@@ -1,0 +1,373 @@
+import { useAuth } from "@/_core/hooks/useAuth";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+  SidebarSeparator,
+  useSidebar,
+} from "@/components/ui/sidebar";
+import { useIsMobile } from "@/hooks/useMobile";
+import {
+  LayoutDashboard,
+  LogOut,
+  PanelLeft,
+  ClipboardList,
+  Package,
+  ArrowLeftRight,
+  RotateCcw,
+  Warehouse,
+  ShoppingCart,
+  FolderKanban,
+  Users,
+  Bell,
+  Settings,
+} from "lucide-react";
+import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "wouter";
+import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
+import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
+import { trpc } from "@/lib/trpc";
+
+type MenuItem = {
+  icon: any;
+  label: string;
+  path: string;
+  roles?: string[];
+};
+
+const allMenuItems: MenuItem[] = [
+  { icon: LayoutDashboard, label: "Dashboard", path: "/" },
+  { icon: ClipboardList, label: "Solicitudes", path: "/solicitudes" },
+  { icon: Package, label: "Flujos de Abastecimiento", path: "/flujos" },
+  {
+    icon: RotateCcw,
+    label: "Logística Inversa",
+    path: "/devoluciones",
+    roles: ["jefe_bodega_central", "administracion_central"],
+  },
+  {
+    icon: Warehouse,
+    label: "Inventario",
+    path: "/inventario",
+    roles: ["jefe_bodega_central", "administracion_central"],
+  },
+  {
+    icon: ShoppingCart,
+    label: "Órdenes de Compra",
+    path: "/ordenes-compra",
+    roles: ["administracion_central"],
+  },
+  { icon: FolderKanban, label: "Proyectos", path: "/proyectos" },
+  {
+    icon: Users,
+    label: "Usuarios",
+    path: "/usuarios",
+    roles: ["admin"],
+  },
+];
+
+const SIDEBAR_WIDTH_KEY = "sidebar-width";
+const DEFAULT_WIDTH = 260;
+const MIN_WIDTH = 200;
+const MAX_WIDTH = 400;
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
+  });
+  const { loading, user } = useAuth();
+
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, sidebarWidth.toString());
+  }, [sidebarWidth]);
+
+  if (loading) {
+    return <DashboardLayoutSkeleton />;
+  }
+
+  if (!user) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <div className="flex flex-col items-center gap-8 p-8 max-w-md w-full">
+          {/* Swiss Style: Bold red square accent */}
+          <div className="w-16 h-16 bg-primary" />
+          <div className="flex flex-col items-center gap-4">
+            <h1 className="text-3xl font-bold tracking-tight text-foreground">
+              BuildReq
+            </h1>
+            <p className="text-sm text-muted-foreground text-center max-w-sm leading-relaxed">
+              Plataforma de gestión de requerimientos de materiales para
+              proyectos de construcción.
+            </p>
+          </div>
+          <div className="w-full h-px bg-foreground/10" />
+          <Button
+            onClick={() => { window.location.href = "/"; }}
+            size="lg"
+            className="w-full"
+          >
+            Iniciar sesión
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <SidebarProvider
+      style={
+        {
+          "--sidebar-width": `${sidebarWidth}px`,
+        } as CSSProperties
+      }
+    >
+      <DashboardLayoutContent setSidebarWidth={setSidebarWidth}>
+        {children}
+      </DashboardLayoutContent>
+    </SidebarProvider>
+  );
+}
+
+type DashboardLayoutContentProps = {
+  children: React.ReactNode;
+  setSidebarWidth: (width: number) => void;
+};
+
+function DashboardLayoutContent({
+  children,
+  setSidebarWidth,
+}: DashboardLayoutContentProps) {
+  const { user, logout } = useAuth();
+  const [location, setLocation] = useLocation();
+  const { state, toggleSidebar } = useSidebar();
+  const isCollapsed = state === "collapsed";
+  const [isResizing, setIsResizing] = useState(false);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
+
+  const { data: unreadCount } = trpc.notifications.unreadCount.useQuery(
+    undefined,
+    { refetchInterval: 30000 }
+  );
+
+  const userRole = (user as any)?.buildreqRole || "";
+  const isAdmin = user?.role === "admin";
+
+  const menuItems = useMemo(() => {
+    return allMenuItems.filter((item) => {
+      if (!item.roles) return true;
+      if (item.roles.includes("admin") && isAdmin) return true;
+      return item.roles.includes(userRole);
+    });
+  }, [userRole, isAdmin]);
+
+  const activeMenuItem = menuItems.find((item) => {
+    if (item.path === "/") return location === "/";
+    return location.startsWith(item.path);
+  });
+
+  useEffect(() => {
+    if (isCollapsed) setIsResizing(false);
+  }, [isCollapsed]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+      const sidebarLeft =
+        sidebarRef.current?.getBoundingClientRect().left ?? 0;
+      const newWidth = e.clientX - sidebarLeft;
+      if (newWidth >= MIN_WIDTH && newWidth <= MAX_WIDTH) {
+        setSidebarWidth(newWidth);
+      }
+    };
+    const handleMouseUp = () => setIsResizing(false);
+
+    if (isResizing) {
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    }
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [isResizing, setSidebarWidth]);
+
+  const roleLabels: Record<string, string> = {
+    ingeniero_residente: "Ing. Residente",
+    jefe_bodega_central: "Jefe de Bodega",
+    administracion_central: "Admin. Central",
+  };
+
+  return (
+    <>
+      <div className="relative" ref={sidebarRef}>
+        <Sidebar
+          collapsible="icon"
+          className="border-r border-border"
+          disableTransition={isResizing}
+        >
+          <SidebarHeader className="h-16 justify-center border-b border-border">
+            <div className="flex items-center gap-3 px-2 transition-all w-full">
+              <button
+                onClick={toggleSidebar}
+                className="h-8 w-8 flex items-center justify-center hover:bg-accent rounded transition-colors focus:outline-none shrink-0"
+                aria-label="Toggle navigation"
+              >
+                <PanelLeft className="h-4 w-4 text-muted-foreground" />
+              </button>
+              {!isCollapsed ? (
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-5 h-5 bg-primary shrink-0" />
+                  <span className="font-bold tracking-tight text-foreground truncate">
+                    BuildReq
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          </SidebarHeader>
+
+          <SidebarContent className="gap-0">
+            <SidebarMenu className="px-2 py-2">
+              {menuItems.map((item) => {
+                const isActive =
+                  item.path === "/"
+                    ? location === "/"
+                    : location.startsWith(item.path);
+                return (
+                  <SidebarMenuItem key={item.path}>
+                    <SidebarMenuButton
+                      isActive={isActive}
+                      onClick={() => setLocation(item.path)}
+                      tooltip={item.label}
+                      className="h-9 transition-all font-normal text-sm"
+                    >
+                      <item.icon
+                        className={`h-4 w-4 ${isActive ? "text-primary" : "text-muted-foreground"}`}
+                      />
+                      <span
+                        className={isActive ? "font-medium" : "font-normal"}
+                      >
+                        {item.label}
+                      </span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+
+            <SidebarSeparator />
+
+            <SidebarMenu className="px-2 py-1">
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={location === "/notificaciones"}
+                  onClick={() => setLocation("/notificaciones")}
+                  tooltip="Notificaciones"
+                  className="h-9 transition-all font-normal text-sm"
+                >
+                  <Bell
+                    className={`h-4 w-4 ${location === "/notificaciones" ? "text-primary" : "text-muted-foreground"}`}
+                  />
+                  <span className="flex items-center gap-2">
+                    Notificaciones
+                    {(unreadCount ?? 0) > 0 && (
+                      <Badge
+                        variant="destructive"
+                        className="h-5 min-w-5 text-xs px-1 rounded-sm"
+                      >
+                        {unreadCount}
+                      </Badge>
+                    )}
+                  </span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarContent>
+
+          <SidebarFooter className="p-3 border-t border-border">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="flex items-center gap-3 rounded px-1 py-1 hover:bg-accent/50 transition-colors w-full text-left group-data-[collapsible=icon]:justify-center focus:outline-none">
+                  <Avatar className="h-8 w-8 border shrink-0">
+                    <AvatarFallback className="text-xs font-semibold bg-primary text-primary-foreground">
+                      {user?.name?.charAt(0).toUpperCase() || "U"}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
+                    <p className="text-sm font-medium truncate leading-none text-foreground">
+                      {user?.name || "—"}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate mt-1">
+                      {roleLabels[userRole] || "Sin rol asignado"}
+                    </p>
+                  </div>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <div className="px-2 py-1.5">
+                  <p className="text-sm font-medium">{user?.name}</p>
+                  <p className="text-xs text-muted-foreground">{user?.email}</p>
+                </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={logout}
+                  className="cursor-pointer text-destructive focus:text-destructive"
+                >
+                  <LogOut className="mr-2 h-4 w-4" />
+                  <span>Cerrar sesión</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </SidebarFooter>
+        </Sidebar>
+        <div
+          className={`absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/20 transition-colors ${isCollapsed ? "hidden" : ""}`}
+          onMouseDown={() => {
+            if (isCollapsed) return;
+            setIsResizing(true);
+          }}
+          style={{ zIndex: 50 }}
+        />
+      </div>
+
+      <SidebarInset>
+        {isMobile && (
+          <div className="flex border-b h-14 items-center justify-between bg-background px-2 sticky top-0 z-40">
+            <div className="flex items-center gap-2">
+              <SidebarTrigger className="h-9 w-9 rounded bg-background" />
+              <span className="font-medium tracking-tight text-foreground text-sm">
+                {activeMenuItem?.label ?? "BuildReq"}
+              </span>
+            </div>
+          </div>
+        )}
+        <main className="flex-1 p-6">{children}</main>
+      </SidebarInset>
+    </>
+  );
+}

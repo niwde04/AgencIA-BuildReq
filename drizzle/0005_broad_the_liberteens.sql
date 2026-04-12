@@ -1,0 +1,1 @@
+ALTER TABLE `supplyFlowRecords` ADD `supplierId` int;

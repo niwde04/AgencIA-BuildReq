@@ -1,0 +1,2 @@
+ALTER TABLE `requestItems` ADD `assignedFlow` enum('compra_directa','despacho_bodega','traslado_proyecto','solicitud_compra');--> statement-breakpoint
+ALTER TABLE `supplyFlowRecords` ADD `requestItemId` int;

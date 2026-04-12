@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1774402292277,
+      "tag": "0000_lush_slapstick",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1774402607490,
+      "tag": "0001_steep_mauler",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1774454590934,
+      "tag": "0002_freezing_nocturne",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1774460828079,
+      "tag": "0003_cute_blonde_phantom",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1774575115309,
+      "tag": "0004_violet_gauntlet",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1774578216405,
+      "tag": "0005_broad_the_liberteens",
+      "breakpoints": true
+    }
+  ]
+}
