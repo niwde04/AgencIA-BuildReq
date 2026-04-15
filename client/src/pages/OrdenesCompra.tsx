@@ -1,51 +1,371 @@
 import { trpc } from "@/lib/trpc";
-import { useAuth } from "@/_core/hooks/useAuth";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { downloadBase64Document } from "@/lib/document-download";
 import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ShoppingCart } from "lucide-react";
-import { useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Download, Send, Trash2, XCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import {
+  calculatePurchaseOrderLineAmounts,
+  formatPurchaseOrderCurrency,
+  normalizePurchaseOrderTaxCode,
+  PURCHASE_ORDER_TAX_OPTIONS,
+  summarizePurchaseOrderLines,
+  type PurchaseOrderTaxCode,
+} from "@shared/purchase-orders";
 
 const STATUS_LABELS: Record<string, string> = {
-  pendiente: "Pendiente",
-  en_proceso: "En proceso",
-  completado: "Completado",
-  cancelado: "Cancelado",
+  borrador: "Borrador",
+  emitida: "Emitida",
+  enviada: "Enviada",
+  parcialmente_recibida: "Parcialmente recibida",
+  recibida: "Recibida",
+  anulada: "Anulada",
 };
 
+const EMISSION_STATUS_LABELS: Record<string, string> = {
+  borrador: "Pendiente",
+  emitida: "Emitida",
+  enviada: "Emitida",
+  parcialmente_recibida: "Emitida",
+  recibida: "Emitida",
+  anulada: "Anulada",
+};
+
+const RECEIVED_ORDER_STATUSES = new Set(["parcialmente_recibida", "recibida"]);
+
+type PurchaseOrderItemDraft = {
+  quantity: string;
+  unitPrice: string;
+  taxCode: PurchaseOrderTaxCode;
+};
+
+type PurchaseOrderConfirmState =
+  | { kind: null }
+  | {
+      kind: "delete-item";
+      itemId: number;
+      itemName: string;
+      isLastItem: boolean;
+    }
+  | {
+      kind: "cancel-order";
+      orderId: number;
+      orderNumber: string;
+    };
+
 export default function OrdenesCompra() {
-  const { user } = useAuth();
   const utils = trpc.useUtils();
-  const [convertDialogOpen, setConvertDialogOpen] = useState(false);
-  const [selectedFlowId, setSelectedFlowId] = useState<number | null>(null);
-  const [poNotes, setPoNotes] = useState("");
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [replaceItemId, setReplaceItemId] = useState<number | null>(null);
+  const [replacementSearch, setReplacementSearch] = useState("");
+  const [selectedSupplierId, setSelectedSupplierId] = useState("");
+  const [savingItemId, setSavingItemId] = useState<number | null>(null);
+  const [deletingItemId, setDeletingItemId] = useState<number | null>(null);
+  const [itemDrafts, setItemDrafts] = useState<Record<number, PurchaseOrderItemDraft>>({});
+  const [confirmState, setConfirmState] = useState<PurchaseOrderConfirmState>({ kind: null });
 
-  const { data: flows, isLoading } = trpc.supplyFlows.list.useQuery({
-    flowType: "solicitud_compra",
-  });
+  const { data: orders, isLoading } = trpc.purchaseOrders.list.useQuery();
+  const { data: suppliersList } = trpc.requestItems.listSuppliers.useQuery();
+  const {
+    data: detail,
+    error: detailError,
+    isLoading: detailLoading,
+    refetch: refetchDetail,
+  } = trpc.purchaseOrders.getById.useQuery(
+    { id: selectedId ?? 0 },
+    { enabled: Boolean(selectedId) }
+  );
+  const { data: sapMatches } = trpc.requestItems.searchSapCatalog.useQuery(
+    { search: replacementSearch },
+    { enabled: replacementSearch.trim().length >= 2 }
+  );
 
-  const convertMutation = trpc.supplyFlows.convertToPurchaseOrder.useMutation({
+  const replaceMutation = trpc.purchaseOrders.replaceItem.useMutation({
     onSuccess: () => {
-      toast.success("Convertida a Orden de Compra exitosamente");
-      utils.supplyFlows.list.invalidate();
-      setConvertDialogOpen(false);
-      setPoNotes("");
+      toast.success("Ítem actualizado en la OC");
+      if (selectedId) {
+        void utils.purchaseOrders.getById.invalidate({ id: selectedId });
+      }
+      setReplaceItemId(null);
+      setReplacementSearch("");
     },
-    onError: (e) => toast.error(e.message),
+    onError: (error) => toast.error(error.message),
   });
 
-  const userRole = (user as any)?.buildreqRole || "";
-  const canConvert =
-    userRole === "administracion_central" || user?.role === "admin";
+  const updateMutation = trpc.purchaseOrders.update.useMutation({
+    onSuccess: () => {
+      toast.success("Proveedor actualizado en la OC");
+      void utils.purchaseOrders.list.invalidate();
+      if (selectedId) {
+        void utils.purchaseOrders.getById.invalidate({ id: selectedId });
+      }
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const updateItemLineMutation = trpc.purchaseOrders.updateItemLine.useMutation({
+    onSuccess: () => {
+      toast.success("Linea actualizada en la OC");
+      if (selectedId) {
+        void utils.purchaseOrders.getById.invalidate({ id: selectedId });
+      }
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const deleteItemMutation = trpc.purchaseOrders.deleteItem.useMutation({
+    onSuccess: (result) => {
+      toast.success(
+        result.orderCancelled
+          ? "Se elimino la ultima linea y la OC quedo anulada"
+          : "Linea eliminada de la OC"
+      );
+      if (selectedId) {
+        void utils.purchaseOrders.getById.invalidate({ id: selectedId });
+        void utils.purchaseOrders.list.invalidate();
+      }
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const cancelOrderMutation = trpc.purchaseOrders.cancelOrder.useMutation({
+    onSuccess: () => {
+      toast.success("Orden de compra anulada");
+      void utils.purchaseOrders.list.invalidate();
+      if (selectedId) {
+        void utils.purchaseOrders.getById.invalidate({ id: selectedId });
+      }
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const sendMutation = trpc.purchaseOrders.sendToSupplier.useMutation({
+    onSuccess: () => {
+      toast.success("OC emitida");
+      void utils.purchaseOrders.list.invalidate();
+      if (selectedId) {
+        void utils.purchaseOrders.getById.invalidate({ id: selectedId });
+      }
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const items = useMemo(() => detail?.items ?? [], [detail]);
+  const selectedSupplier = useMemo(
+    () =>
+      (suppliersList || []).find((supplier: any) => supplier.id === Number(selectedSupplierId)) ??
+      null,
+    [selectedSupplierId, suppliersList]
+  );
+  const currentSupplierEmail = detail?.purchaseOrder.supplierEmail ?? detail?.supplier?.email ?? "";
+  const selectedSupplierEmail = selectedSupplier?.email ?? "";
+  const supplierChanged =
+    !!detail &&
+    !!selectedSupplierId &&
+    (Number(selectedSupplierId) !== detail.purchaseOrder.supplierId ||
+      selectedSupplierEmail !== currentSupplierEmail);
+
+  useEffect(() => {
+    setSelectedSupplierId(detail?.purchaseOrder.supplierId ? String(detail.purchaseOrder.supplierId) : "");
+  }, [detail?.purchaseOrder.id, detail?.purchaseOrder.supplierId]);
+
+  useEffect(() => {
+    if (!detail?.items) {
+      setItemDrafts({});
+      return;
+    }
+
+    setItemDrafts(
+      Object.fromEntries(
+        detail.items.map((item: any) => [
+          item.id,
+          {
+            quantity: String(item.quantity ?? "0.00"),
+            unitPrice: String(item.unitPrice ?? "0.00"),
+            taxCode: normalizePurchaseOrderTaxCode(item.taxCode),
+          },
+        ])
+      )
+    );
+  }, [detail?.items, detail?.purchaseOrder.id]);
+
+  const getItemDraft = (item: any): PurchaseOrderItemDraft =>
+    itemDrafts[item.id] ?? {
+      quantity: String(item.quantity ?? "0.00"),
+      unitPrice: String(item.unitPrice ?? "0.00"),
+      taxCode: normalizePurchaseOrderTaxCode(item.taxCode),
+    };
+
+  const hasItemLineChanged = (item: any) => {
+    const draft = getItemDraft(item);
+    return (
+      Number(draft.quantity || 0) !== Number(item.quantity ?? 0) ||
+      Number(draft.unitPrice || 0) !== Number(item.unitPrice ?? 0) ||
+      draft.taxCode !== normalizePurchaseOrderTaxCode(item.taxCode)
+    );
+  };
+
+  const pricingSummary = useMemo(
+    () =>
+      summarizePurchaseOrderLines(
+        items.map((item: any) => {
+          const draft = getItemDraft(item);
+          return {
+            quantity: draft.quantity,
+            unitPrice: draft.unitPrice,
+            taxCode: draft.taxCode,
+          };
+        })
+      ),
+    [items, itemDrafts]
+  );
+
+  const hasPendingPricingChanges = useMemo(
+    () => items.some((item: any) => hasItemLineChanged(item)),
+    [items, itemDrafts]
+  );
+
+  const isOrderCancelled = detail?.purchaseOrder.status === "anulada";
+  const hasReceivedItems = items.some((item: any) => Number(item.receivedQuantity ?? 0) > 0);
+  const hasOrderReceipts =
+    hasReceivedItems || RECEIVED_ORDER_STATUSES.has(detail?.purchaseOrder.status ?? "");
+  const confirmActionPending = deleteItemMutation.isPending || cancelOrderMutation.isPending;
+
+  const handleSaveSupplier = () => {
+    if (!detail) return;
+    if (!selectedSupplierId) {
+      toast.error("Seleccione un proveedor");
+      return;
+    }
+
+    updateMutation.mutate({
+      id: detail.purchaseOrder.id,
+      supplierId: Number(selectedSupplierId),
+      supplierEmail: selectedSupplier?.email ?? null,
+    });
+  };
+
+  const handleSaveItemLine = (item: any) => {
+    const draft = getItemDraft(item);
+    if (!draft.quantity.trim()) {
+      toast.error("Ingrese la cantidad");
+      return;
+    }
+    if (!draft.unitPrice.trim()) {
+      toast.error("Ingrese el precio unitario");
+      return;
+    }
+
+    setSavingItemId(item.id);
+    updateItemLineMutation.mutate(
+      {
+        purchaseOrderItemId: item.id,
+        quantity: draft.quantity,
+        unitPrice: draft.unitPrice,
+        taxCode: draft.taxCode,
+      },
+      {
+        onSettled: () => {
+          setSavingItemId((current) => (current === item.id ? null : current));
+        },
+      }
+    );
+  };
+
+  const getDeleteBlockReason = (item: any) => {
+    if (Number(item.receivedQuantity ?? 0) > 0) {
+      return "No se puede eliminar una linea que ya tiene recepciones registradas";
+    }
+    return null;
+  };
+
+  const handleDeleteItem = (item: any) => {
+    const blockReason = getDeleteBlockReason(item);
+    if (blockReason) {
+      toast.error(blockReason);
+      return;
+    }
+
+    setConfirmState({
+      kind: "delete-item",
+      itemId: item.id,
+      itemName: item.itemName,
+      isLastItem: items.length <= 1,
+    });
+  };
+
+  const handleCancelOrder = () => {
+    if (!detail) return;
+    if (hasReceivedItems) {
+      toast.error("No se puede cancelar una orden que ya tiene recepciones registradas");
+      return;
+    }
+
+    setConfirmState({
+      kind: "cancel-order",
+      orderId: detail.purchaseOrder.id,
+      orderNumber: detail.purchaseOrder.orderNumber,
+    });
+  };
+
+  const handleConfirmAction = () => {
+    if (confirmState.kind === "delete-item") {
+      setDeletingItemId(confirmState.itemId);
+      deleteItemMutation.mutate(
+        { purchaseOrderItemId: confirmState.itemId },
+        {
+          onSuccess: () => {
+            setReplaceItemId((current) => (current === confirmState.itemId ? null : current));
+            setConfirmState({ kind: null });
+          },
+          onSettled: () => {
+            setDeletingItemId((current) =>
+              current === confirmState.itemId ? null : current
+            );
+          },
+        }
+      );
+      return;
+    }
+
+    if (confirmState.kind === "cancel-order") {
+      cancelOrderMutation.mutate(
+        { id: confirmState.orderId },
+        {
+          onSuccess: () => {
+            setConfirmState({ kind: null });
+          },
+        }
+      );
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -57,114 +377,74 @@ export default function OrdenesCompra() {
         <CardContent className="p-0">
           {isLoading ? (
             <div className="p-8 text-center text-muted-foreground">
-              Cargando solicitudes de compra...
+              Cargando órdenes de compra...
             </div>
-          ) : (flows || []).length === 0 ? (
-            <div className="p-8 text-center">
-              <ShoppingCart className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
-              <p className="text-muted-foreground">
-                No hay solicitudes de compra
-              </p>
+          ) : !(orders || []).length ? (
+            <div className="p-8 text-center text-muted-foreground">
+              No hay órdenes de compra registradas
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border">
-                    <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       No. OC
                     </th>
-                    <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
-                      Solicitud
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Clasificación
                     </th>
-                    <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Proyecto
                     </th>
-                    <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Tipo Compra
                     </th>
-                    <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
-                      Doc. SAP
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Proveedor
                     </th>
-                    <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Estatus
                     </th>
-                    <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
-                      Fecha
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Emisión
                     </th>
-                    {canConvert && (
-                      <th className="text-right p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
-                        Acciones
-                      </th>
-                    )}
+                    <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Acciones
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(flows || []).map((row: any) => {
-                    const f = row.flow;
-                    const req = row.request;
-                    const proj = row.project;
-                    return (
-                      <tr
-                        key={f.id}
-                        className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors"
-                      >
-                        <td className="p-3 font-mono text-xs font-medium">
-                          {f.purchaseOrderNumber || (
-                            <span className="text-muted-foreground italic">
-                              Sin OC
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-3 text-xs">
-                          {req?.requestNumber || "—"}
-                        </td>
-                        <td className="p-3 text-xs">
-                          {proj ? `${proj.code} — ${proj.name}` : "—"}
-                        </td>
-                        <td className="p-3 text-xs">
-                          {f.purchaseType === "local"
-                            ? "Compra Local"
-                            : f.purchaseType === "extranjera"
-                            ? "Compra Extranjera"
-                            : "—"}
-                        </td>
-                        <td className="p-3 text-xs capitalize">
-                          {f.sapDocumentType?.replace(/_/g, " ") || "—"}
-                        </td>
-                        <td className="p-3">
-                          <Badge
-                            variant="outline"
-                            className="text-xs capitalize"
-                          >
-                            {STATUS_LABELS[f.status] || f.status}
-                          </Badge>
-                        </td>
-                        <td className="p-3 text-xs text-muted-foreground">
-                          {f.createdAt
-                            ? new Date(f.createdAt).toLocaleDateString("es")
-                            : "—"}
-                        </td>
-                        {canConvert && (
-                          <td className="p-3 text-right">
-                            {!f.purchaseOrderNumber && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="text-xs"
-                                onClick={() => {
-                                  setSelectedFlowId(f.id);
-                                  setConvertDialogOpen(true);
-                                }}
-                              >
-                                Convertir a OC
-                              </Button>
-                            )}
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  })}
+                  {(orders || []).map((row: any) => (
+                    <tr key={row.purchaseOrder.id} className="border-b border-border last:border-0">
+                      <td className="p-3 font-medium">{row.purchaseOrder.orderNumber}</td>
+                      <td className="p-3 text-xs uppercase">{row.purchaseOrder.classification}</td>
+                      <td className="p-3 text-xs">
+                        {row.project ? `${row.project.code} — ${row.project.name}` : "—"}
+                      </td>
+                      <td className="p-3 text-xs">
+                        {row.purchaseOrder.purchaseType === "local"
+                          ? "Compra Local"
+                          : row.purchaseOrder.purchaseType === "extranjera"
+                          ? "Compra Extranjera"
+                          : "—"}
+                      </td>
+                      <td className="p-3 text-xs">{row.supplier?.name || "Proveedor pendiente"}</td>
+                      <td className="p-3">
+                        <Badge variant="outline" className="text-xs">
+                          {STATUS_LABELS[row.purchaseOrder.status] || row.purchaseOrder.status}
+                        </Badge>
+                      </td>
+                      <td className="p-3 text-xs">
+                        {EMISSION_STATUS_LABELS[row.purchaseOrder.status] || "Pendiente"}
+                      </td>
+                      <td className="p-3 text-right">
+                        <Button variant="outline" size="sm" onClick={() => setSelectedId(row.purchaseOrder.id)}>
+                          Ver
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -172,49 +452,540 @@ export default function OrdenesCompra() {
         </CardContent>
       </Card>
 
-      {/* Convert Dialog - auto-generates OC number */}
-      <Dialog open={convertDialogOpen} onOpenChange={setConvertDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Convertir a Orden de Compra</DialogTitle>
+      <Dialog
+        open={Boolean(selectedId)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedId(null);
+            setReplaceItemId(null);
+            setReplacementSearch("");
+            setSelectedSupplierId("");
+            setSavingItemId(null);
+            setDeletingItemId(null);
+            setItemDrafts({});
+            setConfirmState({ kind: null });
+          }
+        }}
+      >
+        <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1500px] sm:p-6 lg:p-7">
+          <DialogHeader className="border-b border-border/70 pb-4 pr-10">
+            <div className="flex flex-wrap items-center gap-3">
+              <DialogTitle className="text-[2.1rem] font-bold tracking-tight sm:text-[2.5rem]">
+                {detail?.purchaseOrder.orderNumber || "Orden de Compra"}
+              </DialogTitle>
+              {detail?.purchaseOrder.status ? (
+                <Badge variant="outline" className="text-sm">
+                  {STATUS_LABELS[detail.purchaseOrder.status] || detail.purchaseOrder.status}
+                </Badge>
+              ) : null}
+            </div>
           </DialogHeader>
-          <div className="space-y-4 pt-2">
-            <p className="text-sm text-muted-foreground">
-              Se generará automáticamente un número de Orden de Compra con correlativo.
-              El tipo de compra se hereda del documento original.
-            </p>
-            <div className="space-y-2">
-              <Label>Notas (opcional)</Label>
-              <Textarea
-                value={poNotes}
-                onChange={(e) => setPoNotes(e.target.value)}
-                placeholder="Observaciones..."
-                rows={2}
-              />
+
+          {detailLoading ? (
+            <div className="py-10 text-center text-sm text-muted-foreground">
+              Cargando detalle de la orden de compra...
             </div>
-            <div className="flex gap-2 justify-end">
-              <Button
-                variant="outline"
-                onClick={() => setConvertDialogOpen(false)}
-              >
-                Cancelar
-              </Button>
-              <Button
-                onClick={() => {
-                  if (!selectedFlowId) return;
-                  convertMutation.mutate({
-                    flowId: selectedFlowId,
-                    notes: poNotes || undefined,
-                  });
-                }}
-                disabled={convertMutation.isPending}
-              >
-                {convertMutation.isPending ? "Generando OC..." : "Confirmar"}
-              </Button>
+          ) : detailError ? (
+            <div className="space-y-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-5 text-sm text-destructive">
+              <p>No se pudo cargar la orden de compra. {detailError.message}</p>
+              <div>
+                <Button variant="outline" onClick={() => void refetchDetail()}>
+                  Reintentar
+                </Button>
+              </div>
             </div>
-          </div>
+          ) : detail ? (
+            <div className="space-y-5">
+              <div className="grid gap-3 md:grid-cols-12">
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Clasificación
+                  </Label>
+                  <p className="text-base font-semibold uppercase leading-tight sm:text-lg">
+                    {detail.purchaseOrder.classification}
+                  </p>
+                </div>
+                <div className="space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-6 lg:col-span-5">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Proveedor
+                  </Label>
+                  <Select
+                    value={selectedSupplierId}
+                    onValueChange={setSelectedSupplierId}
+                    disabled={Boolean(isOrderCancelled)}
+                  >
+                    <SelectTrigger className="h-11 w-full text-sm sm:h-12 sm:text-base">
+                      <SelectValue placeholder="Seleccione proveedor" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[320px]">
+                      {(suppliersList || []).map((supplier: any) => (
+                        <SelectItem
+                          key={supplier.id}
+                          value={String(supplier.id)}
+                          className="py-2.5 text-sm sm:text-base"
+                        >
+                          {supplier.supplierCode} — {supplier.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      className="h-10 px-4 text-sm font-semibold sm:h-11 sm:text-base"
+                      onClick={handleSaveSupplier}
+                      disabled={
+                        !supplierChanged ||
+                        updateMutation.isPending ||
+                        Boolean(isOrderCancelled)
+                      }
+                    >
+                      {updateMutation.isPending ? "Guardando..." : "Guardar proveedor"}
+                    </Button>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      {selectedSupplier
+                        ? selectedSupplier.email || "Proveedor sin correo configurado"
+                        : detail.supplier?.name || "Proveedor pendiente"}
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3 lg:col-span-2">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Fecha necesaria
+                  </Label>
+                  <p className="text-base font-semibold leading-tight sm:text-lg">
+                    {detail.purchaseOrder.neededBy
+                      ? new Date(detail.purchaseOrder.neededBy).toLocaleDateString("es-HN")
+                      : "—"}
+                  </p>
+                </div>
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3 lg:col-span-3">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Estado de emisión
+                  </Label>
+                  <p className="text-base font-semibold leading-tight sm:text-lg">
+                    {EMISSION_STATUS_LABELS[detail.purchaseOrder.status] || "Pendiente"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-2xl border border-border/70">
+                <table className="w-full table-fixed text-sm lg:text-[15px]">
+                  <colgroup>
+                    <col className="w-[24%]" />
+                    <col className="w-[9%]" />
+                    <col className="w-[16%]" />
+                    <col className="w-[15%]" />
+                    <col className="w-[13%]" />
+                    <col className="w-[11%]" />
+                    <col className="w-[12%]" />
+                  </colgroup>
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30">
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
+                        Ítem
+                      </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
+                        SAP actual
+                      </th>
+                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
+                        Cantidad
+                      </th>
+                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
+                        Precio unitario
+                      </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
+                        Impuesto
+                      </th>
+                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
+                        Total
+                      </th>
+                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
+                        Acciones
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((item: any) => {
+                      const draft = getItemDraft(item);
+                      const deleteBlockReason = getDeleteBlockReason(item);
+                      const lineAmounts = calculatePurchaseOrderLineAmounts({
+                        quantity: draft.quantity,
+                        unitPrice: draft.unitPrice,
+                        taxCode: draft.taxCode,
+                      });
+
+                      return (
+                        <tr key={item.id} className="border-b border-border last:border-0">
+                          <td className="p-3 align-middle sm:p-4">
+                            <div className="text-base font-semibold leading-snug sm:text-lg">
+                              {item.itemName}
+                            </div>
+                            {item.originalSapItemCode && (
+                              <div className="mt-1.5 text-sm text-muted-foreground">
+                                Original: {item.originalSapItemCode}
+                              </div>
+                            )}
+                          </td>
+                          <td className="p-3 align-middle font-mono text-sm font-medium sm:p-4">
+                            {item.currentSapItemCode || "—"}
+                          </td>
+                          <td className="p-3 align-middle sm:p-4">
+                            <div className="flex items-center justify-end gap-2">
+                              <Input
+                                type="number"
+                                min="0.01"
+                                step="0.01"
+                                value={draft.quantity}
+                                onChange={(event) =>
+                                  setItemDrafts((current) => ({
+                                    ...current,
+                                    [item.id]: {
+                                      ...getItemDraft(item),
+                                      quantity: event.target.value,
+                                    },
+                                  }))
+                                }
+                                className="h-10 w-full max-w-[140px] text-right text-sm sm:max-w-[150px] sm:text-base"
+                                placeholder="0.00"
+                                disabled={Boolean(isOrderCancelled)}
+                              />
+                              <span className="min-w-[44px] text-right text-xs font-medium text-muted-foreground sm:min-w-[52px] sm:text-sm">
+                                {item.unit || "—"}
+                              </span>
+                            </div>
+                            {Number(item.receivedQuantity ?? 0) > 0 ? (
+                              <div className="mt-1.5 text-right text-[11px] text-muted-foreground">
+                                Recibido: {item.receivedQuantity} {item.unit || ""}
+                              </div>
+                            ) : null}
+                          </td>
+                          <td className="p-3 align-middle sm:p-4">
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={draft.unitPrice}
+                              onChange={(event) =>
+                                setItemDrafts((current) => ({
+                                  ...current,
+                                  [item.id]: {
+                                    ...getItemDraft(item),
+                                    unitPrice: event.target.value,
+                                  },
+                                }))
+                              }
+                              className="h-10 w-full text-right text-sm sm:text-base"
+                              placeholder="0.00"
+                              disabled={Boolean(isOrderCancelled)}
+                            />
+                          </td>
+                          <td className="p-3 align-middle sm:p-4">
+                            <Select
+                              value={draft.taxCode}
+                              onValueChange={(value) =>
+                                setItemDrafts((current) => ({
+                                  ...current,
+                                  [item.id]: {
+                                    ...getItemDraft(item),
+                                    taxCode: value as PurchaseOrderTaxCode,
+                                  },
+                                }))
+                              }
+                              disabled={Boolean(isOrderCancelled)}
+                            >
+                              <SelectTrigger className="h-10 w-full min-w-0 text-sm sm:text-base">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {PURCHASE_ORDER_TAX_OPTIONS.map((taxOption) => (
+                                  <SelectItem key={taxOption.value} value={taxOption.value}>
+                                    {taxOption.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </td>
+                          <td className="p-3 text-right align-middle sm:p-4">
+                            <div className="text-base font-semibold sm:text-lg">
+                              {formatPurchaseOrderCurrency(lineAmounts.total)}
+                            </div>
+                            <div className="mt-1 text-[11px] text-muted-foreground sm:text-xs">
+                              ISV: {formatPurchaseOrderCurrency(lineAmounts.taxAmount)}
+                            </div>
+                          </td>
+                          <td className="p-3 text-right align-middle sm:p-4">
+                            <div className="flex flex-col items-end gap-2">
+                              <Button
+                                variant="outline"
+                                size="lg"
+                                className="h-10 w-full px-3 text-sm sm:text-base"
+                                onClick={() => {
+                                  setReplaceItemId(item.id);
+                                  setReplacementSearch("");
+                                }}
+                                disabled={Boolean(isOrderCancelled)}
+                              >
+                                Reemplazar ítem
+                              </Button>
+                              <Button
+                                size="lg"
+                                className="h-10 w-full px-3 text-sm sm:text-base"
+                                disabled={
+                                  Boolean(isOrderCancelled) ||
+                                  !hasItemLineChanged(item) ||
+                                  savingItemId === item.id ||
+                                  updateItemLineMutation.isPending
+                                }
+                                onClick={() => handleSaveItemLine(item)}
+                              >
+                                {savingItemId === item.id ? "Guardando..." : "Guardar linea"}
+                              </Button>
+                              <Button
+                                variant="destructive"
+                                size="lg"
+                                className="h-10 w-full px-3 text-sm sm:text-base"
+                                disabled={
+                                  Boolean(isOrderCancelled) ||
+                                  Boolean(deleteBlockReason) ||
+                                  deletingItemId === item.id
+                                }
+                                title={deleteBlockReason ?? "Eliminar linea"}
+                                onClick={() => handleDeleteItem(item)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                {deletingItemId === item.id ? "Eliminando..." : "Eliminar fila"}
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <div className="flex justify-end border-t border-border bg-muted/10 px-3 py-4 sm:px-4">
+                  <div className="w-full max-w-[320px] space-y-2.5 rounded-2xl border border-border/70 bg-background p-4">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Subtotal</span>
+                      <span className="font-medium">
+                        {formatPurchaseOrderCurrency(pricingSummary.subtotal)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Total exento</span>
+                      <span className="font-medium">
+                        {formatPurchaseOrderCurrency(pricingSummary.totalExempt)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Total ISV</span>
+                      <span className="font-medium">
+                        {formatPurchaseOrderCurrency(pricingSummary.totalIsv)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-border pt-3 text-base font-semibold">
+                      <span>Total</span>
+                      <span>{formatPurchaseOrderCurrency(pricingSummary.total)}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {replaceItemId && (
+                <div className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-5 sm:p-6">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold sm:text-base">
+                      Buscar reemplazo en SAP
+                    </Label>
+                    <Input
+                      className="h-12 text-base sm:h-14 sm:text-lg"
+                      value={replacementSearch}
+                      onChange={(event) => setReplacementSearch(event.target.value)}
+                      placeholder="Buscar por código o descripción"
+                    />
+                  </div>
+
+                  <div className="max-h-72 overflow-y-auto rounded-2xl border border-border/70 bg-background">
+                    {(sapMatches || []).length === 0 ? (
+                      <div className="p-4 text-base text-muted-foreground">
+                        Escribe al menos 2 caracteres para buscar en SAP.
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-border">
+                        {(sapMatches || []).map((match: any) => (
+                          <button
+                            key={match.id}
+                            className="w-full px-4 py-4 text-left hover:bg-muted/50"
+                            onClick={() =>
+                              replaceMutation.mutate({
+                                purchaseOrderItemId: replaceItemId,
+                                currentSapItemCode: match.itemCode,
+                                itemName: match.description,
+                              })
+                            }
+                          >
+                            <div className="font-mono text-sm font-medium text-primary">
+                              {match.itemCode}
+                            </div>
+                            <div className="text-base">{match.description}</div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {hasPendingPricingChanges ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  Hay cambios de cantidad, precio o impuesto sin guardar. Guarde las lineas antes de descargar o enviar la OC.
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap justify-end gap-3 border-t border-border/70 pt-1">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="h-10 min-w-[220px] px-5 text-sm font-semibold text-destructive sm:h-11 sm:text-base"
+                  onClick={handleCancelOrder}
+                  disabled={
+                    items.length === 0 ||
+                    Boolean(isOrderCancelled) ||
+                    hasReceivedItems ||
+                    cancelOrderMutation.isPending ||
+                    sendMutation.isPending ||
+                    updateMutation.isPending ||
+                    updateItemLineMutation.isPending ||
+                    deleteItemMutation.isPending ||
+                    hasPendingPricingChanges
+                  }
+                >
+                  <XCircle className="mr-2 h-4 w-4" />
+                  {cancelOrderMutation.isPending ? "Cancelando..." : "Cancelar orden"}
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="h-10 min-w-[210px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
+                  onClick={() => {
+                    const downloaded = downloadBase64Document({
+                      base64: detail.purchaseOrder.printedDocumentContent,
+                      fileName: detail.purchaseOrder.printedDocumentName,
+                      mimeType: detail.purchaseOrder.printedDocumentMimeType,
+                    });
+                    if (!downloaded) toast.error("La OC no tiene documento generado");
+                  }}
+                  disabled={
+                    items.length === 0 ||
+                    detail.purchaseOrder.status === "anulada" ||
+                    hasPendingPricingChanges ||
+                    updateItemLineMutation.isPending ||
+                    deleteItemMutation.isPending ||
+                    updateMutation.isPending ||
+                    cancelOrderMutation.isPending
+                  }
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Descargar PDF
+                </Button>
+
+                <Button
+                  size="lg"
+                  className="h-10 min-w-[220px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
+                  onClick={() => sendMutation.mutate({ id: detail.purchaseOrder.id })}
+                  disabled={
+                    items.length === 0 ||
+                    detail.purchaseOrder.status === "anulada" ||
+                    sendMutation.isPending ||
+                    updateMutation.isPending ||
+                    updateItemLineMutation.isPending ||
+                    deleteItemMutation.isPending ||
+                    cancelOrderMutation.isPending ||
+                    hasOrderReceipts ||
+                    hasPendingPricingChanges
+                  }
+                >
+                  <Send className="mr-2 h-4 w-4" />
+                  {sendMutation.isPending ? "Emitiendo..." : "Emitir orden"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={confirmState.kind !== null}
+        onOpenChange={(open) => {
+          if (!open && !confirmActionPending) {
+            setConfirmState({ kind: null });
+          }
+        }}
+      >
+        <AlertDialogContent className="max-w-[560px] overflow-hidden rounded-2xl border-border/70 p-0 shadow-2xl">
+          <div className="border-b border-border/70 bg-muted/20 px-6 py-5">
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
+                {confirmState.kind === "delete-item" ? (
+                  <Trash2 className="h-5 w-5" />
+                ) : (
+                  <XCircle className="h-5 w-5" />
+                )}
+              </div>
+              <AlertDialogHeader className="gap-2 text-left">
+                <AlertDialogTitle className="text-xl font-semibold tracking-tight">
+                  {confirmState.kind === "delete-item"
+                    ? confirmState.isLastItem
+                      ? "Eliminar última línea"
+                      : "Eliminar línea"
+                    : "Cancelar orden de compra"}
+                </AlertDialogTitle>
+                <AlertDialogDescription className="text-sm leading-6 text-muted-foreground">
+                  {confirmState.kind === "delete-item"
+                    ? confirmState.isLastItem
+                      ? `Se eliminará la última línea "${confirmState.itemName}" y la orden de compra quedará anulada.`
+                      : `Se eliminará la línea "${confirmState.itemName}" de la orden de compra.`
+                    : confirmState.kind === "cancel-order"
+                    ? `Se anulará la orden ${confirmState.orderNumber}. El detalle no se borrará, pero los ítems volverán a quedar habilitados en la requisición.`
+                    : ""}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+            </div>
+          </div>
+
+          <div className="space-y-4 px-6 py-5">
+            <div className="rounded-2xl border border-border/70 bg-muted/10 px-4 py-3 text-sm text-muted-foreground">
+              {confirmState.kind === "delete-item"
+                ? "Esta acción no se puede deshacer."
+                : "La orden quedará visible como historial, pero ya no se podrá editar ni enviar al proveedor."}
+            </div>
+
+            <AlertDialogFooter className="gap-3 sm:justify-end">
+              <AlertDialogCancel
+                disabled={confirmActionPending}
+                className="h-11 rounded-xl px-5 text-sm font-semibold"
+              >
+                Volver
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleConfirmAction}
+                disabled={confirmActionPending}
+                className="h-11 rounded-xl bg-destructive px-5 text-sm font-semibold text-destructive-foreground hover:bg-destructive/90"
+              >
+                {confirmActionPending
+                  ? confirmState.kind === "delete-item"
+                    ? "Eliminando..."
+                    : "Cancelando..."
+                  : confirmState.kind === "delete-item"
+                  ? "Confirmar eliminación"
+                  : "Confirmar cancelación"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </div>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

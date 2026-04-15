@@ -14,7 +14,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 
 const FLOW_LABELS: Record<string, string> = {
   compra_directa: "Compra Directa",
-  despacho_bodega: "Despacho Bodega",
+  despacho_bodega: "Salida de Bodega (legado)",
   traslado_proyecto: "Traslado Proyecto",
   solicitud_compra: "Solicitud Compra",
 };
@@ -44,13 +44,15 @@ export default function Flujos() {
   // Filter available flow types by role
   const allowedFlowTypes = useMemo(() => {
     if (isAdmin || userRole === "jefe_bodega_central") {
-      return ["compra_directa", "despacho_bodega", "traslado_proyecto", "solicitud_compra"];
+      return ["compra_directa", "traslado_proyecto", "solicitud_compra"];
     }
     if (userRole === "administracion_central") {
       return ["compra_directa", "solicitud_compra"];
     }
-    // Ing. Residente sees all flows (read-only)
-    return ["compra_directa", "despacho_bodega", "traslado_proyecto", "solicitud_compra"];
+    if (userRole === "administrador_proyecto") {
+      return ["solicitud_compra"];
+    }
+    return ["compra_directa", "traslado_proyecto", "solicitud_compra"];
   }, [userRole, isAdmin]);
 
   const { data: flows, isLoading } = trpc.supplyFlows.list.useQuery(
@@ -76,9 +78,6 @@ export default function Flujos() {
             <SelectItem value="all">Todos los flujos</SelectItem>
             {allowedFlowTypes.includes("compra_directa") && (
               <SelectItem value="compra_directa">Compra Directa</SelectItem>
-            )}
-            {allowedFlowTypes.includes("despacho_bodega") && (
-              <SelectItem value="despacho_bodega">Despacho Bodega</SelectItem>
             )}
             {allowedFlowTypes.includes("traslado_proyecto") && (
               <SelectItem value="traslado_proyecto">Traslado Proyecto</SelectItem>
@@ -145,7 +144,7 @@ export default function Flujos() {
                       <div className="mt-1 space-y-0.5">
                         {req?.requestNumber && (
                           <p className="text-xs text-muted-foreground">
-                            Solicitud: {req.requestNumber}
+                            Requisición: {req.requestNumber}
                           </p>
                         )}
                         {proj?.name && (

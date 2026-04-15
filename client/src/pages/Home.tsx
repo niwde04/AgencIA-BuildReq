@@ -43,13 +43,31 @@ export default function Home() {
       utils.auth.me.invalidate();
     },
   });
+  const clearSessionMutation = trpc.auth.logout.useMutation({
+    onSuccess: () => {
+      utils.auth.me.invalidate();
+    },
+  });
 
   // Listen for Supabase auth state changes (handles token refresh)
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        if ((event === "SIGNED_IN" || event === "TOKEN_REFRESHED") && session?.access_token) {
+        if (
+          (event === "INITIAL_SESSION" ||
+            event === "SIGNED_IN" ||
+            event === "TOKEN_REFRESHED") &&
+          session?.access_token
+        ) {
           await syncSessionMutation.mutateAsync({ token: session.access_token });
+          return;
+        }
+
+        if (
+          (event === "INITIAL_SESSION" || event === "SIGNED_OUT") &&
+          !session
+        ) {
+          await clearSessionMutation.mutateAsync();
         }
       }
     );
@@ -110,7 +128,7 @@ export default function Home() {
             Bienvenido, {user?.name || "Usuario"}
           </h1>
           <p className="text-muted-foreground mb-8">
-            Accede al panel de control para gestionar solicitudes de materiales,
+            Accede al panel de control para gestionar requisiciones de materiales,
             flujos de abastecimiento y logística inversa.
           </p>
           <Button onClick={() => setLocation("/")} size="lg">
@@ -153,15 +171,15 @@ export default function Home() {
               <span className="text-primary">de construcción</span>
             </h1>
             <p className="text-lg text-muted-foreground max-w-lg leading-relaxed">
-              Plataforma centralizada para gestionar solicitudes de materiales,
+              Plataforma centralizada para gestionar requisiciones de materiales,
               flujos de abastecimiento y logística inversa. Preparada para
               integración con SAP Business One.
             </p>
             <div className="grid grid-cols-2 gap-3 max-w-xs">
               <div className="bg-primary/5 border border-primary/10 p-4 space-y-1">
-                <p className="text-3xl font-bold">20</p>
+                <p className="text-3xl font-bold">N</p>
                 <p className="text-xs text-muted-foreground uppercase tracking-wider">
-                  Proyectos simultáneos
+                  Proyectos escalables
                 </p>
               </div>
               <div className="bg-primary/5 border border-primary/10 p-4 space-y-1">
@@ -338,7 +356,7 @@ export default function Home() {
               <BarChart3 className="h-6 w-6 text-primary" />
               <h3 className="font-semibold">Dashboard Analítico</h3>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Métricas de solicitudes por proyecto, tiempos de atención,
+                Métricas de requisiciones por proyecto, tiempos de atención,
                 consumo y estatus en tiempo real.
               </p>
             </div>

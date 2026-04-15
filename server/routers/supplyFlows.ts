@@ -3,6 +3,57 @@ import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { TRPCError } from "@trpc/server";
 
+function canManageSupply(user: { role: string; buildreqRole?: string | null }) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "administracion_central"
+  );
+}
+
+async function getRequestAndItem(requestId: number, requestItemId: number) {
+  const detail = await db.getMaterialRequestById(requestId);
+  const item = detail?.items.find((entry: any) => entry.id === requestItemId);
+  if (!detail || !item) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "La requisición o el ítem no existen",
+    });
+  }
+
+  return { detail, item };
+}
+
+function assertItemApprovedForProcessing(detail: any, item: any) {
+  if (
+    detail.request.requestType === "bienes" &&
+    detail.request.approvalStatus === "pendiente"
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "La requisición todavía está pendiente de autorización del Administrador del Proyecto o Administración Central",
+    });
+  }
+
+  if (item.approvalStatus === "rechazada") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `El ítem ${item.itemName} fue rechazado y no se puede procesar`,
+    });
+  }
+
+  if (
+    item.approvalStatus !== "aprobada" &&
+    item.approvalStatus !== "no_requiere"
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `El ítem ${item.itemName} todavía no ha sido autorizado para procesarse`,
+    });
+  }
+}
+
 export const supplyFlowsRouter = router({
   list: protectedProcedure
     .input(
@@ -13,68 +64,60 @@ export const supplyFlowsRouter = router({
         })
         .optional()
     )
-    .query(async ({ input }) => {
-      return db.listSupplyFlowRecords(input ?? undefined);
-    }),
+    .query(async ({ input }) => db.listSupplyFlowRecords(input ?? undefined)),
 
   getByRequestId: protectedProcedure
     .input(z.object({ requestId: z.number() }))
-    .query(async ({ input }) => {
-      return db.getSupplyFlowByRequestId(input.requestId);
-    }),
+    .query(async ({ input }) => db.getSupplyFlowByRequestId(input.requestId)),
 
-  /** Returns which flow types the current user's role can assign */
   availableFlows: protectedProcedure.query(({ ctx }) => {
-    const role = ctx.user.buildreqRole;
-    const isAdmin = ctx.user.role === "admin";
+    if (!canManageSupply(ctx.user)) return [];
 
-    if (isAdmin || role === "jefe_bodega_central") {
-      // Jefe de Bodega sees all 4 flows
-      return [
-        "compra_directa",
-        "despacho_bodega",
-        "traslado_proyecto",
-        "solicitud_compra",
-      ];
+    if (
+      ctx.user.role === "admin" ||
+      ctx.user.buildreqRole === "jefe_bodega_central"
+    ) {
+      return ["compra_directa", "traslado_proyecto", "solicitud_compra"];
     }
-    if (role === "administracion_central") {
-      // Admin Central only sees Compra Directa and Solicitud de Compra
+
+    if (ctx.user.buildreqRole === "administracion_central") {
       return ["compra_directa", "solicitud_compra"];
     }
-    // Ingeniero Residente cannot assign flows
+
     return [];
   }),
 
-  /** SAP document type mapping for each flow */
-  sapMapping: protectedProcedure.query(() => {
-    return {
-      despacho_bodega: {
-        sapDocument: "Salida de Inventario",
-        sapModule: "Inventario",
-        description: "Genera una Salida de Inventario en SAP",
-      },
-      solicitud_compra: {
-        sapDocument: "Solicitud de Compra",
-        sapModule: "Compras",
-        description: "Genera una Solicitud de Compra en SAP que Administración Central convierte en Orden de Compra",
-      },
-      traslado_proyecto: {
-        sapDocument: "Solicitud de Transferencia",
-        sapModule: "Inventario",
-        description: "Genera una Solicitud de Transferencia de inventario entre almacenes en SAP",
-      },
-      compra_directa: {
-        sapDocument: "Orden de Compra → Entrada de Mercancías",
-        sapModule: "Compras",
-        description: "Primero genera una Orden de Compra, y al recibir el producto genera una Entrada de Mercancías en SAP",
-        twoStepFlow: true,
-        step1: "Orden de Compra",
-        step2: "Entrada de Mercancías",
-      },
-    };
-  }),
+  sapMapping: protectedProcedure.query(() => ({
+    despacho_bodega: {
+      sapDocument: "Salida de Inventario",
+      sapModule: "Inventario",
+      description:
+        "Flujo legado. La salida de bodega ahora se registra como operación de despacho.",
+      legacy: true,
+    },
+    solicitud_compra: {
+      sapDocument: "Solicitud de Compra",
+      sapModule: "Compras",
+      description:
+        "Genera una Solicitud de Compra en SAP que luego puede convertirse en Orden de Compra",
+    },
+    traslado_proyecto: {
+      sapDocument: "Solicitud de Transferencia",
+      sapModule: "Inventario",
+      description:
+        "Genera una Solicitud de Traslado con confirmación posterior y Guía de Remisión",
+    },
+    compra_directa: {
+      sapDocument: "Orden de Compra → Entrada de Mercancías",
+      sapModule: "Compras",
+      description:
+        "Genera una Compra Directa clasificada como CD y luego admite recepciones parciales",
+      twoStepFlow: true,
+      step1: "Orden de Compra",
+      step2: "Recepción",
+    },
+  })),
 
-  // Flow 1: Compra directa del proyecto (per item) - Two step: OC -> Entrada Mercancía
   createDirectPurchase: protectedProcedure
     .input(
       z.object({
@@ -86,63 +129,286 @@ export const supplyFlowsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const role = ctx.user.buildreqRole;
-      const isAdmin = ctx.user.role === "admin";
-      if (
-        role === "ingeniero_residente" ||
-        (!isAdmin && role !== "jefe_bodega_central" && role !== "administracion_central")
-      ) {
+      if (!canManageSupply(ctx.user) || ctx.user.buildreqRole === "ingeniero_residente") {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para registrar compras directas",
         });
       }
 
+      const { detail, item } = await getRequestAndItem(input.requestId, input.requestItemId);
+      assertItemApprovedForProcessing(detail, item);
+
       await db.updateRequestItem(input.requestItemId, {
         assignedFlow: "compra_directa",
         status: "pendiente",
       });
 
-      await checkAndUpdateRequestStatus(input.requestId, ctx.user.id);
+      const purchaseOrder = await db.createPurchaseOrder(
+        {
+          purchaseRequestId: null,
+          projectId: detail.request.projectId,
+          classification: "cd",
+          purchaseType: "local",
+          supplierId: input.supplierId,
+          supplierEmail: null,
+          status: "emitida",
+          neededBy: detail.request.neededBy,
+          sapDocumentNumber: null,
+          notes: input.notes ?? `Compra directa por ${input.paymentMethod}`,
+          printedDocumentName: null,
+          printedDocumentMimeType: null,
+          printedDocumentContent: null,
+          printedAt: null,
+          emailStatus: "pendiente",
+          emailedAt: null,
+          emailError: null,
+          createdById: ctx.user.id,
+        },
+        [
+          {
+            purchaseRequestItemId: null,
+            materialRequestItemId: item.id,
+            originalSapItemCode: item.sapItemCode,
+            currentSapItemCode: item.sapItemCode,
+            itemName: item.sapItemDescription || item.itemName,
+            quantity: item.quantity,
+            receivedQuantity: "0.00",
+            unit: item.unit,
+            notes: input.notes,
+          },
+        ]
+      );
 
-      // Generate auto-correlative for purchase order
-      const poNumber = await db.generatePurchaseOrderNumber();
-
-      // Step 1: Create OC (Orden de Compra) first
       const result = await db.createSupplyFlowRecord({
         requestId: input.requestId,
         requestItemId: input.requestItemId,
         flowType: "compra_directa",
         paymentMethod: input.paymentMethod,
         supplierId: input.supplierId,
-        purchaseOrderNumber: poNumber,
+        purchaseOrderNumber: purchaseOrder.orderNumber,
         sapDocumentType: "orden_compra",
         processedById: ctx.user.id,
         notes: input.notes,
         status: "en_proceso",
       });
 
-      await db.createSapSyncLog({
-        entityType: "supply_flow",
-        entityId: result.id,
-        sapDocumentType: "Orden de Compra",
-        status: "pending",
-        requestPayload: JSON.stringify({
-          type: "purchase_order",
-          step: 1,
-          purchaseOrderNumber: poNumber,
-          paymentMethod: input.paymentMethod,
-          supplierId: input.supplierId,
-          requestId: input.requestId,
-          requestItemId: input.requestItemId,
-          nextStep: "Entrada de Mercancías (al recibir producto)",
-        }),
-      });
+      await checkAndUpdateRequestStatus(input.requestId, ctx.user.id);
 
-      return result;
+      return {
+        ...result,
+        purchaseOrderId: purchaseOrder.id,
+        purchaseOrderNumber: purchaseOrder.orderNumber,
+      };
     }),
 
-  // Confirm goods receipt for direct purchase (Step 2)
+  createDirectPurchaseBatch: protectedProcedure
+    .input(
+      z.object({
+        requestId: z.number(),
+        items: z
+          .array(
+            z.object({
+              requestItemId: z.number(),
+              quantity: z
+                .string()
+                .trim()
+                .min(1)
+                .refine((value) => Number.isFinite(Number(value)) && Number(value) > 0, {
+                  message: "La cantidad debe ser un numero mayor que cero",
+                }),
+            })
+          )
+          .min(1),
+        supplierId: z.number(),
+        paymentMethod: z.enum(["linea_credito", "caja_chica"]),
+        notes: z.string().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canManageSupply(ctx.user) || ctx.user.buildreqRole === "ingeniero_residente") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para registrar compras directas",
+        });
+      }
+
+      const detail = await db.getMaterialRequestById(input.requestId);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "La requisición no existe",
+        });
+      }
+      if (
+        detail.request.requestType === "bienes" &&
+        detail.request.approvalStatus === "pendiente"
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "La requisición todavía está pendiente de autorización del Administrador del Proyecto o Administración Central",
+        });
+      }
+
+      const uniqueItems = Array.from(
+        new Map(input.items.map((item) => [item.requestItemId, item])).values()
+      );
+      const requestItemsById = new Map(
+        detail.items.map((item: any) => [item.id, item] as const)
+      );
+
+      const preparedItems = [];
+      for (const entry of uniqueItems) {
+        const item = requestItemsById.get(entry.requestItemId);
+        if (!item) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Uno de los ítems ya no existe en la requisición",
+          });
+        }
+        assertItemApprovedForProcessing(detail, item);
+
+        const existingDirectPurchaseFlow = await db.getActiveSupplyFlowForRequestItem({
+          requestId: input.requestId,
+          requestItemId: entry.requestItemId,
+          flowType: "compra_directa",
+        });
+        if (existingDirectPurchaseFlow) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `El ítem ${item.itemName} ya tiene una compra directa activa`,
+          });
+        }
+
+        const requestedQuantity = Number(item.quantity ?? 0);
+        const selectedQuantity = Number(entry.quantity);
+        if (selectedQuantity > requestedQuantity) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `La cantidad de ${item.itemName} no puede exceder ${item.quantity}`,
+          });
+        }
+
+        if (selectedQuantity < requestedQuantity) {
+          const remainingQuantity = requestedQuantity - selectedQuantity;
+
+          await db.updateRequestItem(item.id, {
+            quantity: remainingQuantity.toFixed(2),
+          });
+
+          const createdItem = await db.createRequestItem({
+            requestId: detail.request.id,
+            itemName: item.itemName,
+            quantity: entry.quantity,
+            unit: item.unit,
+            sapItemCode: item.sapItemCode,
+            sapItemDescription: item.sapItemDescription,
+            assignedFlow: "compra_directa",
+            deliveredQuantity: "0.00",
+            dispatchedQuantity: "0.00",
+            committedQuantity: item.committedQuantity ?? "0.00",
+            projectStock: item.projectStock ?? "0.00",
+            sapStock: item.sapStock ?? "0.00",
+            warehouseExitNote: null,
+            approvalStatus: item.approvalStatus,
+            approvedById: item.approvedById,
+            approvedAt: item.approvedAt,
+            rejectionReason: item.rejectionReason,
+            status: "pendiente",
+            notes: item.notes,
+          });
+
+          preparedItems.push({
+            sourceItemId: item.id,
+            processedItemId: createdItem.id,
+            item: {
+              ...item,
+              id: createdItem.id,
+              quantity: entry.quantity,
+              assignedFlow: "compra_directa",
+              deliveredQuantity: "0.00",
+              dispatchedQuantity: "0.00",
+            },
+          });
+          continue;
+        }
+
+        await db.updateRequestItem(item.id, {
+          assignedFlow: "compra_directa",
+          status: "pendiente",
+        });
+
+        preparedItems.push({
+          sourceItemId: item.id,
+          processedItemId: item.id,
+          item: {
+            ...item,
+            quantity: entry.quantity,
+            assignedFlow: "compra_directa",
+          },
+        });
+      }
+
+      const purchaseOrder = await db.createPurchaseOrder(
+        {
+          purchaseRequestId: null,
+          projectId: detail.request.projectId,
+          classification: "cd",
+          purchaseType: "local",
+          supplierId: input.supplierId,
+          supplierEmail: null,
+          status: "emitida",
+          neededBy: detail.request.neededBy,
+          sapDocumentNumber: null,
+          notes: input.notes ?? `Compra directa por ${input.paymentMethod}`,
+          printedDocumentName: null,
+          printedDocumentMimeType: null,
+          printedDocumentContent: null,
+          printedAt: null,
+          emailStatus: "pendiente",
+          emailedAt: null,
+          emailError: null,
+          createdById: ctx.user.id,
+        },
+        preparedItems.map((entry: any) => ({
+          purchaseRequestItemId: null,
+          materialRequestItemId: entry.processedItemId,
+          originalSapItemCode: entry.item.sapItemCode,
+          currentSapItemCode: entry.item.sapItemCode,
+          itemName: entry.item.sapItemDescription || entry.item.itemName,
+          quantity: entry.item.quantity,
+          receivedQuantity: "0.00",
+          unit: entry.item.unit,
+          notes: input.notes,
+        }))
+      );
+
+      for (const entry of preparedItems) {
+        await db.createSupplyFlowRecord({
+          requestId: input.requestId,
+          requestItemId: entry.processedItemId,
+          flowType: "compra_directa",
+          paymentMethod: input.paymentMethod,
+          supplierId: input.supplierId,
+          purchaseOrderNumber: purchaseOrder.orderNumber,
+          sapDocumentType: "orden_compra",
+          processedById: ctx.user.id,
+          notes: input.notes,
+          status: "en_proceso",
+        });
+      }
+
+      await checkAndUpdateRequestStatus(input.requestId, ctx.user.id);
+
+      return {
+        success: true,
+        purchaseOrderId: purchaseOrder.id,
+        purchaseOrderNumber: purchaseOrder.orderNumber,
+        processedItems: preparedItems.length,
+      };
+    }),
+
   confirmGoodsReceipt: protectedProcedure
     .input(
       z.object({
@@ -151,12 +417,7 @@ export const supplyFlowsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const role = ctx.user.buildreqRole;
-      const isAdmin = ctx.user.role === "admin";
-      if (
-        role === "ingeniero_residente" ||
-        (!isAdmin && role !== "jefe_bodega_central" && role !== "administracion_central")
-      ) {
+      if (!canManageSupply(ctx.user) || ctx.user.buildreqRole === "ingeniero_residente") {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para confirmar recepción de mercancía",
@@ -169,22 +430,9 @@ export const supplyFlowsRouter = router({
         notes: input.notes,
       });
 
-      await db.createSapSyncLog({
-        entityType: "supply_flow",
-        entityId: input.flowId,
-        sapDocumentType: "Entrada de Mercancías",
-        status: "pending",
-        requestPayload: JSON.stringify({
-          type: "goods_receipt",
-          step: 2,
-          flowId: input.flowId,
-        }),
-      });
-
       return { success: true };
     }),
 
-  // Flow 2: Despacho desde Bodega Central (per item) -> Salida de Inventario SAP
   createWarehouseDispatch: protectedProcedure
     .input(
       z.object({
@@ -202,41 +450,20 @@ export const supplyFlowsRouter = router({
         });
       }
 
-      await db.updateRequestItem(input.requestItemId, {
-        assignedFlow: "despacho_bodega",
-        status: "completo",
+      const { detail, item } = await getRequestAndItem(input.requestId, input.requestItemId);
+      assertItemApprovedForProcessing(detail, item);
+      await db.recordWarehouseExit({
+        requestId: input.requestId,
+        requestItemId: input.requestItemId,
+        quantity: item.quantity,
+        note: input.notes ?? `Salida registrada desde ${input.sourceWarehouse}`,
+        processedById: ctx.user.id,
       });
 
       await checkAndUpdateRequestStatus(input.requestId, ctx.user.id);
-
-      const result = await db.createSupplyFlowRecord({
-        requestId: input.requestId,
-        requestItemId: input.requestItemId,
-        flowType: "despacho_bodega",
-        sourceWarehouse: input.sourceWarehouse,
-        sapDocumentType: "salida_inventario",
-        processedById: ctx.user.id,
-        notes: input.notes,
-        status: "en_proceso",
-      });
-
-      await db.createSapSyncLog({
-        entityType: "supply_flow",
-        entityId: result.id,
-        sapDocumentType: "Salida de Inventario",
-        status: "pending",
-        requestPayload: JSON.stringify({
-          type: "goods_issue",
-          sourceWarehouse: input.sourceWarehouse,
-          requestId: input.requestId,
-          requestItemId: input.requestItemId,
-        }),
-      });
-
-      return result;
+      return { success: true };
     }),
 
-  // Flow 3: Traslado entre proyectos (per item) -> Solicitud de Transferencia SAP
   createProjectTransfer: protectedProcedure
     .input(
       z.object({
@@ -255,12 +482,44 @@ export const supplyFlowsRouter = router({
         });
       }
 
+      const { detail, item } = await getRequestAndItem(input.requestId, input.requestItemId);
+      assertItemApprovedForProcessing(detail, item);
+      if (input.sourceProjectId === detail.request.projectId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "El proyecto origen debe ser distinto al proyecto solicitante",
+        });
+      }
+
       await db.updateRequestItem(input.requestItemId, {
         assignedFlow: "traslado_proyecto",
-        status: "completo",
+        status: "pendiente",
       });
 
-      await checkAndUpdateRequestStatus(input.requestId, ctx.user.id);
+      const transferRequest = await db.createTransferRequest(
+        {
+          materialRequestId: input.requestId,
+          projectId: input.sourceProjectId,
+          destinationType: "proyecto",
+          destinationProjectId: detail.request.projectId,
+          createdById: ctx.user.id,
+          status: "pendiente",
+          neededBy: detail.request.neededBy,
+          notes: input.notes,
+          rejectionReason: null,
+        },
+        [
+          {
+            materialRequestItemId: item.id,
+            itemName: item.sapItemDescription || item.itemName,
+            sapItemCode: item.sapItemCode,
+            quantity: item.quantity,
+            receivedQuantity: "0.00",
+            unit: item.unit,
+            notes: input.notes,
+          },
+        ]
+      );
 
       const result = await db.createSupplyFlowRecord({
         requestId: input.requestId,
@@ -271,27 +530,18 @@ export const supplyFlowsRouter = router({
         sapDocumentType: "transferencia_inventario",
         processedById: ctx.user.id,
         notes: input.notes,
-        status: "en_proceso",
+        status: "pendiente",
       });
 
-      await db.createSapSyncLog({
-        entityType: "supply_flow",
-        entityId: result.id,
-        sapDocumentType: "Solicitud de Transferencia",
-        status: "pending",
-        requestPayload: JSON.stringify({
-          type: "inventory_transfer_request",
-          sourceProjectId: input.sourceProjectId,
-          destinationProjectId: input.destinationProjectId,
-          requestId: input.requestId,
-          requestItemId: input.requestItemId,
-        }),
-      });
+      await checkAndUpdateRequestStatus(input.requestId, ctx.user.id);
 
-      return result;
+      return {
+        ...result,
+        transferRequestId: transferRequest.id,
+        transferRequestNumber: transferRequest.requestNumber,
+      };
     }),
 
-  // Flow 4: Solicitud de compra (per item) -> Solicitud de Compra SAP
   createPurchaseRequest: protectedProcedure
     .input(
       z.object({
@@ -302,15 +552,30 @@ export const supplyFlowsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const role = ctx.user.buildreqRole;
-      const isAdmin = ctx.user.role === "admin";
-      if (
-        role === "ingeniero_residente" ||
-        (!isAdmin && role !== "jefe_bodega_central" && role !== "administracion_central")
-      ) {
+      if (!canManageSupply(ctx.user) || ctx.user.buildreqRole === "ingeniero_residente") {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para crear solicitudes de compra",
+        });
+      }
+
+      const { detail, item } = await getRequestAndItem(input.requestId, input.requestItemId);
+      assertItemApprovedForProcessing(detail, item);
+      const [existingPurchaseRequest, existingPurchaseRequestFlow] = await Promise.all([
+        db.getActivePurchaseRequestByMaterialRequestItemId(item.id),
+        db.getActiveSupplyFlowForRequestItem({
+          requestId: input.requestId,
+          requestItemId: input.requestItemId,
+          flowType: "solicitud_compra",
+        }),
+      ]);
+
+      if (existingPurchaseRequest || existingPurchaseRequestFlow) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: existingPurchaseRequest
+            ? `Ya existe la solicitud ${existingPurchaseRequest.purchaseRequest.requestNumber} para este ítem`
+            : "Ya existe una solicitud de compra para este ítem",
         });
       }
 
@@ -319,7 +584,36 @@ export const supplyFlowsRouter = router({
         status: "pendiente",
       });
 
-      await checkAndUpdateRequestStatus(input.requestId, ctx.user.id);
+      const purchaseRequest = await db.createPurchaseRequest(
+        {
+          materialRequestId: input.requestId,
+          projectId: detail.request.projectId,
+          createdById: ctx.user.id,
+          purchaseType: input.purchaseType,
+          status: "pendiente",
+          neededBy: detail.request.neededBy,
+          sapDocumentNumber: null,
+          notes: input.notes,
+          rejectionReason: null,
+          printedDocumentName: null,
+          printedDocumentMimeType: null,
+          printedDocumentContent: null,
+          printedAt: null,
+          quoteAttachmentId: null,
+        },
+        [
+          {
+            materialRequestItemId: item.id,
+            originalSapItemCode: item.sapItemCode,
+            currentSapItemCode: item.sapItemCode,
+            itemName: item.sapItemDescription || item.itemName,
+            quantity: item.quantity,
+            receivedQuantity: "0.00",
+            unit: item.unit,
+            notes: input.notes,
+          },
+        ]
+      );
 
       const result = await db.createSupplyFlowRecord({
         requestId: input.requestId,
@@ -332,40 +626,32 @@ export const supplyFlowsRouter = router({
         status: "pendiente",
       });
 
-      // Notify Admin Central
+      await checkAndUpdateRequestStatus(input.requestId, ctx.user.id);
+
       const adminUsers = await db.getUsersByBuildreqRole("administracion_central");
-      for (const aUser of adminUsers) {
+      for (const user of adminUsers) {
         await db.createNotification({
-          userId: aUser.id,
+          userId: user.id,
           title: "Nueva solicitud de compra",
-          message: `Se ha generado una solicitud de compra (${input.purchaseType}) para un ítem.`,
+          message: `Se generó la ${purchaseRequest.requestNumber} (${input.purchaseType}) para la requisición ${detail.request.requestNumber}.`,
           type: "solicitud_compra",
-          relatedEntityType: "supply_flow",
-          relatedEntityId: result.id,
+          relatedEntityType: "purchase_request",
+          relatedEntityId: purchaseRequest.id,
         });
       }
 
-      await db.createSapSyncLog({
-        entityType: "supply_flow",
-        entityId: result.id,
-        sapDocumentType: "Solicitud de Compra",
-        status: "pending",
-        requestPayload: JSON.stringify({
-          type: "purchase_request",
-          purchaseType: input.purchaseType,
-          requestId: input.requestId,
-          requestItemId: input.requestItemId,
-        }),
-      });
-
-      return result;
+      return {
+        ...result,
+        purchaseRequestId: purchaseRequest.id,
+        purchaseRequestNumber: purchaseRequest.requestNumber,
+      };
     }),
 
-  // Convert purchase request to purchase order (Admin Central)
   convertToPurchaseOrder: protectedProcedure
     .input(
       z.object({
-        flowId: z.number(),
+        flowId: z.number().optional(),
+        purchaseRequestId: z.number().optional(),
         notes: z.string().optional(),
       })
     )
@@ -380,28 +666,79 @@ export const supplyFlowsRouter = router({
         });
       }
 
-      // Auto-generate purchase order number
-      const purchaseOrderNumber = await db.generatePurchaseOrderNumber();
+      if (!input.flowId && !input.purchaseRequestId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Debe indicar una solicitud de compra o flujo origen",
+        });
+      }
 
-      const result = await db.updateSupplyFlowRecord(input.flowId, {
+      if (input.purchaseRequestId) {
+        const detail = await db.getPurchaseRequestById(input.purchaseRequestId);
+        if (!detail) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Solicitud de compra no encontrada",
+          });
+        }
+
+        const order = await db.createPurchaseOrder(
+          {
+            purchaseRequestId: detail.purchaseRequest.id,
+            projectId: detail.purchaseRequest.projectId,
+            classification: "oc",
+            purchaseType: detail.purchaseRequest.purchaseType,
+            supplierId: null,
+            supplierEmail: null,
+            status: "emitida",
+            neededBy: detail.purchaseRequest.neededBy,
+            sapDocumentNumber: detail.purchaseRequest.sapDocumentNumber,
+            notes: input.notes ?? detail.purchaseRequest.notes ?? undefined,
+            printedDocumentName: null,
+            printedDocumentMimeType: null,
+            printedDocumentContent: null,
+            printedAt: null,
+            emailStatus: "pendiente",
+            emailedAt: null,
+            emailError: null,
+            createdById: ctx.user.id,
+          },
+          detail.items.map((item: any) => ({
+            purchaseRequestItemId: item.id,
+            materialRequestItemId: item.materialRequestItemId,
+            originalSapItemCode: item.originalSapItemCode,
+            currentSapItemCode: item.currentSapItemCode,
+            itemName: item.itemName,
+            quantity: item.quantity,
+            receivedQuantity: item.receivedQuantity ?? "0.00",
+            unit: item.unit,
+            notes: item.notes,
+          }))
+        );
+
+        await db.updatePurchaseRequest(detail.purchaseRequest.id, {
+          status: "convertida",
+        });
+
+        return {
+          success: true,
+          purchaseOrderId: order.id,
+          purchaseOrderNumber: order.orderNumber,
+        };
+      }
+
+      const purchaseOrderNumber = await db.generatePurchaseOrderNumber();
+      const result = await db.updateSupplyFlowRecord(input.flowId!, {
         purchaseOrderNumber,
         sapDocumentType: "orden_compra",
         status: "en_proceso",
         notes: input.notes,
       });
 
-      await db.createSapSyncLog({
-        entityType: "supply_flow",
-        entityId: input.flowId,
-        sapDocumentType: "Orden de Compra",
-        status: "pending",
-        requestPayload: JSON.stringify({
-          type: "purchase_order",
-          purchaseOrderNumber,
-        }),
-      });
-
-      return result;
+      return {
+        ...result,
+        purchaseOrderNumber,
+      };
     }),
 
   updateStatus: protectedProcedure
@@ -412,26 +749,19 @@ export const supplyFlowsRouter = router({
         notes: z.string().optional(),
       })
     )
-    .mutation(async ({ ctx, input }) => {
-      return db.updateSupplyFlowRecord(input.id, {
+    .mutation(async ({ input }) =>
+      db.updateSupplyFlowRecord(input.id, {
         status: input.status,
         notes: input.notes,
-      });
-    }),
+      })
+    ),
 });
 
-/** Helper: check if all items in a request have flows assigned and update request status automatically */
 async function checkAndUpdateRequestStatus(requestId: number, userId: number) {
   const items = await db.getRequestItemsByRequestId(requestId);
   const someAssigned = items.some((item) => item.assignedFlow !== null);
-  const allAssigned = items.length > 0 && items.every((item) => item.assignedFlow !== null);
 
-  if (allAssigned) {
-    // All items have flows - mark as en_proceso (will become cerrada when sent to SAP)
-    await db.updateMaterialRequestStatus(requestId, "en_proceso", userId);
-  } else if (someAssigned) {
-    // Partial assignment - auto change to en_proceso
+  if (someAssigned) {
     await db.updateMaterialRequestStatus(requestId, "en_proceso", userId);
   }
-  // If none assigned, stays en_espera
 }

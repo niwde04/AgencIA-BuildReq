@@ -32,13 +32,6 @@ export const projectsRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      // Check max 20 active projects
-      const activeCount = await db.countActiveProjects();
-      if (activeCount >= 20) {
-        throw new Error(
-          "Se ha alcanzado el límite máximo de 20 proyectos activos"
-        );
-      }
       return db.createProject(input);
     }),
 

@@ -10,27 +10,53 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Search, Eye } from "lucide-react";
+import { Plus, Search, Eye, Pencil } from "lucide-react";
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { Input } from "@/components/ui/input";
+import {
+  formatDateForDisplay,
+  getDueDateStatus,
+  getNeededByDate,
+  PURCHASE_URGENCY_LABELS,
+} from "@shared/material-requests";
 
 const STATUS_LABELS: Record<string, string> = {
+  borrador: "Borrador",
+  pendiente_aprobar: "Pendiente de aprobar",
   en_espera: "En espera",
   en_proceso: "En proceso de atención",
   cerrada: "Cerrada",
+  anulada: "Anulada",
 };
 
 const STATUS_COLORS: Record<string, string> = {
+  borrador: "border-slate-300 text-slate-700 bg-slate-50",
+  pendiente_aprobar: "border-orange-300 text-orange-700 bg-orange-50",
   en_espera: "border-amber-300 text-amber-700 bg-amber-50",
   en_proceso: "border-blue-300 text-blue-700 bg-blue-50",
   cerrada: "border-gray-300 text-gray-600 bg-gray-50",
+  anulada: "border-rose-300 text-rose-700 bg-rose-50",
 };
 
 const RECIPIENT_LABELS: Record<string, string> = {
   bodega_central: "Bodega Central",
+  bodega_proyecto: "Bodega del Proyecto",
   administrador_proyecto: "Administrador Proyecto",
+  oficina_central: "Oficina Central",
   solicitud_compra: "Solicitud de Compra",
+};
+
+const URGENCY_COLORS: Record<string, string> = {
+  urgente: "border-red-300 text-red-700 bg-red-50",
+  no_urgente: "border-emerald-300 text-emerald-700 bg-emerald-50",
+};
+
+const DUE_STATUS_COLORS: Record<string, string> = {
+  late: "text-red-600",
+  today: "text-red-600",
+  soon: "text-amber-600",
+  ok: "text-muted-foreground",
 };
 
 export default function Solicitudes() {
@@ -56,10 +82,10 @@ export default function Solicitudes() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1>Solicitudes de Materiales</h1>
+        <h1>Requisiciones de Materiales</h1>
         <Button onClick={() => setLocation("/solicitudes/nueva")} size="sm">
           <Plus className="h-4 w-4 mr-2" />
-          Nueva Solicitud
+          Nueva Requisición
         </Button>
       </div>
 
@@ -78,11 +104,13 @@ export default function Solicitudes() {
           <SelectTrigger className="w-52 h-9">
             <SelectValue placeholder="Filtrar por estatus" />
           </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos los estatus</SelectItem>
-            <SelectItem value="en_espera">En espera</SelectItem>
-            <SelectItem value="en_proceso">En proceso de atención</SelectItem>
-            <SelectItem value="cerrada">Cerrada</SelectItem>
+                  <SelectContent>
+                    <SelectItem value="all">Todos los estatus</SelectItem>
+                    <SelectItem value="borrador">Borrador</SelectItem>
+                    <SelectItem value="pendiente_aprobar">Pendiente de aprobar</SelectItem>
+                    <SelectItem value="en_espera">En espera</SelectItem>
+                    <SelectItem value="en_proceso">En proceso de atención</SelectItem>
+                    <SelectItem value="cerrada">Cerrada</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -92,11 +120,11 @@ export default function Solicitudes() {
         <CardContent className="p-0">
           {isLoading ? (
             <div className="p-8 text-center text-muted-foreground">
-              Cargando solicitudes...
+              Cargando requisiciones...
             </div>
           ) : filteredRequests.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground">
-              No se encontraron solicitudes
+              No se encontraron requisiciones
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -104,13 +132,19 @@ export default function Solicitudes() {
                 <thead>
                   <tr className="border-b border-border">
                     <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
-                      No. Solicitud
+                      No. Requisición
                     </th>
                     <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                       Proyecto
                     </th>
                     <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                       Dirigida a
+                    </th>
+                    <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                      Urgencia
+                    </th>
+                    <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                      Fecha necesaria
                     </th>
                     <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                       Estatus
@@ -124,49 +158,86 @@ export default function Solicitudes() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRequests.map((r: any) => (
-                    <tr
-                      key={r.request.id}
-                      className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors cursor-pointer"
-                      onClick={() => setLocation(`/solicitudes/${r.request.id}`)}
-                    >
-                      <td className="p-3">
-                        <span className="font-medium">{r.request.requestNumber}</span>
-                      </td>
-                      <td className="p-3">
-                        <div>
-                          <span className="font-medium text-xs">{r.project?.code}</span>
-                          <p className="text-xs text-muted-foreground">{r.project?.name}</p>
-                        </div>
-                      </td>
-                      <td className="p-3 text-xs">
-                        {RECIPIENT_LABELS[r.request.recipient] || r.request.recipient}
-                      </td>
-                      <td className="p-3">
-                        <Badge
-                          variant="outline"
-                          className={`text-xs ${STATUS_COLORS[r.request.status] || ""}`}
-                        >
-                          {STATUS_LABELS[r.request.status] || r.request.status}
-                        </Badge>
-                      </td>
-                      <td className="p-3 text-xs text-muted-foreground">
-                        {new Date(r.request.createdAt).toLocaleDateString("es")}
-                      </td>
-                      <td className="p-3 text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setLocation(`/solicitudes/${r.request.id}`);
-                          }}
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredRequests.map((r: any) => {
+                    const neededByDate = getNeededByDate(
+                      r.request.purchaseUrgency,
+                      r.request.neededBy,
+                      r.request.createdAt
+                    );
+                    const dueStatus = getDueDateStatus(neededByDate);
+                    const targetPath =
+                      r.request.status === "borrador"
+                        ? `/solicitudes/${r.request.id}/editar`
+                        : `/solicitudes/${r.request.id}`;
+
+                    return (
+                      <tr
+                        key={r.request.id}
+                        className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors cursor-pointer"
+                        onClick={() => setLocation(targetPath)}
+                      >
+                        <td className="p-3">
+                          <span className="font-medium">{r.request.requestNumber}</span>
+                        </td>
+                        <td className="p-3">
+                          <div>
+                            <span className="font-medium text-xs">{r.project?.code}</span>
+                            <p className="text-xs text-muted-foreground">{r.project?.name}</p>
+                          </div>
+                        </td>
+                        <td className="p-3 text-xs">
+                          {RECIPIENT_LABELS[r.request.recipient] || r.request.recipient}
+                        </td>
+                        <td className="p-3">
+                          <Badge
+                            variant="outline"
+                            className={`text-xs ${URGENCY_COLORS[r.request.purchaseUrgency] || ""}`}
+                          >
+                            {PURCHASE_URGENCY_LABELS[
+                              r.request.purchaseUrgency as "urgente" | "no_urgente"
+                            ] || "No urgente"}
+                          </Badge>
+                        </td>
+                        <td className="p-3 text-xs">
+                          <p className="font-medium">
+                            {formatDateForDisplay(neededByDate)}
+                          </p>
+                          {dueStatus && (
+                            <p className={DUE_STATUS_COLORS[dueStatus.tone] || "text-muted-foreground"}>
+                              {dueStatus.label}
+                            </p>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          <Badge
+                            variant="outline"
+                            className={`text-xs ${STATUS_COLORS[r.request.status] || ""}`}
+                          >
+                            {STATUS_LABELS[r.request.status] || r.request.status}
+                          </Badge>
+                        </td>
+                        <td className="p-3 text-xs text-muted-foreground">
+                          {new Date(r.request.createdAt).toLocaleDateString("es")}
+                        </td>
+                        <td className="p-3 text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setLocation(targetPath);
+                            }}
+                          >
+                            {r.request.status === "borrador" ? (
+                              <Pencil className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

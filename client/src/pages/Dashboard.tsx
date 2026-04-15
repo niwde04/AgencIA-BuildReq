@@ -24,18 +24,24 @@ import {
 } from "recharts";
 
 const STATUS_COLORS: Record<string, string> = {
+  borrador: "#64748b",
+  pendiente_aprobar: "#f97316",
   en_espera: "#f59e0b",
   en_proceso: "#3b82f6",
   cerrada: "#6b7280",
 };
 
 const STATUS_LABELS: Record<string, string> = {
+  borrador: "Borrador",
+  pendiente_aprobar: "Pendiente de aprobar",
   en_espera: "En espera",
   en_proceso: "En proceso",
   cerrada: "Cerrada",
 };
 
 const STATUS_BADGE_COLORS: Record<string, string> = {
+  borrador: "border-slate-300 text-slate-700 bg-slate-50",
+  pendiente_aprobar: "border-orange-300 text-orange-700 bg-orange-50",
   en_espera: "border-amber-300 text-amber-700 bg-amber-50",
   en_proceso: "border-blue-300 text-blue-700 bg-blue-50",
   cerrada: "border-gray-300 text-gray-600 bg-gray-50",
@@ -113,7 +119,7 @@ export default function Dashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  Total Solicitudes
+                  Total Requisiciones
                 </p>
                 <p className="text-3xl font-bold mt-1">{stats.totalRequests}</p>
               </div>
@@ -171,7 +177,7 @@ export default function Dashboard() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              Solicitudes por Estatus
+              Requisiciones por Estatus
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -245,7 +251,7 @@ export default function Dashboard() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              Solicitudes por Proyecto
+              Requisiciones por Proyecto
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -266,7 +272,7 @@ export default function Dashboard() {
       <Card>
         <CardHeader className="pb-2 flex flex-row items-center justify-between">
           <CardTitle className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-            Solicitudes Recientes
+            Requisiciones Recientes
           </CardTitle>
           <button
             onClick={() => setLocation("/solicitudes")}
@@ -302,7 +308,7 @@ export default function Dashboard() {
             </div>
           ) : (
             <p className="text-sm text-muted-foreground text-center py-8">
-              No hay solicitudes recientes
+              No hay requisiciones recientes
             </p>
           )}
         </CardContent>

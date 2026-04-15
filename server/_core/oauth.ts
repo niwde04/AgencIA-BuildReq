@@ -46,7 +46,11 @@ export function registerOAuthRoutes(app: Express) {
           if (dbUser) {
             // Apply the invitation role and project
             await db.applyInvitationToUser(dbUser.id, {
-              buildreqRole: pendingInvitation.buildreqRole as "ingeniero_residente" | "jefe_bodega_central" | "administracion_central",
+              buildreqRole: pendingInvitation.buildreqRole as
+                | "ingeniero_residente"
+                | "jefe_bodega_central"
+                | "administracion_central"
+                | "administrador_proyecto",
               assignedProjectId: pendingInvitation.assignedProjectId,
             });
             // Mark invitation as accepted

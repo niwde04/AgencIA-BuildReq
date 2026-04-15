@@ -28,6 +28,7 @@ import {
   PanelLeft,
   ClipboardList,
   Package,
+  Building2,
   ArrowLeftRight,
   RotateCcw,
   Warehouse,
@@ -35,14 +36,17 @@ import {
   FolderKanban,
   Users,
   Bell,
-  Settings,
+  Database,
+  FileText,
+  Truck,
 } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
-import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { trpc } from "@/lib/trpc";
+import Home from "@/pages/Home";
+import UnassignedRoleScreen from "./UnassignedRoleScreen";
 
 type MenuItem = {
   icon: any;
@@ -53,7 +57,7 @@ type MenuItem = {
 
 const allMenuItems: MenuItem[] = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
-  { icon: ClipboardList, label: "Solicitudes", path: "/solicitudes" },
+  { icon: ClipboardList, label: "Requisiciones", path: "/solicitudes" },
   { icon: Package, label: "Flujos de Abastecimiento", path: "/flujos" },
   {
     icon: RotateCcw,
@@ -68,16 +72,83 @@ const allMenuItems: MenuItem[] = [
     roles: ["jefe_bodega_central", "administracion_central"],
   },
   {
+    icon: Building2,
+    label: "Almacenes",
+    path: "/almacenes",
+    roles: ["jefe_bodega_central", "administracion_central", "admin"],
+  },
+  {
+    icon: Package,
+    label: "Saldos Iniciales",
+    path: "/saldos-iniciales",
+    roles: ["jefe_bodega_central", "administracion_central", "admin"],
+  },
+  {
+    icon: FileText,
+    label: "Solicitudes de Compra",
+    path: "/solicitudes-compra",
+    roles: [
+      "jefe_bodega_central",
+      "administracion_central",
+      "administrador_proyecto",
+      "admin",
+    ],
+  },
+  {
     icon: ShoppingCart,
     label: "Órdenes de Compra",
     path: "/ordenes-compra",
-    roles: ["administracion_central"],
+    roles: [
+      "jefe_bodega_central",
+      "administracion_central",
+      "administrador_proyecto",
+      "admin",
+    ],
+  },
+  {
+    icon: ArrowLeftRight,
+    label: "Solicitudes de Traslado",
+    path: "/solicitudes-traslado",
+    roles: [
+      "jefe_bodega_central",
+      "administracion_central",
+      "administrador_proyecto",
+      "admin",
+    ],
+  },
+  {
+    icon: Truck,
+    label: "Traslados",
+    path: "/traslados",
+    roles: [
+      "jefe_bodega_central",
+      "administracion_central",
+      "administrador_proyecto",
+      "admin",
+    ],
+  },
+  {
+    icon: FileText,
+    label: "Recepciones",
+    path: "/recepciones",
+    roles: [
+      "jefe_bodega_central",
+      "administracion_central",
+      "administrador_proyecto",
+      "admin",
+    ],
   },
   { icon: FolderKanban, label: "Proyectos", path: "/proyectos" },
   {
     icon: Users,
     label: "Usuarios",
     path: "/usuarios",
+    roles: ["admin"],
+  },
+  {
+    icon: Database,
+    label: "Datos Demo",
+    path: "/datos-demo",
     roles: ["admin"],
   },
 ];
@@ -96,7 +167,7 @@ export default function DashboardLayout({
     const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
     return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
   });
-  const { loading, user } = useAuth();
+  const { loading, user, logout, refresh } = useAuth();
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_WIDTH_KEY, sidebarWidth.toString());
@@ -107,30 +178,19 @@ export default function DashboardLayout({
   }
 
   if (!user) {
+    return <Home />;
+  }
+
+  if (!user.buildreqRole && user.role !== "admin") {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <div className="flex flex-col items-center gap-8 p-8 max-w-md w-full">
-          {/* Swiss Style: Bold red square accent */}
-          <div className="w-16 h-16 bg-primary" />
-          <div className="flex flex-col items-center gap-4">
-            <h1 className="text-3xl font-bold tracking-tight text-foreground">
-              BuildReq
-            </h1>
-            <p className="text-sm text-muted-foreground text-center max-w-sm leading-relaxed">
-              Plataforma de gestión de requerimientos de materiales para
-              proyectos de construcción.
-            </p>
-          </div>
-          <div className="w-full h-px bg-foreground/10" />
-          <Button
-            onClick={() => { window.location.href = "/"; }}
-            size="lg"
-            className="w-full"
-          >
-            Iniciar sesión
-          </Button>
-        </div>
-      </div>
+      <UnassignedRoleScreen
+        userName={user.name}
+        userEmail={user.email}
+        onRefresh={() => {
+          void refresh();
+        }}
+        onLogout={logout}
+      />
     );
   }
 
@@ -221,6 +281,7 @@ function DashboardLayoutContent({
     ingeniero_residente: "Ing. Residente",
     jefe_bodega_central: "Jefe de Bodega",
     administracion_central: "Admin. Central",
+    administrador_proyecto: "Admin. Proyecto",
   };
 
   return (
@@ -323,7 +384,7 @@ function DashboardLayoutContent({
                       {user?.name || "—"}
                     </p>
                     <p className="text-xs text-muted-foreground truncate mt-1">
-                      {roleLabels[userRole] || "Sin rol asignado"}
+                      {roleLabels[userRole] || (user?.role === "admin" ? "Administrador" : "Sin rol asignado")}
                     </p>
                   </div>
                 </button>

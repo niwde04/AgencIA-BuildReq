@@ -38,8 +38,9 @@ export default function Proyectos() {
 
   const createMutation = trpc.projects.create.useMutation({
     onSuccess: () => {
-      toast.success("Proyecto creado exitosamente");
+      toast.success("Proyecto creado con su bodega operativa");
       utils.projects.list.invalidate();
+      utils.warehouses.list.invalidate();
       setDialogOpen(false);
       resetForm();
     },
@@ -201,6 +202,11 @@ export default function Proyectos() {
                     SAP: {project.sapProjectCode}
                   </p>
                 )}
+                {project.warehouse && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Bodega: {project.warehouse.displayName}
+                  </p>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -210,8 +216,8 @@ export default function Proyectos() {
       {/* Active count indicator */}
       {projects && (
         <p className="text-xs text-muted-foreground text-center">
-          {projects.filter((p: any) => p.status === "activo").length} / 20
-          proyectos activos
+          {projects.filter((p: any) => p.status === "activo").length}
+          {" "}proyectos activos
         </p>
       )}
     </div>

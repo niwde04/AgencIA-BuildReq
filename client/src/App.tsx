@@ -19,6 +19,13 @@ import OrdenesCompra from "./pages/OrdenesCompra";
 import Proyectos from "./pages/Proyectos";
 import Usuarios from "./pages/Usuarios";
 import Notificaciones from "./pages/Notificaciones";
+import DatosDemo from "./pages/DatosDemo";
+import Almacenes from "./pages/Almacenes";
+import PurchaseRequests from "./pages/PurchaseRequests";
+import TransferRequests from "./pages/TransferRequests";
+import Transfers from "./pages/Transfers";
+import Recepciones from "./pages/Recepciones";
+import SaldosIniciales from "./pages/SaldosIniciales";
 
 function Router() {
   return (
@@ -27,14 +34,22 @@ function Router() {
         <Route path="/" component={Dashboard} />
         <Route path="/solicitudes" component={Solicitudes} />
         <Route path="/solicitudes/nueva" component={NuevaSolicitud} />
+        <Route path="/solicitudes/:id/editar" component={NuevaSolicitud} />
         <Route path="/solicitudes/:id" component={SolicitudDetalle} />
         <Route path="/flujos" component={Flujos} />
         <Route path="/devoluciones" component={Devoluciones} />
         <Route path="/devoluciones/nueva" component={NuevaDevolucion} />
         <Route path="/inventario" component={Inventario} />
+        <Route path="/almacenes" component={Almacenes} />
+        <Route path="/solicitudes-compra" component={PurchaseRequests} />
         <Route path="/ordenes-compra" component={OrdenesCompra} />
+        <Route path="/solicitudes-traslado" component={TransferRequests} />
+        <Route path="/traslados" component={Transfers} />
+        <Route path="/recepciones" component={Recepciones} />
+        <Route path="/saldos-iniciales" component={SaldosIniciales} />
         <Route path="/proyectos" component={Proyectos} />
         <Route path="/usuarios" component={Usuarios} />
+        <Route path="/datos-demo" component={DatosDemo} />
         <Route path="/notificaciones" component={Notificaciones} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />

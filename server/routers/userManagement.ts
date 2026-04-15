@@ -15,8 +15,9 @@ export const userManagementRouter = router({
           "ingeniero_residente",
           "jefe_bodega_central",
           "administracion_central",
+          "administrador_proyecto",
         ]),
-        assignedProjectId: z.number().optional(),
+        assignedProjectId: z.number().int().positive().nullable().optional(),
       })
     )
     .mutation(async ({ input }) => {

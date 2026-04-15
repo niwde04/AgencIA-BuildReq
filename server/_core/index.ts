@@ -32,6 +32,13 @@ async function startServer() {
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  app.get("/health", (_req, res) => {
+    res.status(200).json({
+      ok: true,
+      service: "buildreq",
+      timestamp: new Date().toISOString(),
+    });
+  });
   // tRPC API
   app.use(
     "/api/trpc",

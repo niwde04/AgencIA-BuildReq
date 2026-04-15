@@ -59,4 +59,44 @@ describe("auth.logout", () => {
       path: "/",
     });
   });
+
+  it("uses lax cookies for non-secure localhost requests", async () => {
+    const clearedCookies: CookieCall[] = [];
+
+    const user: AuthenticatedUser = {
+      id: 1,
+      openId: "sample-user",
+      email: "sample@example.com",
+      name: "Sample User",
+      loginMethod: "manus",
+      role: "user",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      lastSignedIn: new Date(),
+    };
+
+    const caller = appRouter.createCaller({
+      user,
+      req: {
+        protocol: "http",
+        headers: { host: "localhost:3000" },
+      } as TrpcContext["req"],
+      res: {
+        clearCookie: (name: string, options: Record<string, unknown>) => {
+          clearedCookies.push({ name, options });
+        },
+      } as TrpcContext["res"],
+    });
+
+    await caller.auth.logout();
+
+    expect(clearedCookies).toHaveLength(1);
+    expect(clearedCookies[0]?.options).toMatchObject({
+      secure: false,
+      sameSite: "lax",
+      httpOnly: true,
+      path: "/",
+      maxAge: -1,
+    });
+  });
 });

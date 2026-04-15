@@ -2,13 +2,341 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { TRPCError } from "@trpc/server";
+import {
+  calculateDefaultNeededBy,
+  formatDateForDisplay,
+  isUrgentDateWithinPolicy,
+  parseDateInput,
+  PURCHASE_URGENCY_LABELS,
+  STANDARD_PURCHASE_LEAD_DAYS,
+} from "@shared/material-requests";
 
 const requestItemSchema = z.object({
-  itemName: z.string().min(1, "El nombre del ítem es obligatorio").max(500),
-  quantity: z.string().min(1, "La cantidad es obligatoria"),
+  itemName: z.string().max(500).optional(),
+  quantity: z.string().optional(),
   unit: z.string().optional(),
   notes: z.string().optional(),
 });
+
+const createMaterialRequestInput = z
+  .object({
+    saveMode: z.enum(["draft", "submit"]).default("submit"),
+    projectId: z.number(),
+    requestType: z.enum(["bienes", "servicios"]).default("bienes"),
+    recipient: z
+      .enum([
+        "bodega_central",
+        "bodega_proyecto",
+        "administrador_proyecto",
+        "oficina_central",
+        "solicitud_compra",
+      ])
+      .optional(),
+    purchaseUrgency: z.enum(["urgente", "no_urgente"]).default("no_urgente"),
+    neededBy: z.string().optional(),
+    notes: z.string().optional(),
+    items: z.array(requestItemSchema),
+  })
+  .superRefine((value, ctx) => {
+    const completeItems = value.items.filter(
+      (item) => item.itemName?.trim() && item.quantity?.trim() && item.unit?.trim()
+    );
+    const hasPartialItems = value.items.some((item) => {
+      const hasAnyValue = Boolean(
+        item.itemName?.trim() || item.quantity?.trim() || item.unit?.trim() || item.notes?.trim()
+      );
+      const isComplete = Boolean(
+        item.itemName?.trim() && item.quantity?.trim() && item.unit?.trim()
+      );
+      return hasAnyValue && !isComplete;
+    });
+
+    if (hasPartialItems) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items"],
+        message: "Complete o elimine los ítems incompletos antes de guardar",
+      });
+    }
+
+    if (value.saveMode === "submit" && completeItems.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items"],
+        message: "Debe incluir al menos un ítem completo",
+      });
+    }
+
+    if (value.saveMode !== "submit" || value.purchaseUrgency !== "urgente") {
+      return;
+    }
+
+    if (!value.neededBy) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["neededBy"],
+        message: "La fecha necesaria es obligatoria para compras urgentes",
+      });
+      return;
+    }
+
+    let parsedDate: Date;
+    try {
+      parsedDate = parseDateInput(value.neededBy);
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["neededBy"],
+        message: "La fecha necesaria no es válida",
+      });
+      return;
+    }
+
+    const today = new Date();
+    const normalizedToday = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate(),
+      0,
+      0,
+      0,
+      0
+    );
+
+    if (parsedDate.getTime() < normalizedToday.getTime()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["neededBy"],
+        message: "La fecha necesaria no puede ser anterior a hoy",
+      });
+    }
+
+    if (!isUrgentDateWithinPolicy(parsedDate, today)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["neededBy"],
+        message: `Para clasificarla como urgente, la fecha necesaria debe ser menor al plazo estándar de ${STANDARD_PURCHASE_LEAD_DAYS} días calendario`,
+      });
+    }
+  });
+
+function getCompleteRequestItems(items: z.infer<typeof requestItemSchema>[]) {
+  return items
+    .filter((item) => item.itemName?.trim() && item.quantity?.trim() && item.unit?.trim())
+    .map((item) => ({
+      itemName: item.itemName!.trim(),
+      quantity: item.quantity!.trim(),
+      unit: item.unit?.trim() || undefined,
+      notes: item.notes?.trim() || undefined,
+    }));
+}
+
+function buildRequestItemsForPersistence(params: {
+  requestType: "bienes" | "servicios";
+  saveMode: "draft" | "submit";
+  items: ReturnType<typeof getCompleteRequestItems>;
+}) {
+  const approvalStatus: "pendiente" | "no_requiere" =
+    params.requestType === "bienes" && params.saveMode === "submit"
+      ? "pendiente"
+      : "no_requiere";
+
+  return params.items.map((item) => ({
+    ...item,
+    approvalStatus,
+    approvedById: null,
+    approvedAt: null,
+    rejectionReason: null,
+  }));
+}
+
+function resolveMaterialRequestDefaults(input: {
+  requestType: "bienes" | "servicios";
+  recipient?: "bodega_central" | "bodega_proyecto" | "administrador_proyecto" | "oficina_central" | "solicitud_compra";
+  purchaseUrgency: "urgente" | "no_urgente";
+  neededBy?: string;
+  saveMode: "draft" | "submit";
+}) {
+  const resolvedNeededBy =
+    input.purchaseUrgency === "urgente" && input.neededBy
+      ? parseDateInput(input.neededBy)
+      : calculateDefaultNeededBy();
+  const isService = input.requestType === "servicios";
+  const isDraft = input.saveMode === "draft";
+  const recipient =
+    input.recipient ??
+    (isDraft
+      ? isService
+        ? "administrador_proyecto"
+        : "bodega_proyecto"
+      : "administrador_proyecto");
+
+  return {
+    recipient,
+    resolvedNeededBy,
+    status: isDraft ? "borrador" : "pendiente_aprobar",
+    workflowStage: isDraft
+      ? isService
+        ? "administrador_proyecto"
+        : "bodega_proyecto"
+      : "administrador_proyecto",
+    approvalStatus: isDraft ? "no_requiere" : "pendiente",
+  } as const;
+}
+
+function canAccessRequest(
+  user: { id: number; role: string; buildreqRole?: string | null; assignedProjectId?: number | null },
+  request: { requestedById: number; projectId: number }
+) {
+  if (user.role === "admin") return true;
+  if (user.buildreqRole === "ingeniero_residente") {
+    return request.requestedById === user.id;
+  }
+  if (user.buildreqRole === "administrador_proyecto") {
+    return Boolean(user.assignedProjectId) && user.assignedProjectId === request.projectId;
+  }
+  return true;
+}
+
+function assertProjectScopedCreation(
+  user: { role: string; buildreqRole?: string | null; assignedProjectId?: number | null },
+  projectId: number
+) {
+  if (user.role === "admin") return;
+  if (
+    user.buildreqRole !== "ingeniero_residente" &&
+    user.buildreqRole !== "administrador_proyecto"
+  ) {
+    return;
+  }
+  if (!user.assignedProjectId) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene un proyecto asignado",
+    });
+  }
+  if (user.assignedProjectId !== projectId) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene acceso a requisiciones de otro proyecto",
+    });
+  }
+}
+
+function canEditRequestDraft(
+  user: { id: number; role: string; buildreqRole?: string | null; assignedProjectId?: number | null },
+  detail: Awaited<ReturnType<typeof db.getMaterialRequestById>>
+) {
+  if (!detail) return false;
+
+  const isOwner = detail.request.requestedById === user.id;
+  const isAdmin = user.role === "admin";
+  const isAssignedProjectAdmin =
+    user.buildreqRole === "administrador_proyecto" &&
+    Boolean(user.assignedProjectId) &&
+    user.assignedProjectId === detail.request.projectId;
+
+  if (!isOwner && !isAdmin && !isAssignedProjectAdmin) {
+    return false;
+  }
+
+  if (detail.request.status === "borrador") {
+    return true;
+  }
+
+  if (
+    detail.request.status !== "en_espera" &&
+    detail.request.status !== "pendiente_aprobar"
+  ) {
+    return false;
+  }
+
+  return detail.items.every((item) => {
+    const hasMovement =
+      Number(item.deliveredQuantity ?? 0) > 0 || Number(item.dispatchedQuantity ?? 0) > 0;
+    const hasReviewDecision =
+      item.approvalStatus === "aprobada" || item.approvalStatus === "rechazada";
+    return !item.assignedFlow && !item.sapItemCode && !hasMovement && !hasReviewDecision;
+  });
+}
+
+function canApproveRequestAuthorization(
+  user: { role: string; buildreqRole?: string | null }
+) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "administracion_central"
+  );
+}
+
+async function notifyMaterialRequestSubmitted(params: {
+  requestId: number;
+  requestNumber: string;
+  projectId: number;
+  requestType: "bienes" | "servicios";
+  purchaseUrgency: "urgente" | "no_urgente";
+  resolvedNeededBy: Date;
+  requestedById: number;
+}) {
+  const neededByLabel = formatDateForDisplay(params.resolvedNeededBy);
+  const urgencyLabel = PURCHASE_URGENCY_LABELS[params.purchaseUrgency];
+  const dueDateMessage = `Clasificada como ${urgencyLabel}. Fecha necesaria: ${neededByLabel}.`;
+
+  const projectAdmins = await db.getUsersByBuildreqRoleAndProject(
+    "administrador_proyecto",
+    params.projectId
+  );
+  const centralAdmins = await db.getUsersByBuildreqRole("administracion_central");
+  for (const projectAdmin of projectAdmins) {
+    await db.createNotification({
+      userId: projectAdmin.id,
+      title:
+        params.requestType === "bienes"
+          ? "Nueva requisición pendiente de autorización"
+          : "Nueva requisición de servicios",
+      message:
+        params.requestType === "bienes"
+          ? `La requisición ${params.requestNumber} requiere autorización del Administrador del Proyecto o Administración Central antes de traducir y asignar flujos. ${dueDateMessage}`
+          : `La requisición ${params.requestNumber} requiere aprobación del Administrador del Proyecto o Administración Central. ${dueDateMessage}`,
+      type: "nueva_solicitud",
+      relatedEntityType: "material_request",
+      relatedEntityId: params.requestId,
+    });
+  }
+
+  for (const centralAdmin of centralAdmins) {
+    await db.createNotification({
+      userId: centralAdmin.id,
+      title:
+        params.requestType === "bienes"
+          ? "Nueva requisición pendiente de autorización"
+          : "Nueva requisición de servicios",
+      message:
+        params.requestType === "bienes"
+          ? `La requisición ${params.requestNumber} requiere autorización del Administrador del Proyecto o Administración Central antes de traducir y asignar flujos. ${dueDateMessage}`
+          : `La requisición ${params.requestNumber} requiere aprobación del Administrador del Proyecto o Administración Central. ${dueDateMessage}`,
+      type: "nueva_solicitud",
+      relatedEntityType: "material_request",
+      relatedEntityId: params.requestId,
+    });
+  }
+
+  await db.createNotification({
+    userId: params.requestedById,
+    title:
+      params.purchaseUrgency === "urgente"
+        ? "Requisición urgente registrada"
+        : "Requisición registrada",
+    message:
+      params.requestType === "bienes"
+        ? `La requisición ${params.requestNumber} quedó registrada y fue enviada al Administrador del Proyecto o Administración Central para autorización. ${dueDateMessage}`
+        : `La requisición ${params.requestNumber} quedó registrada. ${dueDateMessage}`,
+    type: "sistema",
+    relatedEntityType: "material_request",
+    relatedEntityId: params.requestId,
+  });
+}
 
 export const materialRequestsRouter = router({
   list: protectedProcedure
@@ -18,16 +346,23 @@ export const materialRequestsRouter = router({
           projectId: z.number().optional(),
           status: z.string().optional(),
           requestedById: z.number().optional(),
+          requestType: z.string().optional(),
+          workflowStage: z.string().optional(),
         })
         .optional()
     )
     .query(async ({ ctx, input }) => {
       const user = ctx.user;
-      // Ing. Residente only sees their own requests
       if (user.buildreqRole === "ingeniero_residente") {
         return db.listMaterialRequests({
           ...input,
           requestedById: user.id,
+        });
+      }
+      if (user.buildreqRole === "administrador_proyecto") {
+        return db.listMaterialRequests({
+          ...input,
+          projectId: user.assignedProjectId ?? undefined,
         });
       }
       return db.listMaterialRequests(input ?? undefined);
@@ -38,89 +373,272 @@ export const materialRequestsRouter = router({
     .query(async ({ ctx, input }) => {
       const result = await db.getMaterialRequestById(input.id);
       if (!result) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Solicitud no encontrada" });
+        throw new TRPCError({ code: "NOT_FOUND", message: "Requisición no encontrada" });
       }
-      // Ing. Residente can only see their own
-      if (
-        ctx.user.buildreqRole === "ingeniero_residente" &&
-        result.request.requestedById !== ctx.user.id
-      ) {
+      if (!canAccessRequest(ctx.user, result.request)) {
         throw new TRPCError({ code: "FORBIDDEN", message: "No tiene acceso a esta solicitud" });
       }
       return result;
     }),
 
   create: protectedProcedure
-    .input(
-      z.object({
-        projectId: z.number(),
-        recipient: z.enum(["bodega_central", "administrador_proyecto", "solicitud_compra"]),
-        notes: z.string().optional(),
-        items: z.array(requestItemSchema).min(1, "Debe incluir al menos un ítem"),
-      })
-    )
+    .input(createMaterialRequestInput)
     .mutation(async ({ ctx, input }) => {
-      const { items, ...requestData } = input;
+      const {
+        items,
+        saveMode: _saveMode,
+        neededBy: _neededBy,
+        recipient: _recipient,
+        ...requestData
+      } = input;
+      assertProjectScopedCreation(ctx.user, input.projectId);
+      const completeItems = getCompleteRequestItems(items);
+      const itemsForPersistence = buildRequestItemsForPersistence({
+        requestType: input.requestType,
+        saveMode: input.saveMode,
+        items: completeItems,
+      });
+      const defaults = resolveMaterialRequestDefaults(input);
+
       const result = await db.createMaterialRequest(
         {
           ...requestData,
+          recipient: defaults.recipient,
           requestedById: ctx.user.id,
+          neededBy: defaults.resolvedNeededBy,
+          notes: input.notes?.trim() || null,
+          status: defaults.status,
+          workflowStage: defaults.workflowStage,
+          approvalStatus: defaults.approvalStatus,
         },
-        items
+        itemsForPersistence
       );
 
-      // Notify based on recipient
-      if (input.recipient === "bodega_central") {
+      if (input.saveMode === "submit") {
+        await notifyMaterialRequestSubmitted({
+          requestId: result.id,
+          requestNumber: result.requestNumber,
+          projectId: input.projectId,
+          requestType: input.requestType,
+          purchaseUrgency: input.purchaseUrgency,
+          resolvedNeededBy: defaults.resolvedNeededBy,
+          requestedById: ctx.user.id,
+        });
+      }
+
+      return {
+        ...result,
+        status: defaults.status,
+      };
+    }),
+
+  update: protectedProcedure
+    .input(
+      createMaterialRequestInput.safeExtend({
+        id: z.number(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const detail = await db.getMaterialRequestById(input.id);
+      if (!detail) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Requisición no encontrada" });
+      }
+      if (!canEditRequestDraft(ctx.user, detail)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Esta requisición ya no se puede editar",
+        });
+      }
+
+      assertProjectScopedCreation(ctx.user, input.projectId);
+
+      const completeItems = getCompleteRequestItems(input.items);
+      const itemsForPersistence = buildRequestItemsForPersistence({
+        requestType: input.requestType,
+        saveMode: input.saveMode,
+        items: completeItems,
+      });
+      const defaults = resolveMaterialRequestDefaults(input);
+      const nextStatus =
+        input.saveMode === "draft"
+          ? "borrador"
+          : detail.request.status === "borrador"
+          ? "pendiente_aprobar"
+          : detail.request.status;
+
+      await db.updateMaterialRequest(input.id, {
+        projectId: input.projectId,
+        requestType: input.requestType,
+        recipient: defaults.recipient,
+        purchaseUrgency: input.purchaseUrgency,
+        neededBy: defaults.resolvedNeededBy,
+        notes: input.notes?.trim() || null,
+        status: nextStatus,
+        workflowStage: defaults.workflowStage,
+        approvalStatus: defaults.approvalStatus,
+      });
+      await db.replaceRequestItems(input.id, itemsForPersistence);
+
+      if (detail.request.status === "borrador" && input.saveMode === "submit") {
+        await notifyMaterialRequestSubmitted({
+          requestId: input.id,
+          requestNumber: detail.request.requestNumber,
+          projectId: input.projectId,
+          requestType: input.requestType,
+          purchaseUrgency: input.purchaseUrgency,
+          resolvedNeededBy: defaults.resolvedNeededBy,
+          requestedById: detail.request.requestedById,
+        });
+      }
+
+      return {
+        id: input.id,
+        requestNumber: detail.request.requestNumber,
+        status: nextStatus,
+      };
+    }),
+
+  reviewItems: protectedProcedure
+    .input(
+      z
+        .object({
+          requestId: z.number(),
+          itemIds: z.array(z.number()).min(1),
+          decision: z.enum(["aprobada", "rechazada"]),
+          reason: z.string().trim().optional(),
+        })
+        .superRefine((value, ctx) => {
+          if (
+            value.decision === "rechazada" &&
+            (!value.reason || value.reason.trim().length < 5)
+          ) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["reason"],
+              message: "Escriba un motivo de rechazo de al menos 5 caracteres",
+            });
+          }
+        })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canApproveRequestAuthorization(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo el Administrador del Proyecto o Administración Central pueden autorizar los ítems",
+        });
+      }
+
+      const detail = await db.getMaterialRequestById(input.requestId);
+      if (!detail) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Requisición no encontrada" });
+      }
+      if (!canAccessRequest(ctx.user, detail.request)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "No tiene acceso a esta solicitud" });
+      }
+      if (detail.request.requestType !== "bienes") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "La autorización por ítem aplica solo a requisiciones de bienes",
+        });
+      }
+      if (detail.request.status === "borrador" || detail.request.status === "cerrada") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "La requisición no está disponible para autorización",
+        });
+      }
+
+      const requestedIds = Array.from(new Set(input.itemIds));
+      const itemsToReview = detail.items.filter((item) => requestedIds.includes(item.id));
+      if (itemsToReview.length !== requestedIds.length) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Uno o más ítems ya no existen en la requisición",
+        });
+      }
+
+      const invalidItem = itemsToReview.find((item) => {
+        const hasMovement =
+          Number(item.deliveredQuantity ?? 0) > 0 || Number(item.dispatchedQuantity ?? 0) > 0;
+        return (
+          item.approvalStatus !== "pendiente" ||
+          Boolean(item.assignedFlow) ||
+          Boolean(item.sapItemCode) ||
+          hasMovement
+        );
+      });
+      if (invalidItem) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `El ítem ${invalidItem.itemName} ya no está pendiente de autorización`,
+        });
+      }
+
+      const summary = await db.reviewMaterialRequestItems({
+        requestId: input.requestId,
+        itemIds: requestedIds,
+        approvalStatus: input.decision,
+        approvedById: ctx.user.id,
+        rejectionReason: input.reason,
+      });
+
+      if (summary.pendingCount === 0 && summary.approvedCount > 0) {
         const bodegaUsers = await db.getUsersByBuildreqRole("jefe_bodega_central");
-        for (const bUser of bodegaUsers) {
+        for (const bodegaUser of bodegaUsers) {
           await db.createNotification({
-            userId: bUser.id,
-            title: "Nueva solicitud de materiales",
-            message: `Se ha creado la solicitud ${result.requestNumber} dirigida a Bodega Central.`,
+            userId: bodegaUser.id,
+            title:
+              summary.rejectedCount > 0
+                ? "Requisición autorizada parcialmente"
+                : "Requisición autorizada",
+            message:
+              summary.rejectedCount > 0
+                ? `La requisición ${detail.request.requestNumber} ya fue revisada por el Administrador del Proyecto o Administración Central. Hay ítems aprobados para traducir/asignar flujo y ${summary.rejectedCount} ítem(s) rechazado(s).`
+                : `La requisición ${detail.request.requestNumber} ya fue autorizada por el Administrador del Proyecto o Administración Central y puede pasar a traducción SAP y asignación de flujos.`,
             type: "nueva_solicitud",
             relatedEntityType: "material_request",
-            relatedEntityId: result.id,
-          });
-        }
-      } else if (input.recipient === "solicitud_compra") {
-        // Notify Admin Central when directed as Solicitud de Compra
-        const adminUsers = await db.getUsersByBuildreqRole("administracion_central");
-        for (const aUser of adminUsers) {
-          await db.createNotification({
-            userId: aUser.id,
-            title: "Nueva solicitud de compra",
-            message: `Se ha creado la solicitud ${result.requestNumber} como Solicitud de Compra.`,
-            type: "solicitud_compra",
-            relatedEntityType: "material_request",
-            relatedEntityId: result.id,
-          });
-        }
-      } else {
-        // administrador_proyecto - notify both
-        const bodegaUsers = await db.getUsersByBuildreqRole("jefe_bodega_central");
-        for (const bUser of bodegaUsers) {
-          await db.createNotification({
-            userId: bUser.id,
-            title: "Nueva solicitud de materiales",
-            message: `Se ha creado la solicitud ${result.requestNumber} dirigida al Administrador de Proyecto.`,
-            type: "nueva_solicitud",
-            relatedEntityType: "material_request",
-            relatedEntityId: result.id,
+            relatedEntityId: input.requestId,
           });
         }
       }
 
-      return result;
+      if (summary.pendingCount === 0) {
+        await db.createNotification({
+          userId: detail.request.requestedById,
+          title:
+            summary.approvedCount > 0
+              ? summary.rejectedCount > 0
+                ? "Requisición autorizada parcialmente"
+                : "Requisición autorizada"
+              : "Requisición rechazada",
+          message:
+            summary.approvedCount > 0
+              ? summary.rejectedCount > 0
+                ? `La requisición ${detail.request.requestNumber} fue revisada. Algunos ítems fueron autorizados y otros rechazados por el Administrador del Proyecto o Administración Central.`
+                : `La requisición ${detail.request.requestNumber} fue autorizada por el Administrador del Proyecto o Administración Central y pasó a Bodega para su procesamiento.`
+              : `La requisición ${detail.request.requestNumber} fue rechazada por el Administrador del Proyecto o Administración Central.`,
+          type: "cambio_estatus",
+          relatedEntityType: "material_request",
+          relatedEntityId: input.requestId,
+        });
+      }
+
+      return summary;
     }),
 
-  // Status is now automatic - no manual status change needed
-  // en_espera -> en_proceso (when at least 1 item has flow assigned)
-  // en_proceso -> cerrada (when all items have flows assigned and completed)
   updateStatus: protectedProcedure
     .input(
       z.object({
         id: z.number(),
-        status: z.enum(["en_espera", "en_proceso", "cerrada"]),
+        status: z.enum([
+          "borrador",
+          "pendiente_aprobar",
+          "en_espera",
+          "en_proceso",
+          "cerrada",
+          "anulada",
+        ]),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -141,14 +659,17 @@ export const materialRequestsRouter = router({
       const request = await db.getMaterialRequestById(input.id);
       if (request) {
         const statusLabels: Record<string, string> = {
+          borrador: "Borrador",
+          pendiente_aprobar: "Pendiente de aprobar",
           en_espera: "En espera",
           en_proceso: "En proceso de atención",
           cerrada: "Cerrada",
+          anulada: "Anulada",
         };
         await db.createNotification({
           userId: request.request.requestedById,
-          title: "Cambio de estatus en solicitud",
-          message: `La solicitud ${request.request.requestNumber} cambió a: ${statusLabels[input.status]}`,
+          title: "Cambio de estatus en requisición",
+          message: `La requisición ${request.request.requestNumber} cambió a: ${statusLabels[input.status]}`,
           type: "cambio_estatus",
           relatedEntityType: "material_request",
           relatedEntityId: input.id,
@@ -158,7 +679,113 @@ export const materialRequestsRouter = router({
       return result;
     }),
 
-  // Send all items to SAP - batch operation
+  approve: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (!canApproveRequestAuthorization(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo el Administrador del Proyecto o Administración Central pueden aprobar servicios",
+        });
+      }
+
+      const request = await db.getMaterialRequestById(input.id);
+      if (!request) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Requisición no encontrada" });
+      }
+      if (!canAccessRequest(ctx.user, request.request)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "No tiene acceso a esta solicitud" });
+      }
+      if (request.request.requestType !== "servicios") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Solo las requisiciones de servicios requieren esta aprobación",
+        });
+      }
+
+      await db.approveMaterialRequest(input.id, ctx.user.id);
+      await db.createNotification({
+        userId: request.request.requestedById,
+        title: "Requisición aprobada",
+        message: `La requisición ${request.request.requestNumber} fue aprobada y enviada a Oficina Central.`,
+        type: "cambio_estatus",
+        relatedEntityType: "material_request",
+        relatedEntityId: input.id,
+      });
+      return { success: true };
+    }),
+
+  reject: protectedProcedure
+    .input(z.object({ id: z.number(), reason: z.string().min(5) }))
+    .mutation(async ({ ctx, input }) => {
+      if (!canApproveRequestAuthorization(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo el Administrador del Proyecto o Administración Central pueden rechazar servicios",
+        });
+      }
+
+      const request = await db.getMaterialRequestById(input.id);
+      if (!request) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Requisición no encontrada" });
+      }
+      if (!canAccessRequest(ctx.user, request.request)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "No tiene acceso a esta solicitud" });
+      }
+
+      await db.rejectMaterialRequest(input.id, ctx.user.id, input.reason);
+      await db.createNotification({
+        userId: request.request.requestedById,
+        title: "Requisición rechazada",
+        message: `La requisición ${request.request.requestNumber} fue rechazada. Motivo: ${input.reason}`,
+        type: "cambio_estatus",
+        relatedEntityType: "material_request",
+        relatedEntityId: input.id,
+      });
+      return { success: true };
+    }),
+
+  assignFlow: protectedProcedure
+    .input(
+      z.object({
+        requestId: z.number(),
+        flowType: z.enum([
+          "compra_directa",
+          "despacho_bodega",
+          "traslado_proyecto",
+          "solicitud_compra",
+        ]),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (
+        ctx.user.buildreqRole === "ingeniero_residente" ||
+        ctx.user.buildreqRole === "administrador_proyecto"
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para asignar flujos",
+        });
+      }
+      const request = await db.getMaterialRequestById(input.requestId);
+      if (!request) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Requisición no encontrada" });
+      }
+      if (
+        request.request.requestType === "bienes" &&
+        request.request.approvalStatus === "pendiente"
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "La requisición todavía está pendiente de autorización del Administrador del Proyecto o Administración Central.",
+        });
+      }
+      return db.assignFlow(input.requestId, input.flowType, ctx.user.id);
+    }),
+
   sendToSap: protectedProcedure
     .input(z.object({ requestId: z.number() }))
     .mutation(async ({ ctx, input }) => {
@@ -173,11 +800,25 @@ export const materialRequestsRouter = router({
 
       const request = await db.getMaterialRequestById(input.requestId);
       if (!request) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Solicitud no encontrada" });
+        throw new TRPCError({ code: "NOT_FOUND", message: "Requisición no encontrada" });
+      }
+
+      const pendingApprovalItems = request.items.filter(
+        (item) => item.approvalStatus === "pendiente"
+      );
+      if (pendingApprovalItems.length > 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "La requisición todavía tiene ítems pendientes de autorización del Administrador del Proyecto o Administración Central.",
+        });
       }
 
       // Verify all items have flows and SAP codes assigned
-      const unassignedItems = request.items.filter(
+      const approvedItems = request.items.filter(
+        (item) => item.approvalStatus !== "rechazada"
+      );
+      const unassignedItems = approvedItems.filter(
         (item) => !item.assignedFlow || !item.sapItemCode
       );
       if (unassignedItems.length > 0) {
@@ -195,7 +836,7 @@ export const materialRequestsRouter = router({
         compra_directa: "Orden de Compra", // First step for compra_directa
       };
 
-      for (const item of request.items) {
+      for (const item of approvedItems) {
         await db.createSapSyncLog({
           entityType: "supply_flow",
           entityId: input.requestId,
@@ -219,13 +860,13 @@ export const materialRequestsRouter = router({
       // Notify the requesting engineer
       await db.createNotification({
         userId: request.request.requestedById,
-        title: "Solicitud enviada a SAP",
-        message: `La solicitud ${request.request.requestNumber} ha sido procesada y enviada a SAP.`,
+        title: "Requisición enviada a SAP",
+        message: `La requisición ${request.request.requestNumber} ha sido procesada y enviada a SAP.`,
         type: "cambio_estatus",
         relatedEntityType: "material_request",
         relatedEntityId: input.requestId,
       });
 
-      return { success: true, itemsProcessed: request.items.length };
+      return { success: true, itemsProcessed: approvedItems.length };
     }),
 });

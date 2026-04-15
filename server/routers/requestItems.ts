@@ -3,6 +3,51 @@ import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { TRPCError } from "@trpc/server";
 
+async function assertItemApprovedForProcessing(requestItemId: number) {
+  const item = await db.getRequestItemById(requestItemId);
+  if (!item) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Ítem no encontrado" });
+  }
+
+  const detail = await db.getMaterialRequestById(item.requestId);
+  if (!detail) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "La requisición del ítem no existe",
+    });
+  }
+
+  if (
+    detail.request.requestType === "bienes" &&
+    detail.request.approvalStatus === "pendiente"
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "La requisición todavía está pendiente de autorización del Administrador del Proyecto o Administración Central",
+    });
+  }
+
+  if (item.approvalStatus === "rechazada") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Este ítem fue rechazado y no se puede procesar",
+    });
+  }
+
+  if (
+    item.approvalStatus !== "aprobada" &&
+    item.approvalStatus !== "no_requiere"
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "El ítem todavía no ha sido autorizado para procesarse",
+    });
+  }
+
+  return { item, detail };
+}
+
 export const requestItemsRouter = router({
   getByRequestId: protectedProcedure
     .input(z.object({ requestId: z.number() }))
@@ -15,6 +60,12 @@ export const requestItemsRouter = router({
     .input(z.object({ search: z.string().min(1) }))
     .query(async ({ input }) => {
       return db.searchSapCatalog(input.search);
+    }),
+
+  lookupSapItem: protectedProcedure
+    .input(z.object({ sapItemCode: z.string().trim().min(1) }))
+    .mutation(async ({ input }) => {
+      return db.lookupSapItemByCode(input.sapItemCode);
     }),
 
   // List all SAP catalog items
@@ -54,6 +105,7 @@ export const requestItemsRouter = router({
           message: "No tiene permisos para traducir ítems a códigos SAP",
         });
       }
+      await assertItemApprovedForProcessing(input.id);
       return db.updateRequestItem(input.id, {
         sapItemCode: input.sapItemCode,
         sapItemDescription: input.sapItemDescription,
@@ -78,6 +130,36 @@ export const requestItemsRouter = router({
       return db.updateRequestItem(input.id, {
         deliveredQuantity: input.deliveredQuantity,
         status: input.status,
+      });
+    }),
+
+  recordWarehouseExit: protectedProcedure
+    .input(
+      z.object({
+        requestId: z.number(),
+        requestItemId: z.number(),
+        dispatchedQuantity: z.string(),
+        note: z.string().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (
+        ctx.user.buildreqRole !== "jefe_bodega_central" &&
+        ctx.user.role !== "admin"
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Solo el Jefe de Bodega puede registrar salida de bodega",
+        });
+      }
+
+      await assertItemApprovedForProcessing(input.requestItemId);
+      return db.recordWarehouseExit({
+        requestId: input.requestId,
+        requestItemId: input.requestItemId,
+        quantity: input.dispatchedQuantity,
+        note: input.note,
+        processedById: ctx.user.id,
       });
     }),
 });

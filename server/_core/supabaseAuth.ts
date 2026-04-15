@@ -15,6 +15,14 @@ export type SupabaseJwtPayload = {
   role: string;
 };
 
+function isExpiredJwtError(error: unknown) {
+  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  return (
+    message.includes("JWTExpired") ||
+    message.includes('"exp" claim timestamp check failed')
+  );
+}
+
 // Fetches Supabase's public keys once and caches them (ECC P-256 / ES256)
 let _jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
@@ -56,6 +64,9 @@ export async function verifySupabaseToken(
     const { payload } = await jwtVerify(token, getJWKS(), { audience: "authenticated" });
     return payload as unknown as SupabaseJwtPayload;
   } catch (error) {
+    if (isExpiredJwtError(error)) {
+      return null;
+    }
     console.warn("[Auth] Supabase JWT verification failed:", String(error));
     return null;
   }
@@ -103,9 +114,38 @@ export async function authenticateRequest(req: Request): Promise<User> {
     lastSignedIn: new Date(),
   });
 
-  const user = await db.getUserByOpenId(openId);
+  let user = await db.getUserByOpenId(openId);
   if (!user) {
     throw ForbiddenError("User not found after upsert");
+  }
+
+  // When the app uses Supabase email auth, apply any pending invitation by email
+  // the first time the invited user signs in.
+  if (!user.buildreqRole && email) {
+    const pendingInvitation = await db.getInvitationByEmail(email);
+    if (pendingInvitation) {
+      await db.applyInvitationToUser(user.id, {
+        buildreqRole: pendingInvitation.buildreqRole,
+        assignedProjectId: pendingInvitation.assignedProjectId,
+      });
+      await db.acceptInvitation(pendingInvitation.id, user.id);
+      user = await db.getUserByOpenId(openId);
+      if (!user) {
+        throw ForbiddenError("User not found after applying invitation");
+      }
+    }
+  }
+
+  // Bootstrap the very first account as the platform owner so setup
+  // does not require a pre-existing administrator.
+  if (user.role !== "admin" && !user.buildreqRole) {
+    const bootstrapped = await db.bootstrapInitialAdmin(user.id);
+    if (bootstrapped) {
+      user = await db.getUserByOpenId(openId);
+      if (!user) {
+        throw ForbiddenError("User not found after bootstrap");
+      }
+    }
   }
 
   return user;

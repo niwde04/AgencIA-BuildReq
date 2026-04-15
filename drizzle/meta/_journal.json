@@ -43,6 +43,48 @@
       "when": 1774578216405,
       "tag": "0005_broad_the_liberteens",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1776137100000,
+      "tag": "0006_demo_data_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1776137130000,
+      "tag": "0007_warehouse_module",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1776137160000,
+      "tag": "0008_integrated_procurement_workflow",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1776137190000,
+      "tag": "0009_project_warehouses",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1776137220000,
+      "tag": "0010_opening_balances",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1776199200000,
+      "tag": "0011_purchase_order_pricing",
+      "breakpoints": true
     }
   ]
 }

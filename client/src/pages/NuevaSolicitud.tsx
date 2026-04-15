@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Select,
   SelectContent,
@@ -12,10 +13,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
-import { useLocation } from "wouter";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { ArrowLeft, CalendarClock, Info, Plus, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
+import {
+  calculateDefaultNeededBy,
+  formatDateForDisplay,
+  PURCHASE_POLICY_COPY,
+  STANDARD_PURCHASE_LEAD_DAYS,
+} from "@shared/material-requests";
 
 /** Standard construction industry units of measure */
 const UNITS = [
@@ -47,38 +55,138 @@ const UNITS = [
 ];
 
 type ItemRow = {
+  id: string;
   itemName: string;
   quantity: string;
   unit: string;
 };
 
+const createItemRow = (overrides?: Partial<Omit<ItemRow, "id">>): ItemRow => ({
+  id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+  itemName: "",
+  quantity: "",
+  unit: "",
+  ...overrides,
+});
+
+const mapRequestItemsToRows = (requestItems: any[]): ItemRow[] =>
+  requestItems.length > 0
+    ? requestItems.map((item) => ({
+        id: `existing-${item.id}`,
+        itemName: item.itemName || "",
+        quantity: String(item.quantity ?? ""),
+        unit: item.unit || "",
+      }))
+    : [createItemRow()];
+
+const formatDateForInput = (value: string | Date | null | undefined) => {
+  if (!value) return "";
+  const date = new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 export default function NuevaSolicitud() {
   const [, setLocation] = useLocation();
+  const params = useParams<{ id?: string }>();
+  const utils = trpc.useUtils();
   const { user } = useAuth();
+  const editingRequestId = params.id ? Number(params.id) : 0;
+  const isEditMode = Number.isFinite(editingRequestId) && editingRequestId > 0;
   const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
-
+  const {
+    data: existingRequest,
+    isLoading: isLoadingRequest,
+    error: existingRequestError,
+  } = trpc.materialRequests.getById.useQuery(
+    { id: editingRequestId },
+    { enabled: isEditMode }
+  );
+  const defaultNeededBy = useMemo(() => calculateDefaultNeededBy(), []);
   const userRole = (user as any)?.buildreqRole || "";
-  const isAdmin = user?.role === "admin";
+  const assignedProjectId = (user as any)?.assignedProjectId || null;
+  const isProjectScopedUser =
+    userRole === "ingeniero_residente" || userRole === "administrador_proyecto";
 
   const [projectId, setProjectId] = useState<string>("");
-  const [recipient, setRecipient] = useState<string>("");
+  const [requestType, setRequestType] = useState<"bienes" | "servicios">("bienes");
+  const [purchaseUrgency, setPurchaseUrgency] = useState<"urgente" | "no_urgente">(
+    "no_urgente"
+  );
+  const [neededBy, setNeededBy] = useState("");
   const [notes, setNotes] = useState("");
-  const [items, setItems] = useState<ItemRow[]>([
-    { itemName: "", quantity: "", unit: "" },
-  ]);
+  const [items, setItems] = useState<ItemRow[]>([createItemRow()]);
+  const [loadedRequestSnapshot, setLoadedRequestSnapshot] = useState<string | null>(null);
+  const availableProjects = useMemo(() => {
+    const projectList = projects ?? [];
+    if (!isProjectScopedUser || !assignedProjectId) {
+      return projectList;
+    }
+
+    return projectList.filter((project: any) => project.id === assignedProjectId);
+  }, [assignedProjectId, isProjectScopedUser, projects]);
+  const effectiveProjectId =
+    isProjectScopedUser && availableProjects.length === 1
+      ? String(availableProjects[0].id)
+      : projectId;
+  const selectedProject = useMemo(
+    () =>
+      (projects || []).find((project: any) => String(project.id) === effectiveProjectId) ?? null,
+    [effectiveProjectId, projects]
+  );
+  const requestSnapshotKey = existingRequest
+    ? `${existingRequest.request.id}:${new Date(existingRequest.request.updatedAt).toISOString()}:${existingRequest.items.length}`
+    : null;
+
+  useEffect(() => {
+    if (!isProjectScopedUser) return;
+
+    if (availableProjects.length === 1) {
+      const nextProjectId = String(availableProjects[0].id);
+      if (projectId !== nextProjectId) {
+        setProjectId(nextProjectId);
+      }
+      return;
+    }
+
+    if (projectId) {
+      setProjectId("");
+    }
+  }, [availableProjects, isProjectScopedUser, projectId]);
+
+  useEffect(() => {
+    if (!existingRequest || !requestSnapshotKey || loadedRequestSnapshot === requestSnapshotKey) {
+      return;
+    }
+
+    setProjectId(String(existingRequest.request.projectId));
+    setRequestType(existingRequest.request.requestType as "bienes" | "servicios");
+    setPurchaseUrgency(
+      existingRequest.request.purchaseUrgency as "urgente" | "no_urgente"
+    );
+    setNeededBy(
+      formatDateForInput(existingRequest.request.neededBy)
+    );
+    setNotes(existingRequest.request.notes || "");
+    setItems(mapRequestItemsToRows(existingRequest.items));
+    setLoadedRequestSnapshot(requestSnapshotKey);
+  }, [existingRequest, loadedRequestSnapshot, requestSnapshotKey]);
 
   const createMutation = trpc.materialRequests.create.useMutation({
-    onSuccess: (data) => {
-      toast.success(`Solicitud ${data.requestNumber} creada exitosamente`);
-      setLocation("/solicitudes");
+    onError: (error) => {
+      toast.error(`Error: ${error.message}`);
     },
+  });
+  const updateMutation = trpc.materialRequests.update.useMutation({
     onError: (error) => {
       toast.error(`Error: ${error.message}`);
     },
   });
 
   const addItem = () => {
-    setItems([...items, { itemName: "", quantity: "", unit: "" }]);
+    setItems([...items, createItemRow()]);
   };
 
   const removeItem = (index: number) => {
@@ -86,50 +194,171 @@ export default function NuevaSolicitud() {
     setItems(items.filter((_, i) => i !== index));
   };
 
-  const updateItem = (index: number, field: keyof ItemRow, value: string) => {
+  const updateItem = (index: number, field: Exclude<keyof ItemRow, "id">, value: string) => {
     const updated = [...items];
     updated[index] = { ...updated[index], [field]: value };
     setItems(updated);
   };
 
-  // Determine available recipients based on role
-  const getAvailableRecipients = () => {
-    const recipients = [
-      { value: "bodega_central", label: "Bodega Central" },
-      { value: "administrador_proyecto", label: "Administrador del Proyecto" },
-    ];
-    // Jefe de Bodega can also direct to Solicitud de Compra
-    if (userRole === "jefe_bodega_central" || isAdmin) {
-      recipients.push({ value: "solicitud_compra", label: "Solicitud de Compra" });
-    }
-    return recipients;
-  };
+  const validItems = items.filter(
+    (item) => item.itemName.trim() && item.quantity.trim() && item.unit.trim()
+  );
+  const hasIncompleteItems = items.some((item) => {
+    const hasAnyValue = Boolean(
+      item.itemName.trim() || item.quantity.trim() || item.unit.trim()
+    );
+    const isComplete = Boolean(
+      item.itemName.trim() && item.quantity.trim() && item.unit.trim()
+    );
+    return hasAnyValue && !isComplete;
+  });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const isEditableExistingRequest = useMemo(() => {
+    if (!existingRequest) return true;
+    if (existingRequest.request.status === "borrador") return true;
+    if (existingRequest.request.status !== "en_espera") return false;
 
-    if (!projectId || !recipient) {
-      toast.error("Complete todos los campos obligatorios");
+    return existingRequest.items.every((item: any) => {
+      const hasMovement =
+        Number(item.deliveredQuantity ?? 0) > 0 || Number(item.dispatchedQuantity ?? 0) > 0;
+      return !item.assignedFlow && !item.sapItemCode && !hasMovement;
+    });
+  }, [existingRequest]);
+
+  const persistRequest = (saveMode: "draft" | "submit") => {
+    if (!effectiveProjectId) {
+      toast.error("Seleccione un proyecto antes de continuar");
       return;
     }
 
-    const validItems = items.filter((item) => item.itemName && item.quantity && item.unit);
-    if (validItems.length === 0) {
+    if (hasIncompleteItems) {
+      toast.error("Complete o elimine los ítems incompletos antes de guardar");
+      return;
+    }
+
+    if (saveMode === "submit" && purchaseUrgency === "urgente" && !neededBy) {
+      toast.error("Seleccione la fecha necesaria para la compra urgente");
+      return;
+    }
+
+    if (saveMode === "submit" && validItems.length === 0) {
       toast.error("Debe agregar al menos un ítem con nombre, cantidad y unidad");
       return;
     }
 
-    createMutation.mutate({
-      projectId: parseInt(projectId),
-      recipient: recipient as "bodega_central" | "administrador_proyecto" | "solicitud_compra",
+    const payload = {
+      saveMode,
+      projectId: parseInt(effectiveProjectId),
+      requestType,
+      purchaseUrgency,
+      neededBy: purchaseUrgency === "urgente" ? neededBy : undefined,
       notes: notes || undefined,
-      items: validItems.map((item) => ({
+      items: items.map((item) => ({
         itemName: item.itemName,
         quantity: item.quantity,
         unit: item.unit || undefined,
       })),
-    });
+    };
+
+    const onSuccess = (data: { id: number; requestNumber: string }) => {
+      setLoadedRequestSnapshot(null);
+      void utils.materialRequests.list.invalidate();
+      void utils.materialRequests.getById.invalidate({ id: data.id });
+
+      if (saveMode === "draft") {
+        toast.success(`Borrador ${data.requestNumber} guardado`);
+        setLocation(`/solicitudes/${data.id}/editar`);
+        return;
+      }
+
+      toast.success(
+        isEditMode && existingRequest?.request.status !== "borrador"
+          ? `Requisición ${data.requestNumber} actualizada`
+          : `Requisición ${data.requestNumber} creada exitosamente`
+      );
+      setLocation(`/solicitudes/${data.id}`);
+    };
+
+    if (isEditMode) {
+      updateMutation.mutate(
+        {
+          id: editingRequestId,
+          ...payload,
+        },
+        { onSuccess }
+      );
+      return;
+    }
+
+    createMutation.mutate(payload, { onSuccess });
   };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    persistRequest("submit");
+  };
+
+  const isSaving = createMutation.isPending || updateMutation.isPending;
+  const primaryActionLabel =
+    isEditMode && existingRequest?.request.status !== "borrador"
+      ? "Guardar cambios"
+      : "Crear Requisición";
+
+  if (isEditMode && isLoadingRequest) {
+    return (
+      <div className="space-y-6 max-w-4xl">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={() => setLocation("/solicitudes")}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <h1>Cargando requisición...</h1>
+        </div>
+      </div>
+    );
+  }
+
+  if (isEditMode && existingRequestError) {
+    return (
+      <div className="space-y-6 max-w-4xl">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={() => setLocation("/solicitudes")}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <h1>No se pudo abrir la requisición</h1>
+        </div>
+        <Alert variant="destructive">
+          <Info className="h-4 w-4" />
+          <AlertTitle>Error al cargar</AlertTitle>
+          <AlertDescription>{existingRequestError.message}</AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  if (isEditMode && existingRequest && !isEditableExistingRequest) {
+    return (
+      <div className="space-y-6 max-w-4xl">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={() => setLocation(`/solicitudes/${editingRequestId}`)}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <h1>Requisición no editable</h1>
+        </div>
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertTitle>Esta requisición ya no se puede editar</AlertTitle>
+          <AlertDescription>
+            Ya fue enviada al flujo operativo o alguien empezó a procesarla. Desde aquí solo puedes verla en detalle.
+          </AlertDescription>
+        </Alert>
+        <div className="flex justify-end">
+          <Button onClick={() => setLocation(`/solicitudes/${editingRequestId}`)}>
+            Ver detalle
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -137,7 +366,13 @@ export default function NuevaSolicitud() {
         <Button variant="ghost" size="sm" onClick={() => setLocation("/solicitudes")}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <h1>Nueva Solicitud de Materiales</h1>
+        <h1>
+          {isEditMode
+            ? existingRequest?.request.status === "borrador"
+              ? "Continuar Borrador de Requisición"
+              : "Editar Requisición de Materiales"
+            : "Nueva Requisición de Materiales"}
+        </h1>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -151,34 +386,161 @@ export default function NuevaSolicitud() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Proyecto *</Label>
-                <Select value={projectId} onValueChange={setProjectId}>
+                <Select
+                  value={effectiveProjectId}
+                  onValueChange={setProjectId}
+                  disabled={isProjectScopedUser && availableProjects.length === 1}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Seleccione un proyecto" />
                   </SelectTrigger>
                   <SelectContent>
-                    {(projects || []).map((p: any) => (
+                    {availableProjects.map((p: any) => (
                       <SelectItem key={p.id} value={String(p.id)}>
                         {p.code} \u2014 {p.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {isProjectScopedUser && availableProjects.length === 1 ? (
+                  <p className="text-xs text-muted-foreground">
+                    Proyecto asignado automáticamente según su rol.
+                  </p>
+                ) : null}
               </div>
 
               <div className="space-y-2">
-                <Label>Dirigida a *</Label>
-                <Select value={recipient} onValueChange={setRecipient}>
+                <Label>Tipo de requisición *</Label>
+                <Select
+                  value={requestType}
+                  onValueChange={(value) => setRequestType(value as "bienes" | "servicios")}
+                >
                   <SelectTrigger>
-                    <SelectValue placeholder="Seleccione destinatario" />
+                    <SelectValue placeholder="Seleccione tipo" />
                   </SelectTrigger>
                   <SelectContent>
-                    {getAvailableRecipients().map((r) => (
-                      <SelectItem key={r.value} value={r.value}>
-                        {r.label}
-                      </SelectItem>
-                    ))}
+                    <SelectItem value="bienes">Bienes</SelectItem>
+                    <SelectItem value="servicios">Servicios</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+            </div>
+
+            {requestType === "bienes" && (
+              <div className="space-y-2 rounded-lg border border-primary/20 bg-primary/5 p-4">
+                <Label className="text-sm font-semibold text-foreground">
+                  Bodega del proyecto
+                </Label>
+                <p className="text-sm font-medium text-foreground">
+                  {selectedProject
+                    ? selectedProject.warehouse?.displayName ??
+                      `Bodega del Proyecto — ${selectedProject.code} — ${selectedProject.name}`
+                    : "Seleccione un proyecto para identificar la bodega operativa"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Esta requisición de bienes se trabajará primero desde la bodega del
+                  proyecto seleccionado.
+                </p>
+              </div>
+            )}
+
+            <Alert className="border-border bg-muted/20">
+              <Info className="h-4 w-4" />
+              <AlertTitle>Enrutamiento automático</AlertTitle>
+              <AlertDescription>
+                {requestType === "bienes"
+                  ? "Los bienes pasan primero por la bodega del proyecto. Desde ahí se registra salida de bodega, solicitud de compra o traslado según disponibilidad."
+                  : "Los servicios pasan al Administrador del Proyecto para aprobación. Si se aprueban, continúan a Oficina Central."}
+              </AlertDescription>
+            </Alert>
+
+            <div className="space-y-3 rounded-lg border border-border p-4">
+              <div className="space-y-1">
+                <Label>Control de compras urgentes *</Label>
+                <p className="text-sm text-muted-foreground">
+                  Clasifica la requisición según la fecha en que el proyecto necesita el
+                  material.
+                </p>
+              </div>
+
+              <RadioGroup
+                value={purchaseUrgency}
+                onValueChange={(value) =>
+                  setPurchaseUrgency(value as "urgente" | "no_urgente")
+                }
+                className="grid grid-cols-1 md:grid-cols-2 gap-3"
+              >
+                <label
+                  htmlFor="urgente"
+                  className={`flex items-start gap-3 rounded-lg border p-4 cursor-pointer transition-colors ${
+                    purchaseUrgency === "urgente"
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:border-primary/40"
+                  }`}
+                >
+                  <RadioGroupItem value="urgente" id="urgente" className="mt-0.5" />
+                  <div>
+                    <p className="font-medium">Urgente</p>
+                    <p className="text-sm text-muted-foreground">
+                      Cuando la fecha necesaria es menor al plazo estándar de{" "}
+                      {STANDARD_PURCHASE_LEAD_DAYS} días calendario.
+                    </p>
+                  </div>
+                </label>
+
+                <label
+                  htmlFor="no-urgente"
+                  className={`flex items-start gap-3 rounded-lg border p-4 cursor-pointer transition-colors ${
+                    purchaseUrgency === "no_urgente"
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:border-primary/40"
+                  }`}
+                >
+                  <RadioGroupItem value="no_urgente" id="no-urgente" className="mt-0.5" />
+                  <div>
+                    <p className="font-medium">No urgente</p>
+                    <p className="text-sm text-muted-foreground">
+                      La fecha necesaria se asigna automáticamente con la política estándar.
+                    </p>
+                  </div>
+                </label>
+              </RadioGroup>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Fecha necesaria *</Label>
+                  {purchaseUrgency === "urgente" ? (
+                    <>
+                      <Input
+                        type="date"
+                        value={neededBy}
+                        onChange={(e) => setNeededBy(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Para clasificarla como urgente, la fecha debe ser menor al plazo
+                        estándar de {STANDARD_PURCHASE_LEAD_DAYS} días calendario.
+                      </p>
+                    </>
+                  ) : (
+                    <div className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-3">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <CalendarClock className="h-4 w-4 text-primary" />
+                        {formatDateForDisplay(defaultNeededBy)}
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Fecha asignada automáticamente por política de compras no urgentes.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <Alert className="border-primary/20 bg-primary/5">
+                  <Info className="h-4 w-4" />
+                  <AlertTitle>Política visible para el pedido</AlertTitle>
+                  <AlertDescription>
+                    <p className="whitespace-pre-line">{PURCHASE_POLICY_COPY}</p>
+                  </AlertDescription>
+                </Alert>
               </div>
             </div>
 
@@ -215,7 +577,7 @@ export default function NuevaSolicitud() {
               </div>
 
               {items.map((item, index) => (
-                <div key={index} className="grid grid-cols-12 gap-2 items-center">
+                <div key={item.id} className="grid grid-cols-12 gap-2 items-center">
                   <div className="col-span-5">
                     <Input
                       placeholder="Ej: Cemento Portland Tipo I"
@@ -235,6 +597,7 @@ export default function NuevaSolicitud() {
                   </div>
                   <div className="col-span-4">
                     <Select
+                      key={`${item.id}-${item.unit || "empty"}`}
                       value={item.unit}
                       onValueChange={(val) => updateItem(index, "unit", val)}
                     >
@@ -269,11 +632,27 @@ export default function NuevaSolicitud() {
         </Card>
 
         <div className="flex items-center gap-3 justify-end">
-          <Button type="button" variant="outline" onClick={() => setLocation("/solicitudes")}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() =>
+              setLocation(isEditMode ? `/solicitudes/${editingRequestId}` : "/solicitudes")
+            }
+          >
             Cancelar
           </Button>
-          <Button type="submit" disabled={createMutation.isPending}>
-            {createMutation.isPending ? "Creando..." : "Crear Solicitud"}
+          <Button
+            type="button"
+            variant="outline"
+            disabled={isSaving}
+            onClick={() => persistRequest("draft")}
+          >
+            {isSaving ? "Guardando..." : "Guardar borrador"}
+          </Button>
+          <Button type="submit" disabled={isSaving}>
+            {isSaving
+              ? "Guardando..."
+              : primaryActionLabel}
           </Button>
         </div>
       </form>

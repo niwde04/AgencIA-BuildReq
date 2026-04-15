@@ -44,6 +44,7 @@ const ROLE_LABELS: Record<string, string> = {
   ingeniero_residente: "Ing. Residente",
   jefe_bodega_central: "Jefe de Bodega Central",
   administracion_central: "Administración Central",
+  administrador_proyecto: "Administrador del Proyecto",
 };
 
 const STATUS_CONFIG: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive"; icon: any }> = {
@@ -122,8 +123,11 @@ export default function Usuarios() {
       toast.error("Nombre, email y rol son obligatorios");
       return;
     }
-    if (invRole === "ingeniero_residente" && !invProject) {
-      toast.error("Debe asignar un proyecto al Ingeniero Residente");
+    if (
+      (invRole === "ingeniero_residente" || invRole === "administrador_proyecto") &&
+      !invProject
+    ) {
+      toast.error("Debe asignar un proyecto a este rol");
       return;
     }
     createInvitationMutation.mutate({
@@ -212,7 +216,10 @@ export default function Usuarios() {
                                 updateRoleMutation.mutate({
                                   userId: u.id,
                                   buildreqRole: val as any,
-                                  assignedProjectId: val === "ingeniero_residente" ? u.assignedProjectId : undefined,
+                                  assignedProjectId:
+                                    val === "ingeniero_residente" || val === "administrador_proyecto"
+                                      ? u.assignedProjectId ?? undefined
+                                      : undefined,
                                 });
                               }}
                             >
@@ -224,18 +231,20 @@ export default function Usuarios() {
                                 <SelectItem value="ingeniero_residente">Ing. Residente</SelectItem>
                                 <SelectItem value="jefe_bodega_central">Jefe de Bodega Central</SelectItem>
                                 <SelectItem value="administracion_central">Administración Central</SelectItem>
+                                <SelectItem value="administrador_proyecto">Administrador del Proyecto</SelectItem>
                               </SelectContent>
                             </Select>
                           </td>
                           <td className="p-3">
-                            {u.buildreqRole === "ingeniero_residente" ? (
+                            {u.buildreqRole === "ingeniero_residente" ||
+                            u.buildreqRole === "administrador_proyecto" ? (
                               <Select
                                 value={u.assignedProjectId ? String(u.assignedProjectId) : "none"}
                                 onValueChange={(val) => {
                                   if (val === "none") return;
                                   updateRoleMutation.mutate({
                                     userId: u.id,
-                                    buildreqRole: u.buildreqRole || "ingeniero_residente",
+                                    buildreqRole: (u.buildreqRole || "ingeniero_residente") as any,
                                     assignedProjectId: parseInt(val),
                                   });
                                 }}
@@ -403,10 +412,11 @@ export default function Usuarios() {
                   <SelectItem value="ingeniero_residente">Ing. Residente</SelectItem>
                   <SelectItem value="jefe_bodega_central">Jefe de Bodega Central</SelectItem>
                   <SelectItem value="administracion_central">Administración Central</SelectItem>
+                  <SelectItem value="administrador_proyecto">Administrador del Proyecto</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            {invRole === "ingeniero_residente" && (
+            {(invRole === "ingeniero_residente" || invRole === "administrador_proyecto") && (
               <div className="space-y-2">
                 <Label>Proyecto asignado</Label>
                 <Select value={invProject} onValueChange={setInvProject}>

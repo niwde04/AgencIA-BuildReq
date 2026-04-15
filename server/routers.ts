@@ -16,6 +16,14 @@ import { dashboardRouter } from "./routers/dashboard";
 import { userManagementRouter } from "./routers/userManagement";
 import { requestItemsRouter } from "./routers/requestItems";
 import { invitationsRouter } from "./routers/invitations";
+import { demoDataRouter } from "./routers/demoData";
+import { warehousesRouter } from "./routers/warehouses";
+import { purchaseRequestsRouter } from "./routers/purchaseRequests";
+import { purchaseOrdersRouter } from "./routers/purchaseOrders";
+import { transferRequestsRouter } from "./routers/transferRequests";
+import { transfersRouter } from "./routers/transfers";
+import { receiptsRouter } from "./routers/receipts";
+import { openingBalancesRouter } from "./routers/openingBalances";
 
 export const appRouter = router({
   system: systemRouter,
@@ -61,6 +69,14 @@ export const appRouter = router({
   userManagement: userManagementRouter,
   requestItems: requestItemsRouter,
   invitations: invitationsRouter,
+  demoData: demoDataRouter,
+  warehouses: warehousesRouter,
+  purchaseRequests: purchaseRequestsRouter,
+  purchaseOrders: purchaseOrdersRouter,
+  transferRequests: transferRequestsRouter,
+  transfers: transfersRouter,
+  receipts: receiptsRouter,
+  openingBalances: openingBalancesRouter,
 });
 
 export type AppRouter = typeof appRouter;
