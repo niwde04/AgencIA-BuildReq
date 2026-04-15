@@ -652,7 +652,11 @@ export default function SolicitudDetalle() {
   const getVisibleQueueOptionsForItem = () => {
     const options: QueueFlowType[] = [];
 
-    if (user?.role === "admin" || userRole === "jefe_bodega_central") {
+    if (
+      user?.role === "admin" ||
+      userRole === "jefe_bodega_central" ||
+      userRole === "administracion_central"
+    ) {
       options.push("despacho_bodega");
     }
     if ((availableFlows || []).includes("compra_directa")) {

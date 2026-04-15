@@ -145,11 +145,13 @@ export const requestItemsRouter = router({
     .mutation(async ({ ctx, input }) => {
       if (
         ctx.user.buildreqRole !== "jefe_bodega_central" &&
+        ctx.user.buildreqRole !== "administracion_central" &&
         ctx.user.role !== "admin"
       ) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo el Jefe de Bodega puede registrar salida de bodega",
+          message:
+            "Solo el Jefe de Bodega Central o Administración Central pueden registrar salida de bodega",
         });
       }
 

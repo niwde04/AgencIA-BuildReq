@@ -182,7 +182,7 @@ describe("BuildReq - Role-based Access Control", () => {
         sourceWarehouse: "Bodega Central",
       })
     ).rejects.toThrow(
-      "Solo el Jefe de Bodega Central puede despachar materiales"
+      "Solo el Jefe de Bodega Central o Administración Central pueden despachar materiales"
     );
   });
 
@@ -198,7 +198,7 @@ describe("BuildReq - Role-based Access Control", () => {
         destinationProjectId: 2,
       })
     ).rejects.toThrow(
-      "Solo el Jefe de Bodega Central puede gestionar traslados"
+      "Solo el Jefe de Bodega Central o Administración Central pueden gestionar traslados"
     );
   });
 
@@ -225,6 +225,134 @@ describe("BuildReq - Role-based Access Control", () => {
     ).rejects.toThrow(
       "Solo el Jefe de Bodega Central puede actualizar el estatus de devoluciones"
     );
+  });
+
+  it("Administración Central can see the same flow options as an admin", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(caller.supplyFlows.availableFlows()).resolves.toEqual([
+      "compra_directa",
+      "traslado_proyecto",
+      "solicitud_compra",
+    ]);
+  });
+
+  it("Administración Central can register warehouse exits", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getRequestItemByIdSpy = vi
+      .spyOn(db, "getRequestItemById")
+      .mockResolvedValue({
+        id: 41,
+        requestId: 9,
+        approvalStatus: "aprobada",
+      } as any);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 9,
+          requestType: "bienes",
+          approvalStatus: "aprobada",
+        },
+      } as any);
+    const recordWarehouseExitSpy = vi
+      .spyOn(db, "recordWarehouseExit")
+      .mockResolvedValue({ success: true } as any);
+
+    await expect(
+      caller.requestItems.recordWarehouseExit({
+        requestId: 9,
+        requestItemId: 41,
+        dispatchedQuantity: "25.00",
+        note: "Salida aprobada por administración central",
+      })
+    ).resolves.toEqual({ success: true });
+
+    expect(recordWarehouseExitSpy).toHaveBeenCalledWith({
+      requestId: 9,
+      requestItemId: 41,
+      quantity: "25.00",
+      note: "Salida aprobada por administración central",
+      processedById: 4,
+    });
+
+    getRequestItemByIdSpy.mockRestore();
+    getMaterialRequestByIdSpy.mockRestore();
+    recordWarehouseExitSpy.mockRestore();
+  });
+
+  it("Administración Central can create project transfers", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 12,
+          projectId: 7,
+          requestType: "bienes",
+          approvalStatus: "aprobada",
+          neededBy: new Date("2026-04-20"),
+        },
+        items: [
+          {
+            id: 51,
+            itemName: "Cemento",
+            sapItemCode: "05050200058",
+            sapItemDescription: "CEMENTO GRANEL",
+            quantity: "100.00",
+            unit: "und",
+            approvalStatus: "aprobada",
+          },
+        ],
+      } as any);
+    const updateRequestItemSpy = vi
+      .spyOn(db, "updateRequestItem")
+      .mockResolvedValue({ success: true } as any);
+    const createTransferRequestSpy = vi
+      .spyOn(db, "createTransferRequest")
+      .mockResolvedValue({ id: 88, requestNumber: "ST-2026-0088" } as any);
+    const createSupplyFlowRecordSpy = vi
+      .spyOn(db, "createSupplyFlowRecord")
+      .mockResolvedValue({ id: 701 } as any);
+    const getRequestItemsByRequestIdSpy = vi
+      .spyOn(db, "getRequestItemsByRequestId")
+      .mockResolvedValue([{ id: 51, assignedFlow: "traslado_proyecto" }] as any);
+    const updateMaterialRequestStatusSpy = vi
+      .spyOn(db, "updateMaterialRequestStatus")
+      .mockResolvedValue({ success: true } as any);
+
+    await expect(
+      caller.supplyFlows.createProjectTransfer({
+        requestId: 12,
+        requestItemId: 51,
+        sourceProjectId: 3,
+        destinationProjectId: 7,
+        notes: "Traslado aprobado por administración central",
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 701,
+        transferRequestId: 88,
+        transferRequestNumber: "ST-2026-0088",
+      })
+    );
+
+    expect(updateRequestItemSpy).toHaveBeenCalledWith(51, {
+      assignedFlow: "traslado_proyecto",
+      status: "pendiente",
+    });
+    expect(createTransferRequestSpy).toHaveBeenCalled();
+    expect(createSupplyFlowRecordSpy).toHaveBeenCalled();
+
+    getMaterialRequestByIdSpy.mockRestore();
+    updateRequestItemSpy.mockRestore();
+    createTransferRequestSpy.mockRestore();
+    createSupplyFlowRecordSpy.mockRestore();
+    getRequestItemsByRequestIdSpy.mockRestore();
+    updateMaterialRequestStatusSpy.mockRestore();
   });
 
   it("Admin Central cannot convert to PO (only administracion_central role)", async () => {

@@ -11,6 +11,17 @@ function canManageSupply(user: { role: string; buildreqRole?: string | null }) {
   );
 }
 
+function canManageWarehouseOrTransfers(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "administracion_central"
+  );
+}
+
 async function getRequestAndItem(requestId: number, requestItemId: number) {
   const detail = await db.getMaterialRequestById(requestId);
   const item = detail?.items.find((entry: any) => entry.id === requestItemId);
@@ -73,15 +84,8 @@ export const supplyFlowsRouter = router({
   availableFlows: protectedProcedure.query(({ ctx }) => {
     if (!canManageSupply(ctx.user)) return [];
 
-    if (
-      ctx.user.role === "admin" ||
-      ctx.user.buildreqRole === "jefe_bodega_central"
-    ) {
+    if (canManageWarehouseOrTransfers(ctx.user)) {
       return ["compra_directa", "traslado_proyecto", "solicitud_compra"];
-    }
-
-    if (ctx.user.buildreqRole === "administracion_central") {
-      return ["compra_directa", "solicitud_compra"];
     }
 
     return [];
@@ -443,10 +447,11 @@ export const supplyFlowsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (ctx.user.buildreqRole !== "jefe_bodega_central" && ctx.user.role !== "admin") {
+      if (!canManageWarehouseOrTransfers(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo el Jefe de Bodega Central puede despachar materiales",
+          message:
+            "Solo el Jefe de Bodega Central o Administración Central pueden despachar materiales",
         });
       }
 
@@ -475,10 +480,11 @@ export const supplyFlowsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (ctx.user.buildreqRole !== "jefe_bodega_central" && ctx.user.role !== "admin") {
+      if (!canManageWarehouseOrTransfers(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo el Jefe de Bodega Central puede gestionar traslados",
+          message:
+            "Solo el Jefe de Bodega Central o Administración Central pueden gestionar traslados",
         });
       }
 
