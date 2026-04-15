@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus } from "lucide-react";
+import { Eye, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -96,6 +96,7 @@ function getSourceItemCode(item: any) {
 export default function Recepciones() {
   const utils = trpc.useUtils();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [viewReceiptId, setViewReceiptId] = useState<number | null>(null);
   const [sourceType, setSourceType] = useState<"purchase_order" | "transfer">("purchase_order");
   const [sourceId, setSourceId] = useState("");
   const [notes, setNotes] = useState("");
@@ -106,6 +107,11 @@ export default function Recepciones() {
   const [receivedMap, setReceivedMap] = useState<Record<number, string>>({});
 
   const { data: receipts, isLoading } = trpc.receipts.list.useQuery();
+  const { data: receiptDetail, isLoading: receiptDetailLoading } =
+    trpc.receipts.getById.useQuery(
+      { id: viewReceiptId ?? 0 },
+      { enabled: viewReceiptId !== null }
+    );
   const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery();
   const { data: transfers } = trpc.transfers.list.useQuery();
   const {
@@ -127,6 +133,25 @@ export default function Recepciones() {
     sourceType === "purchase_order" ? purchaseOrderDetail : transferDetail;
   const activeSourceLoading =
     sourceType === "purchase_order" ? purchaseOrderDetailLoading : transferDetailLoading;
+
+  const { data: receiptPurchaseOrderDetail } = trpc.purchaseOrders.getById.useQuery(
+    { id: receiptDetail?.receipt.sourceId ?? 0 },
+    {
+      enabled:
+        viewReceiptId !== null &&
+        receiptDetail?.receipt.sourceType === "purchase_order" &&
+        Boolean(receiptDetail?.receipt.sourceId),
+    }
+  );
+  const { data: receiptTransferDetail } = trpc.transfers.getById.useQuery(
+    { id: receiptDetail?.receipt.sourceId ?? 0 },
+    {
+      enabled:
+        viewReceiptId !== null &&
+        receiptDetail?.receipt.sourceType === "transfer" &&
+        Boolean(receiptDetail?.receipt.sourceId),
+    }
+  );
 
   const resetForm = () => {
     setSourceType("purchase_order");
@@ -294,6 +319,28 @@ export default function Recepciones() {
       items: receiptItems,
     });
   };
+
+  const receiptSourceHeaderTitle =
+    receiptDetail?.receipt.sourceType === "purchase_order"
+      ? receiptPurchaseOrderDetail?.purchaseOrder.orderNumber || "Orden de Compra"
+      : receiptTransferDetail?.transfer?.transferNumber || "Solicitud de traslado";
+
+  const receiptSourceSecondaryLabel =
+    receiptDetail?.receipt.sourceType === "purchase_order"
+      ? receiptPurchaseOrderDetail?.supplier
+        ? `${receiptPurchaseOrderDetail.supplier.supplierCode} — ${receiptPurchaseOrderDetail.supplier.name}`
+        : "Proveedor pendiente"
+      : receiptTransferDetail?.transferRequest?.destinationType === "proyecto"
+        ? `Destino: Proyecto ${receiptTransferDetail.transferRequest.destinationProjectId ?? "—"}`
+        : receiptTransferDetail?.transferRequest
+          ? "Destino: Bodega Central"
+          : "—";
+
+  const receiptSourceStatusLabel = receiptDetail
+    ? receiptDetail.receipt.sourceType === "purchase_order"
+      ? PURCHASE_ORDER_STATUS_LABELS[receiptPurchaseOrderDetail?.purchaseOrder.status || ""] || "—"
+      : TRANSFER_STATUS_LABELS[receiptTransferDetail?.transfer?.status || ""] || "—"
+    : "—";
 
   return (
     <div className="space-y-6">
@@ -616,6 +663,190 @@ export default function Recepciones() {
         </Dialog>
       </div>
 
+      <Dialog
+        open={viewReceiptId !== null}
+        onOpenChange={(open) => {
+          if (!open) setViewReceiptId(null);
+        }}
+      >
+        <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1480px] sm:p-6 lg:p-7">
+          <DialogHeader className="border-b border-border/70 pb-4 pr-10">
+            <div className="flex flex-wrap items-center gap-3">
+              <DialogTitle className="text-[2rem] font-bold tracking-tight sm:text-[2.4rem]">
+                {receiptDetail?.receipt.receiptNumber || "Detalle de recepción"}
+              </DialogTitle>
+              {receiptDetail ? (
+                <Badge variant="outline" className="text-sm">
+                  {STATUS_LABELS[receiptDetail.receipt.status] || receiptDetail.receipt.status}
+                </Badge>
+              ) : null}
+            </div>
+          </DialogHeader>
+
+          {receiptDetailLoading || (viewReceiptId !== null && !receiptDetail) ? (
+            <div className="py-8 text-center text-muted-foreground">
+              Cargando recepción...
+            </div>
+          ) : receiptDetail ? (
+            <div className="space-y-5">
+              <div className="grid gap-3 md:grid-cols-12">
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Tipo de origen
+                  </Label>
+                  <p className="text-sm font-semibold leading-snug sm:text-base">
+                    {receiptDetail.receipt.sourceType === "purchase_order"
+                      ? SOURCE_TYPE_LABELS.purchase_order
+                      : SOURCE_TYPE_LABELS.transfer}
+                  </p>
+                </div>
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-5">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Documento origen
+                  </Label>
+                  <p className="text-sm font-semibold leading-snug sm:text-base">
+                    {receiptSourceHeaderTitle}
+                  </p>
+                </div>
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Proyecto
+                  </Label>
+                  <p className="text-sm font-semibold leading-snug sm:text-base">
+                    {receiptDetail.project
+                      ? `${receiptDetail.project.code} — ${receiptDetail.project.name}`
+                      : "—"}
+                  </p>
+                </div>
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Estado del origen
+                  </Label>
+                  <p className="text-sm font-semibold leading-snug sm:text-base">
+                    {receiptSourceStatusLabel}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-12">
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-5">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Referencia del origen
+                  </Label>
+                  <p className="text-sm font-semibold leading-snug sm:text-base">
+                    {receiptSourceSecondaryLabel}
+                  </p>
+                </div>
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    CAI
+                  </Label>
+                  <p className="text-sm font-semibold leading-snug sm:text-base">
+                    {receiptDetail.receipt.cai || "—"}
+                  </p>
+                </div>
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Número de factura
+                  </Label>
+                  <p className="text-sm font-semibold leading-snug sm:text-base">
+                    {receiptDetail.receipt.invoiceNumber || "—"}
+                  </p>
+                </div>
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Registrada por
+                  </Label>
+                  <p className="text-sm font-semibold leading-snug sm:text-base">
+                    Usuario #{receiptDetail.receipt.receivedById}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Fecha documento
+                  </Label>
+                  <p className="text-sm font-semibold leading-snug sm:text-base">
+                    {formatDateLabel(receiptDetail.receipt.documentDate)}
+                  </p>
+                </div>
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Fecha contabilización
+                  </Label>
+                  <p className="text-sm font-semibold leading-snug sm:text-base">
+                    {formatDateLabel(receiptDetail.receipt.postingDate)}
+                  </p>
+                </div>
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Fecha recepción
+                  </Label>
+                  <p className="text-sm font-semibold leading-snug sm:text-base">
+                    {formatDateLabel(receiptDetail.receipt.receiptDate)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2 rounded-2xl border border-border/70 bg-muted/10 p-4 sm:p-5">
+                <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                  Notas
+                </Label>
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                  {receiptDetail.receipt.notes?.trim() || "Sin notas registradas"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-border/70">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border/70 bg-muted/20">
+                      <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                        Ítem
+                      </th>
+                      <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                        Esperado
+                      </th>
+                      <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                        Recibido
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {receiptDetail.items.length === 0 ? (
+                      <tr>
+                        <td className="p-4 text-sm text-muted-foreground" colSpan={3}>
+                          Esta recepción no tiene ítems registrados.
+                        </td>
+                      </tr>
+                    ) : (
+                      receiptDetail.items.map((item: any) => (
+                        <tr key={item.id} className="border-b border-border/70 last:border-0">
+                          <td className="p-4">
+                            <div className="font-semibold">{item.itemName}</div>
+                            {item.notes ? (
+                              <div className="mt-1 text-xs text-muted-foreground">{item.notes}</div>
+                            ) : null}
+                          </td>
+                          <td className="p-4 text-right font-semibold">
+                            {formatQuantity(item.quantityExpected)} {item.unit || ""}
+                          </td>
+                          <td className="p-4 text-right text-muted-foreground">
+                            {formatQuantity(item.quantityReceived)} {item.unit || ""}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
@@ -646,6 +877,9 @@ export default function Recepciones() {
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Fecha
                     </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Acciones
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -667,6 +901,17 @@ export default function Recepciones() {
                       </td>
                       <td className="p-3 text-xs">
                         {formatDateLabel(row.receipt.receiptDate || row.receipt.createdAt)}
+                      </td>
+                      <td className="p-3">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2"
+                          onClick={() => setViewReceiptId(row.receipt.id)}
+                        >
+                          <Eye className="h-4 w-4" />
+                          Ver
+                        </Button>
                       </td>
                     </tr>
                   ))}
