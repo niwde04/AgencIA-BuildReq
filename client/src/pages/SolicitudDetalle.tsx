@@ -538,6 +538,48 @@ export default function SolicitudDetalle() {
       groupedItems.get(groupKey)?.push(item);
     }
 
+    const getEntryFlowTypes = (entry: any) =>
+      Array.from(
+        new Set([
+          ...(entry.assignedFlow ? [entry.assignedFlow] : []),
+          ...Array.from(activeFlowTypesByItem.get(entry.id) ?? []),
+        ])
+      );
+
+    const getEntryProcessedQuantity = (entry: any) => {
+      const quantity = parseQuantityValue(entry.quantity);
+      const flowTypes = getEntryFlowTypes(entry);
+      const hasNonDispatchFlow = flowTypes.some(
+        (flowType) => flowType !== "despacho_bodega"
+      );
+
+      if (hasNonDispatchFlow) {
+        return quantity;
+      }
+
+      const dispatched = parseQuantityValue(entry.dispatchedQuantity);
+      return Math.min(dispatched, quantity);
+    };
+
+    const getEntryRemainingQuantity = (entry: any) => {
+      if (!isItemApprovedForProcessing(entry)) {
+        return 0;
+      }
+
+      const quantity = parseQuantityValue(entry.quantity);
+      const flowTypes = getEntryFlowTypes(entry);
+      const hasNonDispatchFlow = flowTypes.some(
+        (flowType) => flowType !== "despacho_bodega"
+      );
+
+      if (hasNonDispatchFlow) {
+        return 0;
+      }
+
+      const dispatched = parseQuantityValue(entry.dispatchedQuantity);
+      return Math.max(quantity - Math.min(dispatched, quantity), 0);
+    };
+
     const buildRow = (groupItems: any[], key: string): ItemDisplayRow => {
       const approvedItems = groupItems.filter((entry) => isItemApprovedForProcessing(entry));
       const pendingApprovalItems = groupItems.filter(
@@ -546,8 +588,12 @@ export default function SolicitudDetalle() {
       const rejectedItems = groupItems.filter(
         (entry) => entry.approvalStatus === "rechazada"
       );
-      const assignedItems = groupItems.filter((entry) => Boolean(entry.assignedFlow));
-      const pendingItems = approvedItems.filter((entry) => !entry.assignedFlow);
+      const assignedItems = approvedItems.filter(
+        (entry) => getEntryProcessedQuantity(entry) > 0
+      );
+      const pendingItems = approvedItems.filter(
+        (entry) => getEntryRemainingQuantity(entry) > 0
+      );
       const editableItem = pendingItems[0] ?? null;
       const baseItem =
         editableItem ?? pendingApprovalItems[0] ?? rejectedItems[0] ?? groupItems[0];
@@ -566,12 +612,12 @@ export default function SolicitudDetalle() {
           (total, entry) => total + parseQuantityValue(entry.quantity),
           0
         ),
-        processedQuantity: assignedItems.reduce(
-          (total, entry) => total + parseQuantityValue(entry.quantity),
+        processedQuantity: approvedItems.reduce(
+          (total, entry) => total + getEntryProcessedQuantity(entry),
           0
         ),
-        remainingQuantity: pendingItems.reduce(
-          (total, entry) => total + parseQuantityValue(entry.quantity),
+        remainingQuantity: approvedItems.reduce(
+          (total, entry) => total + getEntryRemainingQuantity(entry),
           0
         ),
         pendingApprovalQuantity: pendingApprovalItems.reduce(
@@ -584,9 +630,7 @@ export default function SolicitudDetalle() {
         ),
         assignedFlowTypes: Array.from(
           new Set(
-            assignedItems
-              .map((entry) => entry.assignedFlow)
-              .filter((value): value is string => Boolean(value))
+            approvedItems.flatMap((entry) => getEntryFlowTypes(entry))
           )
         ),
         hasSapCode:
@@ -598,12 +642,14 @@ export default function SolicitudDetalle() {
     return orderedKeys.flatMap((groupKey) => {
       const groupItems = groupedItems.get(groupKey) ?? [];
       const pendingItems = groupItems.filter(
-        (entry) => isItemApprovedForProcessing(entry) && !entry.assignedFlow
+        (entry) => getEntryRemainingQuantity(entry) > 0
       );
       const pendingApprovalItems = groupItems.filter(
         (entry) => entry.approvalStatus === "pendiente"
       );
-      const hasProcessedItems = groupItems.some((entry) => Boolean(entry.assignedFlow));
+      const hasProcessedItems = groupItems.some(
+        (entry) => getEntryProcessedQuantity(entry) > 0
+      );
       const shouldCollapse =
         groupItems.length > 1 &&
         hasProcessedItems &&
@@ -616,7 +662,7 @@ export default function SolicitudDetalle() {
 
       return groupItems.map((entry) => buildRow([entry], `${groupKey}:${entry.id}`));
     });
-  }, [items]);
+  }, [activeFlowTypesByItem, items]);
 
   const handleSapSelect = (itemId: number, code: string, desc: string) => {
     translateMutation.mutate({
