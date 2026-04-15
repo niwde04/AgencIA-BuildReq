@@ -33,7 +33,7 @@ Estas variables deben existir en Dokploy antes del primer deploy:
 
 ## Recomendación
 
-- Deja `APP_PORT=3000`
+- Deja `APP_PORT=4000`
 - Usa `RUN_DB_PUSH=false` por defecto
 - Actívalo en `true` solo si quieres que el contenedor ejecute `pnpm db:push` al arrancar
 

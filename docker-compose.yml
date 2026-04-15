@@ -12,10 +12,10 @@ services:
         VITE_ANALYTICS_WEBSITE_ID: ${VITE_ANALYTICS_WEBSITE_ID:-}
     restart: unless-stopped
     ports:
-      - "${APP_PORT:-3000}:3000"
+      - "${APP_PORT:-4000}:4000"
     environment:
       NODE_ENV: production
-      PORT: 3000
+      PORT: 4000
       RUN_DB_PUSH: ${RUN_DB_PUSH:-false}
       DATABASE_URL: ${DATABASE_URL}
       JWT_SECRET: ${JWT_SECRET}
