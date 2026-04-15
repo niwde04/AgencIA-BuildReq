@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { getAppSiteUrl, supabase } from "@/lib/supabase";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import {
@@ -84,7 +84,16 @@ export default function Home() {
       if (mode === "login") {
         result = await supabase.auth.signInWithPassword({ email, password });
       } else {
-        result = await supabase.auth.signUp({ email, password });
+        const emailRedirectTo = getAppSiteUrl();
+        result = await supabase.auth.signUp({
+          email,
+          password,
+          options: emailRedirectTo
+            ? {
+                emailRedirectTo,
+              }
+            : undefined,
+        });
       }
 
       if (result.error) {

@@ -15,6 +15,7 @@ Estas variables deben existir en Dokploy antes del primer deploy:
 - `SUPABASE_JWT_SECRET`
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
+- `VITE_SITE_URL`
 
 ## Variables opcionales
 
@@ -44,4 +45,8 @@ El contenedor expone `GET /health`.
 ## Notas
 
 - El build del frontend necesita `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`, por eso también van como `build args` en `docker-compose.yml`.
+- Define `VITE_SITE_URL=https://buildreq.aibdev.com` para que los correos de confirmación de Supabase regresen al dominio público.
+- En Supabase Auth también configura:
+  - `Site URL`: `https://buildreq.aibdev.com`
+  - `Redirect URLs`: `https://buildreq.aibdev.com/**`
 - Este despliegue asume PostgreSQL externo, por ejemplo Supabase.

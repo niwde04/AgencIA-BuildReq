@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { getAppSiteUrl } from "@/lib/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -59,6 +60,7 @@ export default function Usuarios() {
   const { data: users, isLoading: usersLoading } = trpc.userManagement.list.useQuery();
   const { data: invitationsList, isLoading: invLoading } = trpc.invitations.list.useQuery();
   const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
+  const appSiteUrl = getAppSiteUrl();
 
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [showEmailDialog, setShowEmailDialog] = useState(false);
@@ -135,7 +137,7 @@ export default function Usuarios() {
       name: invName,
       buildreqRole: invRole as any,
       assignedProjectId: invProject ? parseInt(invProject) : undefined,
-      origin: window.location.origin,
+      origin: appSiteUrl,
     });
   }
 
@@ -339,7 +341,7 @@ export default function Usuarios() {
                                     onClick={() => {
                                       resendInvitationMutation.mutate({
                                         invitationId: inv.id,
-                                        origin: window.location.origin,
+                                        origin: appSiteUrl,
                                       });
                                     }}
                                   >
