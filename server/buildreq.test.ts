@@ -1780,6 +1780,47 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
     }
   });
 
+  it("project administrator can query latest supplier prices scoped to their project", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getLatestSupplierPurchasePricesSpy = vi
+      .spyOn(db, "getLatestSupplierPurchasePrices")
+      .mockResolvedValue({
+        "05050200058": {
+          unitPrice: "125.50",
+          supplierId: 7,
+          supplierCode: "PL-00889",
+          supplierName: "AC/DC INGENERIA INTEGRAL S DE R L DE C V",
+          orderNumber: "OC-2026-0010",
+          purchasedAt: new Date("2026-04-12"),
+        },
+      } as any);
+
+    await expect(
+      caller.purchaseOrders.latestSupplierPrices({
+        supplierId: 7,
+        sapCodes: ["05050200058"],
+      })
+    ).resolves.toEqual({
+      "05050200058": {
+        unitPrice: "125.50",
+        supplierId: 7,
+        supplierCode: "PL-00889",
+        supplierName: "AC/DC INGENERIA INTEGRAL S DE R L DE C V",
+        orderNumber: "OC-2026-0010",
+        purchasedAt: new Date("2026-04-12"),
+      },
+    });
+
+    expect(getLatestSupplierPurchasePricesSpy).toHaveBeenCalledWith({
+      supplierId: 7,
+      sapCodes: ["05050200058"],
+      projectId: 1,
+    });
+
+    getLatestSupplierPurchasePricesSpy.mockRestore();
+  });
+
   it("createDirectPurchase works without supplierId", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
@@ -1893,6 +1934,144 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
     getActiveSupplyFlowSpy.mockRestore();
     createPurchaseOrderSpy.mockRestore();
     createRequestItemSpy.mockRestore();
+    updateRequestItemSpy.mockRestore();
+    createSupplyFlowRecordSpy.mockRestore();
+    getRequestItemsByRequestIdSpy.mockRestore();
+    updateMaterialRequestStatusSpy.mockRestore();
+  });
+
+  it("createDirectPurchaseBatch consolidates same-project items into one order and merges same SAP quantities", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockImplementation(async (requestId: number) => {
+        const details: Record<number, any> = {
+          10: {
+            request: {
+              id: 10,
+              projectId: 3,
+              requestType: "bienes",
+              approvalStatus: "aprobada",
+              neededBy: new Date("2026-04-30"),
+            },
+            items: [
+              {
+                id: 101,
+                itemName: "Cemento",
+                sapItemCode: "05050200058",
+                sapItemDescription: "CEMENTO GRANEL",
+                quantity: "100.00",
+                unit: "und",
+                approvalStatus: "aprobada",
+              },
+            ],
+          },
+          11: {
+            request: {
+              id: 11,
+              projectId: 3,
+              requestType: "bienes",
+              approvalStatus: "aprobada",
+              neededBy: new Date("2026-04-28"),
+            },
+            items: [
+              {
+                id: 201,
+                itemName: "Cemento",
+                sapItemCode: "05050200058",
+                sapItemDescription: "CEMENTO GRANEL",
+                quantity: "200.00",
+                unit: "und",
+                approvalStatus: "aprobada",
+              },
+            ],
+          },
+        };
+
+        return details[requestId] as any;
+      });
+    const getActiveSupplyFlowSpy = vi
+      .spyOn(db, "getActiveSupplyFlowForRequestItem")
+      .mockResolvedValue(undefined);
+    const createPurchaseOrderSpy = vi
+      .spyOn(db, "createPurchaseOrder")
+      .mockResolvedValue({ id: 601, orderNumber: "OC-2026-0010" });
+    const updateRequestItemSpy = vi
+      .spyOn(db, "updateRequestItem")
+      .mockResolvedValue({ success: true });
+    const createSupplyFlowRecordSpy = vi
+      .spyOn(db, "createSupplyFlowRecord")
+      .mockResolvedValue({ id: 901 } as any);
+    const getRequestItemsByRequestIdSpy = vi
+      .spyOn(db, "getRequestItemsByRequestId")
+      .mockResolvedValue([{ id: 1, assignedFlow: "compra_directa" }] as any);
+    const updateMaterialRequestStatusSpy = vi
+      .spyOn(db, "updateMaterialRequestStatus")
+      .mockResolvedValue({ success: true });
+
+    await expect(
+      caller.supplyFlows.createDirectPurchaseBatch({
+        paymentMethod: "linea_credito",
+        supplierId: 7,
+        notes: "Compra consolidada",
+        items: [
+          { requestId: 10, requestItemId: 101, quantity: "100.00" },
+          { requestId: 11, requestItemId: 201, quantity: "200.00" },
+        ],
+      })
+    ).resolves.toEqual({
+      success: true,
+      purchaseOrderId: 601,
+      purchaseOrderNumber: "OC-2026-0010",
+      processedItems: 2,
+    });
+
+    expect(createPurchaseOrderSpy).toHaveBeenCalledTimes(1);
+    expect(createPurchaseOrderSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 3,
+        supplierId: 7,
+        classification: "cd",
+        neededBy: new Date("2026-04-28"),
+      }),
+      [
+        expect.objectContaining({
+          materialRequestItemId: 101,
+          currentSapItemCode: "05050200058",
+          quantity: "300.00",
+        }),
+      ]
+    );
+    expect(createSupplyFlowRecordSpy).toHaveBeenCalledTimes(2);
+    expect(createSupplyFlowRecordSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 10,
+        requestItemId: 101,
+        purchaseOrderNumber: "OC-2026-0010",
+      })
+    );
+    expect(createSupplyFlowRecordSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 11,
+        requestItemId: 201,
+        purchaseOrderNumber: "OC-2026-0010",
+      })
+    );
+    expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(10, "en_proceso", ctx.user.id);
+    expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(11, "en_proceso", ctx.user.id);
+    expect(updateRequestItemSpy).toHaveBeenCalledWith(101, {
+      assignedFlow: "compra_directa",
+      status: "pendiente",
+    });
+    expect(updateRequestItemSpy).toHaveBeenCalledWith(201, {
+      assignedFlow: "compra_directa",
+      status: "pendiente",
+    });
+
+    getMaterialRequestByIdSpy.mockRestore();
+    getActiveSupplyFlowSpy.mockRestore();
+    createPurchaseOrderSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     createSupplyFlowRecordSpy.mockRestore();
     getRequestItemsByRequestIdSpy.mockRestore();

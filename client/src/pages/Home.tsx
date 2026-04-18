@@ -13,7 +13,7 @@ import {
   Eye,
   EyeOff,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useLocation } from "wouter";
 
 export default function Home() {
@@ -43,36 +43,6 @@ export default function Home() {
       utils.auth.me.invalidate();
     },
   });
-  const clearSessionMutation = trpc.auth.logout.useMutation({
-    onSuccess: () => {
-      utils.auth.me.invalidate();
-    },
-  });
-
-  // Listen for Supabase auth state changes (handles token refresh)
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (
-          (event === "INITIAL_SESSION" ||
-            event === "SIGNED_IN" ||
-            event === "TOKEN_REFRESHED") &&
-          session?.access_token
-        ) {
-          await syncSessionMutation.mutateAsync({ token: session.access_token });
-          return;
-        }
-
-        if (
-          (event === "INITIAL_SESSION" || event === "SIGNED_OUT") &&
-          !session
-        ) {
-          await clearSessionMutation.mutateAsync();
-        }
-      }
-    );
-    return () => subscription.unsubscribe();
-  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

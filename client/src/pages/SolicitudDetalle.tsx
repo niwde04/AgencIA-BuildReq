@@ -3,7 +3,6 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -251,31 +250,73 @@ function SapSearchBox({
   currentCode,
   currentDescription,
   onSelect,
+  onClear,
   disabled,
 }: {
   itemId: number;
   currentCode: string | null;
   currentDescription: string | null;
   onSelect: (code: string, desc: string) => void;
+  onClear: () => void;
   disabled: boolean;
 }) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
 
   const { data: results } = trpc.requestItems.searchSapCatalog.useQuery(
     { search },
     { enabled: search.length >= 2 }
   );
 
-  if (currentCode) {
+  useEffect(() => {
+    if (currentCode) {
+      setIsEditing(false);
+      setSearch("");
+      setOpen(false);
+    }
+  }, [currentCode]);
+
+  if (currentCode && !isEditing) {
     return (
-      <div className="flex items-center gap-1">
-        <span className="font-mono text-xs font-bold text-primary">{currentCode}</span>
-        {currentDescription && (
-          <span className="text-xs text-muted-foreground truncate max-w-[150px]">
-            {currentDescription}
-          </span>
-        )}
+      <div className="space-y-1">
+        <div className="flex items-center gap-1">
+          <span className="font-mono text-xs font-bold text-primary">{currentCode}</span>
+          {currentDescription && (
+            <span className="text-xs text-muted-foreground truncate max-w-[150px]">
+              {currentDescription}
+            </span>
+          )}
+        </div>
+
+        {!disabled ? (
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-[11px]"
+              onClick={() => {
+                setSearch(currentCode);
+                setIsEditing(true);
+                setOpen(currentCode.trim().length >= 2);
+              }}
+            >
+              <Pencil className="mr-1 h-3 w-3" />
+              Editar
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-[11px] text-rose-600 hover:text-rose-700"
+              onClick={onClear}
+            >
+              <Trash2 className="mr-1 h-3 w-3" />
+              Quitar
+            </Button>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -288,59 +329,78 @@ function SapSearchBox({
   const noResults = results && results.length === 0 && search.length >= 2;
 
   return (
-    <Popover open={open && (!!hasResults || !!noResults)} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <div className="relative">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              if (e.target.value.length >= 2) {
-                setOpen(true);
-              } else {
-                setOpen(false);
-              }
-            }}
-            onFocus={() => {
-              if (search.length >= 2) setOpen(true);
-            }}
-            placeholder="Buscar código SAP..."
-            className="h-7 text-xs pl-7 pr-2"
-          />
-        </div>
-      </PopoverTrigger>
-      <PopoverContent
-        className="p-0 w-[320px] max-h-[240px] overflow-y-auto"
-        align="start"
-        sideOffset={4}
-        onOpenAutoFocus={(e) => e.preventDefault()}
-      >
-        {hasResults && results.map((item: any) => (
-          <button
-            key={item.id}
-            onClick={() => {
-              onSelect(item.itemCode, item.description);
-              setSearch("");
-              setOpen(false);
-            }}
-            className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border last:border-0 flex items-center gap-2"
-          >
-            <span className="font-mono text-xs font-bold text-primary shrink-0">
-              {item.itemCode}
-            </span>
-            <span className="text-xs text-foreground truncate">
-              {item.description}
-            </span>
-          </button>
-        ))}
-        {noResults && (
-          <div className="p-3">
-            <p className="text-xs text-muted-foreground text-center">Sin resultados</p>
+    <div className="space-y-1">
+      <Popover open={open && (!!hasResults || !!noResults)} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                if (e.target.value.length >= 2) {
+                  setOpen(true);
+                } else {
+                  setOpen(false);
+                }
+              }}
+              onFocus={() => {
+                if (search.length >= 2) setOpen(true);
+              }}
+              placeholder="Buscar código SAP..."
+              className="h-7 text-xs pl-7 pr-2"
+            />
           </div>
-        )}
-      </PopoverContent>
-    </Popover>
+        </PopoverTrigger>
+        <PopoverContent
+          className="p-0 w-[320px] max-h-[240px] overflow-y-auto"
+          align="start"
+          sideOffset={4}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
+          {hasResults && results.map((item: any) => (
+            <button
+              key={item.id}
+              onClick={() => {
+                onSelect(item.itemCode, item.description);
+                setSearch("");
+                setIsEditing(false);
+                setOpen(false);
+              }}
+              className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border last:border-0 flex items-center gap-2"
+            >
+              <span className="font-mono text-xs font-bold text-primary shrink-0">
+                {item.itemCode}
+              </span>
+              <span className="text-xs text-foreground truncate">
+                {item.description}
+              </span>
+            </button>
+          ))}
+          {noResults && (
+            <div className="p-3">
+              <p className="text-xs text-muted-foreground text-center">Sin resultados</p>
+            </div>
+          )}
+        </PopoverContent>
+      </Popover>
+
+      {currentCode && isEditing ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-6 px-2 text-[11px]"
+          onClick={() => {
+            setIsEditing(false);
+            setSearch("");
+            setOpen(false);
+          }}
+        >
+          Cancelar edición
+        </Button>
+      ) : null}
+    </div>
   );
 }
 
@@ -369,15 +429,23 @@ export default function SolicitudDetalle() {
     { enabled: requestId > 0 }
   );
 
-  const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
-
-  // Fetch suppliers for Direct Purchase flow
-  const { data: suppliersList } = trpc.requestItems.listSuppliers.useQuery();
   const items = data?.items ?? [];
 
   const translateMutation = trpc.requestItems.translateToSap.useMutation({
     onSuccess: () => {
-      toast.success("Código SAP asignado");
+      toast.success("Traducción SAP guardada");
+      invalidateAll();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const clearSapTranslationMutation = trpc.requestItems.clearSapTranslation.useMutation({
+    onSuccess: (result) => {
+      toast.success(
+        result.clearedFlow
+          ? "Traducción SAP eliminada y flujo retirado"
+          : "Traducción SAP eliminada"
+      );
       invalidateAll();
     },
     onError: (e) => toast.error(e.message),
@@ -391,11 +459,13 @@ export default function SolicitudDetalle() {
     onError: (e) => toast.error(e.message),
   });
 
-  // Batch-oriented flow mutations
-  const directPurchaseMutation = trpc.supplyFlows.createDirectPurchaseBatch.useMutation();
-  const projectTransferMutation = trpc.supplyFlows.createProjectTransfer.useMutation();
-  const purchaseRequestMutation = trpc.supplyFlows.createPurchaseRequest.useMutation();
-  const warehouseExitMutation = trpc.requestItems.recordWarehouseExit.useMutation();
+  const assignFlowMutation = trpc.requestItems.assignFlow.useMutation({
+    onSuccess: () => {
+      toast.success("Flujo actualizado");
+      invalidateAll();
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   const approveMutation = trpc.materialRequests.approve.useMutation({
     onSuccess: () => {
@@ -409,6 +479,8 @@ export default function SolicitudDetalle() {
     onSuccess: (_, variables) => {
       setPendingItemRejection(null);
       setItemRejectReason("");
+      setPendingBulkReviewDecision(null);
+      setBulkRejectReason("");
       toast.success(
         variables.decision === "aprobada"
           ? "Ítem(s) autorizados"
@@ -450,33 +522,17 @@ export default function SolicitudDetalle() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [queuedFlowByItemId, setQueuedFlowByItemId] = useState<
-    Record<number, QueueFlowType | undefined>
-  >({});
-  const [queuedDispatchQuantities, setQueuedDispatchQuantities] = useState<Record<number, string>>(
-    {}
-  );
-  const [directPurchasePaymentMethod, setDirectPurchasePaymentMethod] = useState("");
-  const [directPurchaseSupplierId, setDirectPurchaseSupplierId] = useState("");
-  const [directPurchaseCheckedByItemId, setDirectPurchaseCheckedByItemId] = useState<
-    Record<number, boolean>
-  >({});
-  const [directPurchaseQuantityByItemId, setDirectPurchaseQuantityByItemId] = useState<
-    Record<number, string>
-  >({});
-  const [directPurchaseNotes, setDirectPurchaseNotes] = useState("");
-  const [transferSourceProjectId, setTransferSourceProjectId] = useState("");
-  const [transferNotes, setTransferNotes] = useState("");
-  const [purchaseRequestType, setPurchaseRequestType] = useState("");
-  const [purchaseRequestNotes, setPurchaseRequestNotes] = useState("");
-  const [warehouseExitNotes, setWarehouseExitNotes] = useState("");
-  const [processingQueueType, setProcessingQueueType] = useState<QueueFlowType | null>(null);
+  const [assigningFlowItemId, setAssigningFlowItemId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [pendingItemRejection, setPendingItemRejection] = useState<{
     itemIds: number[];
     itemLabel: string;
   } | null>(null);
   const [itemRejectReason, setItemRejectReason] = useState("");
+  const [pendingBulkReviewDecision, setPendingBulkReviewDecision] = useState<
+    "aprobada" | "rechazada" | null
+  >(null);
+  const [bulkRejectReason, setBulkRejectReason] = useState("");
 
   const userRole = (user as any)?.buildreqRole || "";
   const isAdmin = user?.role === "admin";
@@ -493,6 +549,7 @@ export default function SolicitudDetalle() {
     Promise.all([
       utils.materialRequests.getById.invalidate({ id: requestId }),
       utils.supplyFlows.getByRequestId.invalidate({ requestId }),
+      utils.supplyFlows.pendingQueue.invalidate(),
     ]);
 
   const activePurchaseRequestFlowsByItem = useMemo(() => {
@@ -672,6 +729,10 @@ export default function SolicitudDetalle() {
     });
   };
 
+  const handleClearSapTranslation = (itemId: number) => {
+    clearSapTranslationMutation.mutate({ id: itemId });
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -719,6 +780,9 @@ export default function SolicitudDetalle() {
   };
 
   const getQueueDisabledReason = (item: any, flowType: QueueFlowType) => {
+    if (!item.sapItemCode) {
+      return "Debe traducir el ítem a SAP antes de asignar un flujo";
+    }
     if (flowType === "solicitud_compra" && activePurchaseRequestFlowsByItem.has(item.id)) {
       return "Este ítem ya tiene una solicitud de compra activa";
     }
@@ -731,287 +795,40 @@ export default function SolicitudDetalle() {
     return null;
   };
 
-  const clearQueuedItems = (itemIds: number[]) => {
-    setQueuedFlowByItemId((current) => {
-      const next = { ...current };
-      for (const itemId of itemIds) delete next[itemId];
-      return next;
-    });
-    setQueuedDispatchQuantities((current) => {
-      const next = { ...current };
-      for (const itemId of itemIds) delete next[itemId];
-      return next;
-    });
-    setDirectPurchaseCheckedByItemId((current) => {
-      const next = { ...current };
-      for (const itemId of itemIds) delete next[itemId];
-      return next;
-    });
-    setDirectPurchaseQuantityByItemId((current) => {
-      const next = { ...current };
-      for (const itemId of itemIds) delete next[itemId];
-      return next;
-    });
-  };
+  const handleQueuedFlowSelection = async (item: any, nextFlow: string) => {
+    const requestedFlow = nextFlow === "__clear__" ? null : (nextFlow as QueueFlowType);
 
-  const handleQueuedFlowToggle = (
-    item: any,
-    flowType: QueueFlowType,
-    checked: boolean | "indeterminate"
-  ) => {
-    const isChecked = checked === true;
-    const currentFlow = queuedFlowByItemId[item.id];
-    const disabledReason = getQueueDisabledReason(item, flowType);
-
-    if (isChecked && disabledReason) {
-      toast.error(disabledReason);
-      return;
-    }
-
-    setQueuedFlowByItemId((current) => {
-      const next = { ...current };
-      if (!isChecked || current[item.id] === flowType) {
-        delete next[item.id];
-      } else {
-        next[item.id] = flowType;
+    if (requestedFlow && requestedFlow !== item.assignedFlow) {
+      const disabledReason = getQueueDisabledReason(item, requestedFlow);
+      if (disabledReason) {
+        toast.error(disabledReason);
+        return;
       }
-      return next;
-    });
-
-    if (currentFlow === "despacho_bodega" && flowType !== "despacho_bodega") {
-      setQueuedDispatchQuantities((current) => {
-        const next = { ...current };
-        delete next[item.id];
-        return next;
-      });
     }
 
-    if (currentFlow === "compra_directa" && flowType !== "compra_directa") {
-      setDirectPurchaseCheckedByItemId((current) => {
-        const next = { ...current };
-        delete next[item.id];
-        return next;
-      });
-      setDirectPurchaseQuantityByItemId((current) => {
-        const next = { ...current };
-        delete next[item.id];
-        return next;
-      });
-    }
-
-    if (
-      isChecked &&
-      flowType === "despacho_bodega" &&
-      !queuedDispatchQuantities[item.id]
-    ) {
-      setQueuedDispatchQuantities((current) => ({
-        ...current,
-        [item.id]: String(item.quantity ?? "0.00"),
-      }));
-    }
-
-    if (
-      isChecked &&
-      flowType === "compra_directa" &&
-      !directPurchaseQuantityByItemId[item.id]
-    ) {
-      setDirectPurchaseQuantityByItemId((current) => ({
-        ...current,
-        [item.id]: String(item.quantity ?? "0.00"),
-      }));
-    }
-  };
-
-  const handleQueuedFlowSelection = (item: any, nextFlow: string) => {
-    if (nextFlow === "__clear__") {
-      clearQueuedItems([item.id]);
+    if (requestedFlow === item.assignedFlow) {
       return;
     }
 
-    handleQueuedFlowToggle(item, nextFlow as QueueFlowType, true);
-  };
-
-  const queuedItemsByFlow = useMemo(
-    () =>
-      items.reduce(
-        (groups, item: any) => {
-          const queuedFlow = queuedFlowByItemId[item.id];
-          if (queuedFlow) {
-            groups[queuedFlow].push(item);
-          }
-          return groups;
+    setAssigningFlowItemId(item.id);
+    assignFlowMutation.mutate(
+      {
+        id: item.id,
+        flowType: requestedFlow,
+      },
+      {
+        onSettled: () => {
+          setAssigningFlowItemId((current) => (current === item.id ? null : current));
         },
-        {
-          despacho_bodega: [] as any[],
-          compra_directa: [] as any[],
-          traslado_proyecto: [] as any[],
-          solicitud_compra: [] as any[],
-        }
-      ),
-    [items, queuedFlowByItemId]
-  );
-
-  const queueSections = QUEUE_FLOW_ORDER.filter(
-    (flowType) => queuedItemsByFlow[flowType].length > 0
-  );
+      }
+    );
+  };
 
   const anyQueueProcessing =
-    processingQueueType !== null ||
-    directPurchaseMutation.isPending ||
-    projectTransferMutation.isPending ||
-    purchaseRequestMutation.isPending ||
-    warehouseExitMutation.isPending;
-
-  const getErrorMessage = (error: unknown) =>
-    error instanceof Error ? error.message : "No se pudo procesar el ítem";
-
-  const processQueuedFlow = async (flowType: QueueFlowType) => {
-    const queuedItems = queuedItemsByFlow[flowType];
-    if (queuedItems.length === 0) return;
-
-    if (flowType === "compra_directa") {
-      if (!directPurchasePaymentMethod) {
-        toast.error("Seleccione el método de pago para compra directa");
-        return;
-      }
-      if (!directPurchaseSupplierId) {
-        toast.error("Seleccione el proveedor para compra directa");
-        return;
-      }
-    }
-
-    if (flowType === "traslado_proyecto" && !transferSourceProjectId) {
-      toast.error("Seleccione el proyecto origen para traslado");
-      return;
-    }
-
-    if (flowType === "solicitud_compra" && !purchaseRequestType) {
-      toast.error("Seleccione el tipo de compra para la solicitud de compra");
-      return;
-    }
-
-    setProcessingQueueType(flowType);
-    const processedItemIds: number[] = [];
-    const failedItems: string[] = [];
-
-    if (flowType === "compra_directa") {
-      const selectedItems = queuedItems.filter(
-        (item: any) => directPurchaseCheckedByItemId[item.id]
-      );
-      if (selectedItems.length === 0) {
-        setProcessingQueueType(null);
-        toast.error("Seleccione al menos un detalle de compra directa");
-        return;
-      }
-
-      const invalidQuantityItem = selectedItems.find((item: any) => {
-        const selectedQuantity = Number(
-          directPurchaseQuantityByItemId[item.id] ?? String(item.quantity ?? "0.00")
-        );
-        const maxQuantity = Number(item.quantity ?? 0);
-        return !Number.isFinite(selectedQuantity) || selectedQuantity <= 0 || selectedQuantity > maxQuantity;
-      });
-
-      if (invalidQuantityItem) {
-        setProcessingQueueType(null);
-        toast.error(`La cantidad de ${invalidQuantityItem.itemName} no es valida`);
-        return;
-      }
-
-      try {
-        const result = await directPurchaseMutation.mutateAsync({
-          requestId,
-          paymentMethod: directPurchasePaymentMethod as "linea_credito" | "caja_chica",
-          supplierId: parseInt(directPurchaseSupplierId, 10),
-          notes: directPurchaseNotes || undefined,
-          items: selectedItems.map((item: any) => ({
-            requestItemId: item.id,
-            quantity:
-              directPurchaseQuantityByItemId[item.id] ?? String(item.quantity ?? "0.00"),
-          })),
-        });
-
-        clearQueuedItems(selectedItems.map((item: any) => item.id));
-        await invalidateAll();
-        setProcessingQueueType(null);
-        toast.success(
-          `Se generó la orden ${result.purchaseOrderNumber} para ${result.processedItems} ítem(s)`
-        );
-        return;
-      } catch (error) {
-        setProcessingQueueType(null);
-        toast.error(getErrorMessage(error));
-        return;
-      }
-    }
-
-    for (const item of queuedItems) {
-      try {
-        if (flowType === "despacho_bodega") {
-          const dispatchedQuantity =
-            queuedDispatchQuantities[item.id] ?? String(item.quantity ?? "0.00");
-          const dispatchedNumber = Number(dispatchedQuantity);
-          const requestedNumber = Number(item.quantity ?? 0);
-
-          if (!Number.isFinite(dispatchedNumber) || dispatchedNumber <= 0) {
-            throw new Error("La cantidad despachada debe ser mayor que cero");
-          }
-          if (dispatchedNumber > requestedNumber) {
-            throw new Error("La cantidad despachada no puede ser mayor que la solicitada");
-          }
-
-          await warehouseExitMutation.mutateAsync({
-            requestId,
-            requestItemId: item.id,
-            dispatchedQuantity,
-            note: warehouseExitNotes || undefined,
-          });
-        }
-
-        if (flowType === "traslado_proyecto") {
-          await projectTransferMutation.mutateAsync({
-            requestId,
-            requestItemId: item.id,
-            sourceProjectId: parseInt(transferSourceProjectId),
-            destinationProjectId: data?.request.projectId ?? 0,
-            notes: transferNotes || undefined,
-          });
-        }
-
-        if (flowType === "solicitud_compra") {
-          await purchaseRequestMutation.mutateAsync({
-            requestId,
-            requestItemId: item.id,
-            purchaseType: purchaseRequestType as "local" | "extranjera",
-            notes: purchaseRequestNotes || undefined,
-          });
-        }
-
-        processedItemIds.push(item.id);
-      } catch (error) {
-        failedItems.push(`${item.itemName}: ${getErrorMessage(error)}`);
-      }
-    }
-
-    if (processedItemIds.length > 0) {
-      clearQueuedItems(processedItemIds);
-      await invalidateAll();
-    }
-
-    if (failedItems.length === 0) {
-      toast.success(
-        `${QUEUE_FLOW_LABELS[flowType]} procesada para ${processedItemIds.length} ítem(s)`
-      );
-    } else if (processedItemIds.length > 0) {
-      toast.error(
-        `Se procesaron ${processedItemIds.length} de ${queuedItems.length} ítems. ${failedItems[0]}`
-      );
-    } else {
-      toast.error(failedItems[0]);
-    }
-
-    setProcessingQueueType(null);
-  };
+    assignFlowMutation.isPending ||
+    translateMutation.isPending ||
+    clearSapTranslationMutation.isPending ||
+    assigningFlowItemId !== null;
 
   if (isLoading) {
     return (
@@ -1077,6 +894,14 @@ export default function SolicitudDetalle() {
   const hasPendingApprovalRows = itemRows.some(
     (row) => row.pendingApprovalQuantity > 0
   );
+  const pendingApprovalItemIds = Array.from(
+    new Set(
+      items
+        .filter((item: any) => item.approvalStatus === "pendiente")
+        .map((item: any) => item.id)
+    )
+  );
+  const pendingApprovalItemsCount = pendingApprovalItemIds.length;
   const canReviewGoodsItems =
     request.requestType === "bienes" &&
     request.status !== "borrador" &&
@@ -1333,10 +1158,33 @@ export default function SolicitudDetalle() {
 
       {/* Items Table - Inline columns for flow and SAP */}
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="flex flex-row items-center justify-between gap-3 pb-2">
           <CardTitle className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
             Ítems Solicitados — Asignación de Flujo por Ítem
           </CardTitle>
+          {canReviewGoodsItems && pendingApprovalItemsCount > 0 ? (
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-xs">
+                {pendingApprovalItemsCount} pendiente(s)
+              </Badge>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={reviewItemsMutation.isPending}
+                onClick={() => setPendingBulkReviewDecision("aprobada")}
+              >
+                Aprobar todo
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={reviewItemsMutation.isPending}
+                onClick={() => setPendingBulkReviewDecision("rechazada")}
+              >
+                Rechazar todo
+              </Button>
+            </div>
+          ) : null}
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -1385,7 +1233,7 @@ export default function SolicitudDetalle() {
                 {itemRows.map((row) => {
                   const item = row.baseItem;
                   const editableItem = row.editableItem;
-                  const queuedFlow = editableItem ? queuedFlowByItemId[editableItem.id] : undefined;
+                  const queuedFlow = editableItem?.assignedFlow ?? undefined;
                   const queueOptions = getVisibleQueueOptionsForItem();
                   const approvalBadge = getRowApprovalBadge(row);
                   const rejectionNotes = Array.from(
@@ -1403,8 +1251,27 @@ export default function SolicitudDetalle() {
                     row.remainingQuantity + row.pendingApprovalQuantity;
                   const canReviewRow =
                     canReviewGoodsItems && row.pendingApprovalItems.length > 0;
+                  const hasEditableItemMovement = editableItem
+                    ? Number(editableItem.deliveredQuantity ?? 0) > 0 ||
+                      Number(editableItem.dispatchedQuantity ?? 0) > 0
+                    : false;
+                  const isSapTranslationLocked =
+                    !canManageProcessing ||
+                    request.status === "cerrada" ||
+                    request.status === "borrador" ||
+                    request.status === "anulada" ||
+                    !editableItem ||
+                    (editableItem
+                      ? (activeFlowTypesByItem.get(editableItem.id)?.size ?? 0) > 0
+                      : false) ||
+                    hasEditableItemMovement;
                   const isFlowSelectionLocked =
-                    !editableItem || row.remainingQuantity <= 0;
+                    !editableItem ||
+                    row.remainingQuantity <= 0 ||
+                    (editableItem
+                      ? (activeFlowTypesByItem.get(editableItem.id)?.size ?? 0) > 0
+                      : false) ||
+                    assigningFlowItemId === editableItem?.id;
                   const docSapLabels = Array.from(
                     new Set(
                       row.assignedFlowTypes
@@ -1448,13 +1315,10 @@ export default function SolicitudDetalle() {
                           onSelect={(code, desc) =>
                             handleSapSelect(editableItem?.id ?? item.id, code, desc)
                           }
-                          disabled={
-                            !canManageProcessing ||
-                            request.status === "cerrada" ||
-                            request.status === "borrador" ||
-                            request.status === "anulada" ||
-                            !editableItem
+                          onClear={() =>
+                            handleClearSapTranslation(editableItem?.id ?? item.id)
                           }
+                          disabled={isSapTranslationLocked}
                         />
                       </td>
                       <td className="p-3">
@@ -1542,9 +1406,10 @@ export default function SolicitudDetalle() {
                             </p>
                           ) : null}
 
-                          {queuedFlow ? (
+                          {editableItem?.assignedFlow ? (
                             <Badge variant="secondary" className="text-xs">
-                              En cola: {QUEUE_FLOW_LABELS[queuedFlow]}
+                              En panel:{" "}
+                              {QUEUE_FLOW_LABELS[editableItem.assignedFlow as QueueFlowType]}
                             </Badge>
                           ) : null}
 
@@ -1555,20 +1420,25 @@ export default function SolicitudDetalle() {
                             request.requestType === "bienes" &&
                             row.pendingApprovalQuantity <= 0 && (
                             <div className="space-y-1.5">
+                              {!editableItem?.sapItemCode ? (
+                                <p className="text-[11px] text-rose-700">
+                                  Debe traducir a SAP antes de enviar este ítem al flujo.
+                                </p>
+                              ) : null}
                               <Select
                                 value={queuedFlow}
                                 onValueChange={(value) => {
                                   if (!editableItem) return;
-                                  handleQueuedFlowSelection(editableItem, value);
+                                  void handleQueuedFlowSelection(editableItem, value);
                                 }}
                                 disabled={isFlowSelectionLocked}
                               >
                                 <SelectTrigger className="h-8 w-full min-w-0 text-xs">
-                                  <SelectValue placeholder="Preparar ahora" />
+                                  <SelectValue placeholder="Enviar al flujo" />
                                 </SelectTrigger>
                                 <SelectContent align="start">
                                   {queuedFlow ? (
-                                    <SelectItem value="__clear__">Quitar de la cola</SelectItem>
+                                    <SelectItem value="__clear__">Quitar flujo</SelectItem>
                                   ) : null}
                                   {queueOptions.map((flowType) => {
                                     const disabledReason = editableItem
@@ -1586,15 +1456,15 @@ export default function SolicitudDetalle() {
                                   })}
                                 </SelectContent>
                               </Select>
-                              {queuedFlow ? (
+                              {queuedFlow && editableItem ? (
                                 <Button
                                   variant="ghost"
                                   size="sm"
                                   className="h-7 px-2 text-[11px]"
-                                  onClick={() => clearQueuedItems([editableItem.id])}
+                                  onClick={() => void handleQueuedFlowSelection(editableItem, "__clear__")}
                                   disabled={anyQueueProcessing}
                                 >
-                                  Quitar de la cola
+                                  Quitar flujo
                                 </Button>
                               ) : null}
                             </div>
@@ -1626,317 +1496,12 @@ export default function SolicitudDetalle() {
             request.approvalStatus !== "pendiente" &&
             request.requestType === "bienes" && (
             <div className="border-t border-border bg-muted/5 p-4">
-              {queueSections.length === 0 ? (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <AlertCircle className="h-4 w-4" />
-                  <span>
-                    Marca cada ítem con su flujo y aparecerá en la caja correspondiente para procesarlo por lote.
-                  </span>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <Check className="h-4 w-4 text-primary" />
-                    <span>
-                      Cada ítem solo puede estar en una caja a la vez. Procesa cada grupo desde su propio botón.
-                    </span>
-                  </div>
-
-                  <div className="grid gap-4 xl:grid-cols-2">
-                    {queueSections.map((flowType) => {
-                      const FlowIcon = FLOW_ICONS[flowType] || Package;
-                      const queuedGroupItems = queuedItemsByFlow[flowType];
-
-                      return (
-                        <Card key={flowType} className="border-border/80 bg-background">
-                          <CardHeader className="space-y-3 pb-3">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex items-center gap-2">
-                                <div className="rounded-lg border border-border/70 bg-muted/20 p-2">
-                                  <FlowIcon className="h-4 w-4" />
-                                </div>
-                                <div>
-                                  <CardTitle className="text-base font-semibold">
-                                    {QUEUE_FLOW_LABELS[flowType]}
-                                  </CardTitle>
-                                  <p className="text-xs text-muted-foreground">
-                                    {queuedGroupItems.length} ítem(s) listos para procesar
-                                  </p>
-                                </div>
-                              </div>
-                              <Badge variant="outline" className={`text-xs ${FLOW_COLORS[flowType] || ""}`}>
-                                {queuedGroupItems.length}
-                              </Badge>
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                              {QUEUE_FLOW_DESCRIPTIONS[flowType]}
-                            </p>
-                          </CardHeader>
-                          <CardContent className="space-y-4">
-                            <div className="overflow-hidden rounded-lg border border-border/70">
-                              <table className="w-full table-fixed text-sm">
-                                <thead>
-                                  <tr className="border-b border-border bg-muted/30">
-                                    {flowType === "compra_directa" && (
-                                      <th className="p-2 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                                        Sel.
-                                      </th>
-                                    )}
-                                    <th className="p-2 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                                      Ítem
-                                    </th>
-                                    <th className="p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                                      Cant.
-                                    </th>
-                                    {flowType === "compra_directa" && (
-                                      <th className="p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                                        Comprar
-                                      </th>
-                                    )}
-                                    <th className="p-2 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                                      Unidad
-                                    </th>
-                                    {flowType === "despacho_bodega" && (
-                                      <th className="p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                                        Despachar
-                                      </th>
-                                    )}
-                                    <th className="p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                                      Acción
-                                    </th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {queuedGroupItems.map((item: any) => (
-                                    <tr key={`${flowType}-${item.id}`} className="border-b border-border last:border-0">
-                                      {flowType === "compra_directa" && (
-                                        <td className="p-2 text-center">
-                                          <Checkbox
-                                            checked={directPurchaseCheckedByItemId[item.id] === true}
-                                            onCheckedChange={(checked) =>
-                                              setDirectPurchaseCheckedByItemId((current) => ({
-                                                ...current,
-                                                [item.id]: checked === true,
-                                              }))
-                                            }
-                                            disabled={anyQueueProcessing}
-                                          />
-                                        </td>
-                                      )}
-                                      <td className="p-2">
-                                        <p className="font-medium">{item.itemName}</p>
-                                        <p className="text-[11px] text-muted-foreground">
-                                          SAP: {item.sapItemCode || "Pendiente"}
-                                        </p>
-                                      </td>
-                                      <td className="p-2 text-right font-mono">{item.quantity}</td>
-                                      {flowType === "compra_directa" && (
-                                        <td className="p-2">
-                                          <Input
-                                            value={
-                                              directPurchaseQuantityByItemId[item.id] ??
-                                              String(item.quantity ?? "0.00")
-                                            }
-                                            onChange={(event) =>
-                                              setDirectPurchaseQuantityByItemId((current) => ({
-                                                ...current,
-                                                [item.id]: event.target.value,
-                                              }))
-                                            }
-                                            type="number"
-                                            min="0"
-                                            step="any"
-                                            className="ml-auto h-9 w-28 text-right"
-                                            disabled={anyQueueProcessing}
-                                          />
-                                          <p className="mt-1 text-right text-[10px] text-muted-foreground">
-                                            Max: {item.quantity}
-                                          </p>
-                                        </td>
-                                      )}
-                                      <td className="p-2 text-xs">{item.unit || "—"}</td>
-                                      {flowType === "despacho_bodega" && (
-                                        <td className="p-2">
-                                          <Input
-                                            value={
-                                              queuedDispatchQuantities[item.id] ??
-                                              String(item.quantity ?? "0.00")
-                                            }
-                                            onChange={(event) =>
-                                              setQueuedDispatchQuantities((current) => ({
-                                                ...current,
-                                                [item.id]: event.target.value,
-                                              }))
-                                            }
-                                            type="number"
-                                            min="0"
-                                            step="any"
-                                            className="ml-auto h-9 w-28 text-right"
-                                          />
-                                        </td>
-                                      )}
-                                      <td className="p-2 text-right">
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          className="h-8 px-2 text-xs"
-                                          onClick={() => clearQueuedItems([item.id])}
-                                          disabled={anyQueueProcessing}
-                                        >
-                                          Quitar
-                                        </Button>
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-
-                            {flowType === "compra_directa" && (
-                              <div className="grid gap-3 md:grid-cols-2">
-                                <div className="min-w-0 space-y-2">
-                                  <Label className="text-sm font-medium">Método de pago *</Label>
-                                  <Select
-                                    value={directPurchasePaymentMethod}
-                                    onValueChange={setDirectPurchasePaymentMethod}
-                                  >
-                                    <SelectTrigger className="w-full min-w-0">
-                                      <SelectValue placeholder="Seleccione" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="linea_credito">Línea de Crédito</SelectItem>
-                                      <SelectItem value="caja_chica">Caja Chica</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <div className="min-w-0 space-y-2">
-                                  <Label className="text-sm font-medium">Proveedor *</Label>
-                                  <Select
-                                    value={directPurchaseSupplierId}
-                                    onValueChange={setDirectPurchaseSupplierId}
-                                  >
-                                    <SelectTrigger className="w-full min-w-0">
-                                      <SelectValue placeholder="Seleccione proveedor" />
-                                    </SelectTrigger>
-                                    <SelectContent className="max-h-[280px]">
-                                      {(suppliersList || []).map((supplier: any) => (
-                                        <SelectItem key={supplier.id} value={String(supplier.id)}>
-                                          {supplier.supplierCode} — {supplier.name}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <div className="space-y-2 md:col-span-2">
-                                  <Label className="text-sm font-medium">Notas</Label>
-                                  <Textarea
-                                    value={directPurchaseNotes}
-                                    onChange={(event) => setDirectPurchaseNotes(event.target.value)}
-                                    placeholder="Observaciones para la compra directa"
-                                    rows={3}
-                                  />
-                                </div>
-                                <div className="rounded-lg border border-border/70 bg-muted/15 px-3 py-2 text-xs text-muted-foreground md:col-span-2">
-                                  Marca solo los detalles que quieres incluir en esta orden. También puedes bajar la cantidad para hacer compras parciales; el resto quedará pendiente para volverlo a procesar después.
-                                </div>
-                              </div>
-                            )}
-
-                            {flowType === "despacho_bodega" && (
-                              <div className="space-y-2">
-                                <Label className="text-sm font-medium">Notas del despacho</Label>
-                                <Textarea
-                                  value={warehouseExitNotes}
-                                  onChange={(event) => setWarehouseExitNotes(event.target.value)}
-                                  placeholder="Observaciones para las salidas de bodega seleccionadas"
-                                  rows={3}
-                                />
-                              </div>
-                            )}
-
-                            {flowType === "traslado_proyecto" && (
-                              <div className="space-y-3">
-                                <div className="space-y-2">
-                                  <Label className="text-sm font-medium">Proyecto origen *</Label>
-                                  <Select
-                                    value={transferSourceProjectId}
-                                    onValueChange={setTransferSourceProjectId}
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Seleccione proyecto origen" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {(projects || [])
-                                        .filter((entry: any) => entry.id !== request.projectId)
-                                        .map((entry: any) => (
-                                          <SelectItem key={entry.id} value={String(entry.id)}>
-                                            {entry.code} — {entry.name}
-                                          </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <div className="rounded-lg border border-border/70 bg-muted/15 p-3 text-xs text-muted-foreground">
-                                  Destino: {project ? `${project.code} — ${project.name}` : `Proyecto ${request.projectId}`}
-                                </div>
-                                <div className="space-y-2">
-                                  <Label className="text-sm font-medium">Notas</Label>
-                                  <Textarea
-                                    value={transferNotes}
-                                    onChange={(event) => setTransferNotes(event.target.value)}
-                                    placeholder="Observaciones para el traslado"
-                                    rows={3}
-                                  />
-                                </div>
-                              </div>
-                            )}
-
-                            {flowType === "solicitud_compra" && (
-                              <div className="space-y-3">
-                                <div className="space-y-2">
-                                  <Label className="text-sm font-medium">Tipo de compra *</Label>
-                                  <Select
-                                    value={purchaseRequestType}
-                                    onValueChange={setPurchaseRequestType}
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Seleccione" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="local">Compra Local</SelectItem>
-                                      <SelectItem value="extranjera">Compra Extranjera</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <div className="space-y-2">
-                                  <Label className="text-sm font-medium">Notas</Label>
-                                  <Textarea
-                                    value={purchaseRequestNotes}
-                                    onChange={(event) => setPurchaseRequestNotes(event.target.value)}
-                                    placeholder="Observaciones para la solicitud de compra"
-                                    rows={3}
-                                  />
-                                </div>
-                              </div>
-                            )}
-
-                            <div className="flex justify-end border-t border-border/70 pt-3">
-                              <Button
-                                onClick={() => void processQueuedFlow(flowType)}
-                                disabled={processingQueueType === flowType || anyQueueProcessing}
-                              >
-                                {processingQueueType === flowType
-                                  ? "Procesando..."
-                                  : `Procesar ${QUEUE_FLOW_LABELS[flowType].toLowerCase()}`}
-                              </Button>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              <div className="flex items-start gap-2 text-xs text-muted-foreground">
+                <Check className="mt-0.5 h-4 w-4 text-primary" />
+                <span>
+                  Cuando selecciones un flujo, el ítem se enviará al panel principal de Flujos de Abastecimiento para que se procese en su módulo correspondiente.
+                </span>
+              </div>
             </div>
           )}
 
@@ -2172,6 +1737,94 @@ export default function SolicitudDetalle() {
               disabled={reviewItemsMutation.isPending}
             >
               {reviewItemsMutation.isPending ? "Guardando..." : "Confirmar rechazo"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={pendingBulkReviewDecision !== null}
+        onOpenChange={(open) => {
+          if (!open && !reviewItemsMutation.isPending) {
+            setPendingBulkReviewDecision(null);
+            setBulkRejectReason("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg rounded-2xl border-border/70">
+          <DialogHeader className="space-y-2">
+            <DialogTitle>
+              {pendingBulkReviewDecision === "aprobada"
+                ? "Aprobar todos los ítems pendientes"
+                : "Rechazar todos los ítems pendientes"}
+            </DialogTitle>
+            <DialogDescription className="leading-6">
+              {pendingBulkReviewDecision === "aprobada"
+                ? `Esta acción aprobará los ${pendingApprovalItemsCount} ítem(s) que siguen pendientes de autorización en esta requisición.`
+                : `Esta acción rechazará los ${pendingApprovalItemsCount} ítem(s) que siguen pendientes de autorización en esta requisición.`}
+            </DialogDescription>
+          </DialogHeader>
+
+          {pendingBulkReviewDecision === "rechazada" ? (
+            <div className="space-y-2">
+              <Label htmlFor="bulk-reject-reason">Motivo de rechazo *</Label>
+              <Textarea
+                id="bulk-reject-reason"
+                value={bulkRejectReason}
+                onChange={(event) => setBulkRejectReason(event.target.value)}
+                placeholder="Ejemplo: no cumple especificación, cantidad no autorizada o compra no prioritaria"
+                rows={4}
+                disabled={reviewItemsMutation.isPending}
+              />
+              <p className="text-xs text-muted-foreground">
+                Esta nota quedará visible en todos los ítems rechazados.
+              </p>
+            </div>
+          ) : null}
+
+          <DialogFooter className="gap-2 sm:justify-end">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setPendingBulkReviewDecision(null);
+                setBulkRejectReason("");
+              }}
+              disabled={reviewItemsMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant={pendingBulkReviewDecision === "rechazada" ? "destructive" : "default"}
+              onClick={() => {
+                if (!pendingBulkReviewDecision) return;
+                if (pendingApprovalItemIds.length === 0) {
+                  toast.error("No hay ítems pendientes por revisar");
+                  return;
+                }
+                if (
+                  pendingBulkReviewDecision === "rechazada" &&
+                  bulkRejectReason.trim().length < 5
+                ) {
+                  toast.error("Escribe un motivo de rechazo de al menos 5 caracteres");
+                  return;
+                }
+                reviewItemsMutation.mutate({
+                  requestId,
+                  itemIds: pendingApprovalItemIds,
+                  decision: pendingBulkReviewDecision,
+                  reason:
+                    pendingBulkReviewDecision === "rechazada"
+                      ? bulkRejectReason
+                      : undefined,
+                });
+              }}
+              disabled={reviewItemsMutation.isPending}
+            >
+              {reviewItemsMutation.isPending
+                ? "Guardando..."
+                : pendingBulkReviewDecision === "aprobada"
+                  ? "Confirmar aprobación"
+                  : "Confirmar rechazo"}
             </Button>
           </DialogFooter>
         </DialogContent>

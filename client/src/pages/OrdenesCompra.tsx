@@ -28,7 +28,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Download, Send, Trash2, XCircle } from "lucide-react";
+import {
+  ArrowRightLeft,
+  Download,
+  Loader2,
+  Save,
+  Send,
+  Trash2,
+  XCircle,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -178,11 +186,34 @@ export default function OrdenesCompra() {
   });
 
   const items = useMemo(() => detail?.items ?? [], [detail]);
+  const purchaseOrderSapCodes = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          items
+            .map((item: any) => item.currentSapItemCode ?? item.originalSapItemCode)
+            .filter((value): value is string => Boolean(value))
+        )
+      ),
+    [items]
+  );
   const selectedSupplier = useMemo(
     () =>
       (suppliersList || []).find((supplier: any) => supplier.id === Number(selectedSupplierId)) ??
       null,
     [selectedSupplierId, suppliersList]
+  );
+  const { data: latestSupplierPrices } = trpc.purchaseOrders.latestSupplierPrices.useQuery(
+    {
+      supplierId: Number(selectedSupplierId || 0),
+      sapCodes: purchaseOrderSapCodes,
+    },
+    {
+      enabled:
+        Boolean(selectedId) &&
+        Boolean(selectedSupplierId) &&
+        purchaseOrderSapCodes.length > 0,
+    }
   );
   const currentSupplierEmail = detail?.purchaseOrder.supplierEmail ?? detail?.supplier?.email ?? "";
   const selectedSupplierEmail = selectedSupplier?.email ?? "";
@@ -215,6 +246,44 @@ export default function OrdenesCompra() {
       )
     );
   }, [detail?.items, detail?.purchaseOrder.id]);
+
+  useEffect(() => {
+    if (!detail?.items?.length || !latestSupplierPrices) {
+      return;
+    }
+
+    setItemDrafts((current) => {
+      let changed = false;
+      const next = { ...current };
+
+      for (const item of detail.items) {
+        const sapCode = item.currentSapItemCode ?? item.originalSapItemCode;
+        if (!sapCode) continue;
+
+        const latestPrice = latestSupplierPrices[sapCode];
+        if (!latestPrice?.unitPrice) continue;
+
+        const currentDraft =
+          current[item.id] ??
+          {
+            quantity: String(item.quantity ?? "0.00"),
+            unitPrice: String(item.unitPrice ?? "0.00"),
+            taxCode: normalizePurchaseOrderTaxCode(item.taxCode),
+          };
+
+        if (Number(item.unitPrice ?? 0) > 0) continue;
+        if (Number(currentDraft.unitPrice ?? 0) > 0) continue;
+
+        next[item.id] = {
+          ...currentDraft,
+          unitPrice: latestPrice.unitPrice,
+        };
+        changed = true;
+      }
+
+      return changed ? next : current;
+    });
+  }, [detail?.items, latestSupplierPrices]);
 
   const getItemDraft = (item: any): PurchaseOrderItemDraft =>
     itemDrafts[item.id] ?? {
@@ -467,7 +536,7 @@ export default function OrdenesCompra() {
           }
         }}
       >
-        <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1500px] sm:p-6 lg:p-7">
+        <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1600px] sm:p-6 lg:p-7">
           <DialogHeader className="border-b border-border/70 pb-4 pr-10">
             <div className="flex flex-wrap items-center gap-3">
               <DialogTitle className="text-[2.1rem] font-bold tracking-tight sm:text-[2.5rem]">
@@ -570,16 +639,18 @@ export default function OrdenesCompra() {
                 </div>
               </div>
 
-              <div className="overflow-hidden rounded-2xl border border-border/70">
-                <table className="w-full table-fixed text-sm lg:text-[15px]">
+              <div className="overflow-x-auto rounded-2xl border border-border/70">
+                <table className="min-w-[1360px] table-auto text-sm lg:text-[15px]">
                   <colgroup>
-                    <col className="w-[24%]" />
-                    <col className="w-[9%]" />
-                    <col className="w-[16%]" />
-                    <col className="w-[15%]" />
-                    <col className="w-[13%]" />
-                    <col className="w-[11%]" />
-                    <col className="w-[12%]" />
+                    <col className="w-[250px]" />
+                    <col className="w-[150px]" />
+                    <col className="w-[170px]" />
+                    <col className="w-[190px]" />
+                    <col className="w-[150px]" />
+                    <col className="w-[120px]" />
+                    <col className="w-[110px]" />
+                    <col className="w-[130px]" />
+                    <col className="w-[90px]" />
                   </colgroup>
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
@@ -589,19 +660,25 @@ export default function OrdenesCompra() {
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
                         SAP actual
                       </th>
-                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
+                      <th className="whitespace-nowrap p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
                         Cantidad
                       </th>
-                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
+                      <th className="whitespace-nowrap p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
                         Precio unitario
                       </th>
-                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
+                      <th className="whitespace-nowrap p-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
                         Impuesto
                       </th>
-                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
+                      <th className="whitespace-nowrap p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
+                        Subtotal
+                      </th>
+                      <th className="whitespace-nowrap p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
+                        ISV
+                      </th>
+                      <th className="whitespace-nowrap p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
                         Total
                       </th>
-                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
+                      <th className="whitespace-nowrap p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
                         Acciones
                       </th>
                     </tr>
@@ -609,6 +686,16 @@ export default function OrdenesCompra() {
                   <tbody>
                     {items.map((item: any) => {
                       const draft = getItemDraft(item);
+                      const itemSapCode =
+                        item.currentSapItemCode ?? item.originalSapItemCode ?? null;
+                      const hasLatestSupplierPrice = Boolean(
+                        itemSapCode && latestSupplierPrices?.[itemSapCode]
+                      );
+                      const shouldShowMissingHistoryHint =
+                        Boolean(selectedSupplierId) &&
+                        Boolean(itemSapCode) &&
+                        Number(draft.unitPrice ?? 0) === 0 &&
+                        !hasLatestSupplierPrice;
                       const deleteBlockReason = getDeleteBlockReason(item);
                       const lineAmounts = calculatePurchaseOrderLineAmounts({
                         quantity: draft.quantity,
@@ -662,24 +749,38 @@ export default function OrdenesCompra() {
                             ) : null}
                           </td>
                           <td className="p-3 align-middle sm:p-4">
-                            <Input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={draft.unitPrice}
-                              onChange={(event) =>
-                                setItemDrafts((current) => ({
-                                  ...current,
-                                  [item.id]: {
-                                    ...getItemDraft(item),
-                                    unitPrice: event.target.value,
-                                  },
-                                }))
-                              }
-                              className="h-10 w-full text-right text-sm sm:text-base"
-                              placeholder="0.00"
-                              disabled={Boolean(isOrderCancelled)}
-                            />
+                            <div
+                              className={`relative ml-auto w-full max-w-[190px] ${
+                                shouldShowMissingHistoryHint ? "h-[112px]" : "h-10"
+                              }`}
+                            >
+                              <div className="absolute inset-x-0 top-1/2 -translate-y-1/2">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={draft.unitPrice}
+                                  onChange={(event) =>
+                                    setItemDrafts((current) => ({
+                                      ...current,
+                                      [item.id]: {
+                                        ...getItemDraft(item),
+                                        unitPrice: event.target.value,
+                                      },
+                                    }))
+                                  }
+                                  className="h-10 w-full text-right text-sm sm:text-base"
+                                  placeholder="0.00"
+                                  disabled={Boolean(isOrderCancelled)}
+                                />
+                              </div>
+                              {shouldShowMissingHistoryHint && (
+                                <div className="absolute inset-x-0 bottom-0 pt-5 text-right text-[11px] leading-relaxed text-muted-foreground">
+                                  No hay historial de compra para este producto con este
+                                  proveedor.
+                                </div>
+                              )}
+                            </div>
                           </td>
                           <td className="p-3 align-middle sm:p-4">
                             <Select
@@ -708,30 +809,37 @@ export default function OrdenesCompra() {
                             </Select>
                           </td>
                           <td className="p-3 text-right align-middle sm:p-4">
-                            <div className="text-base font-semibold sm:text-lg">
-                              {formatPurchaseOrderCurrency(lineAmounts.total)}
-                            </div>
-                            <div className="mt-1 text-[11px] text-muted-foreground sm:text-xs">
-                              ISV: {formatPurchaseOrderCurrency(lineAmounts.taxAmount)}
+                            <div className="whitespace-nowrap text-base font-semibold sm:text-lg">
+                              {formatPurchaseOrderCurrency(lineAmounts.subtotal)}
                             </div>
                           </td>
                           <td className="p-3 text-right align-middle sm:p-4">
-                            <div className="flex flex-col items-end gap-2">
+                            <div className="whitespace-nowrap text-base font-semibold sm:text-lg">
+                              {formatPurchaseOrderCurrency(lineAmounts.taxAmount)}
+                            </div>
+                          </td>
+                          <td className="p-3 text-right align-middle sm:p-4">
+                            <div className="whitespace-nowrap text-base font-semibold sm:text-lg">
+                              {formatPurchaseOrderCurrency(lineAmounts.total)}
+                            </div>
+                          </td>
+                          <td className="p-3 text-right align-middle sm:p-4">
+                            <div className="ml-auto flex w-fit items-center justify-end gap-2">
                               <Button
                                 variant="outline"
-                                size="lg"
-                                className="h-10 w-full px-3 text-sm sm:text-base"
+                                size="icon-sm"
                                 onClick={() => {
                                   setReplaceItemId(item.id);
                                   setReplacementSearch("");
                                 }}
                                 disabled={Boolean(isOrderCancelled)}
+                                title="Reemplazar ítem"
+                                aria-label="Reemplazar ítem"
                               >
-                                Reemplazar ítem
+                                <ArrowRightLeft className="h-4 w-4" />
                               </Button>
                               <Button
-                                size="lg"
-                                className="h-10 w-full px-3 text-sm sm:text-base"
+                                size="icon-sm"
                                 disabled={
                                   Boolean(isOrderCancelled) ||
                                   !hasItemLineChanged(item) ||
@@ -739,23 +847,32 @@ export default function OrdenesCompra() {
                                   updateItemLineMutation.isPending
                                 }
                                 onClick={() => handleSaveItemLine(item)}
+                                title="Guardar línea"
+                                aria-label="Guardar línea"
                               >
-                                {savingItemId === item.id ? "Guardando..." : "Guardar linea"}
+                                {savingItemId === item.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Save className="h-4 w-4" />
+                                )}
                               </Button>
                               <Button
                                 variant="destructive"
-                                size="lg"
-                                className="h-10 w-full px-3 text-sm sm:text-base"
+                                size="icon-sm"
                                 disabled={
                                   Boolean(isOrderCancelled) ||
                                   Boolean(deleteBlockReason) ||
                                   deletingItemId === item.id
                                 }
-                                title={deleteBlockReason ?? "Eliminar linea"}
+                                title={deleteBlockReason ?? "Eliminar línea"}
+                                aria-label="Eliminar línea"
                                 onClick={() => handleDeleteItem(item)}
                               >
-                                <Trash2 className="h-4 w-4" />
-                                {deletingItemId === item.id ? "Eliminando..." : "Eliminar fila"}
+                                {deletingItemId === item.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
                               </Button>
                             </div>
                           </td>
@@ -764,30 +881,31 @@ export default function OrdenesCompra() {
                     })}
                   </tbody>
                 </table>
-                <div className="flex justify-end border-t border-border bg-muted/10 px-3 py-4 sm:px-4">
-                  <div className="w-full max-w-[320px] space-y-2.5 rounded-2xl border border-border/70 bg-background p-4">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Subtotal</span>
-                      <span className="font-medium">
-                        {formatPurchaseOrderCurrency(pricingSummary.subtotal)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Total exento</span>
-                      <span className="font-medium">
-                        {formatPurchaseOrderCurrency(pricingSummary.totalExempt)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Total ISV</span>
-                      <span className="font-medium">
-                        {formatPurchaseOrderCurrency(pricingSummary.totalIsv)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between border-t border-border pt-3 text-base font-semibold">
-                      <span>Total</span>
-                      <span>{formatPurchaseOrderCurrency(pricingSummary.total)}</span>
-                    </div>
+              </div>
+
+              <div className="flex justify-end border-t border-border bg-muted/10 px-3 py-4 sm:px-4">
+                <div className="w-full max-w-[320px] space-y-2.5 rounded-2xl border border-border/70 bg-background p-4">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Subtotal</span>
+                    <span className="font-medium">
+                      {formatPurchaseOrderCurrency(pricingSummary.subtotal)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Total exento</span>
+                    <span className="font-medium">
+                      {formatPurchaseOrderCurrency(pricingSummary.totalExempt)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Total ISV</span>
+                    <span className="font-medium">
+                      {formatPurchaseOrderCurrency(pricingSummary.totalIsv)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-border pt-3 text-base font-semibold">
+                    <span>Total</span>
+                    <span>{formatPurchaseOrderCurrency(pricingSummary.total)}</span>
                   </div>
                 </div>
               </div>

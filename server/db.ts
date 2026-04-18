@@ -108,6 +108,242 @@ function toDecimalString(value: string | number | null | undefined) {
   return parseDecimal(value).toFixed(2);
 }
 
+type PurchaseHistoryReference = {
+  unitPrice: string;
+  supplierId: number | null;
+  supplierCode: string | null;
+  supplierName: string | null;
+  orderNumber: string | null;
+  purchasedAt: Date | null;
+};
+
+type SapProcurementInsight = {
+  sapDescription: string | null;
+  lastPurchase: PurchaseHistoryReference | null;
+  minimumPurchase: PurchaseHistoryReference | null;
+};
+
+async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
+  const db = await getDb();
+  const normalizedCodes = Array.from(
+    new Set(
+      sapCodes
+        .map((code) => code?.trim())
+        .filter((code): code is string => Boolean(code))
+    )
+  );
+
+  const emptyInsights = Object.fromEntries(
+    normalizedCodes.map((code) => [
+      code,
+      {
+        sapDescription: null,
+        lastPurchase: null,
+        minimumPurchase: null,
+      } satisfies SapProcurementInsight,
+    ])
+  ) as Record<string, SapProcurementInsight>;
+
+  if (!db || normalizedCodes.length === 0) {
+    return emptyInsights;
+  }
+
+  const [catalogRows, inventoryRows, purchaseRows] = await Promise.all([
+    db
+      .select({
+        sapItemCode: sapCatalog.itemCode,
+        description: sapCatalog.description,
+      })
+      .from(sapCatalog)
+      .where(
+        and(eq(sapCatalog.isActive, true), inArray(sapCatalog.itemCode, normalizedCodes))
+      ),
+    db
+      .select({
+        sapItemCode: inventoryItems.sapItemCode,
+        description: inventoryItems.description,
+        name: inventoryItems.name,
+      })
+      .from(inventoryItems)
+      .where(inArray(inventoryItems.sapItemCode, normalizedCodes))
+      .orderBy(desc(inventoryItems.updatedAt)),
+    db
+      .select({
+        currentSapItemCode: purchaseOrderItems.currentSapItemCode,
+        originalSapItemCode: purchaseOrderItems.originalSapItemCode,
+        unitPrice: purchaseOrderItems.unitPrice,
+        orderNumber: purchaseOrders.orderNumber,
+        purchasedAt: purchaseOrders.createdAt,
+        supplierId: purchaseOrders.supplierId,
+        supplierCode: suppliers.supplierCode,
+        supplierName: suppliers.name,
+      })
+      .from(purchaseOrderItems)
+      .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+      .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
+      .where(
+        and(
+          sql`${purchaseOrders.status} NOT IN ('borrador', 'anulada')`,
+          sql`${purchaseOrderItems.unitPrice} > 0`,
+          or(
+            and(
+              isNotNull(purchaseOrderItems.currentSapItemCode),
+              inArray(purchaseOrderItems.currentSapItemCode, normalizedCodes)
+            ),
+            and(
+              isNotNull(purchaseOrderItems.originalSapItemCode),
+              inArray(purchaseOrderItems.originalSapItemCode, normalizedCodes)
+            )
+          )
+        )
+      )
+      .orderBy(desc(purchaseOrders.createdAt), desc(purchaseOrderItems.id)),
+  ]);
+
+  for (const row of catalogRows) {
+    if (!emptyInsights[row.sapItemCode]) continue;
+    emptyInsights[row.sapItemCode].sapDescription = row.description?.trim() || null;
+  }
+
+  for (const row of inventoryRows) {
+    if (!emptyInsights[row.sapItemCode]) continue;
+    if (emptyInsights[row.sapItemCode].sapDescription) continue;
+    emptyInsights[row.sapItemCode].sapDescription =
+      row.description?.trim() || row.name?.trim() || null;
+  }
+
+  const sapCodeSet = new Set(normalizedCodes);
+
+  for (const row of purchaseRows) {
+    const matchedCodes = [
+      row.currentSapItemCode?.trim(),
+      row.originalSapItemCode?.trim(),
+    ].filter((code, index, values): code is string => {
+      if (!code) return false;
+      if (!sapCodeSet.has(code)) return false;
+      return values.indexOf(code) === index;
+    });
+
+    if (matchedCodes.length === 0) continue;
+
+    const reference: PurchaseHistoryReference = {
+      unitPrice: toDecimalString(row.unitPrice),
+      supplierId: row.supplierId ?? null,
+      supplierCode: row.supplierCode ?? null,
+      supplierName: row.supplierName ?? null,
+      orderNumber: row.orderNumber ?? null,
+      purchasedAt: row.purchasedAt ?? null,
+    };
+
+    for (const code of matchedCodes) {
+      const insight = emptyInsights[code];
+      if (!insight) continue;
+
+      if (!insight.lastPurchase) {
+        insight.lastPurchase = reference;
+      }
+
+      if (
+        !insight.minimumPurchase ||
+        parseDecimal(reference.unitPrice) < parseDecimal(insight.minimumPurchase.unitPrice)
+      ) {
+        insight.minimumPurchase = reference;
+      }
+    }
+  }
+
+  return emptyInsights;
+}
+
+export async function getLatestSupplierPurchasePrices(params: {
+  supplierId: number;
+  sapCodes: string[];
+  projectId?: number;
+}) {
+  const db = await getDb();
+  const normalizedCodes = Array.from(
+    new Set(
+      params.sapCodes
+        .map((code) => code?.trim())
+        .filter((code): code is string => Boolean(code))
+    )
+  );
+
+  if (!db || normalizedCodes.length === 0) {
+    return {} as Record<string, PurchaseHistoryReference>;
+  }
+
+  const conditions = [
+    eq(purchaseOrders.supplierId, params.supplierId),
+    sql`${purchaseOrders.status} NOT IN ('borrador', 'anulada')`,
+    sql`${purchaseOrderItems.unitPrice} > 0`,
+    or(
+      and(
+        isNotNull(purchaseOrderItems.currentSapItemCode),
+        inArray(purchaseOrderItems.currentSapItemCode, normalizedCodes)
+      ),
+      and(
+        isNotNull(purchaseOrderItems.originalSapItemCode),
+        inArray(purchaseOrderItems.originalSapItemCode, normalizedCodes)
+      )
+    ),
+  ];
+
+  if (params.projectId) {
+    conditions.push(eq(purchaseOrders.projectId, params.projectId));
+  }
+
+  const rows = await db
+    .select({
+      currentSapItemCode: purchaseOrderItems.currentSapItemCode,
+      originalSapItemCode: purchaseOrderItems.originalSapItemCode,
+      unitPrice: purchaseOrderItems.unitPrice,
+      orderNumber: purchaseOrders.orderNumber,
+      purchasedAt: purchaseOrders.createdAt,
+      supplierId: purchaseOrders.supplierId,
+      supplierCode: suppliers.supplierCode,
+      supplierName: suppliers.name,
+    })
+    .from(purchaseOrderItems)
+    .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+    .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
+    .where(and(...conditions))
+    .orderBy(desc(purchaseOrders.createdAt), desc(purchaseOrderItems.id));
+
+  const result = {} as Record<string, PurchaseHistoryReference>;
+  const sapCodeSet = new Set(normalizedCodes);
+
+  for (const row of rows) {
+    const matchedCodes = [
+      row.currentSapItemCode?.trim(),
+      row.originalSapItemCode?.trim(),
+    ].filter((code, index, values): code is string => {
+      if (!code) return false;
+      if (!sapCodeSet.has(code)) return false;
+      return values.indexOf(code) === index;
+    });
+
+    if (matchedCodes.length === 0) continue;
+
+    const reference: PurchaseHistoryReference = {
+      unitPrice: toDecimalString(row.unitPrice),
+      supplierId: row.supplierId ?? null,
+      supplierCode: row.supplierCode ?? null,
+      supplierName: row.supplierName ?? null,
+      orderNumber: row.orderNumber ?? null,
+      purchasedAt: row.purchasedAt ?? null,
+    };
+
+    for (const code of matchedCodes) {
+      if (!result[code]) {
+        result[code] = reference;
+      }
+    }
+  }
+
+  return result;
+}
+
 function formatDateLabel(date: Date | string | null | undefined) {
   if (!date) return "Sin fecha";
   return new Date(date).toLocaleDateString("es-HN");
@@ -885,22 +1121,32 @@ export async function recordWarehouseExit(params: {
   }
 
   const requested = parseDecimal(item.quantity);
-  const dispatched = parseDecimal(params.quantity);
+  const alreadyDispatched = parseDecimal(item.dispatchedQuantity);
+  const dispatchedIncrement = parseDecimal(params.quantity);
+  const nextDispatched = alreadyDispatched + dispatchedIncrement;
   const nextStatus =
-    dispatched <= 0 ? "pendiente" : dispatched < requested ? "parcial" : "completo";
+    nextDispatched <= 0 ? "pendiente" : nextDispatched < requested ? "parcial" : "completo";
+
+  if (dispatchedIncrement <= 0) {
+    throw new Error("La cantidad despachada debe ser mayor que cero");
+  }
+
+  if (nextDispatched - requested > 0.000001) {
+    throw new Error("La cantidad despachada no puede exceder la cantidad pendiente");
+  }
 
   await consumeInventoryStock({
     sapItemCode: item.sapItemCode,
     itemName: item.sapItemDescription || item.itemName,
     projectId: request.projectId,
-    quantity: dispatched,
+    quantity: dispatchedIncrement,
   });
 
   await db
     .update(requestItems)
     .set({
-      dispatchedQuantity: toDecimalString(dispatched),
-      deliveredQuantity: toDecimalString(dispatched),
+      dispatchedQuantity: toDecimalString(nextDispatched),
+      deliveredQuantity: toDecimalString(nextDispatched),
       warehouseExitNote: params.note ?? null,
       status: nextStatus,
       updatedAt: new Date(),
@@ -924,7 +1170,7 @@ export async function recordWarehouseExit(params: {
       .update(supplyFlowRecords)
       .set({
         notes: params.note ?? existingFlow.notes,
-        status: dispatched < requested ? "en_proceso" : "completado",
+        status: nextDispatched < requested ? "en_proceso" : "completado",
         updatedAt: new Date(),
       })
       .where(eq(supplyFlowRecords.id, existingFlow.id));
@@ -937,7 +1183,7 @@ export async function recordWarehouseExit(params: {
       sapDocumentType: "salida_inventario",
       processedById: params.processedById,
       notes: params.note,
-      status: dispatched < requested ? "en_proceso" : "completado",
+      status: nextDispatched < requested ? "en_proceso" : "completado",
     });
   }
 
@@ -965,6 +1211,35 @@ export async function getSupplyFlowByRequestId(requestId: number) {
     .from(supplyFlowRecords)
     .where(eq(supplyFlowRecords.requestId, requestId))
     .orderBy(desc(supplyFlowRecords.createdAt));
+}
+
+export async function listDirectPurchaseFlowItemsByOrder(params: {
+  purchaseOrderNumber: string;
+  sapItemCode?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [
+    eq(supplyFlowRecords.flowType, "compra_directa"),
+    eq(supplyFlowRecords.purchaseOrderNumber, params.purchaseOrderNumber),
+    isNotNull(supplyFlowRecords.requestItemId),
+    sql`${supplyFlowRecords.status} <> 'cancelado'`,
+  ];
+
+  if (params.sapItemCode?.trim()) {
+    conditions.push(eq(requestItems.sapItemCode, params.sapItemCode.trim()));
+  }
+
+  return db
+    .select({
+      flow: supplyFlowRecords,
+      item: requestItems,
+    })
+    .from(supplyFlowRecords)
+    .innerJoin(requestItems, eq(supplyFlowRecords.requestItemId, requestItems.id))
+    .where(and(...conditions))
+    .orderBy(desc(supplyFlowRecords.createdAt), asc(requestItems.id));
 }
 
 export async function updateSupplyFlowRecord(
@@ -1001,6 +1276,107 @@ export async function listSupplyFlowRecords(filters?: {
     .leftJoin(projects, eq(materialRequests.projectId, projects.id))
     .where(where)
     .orderBy(desc(supplyFlowRecords.createdAt));
+}
+
+export async function listPendingFlowQueueItems(filters?: { flowType?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [
+    isNotNull(requestItems.assignedFlow),
+    sql`${materialRequests.status} NOT IN ('borrador', 'cerrada', 'anulada')`,
+    sql`${requestItems.approvalStatus} IN ('aprobada', 'no_requiere')`,
+  ];
+
+  if (filters?.flowType) {
+    conditions.push(eq(requestItems.assignedFlow, filters.flowType as any));
+  }
+
+  const candidateRows = await db
+    .select({
+      item: requestItems,
+      request: materialRequests,
+      project: projects,
+    })
+    .from(requestItems)
+    .innerJoin(materialRequests, eq(requestItems.requestId, materialRequests.id))
+    .leftJoin(projects, eq(materialRequests.projectId, projects.id))
+    .where(and(...conditions))
+    .orderBy(
+      asc(requestItems.assignedFlow),
+      desc(materialRequests.createdAt),
+      asc(materialRequests.requestNumber),
+      asc(requestItems.id)
+    );
+
+  const requestItemIds = candidateRows
+    .map((row) => row.item.id)
+    .filter((value): value is number => typeof value === "number");
+
+  if (requestItemIds.length === 0) {
+    return [];
+  }
+
+  const sapCodes = candidateRows
+    .map((row) => row.item.sapItemCode?.trim())
+    .filter((value): value is string => Boolean(value));
+
+  const [activeFlows, procurementInsightsByCode] = await Promise.all([
+    db
+      .select()
+      .from(supplyFlowRecords)
+      .where(
+        and(
+          isNotNull(supplyFlowRecords.requestItemId),
+          inArray(supplyFlowRecords.requestItemId, requestItemIds),
+          sql`${supplyFlowRecords.status} <> 'cancelado'`
+        )
+      ),
+    getSapProcurementInsightsByCodes(sapCodes),
+  ]);
+
+  const activeFlowsByItemId = new Map<number, typeof activeFlows>();
+  for (const flow of activeFlows) {
+    if (!flow.requestItemId) continue;
+    const current = activeFlowsByItemId.get(flow.requestItemId) ?? [];
+    current.push(flow);
+    activeFlowsByItemId.set(flow.requestItemId, current);
+  }
+
+  return candidateRows
+    .filter((row) => {
+      const assignedFlow = row.item.assignedFlow;
+      if (!assignedFlow) return false;
+
+      if (assignedFlow === "despacho_bodega") {
+        return parseDecimal(row.item.dispatchedQuantity) < parseDecimal(row.item.quantity);
+      }
+
+      const activeForSameFlow = (activeFlowsByItemId.get(row.item.id) ?? []).some(
+        (flow) => flow.flowType === assignedFlow
+      );
+
+      return !activeForSameFlow;
+    })
+    .map((row) => {
+      const sapCode = row.item.sapItemCode?.trim() || null;
+      const insight = sapCode ? procurementInsightsByCode[sapCode] : undefined;
+      const resolvedSapDescription =
+        row.item.sapItemDescription?.trim() || insight?.sapDescription || null;
+
+      return {
+        ...row,
+        item: {
+          ...row.item,
+          sapItemDescription: resolvedSapDescription,
+        },
+        purchaseInsight: {
+          sapDescription: resolvedSapDescription,
+          lastPurchase: insight?.lastPurchase ?? null,
+          minimumPurchase: insight?.minimumPurchase ?? null,
+        },
+      };
+    });
 }
 
 export async function getActiveSupplyFlowForRequestItem(params: {

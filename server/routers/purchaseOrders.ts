@@ -82,6 +82,24 @@ async function releaseDirectPurchaseRequestItems(
   }
 }
 
+async function releaseDirectPurchaseOrderItems(params: {
+  purchaseOrderNumber: string;
+  userId: number;
+  note: string;
+  sapItemCode?: string | null;
+}) {
+  const flowItems = await db.listDirectPurchaseFlowItemsByOrder({
+    purchaseOrderNumber: params.purchaseOrderNumber,
+    sapItemCode: params.sapItemCode,
+  });
+
+  await releaseDirectPurchaseRequestItems(
+    flowItems.map((entry) => entry.item.id),
+    params.userId,
+    params.note
+  );
+}
+
 export const purchaseOrdersRouter = router({
   list: protectedProcedure
     .input(
@@ -131,6 +149,31 @@ export const purchaseOrdersRouter = router({
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
       return detail;
+    }),
+
+  latestSupplierPrices: protectedProcedure
+    .input(
+      z.object({
+        supplierId: z.number(),
+        sapCodes: z.array(z.string().trim().min(1)).min(1),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      if (!canAccessPurchaseOrders(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a órdenes de compra",
+        });
+      }
+
+      return db.getLatestSupplierPurchasePrices({
+        supplierId: input.supplierId,
+        sapCodes: input.sapCodes,
+        projectId:
+          ctx.user.buildreqRole === "administrador_proyecto"
+            ? ctx.user.assignedProjectId ?? undefined
+            : undefined,
+      });
     }),
 
   createFromPurchaseRequest: protectedProcedure
@@ -410,11 +453,23 @@ export const purchaseOrdersRouter = router({
       const itemCount = await db.countPurchaseOrderItems(itemDetail.item.purchaseOrderId);
       await db.deletePurchaseOrderItem(input.purchaseOrderItemId);
 
-      await releaseDirectPurchaseRequestItems(
-        [itemDetail.item.materialRequestItemId],
-        ctx.user.id,
-        "Flujo cancelado por eliminar la linea de la orden de compra"
-      );
+      const lineSapCode =
+        itemDetail.item.currentSapItemCode ?? itemDetail.item.originalSapItemCode ?? null;
+
+      if (itemDetail.purchaseOrder.classification === "cd" && lineSapCode) {
+        await releaseDirectPurchaseOrderItems({
+          purchaseOrderNumber: itemDetail.purchaseOrder.orderNumber,
+          userId: ctx.user.id,
+          note: "Flujo cancelado por eliminar la linea de la orden de compra",
+          sapItemCode: lineSapCode,
+        });
+      } else {
+        await releaseDirectPurchaseRequestItems(
+          [itemDetail.item.materialRequestItemId],
+          ctx.user.id,
+          "Flujo cancelado por eliminar la linea de la orden de compra"
+        );
+      }
 
       if (itemCount <= 1) {
         await db.updatePurchaseOrder(itemDetail.item.purchaseOrderId, {
@@ -458,11 +513,19 @@ export const purchaseOrdersRouter = router({
         });
       }
 
-      await releaseDirectPurchaseRequestItems(
-        (detail.items ?? []).map((item: any) => item.materialRequestItemId),
-        ctx.user.id,
-        `Flujo cancelado por anular la orden ${detail.purchaseOrder.orderNumber}`
-      );
+      if (detail.purchaseOrder.classification === "cd") {
+        await releaseDirectPurchaseOrderItems({
+          purchaseOrderNumber: detail.purchaseOrder.orderNumber,
+          userId: ctx.user.id,
+          note: `Flujo cancelado por anular la orden ${detail.purchaseOrder.orderNumber}`,
+        });
+      } else {
+        await releaseDirectPurchaseRequestItems(
+          (detail.items ?? []).map((item: any) => item.materialRequestItemId),
+          ctx.user.id,
+          `Flujo cancelado por anular la orden ${detail.purchaseOrder.orderNumber}`
+        );
+      }
 
       await db.updatePurchaseOrder(input.id, {
         status: "anulada",

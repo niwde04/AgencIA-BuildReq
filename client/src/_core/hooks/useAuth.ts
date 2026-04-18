@@ -1,10 +1,12 @@
 import { supabase } from "@/lib/supabase";
 import { trpc } from "@/lib/trpc";
+import { useAuthSession } from "@/contexts/AuthSessionContext";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 export function useAuth(options?: { redirectOnUnauthenticated?: boolean }) {
   const { redirectOnUnauthenticated = false } = options ?? {};
   const utils = trpc.useUtils();
+  const { ready: authSessionReady } = useAuthSession();
 
   const meQuery = trpc.auth.me.useQuery(undefined, {
     retry: false,
@@ -24,17 +26,22 @@ export function useAuth(options?: { redirectOnUnauthenticated?: boolean }) {
     await utils.auth.me.invalidate();
   }, [logoutMutation, utils]);
 
+  const isResolvingUser =
+    !meQuery.data && (meQuery.isLoading || meQuery.isFetching);
+
   const state = useMemo(
     () => ({
       user: meQuery.data ?? null,
-      loading: meQuery.isLoading || logoutMutation.isPending,
+      loading:
+        !authSessionReady || isResolvingUser || logoutMutation.isPending,
       error: meQuery.error ?? logoutMutation.error ?? null,
       isAuthenticated: Boolean(meQuery.data),
     }),
     [
+      authSessionReady,
+      isResolvingUser,
       meQuery.data,
       meQuery.error,
-      meQuery.isLoading,
       logoutMutation.error,
       logoutMutation.isPending,
     ]
@@ -42,11 +49,16 @@ export function useAuth(options?: { redirectOnUnauthenticated?: boolean }) {
 
   useEffect(() => {
     if (!redirectOnUnauthenticated) return;
-    if (meQuery.isLoading) return;
+    if (!authSessionReady || isResolvingUser) return;
     if (state.user) return;
     // Redirect to home (login page)
     window.location.href = "/";
-  }, [redirectOnUnauthenticated, meQuery.isLoading, state.user]);
+  }, [
+    authSessionReady,
+    isResolvingUser,
+    redirectOnUnauthenticated,
+    state.user,
+  ]);
 
   return {
     ...state,

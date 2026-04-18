@@ -3,6 +3,25 @@ import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { TRPCError } from "@trpc/server";
 
+function canAssignFlows(user: { role: string; buildreqRole?: string | null }) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "administracion_central"
+  );
+}
+
+function canManageSapTranslation(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "administracion_central"
+  );
+}
+
 async function assertItemApprovedForProcessing(requestItemId: number) {
   const item = await db.getRequestItemById(requestItemId);
   if (!item) {
@@ -46,6 +65,38 @@ async function assertItemApprovedForProcessing(requestItemId: number) {
   }
 
   return { item, detail };
+}
+
+async function syncRequestStatusFromAssignments(requestId: number, userId: number) {
+  const items = await db.getRequestItemsByRequestId(requestId);
+  const someAssigned = items.some((item) => item.assignedFlow !== null);
+
+  await db.updateMaterialRequestStatus(
+    requestId,
+    someAssigned ? "en_proceso" : "en_espera",
+    userId
+  );
+}
+
+async function assertSapTranslationCanBeChanged(item: {
+  id: number;
+  requestId: number;
+  deliveredQuantity?: string | null;
+  dispatchedQuantity?: string | null;
+}) {
+  const existingFlows = (await db.getSupplyFlowByRequestId(item.requestId)).filter(
+    (flow) => flow.requestItemId === item.id && flow.status !== "cancelado"
+  );
+  const hasMovement =
+    Number(item.deliveredQuantity ?? 0) > 0 || Number(item.dispatchedQuantity ?? 0) > 0;
+
+  if (existingFlows.length > 0 || hasMovement) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "Este ítem ya tiene movimientos registrados y no se puede cambiar la traducción SAP",
+    });
+  }
 }
 
 export const requestItemsRouter = router({
@@ -95,21 +146,142 @@ export const requestItemsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (
-        ctx.user.buildreqRole !== "jefe_bodega_central" &&
-        ctx.user.buildreqRole !== "administracion_central" &&
-        ctx.user.role !== "admin"
-      ) {
+      if (!canManageSapTranslation(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para traducir ítems a códigos SAP",
         });
       }
-      await assertItemApprovedForProcessing(input.id);
+      const { item } = await assertItemApprovedForProcessing(input.id);
+      await assertSapTranslationCanBeChanged(item);
+
       return db.updateRequestItem(input.id, {
         sapItemCode: input.sapItemCode,
         sapItemDescription: input.sapItemDescription,
       });
+    }),
+
+  clearSapTranslation: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (!canManageSapTranslation(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para modificar la traducción SAP",
+        });
+      }
+
+      const { item } = await assertItemApprovedForProcessing(input.id);
+      await assertSapTranslationCanBeChanged(item);
+
+      const clearedFlow = Boolean(item.assignedFlow);
+
+      await db.updateRequestItem(item.id, {
+        sapItemCode: null,
+        sapItemDescription: null,
+        assignedFlow: null,
+        status: "pendiente",
+      });
+      await syncRequestStatusFromAssignments(item.requestId, ctx.user.id);
+
+      return {
+        success: true,
+        clearedFlow,
+      };
+    }),
+
+  assignFlow: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        flowType: z
+          .enum([
+            "compra_directa",
+            "despacho_bodega",
+            "traslado_proyecto",
+            "solicitud_compra",
+          ])
+          .nullable(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canAssignFlows(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para asignar flujos",
+        });
+      }
+
+      const { item, detail } = await assertItemApprovedForProcessing(input.id);
+
+      if (
+        detail.request.status === "borrador" ||
+        detail.request.status === "cerrada" ||
+        detail.request.status === "anulada"
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "La requisición ya no permite cambios de flujo",
+        });
+      }
+
+      const existingFlows = (await db.getSupplyFlowByRequestId(item.requestId)).filter(
+        (flow) => flow.requestItemId === item.id && flow.status !== "cancelado"
+      );
+
+      if (input.flowType === null) {
+        const hasMovement =
+          Number(item.deliveredQuantity ?? 0) > 0 || Number(item.dispatchedQuantity ?? 0) > 0;
+
+        if (existingFlows.length > 0 || hasMovement) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Este ítem ya tiene movimientos registrados y no se puede quitar del flujo",
+          });
+        }
+
+        await db.updateRequestItem(item.id, {
+          assignedFlow: null,
+          status: "pendiente",
+        });
+        await syncRequestStatusFromAssignments(item.requestId, ctx.user.id);
+        return { success: true };
+      }
+
+      if (!item.sapItemCode) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Debe traducir el ítem a SAP antes de asignar un flujo",
+        });
+      }
+
+      if (input.flowType === "solicitud_compra") {
+        const existingPurchaseRequest = await db.getActivePurchaseRequestByMaterialRequestItemId(
+          item.id
+        );
+        if (existingPurchaseRequest) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Ya existe la solicitud ${existingPurchaseRequest.purchaseRequest.requestNumber} para este ítem`,
+          });
+        }
+      }
+
+      const activeSameFlow = existingFlows.some((flow) => flow.flowType === input.flowType);
+      if (activeSameFlow) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Este ítem ya tiene un flujo activo de este mismo tipo",
+        });
+      }
+
+      await db.updateRequestItem(item.id, {
+        assignedFlow: input.flowType,
+        status: "pendiente",
+      });
+      await syncRequestStatusFromAssignments(item.requestId, ctx.user.id);
+
+      return { success: true };
     }),
 
   updateDelivered: protectedProcedure

@@ -65,6 +65,23 @@ function assertItemApprovedForProcessing(detail: any, item: any) {
   }
 }
 
+function resolveEarliestNeededBy(
+  current: Date | string | null | undefined,
+  candidate: Date | string | null | undefined
+) {
+  if (!candidate) {
+    return current ? new Date(current) : null;
+  }
+  if (!current) {
+    return new Date(candidate);
+  }
+
+  const currentDate = new Date(current);
+  const candidateDate = new Date(candidate);
+
+  return candidateDate.getTime() < currentDate.getTime() ? candidateDate : currentDate;
+}
+
 export const supplyFlowsRouter = router({
   list: protectedProcedure
     .input(
@@ -76,6 +93,16 @@ export const supplyFlowsRouter = router({
         .optional()
     )
     .query(async ({ input }) => db.listSupplyFlowRecords(input ?? undefined)),
+
+  pendingQueue: protectedProcedure
+    .input(
+      z
+        .object({
+          flowType: z.string().optional(),
+        })
+        .optional()
+    )
+    .query(async ({ input }) => db.listPendingFlowQueueItems(input ?? undefined)),
 
   getByRequestId: protectedProcedure
     .input(z.object({ requestId: z.number() }))
@@ -209,10 +236,11 @@ export const supplyFlowsRouter = router({
   createDirectPurchaseBatch: protectedProcedure
     .input(
       z.object({
-        requestId: z.number(),
+        requestId: z.number().optional(),
         items: z
           .array(
             z.object({
+              requestId: z.number().optional(),
               requestItemId: z.number(),
               quantity: z
                 .string()
@@ -237,35 +265,73 @@ export const supplyFlowsRouter = router({
         });
       }
 
-      const detail = await db.getMaterialRequestById(input.requestId);
-      if (!detail) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "La requisición no existe",
-        });
-      }
-      if (
-        detail.request.requestType === "bienes" &&
-        detail.request.approvalStatus === "pendiente"
-      ) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message:
-            "La requisición todavía está pendiente de autorización del Administrador del Proyecto o Administración Central",
-        });
-      }
-
       const uniqueItems = Array.from(
-        new Map(input.items.map((item) => [item.requestItemId, item])).values()
-      );
-      const requestItemsById = new Map(
-        detail.items.map((item: any) => [item.id, item] as const)
+        new Map(
+          input.items.map((item) => {
+            const resolvedRequestId = item.requestId ?? input.requestId;
+            if (!resolvedRequestId) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "Cada ítem debe indicar a qué requisición pertenece",
+              });
+            }
+
+            return [
+              `${resolvedRequestId}:${item.requestItemId}`,
+              {
+                ...item,
+                requestId: resolvedRequestId,
+              },
+            ] as const;
+          })
+        ).values()
       );
 
-      const preparedItems = [];
+      const requestIds = Array.from(
+        new Set(uniqueItems.map((item) => item.requestId))
+      );
+      const requestDetailsById = new Map<number, any>();
+      const requestItemsByRequestId = new Map<number, Map<number, any>>();
+
+      for (const requestId of requestIds) {
+        const detail = await db.getMaterialRequestById(requestId);
+        if (!detail) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "La requisición no existe",
+          });
+        }
+        if (
+          detail.request.requestType === "bienes" &&
+          detail.request.approvalStatus === "pendiente"
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "La requisición todavía está pendiente de autorización del Administrador del Proyecto o Administración Central",
+          });
+        }
+
+        requestDetailsById.set(requestId, detail);
+        requestItemsByRequestId.set(
+          requestId,
+          new Map(detail.items.map((item: any) => [item.id, item] as const))
+        );
+      }
+
+      const preparedItems: Array<{
+        requestId: number;
+        projectId: number;
+        neededBy: Date | null;
+        sourceItemId: number;
+        processedItemId: number;
+        item: any;
+      }> = [];
       for (const entry of uniqueItems) {
-        const item = requestItemsById.get(entry.requestItemId);
-        if (!item) {
+        const detail = requestDetailsById.get(entry.requestId);
+        const requestItemsById = requestItemsByRequestId.get(entry.requestId);
+        const item = requestItemsById?.get(entry.requestItemId);
+        if (!detail || !item) {
           throw new TRPCError({
             code: "NOT_FOUND",
             message: "Uno de los ítems ya no existe en la requisición",
@@ -274,7 +340,7 @@ export const supplyFlowsRouter = router({
         assertItemApprovedForProcessing(detail, item);
 
         const existingDirectPurchaseFlow = await db.getActiveSupplyFlowForRequestItem({
-          requestId: input.requestId,
+          requestId: entry.requestId,
           requestItemId: entry.requestItemId,
           flowType: "compra_directa",
         });
@@ -302,7 +368,7 @@ export const supplyFlowsRouter = router({
           });
 
           const createdItem = await db.createRequestItem({
-            requestId: detail.request.id,
+            requestId: entry.requestId,
             itemName: item.itemName,
             quantity: entry.quantity,
             unit: item.unit,
@@ -324,6 +390,9 @@ export const supplyFlowsRouter = router({
           });
 
           preparedItems.push({
+            requestId: entry.requestId,
+            projectId: detail.request.projectId,
+            neededBy: detail.request.neededBy ? new Date(detail.request.neededBy) : null,
             sourceItemId: item.id,
             processedItemId: createdItem.id,
             item: {
@@ -344,6 +413,9 @@ export const supplyFlowsRouter = router({
         });
 
         preparedItems.push({
+          requestId: entry.requestId,
+          projectId: detail.request.projectId,
+          neededBy: detail.request.neededBy ? new Date(detail.request.neededBy) : null,
           sourceItemId: item.id,
           processedItemId: item.id,
           item: {
@@ -354,61 +426,123 @@ export const supplyFlowsRouter = router({
         });
       }
 
-      const purchaseOrder = await db.createPurchaseOrder(
+      const preparedItemsByProject = new Map<
+        number,
         {
-          purchaseRequestId: null,
-          projectId: detail.request.projectId,
-          classification: "cd",
-          purchaseType: "local",
-          supplierId: input.supplierId,
-          supplierEmail: null,
-          status: "emitida",
-          neededBy: detail.request.neededBy,
-          sapDocumentNumber: null,
-          notes: input.notes ?? `Compra directa por ${input.paymentMethod}`,
-          printedDocumentName: null,
-          printedDocumentMimeType: null,
-          printedDocumentContent: null,
-          printedAt: null,
-          emailStatus: "pendiente",
-          emailedAt: null,
-          emailError: null,
-          createdById: ctx.user.id,
-        },
-        preparedItems.map((entry: any) => ({
-          purchaseRequestItemId: null,
-          materialRequestItemId: entry.processedItemId,
-          originalSapItemCode: entry.item.sapItemCode,
-          currentSapItemCode: entry.item.sapItemCode,
-          itemName: entry.item.sapItemDescription || entry.item.itemName,
-          quantity: entry.item.quantity,
-          receivedQuantity: "0.00",
-          unit: entry.item.unit,
-          notes: input.notes,
-        }))
-      );
+          projectId: number;
+          neededBy: Date | null;
+          items: typeof preparedItems;
+        }
+      >();
 
       for (const entry of preparedItems) {
-        await db.createSupplyFlowRecord({
-          requestId: input.requestId,
-          requestItemId: entry.processedItemId,
-          flowType: "compra_directa",
-          paymentMethod: input.paymentMethod,
-          supplierId: input.supplierId,
-          purchaseOrderNumber: purchaseOrder.orderNumber,
-          sapDocumentType: "orden_compra",
-          processedById: ctx.user.id,
-          notes: input.notes,
-          status: "en_proceso",
-        });
+        const current = preparedItemsByProject.get(entry.projectId) ?? {
+          projectId: entry.projectId,
+          neededBy: entry.neededBy,
+          items: [],
+        };
+        current.neededBy = resolveEarliestNeededBy(current.neededBy, entry.neededBy);
+        current.items.push(entry);
+        preparedItemsByProject.set(entry.projectId, current);
       }
 
-      await checkAndUpdateRequestStatus(input.requestId, ctx.user.id);
+      const createdOrders: Array<{
+        projectId: number;
+        purchaseOrderId: number;
+        purchaseOrderNumber: string;
+      }> = [];
+
+      for (const group of Array.from(preparedItemsByProject.values())) {
+        const aggregatedLines = new Map<string, any>();
+
+        for (const entry of group.items) {
+          const aggregationKey = entry.item.sapItemCode?.trim()
+            ? `sap:${entry.item.sapItemCode.trim()}`
+            : `item:${entry.processedItemId}`;
+          const existingLine = aggregatedLines.get(aggregationKey);
+
+          if (existingLine) {
+            const nextQuantity =
+              Number(existingLine.quantity ?? 0) + Number(entry.item.quantity ?? 0);
+            existingLine.quantity = nextQuantity.toFixed(2);
+            continue;
+          }
+
+          aggregatedLines.set(aggregationKey, {
+            purchaseRequestItemId: null,
+            materialRequestItemId: entry.processedItemId,
+            originalSapItemCode: entry.item.sapItemCode,
+            currentSapItemCode: entry.item.sapItemCode,
+            itemName: entry.item.sapItemDescription || entry.item.itemName,
+            quantity: entry.item.quantity,
+            receivedQuantity: "0.00",
+            unit: entry.item.unit,
+            notes: input.notes,
+          });
+        }
+
+        const purchaseOrder = await db.createPurchaseOrder(
+          {
+            purchaseRequestId: null,
+            projectId: group.projectId,
+            classification: "cd",
+            purchaseType: "local",
+            supplierId: input.supplierId,
+            supplierEmail: null,
+            status: "emitida",
+            neededBy: group.neededBy ?? null,
+            sapDocumentNumber: null,
+            notes: input.notes ?? `Compra directa por ${input.paymentMethod}`,
+            printedDocumentName: null,
+            printedDocumentMimeType: null,
+            printedDocumentContent: null,
+            printedAt: null,
+            emailStatus: "pendiente",
+            emailedAt: null,
+            emailError: null,
+            createdById: ctx.user.id,
+          },
+          Array.from(aggregatedLines.values())
+        );
+
+        createdOrders.push({
+          projectId: group.projectId,
+          purchaseOrderId: purchaseOrder.id,
+          purchaseOrderNumber: purchaseOrder.orderNumber,
+        });
+
+        for (const entry of group.items) {
+          await db.createSupplyFlowRecord({
+            requestId: entry.requestId,
+            requestItemId: entry.processedItemId,
+            flowType: "compra_directa",
+            paymentMethod: input.paymentMethod,
+            supplierId: input.supplierId,
+            purchaseOrderNumber: purchaseOrder.orderNumber,
+            sapDocumentType: "orden_compra",
+            processedById: ctx.user.id,
+            notes: input.notes,
+            status: "en_proceso",
+          });
+        }
+      }
+
+      for (const requestId of requestIds) {
+        await checkAndUpdateRequestStatus(requestId, ctx.user.id);
+      }
+
+      if (createdOrders.length === 1) {
+        return {
+          success: true,
+          purchaseOrderId: createdOrders[0].purchaseOrderId,
+          purchaseOrderNumber: createdOrders[0].purchaseOrderNumber,
+          processedItems: preparedItems.length,
+        };
+      }
 
       return {
         success: true,
-        purchaseOrderId: purchaseOrder.id,
-        purchaseOrderNumber: purchaseOrder.orderNumber,
+        purchaseOrders: createdOrders,
         processedItems: preparedItems.length,
       };
     }),
