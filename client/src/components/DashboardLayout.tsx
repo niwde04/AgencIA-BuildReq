@@ -28,6 +28,7 @@ import {
   PanelLeft,
   ClipboardList,
   Package,
+  PackageMinus,
   Building2,
   ArrowLeftRight,
   RotateCcw,
@@ -70,6 +71,12 @@ const allMenuItems: MenuItem[] = [
     label: "Inventario",
     path: "/inventario",
     roles: ["jefe_bodega_central", "administracion_central"],
+  },
+  {
+    icon: PackageMinus,
+    label: "Salidas de Bodega",
+    path: "/salidas-bodega",
+    roles: ["jefe_bodega_central", "administracion_central", "admin"],
   },
   {
     icon: Building2,

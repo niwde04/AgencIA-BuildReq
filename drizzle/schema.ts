@@ -166,6 +166,11 @@ export const receiptStatusEnum = pgEnum("receipt_status", [
   "parcial",
   "completa",
 ]);
+export const warehouseExitStatusEnum = pgEnum("warehouse_exit_status", [
+  "borrador",
+  "emitida",
+  "anulada",
+]);
 export const receiptSourceTypeEnum = pgEnum("receipt_source_type", [
   "purchase_order",
   "transfer",
@@ -418,6 +423,7 @@ export const purchaseRequests = pgTable(
     id: serial("id").primaryKey(),
     requestNumber: varchar("requestNumber", { length: 20 }).notNull().unique(),
     materialRequestId: integer("materialRequestId"),
+    sourcePurchaseOrderId: integer("sourcePurchaseOrderId"),
     projectId: integer("projectId").notNull(),
     createdById: integer("createdById").notNull(),
     purchaseType: purchaseTypeEnum("purchaseType").notNull(),
@@ -437,6 +443,7 @@ export const purchaseRequests = pgTable(
   (table) => ({
     projectIdx: index("pr_project_idx").on(table.projectId),
     materialRequestIdx: index("pr_material_request_idx").on(table.materialRequestId),
+    sourcePurchaseOrderIdx: index("pr_source_purchase_order_idx").on(table.sourcePurchaseOrderId),
     statusIdx: index("pr_status_idx").on(table.status),
   })
 );
@@ -450,6 +457,7 @@ export const purchaseRequestItems = pgTable(
     id: serial("id").primaryKey(),
     purchaseRequestId: integer("purchaseRequestId").notNull(),
     materialRequestItemId: integer("materialRequestItemId"),
+    sourcePurchaseOrderItemId: integer("sourcePurchaseOrderItemId"),
     originalSapItemCode: varchar("originalSapItemCode", { length: 50 }),
     currentSapItemCode: varchar("currentSapItemCode", { length: 50 }),
     itemName: varchar("itemName", { length: 500 }).notNull(),
@@ -528,6 +536,10 @@ export const purchaseOrderItems = pgTable(
       .default("0.00")
       .notNull(),
     taxCode: purchaseOrderTaxCodeEnum("taxCode").default("exe").notNull(),
+    receiptClosed: boolean("receiptClosed").default(false).notNull(),
+    receiptClosedAt: timestamp("receiptClosedAt"),
+    receiptClosedById: integer("receiptClosedById"),
+    receiptCloseNote: text("receiptCloseNote"),
     notes: text("notes"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
@@ -687,6 +699,71 @@ export const receiptItems = pgTable(
 
 export type ReceiptItem = typeof receiptItems.$inferSelect;
 export type InsertReceiptItem = typeof receiptItems.$inferInsert;
+
+// ============================================================
+// WAREHOUSE EXITS - Formal outbound inventory transactions
+// ============================================================
+export const warehouseExits = pgTable(
+  "warehouseExits",
+  {
+    id: serial("id").primaryKey(),
+    exitNumber: varchar("exitNumber", { length: 20 }).notNull().unique(),
+    projectId: integer("projectId").notNull(),
+    warehouseId: integer("warehouseId").references(() => warehouses.id, {
+      onDelete: "set null",
+    }),
+    materialRequestId: integer("materialRequestId"),
+    createdById: integer("createdById").notNull(),
+    emittedById: integer("emittedById"),
+    cancelledById: integer("cancelledById"),
+    status: warehouseExitStatusEnum("status").default("borrador").notNull(),
+    exitDate: timestamp("exitDate").defaultNow().notNull(),
+    emittedAt: timestamp("emittedAt"),
+    cancelledAt: timestamp("cancelledAt"),
+    cancellationReason: text("cancellationReason"),
+    notes: text("notes"),
+    printedDocumentName: varchar("printedDocumentName", { length: 255 }),
+    printedDocumentMimeType: varchar("printedDocumentMimeType", { length: 100 }),
+    printedDocumentContent: text("printedDocumentContent"),
+    printedAt: timestamp("printedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    projectIdx: index("we_project_idx").on(table.projectId),
+    warehouseIdx: index("we_warehouse_idx").on(table.warehouseId),
+    materialRequestIdx: index("we_material_request_idx").on(table.materialRequestId),
+    statusIdx: index("we_status_idx").on(table.status),
+    createdByIdx: index("we_created_by_idx").on(table.createdById),
+  })
+);
+
+export type WarehouseExit = typeof warehouseExits.$inferSelect;
+export type InsertWarehouseExit = typeof warehouseExits.$inferInsert;
+
+export const warehouseExitItems = pgTable(
+  "warehouseExitItems",
+  {
+    id: serial("id").primaryKey(),
+    warehouseExitId: integer("warehouseExitId").notNull(),
+    materialRequestItemId: integer("materialRequestItemId"),
+    sapItemCode: varchar("sapItemCode", { length: 50 }).notNull(),
+    itemName: varchar("itemName", { length: 500 }).notNull(),
+    quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull(),
+    unit: varchar("unit", { length: 50 }),
+    notes: text("notes"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    warehouseExitIdx: index("wei_warehouse_exit_idx").on(table.warehouseExitId),
+    requestItemIdx: index("wei_request_item_idx").on(table.materialRequestItemId),
+    sapCodeIdx: index("wei_sap_code_idx").on(table.sapItemCode),
+  })
+);
+
+export type WarehouseExitItem = typeof warehouseExitItems.$inferSelect;
+export type InsertWarehouseExitItem = typeof warehouseExitItems.$inferInsert;
 
 // ============================================================
 // OPENING BALANCES - Initial stock load for project warehouses

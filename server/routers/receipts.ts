@@ -162,6 +162,13 @@ export const receiptsRouter = router({
             });
           }
 
+          if (sourceItem.receiptClosed) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `La línea ${sourceItem.itemName} fue cerrada y ya no admite recepciones`,
+            });
+          }
+
           const pendingQuantity = Math.max(
             Number(sourceItem.quantity ?? 0) - Number(sourceItem.receivedQuantity ?? 0),
             0

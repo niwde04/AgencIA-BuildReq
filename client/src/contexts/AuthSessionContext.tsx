@@ -1,9 +1,18 @@
 import { supabase } from "@/lib/supabase";
 import { trpc } from "@/lib/trpc";
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 type AuthSessionContextValue = {
   ready: boolean;
+  clearBackendSession: () => Promise<void>;
 };
 
 const AuthSessionContext = createContext<AuthSessionContextValue | undefined>(
@@ -20,6 +29,7 @@ export function AuthSessionProvider({ children }: AuthSessionProviderProps) {
   const lastSyncedTokenRef = useRef<string | null>(null);
   const syncPromiseRef = useRef<Promise<void> | null>(null);
   const clearPromiseRef = useRef<Promise<void> | null>(null);
+  const utilsRef = useRef(utils);
 
   const syncSessionMutation = trpc.auth.syncSupabaseSession.useMutation({
     onSuccess: () => {
@@ -29,43 +39,54 @@ export function AuthSessionProvider({ children }: AuthSessionProviderProps) {
   const clearSessionMutation = trpc.auth.logout.useMutation({
     onSuccess: () => {
       utils.auth.me.setData(undefined, null);
-      void utils.auth.me.invalidate();
     },
   });
+  const syncSessionMutationRef = useRef(syncSessionMutation.mutateAsync);
+  const clearSessionMutationRef = useRef(clearSessionMutation.mutateAsync);
 
-  const syncBackendSession = useCallback(
-    async (token: string) => {
+  useEffect(() => {
+    utilsRef.current = utils;
+  }, [utils]);
+
+  useEffect(() => {
+    syncSessionMutationRef.current = syncSessionMutation.mutateAsync;
+  }, [syncSessionMutation.mutateAsync]);
+
+  useEffect(() => {
+    clearSessionMutationRef.current = clearSessionMutation.mutateAsync;
+  }, [clearSessionMutation.mutateAsync]);
+
+  const syncBackendSession = useCallback(async (token: string) => {
+    if (lastSyncedTokenRef.current === token) {
+      return;
+    }
+
+    if (syncPromiseRef.current) {
+      await syncPromiseRef.current;
       if (lastSyncedTokenRef.current === token) {
         return;
       }
+    }
 
-      if (syncPromiseRef.current) {
-        await syncPromiseRef.current;
-        if (lastSyncedTokenRef.current === token) {
-          return;
-        }
+    const syncPromise = (async () => {
+      await syncSessionMutationRef.current({ token });
+      lastSyncedTokenRef.current = token;
+    })();
+
+    syncPromiseRef.current = syncPromise;
+
+    try {
+      await syncPromise;
+    } finally {
+      if (syncPromiseRef.current === syncPromise) {
+        syncPromiseRef.current = null;
       }
-
-      const syncPromise = (async () => {
-        await syncSessionMutation.mutateAsync({ token });
-        lastSyncedTokenRef.current = token;
-      })();
-
-      syncPromiseRef.current = syncPromise;
-
-      try {
-        await syncPromise;
-      } finally {
-        if (syncPromiseRef.current === syncPromise) {
-          syncPromiseRef.current = null;
-        }
-      }
-    },
-    [syncSessionMutation]
-  );
+    }
+  }, []);
 
   const clearBackendSession = useCallback(async () => {
     lastSyncedTokenRef.current = null;
+    utilsRef.current.auth.me.setData(undefined, null);
 
     if (clearPromiseRef.current) {
       await clearPromiseRef.current;
@@ -73,7 +94,11 @@ export function AuthSessionProvider({ children }: AuthSessionProviderProps) {
     }
 
     const clearPromise = (async () => {
-      await clearSessionMutation.mutateAsync();
+      try {
+        await clearSessionMutationRef.current();
+      } catch (error) {
+        console.error("[Auth] Failed to clear backend session", error);
+      }
     })();
 
     clearPromiseRef.current = clearPromise;
@@ -85,7 +110,7 @@ export function AuthSessionProvider({ children }: AuthSessionProviderProps) {
         clearPromiseRef.current = null;
       }
     }
-  }, [clearSessionMutation]);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -101,7 +126,7 @@ export function AuthSessionProvider({ children }: AuthSessionProviderProps) {
         if (session?.access_token) {
           await syncBackendSession(session.access_token);
         } else {
-          await clearBackendSession();
+          void clearBackendSession();
         }
       } catch (error) {
         console.error("[Auth] Failed to bootstrap session bridge", error);
@@ -123,7 +148,9 @@ export function AuthSessionProvider({ children }: AuthSessionProviderProps) {
         (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") &&
         session?.access_token
       ) {
-        void syncBackendSession(session.access_token);
+        void syncBackendSession(session.access_token).catch(error => {
+          console.error("[Auth] Failed to sync backend session", error);
+        });
         return;
       }
 
@@ -138,8 +165,13 @@ export function AuthSessionProvider({ children }: AuthSessionProviderProps) {
     };
   }, [clearBackendSession, syncBackendSession]);
 
+  const value = useMemo(
+    () => ({ ready, clearBackendSession }),
+    [clearBackendSession, ready]
+  );
+
   return (
-    <AuthSessionContext.Provider value={{ ready }}>
+    <AuthSessionContext.Provider value={value}>
       {children}
     </AuthSessionContext.Provider>
   );

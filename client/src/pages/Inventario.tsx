@@ -31,13 +31,15 @@ import {
 import {
   ArrowUpDown,
   ArrowRightLeft,
+  BookOpen,
   ChevronDown,
   ChevronUp,
+  ClipboardList,
   Plus,
   Search,
   Warehouse,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 type InventorySortField =
@@ -87,6 +89,44 @@ function buildPageItems(currentPage: number, totalPages: number) {
   return [1, "ellipsis", currentPage - 1, currentPage, currentPage + 1, "ellipsis", totalPages] as const;
 }
 
+function formatDate(value: string | Date | null | undefined) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("es-HN");
+}
+
+function formatQuantity(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return "0.00";
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return String(value);
+  return numeric.toLocaleString("es-HN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatProject(project: any | null | undefined) {
+  if (!project) return "Inventario Central";
+  return `${project.code} - ${project.name}`;
+}
+
+function formatStatus(status: string | null | undefined) {
+  if (!status) return "—";
+  return status.replace(/_/g, " ");
+}
+
+function formatMovementType(type: string) {
+  const labels: Record<string, string> = {
+    saldo_inicial: "Saldo inicial",
+    recepcion_oc: "Recepción OC",
+    recepcion_traslado: "Recepción traslado",
+    despacho_bodega: "Despacho",
+    salida_traslado: "Salida traslado",
+  };
+  return labels[type] ?? type.replace(/_/g, " ");
+}
+
 export default function Inventario() {
   const { user } = useAuth();
   const utils = trpc.useUtils();
@@ -103,6 +143,8 @@ export default function Inventario() {
   const [bulkAssignmentMode, setBulkAssignmentMode] =
     useState<BulkAssignmentMode>("selected");
   const [selectedItem, setSelectedItem] = useState<any | null>(null);
+  const [trackingItem, setTrackingItem] = useState<any | null>(null);
+  const [kardexItem, setKardexItem] = useState<any | null>(null);
   const [assignmentProjectId, setAssignmentProjectId] = useState("none");
   const [bulkAssignmentProjectId, setBulkAssignmentProjectId] = useState("none");
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
@@ -216,6 +258,31 @@ export default function Inventario() {
   } = trpc.inventory.list.useQuery(listQueryInput, {
     placeholderData: (previousData) => previousData,
   });
+
+  const trackingQuery = trpc.inventory.tracking.useQuery(
+    {
+      sapItemCode: trackingItem?.sapItemCode ?? "",
+      projectId: trackingItem?.project?.id ?? undefined,
+      warehouseId:
+        trackingItem?.warehouse?.id ?? trackingItem?.warehouseId ?? undefined,
+      warehouseLocation: trackingItem?.warehouseLocation ?? undefined,
+    },
+    {
+      enabled: Boolean(trackingItem?.sapItemCode),
+    }
+  );
+
+  const kardexQuery = trpc.inventory.kardex.useQuery(
+    {
+      sapItemCode: kardexItem?.sapItemCode ?? "",
+      projectId: kardexItem?.project?.id ?? undefined,
+      warehouseId: kardexItem?.warehouse?.id ?? kardexItem?.warehouseId ?? undefined,
+      warehouseLocation: kardexItem?.warehouseLocation ?? undefined,
+    },
+    {
+      enabled: Boolean(kardexItem?.sapItemCode),
+    }
+  );
 
   useEffect(() => {
     if (data?.page && data.page !== page) {
@@ -408,6 +475,13 @@ export default function Inventario() {
       `${String(project.code).toUpperCase()} - ${String(project.name).toUpperCase()} - BODEGA`
     );
   };
+
+  const trackingData = trackingQuery.data;
+  const kardexData = kardexQuery.data;
+  const trackingTotal =
+    (trackingData?.materialRequests.length ?? 0) +
+    (trackingData?.purchaseRequests.length ?? 0) +
+    (trackingData?.purchaseOrders.length ?? 0);
 
   return (
     <div className="space-y-6">
@@ -802,9 +876,305 @@ export default function Inventario() {
         </>
       ) : null}
 
-      <div className="flex flex-col gap-3 md:flex-row md:items-center">
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      <Dialog
+        open={Boolean(trackingItem)}
+        onOpenChange={(open) => {
+          if (!open) setTrackingItem(null);
+        }}
+      >
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-6xl">
+          <DialogHeader>
+            <DialogTitle>
+              Seguimiento · {trackingItem?.sapItemCode}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-2">
+            <div className="rounded-lg border bg-muted/30 p-3">
+              <p className="font-medium text-foreground">
+                {trackingItem?.name}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {formatProject(trackingItem?.project)} ·{" "}
+                {trackingItem?.warehouseLocation || "Sin almacén"}
+              </p>
+            </div>
+
+            {trackingQuery.isLoading ? (
+              <div className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
+                Cargando seguimiento...
+              </div>
+            ) : trackingQuery.error ? (
+              <div className="rounded-lg border border-destructive/30 p-6 text-center text-sm text-destructive">
+                {trackingQuery.error.message}
+              </div>
+            ) : trackingTotal === 0 ? (
+              <div className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
+                No hay solicitudes ni órdenes de compra en proceso para este ítem.
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {[
+                  {
+                    title: "Requisiciones",
+                    rows: trackingData?.materialRequests ?? [],
+                  },
+                  {
+                    title: "Solicitudes de compra",
+                    rows: trackingData?.purchaseRequests ?? [],
+                  },
+                  {
+                    title: "Órdenes de compra",
+                    rows: trackingData?.purchaseOrders ?? [],
+                  },
+                ].map((section) => (
+                  <div key={section.title} className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold">
+                        {section.title}
+                      </h3>
+                      <span className="text-xs text-muted-foreground">
+                        {section.rows.length.toLocaleString("es-HN")}
+                      </span>
+                    </div>
+                    {section.rows.length === 0 ? (
+                      <div className="rounded-lg border px-3 py-4 text-sm text-muted-foreground">
+                        Sin registros en proceso.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto rounded-lg border">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b bg-muted/40">
+                              <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Documento
+                              </th>
+                              <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Estado
+                              </th>
+                              <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Proyecto
+                              </th>
+                              <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Cantidad
+                              </th>
+                              <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Pendiente
+                              </th>
+                              <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Fecha necesaria
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {section.rows.map((row: any) => (
+                              <tr
+                                key={`${section.title}-${row.id}`}
+                                className="border-b last:border-0"
+                              >
+                                <td className="p-3 font-mono text-xs">
+                                  {row.documentNumber}
+                                </td>
+                                <td className="p-3">
+                                  <span className="inline-flex rounded-md border px-2 py-1 text-xs capitalize">
+                                    {formatStatus(row.status)}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-xs">
+                                  {formatProject(row.project)}
+                                </td>
+                                <td className="p-3 text-right">
+                                  {formatQuantity(row.quantity)}{" "}
+                                  <span className="text-xs text-muted-foreground">
+                                    {row.unit || ""}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-right font-medium">
+                                  {formatQuantity(row.pendingQuantity)}
+                                </td>
+                                <td className="p-3 text-xs">
+                                  {formatDate(row.neededBy)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(kardexItem)}
+        onOpenChange={(open) => {
+          if (!open) setKardexItem(null);
+        }}
+      >
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-6xl">
+          <DialogHeader>
+            <DialogTitle>Kardex · {kardexItem?.sapItemCode}</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-5 pt-2">
+            <div className="rounded-lg border bg-muted/30 p-3">
+              <p className="font-medium text-foreground">{kardexItem?.name}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {formatProject(kardexItem?.project)} ·{" "}
+                {kardexItem?.warehouseLocation || "Sin almacén"}
+              </p>
+            </div>
+
+            {kardexQuery.isLoading ? (
+              <div className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
+                Cargando Kardex...
+              </div>
+            ) : kardexQuery.error ? (
+              <div className="rounded-lg border border-destructive/30 p-6 text-center text-sm text-destructive">
+                {kardexQuery.error.message}
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <h3 className="text-sm font-semibold">Existencias actuales</h3>
+                  {(kardexData?.balances.length ?? 0) === 0 ? (
+                    <div className="rounded-lg border px-3 py-4 text-sm text-muted-foreground">
+                      Sin existencias actuales.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-lg border">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b bg-muted/40">
+                            <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Proyecto
+                            </th>
+                            <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Almacén
+                            </th>
+                            <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Stock
+                            </th>
+                            <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Actualizado
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(kardexData?.balances ?? []).map((balance: any) => (
+                            <tr key={balance.id} className="border-b last:border-0">
+                              <td className="p-3 text-xs">
+                                {formatProject(balance.project)}
+                              </td>
+                              <td className="p-3 text-xs">
+                                {balance.warehouseLocation || "—"}
+                              </td>
+                              <td className="p-3 text-right font-medium">
+                                {formatQuantity(balance.currentStock)}{" "}
+                                <span className="text-xs text-muted-foreground">
+                                  {balance.unit || ""}
+                                </span>
+                              </td>
+                              <td className="p-3 text-xs">
+                                {formatDate(balance.updatedAt)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <h3 className="text-sm font-semibold">Movimientos</h3>
+                  {(kardexData?.movements.length ?? 0) === 0 ? (
+                    <div className="rounded-lg border px-3 py-4 text-sm text-muted-foreground">
+                      Sin movimientos registrados.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-lg border">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b bg-muted/40">
+                            <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Fecha
+                            </th>
+                            <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Tipo
+                            </th>
+                            <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Documento
+                            </th>
+                            <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Proyecto
+                            </th>
+                            <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Entrada
+                            </th>
+                            <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Salida
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(kardexData?.movements ?? []).map((movement: any) => (
+                            <tr
+                              key={movement.id}
+                              className="border-b last:border-0"
+                            >
+                              <td className="p-3 text-xs">
+                                {formatDate(movement.date)}
+                              </td>
+                              <td className="p-3 text-xs">
+                                {formatMovementType(movement.type)}
+                              </td>
+                              <td className="p-3">
+                                <div className="font-mono text-xs">
+                                  {movement.documentNumber}
+                                </div>
+                                {movement.sourceNumber ? (
+                                  <div className="text-xs text-muted-foreground">
+                                    Origen: {movement.sourceNumber}
+                                  </div>
+                                ) : null}
+                              </td>
+                              <td className="p-3 text-xs">
+                                {formatProject(movement.project)}
+                              </td>
+                              <td className="p-3 text-right font-medium text-emerald-700">
+                                {movement.direction === "entrada"
+                                  ? formatQuantity(movement.quantity)
+                                  : "—"}
+                              </td>
+                              <td className="p-3 text-right font-medium text-destructive">
+                                {movement.direction === "salida"
+                                  ? formatQuantity(movement.quantity)
+                                  : "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <div className="grid gap-3 lg:grid-cols-[minmax(280px,1fr)_minmax(240px,384px)_minmax(240px,320px)] lg:items-end">
+        <div className="relative min-w-0">
+          <Label className="mb-1 block text-xs font-medium text-muted-foreground">
+            Búsqueda
+          </Label>
+          <Search className="absolute left-3 top-[calc(50%+10px)] -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Buscar por nombre, código, categoría, proyecto o almacén..."
             value={search}
@@ -813,13 +1183,18 @@ export default function Inventario() {
           />
         </div>
 
-        <div className="w-full md:w-72">
+        <div className="min-w-0">
+          <Label className="mb-1 block text-xs font-medium text-muted-foreground">
+            Proyecto ({(projects ?? []).length.toLocaleString("es-HN")})
+          </Label>
           <Select value={projectFilter} onValueChange={setProjectFilter}>
-            <SelectTrigger className="h-9">
+            <SelectTrigger className="h-9 w-full min-w-0">
               <SelectValue placeholder="Filtrar por proyecto" />
             </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos los proyectos</SelectItem>
+            <SelectContent className="max-h-[360px]">
+              <SelectItem value="all">
+                Todos los proyectos ({(projects ?? []).length.toLocaleString("es-HN")})
+              </SelectItem>
               {(projects ?? []).map((project) => (
                 <SelectItem key={project.id} value={String(project.id)}>
                   {project.code} - {project.name}
@@ -830,13 +1205,18 @@ export default function Inventario() {
         </div>
 
         {canAccessWarehouses ? (
-          <div className="w-full md:w-72">
+          <div className="min-w-0">
+            <Label className="mb-1 block text-xs font-medium text-muted-foreground">
+              Bodega / almacén ({(warehouses ?? []).length.toLocaleString("es-HN")})
+            </Label>
             <Select value={warehouseFilter} onValueChange={setWarehouseFilter}>
-              <SelectTrigger className="h-9">
+              <SelectTrigger className="h-9 w-full min-w-0">
                 <SelectValue placeholder="Filtrar por almacén" />
               </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos los almacenes</SelectItem>
+              <SelectContent className="max-h-[360px]">
+                <SelectItem value="all">
+                  Todos los almacenes ({(warehouses ?? []).length.toLocaleString("es-HN")})
+                </SelectItem>
                 {(warehouses ?? []).map((warehouse) => (
                   <SelectItem key={warehouse.id} value={String(warehouse.id)}>
                     {warehouse.displayName}
@@ -938,20 +1318,34 @@ export default function Inventario() {
                         </th>
                       ) : null}
                       {columns.map((column) => (
-                        <th
-                          key={column.key}
-                          className={`p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground ${column.align === "right" ? "text-right" : "text-left"}`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => handleSort(column.key)}
-                            className={`inline-flex items-center gap-1.5 transition-colors hover:text-foreground ${column.align === "right" ? "ml-auto" : ""}`}
+                        <Fragment key={column.key}>
+                          <th
+                            className={`p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground ${column.align === "right" ? "text-right" : "text-left"}`}
                           >
-                            <span>{column.label}</span>
-                            {renderSortIcon(column.key)}
-                          </button>
-                        </th>
+                            <button
+                              type="button"
+                              onClick={() => handleSort(column.key)}
+                              className={`inline-flex items-center gap-1.5 transition-colors hover:text-foreground ${column.align === "right" ? "ml-auto" : ""}`}
+                            >
+                              <span>{column.label}</span>
+                              {renderSortIcon(column.key)}
+                            </button>
+                          </th>
+                          {column.key === "currentStock" ? (
+                            <>
+                              <th className="p-3 font-semibold text-xs uppercase tracking-wider text-right text-muted-foreground">
+                                Total requeridas
+                              </th>
+                              <th className="p-3 font-semibold text-xs uppercase tracking-wider text-right text-muted-foreground">
+                                Por recibirse
+                              </th>
+                            </>
+                          ) : null}
+                        </Fragment>
                       ))}
+                      <th className="p-3 font-semibold text-xs uppercase tracking-wider text-right text-muted-foreground">
+                        Consultas
+                      </th>
                       {canManage && allowInventoryReassignment ? (
                         <th className="p-3 font-semibold text-xs uppercase tracking-wider text-left text-muted-foreground">
                           Acciones
@@ -1004,6 +1398,12 @@ export default function Inventario() {
                               {item.currentStock || "0"}
                             </span>
                           </td>
+                          <td className="p-3 text-right font-semibold">
+                            {formatQuantity(item.totalRequiredQuantity)}
+                          </td>
+                          <td className="p-3 text-right font-semibold">
+                            {formatQuantity(item.pendingReceiptQuantity)}
+                          </td>
                           <td className="p-3 text-right text-muted-foreground">
                             {item.minimumStock || "—"}
                           </td>
@@ -1014,6 +1414,36 @@ export default function Inventario() {
                           </td>
                           <td className="p-3 text-xs">
                             {item.warehouseLocation || "—"}
+                          </td>
+                          <td className="p-3">
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-8 px-2"
+                                title="Seguimiento"
+                                onClick={() => setTrackingItem(item)}
+                              >
+                                <ClipboardList className="h-3.5 w-3.5" />
+                                <span className="ml-2 hidden xl:inline">
+                                  Seguimiento
+                                </span>
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-8 px-2"
+                                title="Kardex"
+                                onClick={() => setKardexItem(item)}
+                              >
+                                <BookOpen className="h-3.5 w-3.5" />
+                                <span className="ml-2 hidden xl:inline">
+                                  Kardex
+                                </span>
+                              </Button>
+                            </div>
                           </td>
                           {canManage && allowInventoryReassignment ? (
                             <td className="p-3">

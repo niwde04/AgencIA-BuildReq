@@ -50,6 +50,12 @@ export default function SaldosIniciales() {
   );
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<OpeningBalanceItemRow[]>([{ ...EMPTY_ROW }]);
+  const [appendItems, setAppendItems] = useState<OpeningBalanceItemRow[]>([
+    { ...EMPTY_ROW },
+  ]);
+  const [resolvingAppendSapIndex, setResolvingAppendSapIndex] = useState<
+    number | null
+  >(null);
 
   const { data: balances, isLoading } = trpc.openingBalances.list.useQuery();
   const { data: projects } = trpc.projects.list.useQuery();
@@ -58,18 +64,35 @@ export default function SaldosIniciales() {
     { enabled: Boolean(selectedId) }
   );
 
-  const availableProjects = useMemo(() => {
-    const usedProjectIds = new Set(
-      (balances ?? []).map((entry: any) => entry.openingBalance.projectId)
-    );
+  const projectsWithOpeningBalanceIds = useMemo(
+    () =>
+      new Set(
+        (balances ?? []).map((entry: any) => entry.openingBalance.projectId)
+      ),
+    [balances]
+  );
 
+  const availableProjects = useMemo(() => {
     return (projects ?? []).filter(
-      (project: any) =>
-        project.warehouse &&
-        project.status === "activo" &&
-        !usedProjectIds.has(project.id)
+      (project: any) => project.warehouse && project.status === "activo"
     );
-  }, [balances, projects]);
+  }, [projects]);
+
+  const selectableProjectsCount = useMemo(
+    () =>
+      availableProjects.filter(
+        (project: any) => !projectsWithOpeningBalanceIds.has(project.id)
+      ).length,
+    [availableProjects, projectsWithOpeningBalanceIds]
+  );
+
+  const registeredOpeningBalanceCount = useMemo(
+    () =>
+      (balances ?? [])
+        .map((entry: any) => entry.openingBalance.projectId)
+        .filter(Boolean).length,
+    [balances]
+  );
 
   const selectedProject = useMemo(
     () =>
@@ -92,6 +115,21 @@ export default function SaldosIniciales() {
     onError: (error) => toast.error(error.message),
   });
   const lookupSapItemMutation = trpc.requestItems.lookupSapItem.useMutation({
+    onError: (error) => toast.error(error.message),
+  });
+  const addItemsMutation = trpc.openingBalances.addItems.useMutation({
+    onSuccess: (result) => {
+      toast.success(`${result.addedItems} ítem(s) agregado(s) al saldo inicial`);
+      setAppendItems([{ ...EMPTY_ROW }]);
+      setResolvingAppendSapIndex(null);
+      void Promise.all([
+        utils.openingBalances.list.invalidate(),
+        selectedId
+          ? utils.openingBalances.getById.invalidate({ id: selectedId })
+          : Promise.resolve(),
+        utils.inventory.list.invalidate(),
+      ]);
+    },
     onError: (error) => toast.error(error.message),
   });
 
@@ -120,6 +158,29 @@ export default function SaldosIniciales() {
   const removeItem = (index: number) => {
     setItems((current) =>
       current.length === 1 ? current : current.filter((_, itemIndex) => itemIndex !== index)
+    );
+  };
+
+  const updateAppendItem = (
+    index: number,
+    field: keyof OpeningBalanceItemRow,
+    value: string
+  ) => {
+    setAppendItems((current) => {
+      const next = [...current];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
+  const addAppendItem = () =>
+    setAppendItems((current) => [...current, { ...EMPTY_ROW }]);
+
+  const removeAppendItem = (index: number) => {
+    setAppendItems((current) =>
+      current.length === 1
+        ? current
+        : current.filter((_, itemIndex) => itemIndex !== index)
     );
   };
 
@@ -165,6 +226,48 @@ export default function SaldosIniciales() {
     }
   };
 
+  const resolveAppendSapItem = async (index: number) => {
+    const row = appendItems[index];
+    const normalizedSapItemCode = row?.sapItemCode.trim();
+    if (!normalizedSapItemCode) return;
+
+    setResolvingAppendSapIndex(index);
+    try {
+      const result = await lookupSapItemMutation.mutateAsync({
+        sapItemCode: normalizedSapItemCode,
+      });
+
+      if (!result) {
+        setAppendItems((current) => {
+          const next = [...current];
+          if (!next[index]) return current;
+          next[index] = {
+            ...next[index],
+            sapItemCode: normalizedSapItemCode,
+          };
+          return next;
+        });
+        return;
+      }
+
+      setAppendItems((current) => {
+        const next = [...current];
+        const currentRow = next[index];
+        if (!currentRow) return current;
+
+        next[index] = {
+          ...currentRow,
+          sapItemCode: result.sapItemCode,
+          itemName: currentRow.itemName.trim() || result.itemName || currentRow.itemName,
+          unit: currentRow.unit.trim() || result.unit || currentRow.unit,
+        };
+        return next;
+      });
+    } finally {
+      setResolvingAppendSapIndex((current) => (current === index ? null : current));
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -184,7 +287,7 @@ export default function SaldosIniciales() {
           }}
         >
           <DialogTrigger asChild>
-            <Button disabled={availableProjects.length === 0}>
+            <Button disabled={selectableProjectsCount === 0}>
               <Plus className="mr-2 h-4 w-4" />
               Registrar saldo inicial
             </Button>
@@ -204,14 +307,32 @@ export default function SaldosIniciales() {
                     <SelectTrigger className="h-12 text-base">
                       <SelectValue placeholder="Seleccione proyecto" />
                     </SelectTrigger>
-                    <SelectContent>
-                      {availableProjects.map((project: any) => (
-                        <SelectItem key={project.id} value={String(project.id)}>
-                          {project.code} - {project.name}
-                        </SelectItem>
-                      ))}
+                    <SelectContent className="max-h-[360px]">
+                      {availableProjects.map((project: any) => {
+                        const hasOpeningBalance = projectsWithOpeningBalanceIds.has(
+                          project.id
+                        );
+                        return (
+                          <SelectItem
+                            key={project.id}
+                            value={String(project.id)}
+                            disabled={hasOpeningBalance}
+                          >
+                            {project.code} - {project.name}
+                            {hasOpeningBalance ? " (saldo registrado)" : ""}
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Mostrando {availableProjects.length.toLocaleString("es-HN")}{" "}
+                    proyectos activos con bodega
+                    {registeredOpeningBalanceCount > 0
+                      ? `; ${registeredOpeningBalanceCount.toLocaleString("es-HN")} ya tienen saldo inicial`
+                      : ""}
+                    .
+                  </p>
                 </div>
 
                 <div className="space-y-2">
@@ -346,7 +467,7 @@ export default function SaldosIniciales() {
                 </div>
               </div>
 
-              {availableProjects.length === 0 ? (
+              {selectableProjectsCount === 0 ? (
                 <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm text-muted-foreground">
                   Todas las bodegas activas ya tienen su saldo inicial registrado.
                 </div>
@@ -499,8 +620,17 @@ export default function SaldosIniciales() {
         </CardContent>
       </Card>
 
-      <Dialog open={Boolean(selectedId)} onOpenChange={(open) => !open && setSelectedId(null)}>
-        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+      <Dialog
+        open={Boolean(selectedId)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedId(null);
+            setAppendItems([{ ...EMPTY_ROW }]);
+            setResolvingAppendSapIndex(null);
+          }
+        }}
+      >
+        <DialogContent className="max-h-[92vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-2xl p-5 sm:w-[calc(100vw-3rem)] sm:max-w-7xl sm:p-8">
           <DialogHeader>
             <DialogTitle>
               {detail?.openingBalance.balanceNumber || "Saldo inicial"}
@@ -574,6 +704,141 @@ export default function SaldosIniciales() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+
+              <div className="space-y-3 rounded-xl border border-dashed border-border p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <Label className="text-sm font-semibold">
+                      Agregar más ítems
+                    </Label>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Las cantidades nuevas se sumarán al inventario de esta bodega.
+                    </p>
+                  </div>
+                  <Button type="button" variant="outline" onClick={addAppendItem}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Agregar línea
+                  </Button>
+                </div>
+
+                <div className="space-y-3">
+                  {appendItems.map((item, index) => (
+                    <div
+                      key={index}
+                      className="grid gap-3 rounded-xl border border-border/70 bg-muted/20 p-3 md:grid-cols-[150px_1fr_130px_100px_1fr_auto]"
+                    >
+                      <div className="space-y-1">
+                        <Label className="text-xs">Código SAP *</Label>
+                        <Input
+                          value={item.sapItemCode}
+                          onChange={(event) =>
+                            updateAppendItem(index, "sapItemCode", event.target.value)
+                          }
+                          onBlur={() => void resolveAppendSapItem(index)}
+                          placeholder="05050200059"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Descripción *</Label>
+                        <Input
+                          value={item.itemName}
+                          onChange={(event) =>
+                            updateAppendItem(index, "itemName", event.target.value)
+                          }
+                          placeholder="Descripción del artículo"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Cantidad *</Label>
+                        <Input
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          value={item.quantity}
+                          onChange={(event) =>
+                            updateAppendItem(index, "quantity", event.target.value)
+                          }
+                          placeholder="0.00"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Unidad</Label>
+                        <Input
+                          value={item.unit}
+                          onChange={(event) =>
+                            updateAppendItem(index, "unit", event.target.value)
+                          }
+                          placeholder="und"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Notas</Label>
+                        <Input
+                          value={item.notes}
+                          onChange={(event) =>
+                            updateAppendItem(index, "notes", event.target.value)
+                          }
+                          placeholder="Observación opcional"
+                        />
+                      </div>
+                      <div className="flex items-end gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => void resolveAppendSapItem(index)}
+                          disabled={resolvingAppendSapIndex === index}
+                        >
+                          {resolvingAppendSapIndex === index ? "Buscando..." : "SAP"}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => removeAppendItem(index)}
+                          disabled={appendItems.length === 1}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex justify-end border-t border-border/70 pt-3">
+                  <Button
+                    disabled={addItemsMutation.isPending}
+                    onClick={() => {
+                      if (!detail) return;
+
+                      const validItems = appendItems.filter(
+                        (item) =>
+                          item.sapItemCode.trim() &&
+                          item.itemName.trim() &&
+                          item.quantity.trim() &&
+                          Number(item.quantity) > 0
+                      );
+
+                      if (validItems.length === 0) {
+                        toast.error("Agrega al menos un ítem válido");
+                        return;
+                      }
+
+                      addItemsMutation.mutate({
+                        id: detail.openingBalance.id,
+                        items: validItems.map((item) => ({
+                          sapItemCode: item.sapItemCode,
+                          itemName: item.itemName,
+                          quantity: item.quantity,
+                          unit: item.unit || undefined,
+                          notes: item.notes || undefined,
+                        })),
+                      });
+                    }}
+                  >
+                    {addItemsMutation.isPending ? "Agregando..." : "Agregar ítems"}
+                  </Button>
+                </div>
               </div>
             </div>
           ) : null}

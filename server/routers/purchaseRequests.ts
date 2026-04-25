@@ -28,6 +28,16 @@ function assertProjectScopedAccess(
   }
 }
 
+function assertPurchaseRequestMutable(status: string) {
+  if (status === "convertida") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "La solicitud de compra ya fue convertida y solo está disponible en modo lectura",
+    });
+  }
+}
+
 const purchaseRequestItemSchema = z.object({
   materialRequestItemId: z.number().optional(),
   originalSapItemCode: z.string().optional(),
@@ -113,6 +123,7 @@ export const purchaseRequestsRouter = router({
       return db.createPurchaseRequest(
         {
           materialRequestId: input.materialRequestId ?? null,
+          sourcePurchaseOrderId: null,
           projectId: input.projectId,
           createdById: ctx.user.id,
           purchaseType: input.purchaseType,
@@ -164,6 +175,7 @@ export const purchaseRequestsRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseRequest.projectId);
+      assertPurchaseRequestMutable(detail.purchaseRequest.status);
 
       return db.updatePurchaseRequest(input.id, {
         purchaseType: input.purchaseType,
@@ -193,6 +205,7 @@ export const purchaseRequestsRouter = router({
       }
 
       assertProjectScopedAccess(ctx.user, detail.purchaseRequest.projectId);
+      assertPurchaseRequestMutable(detail.purchaseRequest.status);
       await db.rejectPurchaseRequest(input.id, input.reason);
       return { success: true };
     }),
@@ -214,6 +227,7 @@ export const purchaseRequestsRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseRequest.projectId);
+      assertPurchaseRequestMutable(detail.purchaseRequest.status);
       return db.updatePurchaseRequest(input.id, {
         quoteAttachmentId: input.attachmentId,
       });

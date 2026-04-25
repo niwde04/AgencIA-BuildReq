@@ -24,6 +24,7 @@ import { transferRequestsRouter } from "./routers/transferRequests";
 import { transfersRouter } from "./routers/transfers";
 import { receiptsRouter } from "./routers/receipts";
 import { openingBalancesRouter } from "./routers/openingBalances";
+import { warehouseExitsRouter } from "./routers/warehouseExits";
 
 export const appRouter = router({
   system: systemRouter,
@@ -77,6 +78,7 @@ export const appRouter = router({
   transfers: transfersRouter,
   receipts: receiptsRouter,
   openingBalances: openingBalancesRouter,
+  warehouseExits: warehouseExitsRouter,
 });
 
 export type AppRouter = typeof appRouter;

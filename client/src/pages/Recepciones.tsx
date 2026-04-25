@@ -3,6 +3,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -19,7 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Eye, Plus } from "lucide-react";
+import { Eye, Loader2, Plus, ShieldX } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -83,21 +93,40 @@ function formatQuantity(value: string | number | null | undefined) {
 }
 
 function getPendingQuantity(item: any) {
+  if (item.receiptClosed) return 0;
   return Math.max(
-    Number(item.quantity ?? item.quantityExpected ?? 0) - Number(item.receivedQuantity ?? 0),
+    Number(item.quantity ?? item.quantityExpected ?? 0) -
+      Number(item.receivedQuantity ?? 0),
     0
   );
 }
 
+function canManuallyCloseReceiptLine(item: any) {
+  const receivedQuantity = Number(item.receivedQuantity ?? 0);
+  const orderedQuantity = Number(item.quantity ?? item.quantityExpected ?? 0);
+  return (
+    !item.receiptClosed &&
+    receivedQuantity > 0 &&
+    receivedQuantity < orderedQuantity
+  );
+}
+
 function getSourceItemCode(item: any) {
-  return item.currentSapItemCode ?? item.originalSapItemCode ?? item.sapItemCode ?? null;
+  return (
+    item.currentSapItemCode ??
+    item.originalSapItemCode ??
+    item.sapItemCode ??
+    null
+  );
 }
 
 export default function Recepciones() {
   const utils = trpc.useUtils();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [viewReceiptId, setViewReceiptId] = useState<number | null>(null);
-  const [sourceType, setSourceType] = useState<"purchase_order" | "transfer">("purchase_order");
+  const [sourceType, setSourceType] = useState<"purchase_order" | "transfer">(
+    "purchase_order"
+  );
   const [sourceId, setSourceId] = useState("");
   const [notes, setNotes] = useState("");
   const [cai, setCai] = useState("");
@@ -105,6 +134,9 @@ export default function Recepciones() {
   const [documentDate, setDocumentDate] = useState("");
   const [postingDate, setPostingDate] = useState(todayDateValue());
   const [receivedMap, setReceivedMap] = useState<Record<number, string>>({});
+  const [closeReceiptLineItem, setCloseReceiptLineItem] = useState<any | null>(
+    null
+  );
 
   const { data: receipts, isLoading } = trpc.receipts.list.useQuery();
   const { data: receiptDetail, isLoading: receiptDetailLoading } =
@@ -114,35 +146,37 @@ export default function Recepciones() {
     );
   const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery();
   const { data: transfers } = trpc.transfers.list.useQuery();
-  const {
-    data: purchaseOrderDetail,
-    isLoading: purchaseOrderDetailLoading,
-  } = trpc.purchaseOrders.getById.useQuery(
-    { id: Number(sourceId) },
-    { enabled: dialogOpen && sourceType === "purchase_order" && Boolean(sourceId) }
-  );
-  const {
-    data: transferDetail,
-    isLoading: transferDetailLoading,
-  } = trpc.transfers.getById.useQuery(
-    { id: Number(sourceId) },
-    { enabled: dialogOpen && sourceType === "transfer" && Boolean(sourceId) }
-  );
+  const { data: purchaseOrderDetail, isLoading: purchaseOrderDetailLoading } =
+    trpc.purchaseOrders.getById.useQuery(
+      { id: Number(sourceId) },
+      {
+        enabled:
+          dialogOpen && sourceType === "purchase_order" && Boolean(sourceId),
+      }
+    );
+  const { data: transferDetail, isLoading: transferDetailLoading } =
+    trpc.transfers.getById.useQuery(
+      { id: Number(sourceId) },
+      { enabled: dialogOpen && sourceType === "transfer" && Boolean(sourceId) }
+    );
 
   const activeSourceDetail =
     sourceType === "purchase_order" ? purchaseOrderDetail : transferDetail;
   const activeSourceLoading =
-    sourceType === "purchase_order" ? purchaseOrderDetailLoading : transferDetailLoading;
+    sourceType === "purchase_order"
+      ? purchaseOrderDetailLoading
+      : transferDetailLoading;
 
-  const { data: receiptPurchaseOrderDetail } = trpc.purchaseOrders.getById.useQuery(
-    { id: receiptDetail?.receipt.sourceId ?? 0 },
-    {
-      enabled:
-        viewReceiptId !== null &&
-        receiptDetail?.receipt.sourceType === "purchase_order" &&
-        Boolean(receiptDetail?.receipt.sourceId),
-    }
-  );
+  const { data: receiptPurchaseOrderDetail } =
+    trpc.purchaseOrders.getById.useQuery(
+      { id: receiptDetail?.receipt.sourceId ?? 0 },
+      {
+        enabled:
+          viewReceiptId !== null &&
+          receiptDetail?.receipt.sourceType === "purchase_order" &&
+          Boolean(receiptDetail?.receipt.sourceId),
+      }
+    );
   const { data: receiptTransferDetail } = trpc.transfers.getById.useQuery(
     { id: receiptDetail?.receipt.sourceId ?? 0 },
     {
@@ -164,15 +198,26 @@ export default function Recepciones() {
     setReceivedMap({});
   };
 
+  const sourceItems = useMemo(
+    () =>
+      (activeSourceDetail?.items ?? []).filter(
+        (item: any) => getPendingQuantity(item) > 0
+      ),
+    [activeSourceDetail]
+  );
+
   useEffect(() => {
-    if (!activeSourceDetail) return;
+    if (!sourceItems.length) {
+      setReceivedMap({});
+      return;
+    }
 
     const nextMap: Record<number, string> = {};
-    for (const item of activeSourceDetail.items || []) {
+    for (const item of sourceItems) {
       nextMap[item.id] = String(getPendingQuantity(item));
     }
     setReceivedMap(nextMap);
-  }, [activeSourceDetail]);
+  }, [sourceItems]);
 
   const registerMutation = trpc.receipts.register.useMutation({
     onSuccess: () => {
@@ -185,8 +230,27 @@ export default function Recepciones() {
         utils.transfers.list.invalidate(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
+
+  const closeReceiptLineMutation =
+    trpc.purchaseOrders.closeReceiptLine.useMutation({
+      onSuccess: result => {
+        toast.success(
+          result.orderStatus === "recibida"
+            ? "Línea cerrada. La orden ya no tiene recepciones pendientes."
+            : "Línea cerrada para recepción"
+        );
+        setCloseReceiptLineItem(null);
+        if (sourceType === "purchase_order" && sourceId) {
+          void utils.purchaseOrders.getById.invalidate({
+            id: Number(sourceId),
+          });
+        }
+        void utils.purchaseOrders.list.invalidate();
+      },
+      onError: error => toast.error(error.message),
+    });
 
   const availablePurchaseOrders = useMemo(
     () =>
@@ -203,8 +267,6 @@ export default function Recepciones() {
       ),
     [transfers]
   );
-
-  const sourceItems = useMemo(() => activeSourceDetail?.items ?? [], [activeSourceDetail]);
 
   const sourceProjectId =
     sourceType === "purchase_order"
@@ -301,7 +363,7 @@ export default function Recepciones() {
       unit: item.unit || undefined,
     }));
 
-    if (!receiptItems.some((item) => Number(item.quantityReceived || 0) > 0)) {
+    if (!receiptItems.some(item => Number(item.quantityReceived || 0) > 0)) {
       toast.error("Ingresa al menos una cantidad mayor que cero");
       return;
     }
@@ -322,8 +384,10 @@ export default function Recepciones() {
 
   const receiptSourceHeaderTitle =
     receiptDetail?.receipt.sourceType === "purchase_order"
-      ? receiptPurchaseOrderDetail?.purchaseOrder.orderNumber || "Orden de Compra"
-      : receiptTransferDetail?.transfer?.transferNumber || "Solicitud de traslado";
+      ? receiptPurchaseOrderDetail?.purchaseOrder.orderNumber ||
+        "Orden de Compra"
+      : receiptTransferDetail?.transfer?.transferNumber ||
+        "Solicitud de traslado";
 
   const receiptSourceSecondaryLabel =
     receiptDetail?.receipt.sourceType === "purchase_order"
@@ -338,9 +402,27 @@ export default function Recepciones() {
 
   const receiptSourceStatusLabel = receiptDetail
     ? receiptDetail.receipt.sourceType === "purchase_order"
-      ? PURCHASE_ORDER_STATUS_LABELS[receiptPurchaseOrderDetail?.purchaseOrder.status || ""] || "—"
-      : TRANSFER_STATUS_LABELS[receiptTransferDetail?.transfer?.status || ""] || "—"
+      ? PURCHASE_ORDER_STATUS_LABELS[
+          receiptPurchaseOrderDetail?.purchaseOrder.status || ""
+        ] || "—"
+      : TRANSFER_STATUS_LABELS[receiptTransferDetail?.transfer?.status || ""] ||
+        "—"
     : "—";
+
+  const receiptSourceItemCodes = useMemo(() => {
+    const sourceItems =
+      receiptDetail?.receipt.sourceType === "purchase_order"
+        ? receiptPurchaseOrderDetail?.items
+        : receiptTransferDetail?.items;
+
+    return new Map(
+      (sourceItems ?? []).map((item: any) => [item.id, getSourceItemCode(item)])
+    );
+  }, [
+    receiptDetail?.receipt.sourceType,
+    receiptPurchaseOrderDetail?.items,
+    receiptTransferDetail?.items,
+  ]);
 
   return (
     <div className="space-y-6">
@@ -349,7 +431,7 @@ export default function Recepciones() {
 
         <Dialog
           open={dialogOpen}
-          onOpenChange={(open) => {
+          onOpenChange={open => {
             setDialogOpen(open);
             if (!open) resetForm();
           }}
@@ -382,7 +464,7 @@ export default function Recepciones() {
                   </Label>
                   <Select
                     value={sourceType}
-                    onValueChange={(value) => {
+                    onValueChange={value => {
                       setSourceType(value as "purchase_order" | "transfer");
                       setSourceId("");
                       setReceivedMap({});
@@ -396,8 +478,12 @@ export default function Recepciones() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="purchase_order">Orden de Compra</SelectItem>
-                      <SelectItem value="transfer">Solicitud de traslado</SelectItem>
+                      <SelectItem value="purchase_order">
+                        Orden de Compra
+                      </SelectItem>
+                      <SelectItem value="transfer">
+                        Solicitud de traslado
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -408,7 +494,7 @@ export default function Recepciones() {
                   </Label>
                   <Select
                     value={sourceId}
-                    onValueChange={(value) => {
+                    onValueChange={value => {
                       setSourceId(value);
                       setReceivedMap({});
                       setCai("");
@@ -428,7 +514,8 @@ export default function Recepciones() {
                               value={String(row.purchaseOrder.id)}
                               className="py-2.5"
                             >
-                              {row.purchaseOrder.orderNumber} — {row.supplier?.name || "Proveedor pendiente"}
+                              {row.purchaseOrder.orderNumber} —{" "}
+                              {row.supplier?.name || "Proveedor pendiente"}
                             </SelectItem>
                           ))
                         : availableTransfers.map((row: any) => (
@@ -437,7 +524,8 @@ export default function Recepciones() {
                               value={String(row.transfer.id)}
                               className="py-2.5"
                             >
-                              {row.transfer.transferNumber} — {row.project?.name || "Proyecto origen"}
+                              {row.transfer.transferNumber} —{" "}
+                              {row.project?.name || "Proyecto origen"}
                             </SelectItem>
                           ))}
                     </SelectContent>
@@ -453,7 +541,9 @@ export default function Recepciones() {
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                     Proyecto
                   </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">{sourceProjectLabel}</p>
+                  <p className="text-sm font-semibold leading-snug sm:text-base">
+                    {sourceProjectLabel}
+                  </p>
                 </div>
 
                 <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
@@ -508,39 +598,47 @@ export default function Recepciones() {
                     <Input
                       id="receipt-cai"
                       value={cai}
-                      onChange={(event) => setCai(event.target.value)}
+                      onChange={event => setCai(event.target.value)}
                       placeholder="CAI de la factura"
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="receipt-invoice-number">Número de factura</Label>
+                    <Label htmlFor="receipt-invoice-number">
+                      Número de factura
+                    </Label>
                     <Input
                       id="receipt-invoice-number"
                       value={invoiceNumber}
-                      onChange={(event) => setInvoiceNumber(event.target.value)}
+                      onChange={event => setInvoiceNumber(event.target.value)}
                       placeholder="Correlativo de factura"
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="receipt-document-date">Fecha documento</Label>
+                    <Label htmlFor="receipt-document-date">
+                      Fecha documento
+                    </Label>
                     <Input
                       id="receipt-document-date"
                       type="date"
                       value={documentDate}
-                      onChange={(event) => setDocumentDate(event.target.value)}
+                      onChange={event => setDocumentDate(event.target.value)}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="receipt-posting-date">Fecha contabilización</Label>
+                    <Label htmlFor="receipt-posting-date">
+                      Fecha contabilización
+                    </Label>
                     <Input
                       id="receipt-posting-date"
                       type="date"
                       value={postingDate}
-                      onChange={(event) => setPostingDate(event.target.value)}
+                      onChange={event => setPostingDate(event.target.value)}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="receipt-receipt-date">Fecha recepción</Label>
+                    <Label htmlFor="receipt-receipt-date">
+                      Fecha recepción
+                    </Label>
                     <Input
                       id="receipt-receipt-date"
                       type="date"
@@ -556,7 +654,7 @@ export default function Recepciones() {
                   <Textarea
                     id="receipt-notes"
                     value={notes}
-                    onChange={(event) => setNotes(event.target.value)}
+                    onChange={event => setNotes(event.target.value)}
                     rows={3}
                     placeholder="Observaciones, referencia de factura o comentarios de recepción"
                   />
@@ -582,24 +680,37 @@ export default function Recepciones() {
                       <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                         Recibir ahora
                       </th>
+                      <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                        Acción
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {!sourceId ? (
                       <tr>
-                        <td className="p-4 text-sm text-muted-foreground" colSpan={5}>
-                          Selecciona una orden de compra o solicitud de traslado para cargar sus ítems.
+                        <td
+                          className="p-4 text-sm text-muted-foreground"
+                          colSpan={6}
+                        >
+                          Selecciona una orden de compra o solicitud de traslado
+                          para cargar sus ítems.
                         </td>
                       </tr>
                     ) : activeSourceLoading ? (
                       <tr>
-                        <td className="p-4 text-sm text-muted-foreground" colSpan={5}>
+                        <td
+                          className="p-4 text-sm text-muted-foreground"
+                          colSpan={6}
+                        >
                           Cargando detalle del documento...
                         </td>
                       </tr>
                     ) : sourceItems.length === 0 ? (
                       <tr>
-                        <td className="p-4 text-sm text-muted-foreground" colSpan={5}>
+                        <td
+                          className="p-4 text-sm text-muted-foreground"
+                          colSpan={6}
+                        >
                           Este documento no tiene ítems pendientes por recibir.
                         </td>
                       </tr>
@@ -608,21 +719,30 @@ export default function Recepciones() {
                         const pendingQuantity = getPendingQuantity(item);
                         const sourceCode = getSourceItemCode(item);
                         return (
-                          <tr key={item.id} className="border-b border-border/70 last:border-0">
+                          <tr
+                            key={item.id}
+                            className="border-b border-border/70 last:border-0"
+                          >
                             <td className="p-4">
-                              <div className="font-semibold">{item.itemName}</div>
+                              <div className="font-semibold">
+                                {item.itemName}
+                              </div>
                               {sourceCode ? (
                                 <div className="mt-1 text-xs text-muted-foreground">
                                   Original: {sourceCode}
                                 </div>
                               ) : null}
                             </td>
-                            <td className="p-4 font-mono text-sm">{sourceCode || "—"}</td>
+                            <td className="p-4 font-mono text-sm">
+                              {sourceCode || "—"}
+                            </td>
                             <td className="p-4 text-right font-semibold">
-                              {formatQuantity(pendingQuantity)} {item.unit || ""}
+                              {formatQuantity(pendingQuantity)}{" "}
+                              {item.unit || ""}
                             </td>
                             <td className="p-4 text-right text-muted-foreground">
-                              {formatQuantity(item.receivedQuantity)} {item.unit || ""}
+                              {formatQuantity(item.receivedQuantity)}{" "}
+                              {item.unit || ""}
                             </td>
                             <td className="p-4 text-right">
                               <Input
@@ -631,14 +751,38 @@ export default function Recepciones() {
                                 step="0.01"
                                 className="ml-auto w-36 text-right"
                                 value={receivedMap[item.id] ?? ""}
-                                onChange={(event) =>
-                                  setReceivedMap((current) => ({
+                                onChange={event =>
+                                  setReceivedMap(current => ({
                                     ...current,
                                     [item.id]: event.target.value,
                                   }))
                                 }
                                 disabled={pendingQuantity <= 0}
                               />
+                            </td>
+                            <td className="p-4 text-right">
+                              {sourceType === "purchase_order" &&
+                              canManuallyCloseReceiptLine(item) ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="ml-auto gap-2"
+                                  onClick={() => setCloseReceiptLineItem(item)}
+                                  disabled={closeReceiptLineMutation.isPending}
+                                >
+                                  {closeReceiptLineMutation.isPending &&
+                                  closeReceiptLineItem?.id === item.id ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <ShieldX className="h-4 w-4" />
+                                  )}
+                                  Cerrar línea
+                                </Button>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">
+                                  —
+                                </span>
+                              )}
                             </td>
                           </tr>
                         );
@@ -653,9 +797,15 @@ export default function Recepciones() {
                   size="lg"
                   className="min-w-[240px] text-sm font-semibold sm:h-11 sm:text-base"
                   onClick={handleRegisterReceipt}
-                  disabled={registerMutation.isPending || !sourceId || activeSourceLoading}
+                  disabled={
+                    registerMutation.isPending ||
+                    !sourceId ||
+                    activeSourceLoading
+                  }
                 >
-                  {registerMutation.isPending ? "Registrando..." : "Registrar recepción"}
+                  {registerMutation.isPending
+                    ? "Registrando..."
+                    : "Registrar recepción"}
                 </Button>
               </div>
             </div>
@@ -665,7 +815,7 @@ export default function Recepciones() {
 
       <Dialog
         open={viewReceiptId !== null}
-        onOpenChange={(open) => {
+        onOpenChange={open => {
           if (!open) setViewReceiptId(null);
         }}
       >
@@ -677,13 +827,15 @@ export default function Recepciones() {
               </DialogTitle>
               {receiptDetail ? (
                 <Badge variant="outline" className="text-sm">
-                  {STATUS_LABELS[receiptDetail.receipt.status] || receiptDetail.receipt.status}
+                  {STATUS_LABELS[receiptDetail.receipt.status] ||
+                    receiptDetail.receipt.status}
                 </Badge>
               ) : null}
             </div>
           </DialogHeader>
 
-          {receiptDetailLoading || (viewReceiptId !== null && !receiptDetail) ? (
+          {receiptDetailLoading ||
+          (viewReceiptId !== null && !receiptDetail) ? (
             <div className="py-8 text-center text-muted-foreground">
               Cargando recepción...
             </div>
@@ -795,7 +947,8 @@ export default function Recepciones() {
                   Notas
                 </Label>
                 <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
-                  {receiptDetail.receipt.notes?.trim() || "Sin notas registradas"}
+                  {receiptDetail.receipt.notes?.trim() ||
+                    "Sin notas registradas"}
                 </p>
               </div>
 
@@ -805,6 +958,9 @@ export default function Recepciones() {
                     <tr className="border-b border-border/70 bg-muted/20">
                       <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                         Ítem
+                      </th>
+                      <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                        Código
                       </th>
                       <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                         Esperado
@@ -817,27 +973,47 @@ export default function Recepciones() {
                   <tbody>
                     {receiptDetail.items.length === 0 ? (
                       <tr>
-                        <td className="p-4 text-sm text-muted-foreground" colSpan={3}>
+                        <td
+                          className="p-4 text-sm text-muted-foreground"
+                          colSpan={4}
+                        >
                           Esta recepción no tiene ítems registrados.
                         </td>
                       </tr>
                     ) : (
-                      receiptDetail.items.map((item: any) => (
-                        <tr key={item.id} className="border-b border-border/70 last:border-0">
-                          <td className="p-4">
-                            <div className="font-semibold">{item.itemName}</div>
-                            {item.notes ? (
-                              <div className="mt-1 text-xs text-muted-foreground">{item.notes}</div>
-                            ) : null}
-                          </td>
-                          <td className="p-4 text-right font-semibold">
-                            {formatQuantity(item.quantityExpected)} {item.unit || ""}
-                          </td>
-                          <td className="p-4 text-right text-muted-foreground">
-                            {formatQuantity(item.quantityReceived)} {item.unit || ""}
-                          </td>
-                        </tr>
-                      ))
+                      receiptDetail.items.map((item: any) => {
+                        const itemCode =
+                          receiptSourceItemCodes.get(item.sourceItemId) ?? null;
+
+                        return (
+                          <tr
+                            key={item.id}
+                            className="border-b border-border/70 last:border-0"
+                          >
+                            <td className="p-4">
+                              <div className="font-semibold">
+                                {item.itemName}
+                              </div>
+                              {item.notes ? (
+                                <div className="mt-1 text-xs text-muted-foreground">
+                                  {item.notes}
+                                </div>
+                              ) : null}
+                            </td>
+                            <td className="p-4 font-mono text-sm">
+                              {itemCode || "—"}
+                            </td>
+                            <td className="p-4 text-right font-semibold">
+                              {formatQuantity(item.quantityExpected)}{" "}
+                              {item.unit || ""}
+                            </td>
+                            <td className="p-4 text-right text-muted-foreground">
+                              {formatQuantity(item.quantityReceived)}{" "}
+                              {item.unit || ""}
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -846,6 +1022,57 @@ export default function Recepciones() {
           ) : null}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={closeReceiptLineItem !== null}
+        onOpenChange={open => {
+          if (!open) setCloseReceiptLineItem(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cerrar línea de recepción</AlertDialogTitle>
+            <AlertDialogDescription>
+              {closeReceiptLineItem ? (
+                <>
+                  Esta acción cerrará la línea{" "}
+                  <strong>{closeReceiptLineItem.itemName}</strong> con saldo
+                  pendiente de{" "}
+                  <strong>
+                    {formatQuantity(getPendingQuantity(closeReceiptLineItem))}{" "}
+                    {closeReceiptLineItem.unit || ""}
+                  </strong>
+                  . Después de cerrarla ya no aparecerá como opción en este
+                  panel de recepciones.
+                </>
+              ) : (
+                "Esta acción cerrará la línea seleccionada para que deje de aparecer en recepciones."
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={closeReceiptLineMutation.isPending}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={
+                closeReceiptLineMutation.isPending || !closeReceiptLineItem
+              }
+              onClick={event => {
+                event.preventDefault();
+                if (!closeReceiptLineItem) return;
+                closeReceiptLineMutation.mutate({
+                  purchaseOrderItemId: closeReceiptLineItem.id,
+                });
+              }}
+            >
+              {closeReceiptLineMutation.isPending
+                ? "Cerrando..."
+                : "Cerrar línea"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Card>
         <CardContent className="p-0">
@@ -884,10 +1111,17 @@ export default function Recepciones() {
                 </thead>
                 <tbody>
                   {(receipts || []).map((row: any) => (
-                    <tr key={row.receipt.id} className="border-b border-border last:border-0">
-                      <td className="p-3 font-medium">{row.receipt.receiptNumber}</td>
+                    <tr
+                      key={row.receipt.id}
+                      className="border-b border-border last:border-0"
+                    >
+                      <td className="p-3 font-medium">
+                        {row.receipt.receiptNumber}
+                      </td>
                       <td className="p-3 text-xs">
-                        {row.project ? `${row.project.code} — ${row.project.name}` : "—"}
+                        {row.project
+                          ? `${row.project.code} — ${row.project.name}`
+                          : "—"}
                       </td>
                       <td className="p-3 text-xs">
                         {row.receipt.sourceType === "purchase_order"
@@ -896,11 +1130,14 @@ export default function Recepciones() {
                       </td>
                       <td className="p-3">
                         <Badge variant="outline" className="text-xs">
-                          {STATUS_LABELS[row.receipt.status] || row.receipt.status}
+                          {STATUS_LABELS[row.receipt.status] ||
+                            row.receipt.status}
                         </Badge>
                       </td>
                       <td className="p-3 text-xs">
-                        {formatDateLabel(row.receipt.receiptDate || row.receipt.createdAt)}
+                        {formatDateLabel(
+                          row.receipt.receiptDate || row.receipt.createdAt
+                        )}
                       </td>
                       <td className="p-3">
                         <Button

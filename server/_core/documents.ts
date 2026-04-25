@@ -453,6 +453,8 @@ export function buildProcurementPdfBase64(params: {
   generatedLabel: string;
   footerNote?: string;
   watermarkText?: string;
+  detailTitle?: string;
+  detailDescription?: string;
 }) {
   const palette = {
     ink: [0.11, 0.14, 0.2] as PdfRgb,
@@ -582,7 +584,7 @@ export function buildProcurementPdfBase64(params: {
   drawText(page, {
     x: 42,
     top: 350,
-    text: "Detalle del pedido",
+    text: params.detailTitle ?? "Detalle del pedido",
     fontSize: 14,
     font: "F2",
     color: palette.ink,
@@ -590,7 +592,9 @@ export function buildProcurementPdfBase64(params: {
   drawText(page, {
     x: 42,
     top: 368,
-    text: "Resumen de artículos solicitados para gestionar la compra.",
+    text:
+      params.detailDescription ??
+      "Resumen de artículos solicitados para gestionar la compra.",
     fontSize: 10.5,
     color: palette.muted,
   });

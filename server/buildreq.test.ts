@@ -10,9 +10,10 @@ import type { TrpcContext } from "./_core/context";
 // ============================================================
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 
-function createUserContext(
-  overrides: Partial<AuthenticatedUser> = {}
-): { ctx: TrpcContext; clearedCookies: any[] } {
+function createUserContext(overrides: Partial<AuthenticatedUser> = {}): {
+  ctx: TrpcContext;
+  clearedCookies: any[];
+} {
   const clearedCookies: any[] = [];
   const user: AuthenticatedUser = {
     id: 1,
@@ -122,6 +123,15 @@ describe("BuildReq - Role-based Access Control", () => {
     );
   });
 
+  it("Ingeniero Residente cannot access warehouse exits", async () => {
+    const { ctx } = createIngenieroContext();
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(caller.warehouseExits.list()).rejects.toThrow(
+      "No tiene acceso a salidas de bodega"
+    );
+  });
+
   it("Bodega users can query inventory with pagination and sorting", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
@@ -211,9 +221,7 @@ describe("BuildReq - Role-based Access Control", () => {
         id: 1,
         sapItemCode: "MAT-001",
       })
-    ).rejects.toThrow(
-      "No tiene permisos para traducir ítems a códigos SAP"
-    );
+    ).rejects.toThrow("No tiene permisos para traducir ítems a códigos SAP");
   });
 
   it("Admin Central cannot update reverse logistics status", async () => {
@@ -283,6 +291,27 @@ describe("BuildReq - Role-based Access Control", () => {
     recordWarehouseExitSpy.mockRestore();
   });
 
+  it("Bodega users can emit warehouse exit documents created from flows", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const emitWarehouseExitSpy = vi
+      .spyOn(db, "emitWarehouseExit")
+      .mockResolvedValue({
+        success: true,
+        exitNumber: "SB-2026-0001",
+      } as any);
+
+    await expect(
+      caller.warehouseExits.emit({ id: 33 })
+    ).resolves.toEqual({
+      success: true,
+      exitNumber: "SB-2026-0001",
+    });
+    expect(emitWarehouseExitSpy).toHaveBeenCalledWith(33, 3);
+
+    emitWarehouseExitSpy.mockRestore();
+  });
+
   it("Administración Central can create project transfers", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -319,7 +348,9 @@ describe("BuildReq - Role-based Access Control", () => {
       .mockResolvedValue({ id: 701 } as any);
     const getRequestItemsByRequestIdSpy = vi
       .spyOn(db, "getRequestItemsByRequestId")
-      .mockResolvedValue([{ id: 51, assignedFlow: "traslado_proyecto" }] as any);
+      .mockResolvedValue([
+        { id: 51, assignedFlow: "traslado_proyecto" },
+      ] as any);
     const updateMaterialRequestStatusSpy = vi
       .spyOn(db, "updateMaterialRequestStatus")
       .mockResolvedValue({ success: true } as any);
@@ -402,7 +433,8 @@ describe("BuildReq - Reverse Logistics Validations", () => {
       caller.reverseLogistics.create({
         returnType: "devolucion_proveedor",
         reasonCategory: "material_defectuoso",
-        justification: "Material llegó defectuoso del proveedor, no cumple especificaciones",
+        justification:
+          "Material llegó defectuoso del proveedor, no cumple especificaciones",
         sourceProjectId: 1,
         items: [
           {
@@ -426,7 +458,8 @@ describe("BuildReq - Reverse Logistics Validations", () => {
       caller.reverseLogistics.create({
         returnType: "devolucion_entre_proyectos",
         reasonCategory: "excedente",
-        justification: "Material excedente que puede ser utilizado en otro proyecto",
+        justification:
+          "Material excedente que puede ser utilizado en otro proyecto",
         sourceProjectId: 1,
         // Missing destinationProjectId
         items: [
@@ -450,7 +483,8 @@ describe("BuildReq - Reverse Logistics Validations", () => {
       caller.reverseLogistics.create({
         returnType: "devolucion_bodega_central",
         reasonCategory: "excedente",
-        justification: "Material sobrante del proyecto que debe retornarse a bodega",
+        justification:
+          "Material sobrante del proyecto que debe retornarse a bodega",
         sourceProjectId: 1,
         items: [], // Empty items
       })
@@ -524,7 +558,9 @@ describe("BuildReq - Material Request Validations", () => {
         purchaseUrgency: "urgente",
         items: [{ itemName: "Cemento", quantity: "10", unit: "saco" }],
       })
-    ).rejects.toThrow("La fecha necesaria es obligatoria para compras urgentes");
+    ).rejects.toThrow(
+      "La fecha necesaria es obligatoria para compras urgentes"
+    );
   });
 
   it("Rejects urgent requests outside the 5-day policy window", async () => {
@@ -649,7 +685,10 @@ describe("BuildReq - Material Request Validations", () => {
         rejectionReason: null,
       },
     ]);
-    expect(getProjectAdminsSpy).toHaveBeenCalledWith("administrador_proyecto", 1);
+    expect(getProjectAdminsSpy).toHaveBeenCalledWith(
+      "administrador_proyecto",
+      1
+    );
     expect(createNotificationSpy).toHaveBeenCalled();
 
     getMaterialRequestByIdSpy.mockRestore();
@@ -703,8 +742,13 @@ describe("BuildReq - Material Request Validations", () => {
         }),
       ]
     );
-    expect(getProjectAdminsSpy).toHaveBeenCalledWith("administrador_proyecto", 1);
-    expect(getAdminCentralUsersSpy).toHaveBeenCalledWith("administracion_central");
+    expect(getProjectAdminsSpy).toHaveBeenCalledWith(
+      "administrador_proyecto",
+      1
+    );
+    expect(getAdminCentralUsersSpy).toHaveBeenCalledWith(
+      "administracion_central"
+    );
     expect(createNotificationSpy).toHaveBeenCalled();
 
     createMaterialRequestSpy.mockRestore();
@@ -779,7 +823,9 @@ describe("BuildReq - Material Request Validations", () => {
       approvedById: 5,
       rejectionReason: undefined,
     });
-    expect(getUsersByBuildreqRoleSpy).toHaveBeenCalledWith("jefe_bodega_central");
+    expect(getUsersByBuildreqRoleSpy).toHaveBeenCalledWith(
+      "jefe_bodega_central"
+    );
     expect(createNotificationSpy).toHaveBeenCalled();
 
     getMaterialRequestByIdSpy.mockRestore();
@@ -854,7 +900,9 @@ describe("BuildReq - Material Request Validations", () => {
       approvedById: 4,
       rejectionReason: undefined,
     });
-    expect(getUsersByBuildreqRoleSpy).toHaveBeenCalledWith("jefe_bodega_central");
+    expect(getUsersByBuildreqRoleSpy).toHaveBeenCalledWith(
+      "jefe_bodega_central"
+    );
     expect(createNotificationSpy).toHaveBeenCalled();
 
     getMaterialRequestByIdSpy.mockRestore();
@@ -986,7 +1034,6 @@ describe("BuildReq - Supply Flow Validations", () => {
   });
 });
 
-
 // ============================================================
 // Tests: Invitation System
 // ============================================================
@@ -1040,7 +1087,10 @@ describe("BuildReq - Invitation System", () => {
       expect(result.emailData.subject).toContain("Jefe de Bodega Central");
     } catch (e: any) {
       // DB not available in test env is acceptable
-      if (!e.message?.includes("DB not available") && !e.message?.includes("database")) {
+      if (
+        !e.message?.includes("DB not available") &&
+        !e.message?.includes("database")
+      ) {
         throw e;
       }
     }
@@ -1080,7 +1130,10 @@ describe("BuildReq - Invitation System", () => {
 // ============================================================
 describe("BuildReq - User Management", () => {
   it("Admin can assign a project-scoped role before selecting a project", async () => {
-    const { ctx } = createUserContext({ role: "admin", assignedProjectId: null });
+    const { ctx } = createUserContext({
+      role: "admin",
+      assignedProjectId: null,
+    });
     const caller = appRouter.createCaller(ctx);
     const updateUserRoleSpy = vi
       .spyOn(db, "updateUserRole")
@@ -1195,6 +1248,64 @@ describe("BuildReq - Purchase Orders", () => {
     getPurchaseOrderItemSpy.mockRestore();
   });
 
+  it("does not allow editing a received purchase order line", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderItemSpy = vi
+      .spyOn(db, "getPurchaseOrderItemById")
+      .mockResolvedValue({
+        item: { id: 15, purchaseOrderId: 4, receivedQuantity: "100.00" } as any,
+        purchaseOrder: { id: 4, projectId: 1, status: "recibida" } as any,
+      });
+
+    await expect(
+      caller.purchaseOrders.updateItemLine({
+        purchaseOrderItemId: 15,
+        quantity: "125.00",
+        unitPrice: "125.50",
+        taxCode: "isv_15",
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message:
+        "La orden de compra ya fue recibida y solo está disponible en modo lectura",
+    });
+
+    getPurchaseOrderItemSpy.mockRestore();
+  });
+
+  it("does not allow editing an emitted purchase order line", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderItemSpy = vi
+      .spyOn(db, "getPurchaseOrderItemById")
+      .mockResolvedValue({
+        item: { id: 15, purchaseOrderId: 4, receivedQuantity: "0.00" } as any,
+        purchaseOrder: { id: 4, projectId: 1, status: "emitida" } as any,
+      });
+    const updatePurchaseOrderItemSpy = vi
+      .spyOn(db, "updatePurchaseOrderItem")
+      .mockResolvedValue({ success: true });
+
+    await expect(
+      caller.purchaseOrders.updateItemLine({
+        purchaseOrderItemId: 15,
+        quantity: "125.00",
+        unitPrice: "125.50",
+        taxCode: "isv_15",
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message:
+        "La orden de compra ya fue emitida y no permite editar lineas ni proveedor",
+    });
+
+    expect(updatePurchaseOrderItemSpy).not.toHaveBeenCalled();
+
+    getPurchaseOrderItemSpy.mockRestore();
+    updatePurchaseOrderItemSpy.mockRestore();
+  });
+
   it("Admin Central can delete a PO item line when there are other lines and no receipts", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -1256,7 +1367,11 @@ describe("BuildReq - Purchase Orders", () => {
       status: "cancelado",
       notes: "Flujo cancelado por eliminar la linea de la orden de compra",
     });
-    expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(9, "en_espera", 4);
+    expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(
+      9,
+      "en_espera",
+      4
+    );
 
     getPurchaseOrderItemSpy.mockRestore();
     countPurchaseOrderItemsSpy.mockRestore();
@@ -1309,13 +1424,47 @@ describe("BuildReq - Purchase Orders", () => {
     updatePurchaseOrderSpy.mockRestore();
   });
 
+  it("does not allow deleting a PO item line from an emitted order", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderItemSpy = vi
+      .spyOn(db, "getPurchaseOrderItemById")
+      .mockResolvedValue({
+        item: { id: 15, purchaseOrderId: 4, receivedQuantity: "0.00" } as any,
+        purchaseOrder: { id: 4, projectId: 1, status: "emitida" } as any,
+      });
+    const deletePurchaseOrderItemSpy = vi
+      .spyOn(db, "deletePurchaseOrderItem")
+      .mockResolvedValue({ success: true });
+
+    await expect(
+      caller.purchaseOrders.deleteItem({
+        purchaseOrderItemId: 15,
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message:
+        "La orden de compra ya fue emitida y no permite editar lineas ni proveedor",
+    });
+
+    expect(deletePurchaseOrderItemSpy).not.toHaveBeenCalled();
+
+    getPurchaseOrderItemSpy.mockRestore();
+    deletePurchaseOrderItemSpy.mockRestore();
+  });
+
   it("cancelOrder annuls the PO and releases direct purchase items back to the request", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
     const getPurchaseOrderByIdSpy = vi
       .spyOn(db, "getPurchaseOrderById")
       .mockResolvedValue({
-        purchaseOrder: { id: 4, orderNumber: "OC-2026-0005", projectId: 1, status: "emitida" },
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "emitida",
+        },
         items: [
           { id: 15, materialRequestItemId: 21, receivedQuantity: "0.00" },
           { id: 16, materialRequestItemId: 22, receivedQuantity: "0.00" },
@@ -1323,18 +1472,22 @@ describe("BuildReq - Purchase Orders", () => {
       } as any);
     const getRequestItemByIdSpy = vi
       .spyOn(db, "getRequestItemById")
-      .mockImplementation(async (id: number) =>
-        ({
-          21: { id: 21, requestId: 9, assignedFlow: "compra_directa" },
-          22: { id: 22, requestId: 9, assignedFlow: "compra_directa" },
-        })[id] as any
+      .mockImplementation(
+        async (id: number) =>
+          ({
+            21: { id: 21, requestId: 9, assignedFlow: "compra_directa" },
+            22: { id: 22, requestId: 9, assignedFlow: "compra_directa" },
+          })[id] as any
       );
     const updateRequestItemSpy = vi
       .spyOn(db, "updateRequestItem")
       .mockResolvedValue({ success: true });
     const getActiveSupplyFlowForRequestItemSpy = vi
       .spyOn(db, "getActiveSupplyFlowForRequestItem")
-      .mockImplementation(async ({ requestItemId }: { requestItemId: number }) => ({ id: requestItemId + 100 } as any));
+      .mockImplementation(
+        async ({ requestItemId }: { requestItemId: number }) =>
+          ({ id: requestItemId + 100 }) as any
+      );
     const updateSupplyFlowRecordSpy = vi
       .spyOn(db, "updateSupplyFlowRecord")
       .mockResolvedValue({ success: true });
@@ -1373,7 +1526,11 @@ describe("BuildReq - Purchase Orders", () => {
       status: "cancelado",
       notes: "Flujo cancelado por anular la orden OC-2026-0005",
     });
-    expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(9, "en_espera", 4);
+    expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(
+      9,
+      "en_espera",
+      4
+    );
     expect(updatePurchaseOrderSpy).toHaveBeenCalledWith(4, {
       status: "anulada",
       emailStatus: "pendiente",
@@ -1397,7 +1554,12 @@ describe("BuildReq - Purchase Orders", () => {
     const getPurchaseOrderByIdSpy = vi
       .spyOn(db, "getPurchaseOrderById")
       .mockResolvedValue({
-        purchaseOrder: { id: 4, orderNumber: "OC-2026-0005", projectId: 1, status: "emitida" },
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "borrador",
+        },
         items: [{ id: 15 }],
       } as any);
     const updatePurchaseOrderSpy = vi
@@ -1426,13 +1588,51 @@ describe("BuildReq - Purchase Orders", () => {
     sendPurchaseOrderEmailSpy.mockRestore();
   });
 
+  it("does not allow emitting an already emitted PO", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "emitida",
+        },
+        items: [{ id: 15, receivedQuantity: "0.00" }],
+      } as any);
+    const updatePurchaseOrderSpy = vi
+      .spyOn(db, "updatePurchaseOrder")
+      .mockResolvedValue({ success: true });
+
+    await expect(
+      caller.purchaseOrders.sendToSupplier({
+        id: 4,
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "La orden de compra ya fue emitida",
+    });
+
+    expect(updatePurchaseOrderSpy).not.toHaveBeenCalled();
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    updatePurchaseOrderSpy.mockRestore();
+  });
+
   it("does not allow emitting a PO that already has receptions", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
     const getPurchaseOrderByIdSpy = vi
       .spyOn(db, "getPurchaseOrderById")
       .mockResolvedValue({
-        purchaseOrder: { id: 4, orderNumber: "OC-2026-0005", projectId: 1, status: "recibida" },
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "recibida",
+        },
         items: [{ id: 15, receivedQuantity: "10.00" }],
       } as any);
     const updatePurchaseOrderSpy = vi
@@ -1445,7 +1645,8 @@ describe("BuildReq - Purchase Orders", () => {
       })
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
-      message: "No se puede emitir una orden que ya tiene recepciones registradas",
+      message:
+        "No se puede emitir una orden que ya tiene recepciones registradas",
     });
 
     expect(updatePurchaseOrderSpy).not.toHaveBeenCalled();
@@ -1506,7 +1707,9 @@ describe("BuildReq - Purchase Orders", () => {
 
     const draftPdfText = Buffer.from(draftPdf, "base64").toString("latin1");
     const emittedPdfText = Buffer.from(emittedPdf, "base64").toString("latin1");
-    const encodedWatermark = Buffer.from("BORRADOR", "latin1").toString("hex").toUpperCase();
+    const encodedWatermark = Buffer.from("BORRADOR", "latin1")
+      .toString("hex")
+      .toUpperCase();
 
     expect(draftPdfText).toContain(`<${encodedWatermark}> Tj`);
     expect(emittedPdfText).not.toContain(`<${encodedWatermark}> Tj`);
@@ -1639,6 +1842,292 @@ describe("BuildReq - Receipts", () => {
     getPurchaseOrderByIdSpy.mockRestore();
     registerReceiptSpy.mockRestore();
   });
+
+  it("does not allow registering a receipt for a line already closed in reception", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "parcialmente_recibida",
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "CEMENTO GRANEL",
+            quantity: "100.00",
+            receivedQuantity: "40.00",
+            receiptClosed: true,
+          },
+        ],
+      } as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: "CAI-001-ABC",
+        invoiceNumber: "FAC-0001",
+        documentDate: "2026-04-14",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            itemName: "CEMENTO GRANEL",
+            quantityExpected: "60.00",
+            quantityReceived: "10.00",
+            unit: "und",
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "La línea CEMENTO GRANEL fue cerrada y ya no admite recepciones",
+    });
+
+    getPurchaseOrderByIdSpy.mockRestore();
+  });
+
+  it("allows closing a partially received purchase order line", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderItemByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderItemById")
+      .mockResolvedValue({
+        item: {
+          id: 15,
+          purchaseOrderId: 4,
+          itemName: "CEMENTO GRANEL",
+          quantity: "100.00",
+          receivedQuantity: "40.00",
+          receiptClosed: false,
+        },
+        purchaseOrder: {
+          id: 4,
+          projectId: 1,
+          status: "parcialmente_recibida",
+        },
+      } as any);
+    const updatePurchaseOrderItemSpy = vi
+      .spyOn(db, "updatePurchaseOrderItem")
+      .mockResolvedValue({ success: true });
+    const syncPurchaseOrderReceiptStatusSpy = vi
+      .spyOn(db, "syncPurchaseOrderReceiptStatus")
+      .mockResolvedValue("parcialmente_recibida");
+
+    await expect(
+      caller.purchaseOrders.closeReceiptLine({
+        purchaseOrderItemId: 15,
+      })
+    ).resolves.toEqual({
+      success: true,
+      orderStatus: "parcialmente_recibida",
+    });
+
+    expect(updatePurchaseOrderItemSpy).toHaveBeenCalledWith(
+      15,
+      expect.objectContaining({
+        receiptClosed: true,
+        receiptClosedById: 4,
+      })
+    );
+    expect(syncPurchaseOrderReceiptStatusSpy).toHaveBeenCalledWith(4);
+
+    getPurchaseOrderItemByIdSpy.mockRestore();
+    updatePurchaseOrderItemSpy.mockRestore();
+    syncPurchaseOrderReceiptStatusSpy.mockRestore();
+  });
+
+  it("does not allow closing a line that is not partially received", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderItemByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderItemById")
+      .mockResolvedValue({
+        item: {
+          id: 15,
+          purchaseOrderId: 4,
+          itemName: "CEMENTO GRANEL",
+          quantity: "100.00",
+          receivedQuantity: "0.00",
+          receiptClosed: false,
+        },
+        purchaseOrder: {
+          id: 4,
+          projectId: 1,
+          status: "emitida",
+        },
+      } as any);
+
+    await expect(
+      caller.purchaseOrders.closeReceiptLine({
+        purchaseOrderItemId: 15,
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "Solo se pueden cerrar líneas que estén parcialmente recibidas",
+    });
+
+    getPurchaseOrderItemByIdSpy.mockRestore();
+  });
+
+  it("moves pending balance to a new purchase request and closes the line", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderItemByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderItemById")
+      .mockResolvedValue({
+        item: {
+          id: 16,
+          purchaseOrderId: 4,
+          materialRequestItemId: 99,
+          itemName: "PALA HOYADORA MANUAL",
+          originalSapItemCode: "03030100035",
+          currentSapItemCode: "03030100035",
+          quantity: "10.00",
+          receivedQuantity: "5.00",
+          unit: "und",
+          receiptClosed: false,
+        },
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0044",
+          projectId: 1,
+          purchaseType: "local",
+          status: "parcialmente_recibida",
+          neededBy: new Date("2026-05-01"),
+        },
+      } as any);
+    const getReusablePurchaseRequestSpy = vi
+      .spyOn(db, "getReusablePurchaseRequestBySourcePurchaseOrderId")
+      .mockResolvedValue(undefined);
+    const createPurchaseRequestSpy = vi
+      .spyOn(db, "createPurchaseRequest")
+      .mockResolvedValue({ id: 701, requestNumber: "SC-2026-0040" });
+    const updatePurchaseOrderItemSpy = vi
+      .spyOn(db, "updatePurchaseOrderItem")
+      .mockResolvedValue({ success: true });
+    const syncPurchaseOrderReceiptStatusSpy = vi
+      .spyOn(db, "syncPurchaseOrderReceiptStatus")
+      .mockResolvedValue("parcialmente_recibida");
+
+    await expect(
+      caller.purchaseOrders.movePendingToPurchaseRequest({
+        purchaseOrderItemId: 16,
+      })
+    ).resolves.toEqual({
+      success: true,
+      orderStatus: "parcialmente_recibida",
+      reused: false,
+      purchaseRequestId: 701,
+      purchaseRequestNumber: "SC-2026-0040",
+    });
+
+    expect(createPurchaseRequestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourcePurchaseOrderId: 4,
+        projectId: 1,
+        purchaseType: "local",
+      }),
+      [
+        expect.objectContaining({
+          materialRequestItemId: 99,
+          sourcePurchaseOrderItemId: 16,
+          quantity: "5.00",
+        }),
+      ]
+    );
+    expect(updatePurchaseOrderItemSpy).toHaveBeenCalledWith(
+      16,
+      expect.objectContaining({
+        receiptClosed: true,
+        receiptClosedById: 4,
+      })
+    );
+
+    getPurchaseOrderItemByIdSpy.mockRestore();
+    getReusablePurchaseRequestSpy.mockRestore();
+    createPurchaseRequestSpy.mockRestore();
+    updatePurchaseOrderItemSpy.mockRestore();
+    syncPurchaseOrderReceiptStatusSpy.mockRestore();
+  });
+
+  it("reuses the same pending purchase request for another line of the same order", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderItemByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderItemById")
+      .mockResolvedValue({
+        item: {
+          id: 17,
+          purchaseOrderId: 4,
+          materialRequestItemId: 100,
+          itemName: "CEMENTO GRANEL",
+          originalSapItemCode: "05050200058",
+          currentSapItemCode: "05050200058",
+          quantity: "100.00",
+          receivedQuantity: "40.00",
+          unit: "und",
+          receiptClosed: false,
+        },
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0044",
+          projectId: 1,
+          purchaseType: "local",
+          status: "parcialmente_recibida",
+          neededBy: new Date("2026-05-01"),
+        },
+      } as any);
+    const getReusablePurchaseRequestSpy = vi
+      .spyOn(db, "getReusablePurchaseRequestBySourcePurchaseOrderId")
+      .mockResolvedValue({
+        id: 702,
+        requestNumber: "SC-2026-0041",
+        status: "pendiente",
+      } as any);
+    const addPurchaseRequestItemsSpy = vi
+      .spyOn(db, "addPurchaseRequestItems")
+      .mockResolvedValue({ success: true } as any);
+    const updatePurchaseOrderItemSpy = vi
+      .spyOn(db, "updatePurchaseOrderItem")
+      .mockResolvedValue({ success: true });
+    const syncPurchaseOrderReceiptStatusSpy = vi
+      .spyOn(db, "syncPurchaseOrderReceiptStatus")
+      .mockResolvedValue("parcialmente_recibida");
+
+    await expect(
+      caller.purchaseOrders.movePendingToPurchaseRequest({
+        purchaseOrderItemId: 17,
+      })
+    ).resolves.toEqual({
+      success: true,
+      orderStatus: "parcialmente_recibida",
+      reused: true,
+      purchaseRequestId: 702,
+      purchaseRequestNumber: "SC-2026-0041",
+    });
+
+    expect(addPurchaseRequestItemsSpy).toHaveBeenCalledWith(702, [
+      expect.objectContaining({
+        materialRequestItemId: 100,
+        sourcePurchaseOrderItemId: 17,
+        quantity: "60.00",
+      }),
+    ]);
+
+    getPurchaseOrderItemByIdSpy.mockRestore();
+    getReusablePurchaseRequestSpy.mockRestore();
+    addPurchaseRequestItemsSpy.mockRestore();
+    updatePurchaseOrderItemSpy.mockRestore();
+    syncPurchaseOrderReceiptStatusSpy.mockRestore();
+  });
 });
 
 // ============================================================
@@ -1664,18 +2153,22 @@ describe("BuildReq - Transfer Requests", () => {
       } as any);
     const getRequestItemByIdSpy = vi
       .spyOn(db, "getRequestItemById")
-      .mockImplementation(async (id: number) =>
-        ({
-          21: { id: 21, requestId: 9, assignedFlow: "traslado_proyecto" },
-          22: { id: 22, requestId: 9, assignedFlow: "traslado_proyecto" },
-        })[id] as any
+      .mockImplementation(
+        async (id: number) =>
+          ({
+            21: { id: 21, requestId: 9, assignedFlow: "traslado_proyecto" },
+            22: { id: 22, requestId: 9, assignedFlow: "traslado_proyecto" },
+          })[id] as any
       );
     const updateRequestItemSpy = vi
       .spyOn(db, "updateRequestItem")
       .mockResolvedValue({ success: true });
     const getActiveSupplyFlowForRequestItemSpy = vi
       .spyOn(db, "getActiveSupplyFlowForRequestItem")
-      .mockImplementation(async ({ requestItemId }: { requestItemId: number }) => ({ id: requestItemId + 300 } as any));
+      .mockImplementation(
+        async ({ requestItemId }: { requestItemId: number }) =>
+          ({ id: requestItemId + 300 }) as any
+      );
     const updateSupplyFlowRecordSpy = vi
       .spyOn(db, "updateSupplyFlowRecord")
       .mockResolvedValue({ success: true });
@@ -1692,9 +2185,9 @@ describe("BuildReq - Transfer Requests", () => {
       .spyOn(db, "updateTransferRequest")
       .mockResolvedValue({ success: true });
 
-    await expect(
-      caller.transferRequests.cancel({ id: 6 })
-    ).resolves.toEqual({ success: true });
+    await expect(caller.transferRequests.cancel({ id: 6 })).resolves.toEqual({
+      success: true,
+    });
 
     expect(updateRequestItemSpy).toHaveBeenCalledWith(21, {
       assignedFlow: null,
@@ -1712,7 +2205,11 @@ describe("BuildReq - Transfer Requests", () => {
       status: "cancelado",
       notes: "Flujo cancelado por anular la solicitud ST-2026-0001",
     });
-    expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(9, "en_espera", 3);
+    expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(
+      9,
+      "en_espera",
+      3
+    );
     expect(updateTransferRequestSpy).toHaveBeenCalledWith(6, {
       status: "anulada",
       rejectionReason: "Solicitud anulada manualmente",
@@ -1844,7 +2341,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
     }
   });
 
-  it("createDirectPurchaseBatch creates one order for the selected direct purchase items", async () => {
+  it("createDirectPurchaseBatch creates one purchase request for the selected direct purchase items", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
     const getMaterialRequestByIdSpy = vi
@@ -1858,17 +2355,38 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
           neededBy: new Date("2026-04-30"),
         },
         items: [
-          { id: 101, itemName: "Cal", sapItemCode: "02020100044", quantity: "100.00", unit: "und", approvalStatus: "aprobada" },
-          { id: 102, itemName: "Cemento", sapItemCode: "05050200058", quantity: "200.00", unit: "und", approvalStatus: "aprobada" },
-          { id: 103, itemName: "Aceite", sapItemCode: "01010200002", quantity: "20.00", unit: "und", approvalStatus: "aprobada" },
+          {
+            id: 101,
+            itemName: "Cal",
+            sapItemCode: "02020100044",
+            quantity: "100.00",
+            unit: "und",
+            approvalStatus: "aprobada",
+          },
+          {
+            id: 102,
+            itemName: "Cemento",
+            sapItemCode: "05050200058",
+            quantity: "200.00",
+            unit: "und",
+            approvalStatus: "aprobada",
+          },
+          {
+            id: 103,
+            itemName: "Aceite",
+            sapItemCode: "01010200002",
+            quantity: "20.00",
+            unit: "und",
+            approvalStatus: "aprobada",
+          },
         ],
       } as any);
     const getActiveSupplyFlowSpy = vi
       .spyOn(db, "getActiveSupplyFlowForRequestItem")
       .mockResolvedValue(undefined);
-    const createPurchaseOrderSpy = vi
-      .spyOn(db, "createPurchaseOrder")
-      .mockResolvedValue({ id: 501, orderNumber: "OC-2026-0005" });
+    const createPurchaseRequestSpy = vi
+      .spyOn(db, "createPurchaseRequest")
+      .mockResolvedValue({ id: 501, requestNumber: "SC-2026-0005" });
     const createRequestItemSpy = vi
       .spyOn(db, "createRequestItem")
       .mockResolvedValue({ id: 301 });
@@ -1902,20 +2420,33 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
       })
     ).resolves.toEqual({
       success: true,
-      purchaseOrderId: 501,
-      purchaseOrderNumber: "OC-2026-0005",
+      purchaseRequestId: 501,
+      purchaseRequestNumber: "SC-2026-0005",
       processedItems: 2,
     });
 
-    expect(createPurchaseOrderSpy).toHaveBeenCalledWith(
+    expect(createPurchaseRequestSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        supplierId: 7,
-        classification: "cd",
+        materialRequestId: 10,
+        projectId: 3,
+        purchaseType: "local",
+        status: "pendiente",
       }),
       [
         expect.objectContaining({ materialRequestItemId: 101 }),
-        expect.objectContaining({ materialRequestItemId: 301, quantity: "10.00" }),
+        expect.objectContaining({
+          materialRequestItemId: 301,
+          quantity: "10.00",
+        }),
       ]
+    );
+    expect(createSupplyFlowRecordSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 10,
+        purchaseOrderNumber: "SC-2026-0005",
+        sapDocumentType: "solicitud_compra",
+        status: "pendiente",
+      })
     );
     expect(updateRequestItemSpy).toHaveBeenCalledWith(103, {
       quantity: "10.00",
@@ -1932,7 +2463,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
 
     getMaterialRequestByIdSpy.mockRestore();
     getActiveSupplyFlowSpy.mockRestore();
-    createPurchaseOrderSpy.mockRestore();
+    createPurchaseRequestSpy.mockRestore();
     createRequestItemSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     createSupplyFlowRecordSpy.mockRestore();
@@ -1940,7 +2471,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
     updateMaterialRequestStatusSpy.mockRestore();
   });
 
-  it("createDirectPurchaseBatch consolidates same-project items into one order and merges same SAP quantities", async () => {
+  it("createDirectPurchaseBatch consolidates same-project items into one purchase request and merges same SAP quantities", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
     const getMaterialRequestByIdSpy = vi
@@ -1994,9 +2525,9 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
     const getActiveSupplyFlowSpy = vi
       .spyOn(db, "getActiveSupplyFlowForRequestItem")
       .mockResolvedValue(undefined);
-    const createPurchaseOrderSpy = vi
-      .spyOn(db, "createPurchaseOrder")
-      .mockResolvedValue({ id: 601, orderNumber: "OC-2026-0010" });
+    const createPurchaseRequestSpy = vi
+      .spyOn(db, "createPurchaseRequest")
+      .mockResolvedValue({ id: 601, requestNumber: "SC-2026-0010" });
     const updateRequestItemSpy = vi
       .spyOn(db, "updateRequestItem")
       .mockResolvedValue({ success: true });
@@ -2022,17 +2553,17 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
       })
     ).resolves.toEqual({
       success: true,
-      purchaseOrderId: 601,
-      purchaseOrderNumber: "OC-2026-0010",
+      purchaseRequestId: 601,
+      purchaseRequestNumber: "SC-2026-0010",
       processedItems: 2,
     });
 
-    expect(createPurchaseOrderSpy).toHaveBeenCalledTimes(1);
-    expect(createPurchaseOrderSpy).toHaveBeenCalledWith(
+    expect(createPurchaseRequestSpy).toHaveBeenCalledTimes(1);
+    expect(createPurchaseRequestSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: 3,
-        supplierId: 7,
-        classification: "cd",
+        materialRequestId: null,
+        purchaseType: "local",
         neededBy: new Date("2026-04-28"),
       }),
       [
@@ -2048,18 +2579,26 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
       expect.objectContaining({
         requestId: 10,
         requestItemId: 101,
-        purchaseOrderNumber: "OC-2026-0010",
+        purchaseOrderNumber: "SC-2026-0010",
       })
     );
     expect(createSupplyFlowRecordSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         requestId: 11,
         requestItemId: 201,
-        purchaseOrderNumber: "OC-2026-0010",
+        purchaseOrderNumber: "SC-2026-0010",
       })
     );
-    expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(10, "en_proceso", ctx.user.id);
-    expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(11, "en_proceso", ctx.user.id);
+    expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(
+      10,
+      "en_proceso",
+      ctx.user.id
+    );
+    expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(
+      11,
+      "en_proceso",
+      ctx.user.id
+    );
     expect(updateRequestItemSpy).toHaveBeenCalledWith(101, {
       assignedFlow: "compra_directa",
       status: "pendiente",
@@ -2071,11 +2610,380 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
 
     getMaterialRequestByIdSpy.mockRestore();
     getActiveSupplyFlowSpy.mockRestore();
-    createPurchaseOrderSpy.mockRestore();
+    createPurchaseRequestSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     createSupplyFlowRecordSpy.mockRestore();
     getRequestItemsByRequestIdSpy.mockRestore();
     updateMaterialRequestStatusSpy.mockRestore();
+  });
+
+  it("createDirectPurchaseBatch creates a single purchase request for same-supplier items across different projects", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockImplementation(async (requestId: number) => {
+        const details: Record<number, any> = {
+          15: {
+            request: {
+              id: 15,
+              projectId: 6,
+              requestType: "bienes",
+              approvalStatus: "aprobada",
+              neededBy: new Date("2026-04-30"),
+            },
+            items: [
+              {
+                id: 41,
+                itemName: "PRODUCTO 4",
+                quantity: "250.00",
+                unit: "und",
+                approvalStatus: "aprobada",
+              },
+            ],
+          },
+          17: {
+            request: {
+              id: 17,
+              projectId: 4,
+              requestType: "bienes",
+              approvalStatus: "aprobada",
+              neededBy: new Date("2026-04-28"),
+            },
+            items: [
+              {
+                id: 47,
+                itemName: "llantas",
+                sapItemCode: "03030200025",
+                sapItemDescription: "CALIBRADOR AIRE LLANTAS 150PSI",
+                quantity: "40.00",
+                unit: "und",
+                approvalStatus: "aprobada",
+              },
+              {
+                id: 48,
+                itemName: "palas",
+                sapItemCode: "03030100035",
+                sapItemDescription: "PALA HOYADORA MANUAL",
+                quantity: "400.00",
+                unit: "und",
+                approvalStatus: "aprobada",
+              },
+            ],
+          },
+        };
+
+        return details[requestId] as any;
+      });
+    const getActiveSupplyFlowSpy = vi
+      .spyOn(db, "getActiveSupplyFlowForRequestItem")
+      .mockResolvedValue(undefined);
+    const createPurchaseRequestSpy = vi
+      .spyOn(db, "createPurchaseRequest")
+      .mockResolvedValue({ id: 777, requestNumber: "SC-2026-0099" });
+    const updateRequestItemSpy = vi
+      .spyOn(db, "updateRequestItem")
+      .mockResolvedValue({ success: true });
+    const createSupplyFlowRecordSpy = vi
+      .spyOn(db, "createSupplyFlowRecord")
+      .mockResolvedValue({ id: 903 } as any);
+    const getRequestItemsByRequestIdSpy = vi
+      .spyOn(db, "getRequestItemsByRequestId")
+      .mockResolvedValue([{ id: 1, assignedFlow: "compra_directa" }] as any);
+    const updateMaterialRequestStatusSpy = vi
+      .spyOn(db, "updateMaterialRequestStatus")
+      .mockResolvedValue({ success: true });
+
+    await expect(
+      caller.supplyFlows.createDirectPurchaseBatch({
+        paymentMethod: "linea_credito",
+        supplierId: 8,
+        notes: "Unificar SC por proveedor",
+        items: [
+          { requestId: 17, requestItemId: 47, quantity: "40.00" },
+          { requestId: 17, requestItemId: 48, quantity: "400.00" },
+          { requestId: 15, requestItemId: 41, quantity: "250.00" },
+        ],
+      })
+    ).resolves.toEqual({
+      success: true,
+      purchaseRequestId: 777,
+      purchaseRequestNumber: "SC-2026-0099",
+      processedItems: 3,
+    });
+
+    expect(createPurchaseRequestSpy).toHaveBeenCalledTimes(1);
+    expect(createPurchaseRequestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        materialRequestId: null,
+        purchaseType: "local",
+      }),
+      [
+        expect.objectContaining({ materialRequestItemId: 47 }),
+        expect.objectContaining({ materialRequestItemId: 48 }),
+        expect.objectContaining({ materialRequestItemId: 41 }),
+      ]
+    );
+    expect(createSupplyFlowRecordSpy).toHaveBeenCalledTimes(3);
+    expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(
+      17,
+      "en_proceso",
+      ctx.user.id
+    );
+    expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(
+      15,
+      "en_proceso",
+      ctx.user.id
+    );
+
+    getMaterialRequestByIdSpy.mockRestore();
+    getActiveSupplyFlowSpy.mockRestore();
+    createPurchaseRequestSpy.mockRestore();
+    updateRequestItemSpy.mockRestore();
+    createSupplyFlowRecordSpy.mockRestore();
+    getRequestItemsByRequestIdSpy.mockRestore();
+    updateMaterialRequestStatusSpy.mockRestore();
+  });
+
+  it("createFromPurchaseRequest keeps direct purchase requests as CD and updates their flow to the generated OC", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 55,
+          projectId: 3,
+          requestNumber: "SC-2026-0012",
+          purchaseType: "local",
+          neededBy: new Date("2026-05-02"),
+          sapDocumentNumber: null,
+          notes: "SC desde compra directa",
+        },
+        items: [
+          {
+            id: 501,
+            materialRequestItemId: 101,
+            originalSapItemCode: "05050200058",
+            currentSapItemCode: "05050200058",
+            itemName: "CEMENTO GRANEL",
+            quantity: "300.00",
+            receivedQuantity: "0.00",
+            unit: "und",
+            notes: "Compra consolidada",
+          },
+        ],
+      } as any);
+    const listDirectPurchaseFlowItemsByOrderSpy = vi
+      .spyOn(db, "listDirectPurchaseFlowItemsByOrder")
+      .mockResolvedValue([
+        {
+          flow: { id: 81, notes: "SC desde compra directa", supplierId: 7 },
+          item: { id: 101 },
+        },
+      ] as any);
+    const createPurchaseOrderSpy = vi
+      .spyOn(db, "createPurchaseOrder")
+      .mockResolvedValue({ id: 901, orderNumber: "OC-2026-0042" });
+    const updatePurchaseRequestSpy = vi
+      .spyOn(db, "updatePurchaseRequest")
+      .mockResolvedValue({ success: true } as any);
+    const updateSupplyFlowRecordSpy = vi
+      .spyOn(db, "updateSupplyFlowRecord")
+      .mockResolvedValue({ success: true } as any);
+
+    await expect(
+      caller.purchaseOrders.createFromPurchaseRequest({
+        purchaseRequestId: 55,
+        selectedItemIds: [501],
+      })
+    ).resolves.toEqual({
+      success: true,
+      purchaseOrderId: 901,
+      purchaseOrderNumber: "OC-2026-0042",
+    });
+
+    expect(createPurchaseOrderSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purchaseRequestId: 55,
+        classification: "cd",
+        supplierId: 7,
+      }),
+      expect.any(Array)
+    );
+    expect(updateSupplyFlowRecordSpy).toHaveBeenCalledTimes(1);
+    expect(updateSupplyFlowRecordSpy).toHaveBeenCalledWith(
+      81,
+      expect.objectContaining({
+        purchaseOrderNumber: "OC-2026-0042",
+        sapDocumentType: "orden_compra",
+        status: "en_proceso",
+      })
+    );
+
+    getPurchaseRequestByIdSpy.mockRestore();
+    listDirectPurchaseFlowItemsByOrderSpy.mockRestore();
+    createPurchaseOrderSpy.mockRestore();
+    updatePurchaseRequestSpy.mockRestore();
+    updateSupplyFlowRecordSpy.mockRestore();
+  });
+
+  it("createFromPurchaseRequest splits a mixed-project purchase request into one OC per project", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 56,
+          projectId: 4,
+          requestNumber: "SC-2026-0013",
+          purchaseType: "local",
+          neededBy: new Date("2026-05-04"),
+          sapDocumentNumber: null,
+          notes: "SC mixta por proveedor",
+        },
+        items: [
+          {
+            id: 601,
+            materialRequestItemId: 47,
+            originalSapItemCode: "03030200025",
+            currentSapItemCode: "03030200025",
+            itemName: "CALIBRADOR AIRE LLANTAS 150PSI",
+            quantity: "40.00",
+            receivedQuantity: "0.00",
+            unit: "und",
+            notes: "Compra directa",
+            sourceProject: {
+              id: 4,
+              code: "004",
+              name: "CA5 - MANTENIMIENTO RUTINARIO",
+            },
+          },
+          {
+            id: 602,
+            materialRequestItemId: 41,
+            originalSapItemCode: null,
+            currentSapItemCode: null,
+            itemName: "PRODUCTO 4",
+            quantity: "250.00",
+            receivedQuantity: "0.00",
+            unit: "und",
+            notes: "Compra directa",
+            sourceProject: {
+              id: 6,
+              code: "006",
+              name: "CA5 - MANTENIMIENTO PERIÓDICO",
+            },
+          },
+        ],
+      } as any);
+    const listDirectPurchaseFlowItemsByOrderSpy = vi
+      .spyOn(db, "listDirectPurchaseFlowItemsByOrder")
+      .mockResolvedValue([
+        {
+          flow: { id: 91, notes: "SC mixta", supplierId: 8 },
+          item: { id: 47 },
+        },
+        {
+          flow: { id: 92, notes: "SC mixta", supplierId: 8 },
+          item: { id: 41 },
+        },
+      ] as any);
+    const createPurchaseOrderSpy = vi
+      .spyOn(db, "createPurchaseOrder")
+      .mockResolvedValueOnce({ id: 1001, orderNumber: "OC-2026-0050" })
+      .mockResolvedValueOnce({ id: 1002, orderNumber: "OC-2026-0051" });
+    const updatePurchaseRequestSpy = vi
+      .spyOn(db, "updatePurchaseRequest")
+      .mockResolvedValue({ success: true } as any);
+    const updateSupplyFlowRecordSpy = vi
+      .spyOn(db, "updateSupplyFlowRecord")
+      .mockResolvedValue({ success: true } as any);
+
+    await expect(
+      caller.purchaseOrders.createFromPurchaseRequest({
+        purchaseRequestId: 56,
+        selectedItemIds: [601, 602],
+      })
+    ).resolves.toEqual({
+      success: true,
+      purchaseOrders: [
+        {
+          projectId: 4,
+          purchaseOrderId: 1001,
+          purchaseOrderNumber: "OC-2026-0050",
+        },
+        {
+          projectId: 6,
+          purchaseOrderId: 1002,
+          purchaseOrderNumber: "OC-2026-0051",
+        },
+      ],
+    });
+
+    expect(createPurchaseOrderSpy).toHaveBeenCalledTimes(2);
+    expect(createPurchaseOrderSpy).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        purchaseRequestId: 56,
+        projectId: 4,
+        classification: "cd",
+        supplierId: 8,
+      }),
+      [expect.objectContaining({ purchaseRequestItemId: 601 })]
+    );
+    expect(createPurchaseOrderSpy).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        purchaseRequestId: 56,
+        projectId: 6,
+        classification: "cd",
+        supplierId: 8,
+      }),
+      [expect.objectContaining({ purchaseRequestItemId: 602 })]
+    );
+    expect(updateSupplyFlowRecordSpy).toHaveBeenCalledWith(
+      91,
+      expect.objectContaining({ purchaseOrderNumber: "OC-2026-0050" })
+    );
+    expect(updateSupplyFlowRecordSpy).toHaveBeenCalledWith(
+      92,
+      expect.objectContaining({ purchaseOrderNumber: "OC-2026-0051" })
+    );
+
+    getPurchaseRequestByIdSpy.mockRestore();
+    listDirectPurchaseFlowItemsByOrderSpy.mockRestore();
+    createPurchaseOrderSpy.mockRestore();
+    updatePurchaseRequestSpy.mockRestore();
+    updateSupplyFlowRecordSpy.mockRestore();
+  });
+
+  it("createFromPurchaseRequest rejects converted purchase requests", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 57,
+          projectId: 4,
+          requestNumber: "SC-2026-0014",
+          status: "convertida",
+        },
+        items: [],
+      } as any);
+
+    await expect(
+      caller.purchaseOrders.createFromPurchaseRequest({
+        purchaseRequestId: 57,
+        selectedItemIds: [1],
+      })
+    ).rejects.toThrow(
+      "La solicitud de compra ya fue convertida y solo está disponible en modo lectura"
+    );
+
+    getPurchaseRequestByIdSpy.mockRestore();
   });
 
   it("convertToPurchaseOrder no longer requires purchaseOrderNumber", async () => {
@@ -2151,7 +3059,8 @@ describe("BuildReq - Demo Data module", () => {
 
     await expect(
       caller.demoData.import({
-        projectsTsv: "Codigo de proyecto\tNombre de proyecto\n001\tOFICINA CENTRAL",
+        projectsTsv:
+          "Codigo de proyecto\tNombre de proyecto\n001\tOFICINA CENTRAL",
       })
     ).rejects.toThrow();
   });
@@ -2161,7 +3070,8 @@ describe("BuildReq - Demo Data module", () => {
     const caller = appRouter.createCaller(ctx);
 
     const result = await caller.demoData.import({
-      projectsTsv: "Codigo de proyecto\tNombre de proyecto\n001\tOFICINA CENTRAL",
+      projectsTsv:
+        "Codigo de proyecto\tNombre de proyecto\n001\tOFICINA CENTRAL",
       articlesTsv:
         "Numero de articulo\tCodigo de almacen\tNombre de almacen\tDescripcion del articulo\tDescripcion del articulo (sin recortar)\tFecha capitalizacion (AF)\tEn stock\n01010100001\t010\tSAN JOSE\tDIESEL\tDIESEL\t\t6500",
       suppliersTsv:

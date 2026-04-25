@@ -139,13 +139,13 @@ export const supplyFlowsRouter = router({
         "Genera una Solicitud de Traslado con confirmación posterior y Guía de Remisión",
     },
     compra_directa: {
-      sapDocument: "Orden de Compra → Entrada de Mercancías",
+      sapDocument: "Solicitud de Compra → Orden de Compra",
       sapModule: "Compras",
       description:
-        "Genera una Compra Directa clasificada como CD y luego admite recepciones parciales",
+        "Genera una SC desde compra directa y luego la convierte en una OC clasificada como CD",
       twoStepFlow: true,
-      step1: "Orden de Compra",
-      step2: "Recepción",
+      step1: "Solicitud de Compra",
+      step2: "Orden de Compra",
     },
   })),
 
@@ -426,123 +426,92 @@ export const supplyFlowsRouter = router({
         });
       }
 
-      const preparedItemsByProject = new Map<
-        number,
-        {
-          projectId: number;
-          neededBy: Date | null;
-          items: typeof preparedItems;
-        }
-      >();
+      const aggregatedLines = new Map<string, any>();
+      let earliestNeededBy: Date | null = null;
 
       for (const entry of preparedItems) {
-        const current = preparedItemsByProject.get(entry.projectId) ?? {
-          projectId: entry.projectId,
-          neededBy: entry.neededBy,
-          items: [],
-        };
-        current.neededBy = resolveEarliestNeededBy(current.neededBy, entry.neededBy);
-        current.items.push(entry);
-        preparedItemsByProject.set(entry.projectId, current);
+        earliestNeededBy = resolveEarliestNeededBy(earliestNeededBy, entry.neededBy);
+        const aggregationKey = entry.item.sapItemCode?.trim()
+          ? `project:${entry.projectId}:sap:${entry.item.sapItemCode.trim()}`
+          : `project:${entry.projectId}:item:${entry.processedItemId}`;
+        const existingLine = aggregatedLines.get(aggregationKey);
+
+        if (existingLine) {
+          const nextQuantity =
+            Number(existingLine.quantity ?? 0) + Number(entry.item.quantity ?? 0);
+          existingLine.quantity = nextQuantity.toFixed(2);
+          continue;
+        }
+
+        aggregatedLines.set(aggregationKey, {
+          purchaseRequestItemId: null,
+          materialRequestItemId: entry.processedItemId,
+          originalSapItemCode: entry.item.sapItemCode,
+          currentSapItemCode: entry.item.sapItemCode,
+          itemName: entry.item.sapItemDescription || entry.item.itemName,
+          quantity: entry.item.quantity,
+          receivedQuantity: "0.00",
+          unit: entry.item.unit,
+          notes: input.notes,
+        });
       }
 
-      const createdOrders: Array<{
-        projectId: number;
-        purchaseOrderId: number;
-        purchaseOrderNumber: string;
-      }> = [];
+      const sourceRequestIds = Array.from(new Set(preparedItems.map((entry) => entry.requestId)));
+      const sourceProjectIds = Array.from(new Set(preparedItems.map((entry) => entry.projectId)));
 
-      for (const group of Array.from(preparedItemsByProject.values())) {
-        const aggregatedLines = new Map<string, any>();
+      const purchaseRequest = await db.createPurchaseRequest(
+        {
+          materialRequestId: sourceRequestIds.length === 1 ? sourceRequestIds[0] : null,
+          sourcePurchaseOrderId: null,
+          projectId: sourceProjectIds[0],
+          purchaseType: "local",
+          status: "pendiente",
+          neededBy: earliestNeededBy ?? null,
+          sapDocumentNumber: null,
+          notes: input.notes ?? `Compra directa por ${input.paymentMethod}`,
+          rejectionReason: null,
+          printedDocumentName: null,
+          printedDocumentMimeType: null,
+          printedDocumentContent: null,
+          printedAt: null,
+          quoteAttachmentId: null,
+          createdById: ctx.user.id,
+        },
+        Array.from(aggregatedLines.values()).map((line) => ({
+          materialRequestItemId: line.materialRequestItemId ?? null,
+          originalSapItemCode: line.originalSapItemCode ?? null,
+          currentSapItemCode: line.currentSapItemCode ?? null,
+          itemName: line.itemName,
+          quantity: line.quantity,
+          receivedQuantity: "0.00",
+          unit: line.unit,
+          notes: line.notes,
+        }))
+      );
 
-        for (const entry of group.items) {
-          const aggregationKey = entry.item.sapItemCode?.trim()
-            ? `sap:${entry.item.sapItemCode.trim()}`
-            : `item:${entry.processedItemId}`;
-          const existingLine = aggregatedLines.get(aggregationKey);
-
-          if (existingLine) {
-            const nextQuantity =
-              Number(existingLine.quantity ?? 0) + Number(entry.item.quantity ?? 0);
-            existingLine.quantity = nextQuantity.toFixed(2);
-            continue;
-          }
-
-          aggregatedLines.set(aggregationKey, {
-            purchaseRequestItemId: null,
-            materialRequestItemId: entry.processedItemId,
-            originalSapItemCode: entry.item.sapItemCode,
-            currentSapItemCode: entry.item.sapItemCode,
-            itemName: entry.item.sapItemDescription || entry.item.itemName,
-            quantity: entry.item.quantity,
-            receivedQuantity: "0.00",
-            unit: entry.item.unit,
-            notes: input.notes,
-          });
-        }
-
-        const purchaseOrder = await db.createPurchaseOrder(
-          {
-            purchaseRequestId: null,
-            projectId: group.projectId,
-            classification: "cd",
-            purchaseType: "local",
-            supplierId: input.supplierId,
-            supplierEmail: null,
-            status: "emitida",
-            neededBy: group.neededBy ?? null,
-            sapDocumentNumber: null,
-            notes: input.notes ?? `Compra directa por ${input.paymentMethod}`,
-            printedDocumentName: null,
-            printedDocumentMimeType: null,
-            printedDocumentContent: null,
-            printedAt: null,
-            emailStatus: "pendiente",
-            emailedAt: null,
-            emailError: null,
-            createdById: ctx.user.id,
-          },
-          Array.from(aggregatedLines.values())
-        );
-
-        createdOrders.push({
-          projectId: group.projectId,
-          purchaseOrderId: purchaseOrder.id,
-          purchaseOrderNumber: purchaseOrder.orderNumber,
+      for (const entry of preparedItems) {
+        await db.createSupplyFlowRecord({
+          requestId: entry.requestId,
+          requestItemId: entry.processedItemId,
+          flowType: "compra_directa",
+          paymentMethod: input.paymentMethod,
+          supplierId: input.supplierId,
+          purchaseOrderNumber: purchaseRequest.requestNumber,
+          sapDocumentType: "solicitud_compra",
+          processedById: ctx.user.id,
+          notes: input.notes,
+          status: "pendiente",
         });
-
-        for (const entry of group.items) {
-          await db.createSupplyFlowRecord({
-            requestId: entry.requestId,
-            requestItemId: entry.processedItemId,
-            flowType: "compra_directa",
-            paymentMethod: input.paymentMethod,
-            supplierId: input.supplierId,
-            purchaseOrderNumber: purchaseOrder.orderNumber,
-            sapDocumentType: "orden_compra",
-            processedById: ctx.user.id,
-            notes: input.notes,
-            status: "en_proceso",
-          });
-        }
       }
 
       for (const requestId of requestIds) {
         await checkAndUpdateRequestStatus(requestId, ctx.user.id);
       }
 
-      if (createdOrders.length === 1) {
-        return {
-          success: true,
-          purchaseOrderId: createdOrders[0].purchaseOrderId,
-          purchaseOrderNumber: createdOrders[0].purchaseOrderNumber,
-          processedItems: preparedItems.length,
-        };
-      }
-
       return {
         success: true,
-        purchaseOrders: createdOrders,
+        purchaseRequestId: purchaseRequest.id,
+        purchaseRequestNumber: purchaseRequest.requestNumber,
         processedItems: preparedItems.length,
       };
     }),
@@ -727,6 +696,7 @@ export const supplyFlowsRouter = router({
       const purchaseRequest = await db.createPurchaseRequest(
         {
           materialRequestId: input.requestId,
+          sourcePurchaseOrderId: null,
           projectId: detail.request.projectId,
           createdById: ctx.user.id,
           purchaseType: input.purchaseType,
@@ -822,48 +792,115 @@ export const supplyFlowsRouter = router({
           });
         }
 
-        const order = await db.createPurchaseOrder(
-          {
-            purchaseRequestId: detail.purchaseRequest.id,
-            projectId: detail.purchaseRequest.projectId,
-            classification: "oc",
-            purchaseType: detail.purchaseRequest.purchaseType,
-            supplierId: null,
-            supplierEmail: null,
-            status: "emitida",
-            neededBy: detail.purchaseRequest.neededBy,
-            sapDocumentNumber: detail.purchaseRequest.sapDocumentNumber,
-            notes: input.notes ?? detail.purchaseRequest.notes ?? undefined,
-            printedDocumentName: null,
-            printedDocumentMimeType: null,
-            printedDocumentContent: null,
-            printedAt: null,
-            emailStatus: "pendiente",
-            emailedAt: null,
-            emailError: null,
-            createdById: ctx.user.id,
-          },
-          detail.items.map((item: any) => ({
-            purchaseRequestItemId: item.id,
-            materialRequestItemId: item.materialRequestItemId,
-            originalSapItemCode: item.originalSapItemCode,
-            currentSapItemCode: item.currentSapItemCode,
-            itemName: item.itemName,
-            quantity: item.quantity,
-            receivedQuantity: item.receivedQuantity ?? "0.00",
-            unit: item.unit,
-            notes: item.notes,
-          }))
-        );
+        const directPurchaseRequestItemIds = detail.items
+          .map((item: any) => item.materialRequestItemId)
+          .filter((value: number | null | undefined): value is number => typeof value === "number");
+        const directPurchaseFlowItems =
+          directPurchaseRequestItemIds.length > 0
+            ? await db.listDirectPurchaseFlowItemsByOrder({
+                purchaseOrderNumber: detail.purchaseRequest.requestNumber,
+                requestItemIds: directPurchaseRequestItemIds,
+              })
+            : [];
+        const directPurchaseFlowByRequestItemId = new Map<number, any[]>();
+        for (const linkedFlowItem of directPurchaseFlowItems) {
+          const requestItemId = linkedFlowItem.item?.id;
+          if (!requestItemId) continue;
+          const current = directPurchaseFlowByRequestItemId.get(requestItemId) ?? [];
+          current.push(linkedFlowItem);
+          directPurchaseFlowByRequestItemId.set(requestItemId, current);
+        }
+
+        const itemsByProject = new Map<number, any[]>();
+        for (const item of detail.items) {
+          const sourceProjectId = item.sourceProject?.id ?? detail.purchaseRequest.projectId;
+          const current = itemsByProject.get(sourceProjectId) ?? [];
+          current.push(item);
+          itemsByProject.set(sourceProjectId, current);
+        }
+
+        const createdOrders: Array<{
+          projectId: number;
+          purchaseOrderId: number;
+          purchaseOrderNumber: string;
+        }> = [];
+
+        for (const [projectId, projectItems] of Array.from(itemsByProject.entries())) {
+          const projectFlowItems = projectItems.flatMap((item: any) =>
+            item.materialRequestItemId
+              ? directPurchaseFlowByRequestItemId.get(item.materialRequestItemId) ?? []
+              : []
+          );
+
+          const order = await db.createPurchaseOrder(
+            {
+              purchaseRequestId: detail.purchaseRequest.id,
+              projectId,
+              classification: projectFlowItems.length > 0 ? "cd" : "oc",
+              purchaseType: detail.purchaseRequest.purchaseType,
+              supplierId: projectFlowItems[0]?.flow?.supplierId ?? null,
+              supplierEmail: null,
+              status: "borrador",
+              neededBy: detail.purchaseRequest.neededBy,
+              sapDocumentNumber: detail.purchaseRequest.sapDocumentNumber,
+              notes: input.notes ?? detail.purchaseRequest.notes ?? undefined,
+              printedDocumentName: null,
+              printedDocumentMimeType: null,
+              printedDocumentContent: null,
+              printedAt: null,
+              emailStatus: "pendiente",
+              emailedAt: null,
+              emailError: null,
+              createdById: ctx.user.id,
+            },
+            projectItems.map((item: any) => ({
+              purchaseRequestItemId: item.id,
+              materialRequestItemId: item.materialRequestItemId,
+              originalSapItemCode: item.originalSapItemCode,
+              currentSapItemCode: item.currentSapItemCode,
+              itemName: item.itemName,
+              quantity: item.quantity,
+              receivedQuantity: item.receivedQuantity ?? "0.00",
+              unit: item.unit,
+              notes: item.notes,
+            }))
+          );
+
+          createdOrders.push({
+            projectId,
+            purchaseOrderId: order.id,
+            purchaseOrderNumber: order.orderNumber,
+          });
+
+          const updatedFlowIds = new Set<number>();
+          for (const linkedFlowItem of projectFlowItems) {
+            if (updatedFlowIds.has(linkedFlowItem.flow.id)) continue;
+            updatedFlowIds.add(linkedFlowItem.flow.id);
+
+            await db.updateSupplyFlowRecord(linkedFlowItem.flow.id, {
+              purchaseOrderNumber: order.orderNumber,
+              sapDocumentType: "orden_compra",
+              status: "en_proceso",
+              notes: input.notes ?? linkedFlowItem.flow.notes ?? undefined,
+            });
+          }
+        }
 
         await db.updatePurchaseRequest(detail.purchaseRequest.id, {
           status: "convertida",
         });
 
+        if (createdOrders.length === 1) {
+          return {
+            success: true,
+            purchaseOrderId: createdOrders[0].purchaseOrderId,
+            purchaseOrderNumber: createdOrders[0].purchaseOrderNumber,
+          };
+        }
+
         return {
           success: true,
-          purchaseOrderId: order.id,
-          purchaseOrderNumber: order.orderNumber,
+          purchaseOrders: createdOrders,
         };
       }
 

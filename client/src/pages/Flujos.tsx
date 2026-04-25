@@ -41,15 +41,15 @@ const FLOW_LABELS: Record<QueueFlowType, string> = {
 };
 
 const FLOW_DESCRIPTIONS: Record<QueueFlowType, string> = {
-  despacho_bodega: "Despacha inventario disponible hacia la requisición seleccionada.",
-  compra_directa: "Genera una compra directa y crea la OC correspondiente.",
+  despacho_bodega: "Crea una transacción de salida en borrador para la requisición seleccionada.",
+  compra_directa: "Genera una solicitud de compra directa para luego convertirla en OC.",
   traslado_proyecto: "Crea la solicitud de traslado entre proyectos.",
   solicitud_compra: "Genera la solicitud de compra para Oficina Central.",
 };
 
 const FLOW_ROUTE_HINTS: Record<QueueFlowType, string> = {
-  despacho_bodega: "Se atiende en este panel y luego queda reflejado en Inventario.",
-  compra_directa: "Se atiende aquí y luego continúa en Órdenes de Compra.",
+  despacho_bodega: "Se atiende aquí, genera una salida SB en borrador y continúa en Salidas de Bodega.",
+  compra_directa: "Se atiende aquí, genera una SC y luego continúa en Solicitudes de Compra.",
   traslado_proyecto: "Se atiende aquí y luego continúa en Solicitudes de Traslado.",
   solicitud_compra: "Se atiende aquí y luego continúa en Solicitudes de Compra.",
 };
@@ -106,6 +106,15 @@ const parseQuantityValue = (value: unknown) => {
 };
 
 const formatQuantityValue = (value: unknown) => parseQuantityValue(value).toFixed(2);
+
+const getPendingDispatchQuantity = (item: any) =>
+  Math.max(
+    parseQuantityValue(item.quantity) - parseQuantityValue(item.dispatchedQuantity),
+    0
+  );
+
+const getAvailableDispatchQuantity = (item: any) =>
+  Math.max(parseQuantityValue(item.projectStock), 0);
 
 const formatSupplierReferenceLabel = (reference: {
   supplierCode?: string | null;
@@ -207,6 +216,8 @@ export default function Flujos() {
       utils.purchaseRequests.list.invalidate(),
       utils.transferRequests.list.invalidate(),
       utils.transfers.list.invalidate(),
+      utils.warehouseExits.list.invalidate(),
+      utils.inventory.list.invalidate(),
     ]);
 
   const visiblePendingRows = useMemo(
@@ -341,19 +352,19 @@ export default function Flujos() {
         })),
       });
 
-      const purchaseOrderNumbers =
-        "purchaseOrders" in result && Array.isArray(result.purchaseOrders)
-          ? result.purchaseOrders.map((entry) => entry.purchaseOrderNumber)
-          : result.purchaseOrderNumber
-            ? [result.purchaseOrderNumber]
+      const purchaseRequestNumbers =
+        "purchaseRequests" in result && Array.isArray(result.purchaseRequests)
+          ? result.purchaseRequests.map((entry) => entry.purchaseRequestNumber)
+          : result.purchaseRequestNumber
+            ? [result.purchaseRequestNumber]
             : [];
 
       resetProcessedItemDrafts(selectedRows.map((row) => row.item.id));
       await invalidateAll();
       toast.success(
-        purchaseOrderNumbers.length === 1
-          ? `Se generó la orden ${purchaseOrderNumbers[0]} para ${result.processedItems} ítem(s)`
-          : `Se generaron ${purchaseOrderNumbers.length} órdenes para ${result.processedItems} ítem(s)`
+        purchaseRequestNumbers.length === 1
+          ? `Se generó la solicitud ${purchaseRequestNumbers[0]} para ${result.processedItems} ítem(s)`
+          : `Se generaron ${purchaseRequestNumbers.length} solicitudes para ${result.processedItems} ítem(s)`
       );
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -364,18 +375,17 @@ export default function Flujos() {
 
   const processWarehouseDispatchFlow = async (flowType: QueueFlowType) => {
     const rows = pendingRowsByFlow[flowType];
+
     setProcessingFlowType(flowType);
 
     const processedItemIds: number[] = [];
+    const createdExitNumbers: string[] = [];
     const failedItems: string[] = [];
 
     for (const row of rows) {
       const item = row.item;
       try {
-        const pendingQuantity = Math.max(
-          parseQuantityValue(item.quantity) - parseQuantityValue(item.dispatchedQuantity),
-          0
-        );
+        const pendingQuantity = getPendingDispatchQuantity(item);
         const dispatchedQuantity =
           dispatchQuantityByItemId[item.id] ?? pendingQuantity.toFixed(2);
         const dispatchedNumber = Number(dispatchedQuantity);
@@ -387,12 +397,15 @@ export default function Flujos() {
           throw new Error("La cantidad despachada no puede exceder la cantidad pendiente");
         }
 
-        await warehouseExitMutation.mutateAsync({
+        const result = await warehouseExitMutation.mutateAsync({
           requestId: row.request.id,
           requestItemId: item.id,
           dispatchedQuantity,
           note: dispatchNotesByFlowType[flowType] || undefined,
         });
+        if (result?.exitNumber) {
+          createdExitNumbers.push(result.exitNumber);
+        }
 
         processedItemIds.push(item.id);
       } catch (error) {
@@ -406,7 +419,15 @@ export default function Flujos() {
     }
 
     if (failedItems.length === 0) {
-      toast.success(`Salida de bodega procesada para ${processedItemIds.length} ítem(s)`);
+      const exitLabel =
+        createdExitNumbers.length === 1
+          ? ` ${createdExitNumbers[0]}`
+          : createdExitNumbers.length > 1
+            ? ` (${createdExitNumbers.slice(0, 3).join(", ")}${createdExitNumbers.length > 3 ? "..." : ""})`
+            : "";
+      toast.success(
+        `Transacción de salida${exitLabel} creada en borrador para ${processedItemIds.length} ítem(s)`
+      );
     } else if (processedItemIds.length > 0) {
       toast.error(
         `Se procesaron ${processedItemIds.length} de ${rows.length} ítems. ${failedItems[0]}`
@@ -699,6 +720,11 @@ export default function Flujos() {
                           <th className="w-28 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                             Cant.
                           </th>
+                          {flowType === "despacho_bodega" && (
+                            <th className="w-32 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              Disponible
+                            </th>
+                          )}
                           {flowType === "compra_directa" && (
                             <th className="w-40 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                               Comprar
@@ -717,11 +743,9 @@ export default function Flujos() {
                       <tbody>
                         {rows.map((row) => {
                           const item = row.item;
-                          const pendingDispatchQuantity = Math.max(
-                            parseQuantityValue(item.quantity) -
-                              parseQuantityValue(item.dispatchedQuantity),
-                            0
-                          );
+                          const pendingDispatchQuantity = getPendingDispatchQuantity(item);
+                          const availableDispatchQuantity = getAvailableDispatchQuantity(item);
+                          const hasAvailableStock = availableDispatchQuantity > 0;
 
                           return (
                             <tr
@@ -814,6 +838,19 @@ export default function Flujos() {
                               <td className="p-2 text-right font-mono">
                                 {formatQuantityValue(item.quantity)}
                               </td>
+                              {flowType === "despacho_bodega" && (
+                                <td className="p-2 text-right font-mono">
+                                  <span
+                                    className={
+                                      hasAvailableStock
+                                        ? "text-foreground"
+                                        : "font-semibold text-destructive"
+                                    }
+                                  >
+                                    {formatQuantityValue(availableDispatchQuantity)}
+                                  </span>
+                                </td>
+                              )}
                               {flowType === "compra_directa" && (
                                 <td className="p-2">
                                   <Input
@@ -853,6 +890,7 @@ export default function Flujos() {
                                     }
                                     type="number"
                                     min="0"
+                                    max={pendingDispatchQuantity}
                                     step="any"
                                     className="ml-auto h-9 w-28 text-right"
                                     disabled={isProcessing}
@@ -860,6 +898,15 @@ export default function Flujos() {
                                   <p className="mt-1 text-right text-[10px] text-muted-foreground">
                                     Pendiente: {pendingDispatchQuantity.toFixed(2)}
                                   </p>
+                                  {!hasAvailableStock ? (
+                                    <p className="mt-1 text-right text-[10px] font-medium text-destructive">
+                                      Sin stock para emitir
+                                    </p>
+                                  ) : (
+                                    <p className="mt-1 text-right text-[10px] text-muted-foreground">
+                                      Se validará al emitir
+                                    </p>
+                                  )}
                                 </td>
                               )}
                               <td className="p-2 text-xs">{item.unit || "—"}</td>
@@ -927,13 +974,13 @@ export default function Flujos() {
                               [flowType]: event.target.value,
                             }))
                           }
-                          placeholder="Observaciones para la compra directa"
+                          placeholder="Observaciones para la solicitud de compra directa"
                           rows={3}
                         />
                       </div>
 
                       <div className="rounded-lg border border-border/70 bg-muted/15 px-3 py-2 text-xs text-muted-foreground md:col-span-2">
-                        Marca solo los detalles que quieres incluir en esta orden. También puedes bajar la cantidad para hacer compras parciales; el resto quedará pendiente en este mismo panel.
+                        Marca solo los detalles que quieres incluir en esta solicitud. También puedes bajar la cantidad para hacer compras parciales; el resto quedará pendiente en este mismo panel.
                       </div>
                     </div>
                   )}
@@ -1057,7 +1104,7 @@ export default function Flujos() {
                         onClick={() => void processWarehouseDispatchFlow(flowType)}
                         disabled={isProcessing}
                       >
-                        {isProcessing ? "Procesando..." : "Procesar salida de bodega"}
+                        {isProcessing ? "Creando..." : "Crear transacción de salida"}
                       </Button>
                     )}
 
@@ -1148,7 +1195,8 @@ export default function Flujos() {
                               )}
                               {row.flow.purchaseOrderNumber && (
                                 <p className="text-xs text-muted-foreground">
-                                  OC: {row.flow.purchaseOrderNumber}
+                                  {row.flow.sapDocumentType === "solicitud_compra" ? "SC" : "OC"}:{" "}
+                                  {row.flow.purchaseOrderNumber}
                                 </p>
                               )}
                               {row.flow.notes && (

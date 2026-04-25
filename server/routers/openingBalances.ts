@@ -96,4 +96,31 @@ export const openingBalancesRouter = router({
         }))
       );
     }),
+
+  addItems: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        items: z.array(openingBalanceItemSchema).min(1),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canManageOpeningBalances(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para agregar ítems al saldo inicial",
+        });
+      }
+
+      return db.addOpeningBalanceItems(
+        input.id,
+        input.items.map((item) => ({
+          sapItemCode: item.sapItemCode,
+          itemName: item.itemName,
+          quantity: item.quantity,
+          unit: item.unit,
+          notes: item.notes,
+        }))
+      );
+    }),
 });

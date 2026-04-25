@@ -3,6 +3,15 @@ import { protectedProcedure, adminProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { TRPCError } from "@trpc/server";
 
+function assertCanReadInventory(ctx: { user: { buildreqRole?: string | null } }) {
+  if (ctx.user.buildreqRole === "ingeniero_residente") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene acceso al inventario",
+    });
+  }
+}
+
 export const inventoryRouter = router({
   list: protectedProcedure
     .input(
@@ -32,16 +41,36 @@ export const inventoryRouter = router({
         .optional()
     )
     .query(async ({ ctx, input }) => {
-      // Only Jefe Bodega and Admin can see inventory
-      if (
-        ctx.user.buildreqRole === "ingeniero_residente"
-      ) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "No tiene acceso al inventario",
-        });
-      }
+      assertCanReadInventory(ctx);
       return db.listInventoryItems(input ?? undefined);
+    }),
+
+  tracking: protectedProcedure
+    .input(
+      z.object({
+        sapItemCode: z.string().min(1),
+        projectId: z.number().int().positive().nullable().optional(),
+        warehouseId: z.number().int().positive().nullable().optional(),
+        warehouseLocation: z.string().nullable().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      assertCanReadInventory(ctx);
+      return db.getInventoryTracking(input);
+    }),
+
+  kardex: protectedProcedure
+    .input(
+      z.object({
+        sapItemCode: z.string().min(1),
+        projectId: z.number().int().positive().nullable().optional(),
+        warehouseId: z.number().int().positive().nullable().optional(),
+        warehouseLocation: z.string().nullable().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      assertCanReadInventory(ctx);
+      return db.getInventoryKardex(input);
     }),
 
   create: protectedProcedure
