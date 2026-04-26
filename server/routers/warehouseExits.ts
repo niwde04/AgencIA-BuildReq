@@ -66,7 +66,12 @@ export const warehouseExitsRouter = router({
         });
       }
 
-      return db.emitWarehouseExit(input.id, ctx.user.id);
+      const result = await db.emitWarehouseExit(input.id, ctx.user.id);
+      for (const requestId of result.materialRequestIds ?? []) {
+        await db.syncMaterialRequestFulfillmentStatus(requestId, ctx.user.id);
+      }
+
+      return result;
     }),
 
   cancelDraft: protectedProcedure

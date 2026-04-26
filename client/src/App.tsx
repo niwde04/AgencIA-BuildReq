@@ -48,6 +48,7 @@ function Router() {
         <Route path="/solicitudes-traslado" component={TransferRequests} />
         <Route path="/traslados" component={Transfers} />
         <Route path="/recepciones" component={Recepciones} />
+        <Route path="/salidas-inventario" component={SalidasBodega} />
         <Route path="/salidas-bodega" component={SalidasBodega} />
         <Route path="/saldos-iniciales" component={SaldosIniciales} />
         <Route path="/proyectos" component={Proyectos} />

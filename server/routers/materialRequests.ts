@@ -542,7 +542,11 @@ export const materialRequestsRouter = router({
           message: "La autorización por ítem aplica solo a requisiciones de bienes",
         });
       }
-      if (detail.request.status === "borrador" || detail.request.status === "cerrada") {
+      if (
+        detail.request.status === "borrador" ||
+        detail.request.status === "flujo_completado" ||
+        detail.request.status === "cerrada"
+      ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "La requisición no está disponible para autorización",
@@ -636,6 +640,7 @@ export const materialRequestsRouter = router({
           "pendiente_aprobar",
           "en_espera",
           "en_proceso",
+          "flujo_completado",
           "cerrada",
           "anulada",
         ]),
@@ -663,6 +668,7 @@ export const materialRequestsRouter = router({
           pendiente_aprobar: "Pendiente de aprobar",
           en_espera: "En espera",
           en_proceso: "En proceso de atención",
+          flujo_completado: "Flujo completado",
           cerrada: "Cerrada",
           anulada: "Anulada",
         };
@@ -854,8 +860,7 @@ export const materialRequestsRouter = router({
         });
       }
 
-      // Update request status to cerrada
-      await db.updateMaterialRequestStatus(input.requestId, "cerrada", ctx.user.id);
+      await db.updateMaterialRequestStatus(input.requestId, "en_proceso", ctx.user.id);
 
       // Notify the requesting engineer
       await db.createNotification({

@@ -40,6 +40,7 @@ export const requestStatusEnum = pgEnum("request_status", [
   "pendiente_aprobar",
   "en_espera",
   "en_proceso",
+  "flujo_completado",
   "cerrada",
   "anulada",
 ]);
@@ -95,6 +96,7 @@ export const supplyFlowStatusEnum = pgEnum("supply_flow_status", [
 ]);
 export const returnTypeEnum = pgEnum("return_type", [
   "devolucion_bodega_central",
+  "devolucion_bodega_proyecto",
   "devolucion_entre_proyectos",
   "devolucion_proveedor",
 ]);
@@ -828,6 +830,7 @@ export const reverseLogistics = pgTable(
     justification: text("justification").notNull(),
     sourceProjectId: integer("sourceProjectId").notNull(),
     destinationProjectId: integer("destinationProjectId"),
+    sourceWarehouseExitId: integer("sourceWarehouseExitId"),
     supplierName: varchar("supplierName", { length: 255 }),
     originalRequestId: integer("originalRequestId"),
     status: returnStatusEnum("status").default("pendiente").notNull(),
@@ -858,6 +861,7 @@ export const reverseLogisticsItems = pgTable(
   {
     id: serial("id").primaryKey(),
     reverseLogisticId: integer("reverseLogisticId").notNull(),
+    sourceWarehouseExitItemId: integer("sourceWarehouseExitItemId"),
     itemName: varchar("itemName", { length: 500 }).notNull(),
     sapItemCode: varchar("sapItemCode", { length: 50 }),
     quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull(),
@@ -869,6 +873,9 @@ export const reverseLogisticsItems = pgTable(
   (table) => ({
     reverseLogisticIdx: index("rli_reverse_logistic_idx").on(
       table.reverseLogisticId
+    ),
+    sourceWarehouseExitItemIdx: index("rli_source_warehouse_exit_item_idx").on(
+      table.sourceWarehouseExitItemId
     ),
   })
 );

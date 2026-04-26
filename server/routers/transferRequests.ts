@@ -27,7 +27,7 @@ async function releaseTransferRequestItems(
 
     affectedRequestIds.add(requestItem.requestId);
     await db.updateRequestItem(requestItem.id, {
-      assignedFlow: null,
+      assignedFlow: "traslado_proyecto",
       status: "pendiente",
     });
 
@@ -220,7 +220,19 @@ export const transferRequestsRouter = router({
     }),
 
   convertToTransfer: protectedProcedure
-    .input(z.object({ id: z.number() }))
+    .input(
+      z.object({
+        id: z.number(),
+        items: z
+          .array(
+            z.object({
+              transferRequestItemId: z.number(),
+              quantity: z.string().min(1),
+            })
+          )
+          .optional(),
+      })
+    )
     .mutation(async ({ ctx, input }) => {
       if (
         ctx.user.role !== "admin" &&
@@ -247,6 +259,6 @@ export const transferRequestsRouter = router({
         });
       }
 
-      return db.createTransferFromRequest(input.id, ctx.user.id);
+      return db.createTransferFromRequest(input.id, ctx.user.id, input.items);
     }),
 });

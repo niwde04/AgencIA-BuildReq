@@ -15,7 +15,14 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { formatPurchaseOrderCurrency } from "@shared/purchase-orders";
-import { ArrowLeft, ArrowLeftRight, Package, ShoppingCart, Truck } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowLeftRight,
+  Package,
+  RotateCcw,
+  ShoppingCart,
+  Truck,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -34,21 +41,21 @@ const FLOW_ORDER: QueueFlowType[] = [
 ];
 
 const FLOW_LABELS: Record<QueueFlowType, string> = {
-  despacho_bodega: "Salida de bodega",
+  despacho_bodega: "Salida de inventario",
   compra_directa: "Compra directa",
   traslado_proyecto: "Solicitud de traslado",
   solicitud_compra: "Solicitud de compra",
 };
 
 const FLOW_DESCRIPTIONS: Record<QueueFlowType, string> = {
-  despacho_bodega: "Crea una transacción de salida en borrador para la requisición seleccionada.",
+  despacho_bodega: "Crea una salida de inventario en borrador para la requisición seleccionada.",
   compra_directa: "Genera una solicitud de compra directa para luego convertirla en OC.",
   traslado_proyecto: "Crea la solicitud de traslado entre proyectos.",
   solicitud_compra: "Genera la solicitud de compra para Oficina Central.",
 };
 
 const FLOW_ROUTE_HINTS: Record<QueueFlowType, string> = {
-  despacho_bodega: "Se atiende aquí, genera una salida SB en borrador y continúa en Salidas de Bodega.",
+  despacho_bodega: "Se atiende aquí, genera una salida SB en borrador y continúa en Salidas de Inventario.",
   compra_directa: "Se atiende aquí, genera una SC y luego continúa en Solicitudes de Compra.",
   traslado_proyecto: "Se atiende aquí y luego continúa en Solicitudes de Traslado.",
   solicitud_compra: "Se atiende aquí y luego continúa en Solicitudes de Compra.",
@@ -116,6 +123,9 @@ const getPendingDispatchQuantity = (item: any) =>
 const getAvailableDispatchQuantity = (item: any) =>
   Math.max(parseQuantityValue(item.projectStock), 0);
 
+const getSuggestedDispatchQuantity = (item: any) =>
+  Math.min(getPendingDispatchQuantity(item), getAvailableDispatchQuantity(item));
+
 const formatSupplierReferenceLabel = (reference: {
   supplierCode?: string | null;
   supplierName?: string | null;
@@ -138,6 +148,8 @@ export default function Flujos() {
   const [flowFilter, setFlowFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [processingFlowType, setProcessingFlowType] = useState<QueueFlowType | null>(null);
+  const [returningDispatchItemId, setReturningDispatchItemId] = useState<number | null>(null);
+  const [returningTransferItemId, setReturningTransferItemId] = useState<number | null>(null);
   const [dispatchNotesByFlowType, setDispatchNotesByFlowType] = useState<
     Partial<Record<QueueFlowType, string>>
   >({});
@@ -156,6 +168,9 @@ export default function Flujos() {
   >({});
   const [directPurchaseQuantityByItemId, setDirectPurchaseQuantityByItemId] = useState<
     Record<number, string>
+  >({});
+  const [transferCheckedByItemId, setTransferCheckedByItemId] = useState<
+    Record<number, boolean>
   >({});
   const [transferSourceProjectIdByFlowType, setTransferSourceProjectIdByFlowType] = useState<
     Partial<Record<QueueFlowType, string>>
@@ -204,12 +219,18 @@ export default function Flujos() {
   const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
 
   const directPurchaseMutation = trpc.supplyFlows.createDirectPurchaseBatch.useMutation();
-  const projectTransferMutation = trpc.supplyFlows.createProjectTransfer.useMutation();
+  const projectTransferBatchMutation =
+    trpc.supplyFlows.createProjectTransferBatch.useMutation();
   const purchaseRequestMutation = trpc.supplyFlows.createPurchaseRequest.useMutation();
-  const warehouseExitMutation = trpc.requestItems.recordWarehouseExit.useMutation();
+  const warehouseExitBatchMutation = trpc.requestItems.recordWarehouseExitBatch.useMutation();
+  const returnDispatchMutation =
+    trpc.requestItems.returnDispatchToRequisition.useMutation();
+  const returnTransferMutation =
+    trpc.requestItems.returnTransferToRequisition.useMutation();
 
   const invalidateAll = () =>
     Promise.all([
+      utils.materialRequests.list.invalidate(),
       utils.supplyFlows.pendingQueue.invalidate(),
       utils.supplyFlows.list.invalidate(),
       utils.purchaseOrders.list.invalidate(),
@@ -296,6 +317,11 @@ export default function Flujos() {
       for (const itemId of itemIds) delete next[itemId];
       return next;
     });
+    setTransferCheckedByItemId((current) => {
+      const next = { ...current };
+      for (const itemId of itemIds) delete next[itemId];
+      return next;
+    });
   };
 
   const processDirectPurchaseFlow = async (flowType: QueueFlowType) => {
@@ -375,116 +401,194 @@ export default function Flujos() {
 
   const processWarehouseDispatchFlow = async (flowType: QueueFlowType) => {
     const rows = pendingRowsByFlow[flowType];
+    const dispatchRows: Array<{
+      row: PendingQueueRow;
+      dispatchedQuantity: string;
+    }> = [];
+
+    if (rows.length === 0) {
+      toast.error("No hay ítems pendientes para crear salida de bodega");
+      return;
+    }
+    for (const row of rows) {
+      const item = row.item;
+      const pendingQuantity = getPendingDispatchQuantity(item);
+      const availableQuantity = getAvailableDispatchQuantity(item);
+      const dispatchedQuantity =
+        dispatchQuantityByItemId[item.id] ??
+        getSuggestedDispatchQuantity(item).toFixed(2);
+      const dispatchedNumber = Number(dispatchedQuantity);
+
+      if (!Number.isFinite(dispatchedNumber) || dispatchedNumber < 0) {
+        toast.error(`${item.itemName}: revise la cantidad a despachar`);
+        return;
+      }
+      if (dispatchedNumber <= 0) continue;
+      if (dispatchedNumber - pendingQuantity > 0.000001) {
+        toast.error(
+          `${item.itemName}: la cantidad despachada no puede exceder la cantidad pendiente`
+        );
+        return;
+      }
+      if (dispatchedNumber - availableQuantity > 0.000001) {
+        toast.error(
+          `${item.itemName}: la cantidad despachada no puede exceder la existencia disponible`
+        );
+        return;
+      }
+
+      dispatchRows.push({ row, dispatchedQuantity });
+    }
+
+    if (dispatchRows.length === 0) {
+      toast.error(
+        "No hay existencia disponible para crear salida. Use A requisición para cambiar el saldo a otro flujo"
+      );
+      return;
+    }
+
+    const rowsByRequestId = new Map<number, typeof dispatchRows>();
+    for (const dispatchRow of dispatchRows) {
+      const requestId = dispatchRow.row.request.id;
+      const currentRows = rowsByRequestId.get(requestId) ?? [];
+      currentRows.push(dispatchRow);
+      rowsByRequestId.set(requestId, currentRows);
+    }
 
     setProcessingFlowType(flowType);
 
     const processedItemIds: number[] = [];
     const createdExitNumbers: string[] = [];
-    const failedItems: string[] = [];
 
-    for (const row of rows) {
-      const item = row.item;
-      try {
-        const pendingQuantity = getPendingDispatchQuantity(item);
-        const dispatchedQuantity =
-          dispatchQuantityByItemId[item.id] ?? pendingQuantity.toFixed(2);
-        const dispatchedNumber = Number(dispatchedQuantity);
-
-        if (!Number.isFinite(dispatchedNumber) || dispatchedNumber <= 0) {
-          throw new Error("La cantidad despachada debe ser mayor que cero");
-        }
-        if (dispatchedNumber - pendingQuantity > 0.000001) {
-          throw new Error("La cantidad despachada no puede exceder la cantidad pendiente");
-        }
-
-        const result = await warehouseExitMutation.mutateAsync({
-          requestId: row.request.id,
-          requestItemId: item.id,
-          dispatchedQuantity,
+    try {
+      for (const [requestId, requestRows] of Array.from(rowsByRequestId.entries())) {
+        const result = await warehouseExitBatchMutation.mutateAsync({
+          requestId,
+          items: requestRows.map(({ row, dispatchedQuantity }) => ({
+            requestItemId: row.item.id,
+            dispatchedQuantity,
+          })),
           note: dispatchNotesByFlowType[flowType] || undefined,
         });
+
         if (result?.exitNumber) {
           createdExitNumbers.push(result.exitNumber);
         }
-
-        processedItemIds.push(item.id);
-      } catch (error) {
-        failedItems.push(`${item.itemName}: ${getErrorMessage(error)}`);
+        processedItemIds.push(...requestRows.map(({ row }) => row.item.id));
       }
-    }
 
-    if (processedItemIds.length > 0) {
       resetProcessedItemDrafts(processedItemIds);
       await invalidateAll();
-    }
 
-    if (failedItems.length === 0) {
-      const exitLabel =
-        createdExitNumbers.length === 1
-          ? ` ${createdExitNumbers[0]}`
-          : createdExitNumbers.length > 1
-            ? ` (${createdExitNumbers.slice(0, 3).join(", ")}${createdExitNumbers.length > 3 ? "..." : ""})`
-            : "";
+      if (createdExitNumbers.length <= 1) {
+        const exitLabel = createdExitNumbers[0] ? ` ${createdExitNumbers[0]}` : "";
+        toast.success(
+          `Salida de inventario${exitLabel} creada en borrador para ${processedItemIds.length} ítem(s)`
+        );
+      } else {
+        toast.success(
+          `Se crearon ${createdExitNumbers.length} salidas de inventario para ${processedItemIds.length} ítem(s)`
+        );
+      }
+    } catch (error) {
+      if (processedItemIds.length > 0) {
+        resetProcessedItemDrafts(processedItemIds);
+        await invalidateAll();
+        toast.error(
+          `Se procesaron ${processedItemIds.length} de ${dispatchRows.length} ítem(s). ${getErrorMessage(error)}`
+        );
+        return;
+      }
+
+      toast.error(getErrorMessage(error));
+    } finally {
+      setProcessingFlowType(null);
+    }
+  };
+
+  const returnDispatchItemToRequisition = async (row: PendingQueueRow) => {
+    setReturningDispatchItemId(row.item.id);
+    try {
+      const result = await returnDispatchMutation.mutateAsync({ id: row.item.id });
+      resetProcessedItemDrafts([row.item.id, result.pendingRequestItemId].filter(Boolean));
+      await invalidateAll();
       toast.success(
-        `Transacción de salida${exitLabel} creada en borrador para ${processedItemIds.length} ítem(s)`
+        `Se devolvió ${result.pendingQuantity} ${row.item.unit || ""} de ${row.item.itemName} a la requisición`
       );
-    } else if (processedItemIds.length > 0) {
-      toast.error(
-        `Se procesaron ${processedItemIds.length} de ${rows.length} ítems. ${failedItems[0]}`
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setReturningDispatchItemId((current) =>
+        current === row.item.id ? null : current
       );
-    } else {
-      toast.error(failedItems[0]);
     }
+  };
 
-    setProcessingFlowType(null);
+  const returnTransferItemToRequisition = async (row: PendingQueueRow) => {
+    setReturningTransferItemId(row.item.id);
+    try {
+      const result = await returnTransferMutation.mutateAsync({ id: row.item.id });
+      resetProcessedItemDrafts([row.item.id]);
+      await invalidateAll();
+      toast.success(
+        `Se devolvió ${result.pendingQuantity} ${row.item.unit || ""} de ${row.item.itemName} a la requisición`
+      );
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setReturningTransferItemId((current) =>
+        current === row.item.id ? null : current
+      );
+    }
   };
 
   const processTransferFlow = async (flowType: QueueFlowType) => {
     const rows = pendingRowsByFlow[flowType];
     const sourceProjectId = transferSourceProjectIdByFlowType[flowType];
+    const selectedRows = rows.filter(
+      (row) => transferCheckedByItemId[row.item.id] === true
+    );
 
     if (!sourceProjectId) {
       toast.error("Seleccione el proyecto origen para el traslado");
       return;
     }
+    if (selectedRows.length === 0) {
+      toast.error("Seleccione al menos un detalle para la solicitud de traslado");
+      return;
+    }
+
+    const destinationProjectIds = Array.from(
+      new Set(selectedRows.map((row) => row.request.projectId))
+    );
+    if (destinationProjectIds.length !== 1) {
+      toast.error(
+        "Seleccione ítems del mismo proyecto destino para crear una sola solicitud de traslado"
+      );
+      return;
+    }
 
     setProcessingFlowType(flowType);
-    const processedItemIds: number[] = [];
-    const failedItems: string[] = [];
-
-    for (const row of rows) {
-      const item = row.item;
-      try {
-        await projectTransferMutation.mutateAsync({
+    try {
+      const result = await projectTransferBatchMutation.mutateAsync({
+        sourceProjectId: Number(sourceProjectId),
+        notes: transferNotesByFlowType[flowType] || undefined,
+        items: selectedRows.map((row) => ({
           requestId: row.request.id,
-          requestItemId: item.id,
-          sourceProjectId: Number(sourceProjectId),
-          destinationProjectId: row.request.projectId,
-          notes: transferNotesByFlowType[flowType] || undefined,
-        });
+          requestItemId: row.item.id,
+        })),
+      });
 
-        processedItemIds.push(item.id);
-      } catch (error) {
-        failedItems.push(`${item.itemName}: ${getErrorMessage(error)}`);
-      }
-    }
-
-    if (processedItemIds.length > 0) {
-      resetProcessedItemDrafts(processedItemIds);
+      resetProcessedItemDrafts(selectedRows.map((row) => row.item.id));
       await invalidateAll();
-    }
-
-    if (failedItems.length === 0) {
-      toast.success(`Solicitud de traslado generada para ${processedItemIds.length} ítem(s)`);
-    } else if (processedItemIds.length > 0) {
-      toast.error(
-        `Se procesaron ${processedItemIds.length} de ${rows.length} ítems. ${failedItems[0]}`
+      toast.success(
+        `Solicitud ${result.transferRequestNumber} generada para ${result.processedItems} ítem(s)`
       );
-    } else {
-      toast.error(failedItems[0]);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setProcessingFlowType(null);
     }
-
-    setProcessingFlowType(null);
   };
 
   const processPurchaseRequestFlow = async (flowType: QueueFlowType) => {
@@ -568,7 +672,7 @@ export default function Flujos() {
             <SelectContent>
               <SelectItem value="all">Todos los flujos</SelectItem>
               {allowedFlowTypes.includes("despacho_bodega") && (
-                <SelectItem value="despacho_bodega">Salida de bodega</SelectItem>
+                <SelectItem value="despacho_bodega">Salida de inventario</SelectItem>
               )}
               {allowedFlowTypes.includes("compra_directa") && (
                 <SelectItem value="compra_directa">Compra directa</SelectItem>
@@ -706,7 +810,8 @@ export default function Flujos() {
                     <table className="w-full table-fixed text-sm">
                       <thead>
                         <tr className="border-b border-border bg-muted/30">
-                          {flowType === "compra_directa" && (
+                          {(flowType === "compra_directa" ||
+                            flowType === "traslado_proyecto") && (
                             <th className="w-16 p-2 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                               Sel.
                             </th>
@@ -735,9 +840,20 @@ export default function Flujos() {
                               Despachar
                             </th>
                           )}
+                          {flowType === "despacho_bodega" && (
+                            <th className="w-32 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              Saldo
+                            </th>
+                          )}
                           <th className="w-24 p-2 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                             Unidad
                           </th>
+                          {(flowType === "despacho_bodega" ||
+                            flowType === "traslado_proyecto") && (
+                            <th className="w-40 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              Acciones
+                            </th>
+                          )}
                         </tr>
                       </thead>
                       <tbody>
@@ -746,24 +862,48 @@ export default function Flujos() {
                           const pendingDispatchQuantity = getPendingDispatchQuantity(item);
                           const availableDispatchQuantity = getAvailableDispatchQuantity(item);
                           const hasAvailableStock = availableDispatchQuantity > 0;
+                          const dispatchInputValue =
+                            dispatchQuantityByItemId[item.id] ??
+                            getSuggestedDispatchQuantity(item).toFixed(2);
+                          const selectedDispatchQuantity = parseQuantityValue(dispatchInputValue);
+                          const dispatchBalanceQuantity = Math.max(
+                            pendingDispatchQuantity - selectedDispatchQuantity,
+                            0
+                          );
+                          const projectedStockQuantity =
+                            availableDispatchQuantity - selectedDispatchQuantity;
 
                           return (
                             <tr
                               key={`${flowType}:${row.request.id}:${item.id}`}
                               className="border-b border-border last:border-0"
                             >
-                              {flowType === "compra_directa" && (
+                              {(flowType === "compra_directa" ||
+                                flowType === "traslado_proyecto") && (
                                 <td className="p-2 text-center">
-                                  <Checkbox
-                                    checked={directPurchaseCheckedByItemId[item.id] === true}
-                                    onCheckedChange={(checked) =>
-                                      setDirectPurchaseCheckedByItemId((current) => ({
-                                        ...current,
-                                        [item.id]: checked === true,
-                                      }))
-                                    }
-                                    disabled={isProcessing}
-                                  />
+                                  {flowType === "compra_directa" ? (
+                                    <Checkbox
+                                      checked={directPurchaseCheckedByItemId[item.id] === true}
+                                      onCheckedChange={(checked) =>
+                                        setDirectPurchaseCheckedByItemId((current) => ({
+                                          ...current,
+                                          [item.id]: checked === true,
+                                        }))
+                                      }
+                                      disabled={isProcessing}
+                                    />
+                                  ) : (
+                                    <Checkbox
+                                      checked={transferCheckedByItemId[item.id] === true}
+                                      onCheckedChange={(checked) =>
+                                        setTransferCheckedByItemId((current) => ({
+                                          ...current,
+                                          [item.id]: checked === true,
+                                        }))
+                                      }
+                                      disabled={isProcessing}
+                                    />
+                                  )}
                                 </td>
                               )}
                               <td className="p-2">
@@ -878,10 +1018,7 @@ export default function Flujos() {
                               {flowType === "despacho_bodega" && (
                                 <td className="p-2">
                                   <Input
-                                    value={
-                                      dispatchQuantityByItemId[item.id] ??
-                                      pendingDispatchQuantity.toFixed(2)
-                                    }
+                                    value={dispatchInputValue}
                                     onChange={(event) =>
                                       setDispatchQuantityByItemId((current) => ({
                                         ...current,
@@ -890,7 +1027,10 @@ export default function Flujos() {
                                     }
                                     type="number"
                                     min="0"
-                                    max={pendingDispatchQuantity}
+                                    max={Math.min(
+                                      pendingDispatchQuantity,
+                                      availableDispatchQuantity
+                                    )}
                                     step="any"
                                     className="ml-auto h-9 w-28 text-right"
                                     disabled={isProcessing}
@@ -903,13 +1043,78 @@ export default function Flujos() {
                                       Sin stock para emitir
                                     </p>
                                   ) : (
-                                    <p className="mt-1 text-right text-[10px] text-muted-foreground">
-                                      Se validará al emitir
+                                    <p
+                                      className={`mt-1 text-right text-[10px] ${
+                                        projectedStockQuantity < 0
+                                          ? "font-medium text-destructive"
+                                          : "text-muted-foreground"
+                                      }`}
+                                    >
+                                      Nueva existencia:{" "}
+                                      {projectedStockQuantity.toFixed(2)}
                                     </p>
                                   )}
                                 </td>
                               )}
+                              {flowType === "despacho_bodega" && (
+                                <td className="p-2 text-right">
+                                  <p className="font-mono">
+                                    {dispatchBalanceQuantity.toFixed(2)}
+                                  </p>
+                                  {dispatchBalanceQuantity > 0 ? (
+                                    <p className="text-[10px] text-muted-foreground">
+                                      Queda en flujo
+                                    </p>
+                                  ) : null}
+                                </td>
+                              )}
                               <td className="p-2 text-xs">{item.unit || "—"}</td>
+                              {(flowType === "despacho_bodega" ||
+                                flowType === "traslado_proyecto") && (
+                                <td className="p-2 text-right">
+                                  {flowType === "despacho_bodega" ? (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8 px-2 text-[11px]"
+                                      disabled={
+                                        isProcessing ||
+                                        returningDispatchItemId === item.id ||
+                                        returnDispatchMutation.isPending
+                                      }
+                                      onClick={() =>
+                                        void returnDispatchItemToRequisition(row)
+                                      }
+                                    >
+                                      <RotateCcw className="mr-1 h-3.5 w-3.5" />
+                                      {returningDispatchItemId === item.id
+                                        ? "Devolviendo..."
+                                        : "A requisición"}
+                                    </Button>
+                                  ) : (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8 px-2 text-[11px]"
+                                      disabled={
+                                        isProcessing ||
+                                        returningTransferItemId === item.id ||
+                                        returnTransferMutation.isPending
+                                      }
+                                      onClick={() =>
+                                        void returnTransferItemToRequisition(row)
+                                      }
+                                    >
+                                      <RotateCcw className="mr-1 h-3.5 w-3.5" />
+                                      {returningTransferItemId === item.id
+                                        ? "Devolviendo..."
+                                        : "A requisición"}
+                                    </Button>
+                                  )}
+                                </td>
+                              )}
                             </tr>
                           );
                         })}
@@ -1104,7 +1309,7 @@ export default function Flujos() {
                         onClick={() => void processWarehouseDispatchFlow(flowType)}
                         disabled={isProcessing}
                       >
-                        {isProcessing ? "Creando..." : "Crear transacción de salida"}
+                        {isProcessing ? "Creando..." : "Crear salida de inventario"}
                       </Button>
                     )}
 

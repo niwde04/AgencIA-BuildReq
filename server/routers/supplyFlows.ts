@@ -651,6 +651,154 @@ export const supplyFlowsRouter = router({
       };
     }),
 
+  createProjectTransferBatch: protectedProcedure
+    .input(
+      z.object({
+        sourceProjectId: z.number(),
+        notes: z.string().optional(),
+        items: z
+          .array(
+            z.object({
+              requestId: z.number(),
+              requestItemId: z.number(),
+            })
+          )
+          .min(1),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canManageWarehouseOrTransfers(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo el Jefe de Bodega Central o Administración Central pueden gestionar traslados",
+        });
+      }
+
+      const uniqueItems = Array.from(
+        new Map(
+          input.items.map((item) => [
+            `${item.requestId}:${item.requestItemId}`,
+            item,
+          ])
+        ).values()
+      );
+      const preparedItems: Array<{
+        detail: any;
+        item: any;
+      }> = [];
+
+      for (const entry of uniqueItems) {
+        const { detail, item } = await getRequestAndItem(
+          entry.requestId,
+          entry.requestItemId
+        );
+        assertItemApprovedForProcessing(detail, item);
+
+        const existingTransferFlow = await db.getActiveSupplyFlowForRequestItem({
+          requestId: entry.requestId,
+          requestItemId: entry.requestItemId,
+          flowType: "traslado_proyecto",
+        });
+        if (existingTransferFlow) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `El ítem ${item.itemName} ya tiene una solicitud de traslado activa`,
+          });
+        }
+
+        preparedItems.push({ detail, item });
+      }
+
+      const destinationProjectIds = Array.from(
+        new Set(preparedItems.map(({ detail }) => detail.request.projectId))
+      );
+      if (destinationProjectIds.length !== 1) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Para crear una sola solicitud de traslado, seleccione ítems del mismo proyecto destino",
+        });
+      }
+
+      const destinationProjectId = destinationProjectIds[0];
+      if (input.sourceProjectId === destinationProjectId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "El proyecto origen debe ser distinto al proyecto solicitante",
+        });
+      }
+
+      let earliestNeededBy: Date | null = null;
+      for (const { detail, item } of preparedItems) {
+        earliestNeededBy = resolveEarliestNeededBy(
+          earliestNeededBy,
+          detail.request.neededBy ? new Date(detail.request.neededBy) : null
+        );
+
+        await db.updateRequestItem(item.id, {
+          assignedFlow: "traslado_proyecto",
+          status: "pendiente",
+        });
+      }
+
+      const sourceRequestIds = Array.from(
+        new Set(preparedItems.map(({ detail }) => detail.request.id))
+      );
+      const transferRequest = await db.createTransferRequest(
+        {
+          materialRequestId:
+            sourceRequestIds.length === 1 ? sourceRequestIds[0] : null,
+          projectId: input.sourceProjectId,
+          destinationType: "proyecto",
+          destinationProjectId,
+          createdById: ctx.user.id,
+          status: "pendiente",
+          neededBy: earliestNeededBy,
+          notes: input.notes,
+          rejectionReason: null,
+        },
+        preparedItems.map(({ item }) => ({
+          materialRequestItemId: item.id,
+          itemName: item.sapItemDescription || item.itemName,
+          sapItemCode: item.sapItemCode,
+          quantity: item.quantity,
+          receivedQuantity: "0.00",
+          unit: item.unit,
+          notes: input.notes,
+        }))
+      );
+
+      const flowResults = [];
+      for (const { detail, item } of preparedItems) {
+        const result = await db.createSupplyFlowRecord({
+          requestId: detail.request.id,
+          requestItemId: item.id,
+          flowType: "traslado_proyecto",
+          sourceProjectId: input.sourceProjectId,
+          destinationProjectId,
+          sapDocumentType: "transferencia_inventario",
+          sapDocumentNumber: transferRequest.requestNumber,
+          processedById: ctx.user.id,
+          notes: input.notes,
+          status: "pendiente",
+        });
+        flowResults.push(result);
+      }
+
+      for (const requestId of sourceRequestIds) {
+        await checkAndUpdateRequestStatus(requestId, ctx.user.id);
+      }
+
+      return {
+        success: true,
+        transferRequestId: transferRequest.id,
+        transferRequestNumber: transferRequest.requestNumber,
+        processedItems: preparedItems.length,
+        flowIds: flowResults.map((result) => result.id),
+      };
+    }),
+
   createPurchaseRequest: protectedProcedure
     .input(
       z.object({

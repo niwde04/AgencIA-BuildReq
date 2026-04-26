@@ -40,6 +40,7 @@ import {
   Send,
   AlertCircle,
   Pencil,
+  XCircle,
 } from "lucide-react";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useLocation, useParams } from "wouter";
@@ -57,6 +58,7 @@ const STATUS_LABELS: Record<string, string> = {
   pendiente_aprobar: "Pendiente de aprobar",
   en_espera: "En espera",
   en_proceso: "En proceso de atención",
+  flujo_completado: "Flujo completado",
   cerrada: "Cerrada",
   anulada: "Anulada",
 };
@@ -66,6 +68,7 @@ const STATUS_COLORS: Record<string, string> = {
   pendiente_aprobar: "border-orange-300 text-orange-700 bg-orange-50",
   en_espera: "border-amber-300 text-amber-700 bg-amber-50",
   en_proceso: "border-blue-300 text-blue-700 bg-blue-50",
+  flujo_completado: "border-emerald-300 text-emerald-700 bg-emerald-50",
   cerrada: "border-gray-300 text-gray-600 bg-gray-50",
   anulada: "border-rose-300 text-rose-700 bg-rose-50",
 };
@@ -192,6 +195,13 @@ type ItemDisplayRow = {
   pendingApprovalQuantity: number;
   rejectedQuantity: number;
   assignedFlowTypes: string[];
+  flowEvents: Array<{
+    key: string;
+    flowType: string;
+    status: string;
+    createdAt?: string | Date | null;
+    updatedAt?: string | Date | null;
+  }>;
   hasSapCode: boolean;
 };
 
@@ -201,6 +211,64 @@ const parseQuantityValue = (value: unknown) => {
 };
 
 const formatQuantityValue = (value: unknown) => parseQuantityValue(value).toFixed(2);
+
+const formatEventDateTime = (value: string | Date | null | undefined) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+
+  return date.toLocaleString("es-HN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+};
+
+const getLatestEventDate = (values: Array<string | Date | null | undefined>) => {
+  const validDates = values
+    .map((value) => (value ? new Date(value) : null))
+    .filter((date): date is Date => date instanceof Date && !Number.isNaN(date.getTime()))
+    .sort((a, b) => b.getTime() - a.getTime());
+
+  return validDates[0] ?? null;
+};
+
+const getApprovalEventLabel = (row: ItemDisplayRow) => {
+  const eventDate = getLatestEventDate([
+    ...row.approvedItems.map((entry) => entry.approvedAt),
+    ...row.rejectedItems.map((entry) => entry.approvedAt),
+  ]);
+  const formatted = formatEventDateTime(eventDate);
+  if (!formatted) return null;
+
+  if (row.approvedItems.length > 0 && row.rejectedItems.length > 0) {
+    return `Última revisión: ${formatted}`;
+  }
+  if (row.rejectedItems.length > 0) {
+    return `Rechazado: ${formatted}`;
+  }
+  return `Aprobado: ${formatted}`;
+};
+
+const getFlowEventTimeline = (event: ItemDisplayRow["flowEvents"][number]) => {
+  const createdAt = formatEventDateTime(event.createdAt);
+  const updatedAt = formatEventDateTime(event.updatedAt);
+  const lines: string[] = [];
+
+  if (createdAt) {
+    lines.push(`Creado: ${createdAt}`);
+  }
+
+  if (updatedAt && updatedAt !== createdAt) {
+    const label = event.status === "completado" ? "Completado" : "Actualizado";
+    lines.push(`${label}: ${updatedAt}`);
+  }
+
+  return lines;
+};
 
 const normalizeItemFamilyValue = (value: unknown) => String(value ?? "").trim().toLowerCase();
 
@@ -467,6 +535,19 @@ export default function SolicitudDetalle() {
     onError: (e) => toast.error(e.message),
   });
 
+  const rejectPendingQuantityMutation =
+    trpc.requestItems.rejectPendingQuantity.useMutation({
+      onSuccess: (result) => {
+        setPendingBalanceRejection(null);
+        setBalanceRejectReason("");
+        toast.success(
+          `Saldo rechazado: ${formatQuantityValue(result.rejectedQuantity)}`
+        );
+        invalidateAll();
+      },
+      onError: (e) => toast.error(e.message),
+    });
+
   const approveMutation = trpc.materialRequests.approve.useMutation({
     onSuccess: () => {
       toast.success("Requisición aprobada");
@@ -529,6 +610,13 @@ export default function SolicitudDetalle() {
     itemLabel: string;
   } | null>(null);
   const [itemRejectReason, setItemRejectReason] = useState("");
+  const [pendingBalanceRejection, setPendingBalanceRejection] = useState<{
+    itemId: number;
+    itemLabel: string;
+    pendingQuantity: number;
+    unit?: string | null;
+  } | null>(null);
+  const [balanceRejectReason, setBalanceRejectReason] = useState("");
   const [pendingBulkReviewDecision, setPendingBulkReviewDecision] = useState<
     "aprobada" | "rechazada" | null
   >(null);
@@ -582,6 +670,19 @@ export default function SolicitudDetalle() {
     return entries;
   }, [flowData]);
 
+  const activeFlowsByItem = useMemo(() => {
+    const entries = new Map<number, any[]>();
+
+    for (const flow of flowData || []) {
+      if (!flow.requestItemId || flow.status === "cancelado") continue;
+      const current = entries.get(flow.requestItemId) ?? [];
+      current.push(flow);
+      entries.set(flow.requestItemId, current);
+    }
+
+    return entries;
+  }, [flowData]);
+
   const itemRows = useMemo(() => {
     const groupedItems = new Map<string, any[]>();
     const orderedKeys: string[] = [];
@@ -602,6 +703,36 @@ export default function SolicitudDetalle() {
           ...Array.from(activeFlowTypesByItem.get(entry.id) ?? []),
         ])
       );
+
+    const getEntryFlowEvents = (entry: any) => {
+      const activeFlows = activeFlowsByItem.get(entry.id) ?? [];
+      const events = activeFlows.map((flow) => ({
+        key: `flow-${flow.id}`,
+        flowType: flow.flowType,
+        status: flow.status,
+        createdAt: flow.createdAt,
+        updatedAt: flow.updatedAt,
+      }));
+
+      if (
+        entry.assignedFlow &&
+        !activeFlows.some((flow) => flow.flowType === entry.assignedFlow)
+      ) {
+        events.push({
+          key: `assigned-${entry.id}-${entry.assignedFlow}`,
+          flowType: entry.assignedFlow,
+          status: "pendiente",
+          createdAt: entry.updatedAt ?? entry.createdAt,
+          updatedAt: null,
+        });
+      }
+
+      return events.sort((a, b) => {
+        const left = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const right = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return left - right;
+      });
+    };
 
     const getEntryProcessedQuantity = (entry: any) => {
       const quantity = parseQuantityValue(entry.quantity);
@@ -690,6 +821,7 @@ export default function SolicitudDetalle() {
             approvedItems.flatMap((entry) => getEntryFlowTypes(entry))
           )
         ),
+        flowEvents: approvedItems.flatMap((entry) => getEntryFlowEvents(entry)),
         hasSapCode:
           approvedItems.length === 0 ||
           approvedItems.every((entry) => Boolean(entry.sapItemCode)),
@@ -719,7 +851,7 @@ export default function SolicitudDetalle() {
 
       return groupItems.map((entry) => buildRow([entry], `${groupKey}:${entry.id}`));
     });
-  }, [activeFlowTypesByItem, items]);
+  }, [activeFlowTypesByItem, activeFlowsByItem, items]);
 
   const handleSapSelect = (itemId: number, code: string, desc: string) => {
     translateMutation.mutate({
@@ -826,6 +958,7 @@ export default function SolicitudDetalle() {
 
   const anyQueueProcessing =
     assignFlowMutation.isPending ||
+    rejectPendingQuantityMutation.isPending ||
     translateMutation.isPending ||
     clearSapTranslationMutation.isPending ||
     assigningFlowItemId !== null;
@@ -905,6 +1038,7 @@ export default function SolicitudDetalle() {
   const canReviewGoodsItems =
     request.requestType === "bienes" &&
     request.status !== "borrador" &&
+    request.status !== "flujo_completado" &&
     request.status !== "cerrada" &&
     request.status !== "anulada" &&
     request.approvalStatus === "pendiente" &&
@@ -1236,6 +1370,7 @@ export default function SolicitudDetalle() {
                   const queuedFlow = editableItem?.assignedFlow ?? undefined;
                   const queueOptions = getVisibleQueueOptionsForItem();
                   const approvalBadge = getRowApprovalBadge(row);
+                  const approvalEventLabel = getApprovalEventLabel(row);
                   const rejectionNotes = Array.from(
                     new Set(
                       row.rejectedItems
@@ -1257,6 +1392,7 @@ export default function SolicitudDetalle() {
                     : false;
                   const isSapTranslationLocked =
                     !canManageProcessing ||
+                    request.status === "flujo_completado" ||
                     request.status === "cerrada" ||
                     request.status === "borrador" ||
                     request.status === "anulada" ||
@@ -1272,6 +1408,17 @@ export default function SolicitudDetalle() {
                       ? (activeFlowTypesByItem.get(editableItem.id)?.size ?? 0) > 0
                       : false) ||
                     assigningFlowItemId === editableItem?.id;
+                  const canRejectPendingBalance =
+                    canManageProcessing &&
+                    request.status !== "flujo_completado" &&
+                    request.status !== "cerrada" &&
+                    request.status !== "borrador" &&
+                    request.status !== "anulada" &&
+                    request.requestType === "bienes" &&
+                    row.pendingApprovalQuantity <= 0 &&
+                    row.remainingQuantity > 0 &&
+                    row.processedQuantity > 0 &&
+                    Boolean(editableItem);
                   const docSapLabels = Array.from(
                     new Set(
                       row.assignedFlowTypes
@@ -1329,6 +1476,11 @@ export default function SolicitudDetalle() {
                           >
                             {approvalBadge.label}
                           </Badge>
+                          {approvalEventLabel ? (
+                            <p className="text-[10px] leading-4 text-muted-foreground">
+                              {approvalEventLabel}
+                            </p>
+                          ) : null}
 
                           {row.pendingApprovalQuantity > 0 ? (
                             <p className="text-[11px] text-muted-foreground">
@@ -1383,17 +1535,26 @@ export default function SolicitudDetalle() {
                             </div>
                           ) : null}
 
-                          {row.assignedFlowTypes.length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              {row.assignedFlowTypes.map((flowType) => (
-                                <Badge
-                                  key={`${row.key}-${flowType}`}
-                                  variant="outline"
-                                  className={`text-xs ${FLOW_COLORS[flowType] || ""}`}
-                                >
-                                  <Check className="mr-1 h-3 w-3" />
-                                  {FLOW_LABELS[flowType] || flowType}
-                                </Badge>
+                          {row.flowEvents.length > 0 ? (
+                            <div className="space-y-1.5">
+                              {row.flowEvents.map((event) => (
+                                <div key={`${row.key}-${event.key}`} className="space-y-0.5">
+                                  <Badge
+                                    variant="outline"
+                                    className={`text-xs ${FLOW_COLORS[event.flowType] || ""}`}
+                                  >
+                                    <Check className="mr-1 h-3 w-3" />
+                                    {FLOW_LABELS[event.flowType] || event.flowType}
+                                  </Badge>
+                                  {getFlowEventTimeline(event).map((line) => (
+                                    <p
+                                      key={`${row.key}-${event.key}-${line}`}
+                                      className="text-[10px] leading-4 text-muted-foreground"
+                                    >
+                                      {line}
+                                    </p>
+                                  ))}
+                                </div>
                               ))}
                             </div>
                           ) : (
@@ -1406,6 +1567,27 @@ export default function SolicitudDetalle() {
                             </p>
                           ) : null}
 
+                          {canRejectPendingBalance && editableItem ? (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              className="h-7 px-2 text-[11px]"
+                              disabled={anyQueueProcessing}
+                              onClick={() => {
+                                setPendingBalanceRejection({
+                                  itemId: editableItem.id,
+                                  itemLabel: item.itemName,
+                                  pendingQuantity: row.remainingQuantity,
+                                  unit: item.unit,
+                                });
+                                setBalanceRejectReason("");
+                              }}
+                            >
+                              <XCircle className="mr-1 h-3.5 w-3.5" />
+                              Rechazar saldo
+                            </Button>
+                          ) : null}
+
                           {editableItem?.assignedFlow ? (
                             <Badge variant="secondary" className="text-xs">
                               En panel:{" "}
@@ -1415,6 +1597,7 @@ export default function SolicitudDetalle() {
 
                           {canManageProcessing &&
                             request.status !== "cerrada" &&
+                            request.status !== "flujo_completado" &&
                             request.status !== "borrador" &&
                             request.status !== "anulada" &&
                             request.requestType === "bienes" &&
@@ -1491,6 +1674,7 @@ export default function SolicitudDetalle() {
 
           {canManageProcessing &&
             request.status !== "cerrada" &&
+            request.status !== "flujo_completado" &&
             request.status !== "borrador" &&
             request.status !== "anulada" &&
             request.approvalStatus !== "pendiente" &&
@@ -1508,6 +1692,7 @@ export default function SolicitudDetalle() {
           {/* Status bar below table - ONLY "Enviar a SAP" button here */}
           {canManageProcessing &&
             request.status !== "cerrada" &&
+            request.status !== "flujo_completado" &&
             request.status !== "borrador" &&
             request.status !== "anulada" && (
             <div className="border-t border-border p-3 bg-muted/10 flex items-center justify-between">
@@ -1671,6 +1856,82 @@ export default function SolicitudDetalle() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={Boolean(pendingBalanceRejection)}
+        onOpenChange={(open) => {
+          if (!open && !rejectPendingQuantityMutation.isPending) {
+            setPendingBalanceRejection(null);
+            setBalanceRejectReason("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg rounded-2xl border-border/70">
+          <DialogHeader className="space-y-2">
+            <DialogTitle>Rechazar saldo pendiente</DialogTitle>
+            <DialogDescription className="leading-6">
+              Esta acción rechazará el saldo pendiente de{" "}
+              <span className="font-medium text-foreground">
+                {pendingBalanceRejection?.itemLabel ?? "este ítem"}
+              </span>
+              :{" "}
+              <span className="font-medium text-foreground">
+                {formatQuantityValue(pendingBalanceRejection?.pendingQuantity)}{" "}
+                {pendingBalanceRejection?.unit || ""}
+              </span>
+              . Lo ya procesado se conserva.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <Label htmlFor="balance-reject-reason">Nota de rechazo *</Label>
+            <Textarea
+              id="balance-reject-reason"
+              value={balanceRejectReason}
+              onChange={(event) => setBalanceRejectReason(event.target.value)}
+              placeholder="Ejemplo: saldo no requerido, no hay disponibilidad o se cierra por decisión operativa"
+              rows={4}
+              disabled={rejectPendingQuantityMutation.isPending}
+            />
+            <p className="text-xs text-muted-foreground">
+              Esta nota quedará registrada en el saldo rechazado. Si no queda otro saldo activo, la requisición se cerrará automáticamente.
+            </p>
+          </div>
+
+          <DialogFooter className="gap-2 sm:justify-end">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setPendingBalanceRejection(null);
+                setBalanceRejectReason("");
+              }}
+              disabled={rejectPendingQuantityMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (!pendingBalanceRejection) return;
+                if (balanceRejectReason.trim().length < 5) {
+                  toast.error("Escribe un motivo de rechazo de al menos 5 caracteres");
+                  return;
+                }
+
+                rejectPendingQuantityMutation.mutate({
+                  id: pendingBalanceRejection.itemId,
+                  reason: balanceRejectReason,
+                });
+              }}
+              disabled={rejectPendingQuantityMutation.isPending}
+            >
+              {rejectPendingQuantityMutation.isPending
+                ? "Guardando..."
+                : "Confirmar rechazo"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={Boolean(pendingItemRejection)}

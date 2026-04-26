@@ -188,6 +188,9 @@
   .status-en_proceso {
     @apply bg-amber-50 text-amber-700 border border-amber-200;
   }
+  .status-flujo_completado {
+    @apply bg-emerald-50 text-emerald-700 border border-emerald-200;
+  }
   .status-atendida {
     @apply bg-emerald-50 text-emerald-700 border border-emerald-200;
   }

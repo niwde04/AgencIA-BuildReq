@@ -12,12 +12,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ArrowLeft, Plus, Trash2 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 
 type ReturnItem = {
+  sapItemCode: string;
   itemName: string;
   quantity: string;
   unit: string;
@@ -47,9 +48,30 @@ export default function NuevaDevolucion() {
   const [sourceProjectId, setSourceProjectId] = useState("");
   const [destinationProjectId, setDestinationProjectId] = useState("");
   const [supplierName, setSupplierName] = useState("");
+  const [resolvingSapIndex, setResolvingSapIndex] = useState<number | null>(null);
   const [items, setItems] = useState<ReturnItem[]>([
-    { itemName: "", quantity: "", unit: "", condition: "", notes: "" },
+    { sapItemCode: "", itemName: "", quantity: "", unit: "", condition: "", notes: "" },
   ]);
+
+  const selectedSourceProject = useMemo(
+    () => (projects || []).find((project: any) => String(project.id) === sourceProjectId),
+    [projects, sourceProjectId]
+  );
+  const selectedDestinationProject = useMemo(
+    () =>
+      (projects || []).find(
+        (project: any) => String(project.id) === destinationProjectId
+      ),
+    [projects, destinationProjectId]
+  );
+
+  const getProjectWarehouseLabel = (project: any) => {
+    if (!project) return "Seleccione un proyecto para identificar la bodega";
+    return (
+      project.warehouse?.displayName ??
+      `Bodega del Proyecto — ${project.code} — ${project.name}`
+    );
+  };
 
   const createMutation = trpc.reverseLogistics.create.useMutation({
     onSuccess: (data) => {
@@ -60,11 +82,14 @@ export default function NuevaDevolucion() {
       toast.error(`Error: ${error.message}`);
     },
   });
+  const lookupSapItemMutation = trpc.requestItems.lookupSapItem.useMutation({
+    onError: (error) => toast.error(error.message),
+  });
 
   const addItem = () => {
     setItems([
       ...items,
-      { itemName: "", quantity: "", unit: "", condition: "", notes: "" },
+      { sapItemCode: "", itemName: "", quantity: "", unit: "", condition: "", notes: "" },
     ]);
   };
 
@@ -81,6 +106,49 @@ export default function NuevaDevolucion() {
     const updated = [...items];
     updated[index] = { ...updated[index], [field]: value };
     setItems(updated);
+  };
+
+  const resolveSapItem = async (index: number) => {
+    const row = items[index];
+    const normalizedSapItemCode = row?.sapItemCode.trim();
+    if (!normalizedSapItemCode) return;
+
+    setResolvingSapIndex(index);
+    try {
+      const result = await lookupSapItemMutation.mutateAsync({
+        sapItemCode: normalizedSapItemCode,
+      });
+
+      if (!result) {
+        setItems((current) => {
+          const next = [...current];
+          if (!next[index]) return current;
+          next[index] = {
+            ...next[index],
+            sapItemCode: normalizedSapItemCode,
+          };
+          return next;
+        });
+        toast.error(`No se encontró el código SAP ${normalizedSapItemCode}`);
+        return;
+      }
+
+      setItems((current) => {
+        const next = [...current];
+        const currentRow = next[index];
+        if (!currentRow) return current;
+
+        next[index] = {
+          ...currentRow,
+          sapItemCode: result.sapItemCode,
+          itemName: result.itemName || currentRow.itemName,
+          unit: currentRow.unit.trim() || result.unit || currentRow.unit,
+        };
+        return next;
+      });
+    } finally {
+      setResolvingSapIndex((current) => (current === index ? null : current));
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -118,6 +186,7 @@ export default function NuevaDevolucion() {
         : undefined,
       supplierName: supplierName || undefined,
       items: validItems.map((item) => ({
+        sapItemCode: item.sapItemCode || undefined,
         itemName: item.itemName,
         quantity: item.quantity,
         unit: item.unit || undefined,
@@ -128,7 +197,7 @@ export default function NuevaDevolucion() {
   };
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="w-full max-w-none space-y-6">
       <div className="flex items-center gap-3">
         <Button
           variant="ghost"
@@ -152,7 +221,7 @@ export default function NuevaDevolucion() {
               <div className="space-y-2">
                 <Label>Tipo de devolución *</Label>
                 <Select value={returnType} onValueChange={setReturnType}>
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue placeholder="Seleccione tipo" />
                   </SelectTrigger>
                   <SelectContent>
@@ -175,7 +244,7 @@ export default function NuevaDevolucion() {
                   value={reasonCategory}
                   onValueChange={setReasonCategory}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue placeholder="Seleccione motivo" />
                   </SelectTrigger>
                   <SelectContent>
@@ -197,12 +266,16 @@ export default function NuevaDevolucion() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Proyecto origen *</Label>
+                <Label>
+                  {returnType === "devolucion_bodega_proyecto"
+                    ? "Proyecto que recibe la devolución *"
+                    : "Proyecto origen *"}
+                </Label>
                 <Select
                   value={sourceProjectId}
                   onValueChange={setSourceProjectId}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue placeholder="Seleccione proyecto" />
                   </SelectTrigger>
                   <SelectContent>
@@ -222,7 +295,7 @@ export default function NuevaDevolucion() {
                     value={destinationProjectId}
                     onValueChange={setDestinationProjectId}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className="w-full">
                       <SelectValue placeholder="Seleccione proyecto" />
                     </SelectTrigger>
                     <SelectContent>
@@ -244,6 +317,38 @@ export default function NuevaDevolucion() {
                     onChange={(e) => setSupplierName(e.target.value)}
                     placeholder="Nombre del proveedor"
                   />
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2 rounded-lg border border-primary/20 bg-primary/5 p-4">
+                <Label className="text-sm font-semibold text-foreground">
+                  {returnType === "devolucion_bodega_proyecto"
+                    ? "Bodega que recibe la devolución"
+                    : "Bodega del proyecto origen"}
+                </Label>
+                <p className="text-sm font-medium text-foreground">
+                  {getProjectWarehouseLabel(selectedSourceProject)}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {returnType === "devolucion_bodega_proyecto"
+                    ? "Al crear esta devolución, el inventario se cargará a esta bodega."
+                    : "La devolución saldrá desde esta bodega operativa."}
+                </p>
+              </div>
+
+              {returnType === "devolucion_entre_proyectos" && (
+                <div className="space-y-2 rounded-lg border border-primary/20 bg-primary/5 p-4">
+                  <Label className="text-sm font-semibold text-foreground">
+                    Bodega del proyecto destino
+                  </Label>
+                  <p className="text-sm font-medium text-foreground">
+                    {getProjectWarehouseLabel(selectedDestinationProject)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    El material quedará asociado a esta bodega al recibirse.
+                  </p>
                 </div>
               )}
             </div>
@@ -298,7 +403,26 @@ export default function NuevaDevolucion() {
                     </Button>
                   </div>
                   <div className="grid grid-cols-12 gap-2">
-                    <div className="col-span-5">
+                    <div className="col-span-2">
+                      <Input
+                        placeholder={
+                          resolvingSapIndex === index ? "Buscando..." : "Código SAP"
+                        }
+                        value={item.sapItemCode}
+                        onChange={(e) =>
+                          updateItem(index, "sapItemCode", e.target.value)
+                        }
+                        onBlur={() => void resolveSapItem(index)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void resolveSapItem(index);
+                          }
+                        }}
+                        disabled={resolvingSapIndex === index}
+                      />
+                    </div>
+                    <div className="col-span-4">
                       <Input
                         placeholder="Nombre del ítem"
                         value={item.itemName}
@@ -326,14 +450,14 @@ export default function NuevaDevolucion() {
                         }
                       />
                     </div>
-                    <div className="col-span-3">
+                    <div className="col-span-2">
                       <Select
                         value={item.condition}
                         onValueChange={(val) =>
                           updateItem(index, "condition", val)
                         }
                       >
-                        <SelectTrigger>
+                        <SelectTrigger className="w-full min-w-0">
                           <SelectValue placeholder="Condición" />
                         </SelectTrigger>
                         <SelectContent>

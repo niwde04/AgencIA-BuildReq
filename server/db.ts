@@ -834,6 +834,7 @@ export async function getMaterialRequestById(id: number) {
           item.committedQuantity ?? committedQuantity,
         sapStock,
         projectStock,
+        physicalDispatchedQuantity: item.dispatchedQuantity ?? "0.00",
         dispatchedQuantity: item.dispatchedQuantity ?? item.deliveredQuantity ?? "0.00",
       };
     })
@@ -849,6 +850,7 @@ export async function updateMaterialRequestStatus(
     | "pendiente_aprobar"
     | "en_espera"
     | "en_proceso"
+    | "flujo_completado"
     | "cerrada"
     | "anulada",
   processedById?: number
@@ -858,13 +860,153 @@ export async function updateMaterialRequestStatus(
 
   const updateData: Record<string, unknown> = { status };
   if (processedById) updateData.processedById = processedById;
-  if (status === "en_proceso") updateData.processedAt = new Date();
-  if (status === "cerrada") updateData.closedAt = new Date();
-  if (status === "cerrada") updateData.workflowStage = "cerrada";
+  if (status === "en_proceso" || status === "flujo_completado") {
+    updateData.processedAt = new Date();
+  }
+  if (status === "cerrada") {
+    updateData.closedAt = new Date();
+    updateData.workflowStage = "cerrada";
+  } else if (status === "flujo_completado") {
+    updateData.workflowStage = "bodega_proyecto";
+    updateData.closedAt = null;
+  } else if (status !== "anulada") {
+    updateData.closedAt = null;
+  }
   if (status === "anulada") updateData.workflowStage = "rechazada";
 
   await db.update(materialRequests).set(updateData).where(eq(materialRequests.id, id));
   return { success: true };
+}
+
+export async function syncMaterialRequestFulfillmentStatus(
+  requestId: number,
+  processedById?: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [request] = await db
+    .select()
+    .from(materialRequests)
+    .where(eq(materialRequests.id, requestId))
+    .limit(1);
+  if (!request) {
+    throw new Error("Requisición no encontrada");
+  }
+
+  if (
+    request.status === "borrador" ||
+    request.status === "pendiente_aprobar" ||
+    request.status === "anulada"
+  ) {
+    return { success: true, status: request.status, changed: false };
+  }
+
+  const items = await db
+    .select()
+    .from(requestItems)
+    .where(eq(requestItems.requestId, requestId));
+  const activeItems = items.filter((item) => item.approvalStatus !== "rechazada");
+  if (activeItems.length === 0) {
+    return { success: true, status: request.status, changed: false };
+  }
+
+  const activeItemIds = activeItems.map((item) => item.id);
+  const purchaseReceiptRows =
+    activeItemIds.length > 0
+      ? await db
+          .select({
+            materialRequestItemId: purchaseOrderItems.materialRequestItemId,
+            receivedQuantity: sql<string>`coalesce(sum(${purchaseOrderItems.receivedQuantity}), 0)`,
+          })
+          .from(purchaseOrderItems)
+          .where(inArray(purchaseOrderItems.materialRequestItemId, activeItemIds))
+          .groupBy(purchaseOrderItems.materialRequestItemId)
+      : [];
+  const purchaseReceivedByItemId = new Map<number, number>();
+  for (const row of purchaseReceiptRows) {
+    if (!row.materialRequestItemId) continue;
+    purchaseReceivedByItemId.set(
+      row.materialRequestItemId,
+      parseDecimal(row.receivedQuantity)
+    );
+  }
+
+  for (const item of activeItems) {
+    const purchaseReceivedQuantity = purchaseReceivedByItemId.get(item.id) ?? 0;
+    if (purchaseReceivedQuantity <= 0) continue;
+
+    const requested = parseDecimal(item.quantity);
+    const nextDelivered = Math.min(
+      Math.max(parseDecimal(item.deliveredQuantity), purchaseReceivedQuantity),
+      requested
+    );
+    const fulfilledQuantity = Math.max(
+      nextDelivered,
+      parseDecimal(item.dispatchedQuantity)
+    );
+    const nextItemStatus =
+      fulfilledQuantity <= 0
+        ? "pendiente"
+        : fulfilledQuantity < requested
+          ? "parcial"
+          : "completo";
+
+    if (
+      toDecimalString(nextDelivered) !== toDecimalString(item.deliveredQuantity) ||
+      nextItemStatus !== item.status
+    ) {
+      await db
+        .update(requestItems)
+        .set({
+          deliveredQuantity: toDecimalString(nextDelivered),
+          status: nextItemStatus,
+          updatedAt: new Date(),
+        })
+        .where(eq(requestItems.id, item.id));
+
+      item.deliveredQuantity = toDecimalString(nextDelivered);
+      item.status = nextItemStatus;
+    }
+  }
+
+  const isItemPhysicallyDelivered = (item: (typeof activeItems)[number]) => {
+    const requested = parseDecimal(item.quantity);
+    if (requested <= 0) return true;
+    return parseDecimal(item.dispatchedQuantity) >= requested;
+  };
+
+  const isItemFlowCompleted = (item: (typeof activeItems)[number]) => {
+    const requested = parseDecimal(item.quantity);
+    if (requested <= 0) return true;
+    return (
+      item.status === "completo" ||
+      parseDecimal(item.deliveredQuantity) >= requested ||
+      parseDecimal(item.dispatchedQuantity) >= requested
+    );
+  };
+
+  const hasProgress = activeItems.some(
+    (item) =>
+      Boolean(item.assignedFlow) ||
+      item.status !== "pendiente" ||
+      parseDecimal(item.deliveredQuantity) > 0 ||
+      parseDecimal(item.dispatchedQuantity) > 0
+  );
+  const nextStatus = activeItems.every(isItemPhysicallyDelivered)
+    ? "cerrada"
+    : activeItems.every(isItemFlowCompleted)
+      ? "flujo_completado"
+      : hasProgress
+        ? "en_proceso"
+        : "en_espera";
+
+  if (nextStatus === request.status) {
+    return { success: true, status: request.status, changed: false };
+  }
+
+  await updateMaterialRequestStatus(requestId, nextStatus, processedById);
+  return { success: true, status: nextStatus, changed: true };
 }
 
 export async function approveMaterialRequest(id: number, approvedById: number) {
@@ -1129,11 +1271,8 @@ export async function getRequestItemById(id: number) {
   return item;
 }
 
-export async function recordWarehouseExit(params: {
-  requestId: number;
+export async function returnWarehouseDispatchItemToRequisition(params: {
   requestItemId: number;
-  quantity: string;
-  note?: string;
   processedById: number;
 }) {
   const db = await getDb();
@@ -1144,6 +1283,346 @@ export async function recordWarehouseExit(params: {
     .from(requestItems)
     .where(eq(requestItems.id, params.requestItemId))
     .limit(1);
+  if (!item) {
+    throw new Error("Ítem de requisición no encontrado");
+  }
+  if (item.assignedFlow !== "despacho_bodega") {
+    throw new Error("Solo se pueden devolver ítems asignados a salida de bodega");
+  }
+
+  const requestedQuantity = parseDecimal(item.quantity);
+  const dispatchedQuantity = Math.min(
+    Math.max(parseDecimal(item.dispatchedQuantity), 0),
+    requestedQuantity
+  );
+  const pendingQuantity = Math.max(requestedQuantity - dispatchedQuantity, 0);
+
+  if (pendingQuantity <= 0) {
+    throw new Error("Este ítem no tiene cantidad pendiente para devolver a requisición");
+  }
+
+  const activeDraftFlows = await db
+    .select()
+    .from(supplyFlowRecords)
+    .where(
+      and(
+        eq(supplyFlowRecords.requestItemId, item.id),
+        eq(supplyFlowRecords.flowType, "despacho_bodega"),
+        eq(supplyFlowRecords.status, "pendiente"),
+        isNotNull(supplyFlowRecords.sapDocumentNumber)
+      )
+    );
+  if (activeDraftFlows.length > 0) {
+    throw new Error(
+      "Este ítem tiene una salida en borrador. Anule o emita esa salida antes de devolverlo a requisición"
+    );
+  }
+
+  let returnedItemId = item.id;
+  let pendingRequestItemId: number | null = null;
+
+  if (dispatchedQuantity > 0) {
+    const deliveredQuantity = Math.min(
+      Math.max(parseDecimal(item.deliveredQuantity), 0),
+      dispatchedQuantity
+    );
+
+    await db
+      .update(requestItems)
+      .set({
+        quantity: toDecimalString(dispatchedQuantity),
+        deliveredQuantity: toDecimalString(deliveredQuantity),
+        dispatchedQuantity: toDecimalString(dispatchedQuantity),
+        assignedFlow: "despacho_bodega",
+        status: "completo",
+        updatedAt: new Date(),
+      })
+      .where(eq(requestItems.id, item.id));
+
+    await db
+      .update(supplyFlowRecords)
+      .set({
+        status: "completado",
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(supplyFlowRecords.requestItemId, item.id),
+          eq(supplyFlowRecords.flowType, "despacho_bodega"),
+          sql`${supplyFlowRecords.status} <> 'cancelado'`
+        )
+      );
+
+    const createdItem = await createRequestItem({
+      requestId: item.requestId,
+      itemName: item.itemName,
+      quantity: toDecimalString(pendingQuantity),
+      unit: item.unit,
+      approvalStatus: item.approvalStatus,
+      approvedById: item.approvedById,
+      approvedAt: item.approvedAt,
+      rejectionReason: item.rejectionReason,
+      sapItemCode: item.sapItemCode,
+      sapItemDescription: item.sapItemDescription,
+      assignedFlow: null,
+      deliveredQuantity: "0.00",
+      dispatchedQuantity: "0.00",
+      committedQuantity: item.committedQuantity ?? "0.00",
+      projectStock: item.projectStock ?? "0.00",
+      sapStock: item.sapStock ?? "0.00",
+      warehouseExitNote: null,
+      status: "pendiente",
+      notes: item.notes,
+    });
+    pendingRequestItemId = createdItem.id;
+  } else {
+    await db
+      .update(requestItems)
+      .set({
+        assignedFlow: null,
+        status: "pendiente",
+        updatedAt: new Date(),
+      })
+      .where(eq(requestItems.id, item.id));
+    returnedItemId = item.id;
+    pendingRequestItemId = item.id;
+  }
+
+  await syncMaterialRequestFulfillmentStatus(item.requestId, params.processedById);
+
+  return {
+    success: true,
+    requestId: item.requestId,
+    returnedItemId,
+    pendingRequestItemId,
+    pendingQuantity: toDecimalString(pendingQuantity),
+  };
+}
+
+export async function returnTransferFlowItemToRequisition(params: {
+  requestItemId: number;
+  processedById: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [item] = await db
+    .select()
+    .from(requestItems)
+    .where(eq(requestItems.id, params.requestItemId))
+    .limit(1);
+  if (!item) {
+    throw new Error("Ítem de requisición no encontrado");
+  }
+  if (item.assignedFlow !== "traslado_proyecto") {
+    throw new Error("Solo se pueden devolver ítems asignados a traslado");
+  }
+
+  const activeFlow = await getActiveSupplyFlowForRequestItem({
+    requestId: item.requestId,
+    requestItemId: item.id,
+    flowType: "traslado_proyecto",
+  });
+  if (activeFlow) {
+    throw new Error(
+      "Este ítem tiene una solicitud de traslado activa. Anule la ST antes de devolverlo a requisición"
+    );
+  }
+
+  await db
+    .update(requestItems)
+    .set({
+      assignedFlow: null,
+      status: "pendiente",
+      updatedAt: new Date(),
+    })
+    .where(eq(requestItems.id, item.id));
+
+  await syncMaterialRequestFulfillmentStatus(item.requestId, params.processedById);
+
+  return {
+    success: true,
+    requestId: item.requestId,
+    returnedItemId: item.id,
+    pendingQuantity: toDecimalString(item.quantity),
+  };
+}
+
+export async function rejectRequestItemPendingQuantity(params: {
+  requestItemId: number;
+  rejectedById: number;
+  rejectionReason: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [item] = await db
+    .select()
+    .from(requestItems)
+    .where(eq(requestItems.id, params.requestItemId))
+    .limit(1);
+  if (!item) {
+    throw new Error("Ítem de requisición no encontrado");
+  }
+  if (item.approvalStatus === "rechazada") {
+    throw new Error("Este ítem ya fue rechazado");
+  }
+
+  const requestedQuantity = parseDecimal(item.quantity);
+  const deliveredQuantity = Math.max(parseDecimal(item.deliveredQuantity), 0);
+  const dispatchedQuantity = Math.max(parseDecimal(item.dispatchedQuantity), 0);
+  const processedQuantity = Math.min(
+    Math.max(deliveredQuantity, dispatchedQuantity),
+    requestedQuantity
+  );
+  const pendingQuantity = Math.max(requestedQuantity - processedQuantity, 0);
+  if (pendingQuantity <= 0) {
+    throw new Error("Este ítem no tiene saldo pendiente para rechazar");
+  }
+
+  const reason = params.rejectionReason.trim();
+  const rejectionNote = item.notes?.trim()
+    ? `${item.notes.trim()}\n\nNota de rechazo de saldo: ${reason}`
+    : `Nota de rechazo de saldo: ${reason}`;
+  const now = new Date();
+
+  if (processedQuantity <= 0) {
+    await db
+      .update(requestItems)
+      .set({
+        approvalStatus: "rechazada",
+        approvedById: params.rejectedById,
+        approvedAt: now,
+        rejectionReason: reason,
+        notes: rejectionNote,
+        assignedFlow: null,
+        status: "pendiente",
+        updatedAt: now,
+      })
+      .where(eq(requestItems.id, item.id));
+
+    await db
+      .update(supplyFlowRecords)
+      .set({
+        status: "cancelado",
+        notes: rejectionNote,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(supplyFlowRecords.requestItemId, item.id),
+          sql`${supplyFlowRecords.status} <> 'cancelado'`
+        )
+      );
+
+    await syncMaterialRequestFulfillmentStatus(item.requestId, params.rejectedById);
+
+    return {
+      success: true,
+      requestId: item.requestId,
+      processedItemId: null,
+      rejectedItemId: item.id,
+      rejectedQuantity: toDecimalString(pendingQuantity),
+    };
+  }
+
+  await db
+    .update(requestItems)
+    .set({
+      quantity: toDecimalString(processedQuantity),
+      deliveredQuantity: toDecimalString(
+        Math.min(deliveredQuantity, processedQuantity)
+      ),
+      dispatchedQuantity: toDecimalString(
+        Math.min(dispatchedQuantity, processedQuantity)
+      ),
+      status: "completo",
+      updatedAt: now,
+    })
+    .where(eq(requestItems.id, item.id));
+
+  const rejectedItem = await createRequestItem({
+    requestId: item.requestId,
+    itemName: item.itemName,
+    quantity: toDecimalString(pendingQuantity),
+    unit: item.unit,
+    approvalStatus: "rechazada",
+    approvedById: params.rejectedById,
+    approvedAt: now,
+    rejectionReason: reason,
+    sapItemCode: item.sapItemCode,
+    sapItemDescription: item.sapItemDescription,
+    assignedFlow: null,
+    deliveredQuantity: "0.00",
+    dispatchedQuantity: "0.00",
+    committedQuantity: item.committedQuantity ?? "0.00",
+    projectStock: item.projectStock ?? "0.00",
+    sapStock: item.sapStock ?? "0.00",
+    warehouseExitNote: null,
+    status: "pendiente",
+    notes: rejectionNote,
+  });
+
+  await syncMaterialRequestFulfillmentStatus(item.requestId, params.rejectedById);
+
+  return {
+    success: true,
+    requestId: item.requestId,
+    processedItemId: item.id,
+    rejectedItemId: rejectedItem.id,
+    rejectedQuantity: toDecimalString(pendingQuantity),
+  };
+}
+
+export async function recordWarehouseExit(params: {
+  requestId: number;
+  requestItemId: number;
+  quantity: string;
+  note?: string;
+  processedById: number;
+}) {
+  const created = await recordWarehouseExitBatch({
+    requestId: params.requestId,
+    items: [
+      {
+        requestItemId: params.requestItemId,
+        quantity: params.quantity,
+      },
+    ],
+    note: params.note,
+    processedById: params.processedById,
+  });
+
+  return {
+    success: true,
+    id: created.id,
+    exitNumber: created.exitNumber,
+    status: created.status,
+  };
+}
+
+export async function recordWarehouseExitBatch(params: {
+  requestId: number;
+  items: Array<{
+    requestItemId: number;
+    quantity: string;
+  }>;
+  note?: string;
+  processedById: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  if (params.items.length === 0) {
+    throw new Error("Debe registrar al menos un ítem");
+  }
+
+  const requestItemIds = params.items.map((item) => item.requestItemId);
+  const uniqueRequestItemIds = Array.from(new Set(requestItemIds));
+  if (uniqueRequestItemIds.length !== requestItemIds.length) {
+    throw new Error("No se puede repetir el mismo ítem en una salida");
+  }
+
   const [request] = await db
     .select({
       projectId: materialRequests.projectId,
@@ -1152,27 +1631,102 @@ export async function recordWarehouseExit(params: {
     .where(eq(materialRequests.id, params.requestId))
     .limit(1);
 
-  if (!item || !request) {
-    throw new Error("Ítem de requisición no encontrado");
+  if (!request) {
+    throw new Error("Requisición no encontrada");
   }
 
-  const [existingDraftFlow] = await db
+  const selectedItems = await db
+    .select()
+    .from(requestItems)
+    .where(inArray(requestItems.id, uniqueRequestItemIds));
+  const itemById = new Map(selectedItems.map((item) => [item.id, item]));
+
+  for (const requestItemId of uniqueRequestItemIds) {
+    const item = itemById.get(requestItemId);
+    if (!item) {
+      throw new Error("Ítem de requisición no encontrado");
+    }
+    if (item.requestId !== params.requestId) {
+      throw new Error("Todos los ítems de la salida deben pertenecer a la misma requisición");
+    }
+
+    const quantity = params.items.find(
+      (entry) => entry.requestItemId === requestItemId
+    )?.quantity;
+    const dispatchedQuantity = parseDecimal(quantity);
+    const pendingQuantity = Math.max(
+      parseDecimal(item.quantity) - parseDecimal(item.dispatchedQuantity),
+      0
+    );
+
+    if (dispatchedQuantity <= 0) {
+      throw new Error(`La cantidad despachada de ${item.itemName} debe ser mayor que cero`);
+    }
+    if (dispatchedQuantity - pendingQuantity > 0.000001) {
+      throw new Error(
+        `La cantidad despachada de ${item.itemName} no puede exceder la cantidad pendiente`
+      );
+    }
+    if (!item.sapItemCode?.trim()) {
+      throw new Error(`El ítem ${item.itemName} no tiene código SAP`);
+    }
+  }
+
+  const requestedByStockKey = new Map<
+    string,
+    {
+      sapItemCode: string | null;
+      itemName: string;
+      quantity: number;
+    }
+  >();
+  for (const entry of params.items) {
+    const item = itemById.get(entry.requestItemId)!;
+    const sapItemCode = item.sapItemCode?.trim() || null;
+    const stockKey = sapItemCode || item.itemName.trim().toLowerCase();
+    const current = requestedByStockKey.get(stockKey) ?? {
+      sapItemCode,
+      itemName: item.itemName,
+      quantity: 0,
+    };
+    current.quantity += parseDecimal(entry.quantity);
+    requestedByStockKey.set(stockKey, current);
+  }
+
+  for (const requested of Array.from(requestedByStockKey.values())) {
+    const availableQuantity = parseDecimal(
+      await getStockByItem({
+        sapItemCode: requested.sapItemCode,
+        itemName: requested.itemName,
+        projectId: request.projectId,
+      })
+    );
+
+    if (requested.quantity - availableQuantity > 0.000001) {
+      throw new Error(
+        `Stock insuficiente para ${requested.itemName}. Disponible: ${toDecimalString(
+          availableQuantity
+        )}, solicitado para salida: ${toDecimalString(requested.quantity)}.`
+      );
+    }
+  }
+
+  const existingDraftFlows = await db
     .select()
     .from(supplyFlowRecords)
     .where(
       and(
         eq(supplyFlowRecords.requestId, params.requestId),
-        eq(supplyFlowRecords.requestItemId, params.requestItemId),
+        inArray(supplyFlowRecords.requestItemId, uniqueRequestItemIds),
         eq(supplyFlowRecords.flowType, "despacho_bodega"),
         eq(supplyFlowRecords.status, "pendiente"),
         isNotNull(supplyFlowRecords.sapDocumentNumber)
       )
-    )
-    .limit(1);
+    );
 
-  if (existingDraftFlow) {
+  if (existingDraftFlows[0]) {
     throw new Error(
-      `Ya existe una transacción de salida en borrador para este ítem (${existingDraftFlow.sapDocumentNumber})`
+      `Ya existe una transacción de salida en borrador para este ítem (${existingDraftFlows[0].sapDocumentNumber})`
     );
   }
 
@@ -1185,35 +1739,39 @@ export async function recordWarehouseExit(params: {
       exitDate: new Date(),
       notes: params.note,
     },
-    [
-      {
-        materialRequestItemId: params.requestItemId,
+    params.items.map((entry) => {
+      const item = itemById.get(entry.requestItemId)!;
+      return {
+        materialRequestItemId: entry.requestItemId,
         sapItemCode: item.sapItemCode ?? "",
         itemName: item.sapItemDescription || item.itemName,
-        quantity: params.quantity,
+        quantity: entry.quantity,
         unit: item.unit,
         notes: params.note,
-      },
-    ]
+      };
+    })
   );
 
-  await db.insert(supplyFlowRecords).values({
-    requestId: params.requestId,
-    requestItemId: params.requestItemId,
-    flowType: "despacho_bodega",
-    sourceWarehouse: "Bodega del Proyecto",
-    sapDocumentType: "salida_inventario",
-    sapDocumentNumber: created.exitNumber,
-    processedById: params.processedById,
-    notes: params.note ?? null,
-    status: "pendiente",
-  });
+  await db.insert(supplyFlowRecords).values(
+    params.items.map((entry) => ({
+      requestId: params.requestId,
+      requestItemId: entry.requestItemId,
+      flowType: "despacho_bodega" as const,
+      sourceWarehouse: "Bodega del Proyecto",
+      sapDocumentType: "salida_inventario" as const,
+      sapDocumentNumber: created.exitNumber,
+      processedById: params.processedById,
+      notes: params.note ?? null,
+      status: "pendiente" as const,
+    }))
+  );
 
   return {
     success: true,
     id: created.id,
     exitNumber: created.exitNumber,
     status: "borrador",
+    itemCount: params.items.length,
   };
 }
 
@@ -1315,7 +1873,7 @@ export async function listPendingFlowQueueItems(filters?: { flowType?: string })
 
   const conditions = [
     isNotNull(requestItems.assignedFlow),
-    sql`${materialRequests.status} NOT IN ('borrador', 'cerrada', 'anulada')`,
+    sql`${materialRequests.status} NOT IN ('borrador', 'flujo_completado', 'cerrada', 'anulada')`,
     sql`${requestItems.approvalStatus} IN ('aprobada', 'no_requiere')`,
   ];
 
@@ -1374,40 +1932,50 @@ export async function listPendingFlowQueueItems(filters?: { flowType?: string })
     activeFlowsByItemId.set(flow.requestItemId, current);
   }
 
-  return candidateRows
-    .filter((row) => {
-      const assignedFlow = row.item.assignedFlow;
-      if (!assignedFlow) return false;
+  const filteredRows = candidateRows.filter((row) => {
+    const assignedFlow = row.item.assignedFlow;
+    if (!assignedFlow) return false;
 
-      if (assignedFlow === "despacho_bodega") {
-        const hasDraftExit = (activeFlowsByItemId.get(row.item.id) ?? []).some(
-          (flow) =>
-            flow.flowType === "despacho_bodega" &&
-            flow.status === "pendiente" &&
-            Boolean(flow.sapDocumentNumber)
-        );
-        if (hasDraftExit) return false;
-
-        return parseDecimal(row.item.dispatchedQuantity) < parseDecimal(row.item.quantity);
-      }
-
-      const activeForSameFlow = (activeFlowsByItemId.get(row.item.id) ?? []).some(
-        (flow) => flow.flowType === assignedFlow
+    if (assignedFlow === "despacho_bodega") {
+      const hasDraftExit = (activeFlowsByItemId.get(row.item.id) ?? []).some(
+        (flow) =>
+          flow.flowType === "despacho_bodega" &&
+          flow.status === "pendiente" &&
+          Boolean(flow.sapDocumentNumber)
       );
+      if (hasDraftExit) return false;
 
-      return !activeForSameFlow;
-    })
-    .map((row) => {
+      return parseDecimal(row.item.dispatchedQuantity) < parseDecimal(row.item.quantity);
+    }
+
+    const activeForSameFlow = (activeFlowsByItemId.get(row.item.id) ?? []).some(
+      (flow) => flow.flowType === assignedFlow
+    );
+
+    return !activeForSameFlow;
+  });
+
+  return Promise.all(
+    filteredRows.map(async (row) => {
       const sapCode = row.item.sapItemCode?.trim() || null;
       const insight = sapCode ? procurementInsightsByCode[sapCode] : undefined;
       const resolvedSapDescription =
         row.item.sapItemDescription?.trim() || insight?.sapDescription || null;
+      const currentProjectStock =
+        row.item.assignedFlow === "despacho_bodega"
+          ? await getStockByItem({
+              sapItemCode: sapCode,
+              itemName: row.item.itemName,
+              projectId: row.request.projectId,
+            })
+          : row.item.projectStock;
 
       return {
         ...row,
         item: {
           ...row.item,
           sapItemDescription: resolvedSapDescription,
+          projectStock: currentProjectStock,
         },
         purchaseInsight: {
           sapDescription: resolvedSapDescription,
@@ -1415,7 +1983,8 @@ export async function listPendingFlowQueueItems(filters?: { flowType?: string })
           minimumPurchase: insight?.minimumPurchase ?? null,
         },
       };
-    });
+    })
+  );
 }
 
 export async function getActiveSupplyFlowForRequestItem(params: {
@@ -2372,8 +2941,36 @@ export async function getTransferRequestById(id: number) {
   const items = await db
     .select()
     .from(transferRequestItems)
-    .where(eq(transferRequestItems.transferRequestId, id));
-  return { ...rows[0], items };
+    .where(eq(transferRequestItems.transferRequestId, id))
+    .orderBy(asc(transferRequestItems.id));
+
+  const enrichedItems = await Promise.all(
+    items.map(async (item) => {
+      const currentOriginStock = parseDecimal(
+        await getStockByItem({
+          sapItemCode: item.sapItemCode,
+          itemName: item.itemName,
+          projectId: rows[0].transferRequest.projectId,
+        })
+      );
+      const requestedQuantity = parseDecimal(item.quantity);
+      const alreadyConverted = rows[0].transferRequest.status === "convertida";
+      const originStockBeforeTransfer = alreadyConverted
+        ? currentOriginStock + requestedQuantity
+        : currentOriginStock;
+      const stockAfterTransfer = alreadyConverted
+        ? currentOriginStock
+        : originStockBeforeTransfer - requestedQuantity;
+
+      return {
+        ...item,
+        originStockQuantity: toDecimalString(originStockBeforeTransfer),
+        stockAfterTransfer: toDecimalString(stockAfterTransfer),
+      };
+    })
+  );
+
+  return { ...rows[0], items: enrichedItems };
 }
 
 export async function updateTransferRequest(
@@ -2391,20 +2988,171 @@ export async function updateTransferRequest(
 
 export async function createTransferFromRequest(
   transferRequestId: number,
-  confirmedById: number
+  confirmedById: number,
+  itemQuantities?: Array<{ transferRequestItemId: number; quantity: string | number }>
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const detail = await getTransferRequestById(transferRequestId);
   if (!detail) throw new Error("Solicitud de traslado no encontrada");
 
-  for (const item of detail.items || []) {
+  const quantityByItemId = new Map<number, number>();
+  for (const item of itemQuantities ?? []) {
+    quantityByItemId.set(
+      item.transferRequestItemId,
+      parseDecimal(item.quantity)
+    );
+  }
+
+  const requestedItems = detail.items || [];
+  const transferItems = requestedItems.map((item) => {
+    const requestedQuantity = parseDecimal(item.quantity);
+    const transferQuantity = itemQuantities
+      ? quantityByItemId.get(item.id) ?? 0
+      : requestedQuantity;
+    const pendingQuantity = Math.max(requestedQuantity - transferQuantity, 0);
+
+    if (transferQuantity < 0) {
+      throw new Error("La cantidad a trasladar no puede ser negativa");
+    }
+    if (transferQuantity - requestedQuantity > 0.000001) {
+      throw new Error(
+        `La cantidad a trasladar de ${item.itemName} no puede exceder lo solicitado`
+      );
+    }
+
+    return {
+      item,
+      requestedQuantity,
+      transferQuantity,
+      pendingQuantity,
+    };
+  });
+
+  if (!transferItems.some((entry) => entry.transferQuantity > 0)) {
+    throw new Error("Debe trasladar al menos una cantidad mayor que cero");
+  }
+
+  for (const entry of transferItems) {
+    if (entry.transferQuantity <= 0) continue;
+
     await consumeInventoryStock({
-      sapItemCode: item.sapItemCode,
-      itemName: item.itemName,
+      sapItemCode: entry.item.sapItemCode,
+      itemName: entry.item.itemName,
       projectId: detail.transferRequest.projectId,
-      quantity: item.quantity,
+      quantity: toDecimalString(entry.transferQuantity),
     });
+  }
+
+  const affectedRequestIds = new Set<number>();
+
+  for (const entry of transferItems) {
+    const item = entry.item;
+
+    if (entry.transferQuantity > 0) {
+      await db
+        .update(transferRequestItems)
+        .set({
+          quantity: toDecimalString(entry.transferQuantity),
+          updatedAt: new Date(),
+        })
+        .where(eq(transferRequestItems.id, item.id));
+    } else {
+      await db
+        .delete(transferRequestItems)
+        .where(eq(transferRequestItems.id, item.id));
+    }
+
+    if (!item.materialRequestItemId) continue;
+
+    const [requestItem] = await db
+      .select()
+      .from(requestItems)
+      .where(eq(requestItems.id, item.materialRequestItemId))
+      .limit(1);
+    if (!requestItem) continue;
+
+    affectedRequestIds.add(requestItem.requestId);
+
+    const activeFlowConditions = and(
+      eq(supplyFlowRecords.requestItemId, requestItem.id),
+      eq(supplyFlowRecords.flowType, "traslado_proyecto"),
+      sql`${supplyFlowRecords.status} <> 'cancelado'`
+    );
+
+    if (entry.transferQuantity > 0) {
+      await db
+        .update(requestItems)
+        .set({
+          quantity: toDecimalString(entry.transferQuantity),
+          deliveredQuantity: toDecimalString(
+            Math.min(
+              Math.max(parseDecimal(requestItem.deliveredQuantity), 0),
+              entry.transferQuantity
+            )
+          ),
+          assignedFlow: "traslado_proyecto",
+          status: "pendiente",
+          updatedAt: new Date(),
+        })
+        .where(eq(requestItems.id, requestItem.id));
+
+      await db
+        .update(supplyFlowRecords)
+        .set({
+          status: "completado",
+          processedById: confirmedById,
+          updatedAt: new Date(),
+        })
+        .where(activeFlowConditions);
+    } else {
+      await db
+        .update(requestItems)
+        .set({
+          assignedFlow: "traslado_proyecto",
+          status: "pendiente",
+          updatedAt: new Date(),
+        })
+        .where(eq(requestItems.id, requestItem.id));
+
+      await db
+        .update(supplyFlowRecords)
+        .set({
+          status: "cancelado",
+          notes: `Saldo devuelto al flujo por traslado parcial ${detail.transferRequest.requestNumber}`,
+          updatedAt: new Date(),
+        })
+        .where(activeFlowConditions);
+    }
+
+    if (entry.pendingQuantity > 0 && entry.transferQuantity > 0) {
+      await createRequestItem({
+        requestId: requestItem.requestId,
+        itemName: requestItem.itemName,
+        quantity: toDecimalString(entry.pendingQuantity),
+        unit: requestItem.unit,
+        approvalStatus: requestItem.approvalStatus,
+        approvedById: requestItem.approvedById,
+        approvedAt: requestItem.approvedAt,
+        rejectionReason: requestItem.rejectionReason,
+        sapItemCode: requestItem.sapItemCode,
+        sapItemDescription: requestItem.sapItemDescription,
+        assignedFlow: "traslado_proyecto",
+        deliveredQuantity: "0.00",
+        dispatchedQuantity: "0.00",
+        committedQuantity: requestItem.committedQuantity ?? "0.00",
+        projectStock: requestItem.projectStock ?? "0.00",
+        sapStock: requestItem.sapStock ?? "0.00",
+        warehouseExitNote: null,
+        status: "pendiente",
+        notes: [
+          requestItem.notes,
+          `Saldo pendiente de ${toDecimalString(entry.pendingQuantity)} ${requestItem.unit ?? ""} por traslado parcial ${detail.transferRequest.requestNumber}.`,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      });
+    }
   }
 
   const transferNumber = await generateTransferNumber();
@@ -2445,6 +3193,11 @@ export async function createTransferFromRequest(
   });
 
   await updateTransferRequest(transferRequestId, { status: "convertida" });
+
+  for (const requestId of Array.from(affectedRequestIds)) {
+    await updateMaterialRequestStatus(requestId, "en_proceso", confirmedById);
+  }
+
   return { id: transfer.id, transferNumber, guideNumber, sapCorrelative };
 }
 
@@ -2551,6 +3304,56 @@ export async function registerReceipt(
         receivedQuantity: toDecimalString(nextReceived),
       });
 
+      if (existingItem.purchaseRequestItemId) {
+        const [purchaseRequestItem] = await db
+          .select()
+          .from(purchaseRequestItems)
+          .where(eq(purchaseRequestItems.id, existingItem.purchaseRequestItemId))
+          .limit(1);
+
+        if (purchaseRequestItem) {
+          const nextPurchaseRequestReceived =
+            parseDecimal(purchaseRequestItem.receivedQuantity) +
+            parseDecimal(item.quantityReceived);
+
+          await updatePurchaseRequestItem(purchaseRequestItem.id, {
+            receivedQuantity: toDecimalString(nextPurchaseRequestReceived),
+          });
+        }
+      }
+
+      if (existingItem.materialRequestItemId) {
+        const [requestItem] = await db
+          .select()
+          .from(requestItems)
+          .where(eq(requestItems.id, existingItem.materialRequestItemId))
+          .limit(1);
+
+        if (requestItem) {
+          const requestedQuantity = parseDecimal(requestItem.quantity);
+          const nextDelivered = Math.min(
+            parseDecimal(requestItem.deliveredQuantity) +
+              parseDecimal(item.quantityReceived),
+            requestedQuantity
+          );
+          const nextStatus =
+            nextDelivered <= 0
+              ? "pendiente"
+              : nextDelivered < requestedQuantity
+                ? "parcial"
+                : "completo";
+
+          await db
+            .update(requestItems)
+            .set({
+              deliveredQuantity: toDecimalString(nextDelivered),
+              status: nextStatus,
+              updatedAt: new Date(),
+            })
+            .where(eq(requestItems.id, requestItem.id));
+        }
+      }
+
       await addInventoryStock({
         sapItemCode:
           existingItem.currentSapItemCode ?? existingItem.originalSapItemCode,
@@ -2561,6 +3364,28 @@ export async function registerReceipt(
       });
     }
     await syncPurchaseOrderReceiptStatus(data.sourceId);
+
+    const materialRequestIds = Array.from(
+      new Set(
+        (purchaseOrderDetail.items ?? [])
+          .map((orderItem: any) => orderItem.materialRequestItemId)
+          .filter((value: unknown): value is number => typeof value === "number")
+      )
+    );
+    if (materialRequestIds.length > 0) {
+      const requestRows = await db
+        .select({
+          requestId: requestItems.requestId,
+        })
+        .from(requestItems)
+        .where(inArray(requestItems.id, materialRequestIds));
+
+      for (const requestId of Array.from(
+        new Set(requestRows.map((row) => row.requestId))
+      )) {
+        await syncMaterialRequestFulfillmentStatus(requestId, data.receivedById);
+      }
+    }
   } else {
     const transferDetail = await getTransferById(data.sourceId);
     if (transferDetail?.transfer) {
@@ -2568,6 +3393,7 @@ export async function registerReceipt(
         transferDetail.transferRequest?.destinationType === "proyecto"
           ? transferDetail.transferRequest.destinationProjectId
           : null;
+      const affectedRequestIds = new Set<number>();
 
       for (const item of items) {
         const [existingItem] = await db
@@ -2589,6 +3415,39 @@ export async function registerReceipt(
           })
           .where(eq(transferRequestItems.id, existingItem.id));
 
+        if (existingItem.materialRequestItemId) {
+          const [requestItem] = await db
+            .select()
+            .from(requestItems)
+            .where(eq(requestItems.id, existingItem.materialRequestItemId))
+            .limit(1);
+
+          if (requestItem) {
+            const requestedQuantity = parseDecimal(requestItem.quantity);
+            const nextDelivered = Math.min(
+              parseDecimal(requestItem.deliveredQuantity) +
+                parseDecimal(item.quantityReceived),
+              requestedQuantity
+            );
+            const nextStatus =
+              nextDelivered <= 0
+                ? "pendiente"
+                : nextDelivered < requestedQuantity
+                  ? "parcial"
+                  : "completo";
+
+            affectedRequestIds.add(requestItem.requestId);
+            await db
+              .update(requestItems)
+              .set({
+                deliveredQuantity: toDecimalString(nextDelivered),
+                status: nextStatus,
+                updatedAt: new Date(),
+              })
+              .where(eq(requestItems.id, requestItem.id));
+          }
+        }
+
         await addInventoryStock({
           sapItemCode: existingItem.sapItemCode,
           itemName: existingItem.itemName,
@@ -2606,6 +3465,10 @@ export async function registerReceipt(
           updatedAt: new Date(),
         })
         .where(eq(transfers.id, data.sourceId));
+
+      for (const requestId of Array.from(affectedRequestIds)) {
+        await syncMaterialRequestFulfillmentStatus(requestId, data.receivedById);
+      }
     }
   }
 
@@ -2672,7 +3535,7 @@ function buildWarehouseExitDocument(params: {
   }>;
 }) {
   return buildProcurementPdfBase64({
-    title: "Salida de Bodega",
+    title: "Salida de Inventario",
     documentNumber: params.exitNumber,
     badgeText: "SB",
     primaryFields: [
@@ -2844,6 +3707,39 @@ export async function getWarehouseExitById(id: number) {
     .where(eq(warehouseExitItems.warehouseExitId, id))
     .orderBy(asc(warehouseExitItems.id));
 
+  const returnedQuantityByExitItemId = new Map<number, number>();
+  const warehouseExitItemIds = items.map((item) => item.id);
+  if (warehouseExitItemIds.length > 0) {
+    const returnedRows = await db
+      .select({
+        sourceWarehouseExitItemId: reverseLogisticsItems.sourceWarehouseExitItemId,
+        quantity: reverseLogisticsItems.quantity,
+      })
+      .from(reverseLogisticsItems)
+      .innerJoin(
+        reverseLogistics,
+        eq(reverseLogisticsItems.reverseLogisticId, reverseLogistics.id)
+      )
+      .where(
+        and(
+          inArray(
+            reverseLogisticsItems.sourceWarehouseExitItemId,
+            warehouseExitItemIds
+          ),
+          sql`${reverseLogistics.status} <> 'rechazada'`
+        )
+      );
+
+    for (const row of returnedRows) {
+      if (!row.sourceWarehouseExitItemId) continue;
+      returnedQuantityByExitItemId.set(
+        row.sourceWarehouseExitItemId,
+        (returnedQuantityByExitItemId.get(row.sourceWarehouseExitItemId) ?? 0) +
+          parseDecimal(row.quantity)
+      );
+    }
+  }
+
   const enrichedItems = await Promise.all(
     items.map(async (item) => {
       const stockRows = await listInventoryRowsForStock({
@@ -2857,6 +3753,7 @@ export async function getWarehouseExitById(id: number) {
         0
       );
       const exitQuantity = parseDecimal(item.quantity);
+      const returnedQuantity = returnedQuantityByExitItemId.get(item.id) ?? 0;
       const stockAfterExit =
         rows[0].warehouseExit.status === "emitida"
           ? availableQuantity
@@ -2866,6 +3763,10 @@ export async function getWarehouseExitById(id: number) {
         ...item,
         availableQuantity: toDecimalString(availableQuantity),
         stockAfterExit: toDecimalString(stockAfterExit),
+        returnedQuantity: toDecimalString(returnedQuantity),
+        returnableQuantity: toDecimalString(
+          Math.max(exitQuantity - returnedQuantity, 0)
+        ),
       };
     })
   );
@@ -3007,8 +3908,10 @@ async function applyWarehouseExitToRequestItem(params: {
   const alreadyDispatched = parseDecimal(item.dispatchedQuantity);
   const dispatchedIncrement = parseDecimal(params.quantity);
   const nextDispatched = alreadyDispatched + dispatchedIncrement;
+  const nextDelivered = Math.max(parseDecimal(item.deliveredQuantity), nextDispatched);
+  const nextFulfilled = Math.max(nextDelivered, nextDispatched);
   const nextStatus =
-    nextDispatched <= 0 ? "pendiente" : nextDispatched < requested ? "parcial" : "completo";
+    nextFulfilled <= 0 ? "pendiente" : nextFulfilled < requested ? "parcial" : "completo";
 
   if (dispatchedIncrement <= 0) {
     throw new Error("La cantidad despachada debe ser mayor que cero");
@@ -3022,7 +3925,7 @@ async function applyWarehouseExitToRequestItem(params: {
     .update(requestItems)
     .set({
       dispatchedQuantity: toDecimalString(nextDispatched),
-      deliveredQuantity: toDecimalString(nextDispatched),
+      deliveredQuantity: toDecimalString(nextDelivered),
       warehouseExitNote: params.note ?? null,
       status: nextStatus,
       updatedAt: new Date(),
@@ -3066,7 +3969,7 @@ async function applyWarehouseExitToRequestItem(params: {
     });
   }
 
-  return nextStatus;
+  return { status: nextStatus, requestId: item.requestId };
 }
 
 export async function emitWarehouseExit(id: number, emittedById: number) {
@@ -3084,6 +3987,7 @@ export async function emitWarehouseExit(id: number, emittedById: number) {
     throw new Error("La salida de bodega no tiene ítems");
   }
 
+  const affectedRequestIds = new Set<number>();
   for (const item of detail.items) {
     await consumeInventoryStock({
       sapItemCode: item.sapItemCode,
@@ -3094,13 +3998,14 @@ export async function emitWarehouseExit(id: number, emittedById: number) {
     });
 
     if (item.materialRequestItemId) {
-      await applyWarehouseExitToRequestItem({
+      const result = await applyWarehouseExitToRequestItem({
         exitNumber: detail.warehouseExit.exitNumber,
         requestItemId: item.materialRequestItemId,
         quantity: item.quantity,
         note: item.notes ?? detail.warehouseExit.notes,
         processedById: emittedById,
       });
+      affectedRequestIds.add(result.requestId);
     }
   }
 
@@ -3140,6 +4045,7 @@ export async function emitWarehouseExit(id: number, emittedById: number) {
   return {
     success: true,
     exitNumber: detail.warehouseExit.exitNumber,
+    materialRequestIds: Array.from(affectedRequestIds),
   };
 }
 
@@ -3459,6 +4365,204 @@ export async function generateReturnNumber() {
   return `DEV-${year}-${String(num).padStart(4, "0")}`;
 }
 
+function reverseLogisticReasonReopensRequest(reasonCategory: string) {
+  return reasonCategory !== "excedente";
+}
+
+async function reopenMaterialRequestForWarehouseDispatch(
+  requestId: number,
+  processedById: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  await db
+    .update(materialRequests)
+    .set({
+      status: "en_proceso",
+      workflowStage: "bodega_proyecto",
+      closedAt: null,
+      processedById,
+      processedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(materialRequests.id, requestId));
+}
+
+async function reopenRequestItemAfterWarehouseReturn(params: {
+  requestItemId: number;
+  quantity: string | number;
+  processedById: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [item] = await db
+    .select()
+    .from(requestItems)
+    .where(eq(requestItems.id, params.requestItemId))
+    .limit(1);
+  if (!item) return null;
+
+  const returnedQuantity = parseDecimal(params.quantity);
+  if (returnedQuantity <= 0) return item.requestId;
+
+  const requested = parseDecimal(item.quantity);
+  const nextDispatched = Math.max(
+    parseDecimal(item.dispatchedQuantity) - returnedQuantity,
+    0
+  );
+  const nextDelivered = Math.max(
+    parseDecimal(item.deliveredQuantity) - returnedQuantity,
+    0
+  );
+  const nextFulfilled = Math.max(nextDispatched, nextDelivered);
+  const nextStatus =
+    nextFulfilled <= 0
+      ? "pendiente"
+      : nextFulfilled < requested
+        ? "parcial"
+        : "completo";
+
+  await db
+    .update(requestItems)
+    .set({
+      dispatchedQuantity: toDecimalString(nextDispatched),
+      deliveredQuantity: toDecimalString(nextDelivered),
+      status: nextStatus,
+      assignedFlow: "despacho_bodega",
+      updatedAt: new Date(),
+    })
+    .where(eq(requestItems.id, item.id));
+
+  return item.requestId;
+}
+
+export async function createWarehouseExitProjectReturn(params: {
+  sourceWarehouseExitId: number;
+  reasonCategory:
+    | "material_defectuoso"
+    | "excedente"
+    | "error_pedido"
+    | "cambio_especificacion"
+    | "otro";
+  justification: string;
+  createdById: number;
+  items: Array<{
+    sourceWarehouseExitItemId: number;
+    quantity: string;
+    condition: "nuevo" | "usado_buen_estado" | "defectuoso" | "danado";
+    notes?: string | null;
+  }>;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  if (params.items.length === 0) {
+    throw new Error("Debe incluir al menos un ítem");
+  }
+
+  const detail = await getWarehouseExitById(params.sourceWarehouseExitId);
+  if (!detail) {
+    throw new Error("Salida de bodega no encontrada");
+  }
+  if (detail.warehouseExit.status !== "emitida") {
+    throw new Error("Solo se pueden devolver materiales de salidas emitidas");
+  }
+
+  const sourceItemById = new Map(detail.items.map((item) => [item.id, item]));
+  const normalizedItems = params.items.map((item) => {
+    const sourceItem = sourceItemById.get(item.sourceWarehouseExitItemId);
+    if (!sourceItem) {
+      throw new Error("La devolución incluye un ítem que no pertenece a la salida");
+    }
+
+    const quantity = parseDecimal(item.quantity);
+    const returnableQuantity = parseDecimal(sourceItem.returnableQuantity);
+    if (quantity <= 0) {
+      throw new Error(`La cantidad de ${sourceItem.itemName} debe ser mayor que cero`);
+    }
+    if (quantity - returnableQuantity > 0.000001) {
+      throw new Error(
+        `La cantidad de ${sourceItem.itemName} excede lo disponible para devolución`
+      );
+    }
+
+    return {
+      sourceItem,
+      quantity: toDecimalString(quantity),
+      condition: item.condition,
+      notes: item.notes?.trim() || null,
+    };
+  });
+
+  const returnNumber = await generateReturnNumber();
+  const shouldReopenRequest = reverseLogisticReasonReopensRequest(
+    params.reasonCategory
+  );
+  const [reverseLogistic] = await db
+    .insert(reverseLogistics)
+    .values({
+      returnNumber,
+      returnType: "devolucion_bodega_proyecto",
+      reasonCategory: params.reasonCategory,
+      justification: params.justification,
+      sourceProjectId: detail.warehouseExit.projectId,
+      sourceWarehouseExitId: params.sourceWarehouseExitId,
+      originalRequestId: detail.warehouseExit.materialRequestId,
+      status: "recibida",
+      createdById: params.createdById,
+      processedById: params.createdById,
+      processedAt: new Date(),
+    })
+    .returning({ id: reverseLogistics.id });
+
+  await db.insert(reverseLogisticsItems).values(
+    normalizedItems.map(({ sourceItem, quantity, condition, notes }) => ({
+      reverseLogisticId: reverseLogistic.id,
+      sourceWarehouseExitItemId: sourceItem.id,
+      itemName: sourceItem.itemName,
+      sapItemCode: sourceItem.sapItemCode,
+      quantity,
+      unit: sourceItem.unit,
+      condition,
+      notes,
+    }))
+  );
+
+  const reopenedRequestIds = new Set<number>();
+  for (const { sourceItem, quantity } of normalizedItems) {
+    await addInventoryStock({
+      sapItemCode: sourceItem.sapItemCode,
+      itemName: sourceItem.itemName,
+      unit: sourceItem.unit,
+      projectId: detail.warehouseExit.projectId,
+      quantity,
+    });
+
+    if (shouldReopenRequest && sourceItem.materialRequestItemId) {
+      const requestId = await reopenRequestItemAfterWarehouseReturn({
+        requestItemId: sourceItem.materialRequestItemId,
+        quantity,
+        processedById: params.createdById,
+      });
+      if (requestId) reopenedRequestIds.add(requestId);
+    }
+  }
+
+  for (const requestId of Array.from(reopenedRequestIds)) {
+    await reopenMaterialRequestForWarehouseDispatch(
+      requestId,
+      params.createdById
+    );
+  }
+
+  return {
+    id: reverseLogistic.id,
+    returnNumber,
+    reopenedRequestIds: Array.from(reopenedRequestIds),
+  };
+}
+
 export async function createReverseLogistic(
   data: Omit<InsertReverseLogistic, "returnNumber">,
   items: Omit<InsertReverseLogisticItem, "reverseLogisticId">[]
@@ -3467,11 +4571,20 @@ export async function createReverseLogistic(
   if (!db) throw new Error("DB not available");
 
   const returnNumber = await generateReturnNumber();
+  const isProjectWarehouseReturn =
+    data.returnType === "devolucion_bodega_proyecto";
   const [reverseLogistic] = await db
     .insert(reverseLogistics)
     .values({
       ...data,
       returnNumber,
+      status: isProjectWarehouseReturn ? "recibida" : data.status,
+      processedById: isProjectWarehouseReturn
+        ? data.createdById
+        : data.processedById,
+      processedAt: isProjectWarehouseReturn
+        ? new Date()
+        : data.processedAt,
     })
     .returning({ id: reverseLogistics.id });
   const reverseLogisticId = reverseLogistic.id;
@@ -3480,6 +4593,18 @@ export async function createReverseLogistic(
     await db.insert(reverseLogisticsItems).values(
       items.map((item) => ({ ...item, reverseLogisticId }))
     );
+  }
+
+  if (isProjectWarehouseReturn) {
+    for (const item of items) {
+      await addInventoryStock({
+        sapItemCode: item.sapItemCode,
+        itemName: item.itemName,
+        unit: item.unit,
+        projectId: data.sourceProjectId,
+        quantity: item.quantity,
+      });
+    }
   }
 
   return { id: reverseLogisticId, returnNumber };
@@ -3519,9 +4644,14 @@ export async function getReverseLogisticById(id: number) {
     .select({
       return: reverseLogistics,
       sourceProject: projects,
+      sourceWarehouseExit: warehouseExits,
     })
     .from(reverseLogistics)
     .leftJoin(projects, eq(reverseLogistics.sourceProjectId, projects.id))
+    .leftJoin(
+      warehouseExits,
+      eq(reverseLogistics.sourceWarehouseExitId, warehouseExits.id)
+    )
     .where(eq(reverseLogistics.id, id))
     .limit(1);
 
@@ -3542,6 +4672,22 @@ export async function updateReverseLogisticStatus(
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
+
+  const detail = status === "recibida" ? await getReverseLogisticById(id) : undefined;
+  if (
+    detail?.return.returnType === "devolucion_bodega_proyecto" &&
+    detail.return.status !== "recibida"
+  ) {
+    for (const item of detail.items) {
+      await addInventoryStock({
+        sapItemCode: item.sapItemCode,
+        itemName: item.itemName,
+        unit: item.unit,
+        projectId: detail.return.sourceProjectId,
+        quantity: item.quantity,
+      });
+    }
+  }
 
   const updateData: Record<string, unknown> = { status };
   if (processedById) {

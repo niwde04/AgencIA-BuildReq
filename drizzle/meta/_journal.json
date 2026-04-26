@@ -85,6 +85,27 @@
       "when": 1776199200000,
       "tag": "0011_purchase_order_pricing",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1777243200000,
+      "tag": "0012_project_warehouse_returns",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "5",
+      "when": 1777243260000,
+      "tag": "0013_reverse_logistics_source_exit",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "5",
+      "when": 1777243320000,
+      "tag": "0019_material_request_flow_completed_status",
+      "breakpoints": true
     }
   ]
 }

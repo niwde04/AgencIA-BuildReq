@@ -30,7 +30,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Truck, Ban } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -57,6 +57,9 @@ export default function TransferRequests() {
   const [quantity, setQuantity] = useState("");
   const [unit, setUnit] = useState("");
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
+  const [transferQuantityByItemId, setTransferQuantityByItemId] = useState<
+    Record<number, string>
+  >({});
 
   const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
   const { data: transferRequests, isLoading } = trpc.transferRequests.list.useQuery();
@@ -104,6 +107,78 @@ export default function TransferRequests() {
     },
     onError: (error) => toast.error(error.message),
   });
+
+  useEffect(() => {
+    if (!detail || detail.transferRequest.status !== "pendiente") {
+      return;
+    }
+
+    const nextQuantities: Record<number, string> = {};
+    for (const item of detail.items || []) {
+      const requestedQuantity = Number(item.quantity ?? 0);
+      const availableQuantity = Number(item.originStockQuantity ?? 0);
+      const suggestedQuantity = Math.min(
+        Math.max(requestedQuantity, 0),
+        Math.max(availableQuantity, 0)
+      );
+      nextQuantities[item.id] = suggestedQuantity.toFixed(2);
+    }
+    setTransferQuantityByItemId(nextQuantities);
+  }, [detail?.transferRequest.id, detail?.transferRequest.status]);
+
+  const getTransferQuantity = (item: any) =>
+    Number(
+      transferQuantityByItemId[item.id] ??
+        (detail?.transferRequest.status === "pendiente"
+          ? Math.min(
+              Number(item.quantity ?? 0),
+              Number(item.originStockQuantity ?? 0)
+            ).toFixed(2)
+          : item.quantity ?? 0)
+    );
+
+  const handleConvertToTransfer = () => {
+    if (!detail) return;
+
+    const items = (detail.items || []).map((item: any) => {
+      const requestedQuantity = Number(item.quantity ?? 0);
+      const availableQuantity = Number(item.originStockQuantity ?? 0);
+      const transferQuantity = getTransferQuantity(item);
+
+      if (!Number.isFinite(transferQuantity) || transferQuantity < 0) {
+        toast.error("Revise las cantidades a enviar");
+        return null;
+      }
+      if (transferQuantity - requestedQuantity > 0.000001) {
+        toast.error(`La cantidad a enviar de ${item.itemName} no puede exceder lo solicitado`);
+        return null;
+      }
+      if (transferQuantity - availableQuantity > 0.000001) {
+        toast.error(`No hay suficiente existencia para enviar ${item.itemName}`);
+        return null;
+      }
+
+      return {
+        transferRequestItemId: item.id,
+        quantity: transferQuantity.toFixed(2),
+      };
+    });
+
+    if (items.some((item) => item === null)) return;
+    const validItems = items.filter((item): item is NonNullable<typeof item> =>
+      Boolean(item)
+    );
+
+    if (!validItems.some((item) => Number(item.quantity) > 0)) {
+      toast.error("Debe enviar al menos una cantidad mayor que cero");
+      return;
+    }
+
+    convertMutation.mutate({
+      id: detail.transferRequest.id,
+      items: validItems,
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -306,7 +381,7 @@ export default function TransferRequests() {
       </Card>
 
       <Dialog open={Boolean(detailId)} onOpenChange={(open) => !open && setDetailId(null)}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1200px] sm:p-6 lg:p-7">
           <DialogHeader>
             <DialogTitle>{detail?.transferRequest.requestNumber || "Solicitud de Traslado"}</DialogTitle>
           </DialogHeader>
@@ -339,23 +414,109 @@ export default function TransferRequests() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
+                      <th className="w-44 p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Código
+                      </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Ítem
                       </th>
                       <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Cantidad
+                        Cant. solicitada
                       </th>
+                      {detail.transferRequest.status === "pendiente" && (
+                        <th className="w-36 p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Enviar
+                        </th>
+                      )}
+                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Exist. origen
+                      </th>
+                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Nueva existencia
+                      </th>
+                      {detail.transferRequest.status === "pendiente" && (
+                        <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Saldo
+                        </th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
-                    {(detail.items || []).map((item: any) => (
-                      <tr key={item.id} className="border-b border-border last:border-0">
-                        <td className="p-3">{item.itemName}</td>
-                        <td className="p-3 text-right">
-                          {item.quantity} {item.unit || ""}
-                        </td>
-                      </tr>
-                    ))}
+                    {(detail.items || []).map((item: any) => {
+                      const requestedQuantity = Number(item.quantity ?? 0);
+                      const originStockQuantity = Number(item.originStockQuantity ?? 0);
+                      const transferQuantity =
+                        detail.transferRequest.status === "pendiente"
+                          ? getTransferQuantity(item)
+                          : requestedQuantity;
+                      const newStockQuantity =
+                        detail.transferRequest.status === "pendiente"
+                          ? originStockQuantity - transferQuantity
+                          : Number(item.stockAfterTransfer ?? 0);
+                      const pendingQuantity = Math.max(
+                        requestedQuantity - transferQuantity,
+                        0
+                      );
+
+                      return (
+                        <tr key={item.id} className="border-b border-border last:border-0">
+                          <td className="p-3 font-mono text-xs text-muted-foreground">
+                            {item.sapItemCode || "-"}
+                          </td>
+                          <td className="p-3">{item.itemName}</td>
+                          <td className="p-3 text-right">
+                            {item.quantity} {item.unit || ""}
+                          </td>
+                          {detail.transferRequest.status === "pendiente" && (
+                            <td className="p-3">
+                              <Input
+                                value={
+                                  transferQuantityByItemId[item.id] ??
+                                  Math.min(
+                                    requestedQuantity,
+                                    originStockQuantity
+                                  ).toFixed(2)
+                                }
+                                onChange={(event) =>
+                                  setTransferQuantityByItemId((current) => ({
+                                    ...current,
+                                    [item.id]: event.target.value,
+                                  }))
+                                }
+                                type="number"
+                                min="0"
+                                max={Math.min(requestedQuantity, originStockQuantity)}
+                                step="any"
+                                className="ml-auto h-9 w-28 text-right"
+                                disabled={convertMutation.isPending}
+                              />
+                            </td>
+                          )}
+                          <td className="p-3 text-right">
+                            {originStockQuantity.toFixed(2)} {item.unit || ""}
+                          </td>
+                          <td
+                            className={`p-3 text-right font-medium ${
+                              newStockQuantity < 0 ? "text-destructive" : ""
+                            }`}
+                          >
+                            {newStockQuantity.toFixed(2)} {item.unit || ""}
+                          </td>
+                          {detail.transferRequest.status === "pendiente" && (
+                            <td className="p-3 text-right">
+                              <p className="font-mono">
+                                {pendingQuantity.toFixed(2)} {item.unit || ""}
+                              </p>
+                              {pendingQuantity > 0 && (
+                                <p className="text-[10px] text-muted-foreground">
+                                  Vuelve a flujo
+                                </p>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -374,7 +535,7 @@ export default function TransferRequests() {
                     </Button>
                   ) : null}
                   <Button
-                    onClick={() => convertMutation.mutate({ id: detail.transferRequest.id })}
+                    onClick={handleConvertToTransfer}
                     disabled={convertMutation.isPending || detail.transferRequest.status !== "pendiente"}
                   >
                     <Truck className="mr-2 h-4 w-4" />

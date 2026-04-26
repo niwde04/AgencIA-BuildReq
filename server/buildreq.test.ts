@@ -291,6 +291,175 @@ describe("BuildReq - Role-based Access Control", () => {
     recordWarehouseExitSpy.mockRestore();
   });
 
+  it("Administración Central can register one warehouse exit with multiple items", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getRequestItemByIdSpy = vi
+      .spyOn(db, "getRequestItemById")
+      .mockImplementation(async (id: number) =>
+        ({
+          id,
+          requestId: 9,
+          approvalStatus: "aprobada",
+        }) as any
+      );
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 9,
+          requestType: "bienes",
+          approvalStatus: "aprobada",
+        },
+      } as any);
+    const recordWarehouseExitBatchSpy = vi
+      .spyOn(db, "recordWarehouseExitBatch")
+      .mockResolvedValue({
+        success: true,
+        id: 88,
+        exitNumber: "SB-2026-0001",
+        status: "borrador",
+        itemCount: 2,
+      } as any);
+
+    await expect(
+      caller.requestItems.recordWarehouseExitBatch({
+        requestId: 9,
+        items: [
+          { requestItemId: 41, dispatchedQuantity: "25.00" },
+          { requestItemId: 42, dispatchedQuantity: "10.00" },
+        ],
+        note: "Salida aprobada por administración central",
+      })
+    ).resolves.toEqual({
+      success: true,
+      id: 88,
+      exitNumber: "SB-2026-0001",
+      status: "borrador",
+      itemCount: 2,
+    });
+
+    expect(recordWarehouseExitBatchSpy).toHaveBeenCalledWith({
+      requestId: 9,
+      items: [
+        { requestItemId: 41, quantity: "25.00" },
+        { requestItemId: 42, quantity: "10.00" },
+      ],
+      note: "Salida aprobada por administración central",
+      processedById: 4,
+    });
+
+    getRequestItemByIdSpy.mockRestore();
+    getMaterialRequestByIdSpy.mockRestore();
+    recordWarehouseExitBatchSpy.mockRestore();
+  });
+
+  it("Bodega users can return a warehouse dispatch item to the requisition", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getRequestItemByIdSpy = vi
+      .spyOn(db, "getRequestItemById")
+      .mockResolvedValue({
+        id: 41,
+        requestId: 9,
+        assignedFlow: "despacho_bodega",
+        approvalStatus: "aprobada",
+      } as any);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 9,
+          requestType: "bienes",
+          approvalStatus: "aprobada",
+        },
+      } as any);
+    const returnWarehouseDispatchItemToRequisitionSpy = vi
+      .spyOn(db, "returnWarehouseDispatchItemToRequisition")
+      .mockResolvedValue({
+        success: true,
+        requestId: 9,
+        returnedItemId: 41,
+        pendingRequestItemId: 77,
+        pendingQuantity: "50.00",
+      } as any);
+
+    await expect(
+      caller.requestItems.returnDispatchToRequisition({ id: 41 })
+    ).resolves.toEqual({
+      success: true,
+      requestId: 9,
+      returnedItemId: 41,
+      pendingRequestItemId: 77,
+      pendingQuantity: "50.00",
+    });
+
+    expect(returnWarehouseDispatchItemToRequisitionSpy).toHaveBeenCalledWith({
+      requestItemId: 41,
+      processedById: 3,
+    });
+
+    getRequestItemByIdSpy.mockRestore();
+    getMaterialRequestByIdSpy.mockRestore();
+    returnWarehouseDispatchItemToRequisitionSpy.mockRestore();
+  });
+
+  it("Bodega users can reject a remaining item balance", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getRequestItemByIdSpy = vi
+      .spyOn(db, "getRequestItemById")
+      .mockResolvedValue({
+        id: 41,
+        requestId: 9,
+        quantity: "10.00",
+        deliveredQuantity: "5.00",
+        dispatchedQuantity: "5.00",
+        approvalStatus: "aprobada",
+      } as any);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 9,
+          requestType: "bienes",
+          approvalStatus: "aprobada",
+        },
+      } as any);
+    const rejectRequestItemPendingQuantitySpy = vi
+      .spyOn(db, "rejectRequestItemPendingQuantity")
+      .mockResolvedValue({
+        success: true,
+        requestId: 9,
+        processedItemId: 41,
+        rejectedItemId: 78,
+        rejectedQuantity: "5.00",
+      } as any);
+
+    await expect(
+      caller.requestItems.rejectPendingQuantity({
+        id: 41,
+        reason: "Saldo ya no requerido",
+      })
+    ).resolves.toEqual({
+      success: true,
+      requestId: 9,
+      processedItemId: 41,
+      rejectedItemId: 78,
+      rejectedQuantity: "5.00",
+    });
+
+    expect(rejectRequestItemPendingQuantitySpy).toHaveBeenCalledWith({
+      requestItemId: 41,
+      rejectedById: 3,
+      rejectionReason: "Saldo ya no requerido",
+    });
+
+    getRequestItemByIdSpy.mockRestore();
+    getMaterialRequestByIdSpy.mockRestore();
+    rejectRequestItemPendingQuantitySpy.mockRestore();
+  });
+
   it("Bodega users can emit warehouse exit documents created from flows", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
@@ -310,6 +479,36 @@ describe("BuildReq - Role-based Access Control", () => {
     expect(emitWarehouseExitSpy).toHaveBeenCalledWith(33, 3);
 
     emitWarehouseExitSpy.mockRestore();
+  });
+
+  it("syncs the material request status after emitting a warehouse exit", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const emitWarehouseExitSpy = vi
+      .spyOn(db, "emitWarehouseExit")
+      .mockResolvedValue({
+        success: true,
+        exitNumber: "SB-2026-0008",
+        materialRequestIds: [25],
+      } as any);
+    const syncMaterialRequestFulfillmentStatusSpy = vi
+      .spyOn(db, "syncMaterialRequestFulfillmentStatus")
+      .mockResolvedValue({
+        success: true,
+        status: "cerrada",
+        changed: true,
+      } as any);
+
+    await expect(caller.warehouseExits.emit({ id: 88 })).resolves.toEqual({
+      success: true,
+      exitNumber: "SB-2026-0008",
+      materialRequestIds: [25],
+    });
+    expect(emitWarehouseExitSpy).toHaveBeenCalledWith(88, 3);
+    expect(syncMaterialRequestFulfillmentStatusSpy).toHaveBeenCalledWith(25, 3);
+
+    emitWarehouseExitSpy.mockRestore();
+    syncMaterialRequestFulfillmentStatusSpy.mockRestore();
   });
 
   it("Administración Central can create project transfers", async () => {
@@ -379,6 +578,103 @@ describe("BuildReq - Role-based Access Control", () => {
     expect(createSupplyFlowRecordSpy).toHaveBeenCalled();
 
     getMaterialRequestByIdSpy.mockRestore();
+    updateRequestItemSpy.mockRestore();
+    createTransferRequestSpy.mockRestore();
+    createSupplyFlowRecordSpy.mockRestore();
+    getRequestItemsByRequestIdSpy.mockRestore();
+    updateMaterialRequestStatusSpy.mockRestore();
+  });
+
+  it("Administración Central can create one transfer request for selected items", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 12,
+          projectId: 7,
+          requestType: "bienes",
+          approvalStatus: "aprobada",
+          neededBy: new Date("2026-04-20"),
+        },
+        items: [
+          {
+            id: 51,
+            itemName: "Cemento",
+            sapItemCode: "05050200058",
+            sapItemDescription: "CEMENTO GRANEL",
+            quantity: "100.00",
+            unit: "und",
+            approvalStatus: "aprobada",
+          },
+          {
+            id: 52,
+            itemName: "Pala",
+            sapItemCode: "03030100036",
+            sapItemDescription: "PALA PUNTA REDONDA",
+            quantity: "2.00",
+            unit: "und",
+            approvalStatus: "aprobada",
+          },
+        ],
+      } as any);
+    const getActiveSupplyFlowForRequestItemSpy = vi
+      .spyOn(db, "getActiveSupplyFlowForRequestItem")
+      .mockResolvedValue(undefined as any);
+    const updateRequestItemSpy = vi
+      .spyOn(db, "updateRequestItem")
+      .mockResolvedValue({ success: true } as any);
+    const createTransferRequestSpy = vi
+      .spyOn(db, "createTransferRequest")
+      .mockResolvedValue({ id: 88, requestNumber: "ST-2026-0088" } as any);
+    const createSupplyFlowRecordSpy = vi
+      .spyOn(db, "createSupplyFlowRecord")
+      .mockResolvedValueOnce({ id: 701 } as any)
+      .mockResolvedValueOnce({ id: 702 } as any);
+    const getRequestItemsByRequestIdSpy = vi
+      .spyOn(db, "getRequestItemsByRequestId")
+      .mockResolvedValue([
+        { id: 51, assignedFlow: "traslado_proyecto" },
+        { id: 52, assignedFlow: "traslado_proyecto" },
+      ] as any);
+    const updateMaterialRequestStatusSpy = vi
+      .spyOn(db, "updateMaterialRequestStatus")
+      .mockResolvedValue({ success: true } as any);
+
+    await expect(
+      caller.supplyFlows.createProjectTransferBatch({
+        sourceProjectId: 3,
+        notes: "Traslado consolidado",
+        items: [
+          { requestId: 12, requestItemId: 51 },
+          { requestId: 12, requestItemId: 52 },
+        ],
+      })
+    ).resolves.toEqual({
+      success: true,
+      transferRequestId: 88,
+      transferRequestNumber: "ST-2026-0088",
+      processedItems: 2,
+      flowIds: [701, 702],
+    });
+
+    expect(createTransferRequestSpy).toHaveBeenCalledTimes(1);
+    expect(createTransferRequestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        materialRequestId: 12,
+        projectId: 3,
+        destinationProjectId: 7,
+      }),
+      expect.arrayContaining([
+        expect.objectContaining({ materialRequestItemId: 51 }),
+        expect.objectContaining({ materialRequestItemId: 52 }),
+      ])
+    );
+    expect(createSupplyFlowRecordSpy).toHaveBeenCalledTimes(2);
+
+    getMaterialRequestByIdSpy.mockRestore();
+    getActiveSupplyFlowForRequestItemSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     createTransferRequestSpy.mockRestore();
     createSupplyFlowRecordSpy.mockRestore();
@@ -489,6 +785,64 @@ describe("BuildReq - Reverse Logistics Validations", () => {
         items: [], // Empty items
       })
     ).rejects.toThrow();
+  });
+
+  it("Allows creating returns to a project warehouse", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const createReverseLogisticSpy = vi
+      .spyOn(db, "createReverseLogistic")
+      .mockResolvedValue({
+        id: 77,
+        returnNumber: "DEV-2026-0007",
+      });
+    const getUsersByBuildreqRoleSpy = vi
+      .spyOn(db, "getUsersByBuildreqRole")
+      .mockResolvedValue([]);
+    const createNotificationSpy = vi
+      .spyOn(db, "createNotification")
+      .mockResolvedValue({ id: 1 } as any);
+
+    await expect(
+      caller.reverseLogistics.create({
+        returnType: "devolucion_bodega_proyecto",
+        reasonCategory: "excedente",
+        justification:
+          "Material devuelto al proyecto despues de una salida de bodega",
+        sourceProjectId: 1,
+        items: [
+          {
+            itemName: "Pala",
+            sapItemCode: "01010200099",
+            quantity: "100.00",
+            unit: "und",
+            condition: "usado_buen_estado",
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      id: 77,
+      returnNumber: "DEV-2026-0007",
+    });
+
+    expect(createReverseLogisticSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        returnType: "devolucion_bodega_proyecto",
+        sourceProjectId: 1,
+        createdById: ctx.user?.id,
+      }),
+      [
+        expect.objectContaining({
+          itemName: "Pala",
+          sapItemCode: "01010200099",
+          quantity: "100.00",
+        }),
+      ]
+    );
+
+    createReverseLogisticSpy.mockRestore();
+    getUsersByBuildreqRoleSpy.mockRestore();
+    createNotificationSpy.mockRestore();
   });
 });
 
@@ -2134,7 +2488,7 @@ describe("BuildReq - Receipts", () => {
 // Tests: Transfer Requests
 // ============================================================
 describe("BuildReq - Transfer Requests", () => {
-  it("cancel annuls a pending transfer request and releases transfer items back to the request", async () => {
+  it("cancel annuls a pending transfer request and returns transfer items to the transfer flow", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
     const getTransferRequestByIdSpy = vi
@@ -2175,8 +2529,8 @@ describe("BuildReq - Transfer Requests", () => {
     const getRequestItemsByRequestIdSpy = vi
       .spyOn(db, "getRequestItemsByRequestId")
       .mockResolvedValue([
-        { id: 21, assignedFlow: null },
-        { id: 22, assignedFlow: null },
+        { id: 21, assignedFlow: "traslado_proyecto" },
+        { id: 22, assignedFlow: "traslado_proyecto" },
       ] as any);
     const updateMaterialRequestStatusSpy = vi
       .spyOn(db, "updateMaterialRequestStatus")
@@ -2190,11 +2544,11 @@ describe("BuildReq - Transfer Requests", () => {
     });
 
     expect(updateRequestItemSpy).toHaveBeenCalledWith(21, {
-      assignedFlow: null,
+      assignedFlow: "traslado_proyecto",
       status: "pendiente",
     });
     expect(updateRequestItemSpy).toHaveBeenCalledWith(22, {
-      assignedFlow: null,
+      assignedFlow: "traslado_proyecto",
       status: "pendiente",
     });
     expect(updateSupplyFlowRecordSpy).toHaveBeenCalledWith(321, {
@@ -2207,7 +2561,7 @@ describe("BuildReq - Transfer Requests", () => {
     });
     expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(
       9,
-      "en_espera",
+      "en_proceso",
       3
     );
     expect(updateTransferRequestSpy).toHaveBeenCalledWith(6, {

@@ -4,6 +4,7 @@ import * as db from "../db";
 import { TRPCError } from "@trpc/server";
 
 const returnItemSchema = z.object({
+  sourceWarehouseExitItemId: z.number().optional(),
   itemName: z.string().min(1, "El nombre del ítem es obligatorio").max(500),
   sapItemCode: z.string().optional(),
   quantity: z.string().min(1, "La cantidad es obligatoria"),
@@ -45,6 +46,7 @@ export const reverseLogisticsRouter = router({
       z.object({
         returnType: z.enum([
           "devolucion_bodega_central",
+          "devolucion_bodega_proyecto",
           "devolucion_entre_proyectos",
           "devolucion_proveedor",
         ]),
@@ -60,6 +62,7 @@ export const reverseLogisticsRouter = router({
           .min(10, "La justificación debe tener al menos 10 caracteres"),
         sourceProjectId: z.number(),
         destinationProjectId: z.number().optional(),
+        sourceWarehouseExitId: z.number().optional(),
         supplierName: z.string().optional(),
         originalRequestId: z.number().optional(),
         items: z
@@ -104,13 +107,38 @@ export const reverseLogisticsRouter = router({
       }
 
       const { items, ...returnData } = input;
-      const result = await db.createReverseLogistic(
-        {
-          ...returnData,
-          createdById: ctx.user.id,
-        },
-        items
-      );
+      const result =
+        input.returnType === "devolucion_bodega_proyecto" &&
+        input.sourceWarehouseExitId
+          ? await db.createWarehouseExitProjectReturn({
+              sourceWarehouseExitId: input.sourceWarehouseExitId,
+              reasonCategory: input.reasonCategory,
+              justification: input.justification,
+              createdById: ctx.user.id,
+              items: input.items.map((item) => {
+                if (!item.sourceWarehouseExitItemId) {
+                  throw new TRPCError({
+                    code: "BAD_REQUEST",
+                    message:
+                      "Las devoluciones desde salida deben indicar el ítem origen",
+                  });
+                }
+
+                return {
+                  sourceWarehouseExitItemId: item.sourceWarehouseExitItemId,
+                  quantity: item.quantity,
+                  condition: item.condition,
+                  notes: item.notes,
+                };
+              }),
+            })
+          : await db.createReverseLogistic(
+              {
+                ...returnData,
+                createdById: ctx.user.id,
+              },
+              items
+            );
 
       // Notify Jefe de Bodega
       const bodegaUsers = await db.getUsersByBuildreqRole(

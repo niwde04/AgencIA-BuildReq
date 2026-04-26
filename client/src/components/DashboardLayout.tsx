@@ -74,8 +74,8 @@ const allMenuItems: MenuItem[] = [
   },
   {
     icon: PackageMinus,
-    label: "Salidas de Bodega",
-    path: "/salidas-bodega",
+    label: "Salidas de Inventario",
+    path: "/salidas-inventario",
     roles: ["jefe_bodega_central", "administracion_central", "admin"],
   },
   {

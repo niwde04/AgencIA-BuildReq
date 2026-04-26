@@ -216,6 +216,7 @@ export const requestItemsRouter = router({
 
       if (
         detail.request.status === "borrador" ||
+        detail.request.status === "flujo_completado" ||
         detail.request.status === "cerrada" ||
         detail.request.status === "anulada"
       ) {
@@ -334,6 +335,150 @@ export const requestItemsRouter = router({
         quantity: input.dispatchedQuantity,
         note: input.note,
         processedById: ctx.user.id,
+      });
+    }),
+
+  recordWarehouseExitBatch: protectedProcedure
+    .input(
+      z.object({
+        requestId: z.number(),
+        items: z
+          .array(
+            z.object({
+              requestItemId: z.number(),
+              dispatchedQuantity: z.string(),
+            })
+          )
+          .min(1),
+        note: z.string().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (
+        ctx.user.buildreqRole !== "jefe_bodega_central" &&
+        ctx.user.buildreqRole !== "administracion_central" &&
+        ctx.user.role !== "admin"
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo el Jefe de Bodega Central o Administración Central pueden registrar salida de bodega",
+        });
+      }
+
+      for (const item of input.items) {
+        await assertItemApprovedForProcessing(item.requestItemId);
+      }
+
+      return db.recordWarehouseExitBatch({
+        requestId: input.requestId,
+        items: input.items.map((item) => ({
+          requestItemId: item.requestItemId,
+          quantity: item.dispatchedQuantity,
+        })),
+        note: input.note,
+        processedById: ctx.user.id,
+      });
+    }),
+
+  returnDispatchToRequisition: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (
+        ctx.user.buildreqRole !== "jefe_bodega_central" &&
+        ctx.user.buildreqRole !== "administracion_central" &&
+        ctx.user.role !== "admin"
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo el Jefe de Bodega Central o Administración Central pueden devolver una salida a requisición",
+        });
+      }
+
+      const { item } = await assertItemApprovedForProcessing(input.id);
+      if (item.assignedFlow !== "despacho_bodega") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Este ítem no está asignado a salida de bodega",
+        });
+      }
+
+      return db.returnWarehouseDispatchItemToRequisition({
+        requestItemId: input.id,
+        processedById: ctx.user.id,
+      });
+    }),
+
+  returnTransferToRequisition: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (
+        ctx.user.buildreqRole !== "jefe_bodega_central" &&
+        ctx.user.buildreqRole !== "administracion_central" &&
+        ctx.user.role !== "admin"
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo el Jefe de Bodega Central o Administración Central pueden devolver un traslado a requisición",
+        });
+      }
+
+      const { item } = await assertItemApprovedForProcessing(input.id);
+      if (item.assignedFlow !== "traslado_proyecto") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Este ítem no está asignado a traslado",
+        });
+      }
+
+      return db.returnTransferFlowItemToRequisition({
+        requestItemId: input.id,
+        processedById: ctx.user.id,
+      });
+    }),
+
+  rejectPendingQuantity: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        reason: z
+          .string()
+          .trim()
+          .min(5, "Escriba un motivo de rechazo de al menos 5 caracteres"),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (
+        ctx.user.buildreqRole !== "jefe_bodega_central" &&
+        ctx.user.buildreqRole !== "administracion_central" &&
+        ctx.user.role !== "admin"
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo el Jefe de Bodega Central o Administración Central pueden rechazar saldos pendientes",
+        });
+      }
+
+      const { item } = await assertItemApprovedForProcessing(input.id);
+      const requestedQuantity = Number(item.quantity ?? 0);
+      const processedQuantity = Math.max(
+        Number(item.deliveredQuantity ?? 0),
+        Number(item.dispatchedQuantity ?? 0)
+      );
+      if (!(requestedQuantity > 0 && processedQuantity < requestedQuantity)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Este ítem no tiene saldo pendiente para rechazar",
+        });
+      }
+
+      return db.rejectRequestItemPendingQuantity({
+        requestItemId: input.id,
+        rejectedById: ctx.user.id,
+        rejectionReason: input.reason,
       });
     }),
 });
