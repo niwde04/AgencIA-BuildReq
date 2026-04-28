@@ -14,7 +14,16 @@ function canAccessTransfers(user: { role: string; buildreqRole?: string | null }
 
 export const transfersRouter = router({
   list: protectedProcedure
-    .input(z.object({ status: z.string().optional() }).optional())
+    .input(
+      z
+        .object({
+          status: z.string().optional(),
+          receivableOnly: z.boolean().optional(),
+          sourceProjectId: z.number().optional(),
+          destinationProjectId: z.number().optional(),
+        })
+        .optional()
+    )
     .query(async ({ ctx, input }) => {
       if (!canAccessTransfers(ctx.user)) {
         throw new TRPCError({
@@ -23,7 +32,15 @@ export const transfersRouter = router({
         });
       }
 
-      return db.listTransfers(input ?? undefined);
+      const destinationProjectId =
+        ctx.user.buildreqRole === "administrador_proyecto"
+          ? ctx.user.assignedProjectId ?? undefined
+          : input?.destinationProjectId;
+
+      return db.listTransfers({
+        ...(input ?? {}),
+        destinationProjectId,
+      });
     }),
 
   getById: protectedProcedure

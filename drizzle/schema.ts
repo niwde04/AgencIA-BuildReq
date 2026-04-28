@@ -40,8 +40,10 @@ export const requestStatusEnum = pgEnum("request_status", [
   "pendiente_aprobar",
   "en_espera",
   "en_proceso",
+  "parcialmente_atendida",
   "flujo_completado",
   "cerrada",
+  "cerrada_incompleta",
   "anulada",
 ]);
 export const requestWorkflowStageEnum = pgEnum("request_workflow_stage", [
@@ -161,12 +163,14 @@ export const transferStatusEnum = pgEnum("transfer_status", [
   "en_transito",
   "parcialmente_recibido",
   "recibido",
+  "cerrado_incompleto",
   "anulado",
 ]);
 export const receiptStatusEnum = pgEnum("receipt_status", [
   "pendiente",
   "parcial",
   "completa",
+  "cierre_incompleto",
 ]);
 export const warehouseExitStatusEnum = pgEnum("warehouse_exit_status", [
   "borrador",
@@ -594,6 +598,17 @@ export const transferRequestItems = pgTable(
     sapItemCode: varchar("sapItemCode", { length: 50 }),
     quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull(),
     receivedQuantity: decimal("receivedQuantity", { precision: 12, scale: 2 }),
+    returnedToOriginQuantity: decimal("returnedToOriginQuantity", {
+      precision: 12,
+      scale: 2,
+    })
+      .default("0")
+      .notNull(),
+    receiptClosed: boolean("receiptClosed").default(false).notNull(),
+    receiptClosedAt: timestamp("receiptClosedAt"),
+    receiptClosedById: integer("receiptClosedById"),
+    receiptCloseReason: varchar("receiptCloseReason", { length: 120 }),
+    receiptCloseNote: text("receiptCloseNote"),
     unit: varchar("unit", { length: 50 }),
     notes: text("notes"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),

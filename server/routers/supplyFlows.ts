@@ -1083,10 +1083,18 @@ export const supplyFlowsRouter = router({
 });
 
 async function checkAndUpdateRequestStatus(requestId: number, userId: number) {
-  const items = await db.getRequestItemsByRequestId(requestId);
-  const someAssigned = items.some((item) => item.assignedFlow !== null);
+  try {
+    await db.syncMaterialRequestFulfillmentStatus(requestId, userId);
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "DB not available") {
+      throw error;
+    }
 
-  if (someAssigned) {
-    await db.updateMaterialRequestStatus(requestId, "en_proceso", userId);
+    const items = await db.getRequestItemsByRequestId(requestId);
+    const someAssigned = items.some((item) => item.assignedFlow !== null);
+
+    if (someAssigned) {
+      await db.updateMaterialRequestStatus(requestId, "en_proceso", userId);
+    }
   }
 }

@@ -15,6 +15,8 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -29,19 +31,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Eye, Loader2, Plus, ShieldX } from "lucide-react";
+import { Eye, Loader2, Plus, RotateCcw, ShieldX } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 const STATUS_LABELS: Record<string, string> = {
   pendiente: "Pendiente",
   parcial: "Parcial",
   completa: "Completa",
+  cierre_incompleto: "Cierre incompleto",
 };
 
 const SOURCE_TYPE_LABELS: Record<"purchase_order" | "transfer", string> = {
   purchase_order: "Orden de Compra",
-  transfer: "Solicitud de traslado",
+  transfer: "Traslado",
 };
 
 const PURCHASE_ORDER_STATUS_LABELS: Record<string, string> = {
@@ -59,8 +63,17 @@ const TRANSFER_STATUS_LABELS: Record<string, string> = {
   en_transito: "En tránsito",
   parcialmente_recibido: "Parcialmente recibido",
   recibido: "Recibido",
+  cerrado_incompleto: "Cerrado incompleto",
   anulado: "Anulado",
 };
+
+const TRANSFER_CLOSE_REASONS = [
+  { value: "no_se_va_a_recibir", label: "No se va a recibir" },
+  { value: "diferencia_despacho", label: "Diferencia de despacho" },
+  { value: "devuelto_origen", label: "Devuelto al origen" },
+  { value: "error_traslado", label: "Error en traslado" },
+  { value: "otro", label: "Otro" },
+];
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
   "emitida",
@@ -96,7 +109,8 @@ function getPendingQuantity(item: any) {
   if (item.receiptClosed) return 0;
   return Math.max(
     Number(item.quantity ?? item.quantityExpected ?? 0) -
-      Number(item.receivedQuantity ?? 0),
+      Number(item.receivedQuantity ?? 0) -
+      Number(item.returnedToOriginQuantity ?? 0),
     0
   );
 }
@@ -120,8 +134,34 @@ function getSourceItemCode(item: any) {
   );
 }
 
+function formatProjectReference(project: any, fallback: string) {
+  return project ? `${project.code} — ${project.name}` : fallback;
+}
+
+function getTransferDestinationLabel(transferDetail: any, fallback: string) {
+  if (!transferDetail?.transferRequest) return fallback;
+  if (transferDetail.transferRequest.destinationType === "bodega_central") {
+    return "Bodega Central";
+  }
+  return transferDetail.destinationProject
+    ? formatProjectReference(transferDetail.destinationProject, fallback)
+    : transferDetail.transferRequest.destinationProjectId
+      ? `Proyecto ${transferDetail.transferRequest.destinationProjectId}`
+      : fallback;
+}
+
+function getTransferOriginLabel(transferDetail: any, fallback: string) {
+  if (!transferDetail?.transferRequest) return fallback;
+  return transferDetail.project
+    ? formatProjectReference(transferDetail.project, fallback)
+    : transferDetail.transferRequest.projectId
+      ? `Proyecto ${transferDetail.transferRequest.projectId}`
+      : fallback;
+}
+
 export default function Recepciones() {
   const utils = trpc.useUtils();
+  const { user } = useAuth();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [viewReceiptId, setViewReceiptId] = useState<number | null>(null);
   const [sourceType, setSourceType] = useState<"purchase_order" | "transfer">(
@@ -133,10 +173,21 @@ export default function Recepciones() {
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [documentDate, setDocumentDate] = useState("");
   const [postingDate, setPostingDate] = useState(todayDateValue());
+  const [receiptDate, setReceiptDate] = useState(todayDateValue());
   const [receivedMap, setReceivedMap] = useState<Record<number, string>>({});
   const [closeReceiptLineItem, setCloseReceiptLineItem] = useState<any | null>(
     null
   );
+  const [closeTransferLineItem, setCloseTransferLineItem] = useState<any | null>(
+    null
+  );
+  const [transferClosureDrafts, setTransferClosureDrafts] = useState<
+    Record<number, { reason: string; note: string }>
+  >({});
+  const [transferCloseReason, setTransferCloseReason] = useState(
+    TRANSFER_CLOSE_REASONS[0].value
+  );
+  const [transferCloseNote, setTransferCloseNote] = useState("");
 
   const { data: receipts, isLoading } = trpc.receipts.list.useQuery();
   const { data: receiptDetail, isLoading: receiptDetailLoading } =
@@ -145,7 +196,9 @@ export default function Recepciones() {
       { enabled: viewReceiptId !== null }
     );
   const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery();
-  const { data: transfers } = trpc.transfers.list.useQuery();
+  const { data: transfers } = trpc.transfers.list.useQuery({
+    receivableOnly: true,
+  });
   const { data: purchaseOrderDetail, isLoading: purchaseOrderDetailLoading } =
     trpc.purchaseOrders.getById.useQuery(
       { id: Number(sourceId) },
@@ -195,7 +248,12 @@ export default function Recepciones() {
     setInvoiceNumber("");
     setDocumentDate("");
     setPostingDate(todayDateValue());
+    setReceiptDate(todayDateValue());
     setReceivedMap({});
+    setTransferClosureDrafts({});
+    setCloseTransferLineItem(null);
+    setTransferCloseReason(TRANSFER_CLOSE_REASONS[0].value);
+    setTransferCloseNote("");
   };
 
   const sourceItems = useMemo(
@@ -228,6 +286,15 @@ export default function Recepciones() {
         utils.receipts.list.invalidate(),
         utils.purchaseOrders.list.invalidate(),
         utils.transfers.list.invalidate(),
+        utils.materialRequests.list.invalidate(),
+        utils.supplyFlows.pendingQueue.invalidate(),
+        utils.supplyFlows.list.invalidate(),
+        sourceType === "transfer" && sourceId
+          ? utils.transfers.getById.invalidate({ id: Number(sourceId) })
+          : Promise.resolve(),
+        sourceType === "purchase_order" && sourceId
+          ? utils.purchaseOrders.getById.invalidate({ id: Number(sourceId) })
+          : Promise.resolve(),
       ]);
     },
     onError: error => toast.error(error.message),
@@ -275,6 +342,13 @@ export default function Recepciones() {
         ? transferDetail.transferRequest.destinationProjectId
         : undefined;
 
+  const canCloseTransferLines =
+    sourceType === "transfer" &&
+    ((user as any)?.buildreqRole === "administracion_central" ||
+      ((user as any)?.buildreqRole === "administrador_proyecto" &&
+        sourceProjectId !== undefined &&
+        (user as any)?.assignedProjectId === sourceProjectId));
+
   const sourceProjectLabel =
     sourceType === "purchase_order"
       ? purchaseOrderDetail?.project
@@ -282,11 +356,7 @@ export default function Recepciones() {
         : purchaseOrderDetail?.purchaseOrder.projectId
           ? `Proyecto ${purchaseOrderDetail.purchaseOrder.projectId}`
           : "Seleccione documento"
-      : transferDetail?.project
-        ? `${transferDetail.project.code} — ${transferDetail.project.name}`
-        : transferDetail?.transferRequest?.projectId
-          ? `Proyecto ${transferDetail.transferRequest.projectId}`
-          : "Seleccione documento";
+      : getTransferDestinationLabel(transferDetail, "Seleccione documento");
 
   const sourceHeaderTitle =
     sourceType === "purchase_order"
@@ -308,11 +378,9 @@ export default function Recepciones() {
       ? purchaseOrderDetail?.supplier
         ? `${purchaseOrderDetail.supplier.supplierCode} — ${purchaseOrderDetail.supplier.name}`
         : "Proveedor pendiente"
-      : transferDetail?.transferRequest?.destinationType === "proyecto"
-        ? `Destino: Proyecto ${transferDetail.transferRequest.destinationProjectId ?? "—"}`
-        : transferDetail?.transferRequest
-          ? "Destino: Bodega Central"
-          : "Seleccione documento";
+      : transferDetail?.transferRequest
+        ? `Origen: ${getTransferOriginLabel(transferDetail, "Proyecto origen")}`
+        : "Seleccione documento";
 
   const sourceNeededByLabel =
     sourceType === "purchase_order"
@@ -333,6 +401,11 @@ export default function Recepciones() {
       ),
     [receivedMap, sourceItems]
   );
+
+  const getTransferCloseQuantity = (item: any) => {
+    const requestedQuantity = Math.max(Number(receivedMap[item.id] ?? 0) || 0, 0);
+    return Math.max(getPendingQuantity(item) - requestedQuantity, 0);
+  };
 
   const handleRegisterReceipt = () => {
     if (!sourceId || !sourceProjectId) {
@@ -355,18 +428,52 @@ export default function Recepciones() {
       }
     }
 
-    const receiptItems = sourceItems.map((item: any) => ({
-      sourceItemId: item.id,
-      itemName: item.itemName,
-      quantityExpected: String(getPendingQuantity(item)),
-      quantityReceived: receivedMap[item.id] || "0",
-      unit: item.unit || undefined,
-    }));
+    const receiptItems = sourceItems.map((item: any) => {
+      const closureDraft = transferClosureDrafts[item.id];
+      const closeQuantity =
+        sourceType === "transfer" && closureDraft
+          ? getTransferCloseQuantity(item)
+          : 0;
 
-    if (!receiptItems.some(item => Number(item.quantityReceived || 0) > 0)) {
-      toast.error("Ingresa al menos una cantidad mayor que cero");
+      return {
+        sourceItemId: item.id,
+        itemName: item.itemName,
+        quantityExpected: String(getPendingQuantity(item)),
+        quantityReceived: receivedMap[item.id] || "0",
+        unit: item.unit || undefined,
+        closeRemaining: closeQuantity > 0,
+        closeReason:
+          closeQuantity > 0
+            ? TRANSFER_CLOSE_REASONS.find(
+                reason => reason.value === closureDraft?.reason
+              )?.label || closureDraft?.reason
+            : undefined,
+        closeNote: closeQuantity > 0 ? closureDraft?.note : undefined,
+      };
+    });
+
+    const hasPositiveReceipt = receiptItems.some(
+      item => Number(item.quantityReceived || 0) > 0
+    );
+    const hasTransferClosure = receiptItems.some(item => item.closeRemaining);
+
+    if (!hasPositiveReceipt && !hasTransferClosure) {
+      toast.error(
+        "Ingresa al menos una cantidad mayor que cero o cierra un saldo pendiente"
+      );
       return;
     }
+
+    const invalidClosure = receiptItems.find(
+      item => item.closeRemaining && (!item.closeReason || !item.closeNote)
+    );
+    if (invalidClosure) {
+      toast.error("Completa el motivo y la nota del cierre incompleto");
+      return;
+    }
+
+    const currentPostingDate = todayDateValue();
+    setPostingDate(currentPostingDate);
 
     registerMutation.mutate({
       sourceType,
@@ -375,8 +482,8 @@ export default function Recepciones() {
       cai: cai || undefined,
       invoiceNumber: invoiceNumber || undefined,
       documentDate: documentDate || undefined,
-      postingDate,
-      receiptDate: postingDate,
+      postingDate: currentPostingDate,
+      receiptDate,
       notes: notes || undefined,
       items: receiptItems,
     });
@@ -387,18 +494,16 @@ export default function Recepciones() {
       ? receiptPurchaseOrderDetail?.purchaseOrder.orderNumber ||
         "Orden de Compra"
       : receiptTransferDetail?.transfer?.transferNumber ||
-        "Solicitud de traslado";
+        "Traslado";
 
   const receiptSourceSecondaryLabel =
     receiptDetail?.receipt.sourceType === "purchase_order"
       ? receiptPurchaseOrderDetail?.supplier
         ? `${receiptPurchaseOrderDetail.supplier.supplierCode} — ${receiptPurchaseOrderDetail.supplier.name}`
         : "Proveedor pendiente"
-      : receiptTransferDetail?.transferRequest?.destinationType === "proyecto"
-        ? `Destino: Proyecto ${receiptTransferDetail.transferRequest.destinationProjectId ?? "—"}`
-        : receiptTransferDetail?.transferRequest
-          ? "Destino: Bodega Central"
-          : "—";
+      : receiptTransferDetail?.transferRequest
+        ? `Origen: ${getTransferOriginLabel(receiptTransferDetail, "Proyecto origen")}`
+        : "—";
 
   const receiptSourceStatusLabel = receiptDetail
     ? receiptDetail.receipt.sourceType === "purchase_order"
@@ -433,7 +538,12 @@ export default function Recepciones() {
           open={dialogOpen}
           onOpenChange={open => {
             setDialogOpen(open);
-            if (!open) resetForm();
+            if (open) {
+              setPostingDate(todayDateValue());
+              setReceiptDate(todayDateValue());
+            } else {
+              resetForm();
+            }
           }}
         >
           <DialogTrigger asChild>
@@ -472,6 +582,8 @@ export default function Recepciones() {
                       setInvoiceNumber("");
                       setDocumentDate("");
                       setPostingDate(todayDateValue());
+                      setReceiptDate(todayDateValue());
+                      setTransferClosureDrafts({});
                     }}
                   >
                     <SelectTrigger className="h-11 w-full text-sm sm:h-12 sm:text-base">
@@ -482,7 +594,7 @@ export default function Recepciones() {
                         Orden de Compra
                       </SelectItem>
                       <SelectItem value="transfer">
-                        Solicitud de traslado
+                        Traslado
                       </SelectItem>
                     </SelectContent>
                   </Select>
@@ -501,6 +613,8 @@ export default function Recepciones() {
                       setInvoiceNumber("");
                       setDocumentDate("");
                       setPostingDate(todayDateValue());
+                      setReceiptDate(todayDateValue());
+                      setTransferClosureDrafts({});
                     }}
                   >
                     <SelectTrigger className="h-11 w-full text-sm sm:h-12 sm:text-base">
@@ -525,7 +639,12 @@ export default function Recepciones() {
                               className="py-2.5"
                             >
                               {row.transfer.transferNumber} —{" "}
-                              {row.project?.name || "Proyecto origen"}
+                              {row.transferRequest?.requestNumber || "Solicitud"}
+                              {" — "}
+                              {getTransferDestinationLabel(
+                                row,
+                                "Destino pendiente"
+                              )}
                             </SelectItem>
                           ))}
                     </SelectContent>
@@ -533,7 +652,7 @@ export default function Recepciones() {
                   <p className="text-sm leading-relaxed text-muted-foreground">
                     {sourceType === "purchase_order"
                       ? "Solo aparecen órdenes emitidas con saldo pendiente por recibir."
-                      : "Solo aparecen traslados confirmados o con saldo pendiente."}
+                      : "Solo aparecen traslados confirmados con saldo pendiente por recibir."}
                   </p>
                 </div>
 
@@ -592,38 +711,48 @@ export default function Recepciones() {
               </div>
 
               <div className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-4 sm:p-5">
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                  <div className="space-y-2">
-                    <Label htmlFor="receipt-cai">CAI</Label>
-                    <Input
-                      id="receipt-cai"
-                      value={cai}
-                      onChange={event => setCai(event.target.value)}
-                      placeholder="CAI de la factura"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="receipt-invoice-number">
-                      Número de factura
-                    </Label>
-                    <Input
-                      id="receipt-invoice-number"
-                      value={invoiceNumber}
-                      onChange={event => setInvoiceNumber(event.target.value)}
-                      placeholder="Correlativo de factura"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="receipt-document-date">
-                      Fecha documento
-                    </Label>
-                    <Input
-                      id="receipt-document-date"
-                      type="date"
-                      value={documentDate}
-                      onChange={event => setDocumentDate(event.target.value)}
-                    />
-                  </div>
+                <div
+                  className={`grid gap-3 md:grid-cols-2 ${
+                    sourceType === "purchase_order"
+                      ? "xl:grid-cols-5"
+                      : "xl:grid-cols-2"
+                  }`}
+                >
+                  {sourceType === "purchase_order" ? (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="receipt-cai">CAI</Label>
+                        <Input
+                          id="receipt-cai"
+                          value={cai}
+                          onChange={event => setCai(event.target.value)}
+                          placeholder="CAI de la factura"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="receipt-invoice-number">
+                          Número de factura
+                        </Label>
+                        <Input
+                          id="receipt-invoice-number"
+                          value={invoiceNumber}
+                          onChange={event => setInvoiceNumber(event.target.value)}
+                          placeholder="Correlativo de factura"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="receipt-document-date">
+                          Fecha documento
+                        </Label>
+                        <Input
+                          id="receipt-document-date"
+                          type="date"
+                          value={documentDate}
+                          onChange={event => setDocumentDate(event.target.value)}
+                        />
+                      </div>
+                    </>
+                  ) : null}
                   <div className="space-y-2">
                     <Label htmlFor="receipt-posting-date">
                       Fecha contabilización
@@ -632,7 +761,8 @@ export default function Recepciones() {
                       id="receipt-posting-date"
                       type="date"
                       value={postingDate}
-                      onChange={event => setPostingDate(event.target.value)}
+                      readOnly
+                      className="bg-muted/40"
                     />
                   </div>
                   <div className="space-y-2">
@@ -642,9 +772,8 @@ export default function Recepciones() {
                     <Input
                       id="receipt-receipt-date"
                       type="date"
-                      value={postingDate}
-                      readOnly
-                      className="bg-muted/40"
+                      value={receiptDate}
+                      onChange={event => setReceiptDate(event.target.value)}
                     />
                   </div>
                 </div>
@@ -656,7 +785,11 @@ export default function Recepciones() {
                     value={notes}
                     onChange={event => setNotes(event.target.value)}
                     rows={3}
-                    placeholder="Observaciones, referencia de factura o comentarios de recepción"
+                    placeholder={
+                      sourceType === "purchase_order"
+                        ? "Observaciones, referencia de factura o comentarios de recepción"
+                        : "Observaciones o comentarios de recepción"
+                    }
                   />
                 </div>
               </div>
@@ -692,8 +825,8 @@ export default function Recepciones() {
                           className="p-4 text-sm text-muted-foreground"
                           colSpan={6}
                         >
-                          Selecciona una orden de compra o solicitud de traslado
-                          para cargar sus ítems.
+                          Selecciona una orden de compra o traslado para cargar
+                          sus ítems.
                         </td>
                       </tr>
                     ) : activeSourceLoading ? (
@@ -718,6 +851,9 @@ export default function Recepciones() {
                       sourceItems.map((item: any) => {
                         const pendingQuantity = getPendingQuantity(item);
                         const sourceCode = getSourceItemCode(item);
+                        const transferCloseQuantity = getTransferCloseQuantity(item);
+                        const transferClosureDraft =
+                          transferClosureDrafts[item.id];
                         return (
                           <tr
                             key={item.id}
@@ -778,6 +914,63 @@ export default function Recepciones() {
                                   )}
                                   Cerrar línea
                                 </Button>
+                              ) : sourceType === "transfer" ? (
+                                <div className="flex flex-col items-end gap-1.5">
+                                  <Button
+                                    variant={
+                                      transferClosureDraft &&
+                                      transferCloseQuantity > 0
+                                        ? "default"
+                                        : "outline"
+                                    }
+                                    size="sm"
+                                    className="ml-auto gap-2"
+                                    onClick={() => {
+                                      if (!canCloseTransferLines) return;
+                                      setCloseTransferLineItem(item);
+                                      setTransferCloseReason(
+                                        transferClosureDraft?.reason ||
+                                          TRANSFER_CLOSE_REASONS[0].value
+                                      );
+                                      setTransferCloseNote(
+                                        transferClosureDraft?.note || ""
+                                      );
+                                    }}
+                                    disabled={
+                                      !canCloseTransferLines ||
+                                      transferCloseQuantity <= 0
+                                    }
+                                    title={
+                                      !canCloseTransferLines
+                                        ? "Solo Administración Central o el administrador del proyecto destino pueden cerrar saldos de traslado"
+                                        : transferCloseQuantity <= 0
+                                          ? "No hay saldo restante para cerrar; baja Recibir ahora si no recibiste todo"
+                                          : "Cerrar saldo pendiente, devolverlo al origen y regresarlo a requisición"
+                                    }
+                                  >
+                                    <RotateCcw className="h-4 w-4" />
+                                    {!canCloseTransferLines
+                                      ? "Sin autorización"
+                                      : transferCloseQuantity <= 0
+                                        ? "Sin saldo"
+                                        : transferClosureDraft
+                                          ? "Cierre marcado"
+                                          : "Cerrar saldo"}
+                                  </Button>
+                                  {transferClosureDraft &&
+                                  transferCloseQuantity > 0 ? (
+                                    <span className="text-xs text-muted-foreground">
+                                      Devuelve{" "}
+                                      {formatQuantity(transferCloseQuantity)}{" "}
+                                      {item.unit || ""} al origen y a requisición
+                                    </span>
+                                  ) : canCloseTransferLines &&
+                                    transferCloseQuantity <= 0 ? (
+                                    <span className="max-w-48 text-right text-xs text-muted-foreground">
+                                      Baja Recibir ahora para cerrar saldo.
+                                    </span>
+                                  ) : null}
+                                </div>
                               ) : (
                                 <span className="text-xs text-muted-foreground">
                                   —
@@ -1020,6 +1213,134 @@ export default function Recepciones() {
               </div>
             </div>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={closeTransferLineItem !== null}
+        onOpenChange={open => {
+          if (!open) {
+            setCloseTransferLineItem(null);
+            setTransferCloseReason(TRANSFER_CLOSE_REASONS[0].value);
+            setTransferCloseNote("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>Cerrar saldo de traslado</DialogTitle>
+            <DialogDescription>
+              El saldo que ya no se recibirá se devolverá al proyecto origen y
+              volverá a la requisición al registrar la recepción.
+            </DialogDescription>
+          </DialogHeader>
+
+          {closeTransferLineItem ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-border/70 bg-muted/20 p-3 text-sm">
+                <div className="font-semibold">
+                  {closeTransferLineItem.itemName}
+                </div>
+                <div className="mt-1 text-muted-foreground">
+                  Se recibirá{" "}
+                  <strong>
+                    {formatQuantity(
+                      Number(receivedMap[closeTransferLineItem.id] ?? 0) || 0
+                    )}{" "}
+                    {closeTransferLineItem.unit || ""}
+                  </strong>{" "}
+                  y se devolverá al origen y volverá a requisición el saldo de{" "}
+                  <strong>
+                    {formatQuantity(
+                      getTransferCloseQuantity(closeTransferLineItem)
+                    )}{" "}
+                    {closeTransferLineItem.unit || ""}
+                  </strong>
+                  .
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Motivo</Label>
+                <Select
+                  value={transferCloseReason}
+                  onValueChange={setTransferCloseReason}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TRANSFER_CLOSE_REASONS.map(reason => (
+                      <SelectItem key={reason.value} value={reason.value}>
+                        {reason.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="transfer-close-note">Nota obligatoria</Label>
+                <Textarea
+                  id="transfer-close-note"
+                  rows={4}
+                  value={transferCloseNote}
+                  onChange={event => setTransferCloseNote(event.target.value)}
+                  placeholder="Explique por qué el saldo no se recibirá, regresa al origen y vuelve a requisición"
+                />
+              </div>
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            {closeTransferLineItem &&
+            transferClosureDrafts[closeTransferLineItem.id] ? (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setTransferClosureDrafts(current => {
+                    const next = { ...current };
+                    delete next[closeTransferLineItem.id];
+                    return next;
+                  });
+                  setCloseTransferLineItem(null);
+                }}
+              >
+                Quitar cierre
+              </Button>
+            ) : null}
+            <Button
+              variant="outline"
+              onClick={() => setCloseTransferLineItem(null)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                if (!closeTransferLineItem) return;
+                if (getTransferCloseQuantity(closeTransferLineItem) <= 0) {
+                  toast.error("No hay saldo pendiente para cerrar");
+                  return;
+                }
+                if (!transferCloseNote.trim()) {
+                  toast.error("Ingrese una nota para cerrar el saldo");
+                  return;
+                }
+
+                setTransferClosureDrafts(current => ({
+                  ...current,
+                  [closeTransferLineItem.id]: {
+                    reason: transferCloseReason,
+                    note: transferCloseNote.trim(),
+                  },
+                }));
+                setCloseTransferLineItem(null);
+                toast.success("Cierre marcado para esta recepción");
+              }}
+            >
+              Marcar cierre
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

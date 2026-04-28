@@ -17,6 +17,7 @@ const STATUS_LABELS: Record<string, string> = {
   en_transito: "En tránsito",
   parcialmente_recibido: "Parcialmente recibido",
   recibido: "Recibido",
+  cerrado_incompleto: "Cerrado incompleto",
   anulado: "Anulado",
 };
 
@@ -205,6 +206,9 @@ export default function Transfers() {
                       <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Recibido
                       </th>
+                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Devuelto origen
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -219,6 +223,19 @@ export default function Transfers() {
                         </td>
                         <td className="p-3 text-right">
                           {item.receivedQuantity || "0.00"} {item.unit || ""}
+                        </td>
+                        <td className="p-3 text-right">
+                          <div>
+                            {item.returnedToOriginQuantity || "0.00"}{" "}
+                            {item.unit || ""}
+                          </div>
+                          {item.receiptCloseReason || item.receiptCloseNote ? (
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {[item.receiptCloseReason, item.receiptCloseNote]
+                                .filter(Boolean)
+                                .join(" — ")}
+                            </div>
+                          ) : null}
                         </td>
                       </tr>
                     ))}

@@ -20,7 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { downloadBase64Document } from "@/lib/document-download";
 import { trpc } from "@/lib/trpc";
 import { Download, Eye, PackageMinus, Plus, RotateCcw, Send, XCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -61,6 +61,39 @@ function formatQuantity(value: string | number | null | undefined) {
   });
 }
 
+function parseQuantity(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return 0;
+  const numberValue = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numberValue) ? numberValue : 0;
+}
+
+function getPhysicalDispatchedQuantity(item: any) {
+  return Math.max(
+    parseQuantity(item.physicalDispatchedQuantity ?? item.dispatchedQuantity),
+    0
+  );
+}
+
+function getDeliveryPendingQuantity(item: any) {
+  const requestedQuantity = Math.max(parseQuantity(item.quantity), 0);
+  const alreadyDispatched = getPhysicalDispatchedQuantity(item);
+  const receivedQuantity = Math.min(
+    Math.max(parseQuantity(item.deliveredQuantity), 0),
+    requestedQuantity
+  );
+  const dispatchableQuantity =
+    item.assignedFlow === "despacho_bodega" ? requestedQuantity : receivedQuantity;
+
+  return Math.max(dispatchableQuantity - alreadyDispatched, 0);
+}
+
+function getSuggestedDeliveryQuantity(item: any) {
+  return Math.min(
+    getDeliveryPendingQuantity(item),
+    Math.max(parseQuantity(item.projectStock), 0)
+  );
+}
+
 export default function SalidasBodega() {
   const utils = trpc.useUtils();
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -82,7 +115,7 @@ export default function SalidasBodega() {
 
   const { data: exits, isLoading } = trpc.warehouseExits.list.useQuery();
   const { data: materialRequests } = trpc.materialRequests.list.useQuery({
-    status: "flujo_completado",
+    requestType: "bienes",
   });
   const { data: deliveryRequestDetail } =
     trpc.materialRequests.getById.useQuery(
@@ -111,6 +144,7 @@ export default function SalidasBodega() {
   });
   const createDeliveryMutation = trpc.requestItems.recordWarehouseExitBatch.useMutation({
     onSuccess: (result) => {
+      const requestIdToInvalidate = Number(deliveryRequestId || 0);
       toast.success(`Salida ${result.exitNumber} creada en borrador`);
       setDeliveryDialogOpen(false);
       setDeliveryRequestId("");
@@ -120,6 +154,9 @@ export default function SalidasBodega() {
       void Promise.all([
         utils.warehouseExits.list.invalidate(),
         utils.materialRequests.list.invalidate(),
+        requestIdToInvalidate
+          ? utils.materialRequests.getById.invalidate({ id: requestIdToInvalidate })
+          : Promise.resolve(),
         utils.supplyFlows.pendingQueue.invalidate(),
         utils.supplyFlows.list.invalidate(),
       ]);
@@ -178,13 +215,7 @@ export default function SalidasBodega() {
 
     const nextQuantities: Record<number, string> = {};
     for (const item of deliveryRequestDetail.items || []) {
-      const requestedQuantity = Number(item.quantity ?? 0);
-      const alreadyDispatched = Number(
-        item.physicalDispatchedQuantity ?? item.dispatchedQuantity ?? 0
-      );
-      const availableQuantity = Number(item.projectStock ?? 0);
-      const pendingQuantity = Math.max(requestedQuantity - alreadyDispatched, 0);
-      const suggestedQuantity = Math.min(pendingQuantity, Math.max(availableQuantity, 0));
+      const suggestedQuantity = getSuggestedDeliveryQuantity(item);
       if (suggestedQuantity > 0) {
         nextQuantities[item.id] = suggestedQuantity.toFixed(2);
       }
@@ -192,9 +223,24 @@ export default function SalidasBodega() {
     setDeliveryQuantityByItemId(nextQuantities);
   }, [deliveryRequestDetail?.request.id]);
 
-  const eligibleMaterialRequests = (materialRequests ?? []).filter((row: any) => {
-    return row.request.requestType === "bienes" && row.request.status === "flujo_completado";
-  });
+  const eligibleMaterialRequests = useMemo(
+    () =>
+      (materialRequests ?? []).filter((row: any) => {
+        return (
+          row.request.requestType === "bienes" &&
+          ["flujo_completado", "parcialmente_atendida"].includes(row.request.status)
+        );
+      }),
+    [materialRequests]
+  );
+
+  const deliveryItems = useMemo(
+    () =>
+      (deliveryRequestDetail?.items ?? []).filter(
+        (item: any) => getDeliveryPendingQuantity(item) > 0
+      ),
+    [deliveryRequestDetail?.items]
+  );
 
   const submitDelivery = () => {
     if (!deliveryRequestDetail) {
@@ -202,15 +248,11 @@ export default function SalidasBodega() {
       return;
     }
 
-    const selectedItems = (deliveryRequestDetail.items || [])
+    const selectedItems = deliveryItems
       .map((item: any) => {
         const quantity = Number(deliveryQuantityByItemId[item.id] ?? 0);
-        const requestedQuantity = Number(item.quantity ?? 0);
-        const alreadyDispatched = Number(
-          item.physicalDispatchedQuantity ?? item.dispatchedQuantity ?? 0
-        );
-        const availableQuantity = Number(item.projectStock ?? 0);
-        const pendingQuantity = Math.max(requestedQuantity - alreadyDispatched, 0);
+        const availableQuantity = parseQuantity(item.projectStock);
+        const pendingQuantity = getDeliveryPendingQuantity(item);
 
         return { item, quantity, pendingQuantity, availableQuantity };
       })
@@ -816,116 +858,117 @@ export default function SalidasBodega() {
                     : "Proyecto pendiente"}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Solo se muestran requisiciones con flujo completado. Al emitir la salida se descuenta inventario y la requisición queda cerrada.
+                  Se muestran requisiciones con flujo completado o parcialmente atendidas. La salida solo incluye renglones ya recibidos o disponibles en bodega.
                 </p>
               </div>
             </div>
 
             {deliveryRequestDetail ? (
               <>
-                <div className="overflow-x-auto rounded-xl border">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/30">
-                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Código SAP
-                        </th>
-                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Ítem
-                        </th>
-                        <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Solicitado
-                        </th>
-                        <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Ya entregado
-                        </th>
-                        <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Disponible
-                        </th>
-                        <th className="w-36 p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Entregar
-                        </th>
-                        <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Saldo
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(deliveryRequestDetail.items || []).map((item: any) => {
-                        const requestedQuantity = Number(item.quantity ?? 0);
-                        const alreadyDispatched = Number(
-                          item.physicalDispatchedQuantity ?? item.dispatchedQuantity ?? 0
-                        );
-                        const availableQuantity = Number(item.projectStock ?? 0);
-                        const pendingQuantity = Math.max(
-                          requestedQuantity - alreadyDispatched,
-                          0
-                        );
-                        const quantity = Number(deliveryQuantityByItemId[item.id] ?? 0);
-                        const balanceQuantity = Math.max(pendingQuantity - quantity, 0);
-                        const canDeliver =
-                          pendingQuantity > 0 &&
-                          availableQuantity > 0 &&
-                          Boolean(item.sapItemCode);
+                {deliveryItems.length > 0 ? (
+                  <div className="overflow-x-auto rounded-xl border">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/30">
+                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Código SAP
+                          </th>
+                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Ítem
+                          </th>
+                          <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Solicitado
+                          </th>
+                          <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Ya entregado
+                          </th>
+                          <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Disponible
+                          </th>
+                          <th className="w-36 p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Entregar
+                          </th>
+                          <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Saldo
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {deliveryItems.map((item: any) => {
+                          const requestedQuantity = parseQuantity(item.quantity);
+                          const alreadyDispatched = getPhysicalDispatchedQuantity(item);
+                          const availableQuantity = parseQuantity(item.projectStock);
+                          const pendingQuantity = getDeliveryPendingQuantity(item);
+                          const quantity = Number(deliveryQuantityByItemId[item.id] ?? 0);
+                          const balanceQuantity = Math.max(pendingQuantity - quantity, 0);
+                          const canDeliver =
+                            pendingQuantity > 0 &&
+                            availableQuantity > 0 &&
+                            Boolean(item.sapItemCode);
 
-                        return (
-                          <tr key={item.id} className="border-b last:border-0">
-                            <td className="p-3 font-mono text-xs">
-                              {item.sapItemCode || "-"}
-                            </td>
-                            <td className="p-3">
-                              <p className="font-medium">
-                                {item.sapItemDescription || item.itemName}
-                              </p>
-                              {!item.sapItemCode ? (
-                                <p className="text-[11px] text-destructive">
-                                  Pendiente de código SAP
+                          return (
+                            <tr key={item.id} className="border-b last:border-0">
+                              <td className="p-3 font-mono text-xs">
+                                {item.sapItemCode || "-"}
+                              </td>
+                              <td className="p-3">
+                                <p className="font-medium">
+                                  {item.sapItemDescription || item.itemName}
                                 </p>
-                              ) : null}
-                            </td>
-                            <td className="p-3 text-right">
-                              {formatQuantity(requestedQuantity)} {item.unit || ""}
-                            </td>
-                            <td className="p-3 text-right">
-                              {formatQuantity(alreadyDispatched)} {item.unit || ""}
-                            </td>
-                            <td className="p-3 text-right font-medium">
-                              {formatQuantity(availableQuantity)} {item.unit || ""}
-                            </td>
-                            <td className="p-3">
-                              <Input
-                                className="ml-auto w-28 text-right"
-                                type="number"
-                                min="0"
-                                max={Math.min(pendingQuantity, availableQuantity)}
-                                step="any"
-                                value={deliveryQuantityByItemId[item.id] ?? ""}
-                                onChange={(event) =>
-                                  setDeliveryQuantityByItemId((current) => ({
-                                    ...current,
-                                    [item.id]: event.target.value,
-                                  }))
-                                }
-                                disabled={!canDeliver || createDeliveryMutation.isPending}
-                                placeholder="0.00"
-                              />
-                            </td>
-                            <td className="p-3 text-right">
-                              <p className="font-mono">
-                                {formatQuantity(balanceQuantity)} {item.unit || ""}
-                              </p>
-                              {balanceQuantity > 0 ? (
-                                <p className="text-[10px] text-muted-foreground">
-                                  Pendiente
+                                {!item.sapItemCode ? (
+                                  <p className="text-[11px] text-destructive">
+                                    Pendiente de código SAP
+                                  </p>
+                                ) : null}
+                              </td>
+                              <td className="p-3 text-right">
+                                {formatQuantity(requestedQuantity)} {item.unit || ""}
+                              </td>
+                              <td className="p-3 text-right">
+                                {formatQuantity(alreadyDispatched)} {item.unit || ""}
+                              </td>
+                              <td className="p-3 text-right font-medium">
+                                {formatQuantity(availableQuantity)} {item.unit || ""}
+                              </td>
+                              <td className="p-3">
+                                <Input
+                                  className="ml-auto w-28 text-right"
+                                  type="number"
+                                  min="0"
+                                  max={Math.min(pendingQuantity, availableQuantity)}
+                                  step="any"
+                                  value={deliveryQuantityByItemId[item.id] ?? ""}
+                                  onChange={(event) =>
+                                    setDeliveryQuantityByItemId((current) => ({
+                                      ...current,
+                                      [item.id]: event.target.value,
+                                    }))
+                                  }
+                                  disabled={!canDeliver || createDeliveryMutation.isPending}
+                                  placeholder="0.00"
+                                />
+                              </td>
+                              <td className="p-3 text-right">
+                                <p className="font-mono">
+                                  {formatQuantity(balanceQuantity)} {item.unit || ""}
                                 </p>
-                              ) : null}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                                {balanceQuantity > 0 ? (
+                                  <p className="text-[10px] text-muted-foreground">
+                                    Pendiente
+                                  </p>
+                                ) : null}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border bg-muted/20 p-8 text-center text-sm text-muted-foreground">
+                    Esta requisición no tiene renglones recibidos disponibles para salida.
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <Label>Notas</Label>
@@ -953,7 +996,11 @@ export default function SalidasBodega() {
               </Button>
               <Button
                 onClick={submitDelivery}
-                disabled={!deliveryRequestDetail || createDeliveryMutation.isPending}
+                disabled={
+                  !deliveryRequestDetail ||
+                  deliveryItems.length === 0 ||
+                  createDeliveryMutation.isPending
+                }
               >
                 {createDeliveryMutation.isPending
                   ? "Creando..."

@@ -22,6 +22,36 @@ function canManageSapTranslation(user: {
   );
 }
 
+function canRejectApprovedItems(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "administracion_central"
+  );
+}
+
+function canAccessRequest(
+  user: {
+    id: number;
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+  },
+  request: { requestedById: number; projectId: number }
+) {
+  if (user.role === "admin") return true;
+  if (user.buildreqRole === "ingeniero_residente") {
+    return request.requestedById === user.id;
+  }
+  if (user.buildreqRole === "administrador_proyecto") {
+    return Boolean(user.assignedProjectId) && user.assignedProjectId === request.projectId;
+  }
+  return true;
+}
+
 async function assertItemApprovedForProcessing(requestItemId: number) {
   const item = await db.getRequestItemById(requestItemId);
   if (!item) {
@@ -68,14 +98,22 @@ async function assertItemApprovedForProcessing(requestItemId: number) {
 }
 
 async function syncRequestStatusFromAssignments(requestId: number, userId: number) {
-  const items = await db.getRequestItemsByRequestId(requestId);
-  const someAssigned = items.some((item) => item.assignedFlow !== null);
+  try {
+    await db.syncMaterialRequestFulfillmentStatus(requestId, userId);
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "DB not available") {
+      throw error;
+    }
 
-  await db.updateMaterialRequestStatus(
-    requestId,
-    someAssigned ? "en_proceso" : "en_espera",
-    userId
-  );
+    const items = await db.getRequestItemsByRequestId(requestId);
+    const someAssigned = items.some((item) => item.assignedFlow !== null);
+
+    await db.updateMaterialRequestStatus(
+      requestId,
+      someAssigned ? "en_proceso" : "en_espera",
+      userId
+    );
+  }
 }
 
 async function assertSapTranslationCanBeChanged(item: {
@@ -218,6 +256,7 @@ export const requestItemsRouter = router({
         detail.request.status === "borrador" ||
         detail.request.status === "flujo_completado" ||
         detail.request.status === "cerrada" ||
+        detail.request.status === "cerrada_incompleta" ||
         detail.request.status === "anulada"
       ) {
         throw new TRPCError({
@@ -476,6 +515,70 @@ export const requestItemsRouter = router({
       }
 
       return db.rejectRequestItemPendingQuantity({
+        requestItemId: input.id,
+        rejectedById: ctx.user.id,
+        rejectionReason: input.reason,
+      });
+    }),
+
+  rejectApproved: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        reason: z
+          .string()
+          .trim()
+          .min(5, "Escriba un motivo de rechazo de al menos 5 caracteres"),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canRejectApprovedItems(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo el Administrador del Proyecto o Administración Central pueden rechazar ítems aprobados",
+        });
+      }
+
+      const { item, detail } = await assertItemApprovedForProcessing(input.id);
+      if (!canAccessRequest(ctx.user, detail.request)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a esta solicitud",
+        });
+      }
+      if (detail.request.requestType !== "bienes") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "El rechazo por ítem aplica solo a requisiciones de bienes",
+        });
+      }
+      if (
+        detail.request.status === "borrador" ||
+        detail.request.status === "cerrada" ||
+        detail.request.status === "cerrada_incompleta" ||
+        detail.request.status === "anulada"
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "La requisición no permite rechazar ítems aprobados",
+        });
+      }
+
+      const activeFlows = (await db.getSupplyFlowByRequestId(item.requestId)).filter(
+        (flow) => flow.requestItemId === item.id && flow.status !== "cancelado"
+      );
+      const hasMovement =
+        Number(item.deliveredQuantity ?? 0) > 0 || Number(item.dispatchedQuantity ?? 0) > 0;
+      if (activeFlows.length > 0 || Boolean(item.assignedFlow) || hasMovement) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Solo se pueden rechazar ítems aprobados sin flujo activo ni movimientos",
+        });
+      }
+
+      return db.rejectApprovedRequestItem({
         requestItemId: input.id,
         rejectedById: ctx.user.id,
         rejectionReason: input.reason,

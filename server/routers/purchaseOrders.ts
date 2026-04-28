@@ -125,13 +125,21 @@ async function releaseDirectPurchaseRequestItems(
   }
 
   for (const requestId of Array.from(affectedRequestIds)) {
-    const requestItems = await db.getRequestItemsByRequestId(requestId);
-    const someAssigned = requestItems.some(item => item.assignedFlow !== null);
-    await db.updateMaterialRequestStatus(
-      requestId,
-      someAssigned ? "en_proceso" : "en_espera",
-      userId
-    );
+    try {
+      await db.syncMaterialRequestFulfillmentStatus(requestId, userId);
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "DB not available") {
+        throw error;
+      }
+
+      const requestItems = await db.getRequestItemsByRequestId(requestId);
+      const someAssigned = requestItems.some(item => item.assignedFlow !== null);
+      await db.updateMaterialRequestStatus(
+        requestId,
+        someAssigned ? "en_proceso" : "en_espera",
+        userId
+      );
+    }
   }
 }
 

@@ -63,7 +63,11 @@ export default function TransferRequests() {
 
   const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
   const { data: transferRequests, isLoading } = trpc.transferRequests.list.useQuery();
-  const { data: detail } = trpc.transferRequests.getById.useQuery(
+  const {
+    data: detail,
+    isLoading: detailLoading,
+    error: detailError,
+  } = trpc.transferRequests.getById.useQuery(
     { id: detailId ?? 0 },
     { enabled: Boolean(detailId) }
   );
@@ -385,7 +389,15 @@ export default function TransferRequests() {
           <DialogHeader>
             <DialogTitle>{detail?.transferRequest.requestNumber || "Solicitud de Traslado"}</DialogTitle>
           </DialogHeader>
-          {detail && (
+          {detailLoading ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              Cargando solicitud...
+            </div>
+          ) : detailError ? (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+              {detailError.message}
+            </div>
+          ) : detail ? (
             <div className="space-y-4">
               <div className="grid gap-4 md:grid-cols-3">
                 <div>
@@ -544,7 +556,7 @@ export default function TransferRequests() {
                 </div>
               </div>
             </div>
-          )}
+          ) : null}
         </DialogContent>
       </Dialog>
 

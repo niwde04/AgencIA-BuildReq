@@ -58,8 +58,10 @@ const STATUS_LABELS: Record<string, string> = {
   pendiente_aprobar: "Pendiente de aprobar",
   en_espera: "En espera",
   en_proceso: "En proceso de atención",
+  parcialmente_atendida: "Parcialmente atendida",
   flujo_completado: "Flujo completado",
   cerrada: "Cerrada",
+  cerrada_incompleta: "Cerrada incompleta",
   anulada: "Anulada",
 };
 
@@ -68,8 +70,10 @@ const STATUS_COLORS: Record<string, string> = {
   pendiente_aprobar: "border-orange-300 text-orange-700 bg-orange-50",
   en_espera: "border-amber-300 text-amber-700 bg-amber-50",
   en_proceso: "border-blue-300 text-blue-700 bg-blue-50",
+  parcialmente_atendida: "border-cyan-300 text-cyan-700 bg-cyan-50",
   flujo_completado: "border-emerald-300 text-emerald-700 bg-emerald-50",
   cerrada: "border-gray-300 text-gray-600 bg-gray-50",
+  cerrada_incompleta: "border-yellow-300 text-yellow-700 bg-yellow-50",
   anulada: "border-rose-300 text-rose-700 bg-rose-50",
 };
 
@@ -95,6 +99,7 @@ const WORKFLOW_STAGE_LABELS: Record<string, string> = {
   traslado: "Traslado",
   recepcion: "Recepción",
   cerrada: "Cerrada",
+  cerrada_incompleta: "Cerrada incompleta",
   rechazada: "Rechazada",
 };
 
@@ -480,7 +485,7 @@ export default function SolicitudDetalle() {
 
   const requestId = parseInt(params.id || "0");
 
-  const { data, isLoading } = trpc.materialRequests.getById.useQuery(
+  const { data, isLoading, error } = trpc.materialRequests.getById.useQuery(
     { id: requestId },
     { enabled: requestId > 0 }
   );
@@ -547,6 +552,18 @@ export default function SolicitudDetalle() {
       },
       onError: (e) => toast.error(e.message),
     });
+
+  const rejectApprovedItemMutation = trpc.requestItems.rejectApproved.useMutation({
+    onSuccess: (result) => {
+      setPendingApprovedItemRejection(null);
+      setApprovedItemRejectReason("");
+      toast.success(
+        `Ítem rechazado: ${formatQuantityValue(result.rejectedQuantity)}`
+      );
+      invalidateAll();
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   const approveMutation = trpc.materialRequests.approve.useMutation({
     onSuccess: () => {
@@ -617,6 +634,13 @@ export default function SolicitudDetalle() {
     unit?: string | null;
   } | null>(null);
   const [balanceRejectReason, setBalanceRejectReason] = useState("");
+  const [pendingApprovedItemRejection, setPendingApprovedItemRejection] = useState<{
+    itemId: number;
+    itemLabel: string;
+    quantity: number;
+    unit?: string | null;
+  } | null>(null);
+  const [approvedItemRejectReason, setApprovedItemRejectReason] = useState("");
   const [pendingBulkReviewDecision, setPendingBulkReviewDecision] = useState<
     "aprobada" | "rechazada" | null
   >(null);
@@ -636,6 +660,7 @@ export default function SolicitudDetalle() {
   const invalidateAll = () =>
     Promise.all([
       utils.materialRequests.getById.invalidate({ id: requestId }),
+      utils.materialRequests.list.invalidate(),
       utils.supplyFlows.getByRequestId.invalidate({ requestId }),
       utils.supplyFlows.pendingQueue.invalidate(),
     ]);
@@ -959,6 +984,7 @@ export default function SolicitudDetalle() {
   const anyQueueProcessing =
     assignFlowMutation.isPending ||
     rejectPendingQuantityMutation.isPending ||
+    rejectApprovedItemMutation.isPending ||
     translateMutation.isPending ||
     clearSapTranslationMutation.isPending ||
     assigningFlowItemId !== null;
@@ -973,6 +999,22 @@ export default function SolicitudDetalle() {
           <div className="h-6 w-40 animate-pulse bg-muted rounded" />
         </div>
         <div className="h-64 animate-pulse bg-muted rounded" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={() => setLocation("/solicitudes")}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <div>
+            <h1>No se pudo cargar la requisición</h1>
+            <p className="text-sm text-muted-foreground">{error.message}</p>
+          </div>
+        </div>
       </div>
     );
   }
@@ -1040,6 +1082,7 @@ export default function SolicitudDetalle() {
     request.status !== "borrador" &&
     request.status !== "flujo_completado" &&
     request.status !== "cerrada" &&
+    request.status !== "cerrada_incompleta" &&
     request.status !== "anulada" &&
     request.approvalStatus === "pendiente" &&
     canApproveProjectRequests;
@@ -1335,6 +1378,9 @@ export default function SolicitudDetalle() {
                     Ya procesada
                   </th>
                   <th className="text-right p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                    Cant. desp.
+                  </th>
+                  <th className="text-right p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                     Pendiente
                   </th>
                   <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground w-20">
@@ -1348,9 +1394,6 @@ export default function SolicitudDetalle() {
                   </th>
                   <th className="text-right p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                     Comprometido
-                  </th>
-                  <th className="text-right p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
-                    Cant. desp.
                   </th>
                   <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground min-w-[220px]">
                     Traducir a SAP
@@ -1394,6 +1437,7 @@ export default function SolicitudDetalle() {
                     !canManageProcessing ||
                     request.status === "flujo_completado" ||
                     request.status === "cerrada" ||
+                    request.status === "cerrada_incompleta" ||
                     request.status === "borrador" ||
                     request.status === "anulada" ||
                     !editableItem ||
@@ -1412,6 +1456,7 @@ export default function SolicitudDetalle() {
                     canManageProcessing &&
                     request.status !== "flujo_completado" &&
                     request.status !== "cerrada" &&
+                    request.status !== "cerrada_incompleta" &&
                     request.status !== "borrador" &&
                     request.status !== "anulada" &&
                     request.requestType === "bienes" &&
@@ -1419,6 +1464,24 @@ export default function SolicitudDetalle() {
                     row.remainingQuantity > 0 &&
                     row.processedQuantity > 0 &&
                     Boolean(editableItem);
+                  const approvedRejectableItem = row.approvedItems.find((entry) => {
+                    const hasMovement =
+                      Number(entry.deliveredQuantity ?? 0) > 0 ||
+                      Number(entry.dispatchedQuantity ?? 0) > 0;
+                    const hasActiveFlows = (activeFlowsByItem.get(entry.id) ?? []).length > 0;
+
+                    return !entry.assignedFlow && !hasActiveFlows && !hasMovement;
+                  });
+                  const canRejectApprovedItem =
+                    canApproveProjectRequests &&
+                    request.requestType === "bienes" &&
+                    request.status !== "borrador" &&
+                    request.status !== "cerrada" &&
+                    request.status !== "cerrada_incompleta" &&
+                    request.status !== "anulada" &&
+                    request.approvalStatus !== "pendiente" &&
+                    row.pendingApprovalQuantity <= 0 &&
+                    Boolean(approvedRejectableItem);
                   const docSapLabels = Array.from(
                     new Set(
                       row.assignedFlowTypes
@@ -1444,6 +1507,7 @@ export default function SolicitudDetalle() {
                       <td className="p-3 text-right font-mono text-xs">
                         {formatQuantityValue(row.processedQuantity)}
                       </td>
+                      <td className="p-3 text-right text-xs">{item.dispatchedQuantity || "0.00"}</td>
                       <td className="p-3 text-right font-mono text-xs">
                         {formatQuantityValue(unresolvedQuantity)}
                       </td>
@@ -1451,7 +1515,6 @@ export default function SolicitudDetalle() {
                       <td className="p-3 text-right text-xs">{item.projectStock || "0.00"}</td>
                       <td className="p-3 text-right text-xs">{item.sapStock || "0.00"}</td>
                       <td className="p-3 text-right text-xs">{item.committedQuantity || "0.00"}</td>
-                      <td className="p-3 text-right text-xs">{item.dispatchedQuantity || "0.00"}</td>
                       <td className="p-3">
                         <SapSearchBox
                           itemId={editableItem?.id ?? item.id}
@@ -1588,6 +1651,27 @@ export default function SolicitudDetalle() {
                             </Button>
                           ) : null}
 
+                          {canRejectApprovedItem && approvedRejectableItem ? (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              className="h-7 px-2 text-[11px]"
+                              disabled={anyQueueProcessing}
+                              onClick={() => {
+                                setPendingApprovedItemRejection({
+                                  itemId: approvedRejectableItem.id,
+                                  itemLabel: item.itemName,
+                                  quantity: Number(approvedRejectableItem.quantity ?? 0),
+                                  unit: approvedRejectableItem.unit,
+                                });
+                                setApprovedItemRejectReason("");
+                              }}
+                            >
+                              <XCircle className="mr-1 h-3.5 w-3.5" />
+                              Rechazar ítem
+                            </Button>
+                          ) : null}
+
                           {editableItem?.assignedFlow ? (
                             <Badge variant="secondary" className="text-xs">
                               En panel:{" "}
@@ -1598,6 +1682,7 @@ export default function SolicitudDetalle() {
                           {canManageProcessing &&
                             request.status !== "cerrada" &&
                             request.status !== "flujo_completado" &&
+                            request.status !== "cerrada_incompleta" &&
                             request.status !== "borrador" &&
                             request.status !== "anulada" &&
                             request.requestType === "bienes" &&
@@ -1675,6 +1760,7 @@ export default function SolicitudDetalle() {
           {canManageProcessing &&
             request.status !== "cerrada" &&
             request.status !== "flujo_completado" &&
+            request.status !== "cerrada_incompleta" &&
             request.status !== "borrador" &&
             request.status !== "anulada" &&
             request.approvalStatus !== "pendiente" &&
@@ -1693,6 +1779,7 @@ export default function SolicitudDetalle() {
           {canManageProcessing &&
             request.status !== "cerrada" &&
             request.status !== "flujo_completado" &&
+            request.status !== "cerrada_incompleta" &&
             request.status !== "borrador" &&
             request.status !== "anulada" && (
             <div className="border-t border-border p-3 bg-muted/10 flex items-center justify-between">
@@ -1926,6 +2013,82 @@ export default function SolicitudDetalle() {
               disabled={rejectPendingQuantityMutation.isPending}
             >
               {rejectPendingQuantityMutation.isPending
+                ? "Guardando..."
+                : "Confirmar rechazo"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(pendingApprovedItemRejection)}
+        onOpenChange={(open) => {
+          if (!open && !rejectApprovedItemMutation.isPending) {
+            setPendingApprovedItemRejection(null);
+            setApprovedItemRejectReason("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg rounded-2xl border-border/70">
+          <DialogHeader className="space-y-2">
+            <DialogTitle>Rechazar ítem aprobado</DialogTitle>
+            <DialogDescription className="leading-6">
+              Esta acción rechazará{" "}
+              <span className="font-medium text-foreground">
+                {pendingApprovedItemRejection?.itemLabel ?? "este ítem"}
+              </span>
+              :{" "}
+              <span className="font-medium text-foreground">
+                {formatQuantityValue(pendingApprovedItemRejection?.quantity)}{" "}
+                {pendingApprovedItemRejection?.unit || ""}
+              </span>
+              . Solo aplica a renglones sin flujo activo ni movimientos.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <Label htmlFor="approved-item-reject-reason">Motivo de rechazo *</Label>
+            <Textarea
+              id="approved-item-reject-reason"
+              value={approvedItemRejectReason}
+              onChange={(event) => setApprovedItemRejectReason(event.target.value)}
+              placeholder="Ejemplo: saldo ya no requerido, cambio de prioridad o cierre administrativo"
+              rows={4}
+              disabled={rejectApprovedItemMutation.isPending}
+            />
+            <p className="text-xs text-muted-foreground">
+              Esta nota quedará visible en el renglón rechazado.
+            </p>
+          </div>
+
+          <DialogFooter className="gap-2 sm:justify-end">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setPendingApprovedItemRejection(null);
+                setApprovedItemRejectReason("");
+              }}
+              disabled={rejectApprovedItemMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (!pendingApprovedItemRejection) return;
+                if (approvedItemRejectReason.trim().length < 5) {
+                  toast.error("Escribe un motivo de rechazo de al menos 5 caracteres");
+                  return;
+                }
+
+                rejectApprovedItemMutation.mutate({
+                  id: pendingApprovedItemRejection.itemId,
+                  reason: approvedItemRejectReason,
+                });
+              }}
+              disabled={rejectApprovedItemMutation.isPending}
+            >
+              {rejectApprovedItemMutation.isPending
                 ? "Guardando..."
                 : "Confirmar rechazo"}
             </Button>

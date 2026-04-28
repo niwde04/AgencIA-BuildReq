@@ -28,8 +28,10 @@ const STATUS_COLORS: Record<string, string> = {
   pendiente_aprobar: "#f97316",
   en_espera: "#f59e0b",
   en_proceso: "#3b82f6",
+  parcialmente_atendida: "#0891b2",
   flujo_completado: "#10b981",
   cerrada: "#6b7280",
+  cerrada_incompleta: "#ca8a04",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -37,8 +39,10 @@ const STATUS_LABELS: Record<string, string> = {
   pendiente_aprobar: "Pendiente de aprobar",
   en_espera: "En espera",
   en_proceso: "En proceso",
+  parcialmente_atendida: "Parcialmente atendida",
   flujo_completado: "Flujo completado",
   cerrada: "Cerrada",
+  cerrada_incompleta: "Cerrada incompleta",
 };
 
 const STATUS_BADGE_COLORS: Record<string, string> = {
@@ -46,8 +50,10 @@ const STATUS_BADGE_COLORS: Record<string, string> = {
   pendiente_aprobar: "border-orange-300 text-orange-700 bg-orange-50",
   en_espera: "border-amber-300 text-amber-700 bg-amber-50",
   en_proceso: "border-blue-300 text-blue-700 bg-blue-50",
+  parcialmente_atendida: "border-cyan-300 text-cyan-700 bg-cyan-50",
   flujo_completado: "border-emerald-300 text-emerald-700 bg-emerald-50",
   cerrada: "border-gray-300 text-gray-600 bg-gray-50",
+  cerrada_incompleta: "border-yellow-300 text-yellow-700 bg-yellow-50",
 };
 
 const FLOW_LABELS: Record<string, string> = {

@@ -30,10 +30,44 @@ const receiptItemSchema = z.object({
   quantityReceived: z.string().min(1),
   unit: z.string().optional(),
   notes: z.string().optional(),
+  closeRemaining: z.boolean().optional(),
+  closeReason: z.string().trim().max(120).optional(),
+  closeNote: z.string().trim().max(1000).optional(),
 });
 
 function parseDateInput(value: string) {
   return new Date(`${value}T12:00:00`);
+}
+
+function getTransferPendingQuantity(item: any) {
+  if (item.receiptClosed) return 0;
+  return Math.max(
+    Number(item.quantity ?? 0) -
+      Number(item.receivedQuantity ?? 0) -
+      Number(item.returnedToOriginQuantity ?? 0),
+    0
+  );
+}
+
+function canCloseTransferReceiptLine(
+  user: {
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+  },
+  detail: any
+) {
+  if (user.buildreqRole === "administracion_central") return true;
+
+  const destinationProjectId =
+    detail.transferRequest?.destinationType === "proyecto"
+      ? detail.transferRequest.destinationProjectId
+      : null;
+
+  return (
+    user.buildreqRole === "administrador_proyecto" &&
+    destinationProjectId !== null &&
+    user.assignedProjectId === destinationProjectId
+  );
 }
 
 export const receiptsRouter = router({
@@ -211,6 +245,7 @@ export const receiptsRouter = router({
 
         const itemsById = new Map((detail.items ?? []).map((item: any) => [item.id, item]));
         let hasPositiveReceipt = false;
+        let hasTransferClosure = false;
 
         for (const item of input.items) {
           const sourceItem = itemsById.get(item.sourceItemId);
@@ -221,11 +256,11 @@ export const receiptsRouter = router({
             });
           }
 
-          const pendingQuantity = Math.max(
-            Number(sourceItem.quantity ?? 0) - Number(sourceItem.receivedQuantity ?? 0),
-            0
-          );
+          const pendingQuantity = getTransferPendingQuantity(sourceItem);
           const requestedQuantity = Number(item.quantityReceived ?? 0);
+          const closeQuantity = item.closeRemaining
+            ? Math.max(pendingQuantity - requestedQuantity, 0)
+            : 0;
 
           if (requestedQuantity > pendingQuantity) {
             throw new TRPCError({
@@ -234,15 +269,49 @@ export const receiptsRouter = router({
             });
           }
 
+          if (item.closeRemaining) {
+            if (closeQuantity <= 0) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: `La línea ${sourceItem.itemName} no tiene saldo pendiente para cerrar`,
+              });
+            }
+
+            if (!canCloseTransferReceiptLine(ctx.user, detail)) {
+              throw new TRPCError({
+                code: "FORBIDDEN",
+                message:
+                  "Solo Administración Central o el Administrador del Proyecto destino pueden cerrar saldos de traslado",
+              });
+            }
+
+            if (!item.closeReason?.trim()) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "Seleccione el motivo del cierre incompleto",
+              });
+            }
+
+            if (!item.closeNote?.trim()) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "Ingrese una nota para cerrar el saldo del traslado",
+              });
+            }
+
+            hasTransferClosure = true;
+          }
+
           if (requestedQuantity > 0) {
             hasPositiveReceipt = true;
           }
         }
 
-        if (!hasPositiveReceipt) {
+        if (!hasPositiveReceipt && !hasTransferClosure) {
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message: "Ingrese al menos una cantidad mayor que cero para registrar la recepción",
+            message:
+              "Ingrese al menos una cantidad mayor que cero o cierre un saldo pendiente para registrar la recepción",
           });
         }
       }
@@ -267,7 +336,26 @@ export const receiptsRouter = router({
           quantityExpected: item.quantityExpected,
           quantityReceived: item.quantityReceived,
           unit: item.unit,
-          notes: item.notes,
+          notes:
+            item.notes ??
+            (input.sourceType === "transfer" && item.closeRemaining
+              ? [
+                  "Cierre incompleto con devolución al origen y regreso a requisición.",
+                  item.closeReason ? `Motivo: ${item.closeReason}.` : null,
+                  item.closeNote ? `Nota: ${item.closeNote}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" ")
+              : undefined),
+          closeRemaining:
+            input.sourceType === "transfer" ? item.closeRemaining : undefined,
+          closeReason:
+            input.sourceType === "transfer" ? item.closeReason : undefined,
+          closeNote: input.sourceType === "transfer" ? item.closeNote : undefined,
+          closedById:
+            input.sourceType === "transfer" && item.closeRemaining
+              ? ctx.user.id
+              : undefined,
         }))
       );
     }),

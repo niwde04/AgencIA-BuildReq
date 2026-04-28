@@ -354,6 +354,79 @@ describe("BuildReq - Role-based Access Control", () => {
     recordWarehouseExitBatchSpy.mockRestore();
   });
 
+  it("Bodega users cannot reject an approved request item administratively", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(
+      caller.requestItems.rejectApproved({
+        id: 41,
+        reason: "Saldo ya no requerido",
+      })
+    ).rejects.toThrow(
+      "Solo el Administrador del Proyecto o Administración Central pueden rechazar ítems aprobados"
+    );
+  });
+
+  it("Administración Central can reject an approved request item with a reason", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getRequestItemByIdSpy = vi
+      .spyOn(db, "getRequestItemById")
+      .mockResolvedValue({
+        id: 41,
+        requestId: 9,
+        assignedFlow: null,
+        approvalStatus: "aprobada",
+        deliveredQuantity: "0.00",
+        dispatchedQuantity: "0.00",
+      } as any);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 9,
+          requestType: "bienes",
+          approvalStatus: "aprobada",
+          status: "parcialmente_atendida",
+        },
+      } as any);
+    const getSupplyFlowByRequestIdSpy = vi
+      .spyOn(db, "getSupplyFlowByRequestId")
+      .mockResolvedValue([]);
+    const rejectApprovedRequestItemSpy = vi
+      .spyOn(db, "rejectApprovedRequestItem")
+      .mockResolvedValue({
+        success: true,
+        requestId: 9,
+        rejectedItemId: 41,
+        rejectedQuantity: "25.00",
+      } as any);
+
+    await expect(
+      caller.requestItems.rejectApproved({
+        id: 41,
+        reason: "Saldo ya no requerido",
+      })
+    ).resolves.toEqual({
+      success: true,
+      requestId: 9,
+      rejectedItemId: 41,
+      rejectedQuantity: "25.00",
+    });
+
+    expect(rejectApprovedRequestItemSpy).toHaveBeenCalledWith({
+      requestItemId: 41,
+      rejectedById: 4,
+      rejectionReason: "Saldo ya no requerido",
+    });
+
+    getRequestItemByIdSpy.mockRestore();
+    getMaterialRequestByIdSpy.mockRestore();
+    getSupplyFlowByRequestIdSpy.mockRestore();
+    rejectApprovedRequestItemSpy.mockRestore();
+  });
+
   it("Bodega users can return a warehouse dispatch item to the requisition", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
@@ -2138,6 +2211,357 @@ describe("BuildReq - Receipts", () => {
     expect(receiptPayload.receiptDate).toBeInstanceOf(Date);
 
     getPurchaseOrderByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("allows registering a receipt from a confirmed transfer without invoice metadata", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getTransferByIdSpy = vi
+      .spyOn(db, "getTransferById")
+      .mockResolvedValue({
+        transfer: {
+          id: 8,
+          transferNumber: "TR-2026-0003",
+          status: "confirmado",
+        },
+        transferRequest: {
+          id: 5,
+          requestNumber: "ST-2026-0005",
+          destinationType: "proyecto",
+          destinationProjectId: 1,
+        },
+        items: [
+          {
+            id: 31,
+            itemName: "VARILLA #4",
+            quantity: "20.00",
+            receivedQuantity: "5.00",
+            sapItemCode: "01010100001",
+            unit: "und",
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({
+        id: 7,
+        receiptNumber: "RC-2026-0002",
+        status: "parcial",
+      } as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "transfer",
+        sourceId: 8,
+        projectId: 1,
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        notes: "Ingreso parcial de traslado",
+        items: [
+          {
+            sourceItemId: 31,
+            itemName: "VARILLA #4",
+            quantityExpected: "15.00",
+            quantityReceived: "10.00",
+            unit: "und",
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      id: 7,
+      receiptNumber: "RC-2026-0002",
+      status: "parcial",
+    });
+
+    const receiptPayload = registerReceiptSpy.mock.calls[0]?.[0] as any;
+    expect(receiptPayload.sourceType).toBe("transfer");
+    expect(receiptPayload.sourceId).toBe(8);
+    expect(receiptPayload.projectId).toBe(1);
+    expect(receiptPayload.cai).toBeNull();
+    expect(receiptPayload.invoiceNumber).toBeNull();
+    expect(receiptPayload.documentDate).toBeNull();
+
+    getTransferByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("allows the destination project admin to close a transfer receipt balance", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getTransferByIdSpy = vi
+      .spyOn(db, "getTransferById")
+      .mockResolvedValue({
+        transfer: {
+          id: 8,
+          transferNumber: "TR-2026-0003",
+          status: "parcialmente_recibido",
+        },
+        transferRequest: {
+          id: 5,
+          requestNumber: "ST-2026-0005",
+          destinationType: "proyecto",
+          destinationProjectId: 1,
+        },
+        items: [
+          {
+            id: 31,
+            itemName: "VARILLA #4",
+            quantity: "100.00",
+            receivedQuantity: "50.00",
+            returnedToOriginQuantity: "0.00",
+            sapItemCode: "01010100001",
+            unit: "und",
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({
+        id: 7,
+        receiptNumber: "RC-2026-0002",
+        status: "parcial",
+      } as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "transfer",
+        sourceId: 8,
+        projectId: 1,
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 31,
+            itemName: "VARILLA #4",
+            quantityExpected: "50.00",
+            quantityReceived: "20.00",
+            unit: "und",
+            closeRemaining: true,
+            closeReason: "No se va a recibir",
+            closeNote: "El saldo fue confirmado como devuelto al origen",
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      id: 7,
+      receiptNumber: "RC-2026-0002",
+      status: "parcial",
+    });
+
+    const receiptItems = registerReceiptSpy.mock.calls[0]?.[1] as any[];
+    expect(receiptItems[0]).toEqual(
+      expect.objectContaining({
+        sourceItemId: 31,
+        quantityReceived: "20.00",
+        closeRemaining: true,
+        closeReason: "No se va a recibir",
+        closeNote: "El saldo fue confirmado como devuelto al origen",
+        closedById: 5,
+      })
+    );
+    expect(receiptItems[0].notes).toContain("Cierre incompleto");
+
+    getTransferByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("allows central administration to close a transfer receipt balance", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getTransferByIdSpy = vi
+      .spyOn(db, "getTransferById")
+      .mockResolvedValue({
+        transfer: {
+          id: 8,
+          transferNumber: "TR-2026-0003",
+          status: "parcialmente_recibido",
+        },
+        transferRequest: {
+          id: 5,
+          requestNumber: "ST-2026-0005",
+          destinationType: "proyecto",
+          destinationProjectId: 1,
+        },
+        items: [
+          {
+            id: 31,
+            itemName: "VARILLA #4",
+            quantity: "100.00",
+            receivedQuantity: "50.00",
+            returnedToOriginQuantity: "0.00",
+            sapItemCode: "01010100001",
+            unit: "und",
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({
+        id: 7,
+        receiptNumber: "RC-2026-0002",
+        status: "parcial",
+      } as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "transfer",
+        sourceId: 8,
+        projectId: 1,
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 31,
+            itemName: "VARILLA #4",
+            quantityExpected: "50.00",
+            quantityReceived: "0.00",
+            unit: "und",
+            closeRemaining: true,
+            closeReason: "No se va a recibir",
+            closeNote: "El saldo fue confirmado como devuelto al origen",
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      id: 7,
+      receiptNumber: "RC-2026-0002",
+      status: "parcial",
+    });
+
+    expect((registerReceiptSpy.mock.calls[0]?.[1] as any[])[0]).toEqual(
+      expect.objectContaining({
+        closeRemaining: true,
+        closedById: 4,
+      })
+    );
+
+    getTransferByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("blocks warehouse users from closing a transfer receipt balance", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getTransferByIdSpy = vi
+      .spyOn(db, "getTransferById")
+      .mockResolvedValue({
+        transfer: {
+          id: 8,
+          transferNumber: "TR-2026-0003",
+          status: "parcialmente_recibido",
+        },
+        transferRequest: {
+          id: 5,
+          requestNumber: "ST-2026-0005",
+          destinationType: "proyecto",
+          destinationProjectId: 1,
+        },
+        items: [
+          {
+            id: 31,
+            itemName: "VARILLA #4",
+            quantity: "100.00",
+            receivedQuantity: "50.00",
+            returnedToOriginQuantity: "0.00",
+            sapItemCode: "01010100001",
+            unit: "und",
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({} as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "transfer",
+        sourceId: 8,
+        projectId: 1,
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 31,
+            itemName: "VARILLA #4",
+            quantityExpected: "50.00",
+            quantityReceived: "0.00",
+            unit: "und",
+            closeRemaining: true,
+            closeReason: "No se va a recibir",
+            closeNote: "El saldo fue confirmado como devuelto al origen",
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message:
+        "Solo Administración Central o el Administrador del Proyecto destino pueden cerrar saldos de traslado",
+    });
+
+    expect(registerReceiptSpy).not.toHaveBeenCalled();
+
+    getTransferByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("does not allow receiving more than the pending transfer balance", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getTransferByIdSpy = vi
+      .spyOn(db, "getTransferById")
+      .mockResolvedValue({
+        transfer: {
+          id: 8,
+          transferNumber: "TR-2026-0003",
+          status: "parcialmente_recibido",
+        },
+        transferRequest: {
+          id: 5,
+          requestNumber: "ST-2026-0005",
+          destinationType: "proyecto",
+          destinationProjectId: 1,
+        },
+        items: [
+          {
+            id: 31,
+            itemName: "VARILLA #4",
+            quantity: "20.00",
+            receivedQuantity: "5.00",
+            sapItemCode: "01010100001",
+            unit: "und",
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({} as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "transfer",
+        sourceId: 8,
+        projectId: 1,
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 31,
+            itemName: "VARILLA #4",
+            quantityExpected: "15.00",
+            quantityReceived: "16.00",
+            unit: "und",
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "La cantidad a recibir de VARILLA #4 excede lo pendiente",
+    });
+
+    expect(registerReceiptSpy).not.toHaveBeenCalled();
+
+    getTransferByIdSpy.mockRestore();
     registerReceiptSpy.mockRestore();
   });
 

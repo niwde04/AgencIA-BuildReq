@@ -353,24 +353,48 @@ export const materialRequestsRouter = router({
     )
     .query(async ({ ctx, input }) => {
       const user = ctx.user;
+      const syncVisibleRows = async (
+        rows: Awaited<ReturnType<typeof db.listMaterialRequests>>
+      ) => {
+        await Promise.all(
+          rows.map(async (row) => {
+            const result = await db.syncMaterialRequestFulfillmentStatus(
+              row.request.id,
+              user.id
+            );
+            if (result.changed) {
+              row.request.status = result.status as any;
+            }
+          })
+        );
+        return input?.status
+          ? rows.filter((row) => row.request.status === input.status)
+          : rows;
+      };
+
       if (user.buildreqRole === "ingeniero_residente") {
-        return db.listMaterialRequests({
+        return syncVisibleRows(await db.listMaterialRequests({
           ...input,
           requestedById: user.id,
-        });
+        }));
       }
       if (user.buildreqRole === "administrador_proyecto") {
-        return db.listMaterialRequests({
+        return syncVisibleRows(await db.listMaterialRequests({
           ...input,
           projectId: user.assignedProjectId ?? undefined,
-        });
+        }));
       }
-      return db.listMaterialRequests(input ?? undefined);
+      return syncVisibleRows(await db.listMaterialRequests(input ?? undefined));
     }),
 
   getById: protectedProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ ctx, input }) => {
+      const initial = await db.getMaterialRequestById(input.id);
+      if (!initial) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Requisición no encontrada" });
+      }
+      await db.syncMaterialRequestFulfillmentStatus(input.id, ctx.user.id);
       const result = await db.getMaterialRequestById(input.id);
       if (!result) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Requisición no encontrada" });
@@ -545,7 +569,8 @@ export const materialRequestsRouter = router({
       if (
         detail.request.status === "borrador" ||
         detail.request.status === "flujo_completado" ||
-        detail.request.status === "cerrada"
+        detail.request.status === "cerrada" ||
+        detail.request.status === "cerrada_incompleta"
       ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -640,8 +665,10 @@ export const materialRequestsRouter = router({
           "pendiente_aprobar",
           "en_espera",
           "en_proceso",
+          "parcialmente_atendida",
           "flujo_completado",
           "cerrada",
+          "cerrada_incompleta",
           "anulada",
         ]),
       })
@@ -668,8 +695,10 @@ export const materialRequestsRouter = router({
           pendiente_aprobar: "Pendiente de aprobar",
           en_espera: "En espera",
           en_proceso: "En proceso de atención",
+          parcialmente_atendida: "Parcialmente atendida",
           flujo_completado: "Flujo completado",
           cerrada: "Cerrada",
+          cerrada_incompleta: "Cerrada incompleta",
           anulada: "Anulada",
         };
         await db.createNotification({
