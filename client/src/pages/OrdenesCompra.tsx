@@ -4,6 +4,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -22,6 +30,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -30,10 +43,11 @@ import {
 } from "@/components/ui/select";
 import {
   ArrowRightLeft,
+  Check,
+  ChevronsUpDown,
   Download,
   Loader2,
   Pencil,
-  Save,
   Send,
   ShoppingCart,
   ShieldX,
@@ -77,6 +91,11 @@ const RECEIPT_CLOSABLE_ORDER_STATUSES = new Set([
 ]);
 const ORDER_STRUCTURE_EDITABLE_STATUSES = new Set(["borrador"]);
 
+function formatSupplierOptionLabel(supplier?: any | null) {
+  if (!supplier) return "Seleccione proveedor";
+  return [supplier.supplierCode, supplier.name].filter(Boolean).join(" — ");
+}
+
 type PurchaseOrderItemDraft = {
   quantity: string;
   unitPrice: string;
@@ -110,6 +129,7 @@ export default function OrdenesCompra() {
   const [replaceItemId, setReplaceItemId] = useState<number | null>(null);
   const [replacementSearch, setReplacementSearch] = useState("");
   const [selectedSupplierId, setSelectedSupplierId] = useState("");
+  const [supplierPopoverOpen, setSupplierPopoverOpen] = useState(false);
   const [savingItemId, setSavingItemId] = useState<number | null>(null);
   const [deletingItemId, setDeletingItemId] = useState<number | null>(null);
   const [itemDrafts, setItemDrafts] = useState<
@@ -161,7 +181,6 @@ export default function OrdenesCompra() {
   const updateItemLineMutation = trpc.purchaseOrders.updateItemLine.useMutation(
     {
       onSuccess: () => {
-        toast.success("Linea actualizada en la OC");
         if (selectedId) {
           void utils.purchaseOrders.getById.invalidate({ id: selectedId });
         }
@@ -291,12 +310,6 @@ export default function OrdenesCompra() {
     );
   const currentSupplierEmail =
     detail?.purchaseOrder.supplierEmail ?? detail?.supplier?.email ?? "";
-  const selectedSupplierEmail = selectedSupplier?.email ?? "";
-  const supplierChanged =
-    !!detail &&
-    !!selectedSupplierId &&
-    (Number(selectedSupplierId) !== detail.purchaseOrder.supplierId ||
-      selectedSupplierEmail !== currentSupplierEmail);
   const orderStatus = detail?.purchaseOrder.status ?? "";
   const canEditOrderStructure =
     ORDER_STRUCTURE_EDITABLE_STATUSES.has(orderStatus);
@@ -348,35 +361,51 @@ export default function OrdenesCompra() {
       return;
     }
 
-    setItemDrafts(current => {
-      let changed = false;
-      const next = { ...current };
+    const updates: Array<{
+      itemId: number;
+      draft: PurchaseOrderItemDraft;
+    }> = [];
+    const nextDrafts = { ...itemDrafts };
 
-      for (const item of detail.items) {
-        const sapCode = item.currentSapItemCode ?? item.originalSapItemCode;
-        if (!sapCode) continue;
+    for (const item of detail.items) {
+      const sapCode = item.currentSapItemCode ?? item.originalSapItemCode;
+      if (!sapCode) continue;
 
-        const latestPrice = latestSupplierPrices[sapCode];
-        if (!latestPrice?.unitPrice) continue;
+      const latestPrice = latestSupplierPrices[sapCode];
+      if (!latestPrice?.unitPrice) continue;
 
-        const currentDraft = current[item.id] ?? {
-          quantity: String(item.quantity ?? "0.00"),
-          unitPrice: String(item.unitPrice ?? "0.00"),
-          taxCode: normalizePurchaseOrderTaxCode(item.taxCode),
-        };
+      const currentDraft = itemDrafts[item.id] ?? {
+        quantity: String(item.quantity ?? "0.00"),
+        unitPrice: String(item.unitPrice ?? "0.00"),
+        taxCode: normalizePurchaseOrderTaxCode(item.taxCode),
+      };
 
-        if (Number(item.unitPrice ?? 0) > 0) continue;
-        if (Number(currentDraft.unitPrice ?? 0) > 0) continue;
+      if (Number(item.unitPrice ?? 0) > 0) continue;
+      if (Number(currentDraft.unitPrice ?? 0) > 0) continue;
 
-        next[item.id] = {
-          ...currentDraft,
-          unitPrice: latestPrice.unitPrice,
-        };
-        changed = true;
-      }
+      const nextDraft = {
+        ...currentDraft,
+        unitPrice: latestPrice.unitPrice,
+      };
 
-      return changed ? next : current;
-    });
+      nextDrafts[item.id] = nextDraft;
+      updates.push({
+        itemId: item.id,
+        draft: nextDraft,
+      });
+    }
+
+    if (updates.length === 0) return;
+
+    setItemDrafts(nextDrafts);
+    for (const update of updates) {
+      updateItemLineMutation.mutate({
+        purchaseOrderItemId: update.itemId,
+        quantity: update.draft.quantity,
+        unitPrice: update.draft.unitPrice,
+        taxCode: update.draft.taxCode,
+      });
+    }
   }, [canEditOrderStructure, detail?.items, latestSupplierPrices]);
 
   const getItemDraft = (item: any): PurchaseOrderItemDraft =>
@@ -385,15 +414,6 @@ export default function OrdenesCompra() {
       unitPrice: String(item.unitPrice ?? "0.00"),
       taxCode: normalizePurchaseOrderTaxCode(item.taxCode),
     };
-
-  const hasItemLineChanged = (item: any) => {
-    const draft = getItemDraft(item);
-    return (
-      Number(draft.quantity || 0) !== Number(item.quantity ?? 0) ||
-      Number(draft.unitPrice || 0) !== Number(item.unitPrice ?? 0) ||
-      draft.taxCode !== normalizePurchaseOrderTaxCode(item.taxCode)
-    );
-  };
 
   const pricingSummary = useMemo(
     () =>
@@ -413,7 +433,14 @@ export default function OrdenesCompra() {
   const hasPendingPricingChanges = useMemo(
     () =>
       canEditOrderStructure &&
-      items.some((item: any) => hasItemLineChanged(item)),
+      items.some((item: any) => {
+        const draft = getItemDraft(item);
+        return (
+          Number(draft.quantity || 0) !== Number(item.quantity ?? 0) ||
+          Number(draft.unitPrice || 0) !== Number(item.unitPrice ?? 0) ||
+          draft.taxCode !== normalizePurchaseOrderTaxCode(item.taxCode)
+        );
+      }),
     [canEditOrderStructure, items, itemDrafts]
   );
 
@@ -424,31 +451,51 @@ export default function OrdenesCompra() {
     closeReceiptLineMutation.isPending ||
     movePendingToPurchaseRequestMutation.isPending;
 
-  const handleSaveSupplier = () => {
+  const handleSupplierChange = (value: string) => {
+    setSelectedSupplierId(value);
     if (!detail) return;
     if (!canEditOrderStructure) {
       toast.error("La OC ya fue emitida y no se puede actualizar");
       return;
     }
-    if (!selectedSupplierId) {
+    if (!value) {
       toast.error("Seleccione un proveedor");
+      return;
+    }
+
+    const nextSupplier = (suppliersList || []).find(
+      (supplier: any) => supplier.id === Number(value)
+    );
+    const nextSupplierEmail = nextSupplier?.email ?? "";
+    const supplierChanged =
+      Number(value) !== detail.purchaseOrder.supplierId ||
+      nextSupplierEmail !== currentSupplierEmail;
+
+    if (!supplierChanged) {
       return;
     }
 
     updateMutation.mutate({
       id: detail.purchaseOrder.id,
-      supplierId: Number(selectedSupplierId),
-      supplierEmail: selectedSupplier?.email ?? null,
+      supplierId: Number(value),
+      supplierEmail: nextSupplier?.email ?? null,
     });
   };
 
-  const handleSaveItemLine = (item: any) => {
+  const handleSaveItemLine = (item: any, draftOverride?: PurchaseOrderItemDraft) => {
     if (!canEditOrderStructure) {
       toast.error("La OC ya fue emitida y no se puede actualizar");
       return;
     }
 
-    const draft = getItemDraft(item);
+    const draft = draftOverride ?? getItemDraft(item);
+    if (
+      Number(draft.quantity || 0) === Number(item.quantity ?? 0) &&
+      Number(draft.unitPrice || 0) === Number(item.unitPrice ?? 0) &&
+      draft.taxCode === normalizePurchaseOrderTaxCode(item.taxCode)
+    ) {
+      return;
+    }
     if (!draft.quantity.trim()) {
       toast.error("Ingrese la cantidad");
       return;
@@ -707,6 +754,7 @@ export default function OrdenesCompra() {
             setReplaceItemId(null);
             setReplacementSearch("");
             setSelectedSupplierId("");
+            setSupplierPopoverOpen(false);
             setSavingItemId(null);
             setDeletingItemId(null);
             setItemDrafts({});
@@ -757,42 +805,68 @@ export default function OrdenesCompra() {
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                     Proveedor
                   </Label>
-                  <Select
-                    value={selectedSupplierId}
-                    onValueChange={setSelectedSupplierId}
-                    disabled={!canEditOrderStructure}
+                  <Popover
+                    open={supplierPopoverOpen}
+                    onOpenChange={setSupplierPopoverOpen}
                   >
-                    <SelectTrigger className="h-11 w-full text-sm sm:h-12 sm:text-base">
-                      <SelectValue placeholder="Seleccione proveedor" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[320px]">
-                      {(suppliersList || []).map((supplier: any) => (
-                        <SelectItem
-                          key={supplier.id}
-                          value={String(supplier.id)}
-                          className="py-2.5 text-sm sm:text-base"
-                        >
-                          {supplier.supplierCode} — {supplier.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <div className="flex flex-wrap items-center gap-3">
-                    {canEditOrderStructure ? (
+                    <PopoverTrigger asChild>
                       <Button
+                        type="button"
                         variant="outline"
-                        size="lg"
-                        className="h-10 px-4 text-sm font-semibold sm:h-11 sm:text-base"
-                        onClick={handleSaveSupplier}
-                        disabled={!supplierChanged || updateMutation.isPending}
+                        role="combobox"
+                        aria-expanded={supplierPopoverOpen}
+                        className="h-11 w-full justify-between overflow-hidden px-3 text-sm font-normal sm:h-12 sm:text-base"
+                        disabled={!canEditOrderStructure}
                       >
-                        {updateMutation.isPending
-                          ? "Guardando..."
-                          : "Guardar proveedor"}
+                        <span className="truncate">
+                          {formatSupplierOptionLabel(selectedSupplier)}
+                        </span>
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                       </Button>
-                    ) : null}
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="start"
+                      className="w-[var(--radix-popover-trigger-width)] p-0"
+                    >
+                      <Command>
+                        <CommandInput placeholder="Buscar proveedor por código o nombre..." />
+                        <CommandList>
+                          <CommandEmpty>No se encontraron proveedores.</CommandEmpty>
+                          <CommandGroup>
+                            {(suppliersList || []).map((supplier: any) => {
+                              const supplierId = String(supplier.id);
+                              const selected = selectedSupplierId === supplierId;
+
+                              return (
+                                <CommandItem
+                                  key={supplier.id}
+                                  value={`${supplier.id} ${supplier.supplierCode} ${supplier.name}`}
+                                  onSelect={() => {
+                                    handleSupplierChange(supplierId);
+                                    setSupplierPopoverOpen(false);
+                                  }}
+                                >
+                                  <Check
+                                    className={`h-4 w-4 ${
+                                      selected ? "opacity-100" : "opacity-0"
+                                    }`}
+                                  />
+                                  <span className="truncate">
+                                    {formatSupplierOptionLabel(supplier)}
+                                  </span>
+                                </CommandItem>
+                              );
+                            })}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                  <div className="flex flex-wrap items-center gap-3">
                     <p className="text-sm leading-relaxed text-muted-foreground">
-                      {selectedSupplier
+                      {updateMutation.isPending
+                        ? "Guardando proveedor..."
+                        : selectedSupplier
                         ? selectedSupplier.email ||
                           "Proveedor sin correo configurado"
                         : detail.supplier?.name || "Proveedor pendiente"}
@@ -823,11 +897,11 @@ export default function OrdenesCompra() {
               </div>
 
               <div className="overflow-x-auto rounded-2xl border border-border/70">
-                <table className="min-w-[1360px] table-auto text-sm lg:text-[15px]">
+                <table className="min-w-[1420px] table-auto text-sm lg:text-[15px]">
                   <colgroup>
                     <col className="w-[250px]" />
                     <col className="w-[150px]" />
-                    <col className="w-[170px]" />
+                    <col className="w-[230px]" />
                     <col className="w-[190px]" />
                     <col className="w-[150px]" />
                     <col className="w-[120px]" />
@@ -885,6 +959,7 @@ export default function OrdenesCompra() {
                       const canCloseThisReceiptLine = canCloseReceiptLine(item);
                       const shouldShowLineActions =
                         canEditOrderStructure || canCloseThisReceiptLine;
+                      const isSavingThisLine = savingItemId === item.id;
                       const lineAmounts = calculatePurchaseOrderLineAmounts({
                         quantity: draft.quantity,
                         unitPrice: draft.unitPrice,
@@ -926,23 +1001,30 @@ export default function OrdenesCompra() {
                                 min="0.01"
                                 step="0.01"
                                 value={draft.quantity}
-                                onChange={event =>
+                                onChange={event => {
+                                  const nextDraft = {
+                                    ...getItemDraft(item),
+                                    quantity: event.target.value,
+                                  };
                                   setItemDrafts(current => ({
                                     ...current,
-                                    [item.id]: {
-                                      ...getItemDraft(item),
-                                      quantity: event.target.value,
-                                    },
-                                  }))
-                                }
-                                className="h-10 w-full max-w-[140px] text-right text-sm sm:max-w-[150px] sm:text-base"
+                                    [item.id]: nextDraft,
+                                  }));
+                                }}
+                                onBlur={() => handleSaveItemLine(item)}
+                                className="h-10 w-full max-w-[190px] text-right text-sm sm:max-w-[200px] sm:text-base"
                                 placeholder="0.00"
-                                disabled={!canEditOrderStructure}
+                                disabled={!canEditOrderStructure || isSavingThisLine}
                               />
-                              <span className="min-w-[44px] text-right text-xs font-medium text-muted-foreground sm:min-w-[52px] sm:text-sm">
+                              <span className="min-w-[56px] text-right text-xs font-medium text-muted-foreground sm:min-w-[64px] sm:text-sm">
                                 {item.unit || "—"}
                               </span>
                             </div>
+                            {isSavingThisLine ? (
+                              <div className="mt-1.5 text-right text-[11px] text-muted-foreground">
+                                Guardando...
+                              </div>
+                            ) : null}
                             {Number(item.receivedQuantity ?? 0) > 0 ? (
                               <div className="mt-1.5 text-right text-[11px] text-muted-foreground">
                                 Recibido: {item.receivedQuantity}{" "}
@@ -968,18 +1050,20 @@ export default function OrdenesCompra() {
                                 min="0"
                                 step="0.01"
                                 value={draft.unitPrice}
-                                onChange={event =>
+                                onChange={event => {
+                                  const nextDraft = {
+                                    ...getItemDraft(item),
+                                    unitPrice: event.target.value,
+                                  };
                                   setItemDrafts(current => ({
                                     ...current,
-                                    [item.id]: {
-                                      ...getItemDraft(item),
-                                      unitPrice: event.target.value,
-                                    },
-                                  }))
-                                }
+                                    [item.id]: nextDraft,
+                                  }));
+                                }}
+                                onBlur={() => handleSaveItemLine(item)}
                                 className="h-10 w-full text-right text-sm sm:text-base"
                                 placeholder="0.00"
-                                disabled={!canEditOrderStructure}
+                                disabled={!canEditOrderStructure || isSavingThisLine}
                               />
                               {shouldShowMissingHistoryHint && (
                                 <div className="mt-3 w-full px-1 text-right text-[11px] leading-snug text-muted-foreground">
@@ -991,16 +1075,18 @@ export default function OrdenesCompra() {
                           <td className="p-3 align-middle sm:p-4">
                             <Select
                               value={draft.taxCode}
-                              onValueChange={value =>
+                              onValueChange={value => {
+                                const nextDraft = {
+                                  ...getItemDraft(item),
+                                  taxCode: value as PurchaseOrderTaxCode,
+                                };
                                 setItemDrafts(current => ({
                                   ...current,
-                                  [item.id]: {
-                                    ...getItemDraft(item),
-                                    taxCode: value as PurchaseOrderTaxCode,
-                                  },
-                                }))
-                              }
-                              disabled={!canEditOrderStructure}
+                                  [item.id]: nextDraft,
+                                }));
+                                handleSaveItemLine(item, nextDraft);
+                              }}
+                              disabled={!canEditOrderStructure || isSavingThisLine}
                             >
                               <SelectTrigger className="h-10 w-full min-w-0 text-sm sm:text-base">
                                 <SelectValue />
@@ -1052,23 +1138,6 @@ export default function OrdenesCompra() {
                                       aria-label="Reemplazar ítem"
                                     >
                                       <ArrowRightLeft className="h-4 w-4" />
-                                    </Button>
-                                    <Button
-                                      size="icon-sm"
-                                      disabled={
-                                        !hasItemLineChanged(item) ||
-                                        savingItemId === item.id ||
-                                        updateItemLineMutation.isPending
-                                      }
-                                      onClick={() => handleSaveItemLine(item)}
-                                      title="Guardar línea"
-                                      aria-label="Guardar línea"
-                                    >
-                                      {savingItemId === item.id ? (
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                      ) : (
-                                        <Save className="h-4 w-4" />
-                                      )}
                                     </Button>
                                   </>
                                 ) : null}
@@ -1202,8 +1271,7 @@ export default function OrdenesCompra() {
 
               {hasPendingPricingChanges ? (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                  Hay cambios de cantidad, precio o impuesto sin guardar. Guarde
-                  las lineas antes de descargar o enviar la OC.
+                  Hay cambios de cantidad, precio o impuesto pendientes de guardado automático. Sal del campo para terminar la actualización antes de descargar o emitir la OC.
                 </div>
               ) : null}
 

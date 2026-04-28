@@ -7,6 +7,19 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -18,6 +31,8 @@ import { formatPurchaseOrderCurrency } from "@shared/purchase-orders";
 import {
   ArrowLeft,
   ArrowLeftRight,
+  Check,
+  ChevronsUpDown,
   Package,
   RotateCcw,
   ShoppingCart,
@@ -141,6 +156,11 @@ const formatSupplierReferenceLabel = (reference: {
   return reference?.supplierName || reference?.supplierCode || "Proveedor pendiente";
 };
 
+const formatSupplierOptionLabel = (supplier: any) => {
+  if (!supplier) return "Seleccione proveedor";
+  return `${supplier.supplierCode} — ${supplier.name}`;
+};
+
 export default function Flujos() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
@@ -160,6 +180,8 @@ export default function Flujos() {
     useState<Partial<Record<QueueFlowType, string>>>({});
   const [directPurchaseSupplierIdByFlowType, setDirectPurchaseSupplierIdByFlowType] =
     useState<Partial<Record<QueueFlowType, string>>>({});
+  const [directPurchaseSupplierPopoverOpenByFlowType, setDirectPurchaseSupplierPopoverOpenByFlowType] =
+    useState<Partial<Record<QueueFlowType, boolean>>>({});
   const [directPurchaseNotesByFlowType, setDirectPurchaseNotesByFlowType] = useState<
     Partial<Record<QueueFlowType, string>>
   >({});
@@ -776,6 +798,13 @@ export default function Flujos() {
             const FlowIcon = FLOW_ICONS[flowType];
             const rows = pendingRowsByFlow[flowType];
             const isProcessing = processingFlowType === flowType;
+            const selectedDirectPurchaseSupplier = (suppliersList || []).find(
+              (supplier: any) =>
+                String(supplier.id) ===
+                (directPurchaseSupplierIdByFlowType[flowType] || "")
+            );
+            const isSupplierPopoverOpen =
+              directPurchaseSupplierPopoverOpenByFlowType[flowType] === true;
 
             if (rows.length === 0) {
               return null;
@@ -1147,26 +1176,78 @@ export default function Flujos() {
 
                       <div className="min-w-0 space-y-2">
                         <Label className="text-sm font-medium">Proveedor *</Label>
-                        <Select
-                          value={directPurchaseSupplierIdByFlowType[flowType] || ""}
-                          onValueChange={(value) =>
-                            setDirectPurchaseSupplierIdByFlowType((current) => ({
+                        <Popover
+                          open={isSupplierPopoverOpen}
+                          onOpenChange={(open) =>
+                            setDirectPurchaseSupplierPopoverOpenByFlowType((current) => ({
                               ...current,
-                              [flowType]: value,
+                              [flowType]: open,
                             }))
                           }
                         >
-                          <SelectTrigger className="w-full min-w-0">
-                            <SelectValue placeholder="Seleccione proveedor" />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-[280px]">
-                            {(suppliersList || []).map((supplier: any) => (
-                              <SelectItem key={supplier.id} value={String(supplier.id)}>
-                                {supplier.supplierCode} — {supplier.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          <PopoverTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              role="combobox"
+                              aria-expanded={isSupplierPopoverOpen}
+                              className="h-10 w-full justify-between overflow-hidden px-3 font-normal"
+                              disabled={isProcessing}
+                            >
+                              <span className="truncate">
+                                {formatSupplierOptionLabel(selectedDirectPurchaseSupplier)}
+                              </span>
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            align="start"
+                            className="w-[var(--radix-popover-trigger-width)] p-0"
+                          >
+                            <Command>
+                              <CommandInput placeholder="Buscar proveedor por código o nombre..." />
+                              <CommandList>
+                                <CommandEmpty>No se encontraron proveedores.</CommandEmpty>
+                                <CommandGroup>
+                                  {(suppliersList || []).map((supplier: any) => {
+                                    const supplierId = String(supplier.id);
+                                    const selected =
+                                      directPurchaseSupplierIdByFlowType[flowType] ===
+                                      supplierId;
+
+                                    return (
+                                      <CommandItem
+                                        key={supplier.id}
+                                        value={`${supplier.id} ${supplier.supplierCode} ${supplier.name}`}
+                                        onSelect={() => {
+                                          setDirectPurchaseSupplierIdByFlowType((current) => ({
+                                            ...current,
+                                            [flowType]: supplierId,
+                                          }));
+                                          setDirectPurchaseSupplierPopoverOpenByFlowType(
+                                            (current) => ({
+                                              ...current,
+                                              [flowType]: false,
+                                            })
+                                          );
+                                        }}
+                                      >
+                                        <Check
+                                          className={`h-4 w-4 ${
+                                            selected ? "opacity-100" : "opacity-0"
+                                          }`}
+                                        />
+                                        <span className="truncate">
+                                          {supplier.supplierCode} — {supplier.name}
+                                        </span>
+                                      </CommandItem>
+                                    );
+                                  })}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
                       </div>
 
                       <div className="space-y-2 md:col-span-2">

@@ -1,8 +1,21 @@
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -11,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, ChevronsUpDown, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -25,6 +38,34 @@ type ReturnItem = {
   condition: string;
   notes: string;
 };
+
+const blankReturnItem = (): ReturnItem => ({
+  sapItemCode: "",
+  itemName: "",
+  quantity: "",
+  unit: "",
+  condition: "",
+  notes: "",
+});
+
+function formatReceiptSupplier(supplier?: any | null) {
+  if (!supplier) return "";
+  return [supplier.supplierCode, supplier.name].filter(Boolean).join(" — ");
+}
+
+function formatCompletedReceiptLabel(row?: any | null) {
+  if (!row) return "Seleccione recepción completada";
+  const receiptNumber = row.receipt?.receiptNumber ?? "Recepción";
+  const orderNumber = row.purchaseOrder?.orderNumber;
+  const supplierName = formatReceiptSupplier(row.supplier);
+  const projectLabel = row.project
+    ? `${row.project.code} ${row.project.name}`
+    : "";
+
+  return [receiptNumber, orderNumber, supplierName, projectLabel]
+    .filter(Boolean)
+    .join(" — ");
+}
 
 export default function NuevaDevolucion() {
   const [, setLocation] = useLocation();
@@ -48,10 +89,18 @@ export default function NuevaDevolucion() {
   const [sourceProjectId, setSourceProjectId] = useState("");
   const [destinationProjectId, setDestinationProjectId] = useState("");
   const [supplierName, setSupplierName] = useState("");
+  const [sourceReceiptId, setSourceReceiptId] = useState("");
+  const [receiptPopoverOpen, setReceiptPopoverOpen] = useState(false);
   const [resolvingSapIndex, setResolvingSapIndex] = useState<number | null>(null);
-  const [items, setItems] = useState<ReturnItem[]>([
-    { sapItemCode: "", itemName: "", quantity: "", unit: "", condition: "", notes: "" },
-  ]);
+  const [items, setItems] = useState<ReturnItem[]>([blankReturnItem()]);
+  const { data: completedPurchaseReceipts } = trpc.receipts.list.useQuery(
+    { sourceType: "purchase_order", status: "completa" },
+    { enabled: returnType === "devolucion_proveedor" }
+  );
+  const completedSupplierReceipts = useMemo(
+    () => (completedPurchaseReceipts || []).filter((row: any) => row.supplier),
+    [completedPurchaseReceipts]
+  );
 
   const selectedSourceProject = useMemo(
     () => (projects || []).find((project: any) => String(project.id) === sourceProjectId),
@@ -64,6 +113,91 @@ export default function NuevaDevolucion() {
       ),
     [projects, destinationProjectId]
   );
+  const selectedReceiptRow = useMemo(
+    () =>
+      completedSupplierReceipts.find(
+        (row: any) => String(row.receipt.id) === sourceReceiptId
+      ),
+    [completedSupplierReceipts, sourceReceiptId]
+  );
+  const selectedReceiptNumericId = sourceReceiptId ? Number(sourceReceiptId) : 0;
+  const { data: selectedReceiptDetail } = trpc.receipts.getById.useQuery(
+    { id: selectedReceiptNumericId },
+    {
+      enabled:
+        returnType === "devolucion_proveedor" &&
+        Number.isFinite(selectedReceiptNumericId) &&
+        selectedReceiptNumericId > 0,
+    }
+  );
+  const selectedPurchaseOrderId =
+    selectedReceiptDetail?.receipt.sourceType === "purchase_order"
+      ? selectedReceiptDetail.receipt.sourceId
+      : 0;
+  const { data: selectedReceiptPurchaseOrder } =
+    trpc.purchaseOrders.getById.useQuery(
+      { id: selectedPurchaseOrderId },
+      {
+        enabled:
+          returnType === "devolucion_proveedor" &&
+          selectedPurchaseOrderId > 0,
+      }
+    );
+
+  useEffect(() => {
+    if (returnType !== "devolucion_proveedor") {
+      setSourceReceiptId("");
+      setReceiptPopoverOpen(false);
+      setSupplierName("");
+    }
+  }, [returnType]);
+
+  useEffect(() => {
+    if (returnType !== "devolucion_proveedor" || !selectedReceiptRow) return;
+    setSourceProjectId(String(selectedReceiptRow.receipt.projectId));
+    setSupplierName(formatReceiptSupplier(selectedReceiptRow.supplier));
+  }, [returnType, selectedReceiptRow]);
+
+  useEffect(() => {
+    if (
+      returnType !== "devolucion_proveedor" ||
+      !sourceReceiptId ||
+      !selectedReceiptDetail ||
+      !selectedReceiptPurchaseOrder
+    ) {
+      return;
+    }
+
+    const purchaseOrderItemById = new Map(
+      (selectedReceiptPurchaseOrder.items || []).map((item: any) => [
+        item.id,
+        item,
+      ])
+    );
+    const hydratedItems = (selectedReceiptDetail.items || [])
+      .filter((item: any) => Number(item.quantityReceived ?? 0) > 0)
+      .map((item: any) => {
+        const purchaseOrderItem = purchaseOrderItemById.get(item.sourceItemId);
+        return {
+          sapItemCode:
+            purchaseOrderItem?.currentSapItemCode ||
+            purchaseOrderItem?.originalSapItemCode ||
+            "",
+          itemName: item.itemName,
+          quantity: String(item.quantityReceived ?? ""),
+          unit: item.unit || purchaseOrderItem?.unit || "",
+          condition: "nuevo",
+          notes: `Recepción ${selectedReceiptDetail.receipt.receiptNumber}`,
+        };
+      });
+
+    setItems(hydratedItems.length > 0 ? hydratedItems : [blankReturnItem()]);
+  }, [
+    returnType,
+    sourceReceiptId,
+    selectedReceiptDetail,
+    selectedReceiptPurchaseOrder,
+  ]);
 
   const getProjectWarehouseLabel = (project: any) => {
     if (!project) return "Seleccione un proyecto para identificar la bodega";
@@ -87,10 +221,7 @@ export default function NuevaDevolucion() {
   });
 
   const addItem = () => {
-    setItems([
-      ...items,
-      { sapItemCode: "", itemName: "", quantity: "", unit: "", condition: "", notes: "" },
-    ]);
+    setItems([...items, blankReturnItem()]);
   };
 
   const removeItem = (index: number) => {
@@ -154,7 +285,17 @@ export default function NuevaDevolucion() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!returnType || !reasonCategory || !sourceProjectId) {
+    if (!returnType || !reasonCategory) {
+      toast.error("Complete todos los campos obligatorios");
+      return;
+    }
+
+    if (returnType === "devolucion_proveedor" && !sourceReceiptId) {
+      toast.error("Seleccione una recepción completada para generar la nota de crédito");
+      return;
+    }
+
+    if (!sourceProjectId) {
       toast.error("Complete todos los campos obligatorios");
       return;
     }
@@ -184,6 +325,7 @@ export default function NuevaDevolucion() {
       destinationProjectId: destinationProjectId
         ? parseInt(destinationProjectId)
         : undefined,
+      sourceReceiptId: sourceReceiptId ? parseInt(sourceReceiptId) : undefined,
       supplierName: supplierName || undefined,
       items: validItems.map((item) => ({
         sapItemCode: item.sapItemCode || undefined,
@@ -274,9 +416,16 @@ export default function NuevaDevolucion() {
                 <Select
                   value={sourceProjectId}
                   onValueChange={setSourceProjectId}
+                  disabled={returnType === "devolucion_proveedor"}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Seleccione proyecto" />
+                    <SelectValue
+                      placeholder={
+                        returnType === "devolucion_proveedor"
+                          ? "Seleccione una recepción"
+                          : "Seleccione proyecto"
+                      }
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     {(projects || []).map((p: any) => (
@@ -311,12 +460,90 @@ export default function NuevaDevolucion() {
 
               {returnType === "devolucion_proveedor" && (
                 <div className="space-y-2">
-                  <Label>Nombre del proveedor *</Label>
-                  <Input
-                    value={supplierName}
-                    onChange={(e) => setSupplierName(e.target.value)}
-                    placeholder="Nombre del proveedor"
-                  />
+                  <Label>Recepción completada *</Label>
+                  <Popover
+                    open={receiptPopoverOpen}
+                    onOpenChange={setReceiptPopoverOpen}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={receiptPopoverOpen}
+                        className="h-10 w-full justify-between overflow-hidden px-3 font-normal"
+                      >
+                        <span className="truncate">
+                          {formatCompletedReceiptLabel(selectedReceiptRow)}
+                        </span>
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="start"
+                      className="w-[var(--radix-popover-trigger-width)] p-0"
+                    >
+                      <Command>
+                        <CommandInput placeholder="Buscar por recepción, OC, proveedor o proyecto..." />
+                        <CommandList>
+                          <CommandEmpty>No se encontraron recepciones completadas con proveedor.</CommandEmpty>
+                          <CommandGroup>
+                            {completedSupplierReceipts.map((row: any) => {
+                              const receiptId = String(row.receipt.id);
+                              const selected = sourceReceiptId === receiptId;
+                              const searchValue = [
+                                row.receipt.receiptNumber,
+                                row.purchaseOrder?.orderNumber,
+                                row.supplier?.supplierCode,
+                                row.supplier?.name,
+                                row.project?.code,
+                                row.project?.name,
+                                row.receipt.invoiceNumber,
+                              ]
+                                .filter(Boolean)
+                                .join(" ");
+
+                              return (
+                                <CommandItem
+                                  key={row.receipt.id}
+                                  value={searchValue}
+                                  onSelect={() => {
+                                    setSourceReceiptId(receiptId);
+                                    setSourceProjectId(String(row.receipt.projectId));
+                                    setSupplierName(formatReceiptSupplier(row.supplier));
+                                    setItems([blankReturnItem()]);
+                                    setReceiptPopoverOpen(false);
+                                  }}
+                                >
+                                  <Check
+                                    className={`h-4 w-4 ${
+                                      selected ? "opacity-100" : "opacity-0"
+                                    }`}
+                                  />
+                                  <span className="truncate">
+                                    {formatCompletedReceiptLabel(row)}
+                                  </span>
+                                </CommandItem>
+                              );
+                            })}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                  {supplierName && (
+                    <p className="text-xs text-muted-foreground">
+                      Proveedor:{" "}
+                      <span className="font-medium text-foreground">
+                        {supplierName}
+                      </span>
+                    </p>
+                  )}
+                  {sourceReceiptId && (
+                    <p className="text-xs text-muted-foreground">
+                      Se generará una nota de crédito para la recepción seleccionada.
+                    </p>
+                  )}
                 </div>
               )}
             </div>

@@ -3,6 +3,16 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -16,10 +26,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Eye, Plus, Printer } from "lucide-react";
+import { CreditCard, Eye, Plus, Printer } from "lucide-react";
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { toast } from "sonner";
 
 const RETURN_TYPE_LABELS: Record<string, string> = {
   devolucion_bodega_proyecto: "Devolución a Bodega de Proyecto",
@@ -78,11 +89,15 @@ function escapeHtml(value: unknown) {
 }
 
 export default function Devoluciones() {
+  const utils = trpc.useUtils();
   const [, setLocation] = useLocation();
   const { user } = useAuth();
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [selectedReturnId, setSelectedReturnId] = useState<number | null>(null);
+  const [creditNoteReturnId, setCreditNoteReturnId] = useState<number | null>(
+    null
+  );
 
   const userRole = (user as any)?.buildreqRole || "";
   const isAdmin = user?.role === "admin";
@@ -102,8 +117,32 @@ export default function Devoluciones() {
 
   const selectedReturn = detail?.return;
   const sourceProject = detail?.sourceProject;
-  const sourceWarehouseExit = detail?.sourceWarehouseExit;
+  const sourceWarehouse = detail?.sourceWarehouse;
+  const sourceReceipt = detail?.sourceReceipt;
   const returnItems = detail?.items ?? [];
+  const sourceWarehouseLabel =
+    sourceWarehouse?.displayName ??
+    (sourceProject
+      ? `Bodega del Proyecto - ${sourceProject.code} - ${sourceProject.name}`
+      : "-");
+  const canGenerateCreditNote =
+    canCreateReturn &&
+    selectedReturn?.returnType === "devolucion_proveedor" &&
+    selectedReturn.status === "pendiente" &&
+    !selectedReturn.sapDocumentNumber;
+
+  const generateCreditNoteMutation =
+    trpc.reverseLogistics.generateCreditNote.useMutation({
+      onSuccess: result => {
+        toast.success(`Nota de crédito ${result.sapDocumentNumber} generada`);
+        setCreditNoteReturnId(null);
+        void utils.reverseLogistics.list.invalidate();
+        if (selectedReturnId) {
+          void utils.reverseLogistics.getById.invalidate({ id: selectedReturnId });
+        }
+      },
+      onError: error => toast.error(error.message),
+    });
 
   const handlePrintReturn = () => {
     if (!selectedReturn) return;
@@ -112,6 +151,17 @@ export default function Devoluciones() {
       ? `${sourceProject.code} - ${sourceProject.name}`
       : "-";
     const printedAt = new Date().toLocaleString("es-HN");
+    const documentLabel =
+      selectedReturn.returnType === "devolucion_proveedor"
+        ? selectedReturn.sapDocumentNumber || "Pendiente de generar"
+        : selectedReturn.sapDocumentNumber || "-";
+    const sourceDocumentNumber =
+      sourceReceipt?.invoiceNumber || selectedReturn.sapDocumentNumber || "-";
+    const subtitle =
+      selectedReturn.returnType === "devolucion_proveedor" &&
+      selectedReturn.sapDocumentNumber
+        ? "Nota de crédito interna / devolución a proveedor"
+        : "Comprobante de devolución / logística inversa";
     const itemRows = returnItems
       .map(
         (item: any) => `
@@ -227,7 +277,7 @@ export default function Devoluciones() {
                 ${escapeHtml(selectedReturn.returnNumber)}
                 <span class="status">${escapeHtml(STATUS_LABELS[selectedReturn.status])}</span>
               </h1>
-              <div class="muted">Comprobante de devolución / logística inversa</div>
+              <div class="muted">${escapeHtml(subtitle)}</div>
             </div>
             <div class="muted">Impreso: ${escapeHtml(printedAt)}</div>
           </header>
@@ -250,16 +300,36 @@ export default function Devoluciones() {
               <div class="value">${escapeHtml(formatDate(selectedReturn.createdAt))}</div>
             </div>
             <div class="box">
-              <div class="label">Salida origen</div>
-              <div class="value">${escapeHtml(sourceWarehouseExit?.exitNumber || "-")}</div>
+              <div class="label">Bodega origen</div>
+              <div class="value">${escapeHtml(sourceWarehouseLabel)}</div>
             </div>
             <div class="box">
               <div class="label">Proveedor</div>
               <div class="value">${escapeHtml(selectedReturn.supplierName || "-")}</div>
             </div>
             <div class="box">
+              <div class="label">Nota de crédito</div>
+              <div class="value">${escapeHtml(documentLabel)}</div>
+            </div>
+            <div class="box">
               <div class="label">Procesada</div>
               <div class="value">${escapeHtml(formatDate(selectedReturn.processedAt))}</div>
+            </div>
+            <div class="box">
+              <div class="label">CAI</div>
+              <div class="value">${escapeHtml(sourceReceipt?.cai || "-")}</div>
+            </div>
+            <div class="box">
+              <div class="label">Número documento</div>
+              <div class="value">${escapeHtml(sourceDocumentNumber)}</div>
+            </div>
+            <div class="box">
+              <div class="label">Fecha documento</div>
+              <div class="value">${escapeHtml(formatDate(sourceReceipt?.documentDate))}</div>
+            </div>
+            <div class="box">
+              <div class="label">Fecha recepción</div>
+              <div class="value">${escapeHtml(formatDate(sourceReceipt?.receiptDate))}</div>
             </div>
           </section>
 
@@ -437,16 +507,29 @@ export default function Devoluciones() {
                   Detalle de logística inversa y sus ítems asociados.
                 </DialogDescription>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handlePrintReturn}
-                disabled={!selectedReturn || isDetailLoading}
-                className="w-fit"
-              >
-                <Printer className="mr-2 h-4 w-4" />
-                Imprimir
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                {canGenerateCreditNote ? (
+                  <Button
+                    size="sm"
+                    onClick={() => setCreditNoteReturnId(selectedReturn.id)}
+                    disabled={generateCreditNoteMutation.isPending}
+                    className="w-fit"
+                  >
+                    <CreditCard className="mr-2 h-4 w-4" />
+                    Generar nota de crédito
+                  </Button>
+                ) : null}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handlePrintReturn}
+                  disabled={!selectedReturn || isDetailLoading}
+                  className="w-fit"
+                >
+                  <Printer className="mr-2 h-4 w-4" />
+                  Imprimir
+                </Button>
+              </div>
             </div>
           </DialogHeader>
 
@@ -497,13 +580,13 @@ export default function Devoluciones() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
                 <div className="rounded-lg border border-border p-4">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Salida origen
+                    Bodega origen
                   </p>
                   <p className="mt-2 text-sm font-medium">
-                    {sourceWarehouseExit?.exitNumber || "-"}
+                    {sourceWarehouseLabel}
                   </p>
                 </div>
                 <div className="rounded-lg border border-border p-4">
@@ -516,10 +599,58 @@ export default function Devoluciones() {
                 </div>
                 <div className="rounded-lg border border-border p-4">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Nota de crédito
+                  </p>
+                  <p className="mt-2 text-sm font-medium">
+                    {selectedReturn.returnType === "devolucion_proveedor"
+                      ? selectedReturn.sapDocumentNumber ||
+                        "Pendiente de generar"
+                      : selectedReturn.sapDocumentNumber || "-"}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Procesada
                   </p>
                   <p className="mt-2 text-sm font-medium">
                     {formatDate(selectedReturn.processedAt)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                <div className="rounded-lg border border-border p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    CAI
+                  </p>
+                  <p className="mt-2 text-sm font-medium">
+                    {sourceReceipt?.cai || "-"}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Número documento
+                  </p>
+                  <p className="mt-2 text-sm font-medium">
+                    {sourceReceipt?.invoiceNumber ||
+                      selectedReturn.sapDocumentNumber ||
+                      "-"}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Fecha documento
+                  </p>
+                  <p className="mt-2 text-sm font-medium">
+                    {formatDate(sourceReceipt?.documentDate)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Fecha recepción
+                  </p>
+                  <p className="mt-2 text-sm font-medium">
+                    {formatDate(sourceReceipt?.receiptDate)}
                   </p>
                 </div>
               </div>
@@ -586,6 +717,43 @@ export default function Devoluciones() {
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={Boolean(creditNoteReturnId)}
+        onOpenChange={open => {
+          if (!open) setCreditNoteReturnId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Generar nota de crédito</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción descontará del inventario del proyecto los ítems de
+              la devolución y marcará el documento como aprobado con número de
+              nota de crédito. No se puede repetir para la misma devolución.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={generateCreditNoteMutation.isPending}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={
+                generateCreditNoteMutation.isPending || !creditNoteReturnId
+              }
+              onClick={event => {
+                event.preventDefault();
+                if (!creditNoteReturnId) return;
+                generateCreditNoteMutation.mutate({ id: creditNoteReturnId });
+              }}
+            >
+              {generateCreditNoteMutation.isPending
+                ? "Generando..."
+                : "Generar nota"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

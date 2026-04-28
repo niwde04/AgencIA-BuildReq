@@ -56,6 +56,22 @@ type MenuItem = {
   roles?: string[];
 };
 
+type SidebarCountKey =
+  | "materialRequestsPendingApproval"
+  | "supplyFlowsPending"
+  | "purchaseRequestsPending"
+  | "purchaseOrdersEmitted"
+  | "transferRequestsPending";
+
+const MENU_COUNT_KEYS: Partial<Record<string, SidebarCountKey>> = {
+  "/solicitudes": "materialRequestsPendingApproval",
+  "/flujos": "supplyFlowsPending",
+  "/solicitudes-compra": "purchaseRequestsPending",
+  "/ordenes-compra": "purchaseOrdersEmitted",
+  "/solicitudes-traslado": "transferRequestsPending",
+};
+const MENU_ALWAYS_SHOW_COUNT_PATHS = new Set(["/solicitudes"]);
+
 const allMenuItems: MenuItem[] = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
   { icon: ClipboardList, label: "Requisiciones", path: "/solicitudes" },
@@ -237,6 +253,10 @@ function DashboardLayoutContent({
     undefined,
     { refetchInterval: 30000 }
   );
+  const { data: sidebarCounts } = trpc.dashboard.sidebarCounts.useQuery(
+    undefined,
+    { refetchInterval: 30000 }
+  );
 
   const userRole = (user as any)?.buildreqRole || "";
   const isAdmin = user?.role === "admin";
@@ -326,6 +346,10 @@ function DashboardLayoutContent({
                   item.path === "/"
                     ? location === "/"
                     : location.startsWith(item.path);
+                const countKey = MENU_COUNT_KEYS[item.path];
+                const badgeCount = countKey ? sidebarCounts?.[countKey] ?? 0 : 0;
+                const showBadge =
+                  badgeCount > 0 || MENU_ALWAYS_SHOW_COUNT_PATHS.has(item.path);
                 return (
                   <SidebarMenuItem key={item.path}>
                     <SidebarMenuButton
@@ -338,9 +362,19 @@ function DashboardLayoutContent({
                         className={`h-4 w-4 ${isActive ? "text-primary" : "text-muted-foreground"}`}
                       />
                       <span
-                        className={isActive ? "font-medium" : "font-normal"}
+                        className={`flex min-w-0 flex-1 items-center justify-between gap-2 ${
+                          isActive ? "font-medium" : "font-normal"
+                        }`}
                       >
-                        {item.label}
+                        <span className="truncate">{item.label}</span>
+                        {showBadge ? (
+                          <Badge
+                            variant={badgeCount > 0 ? "destructive" : "outline"}
+                            className="h-5 min-w-5 shrink-0 rounded-sm px-1 text-xs"
+                          >
+                            {badgeCount}
+                          </Badge>
+                        ) : null}
                       </span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

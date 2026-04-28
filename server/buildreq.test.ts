@@ -794,7 +794,7 @@ describe("BuildReq - Reverse Logistics Validations", () => {
     ).rejects.toThrow();
   });
 
-  it("Requires supplier name for vendor returns", async () => {
+  it("Requires completed receipt for vendor returns", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
 
@@ -805,6 +805,7 @@ describe("BuildReq - Reverse Logistics Validations", () => {
         justification:
           "Material llegó defectuoso del proveedor, no cumple especificaciones",
         sourceProjectId: 1,
+        supplierName: "Proveedor de prueba",
         items: [
           {
             itemName: "Varilla de acero",
@@ -812,10 +813,10 @@ describe("BuildReq - Reverse Logistics Validations", () => {
             condition: "defectuoso",
           },
         ],
-        // Missing supplierName
+        // Missing sourceReceiptId
       })
     ).rejects.toThrow(
-      "Para devoluciones a proveedor, debe indicar el nombre del proveedor"
+      "Para devoluciones a proveedor, debe seleccionar una recepción completada"
     );
   });
 
@@ -915,6 +916,151 @@ describe("BuildReq - Reverse Logistics Validations", () => {
 
     createReverseLogisticSpy.mockRestore();
     getUsersByBuildreqRoleSpy.mockRestore();
+    createNotificationSpy.mockRestore();
+  });
+
+  it("Creates vendor returns as credit notes from completed receipts", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getReceiptByIdSpy = vi.spyOn(db, "getReceiptById").mockResolvedValue({
+      receipt: {
+        id: 44,
+        receiptNumber: "TR-2026-0044",
+        sourceType: "purchase_order",
+        sourceId: 12,
+        projectId: 1,
+        status: "completa",
+      },
+      project: null,
+      purchaseOrder: null,
+      supplier: null,
+      items: [],
+    } as any);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 12,
+          orderNumber: "OC-2026-0012",
+        },
+        purchaseRequest: null,
+        project: null,
+        supplier: {
+          id: 5,
+          supplierCode: "PL-00005",
+          name: "Proveedor Demo",
+        },
+        items: [],
+        summary: {},
+      } as any);
+    const createReverseLogisticSpy = vi
+      .spyOn(db, "createReverseLogistic")
+      .mockResolvedValue({
+        id: 88,
+        returnNumber: "DEV-2026-0088",
+      });
+    const getUsersByBuildreqRoleSpy = vi
+      .spyOn(db, "getUsersByBuildreqRole")
+      .mockResolvedValue([]);
+    const createNotificationSpy = vi
+      .spyOn(db, "createNotification")
+      .mockResolvedValue({ id: 1 } as any);
+
+    await expect(
+      caller.reverseLogistics.create({
+        returnType: "devolucion_proveedor",
+        reasonCategory: "material_defectuoso",
+        justification:
+          "Material recibido defectuoso y debe devolverse al proveedor",
+        sourceProjectId: 1,
+        sourceReceiptId: 44,
+        supplierName: "Proveedor escrito a mano",
+        items: [
+          {
+            itemName: "Varilla de acero",
+            sapItemCode: "01010200055",
+            quantity: "50.00",
+            unit: "und",
+            condition: "defectuoso",
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      id: 88,
+      returnNumber: "DEV-2026-0088",
+    });
+
+    expect(createReverseLogisticSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        returnType: "devolucion_proveedor",
+        sourceReceiptId: 44,
+        sourceProjectId: 1,
+        supplierName: "PL-00005 — Proveedor Demo",
+        sapDocumentType: "nota_credito",
+        createdById: ctx.user?.id,
+      }),
+      [
+        expect.objectContaining({
+          itemName: "Varilla de acero",
+          sapItemCode: "01010200055",
+          quantity: "50.00",
+        }),
+      ]
+    );
+
+    getReceiptByIdSpy.mockRestore();
+    getPurchaseOrderByIdSpy.mockRestore();
+    createReverseLogisticSpy.mockRestore();
+    getUsersByBuildreqRoleSpy.mockRestore();
+    createNotificationSpy.mockRestore();
+  });
+
+  it("Allows bodega users to generate supplier credit notes", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const generateCreditNoteSpy = vi
+      .spyOn(db, "generateSupplierReturnCreditNote")
+      .mockResolvedValue({
+        success: true,
+        status: "aprobada",
+        sapDocumentNumber: "NC-2026-0088",
+      });
+    const getReverseLogisticByIdSpy = vi
+      .spyOn(db, "getReverseLogisticById")
+      .mockResolvedValue({
+        return: {
+          id: 88,
+          returnNumber: "DEV-2026-0088",
+          createdById: 3,
+        },
+        sourceProject: null,
+        sourceWarehouseExit: null,
+        items: [],
+      } as any);
+    const createNotificationSpy = vi
+      .spyOn(db, "createNotification")
+      .mockResolvedValue({ id: 1 } as any);
+
+    await expect(
+      caller.reverseLogistics.generateCreditNote({ id: 88 })
+    ).resolves.toEqual({
+      success: true,
+      status: "aprobada",
+      sapDocumentNumber: "NC-2026-0088",
+    });
+
+    expect(generateCreditNoteSpy).toHaveBeenCalledWith(88, ctx.user?.id);
+    expect(createNotificationSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 3,
+        title: "Nota de crédito generada",
+        relatedEntityType: "reverse_logistic",
+        relatedEntityId: 88,
+      })
+    );
+
+    generateCreditNoteSpy.mockRestore();
+    getReverseLogisticByIdSpy.mockRestore();
     createNotificationSpy.mockRestore();
   });
 });

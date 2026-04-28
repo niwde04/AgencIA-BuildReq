@@ -3926,20 +3926,32 @@ export async function registerReceipt(
 export async function listReceipts(filters?: {
   projectId?: number;
   sourceType?: string;
+  status?: string;
 }) {
   const db = await getDb();
   if (!db) return [];
   const conditions = [];
   if (filters?.projectId) conditions.push(eq(receipts.projectId, filters.projectId));
   if (filters?.sourceType) conditions.push(eq(receipts.sourceType, filters.sourceType as any));
+  if (filters?.status) conditions.push(eq(receipts.status, filters.status as any));
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   return db
     .select({
       receipt: receipts,
       project: projects,
+      purchaseOrder: purchaseOrders,
+      supplier: suppliers,
     })
     .from(receipts)
     .leftJoin(projects, eq(receipts.projectId, projects.id))
+    .leftJoin(
+      purchaseOrders,
+      and(
+        eq(receipts.sourceType, "purchase_order" as any),
+        eq(receipts.sourceId, purchaseOrders.id)
+      )
+    )
+    .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
     .where(where)
     .orderBy(desc(receipts.createdAt));
 }
@@ -3951,9 +3963,19 @@ export async function getReceiptById(id: number) {
     .select({
       receipt: receipts,
       project: projects,
+      purchaseOrder: purchaseOrders,
+      supplier: suppliers,
     })
     .from(receipts)
     .leftJoin(projects, eq(receipts.projectId, projects.id))
+    .leftJoin(
+      purchaseOrders,
+      and(
+        eq(receipts.sourceType, "purchase_order" as any),
+        eq(receipts.sourceId, purchaseOrders.id)
+      )
+    )
+    .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
     .where(eq(receipts.id, id))
     .limit(1);
   if (!rows[0]) return undefined;
@@ -5096,13 +5118,17 @@ export async function getReverseLogisticById(id: number) {
       return: reverseLogistics,
       sourceProject: projects,
       sourceWarehouseExit: warehouseExits,
+      sourceReceipt: receipts,
+      sourceWarehouse: warehouses,
     })
     .from(reverseLogistics)
     .leftJoin(projects, eq(reverseLogistics.sourceProjectId, projects.id))
+    .leftJoin(warehouses, eq(warehouses.projectId, reverseLogistics.sourceProjectId))
     .leftJoin(
       warehouseExits,
       eq(reverseLogistics.sourceWarehouseExitId, warehouseExits.id)
     )
+    .leftJoin(receipts, eq(reverseLogistics.sourceReceiptId, receipts.id))
     .where(eq(reverseLogistics.id, id))
     .limit(1);
 
@@ -5148,6 +5174,122 @@ export async function updateReverseLogisticStatus(
 
   await db.update(reverseLogistics).set(updateData).where(eq(reverseLogistics.id, id));
   return { success: true };
+}
+
+function buildSupplierCreditNoteNumber(returnNumber: string) {
+  return returnNumber.replace(/^DEV-/, "NC-");
+}
+
+export async function generateSupplierReturnCreditNote(
+  id: number,
+  processedById: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const detail = await getReverseLogisticById(id);
+  if (!detail) {
+    throw new Error("Devolución no encontrada");
+  }
+
+  if (detail.return.returnType !== "devolucion_proveedor") {
+    throw new Error("Solo las devoluciones a proveedor generan nota de crédito");
+  }
+
+  if (detail.return.sapDocumentNumber) {
+    return {
+      success: true,
+      status: detail.return.status,
+      sapDocumentNumber: detail.return.sapDocumentNumber,
+    };
+  }
+
+  if (detail.return.status !== "pendiente") {
+    throw new Error(
+      "Solo se puede generar nota de crédito para devoluciones pendientes"
+    );
+  }
+
+  if (detail.items.length === 0) {
+    throw new Error("La devolución no tiene ítems para generar nota de crédito");
+  }
+
+  const quantityByItem = new Map<
+    string,
+    {
+      sapItemCode?: string | null;
+      itemName: string;
+      quantity: number;
+    }
+  >();
+
+  for (const item of detail.items) {
+    const quantity = parseDecimal(item.quantity);
+    if (quantity <= 0) {
+      throw new Error(`La cantidad de ${item.itemName} debe ser mayor que cero`);
+    }
+
+    const key = item.sapItemCode?.trim()
+      ? `sap:${item.sapItemCode.trim()}`
+      : `name:${item.itemName.trim().toLowerCase()}`;
+    const current = quantityByItem.get(key);
+    quantityByItem.set(key, {
+      sapItemCode: item.sapItemCode,
+      itemName: item.itemName,
+      quantity: (current?.quantity ?? 0) + quantity,
+    });
+  }
+
+  for (const groupedItem of Array.from(quantityByItem.values())) {
+    const rows = await listInventoryRowsForStock({
+      sapItemCode: groupedItem.sapItemCode,
+      itemName: groupedItem.itemName,
+      projectId: detail.return.sourceProjectId,
+    });
+    const available = rows.reduce(
+      (total, row) => total + parseDecimal(row.currentStock),
+      0
+    );
+
+    if (available + 0.0001 < groupedItem.quantity) {
+      throw new Error(
+        `Stock insuficiente para ${groupedItem.itemName}. Disponible: ${toDecimalString(
+          available
+        )}, solicitado: ${toDecimalString(groupedItem.quantity)}.`
+      );
+    }
+  }
+
+  for (const item of detail.items) {
+    await consumeInventoryStock({
+      sapItemCode: item.sapItemCode,
+      itemName: item.itemName,
+      projectId: detail.return.sourceProjectId,
+      quantity: item.quantity,
+    });
+  }
+
+  const sapDocumentNumber = buildSupplierCreditNoteNumber(
+    detail.return.returnNumber
+  );
+  await db
+    .update(reverseLogistics)
+    .set({
+      status: "aprobada",
+      sapDocumentType: "nota_credito",
+      sapDocumentNumber,
+      sapSynced: false,
+      processedById,
+      processedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(reverseLogistics.id, id));
+
+  return {
+    success: true,
+    status: "aprobada" as const,
+    sapDocumentNumber,
+  };
 }
 
 // ============================================================

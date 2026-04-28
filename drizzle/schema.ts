@@ -846,6 +846,7 @@ export const reverseLogistics = pgTable(
     sourceProjectId: integer("sourceProjectId").notNull(),
     destinationProjectId: integer("destinationProjectId"),
     sourceWarehouseExitId: integer("sourceWarehouseExitId"),
+    sourceReceiptId: integer("sourceReceiptId"),
     supplierName: varchar("supplierName", { length: 255 }),
     originalRequestId: integer("originalRequestId"),
     status: returnStatusEnum("status").default("pendiente").notNull(),
@@ -860,6 +861,7 @@ export const reverseLogistics = pgTable(
   },
   (table) => ({
     sourceProjectIdx: index("rl_source_project_idx").on(table.sourceProjectId),
+    sourceReceiptIdx: index("rl_source_receipt_idx").on(table.sourceReceiptId),
     returnTypeIdx: index("rl_return_type_idx").on(table.returnType),
     statusIdx: index("rl_status_idx").on(table.status),
   })

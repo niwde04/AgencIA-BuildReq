@@ -63,6 +63,7 @@ export const reverseLogisticsRouter = router({
         sourceProjectId: z.number(),
         destinationProjectId: z.number().optional(),
         sourceWarehouseExitId: z.number().optional(),
+        sourceReceiptId: z.number().optional(),
         supplierName: z.string().optional(),
         originalRequestId: z.number().optional(),
         items: z
@@ -82,16 +83,61 @@ export const reverseLogisticsRouter = router({
         });
       }
 
-      // Validate: supplier returns need supplierName
-      if (
-        input.returnType === "devolucion_proveedor" &&
-        !input.supplierName
-      ) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message:
-            "Para devoluciones a proveedor, debe indicar el nombre del proveedor",
-        });
+      let supplierNameFromReceipt: string | undefined;
+
+      if (input.returnType === "devolucion_proveedor") {
+        if (!input.sourceReceiptId) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "Para devoluciones a proveedor, debe seleccionar una recepción completada",
+          });
+        }
+
+        const sourceReceipt = await db.getReceiptById(input.sourceReceiptId);
+        if (!sourceReceipt) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Recepción seleccionada no encontrada",
+          });
+        }
+
+        if (
+          sourceReceipt.receipt.sourceType !== "purchase_order" ||
+          sourceReceipt.receipt.status !== "completa"
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "Solo se pueden devolver a proveedor recepciones de orden de compra completadas",
+          });
+        }
+
+        if (sourceReceipt.receipt.projectId !== input.sourceProjectId) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "El proyecto origen debe coincidir con la recepción seleccionada",
+          });
+        }
+
+        const purchaseOrderDetail = await db.getPurchaseOrderById(
+          sourceReceipt.receipt.sourceId
+        );
+        if (!purchaseOrderDetail?.supplier) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "La recepción seleccionada no tiene proveedor asociado",
+          });
+        }
+
+        supplierNameFromReceipt = [
+          purchaseOrderDetail.supplier.supplierCode,
+          purchaseOrderDetail.supplier.name,
+        ]
+          .filter(Boolean)
+          .join(" — ");
       }
 
       // Validate: project transfers need destinationProjectId
@@ -107,6 +153,14 @@ export const reverseLogisticsRouter = router({
       }
 
       const { items, ...returnData } = input;
+      const normalizedReturnData =
+        input.returnType === "devolucion_proveedor"
+          ? {
+              ...returnData,
+              supplierName: supplierNameFromReceipt,
+              sapDocumentType: "nota_credito",
+            }
+          : returnData;
       const result =
         input.returnType === "devolucion_bodega_proyecto" &&
         input.sourceWarehouseExitId
@@ -134,7 +188,7 @@ export const reverseLogisticsRouter = router({
             })
           : await db.createReverseLogistic(
               {
-                ...returnData,
+                ...normalizedReturnData,
                 createdById: ctx.user.id,
               },
               items
@@ -156,6 +210,50 @@ export const reverseLogisticsRouter = router({
       }
 
       return result;
+    }),
+
+  generateCreditNote: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (
+        ctx.user.buildreqRole !== "jefe_bodega_central" &&
+        ctx.user.role !== "admin"
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo el Jefe de Bodega Central puede generar notas de crédito",
+        });
+      }
+
+      try {
+        const result = await db.generateSupplierReturnCreditNote(
+          input.id,
+          ctx.user.id
+        );
+
+        const returnRecord = await db.getReverseLogisticById(input.id);
+        if (returnRecord) {
+          await db.createNotification({
+            userId: returnRecord.return.createdById,
+            title: "Nota de crédito generada",
+            message: `Se generó la nota de crédito ${result.sapDocumentNumber} para la devolución ${returnRecord.return.returnNumber}.`,
+            type: "devolucion",
+            relatedEntityType: "reverse_logistic",
+            relatedEntityId: input.id,
+          });
+        }
+
+        return result;
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudo generar la nota de crédito",
+        });
+      }
     }),
 
   updateStatus: protectedProcedure

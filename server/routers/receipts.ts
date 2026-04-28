@@ -77,6 +77,9 @@ export const receiptsRouter = router({
         .object({
           projectId: z.number().optional(),
           sourceType: z.enum(["purchase_order", "transfer"]).optional(),
+          status: z
+            .enum(["pendiente", "parcial", "completa", "cierre_incompleto"])
+            .optional(),
         })
         .optional()
     )
