@@ -50,7 +50,8 @@ export function registerOAuthRoutes(app: Express) {
                 | "ingeniero_residente"
                 | "jefe_bodega_central"
                 | "administracion_central"
-                | "administrador_proyecto",
+                | "administrador_proyecto"
+                | "bodeguero_proyecto",
               assignedProjectId: pendingInvitation.assignedProjectId,
             });
             // Mark invitation as accepted

@@ -22,6 +22,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useAuth } from "@/_core/hooks/useAuth";
 import {
   Select,
   SelectContent,
@@ -43,7 +44,10 @@ const STATUS_LABELS: Record<string, string> = {
 
 export default function TransferRequests() {
   const utils = trpc.useUtils();
+  const { user } = useAuth();
   const allowManualTransferRequests = false;
+  const canProcessTransferRequests =
+    user?.role === "admin" || (user as any)?.buildreqRole === "jefe_bodega_central";
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [projectId, setProjectId] = useState("");
@@ -435,7 +439,8 @@ export default function TransferRequests() {
                       <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Cant. solicitada
                       </th>
-                      {detail.transferRequest.status === "pendiente" && (
+                      {canProcessTransferRequests &&
+                        detail.transferRequest.status === "pendiente" && (
                         <th className="w-36 p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Enviar
                         </th>
@@ -446,7 +451,8 @@ export default function TransferRequests() {
                       <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Nueva existencia
                       </th>
-                      {detail.transferRequest.status === "pendiente" && (
+                      {canProcessTransferRequests &&
+                        detail.transferRequest.status === "pendiente" && (
                         <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Saldo
                         </th>
@@ -479,7 +485,8 @@ export default function TransferRequests() {
                           <td className="p-3 text-right">
                             {item.quantity} {item.unit || ""}
                           </td>
-                          {detail.transferRequest.status === "pendiente" && (
+                          {canProcessTransferRequests &&
+                            detail.transferRequest.status === "pendiente" && (
                             <td className="p-3">
                               <Input
                                 value={
@@ -514,7 +521,8 @@ export default function TransferRequests() {
                           >
                             {newStockQuantity.toFixed(2)} {item.unit || ""}
                           </td>
-                          {detail.transferRequest.status === "pendiente" && (
+                          {canProcessTransferRequests &&
+                            detail.transferRequest.status === "pendiente" && (
                             <td className="p-3 text-right">
                               <p className="font-mono">
                                 {pendingQuantity.toFixed(2)} {item.unit || ""}
@@ -533,7 +541,8 @@ export default function TransferRequests() {
                 </table>
               </div>
 
-              <div className="flex justify-end">
+              {canProcessTransferRequests ? (
+                <div className="flex justify-end">
                 <div className="flex flex-wrap justify-end gap-2">
                   {detail.transferRequest.status === "pendiente" ? (
                     <Button
@@ -555,6 +564,7 @@ export default function TransferRequests() {
                   </Button>
                 </div>
               </div>
+              ) : null}
             </div>
           ) : null}
         </DialogContent>

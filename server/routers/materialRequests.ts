@@ -195,6 +195,9 @@ function canAccessRequest(
   if (user.buildreqRole === "administrador_proyecto") {
     return Boolean(user.assignedProjectId) && user.assignedProjectId === request.projectId;
   }
+  if (user.buildreqRole === "bodeguero_proyecto") {
+    return Boolean(user.assignedProjectId) && user.assignedProjectId === request.projectId;
+  }
   return true;
 }
 
@@ -205,7 +208,8 @@ function assertProjectScopedCreation(
   if (user.role === "admin") return;
   if (
     user.buildreqRole !== "ingeniero_residente" &&
-    user.buildreqRole !== "administrador_proyecto"
+    user.buildreqRole !== "administrador_proyecto" &&
+    user.buildreqRole !== "bodeguero_proyecto"
   ) {
     return;
   }
@@ -265,6 +269,7 @@ function canApproveRequestAuthorization(
 ) {
   return (
     user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administrador_proyecto" ||
     user.buildreqRole === "administracion_central"
   );
@@ -297,8 +302,8 @@ async function notifyMaterialRequestSubmitted(params: {
           : "Nueva requisición de servicios",
       message:
         params.requestType === "bienes"
-          ? `La requisición ${params.requestNumber} requiere autorización del Administrador del Proyecto o Administración Central antes de traducir y asignar flujos. ${dueDateMessage}`
-          : `La requisición ${params.requestNumber} requiere aprobación del Administrador del Proyecto o Administración Central. ${dueDateMessage}`,
+          ? `La requisición ${params.requestNumber} requiere autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega antes de traducir y asignar flujos. ${dueDateMessage}`
+          : `La requisición ${params.requestNumber} requiere aprobación del Administrador del Proyecto, Administración Central o Jefe de Bodega. ${dueDateMessage}`,
       type: "nueva_solicitud",
       relatedEntityType: "material_request",
       relatedEntityId: params.requestId,
@@ -314,8 +319,8 @@ async function notifyMaterialRequestSubmitted(params: {
           : "Nueva requisición de servicios",
       message:
         params.requestType === "bienes"
-          ? `La requisición ${params.requestNumber} requiere autorización del Administrador del Proyecto o Administración Central antes de traducir y asignar flujos. ${dueDateMessage}`
-          : `La requisición ${params.requestNumber} requiere aprobación del Administrador del Proyecto o Administración Central. ${dueDateMessage}`,
+          ? `La requisición ${params.requestNumber} requiere autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega antes de traducir y asignar flujos. ${dueDateMessage}`
+          : `La requisición ${params.requestNumber} requiere aprobación del Administrador del Proyecto, Administración Central o Jefe de Bodega. ${dueDateMessage}`,
       type: "nueva_solicitud",
       relatedEntityType: "material_request",
       relatedEntityId: params.requestId,
@@ -330,7 +335,7 @@ async function notifyMaterialRequestSubmitted(params: {
         : "Requisición registrada",
     message:
       params.requestType === "bienes"
-        ? `La requisición ${params.requestNumber} quedó registrada y fue enviada al Administrador del Proyecto o Administración Central para autorización. ${dueDateMessage}`
+        ? `La requisición ${params.requestNumber} quedó registrada y fue enviada para autorización. ${dueDateMessage}`
         : `La requisición ${params.requestNumber} quedó registrada. ${dueDateMessage}`,
     type: "sistema",
     relatedEntityType: "material_request",
@@ -381,7 +386,13 @@ export const materialRequestsRouter = router({
       if (user.buildreqRole === "administrador_proyecto") {
         return syncVisibleRows(await db.listMaterialRequests({
           ...input,
-          projectId: user.assignedProjectId ?? undefined,
+          projectId: user.assignedProjectId ?? -1,
+        }));
+      }
+      if (user.buildreqRole === "bodeguero_proyecto") {
+        return syncVisibleRows(await db.listMaterialRequests({
+          ...input,
+          projectId: user.assignedProjectId ?? -1,
         }));
       }
       return syncVisibleRows(await db.listMaterialRequests(input ?? undefined));
@@ -415,6 +426,12 @@ export const materialRequestsRouter = router({
         recipient: _recipient,
         ...requestData
       } = input;
+      if (ctx.user.buildreqRole === "bodeguero_proyecto") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "El Bodeguero de Proyecto no puede crear requisiciones",
+        });
+      }
       assertProjectScopedCreation(ctx.user, input.projectId);
       const completeItems = getCompleteRequestItems(items);
       const itemsForPersistence = buildRequestItemsForPersistence({
@@ -549,7 +566,7 @@ export const materialRequestsRouter = router({
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo el Administrador del Proyecto o Administración Central pueden autorizar los ítems",
+            "Solo el Administrador del Proyecto, Administración Central o Jefe de Bodega pueden autorizar los ítems",
         });
       }
 
@@ -613,7 +630,21 @@ export const materialRequestsRouter = router({
       });
 
       if (summary.pendingCount === 0 && summary.approvedCount > 0) {
-        const bodegaUsers = await db.getUsersByBuildreqRole("jefe_bodega_central");
+        const [centralBodegaUsers, projectBodegaUsers] = await Promise.all([
+          db.getUsersByBuildreqRole("jefe_bodega_central"),
+          db.getUsersByBuildreqRoleAndProject(
+            "bodeguero_proyecto",
+            detail.request.projectId
+          ),
+        ]);
+        const bodegaUsers = Array.from(
+          new Map(
+            [...centralBodegaUsers, ...projectBodegaUsers].map((user) => [
+              user.id,
+              user,
+            ])
+          ).values()
+        );
         for (const bodegaUser of bodegaUsers) {
           await db.createNotification({
             userId: bodegaUser.id,
@@ -623,8 +654,8 @@ export const materialRequestsRouter = router({
                 : "Requisición autorizada",
             message:
               summary.rejectedCount > 0
-                ? `La requisición ${detail.request.requestNumber} ya fue revisada por el Administrador del Proyecto o Administración Central. Hay ítems aprobados para traducir/asignar flujo y ${summary.rejectedCount} ítem(s) rechazado(s).`
-                : `La requisición ${detail.request.requestNumber} ya fue autorizada por el Administrador del Proyecto o Administración Central y puede pasar a traducción SAP y asignación de flujos.`,
+                ? `La requisición ${detail.request.requestNumber} ya fue revisada. Hay ítems aprobados para traducir/asignar flujo y ${summary.rejectedCount} ítem(s) rechazado(s).`
+                : `La requisición ${detail.request.requestNumber} ya fue autorizada y puede pasar a traducción SAP y asignación de flujos.`,
             type: "nueva_solicitud",
             relatedEntityType: "material_request",
             relatedEntityId: input.requestId,
@@ -644,9 +675,9 @@ export const materialRequestsRouter = router({
           message:
             summary.approvedCount > 0
               ? summary.rejectedCount > 0
-                ? `La requisición ${detail.request.requestNumber} fue revisada. Algunos ítems fueron autorizados y otros rechazados por el Administrador del Proyecto o Administración Central.`
-                : `La requisición ${detail.request.requestNumber} fue autorizada por el Administrador del Proyecto o Administración Central y pasó a Bodega para su procesamiento.`
-              : `La requisición ${detail.request.requestNumber} fue rechazada por el Administrador del Proyecto o Administración Central.`,
+                ? `La requisición ${detail.request.requestNumber} fue revisada. Algunos ítems fueron autorizados y otros rechazados.`
+                : `La requisición ${detail.request.requestNumber} fue autorizada y pasó a Bodega para su procesamiento.`
+              : `La requisición ${detail.request.requestNumber} fue rechazada.`,
           type: "cambio_estatus",
           relatedEntityType: "material_request",
           relatedEntityId: input.requestId,
@@ -674,7 +705,10 @@ export const materialRequestsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (ctx.user.buildreqRole === "ingeniero_residente") {
+      if (
+        ctx.user.buildreqRole === "ingeniero_residente" ||
+        ctx.user.buildreqRole === "bodeguero_proyecto"
+      ) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para cambiar el estatus",
@@ -721,7 +755,7 @@ export const materialRequestsRouter = router({
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo el Administrador del Proyecto o Administración Central pueden aprobar servicios",
+            "Solo el Administrador del Proyecto, Administración Central o Jefe de Bodega pueden aprobar servicios",
         });
       }
 
@@ -758,7 +792,7 @@ export const materialRequestsRouter = router({
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo el Administrador del Proyecto o Administración Central pueden rechazar servicios",
+            "Solo el Administrador del Proyecto, Administración Central o Jefe de Bodega pueden rechazar servicios",
         });
       }
 
@@ -808,6 +842,20 @@ export const materialRequestsRouter = router({
       if (!request) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Requisición no encontrada" });
       }
+      if (!canAccessRequest(ctx.user, request.request)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "No tiene acceso a esta solicitud" });
+      }
+      if (
+        ctx.user.buildreqRole === "bodeguero_proyecto" &&
+        input.flowType !== "despacho_bodega" &&
+        input.flowType !== "compra_directa"
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "El Bodeguero de Proyecto solo puede enviar requisiciones a Salida de bodega o Compra directa",
+        });
+      }
       if (
         request.request.requestType === "bienes" &&
         request.request.approvalStatus === "pendiente"
@@ -815,7 +863,7 @@ export const materialRequestsRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message:
-            "La requisición todavía está pendiente de autorización del Administrador del Proyecto o Administración Central.",
+            "La requisición todavía está pendiente de autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega.",
         });
       }
       return db.assignFlow(input.requestId, input.flowType, ctx.user.id);
@@ -825,7 +873,8 @@ export const materialRequestsRouter = router({
     .input(z.object({ requestId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       if (
-        ctx.user.buildreqRole === "ingeniero_residente"
+        ctx.user.buildreqRole === "ingeniero_residente" ||
+        ctx.user.buildreqRole === "bodeguero_proyecto"
       ) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -845,7 +894,7 @@ export const materialRequestsRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message:
-            "La requisición todavía tiene ítems pendientes de autorización del Administrador del Proyecto o Administración Central.",
+            "La requisición todavía tiene ítems pendientes de autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega.",
         });
       }
 

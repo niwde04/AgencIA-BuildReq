@@ -56,6 +56,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useAuth } from "@/_core/hooks/useAuth";
 import {
   calculatePurchaseOrderLineAmounts,
   formatPurchaseOrderCurrency,
@@ -72,6 +73,11 @@ const STATUS_LABELS: Record<string, string> = {
   parcialmente_recibida: "Parcialmente recibida",
   recibida: "Recibida",
   anulada: "Anulada",
+};
+const PURCHASE_TYPE_LABELS: Record<string, string> = {
+  local: "Compra Local",
+  extranjera: "Compra Extranjera",
+  compra_directa: "Compra Directa",
 };
 
 const EMISSION_STATUS_LABELS: Record<string, string> = {
@@ -125,6 +131,7 @@ type PurchaseOrderConfirmState =
 
 export default function OrdenesCompra() {
   const utils = trpc.useUtils();
+  const { user } = useAuth();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [replaceItemId, setReplaceItemId] = useState<number | null>(null);
   const [replacementSearch, setReplacementSearch] = useState("");
@@ -285,9 +292,15 @@ export default function OrdenesCompra() {
             )
             .filter((value): value is string => Boolean(value))
         )
-      ),
+    ),
     [items]
   );
+  const userRole = (user as any)?.buildreqRole;
+  const canManagePurchaseOrders =
+    user?.role === "admin" ||
+    userRole === "jefe_bodega_central" ||
+    userRole === "administracion_central" ||
+    userRole === "administrador_proyecto";
   const selectedSupplier = useMemo(
     () =>
       (suppliersList || []).find(
@@ -303,6 +316,7 @@ export default function OrdenesCompra() {
       },
       {
         enabled:
+          canManagePurchaseOrders &&
           Boolean(selectedId) &&
           Boolean(selectedSupplierId) &&
           purchaseOrderSapCodes.length > 0,
@@ -312,17 +326,21 @@ export default function OrdenesCompra() {
     detail?.purchaseOrder.supplierEmail ?? detail?.supplier?.email ?? "";
   const orderStatus = detail?.purchaseOrder.status ?? "";
   const canEditOrderStructure =
-    ORDER_STRUCTURE_EDITABLE_STATUSES.has(orderStatus);
+    canManagePurchaseOrders && ORDER_STRUCTURE_EDITABLE_STATUSES.has(orderStatus);
   const isOrderCancelled = orderStatus === "anulada";
   const isOrderReceived = orderStatus === "recibida";
-  const isOrderReadOnly = Boolean(isOrderCancelled || isOrderReceived);
+  const isOrderReadOnly = Boolean(
+    !canManagePurchaseOrders || isOrderCancelled || isOrderReceived
+  );
   const hasReceivedItems = items.some(
     (item: any) => Number(item.receivedQuantity ?? 0) > 0
   );
   const hasOrderReceipts =
     hasReceivedItems || RECEIVED_ORDER_STATUSES.has(orderStatus);
   const canReopenDraft =
-    ["emitida", "enviada"].includes(orderStatus) && !hasOrderReceipts;
+    canManagePurchaseOrders &&
+    ["emitida", "enviada"].includes(orderStatus) &&
+    !hasOrderReceipts;
 
   useEffect(() => {
     setSelectedSupplierId(
@@ -443,6 +461,22 @@ export default function OrdenesCompra() {
       }),
     [canEditOrderStructure, items, itemDrafts]
   );
+  const emissionBlockReason = useMemo(() => {
+    if (!detail) return null;
+    if (!selectedSupplierId && !detail.purchaseOrder.supplierId) {
+      return "Seleccione un proveedor antes de emitir la OC";
+    }
+
+    const itemWithoutPrice = items.find((item: any) => {
+      const unitPrice = Number(getItemDraft(item).unitPrice || 0);
+      return !Number.isFinite(unitPrice) || unitPrice <= 0;
+    });
+    if (itemWithoutPrice) {
+      return `Ingrese un precio unitario mayor que cero para ${itemWithoutPrice.itemName}`;
+    }
+
+    return null;
+  }, [detail, items, itemDrafts, selectedSupplierId]);
 
   const confirmActionPending =
     deleteItemMutation.isPending ||
@@ -582,6 +616,10 @@ export default function OrdenesCompra() {
 
   const handleCancelOrder = () => {
     if (!detail) return;
+    if (!canManagePurchaseOrders) {
+      toast.error("El Bodeguero de Proyecto solo puede consultar la OC");
+      return;
+    }
     if (hasReceivedItems) {
       toast.error(
         "No se puede cancelar una orden que ya tiene recepciones registradas"
@@ -709,11 +747,7 @@ export default function OrdenesCompra() {
                           : "—"}
                       </td>
                       <td className="p-3 text-xs">
-                        {row.purchaseOrder.purchaseType === "local"
-                          ? "Compra Local"
-                          : row.purchaseOrder.purchaseType === "extranjera"
-                            ? "Compra Extranjera"
-                            : "—"}
+                        {PURCHASE_TYPE_LABELS[row.purchaseOrder.purchaseType] || "—"}
                       </td>
                       <td className="p-3 text-xs">
                         {row.supplier?.name || "Proveedor pendiente"}
@@ -1274,9 +1308,14 @@ export default function OrdenesCompra() {
                   Hay cambios de cantidad, precio o impuesto pendientes de guardado automático. Sal del campo para terminar la actualización antes de descargar o emitir la OC.
                 </div>
               ) : null}
+              {canEditOrderStructure && emissionBlockReason ? (
+                <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                  {emissionBlockReason}
+                </div>
+              ) : null}
 
               <div className="flex flex-wrap justify-end gap-3 border-t border-border/70 pt-1">
-                {!isOrderReceived ? (
+                {canManagePurchaseOrders && !isOrderReceived ? (
                   <Button
                     variant="outline"
                     size="lg"
@@ -1334,9 +1373,13 @@ export default function OrdenesCompra() {
                   <Button
                     size="lg"
                     className="h-10 min-w-[220px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
-                    onClick={() =>
-                      sendMutation.mutate({ id: detail.purchaseOrder.id })
-                    }
+                    onClick={() => {
+                      if (emissionBlockReason) {
+                        toast.error(emissionBlockReason);
+                        return;
+                      }
+                      sendMutation.mutate({ id: detail.purchaseOrder.id });
+                    }}
                     disabled={
                       items.length === 0 ||
                       sendMutation.isPending ||

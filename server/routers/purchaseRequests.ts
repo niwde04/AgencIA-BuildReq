@@ -47,6 +47,7 @@ const purchaseRequestItemSchema = z.object({
   unit: z.string().optional(),
   notes: z.string().optional(),
 });
+const purchaseTypeSchema = z.enum(["local", "extranjera", "compra_directa"]);
 
 export const purchaseRequestsRouter = router({
   list: protectedProcedure
@@ -68,7 +69,7 @@ export const purchaseRequestsRouter = router({
 
       const projectId =
         ctx.user.buildreqRole === "administrador_proyecto"
-          ? ctx.user.assignedProjectId ?? undefined
+          ? ctx.user.assignedProjectId ?? -1
           : input?.projectId;
 
       return db.listPurchaseRequests({
@@ -104,7 +105,7 @@ export const purchaseRequestsRouter = router({
       z.object({
         materialRequestId: z.number().optional(),
         projectId: z.number(),
-        purchaseType: z.enum(["local", "extranjera"]),
+        purchaseType: purchaseTypeSchema,
         neededBy: z.string().optional(),
         notes: z.string().optional(),
         items: z.array(purchaseRequestItemSchema).min(1),
@@ -155,7 +156,7 @@ export const purchaseRequestsRouter = router({
     .input(
       z.object({
         id: z.number(),
-        purchaseType: z.enum(["local", "extranjera"]).optional(),
+        purchaseType: purchaseTypeSchema.optional(),
         neededBy: z.string().optional(),
         notes: z.string().optional(),
       })

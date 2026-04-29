@@ -108,7 +108,9 @@ export default function NuevaSolicitud() {
   const userRole = (user as any)?.buildreqRole || "";
   const assignedProjectId = (user as any)?.assignedProjectId || null;
   const isProjectScopedUser =
-    userRole === "ingeniero_residente" || userRole === "administrador_proyecto";
+    userRole === "ingeniero_residente" ||
+    userRole === "administrador_proyecto" ||
+    userRole === "bodeguero_proyecto";
 
   const [projectId, setProjectId] = useState<string>("");
   const [requestType, setRequestType] = useState<"bienes" | "servicios">("bienes");

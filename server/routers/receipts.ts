@@ -19,8 +19,28 @@ function canAccessReceipts(user: { role: string; buildreqRole?: string | null })
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administracion_central" ||
-    user.buildreqRole === "administrador_proyecto"
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto"
   );
+}
+
+function assertProjectScopedAccess(
+  user: { role: string; buildreqRole?: string | null; assignedProjectId?: number | null },
+  projectId: number
+) {
+  if (user.role === "admin") return;
+  if (
+    user.buildreqRole !== "administrador_proyecto" &&
+    user.buildreqRole !== "bodeguero_proyecto"
+  ) {
+    return;
+  }
+  if (user.assignedProjectId !== projectId) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene acceso a recepciones de otro proyecto",
+    });
+  }
 }
 
 const receiptItemSchema = z.object({
@@ -92,8 +112,9 @@ export const receiptsRouter = router({
       }
 
       const projectId =
-        ctx.user.buildreqRole === "administrador_proyecto"
-          ? ctx.user.assignedProjectId ?? undefined
+        ctx.user.buildreqRole === "administrador_proyecto" ||
+        ctx.user.buildreqRole === "bodeguero_proyecto"
+          ? ctx.user.assignedProjectId ?? -1
           : input?.projectId;
 
       return db.listReceipts({
@@ -119,6 +140,7 @@ export const receiptsRouter = router({
           message: "Recepción no encontrada",
         });
       }
+      assertProjectScopedAccess(ctx.user, detail.receipt.projectId);
       return detail;
     }),
 
@@ -179,6 +201,14 @@ export const receiptsRouter = router({
             message: "Orden de compra no encontrada",
           });
         }
+        assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+        if (input.projectId !== detail.purchaseOrder.projectId) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "El proyecto de la recepción no coincide con la orden de compra",
+          });
+        }
 
         if (!RECEIVABLE_PURCHASE_ORDER_STATUSES.has(detail.purchaseOrder.status)) {
           throw new TRPCError({
@@ -237,6 +267,21 @@ export const receiptsRouter = router({
             code: "NOT_FOUND",
             message: "Traslado no encontrado",
           });
+        }
+
+        const destinationProjectId =
+          detail.transferRequest?.destinationType === "proyecto"
+            ? detail.transferRequest.destinationProjectId
+            : input.projectId;
+        if (typeof destinationProjectId === "number") {
+          assertProjectScopedAccess(ctx.user, destinationProjectId);
+          if (input.projectId !== destinationProjectId) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "El proyecto de la recepción no coincide con el destino del traslado",
+            });
+          }
         }
 
         if (!RECEIVABLE_TRANSFER_STATUSES.has(detail.transfer.status)) {

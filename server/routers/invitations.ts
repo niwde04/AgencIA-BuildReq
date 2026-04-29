@@ -20,6 +20,7 @@ export const invitationsRouter = router({
           "jefe_bodega_central",
           "administracion_central",
           "administrador_proyecto",
+          "bodeguero_proyecto",
         ]),
         assignedProjectId: z.number().optional(),
         origin: z.string(), // Frontend passes window.location.origin
@@ -47,6 +48,7 @@ export const invitationsRouter = router({
         jefe_bodega_central: "Jefe de Bodega Central",
         administracion_central: "Administración Central",
         administrador_proyecto: "Administrador del Proyecto",
+        bodeguero_proyecto: "Bodeguero de Proyecto",
       };
       const roleLabel = roleLabels[input.buildreqRole] || input.buildreqRole;
 
@@ -101,6 +103,7 @@ export const invitationsRouter = router({
         jefe_bodega_central: "Jefe de Bodega Central",
         administracion_central: "Administración Central",
         administrador_proyecto: "Administrador del Proyecto",
+        bodeguero_proyecto: "Bodeguero de Proyecto",
       };
       const roleLabel = roleLabels[inv.buildreqRole] || inv.buildreqRole;
       const projectInfo = found.project

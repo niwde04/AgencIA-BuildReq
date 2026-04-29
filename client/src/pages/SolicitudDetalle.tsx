@@ -89,6 +89,11 @@ const REQUEST_TYPE_LABELS: Record<string, string> = {
   bienes: "Bienes",
   servicios: "Servicios",
 };
+const PURCHASE_TYPE_LABELS: Record<string, string> = {
+  local: "Compra Local",
+  extranjera: "Compra Extranjera",
+  compra_directa: "Compra Directa",
+};
 
 const WORKFLOW_STAGE_LABELS: Record<string, string> = {
   bodega_proyecto: "Bodega del Proyecto",
@@ -652,8 +657,17 @@ export default function SolicitudDetalle() {
     userRole === "jefe_bodega_central" ||
     userRole === "administracion_central" ||
     isAdmin;
+  const canManageSapTranslation =
+    canManageProcessing ||
+    userRole === "administrador_proyecto" ||
+    userRole === "bodeguero_proyecto";
+  const canAssignQueueFlows =
+    canManageProcessing ||
+    userRole === "administrador_proyecto" ||
+    userRole === "bodeguero_proyecto";
   const canApproveProjectRequests =
     userRole === "administrador_proyecto" ||
+    userRole === "jefe_bodega_central" ||
     userRole === "administracion_central" ||
     isAdmin;
 
@@ -919,7 +933,8 @@ export default function SolicitudDetalle() {
     if (
       user?.role === "admin" ||
       userRole === "jefe_bodega_central" ||
-      userRole === "administracion_central"
+      userRole === "administracion_central" ||
+      userRole === "bodeguero_proyecto"
     ) {
       options.push("despacho_bodega");
     }
@@ -1149,7 +1164,7 @@ export default function SolicitudDetalle() {
                 <div>
                   <p className="text-sm font-medium">Aprobación de servicio pendiente</p>
                   <p className="text-xs text-muted-foreground">
-                    El Administrador del Proyecto o Administración Central deben aprobar o rechazar antes de continuar a Oficina Central.
+                    El Administrador del Proyecto, Administración Central o Jefe de Bodega deben aprobar o rechazar antes de continuar a Oficina Central.
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -1195,7 +1210,7 @@ export default function SolicitudDetalle() {
                 <p className="text-xs text-muted-foreground">
                   {canReviewGoodsItems
                     ? "Autoriza o rechaza cada producto desde la tabla inferior. Cuando termines la revisión, la requisición pasará a Bodega para traducir y asignar flujos."
-                    : "Esta requisición está esperando que el Administrador del Proyecto o Administración Central revisen cada ítem antes de habilitar SAP y los flujos."}
+                    : "Esta requisición está esperando que el Administrador del Proyecto, Administración Central o Jefe de Bodega revisen cada ítem antes de habilitar SAP y los flujos."}
                 </p>
               </div>
               <Badge
@@ -1390,9 +1405,6 @@ export default function SolicitudDetalle() {
                     Exist. Proyecto
                   </th>
                   <th className="text-right p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
-                    Exist. SAP
-                  </th>
-                  <th className="text-right p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                     Comprometido
                   </th>
                   <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground min-w-[220px]">
@@ -1434,7 +1446,7 @@ export default function SolicitudDetalle() {
                       Number(editableItem.dispatchedQuantity ?? 0) > 0
                     : false;
                   const isSapTranslationLocked =
-                    !canManageProcessing ||
+                    !canManageSapTranslation ||
                     request.status === "flujo_completado" ||
                     request.status === "cerrada" ||
                     request.status === "cerrada_incompleta" ||
@@ -1513,7 +1525,6 @@ export default function SolicitudDetalle() {
                       </td>
                       <td className="p-3 text-xs">{item.unit || "—"}</td>
                       <td className="p-3 text-right text-xs">{item.projectStock || "0.00"}</td>
-                      <td className="p-3 text-right text-xs">{item.sapStock || "0.00"}</td>
                       <td className="p-3 text-right text-xs">{item.committedQuantity || "0.00"}</td>
                       <td className="p-3">
                         <SapSearchBox
@@ -1679,7 +1690,7 @@ export default function SolicitudDetalle() {
                             </Badge>
                           ) : null}
 
-                          {canManageProcessing &&
+                          {canAssignQueueFlows &&
                             request.status !== "cerrada" &&
                             request.status !== "flujo_completado" &&
                             request.status !== "cerrada_incompleta" &&
@@ -1757,7 +1768,7 @@ export default function SolicitudDetalle() {
             </table>
           </div>
 
-          {canManageProcessing &&
+          {canAssignQueueFlows &&
             request.status !== "cerrada" &&
             request.status !== "flujo_completado" &&
             request.status !== "cerrada_incompleta" &&
@@ -1788,7 +1799,7 @@ export default function SolicitudDetalle() {
                   <>
                     <AlertCircle className="h-4 w-4" />
                     <span>
-                      Esperando autorización del Administrador del Proyecto o Administración Central para habilitar SAP y los flujos.
+                      Esperando autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega para habilitar SAP y los flujos.
                     </span>
                   </>
                 )}
@@ -1863,7 +1874,7 @@ export default function SolicitudDetalle() {
                       )}
                       {flow.purchaseType && (
                         <p className="text-xs opacity-80">
-                          Tipo: {flow.purchaseType === "local" ? "Compra Local" : "Compra Extranjera"}
+                          Tipo: {PURCHASE_TYPE_LABELS[flow.purchaseType] || "—"}
                         </p>
                       )}
                       {flow.purchaseOrderNumber && (

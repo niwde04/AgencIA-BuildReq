@@ -10,7 +10,8 @@ export function useAuth(options?: { redirectOnUnauthenticated?: boolean }) {
 
   const meQuery = trpc.auth.me.useQuery(undefined, {
     retry: false,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 
   const logout = useCallback(async () => {

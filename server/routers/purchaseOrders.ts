@@ -24,7 +24,19 @@ function canAccessPurchaseOrders(user: {
     user.role === "admin" ||
     user.buildreqRole === "administracion_central" ||
     user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto" ||
     user.buildreqRole === "jefe_bodega_central"
+  );
+}
+
+function canConvertPurchaseRequestToOrder(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto"
   );
 }
 
@@ -38,12 +50,41 @@ function assertProjectScopedAccess(
 ) {
   if (user.role === "admin") return;
   if (
-    user.buildreqRole === "administrador_proyecto" &&
+    (user.buildreqRole === "administrador_proyecto" ||
+      user.buildreqRole === "bodeguero_proyecto") &&
     user.assignedProjectId !== projectId
   ) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene acceso a órdenes de compra de otro proyecto",
+    });
+  }
+}
+
+function assertProjectAdminCanConvertPurchaseType(
+  user: { buildreqRole?: string | null },
+  purchaseType?: string | null
+) {
+  if (
+    user.buildreqRole === "administrador_proyecto" &&
+    purchaseType !== "compra_directa"
+  ) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message:
+        "El Administrador del Proyecto solo puede convertir a OC solicitudes de compra directa",
+    });
+  }
+}
+
+function assertCanModifyPurchaseOrders(user: {
+  buildreqRole?: string | null;
+}) {
+  if (user.buildreqRole === "bodeguero_proyecto") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message:
+        "El Bodeguero de Proyecto solo puede consultar órdenes de compra",
     });
   }
 }
@@ -181,8 +222,9 @@ export const purchaseOrdersRouter = router({
       }
 
       const projectId =
-        ctx.user.buildreqRole === "administrador_proyecto"
-          ? (ctx.user.assignedProjectId ?? undefined)
+        ctx.user.buildreqRole === "administrador_proyecto" ||
+        ctx.user.buildreqRole === "bodeguero_proyecto"
+          ? (ctx.user.assignedProjectId ?? -1)
           : input?.projectId;
 
       return db.listPurchaseOrders({
@@ -231,8 +273,9 @@ export const purchaseOrdersRouter = router({
         supplierId: input.supplierId,
         sapCodes: input.sapCodes,
         projectId:
-          ctx.user.buildreqRole === "administrador_proyecto"
-            ? (ctx.user.assignedProjectId ?? undefined)
+          ctx.user.buildreqRole === "administrador_proyecto" ||
+          ctx.user.buildreqRole === "bodeguero_proyecto"
+            ? (ctx.user.assignedProjectId ?? -1)
             : undefined,
       });
     }),
@@ -249,13 +292,11 @@ export const purchaseOrdersRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (
-        ctx.user.role !== "admin" &&
-        ctx.user.buildreqRole !== "administracion_central"
-      ) {
+      if (!canConvertPurchaseRequestToOrder(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo Administración Central puede convertir SC a OC",
+          message:
+            "Solo Administración Central o el Administrador del Proyecto puede convertir SC a OC",
         });
       }
 
@@ -266,6 +307,12 @@ export const purchaseOrdersRouter = router({
           message: "Solicitud de compra no encontrada",
         });
       }
+      assertProjectScopedAccess(ctx.user, detail.purchaseRequest.projectId);
+      assertProjectAdminCanConvertPurchaseType(
+        ctx.user,
+        detail.purchaseRequest.purchaseType
+      );
+
       if (detail.purchaseRequest.status === "convertida") {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -311,6 +358,7 @@ export const purchaseOrdersRouter = router({
       for (const item of selectedItems) {
         const sourceProjectId =
           item.sourceProject?.id ?? detail.purchaseRequest.projectId;
+        assertProjectScopedAccess(ctx.user, sourceProjectId);
         const current = selectedItemsByProject.get(sourceProjectId) ?? [];
         current.push(item);
         selectedItemsByProject.set(sourceProjectId, current);
@@ -426,13 +474,11 @@ export const purchaseOrdersRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (
-        ctx.user.role !== "admin" &&
-        ctx.user.buildreqRole !== "administracion_central"
-      ) {
+      if (!canConvertPurchaseRequestToOrder(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo Administración Central puede convertir SC a OC",
+          message:
+            "Solo Administración Central o el Administrador del Proyecto puede convertir SC a OC",
         });
       }
 
@@ -457,6 +503,14 @@ export const purchaseOrdersRouter = router({
       }
 
       const purchaseRequests = details as Array<NonNullable<typeof details[number]>>;
+      for (const detail of purchaseRequests) {
+        assertProjectScopedAccess(ctx.user, detail.purchaseRequest.projectId);
+        assertProjectAdminCanConvertPurchaseType(
+          ctx.user,
+          detail.purchaseRequest.purchaseType
+        );
+      }
+
       const blockedRequest = purchaseRequests.find(
         (detail) =>
           !UNIFIED_PURCHASE_REQUEST_STATUSES.has(
@@ -499,6 +553,10 @@ export const purchaseOrdersRouter = router({
       const sourceProjectIds = new Set(
         allItems.map((entry) => entry.sourceProjectId)
       );
+      for (const projectId of Array.from(sourceProjectIds)) {
+        assertProjectScopedAccess(ctx.user, projectId);
+      }
+
       if (sourceProjectIds.size > 1) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -634,6 +692,7 @@ export const purchaseOrdersRouter = router({
           message: "No tiene permisos para editar la OC",
         });
       }
+      assertCanModifyPurchaseOrders(ctx.user);
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
       assertPurchaseOrderStructureEditable(detail.purchaseOrder.status);
 
@@ -659,6 +718,7 @@ export const purchaseOrdersRouter = router({
           message: "No tiene permisos para reemplazar ítems",
         });
       }
+      assertCanModifyPurchaseOrders(ctx.user);
 
       const itemDetail = await db.getPurchaseOrderItemById(
         input.purchaseOrderItemId
@@ -702,6 +762,7 @@ export const purchaseOrdersRouter = router({
           message: "No tiene permisos para actualizar montos de la OC",
         });
       }
+      assertCanModifyPurchaseOrders(ctx.user);
 
       const itemDetail = await db.getPurchaseOrderItemById(
         input.purchaseOrderItemId
@@ -755,6 +816,7 @@ export const purchaseOrdersRouter = router({
           message: "No tiene permisos para actualizar lineas de la OC",
         });
       }
+      assertCanModifyPurchaseOrders(ctx.user);
 
       const itemDetail = await db.getPurchaseOrderItemById(
         input.purchaseOrderItemId
@@ -798,6 +860,7 @@ export const purchaseOrdersRouter = router({
           message: "No tiene permisos para cerrar líneas de recepción",
         });
       }
+      assertCanModifyPurchaseOrders(ctx.user);
 
       const itemDetail = await db.getPurchaseOrderItemById(
         input.purchaseOrderItemId
@@ -872,6 +935,7 @@ export const purchaseOrdersRouter = router({
             "No tiene permisos para reenviar saldos pendientes a solicitud de compra",
         });
       }
+      assertCanModifyPurchaseOrders(ctx.user);
 
       const itemDetail = await db.getPurchaseOrderItemById(
         input.purchaseOrderItemId
@@ -1013,6 +1077,7 @@ export const purchaseOrdersRouter = router({
           message: "No tiene permisos para eliminar lineas de la OC",
         });
       }
+      assertCanModifyPurchaseOrders(ctx.user);
 
       const itemDetail = await db.getPurchaseOrderItemById(
         input.purchaseOrderItemId
@@ -1080,6 +1145,7 @@ export const purchaseOrdersRouter = router({
           message: "No tiene permisos para cancelar la OC",
         });
       }
+      assertCanModifyPurchaseOrders(ctx.user);
 
       const detail = await db.getPurchaseOrderById(input.id);
       if (!detail) {
@@ -1186,6 +1252,7 @@ export const purchaseOrdersRouter = router({
           message: "No tiene permisos para emitir la OC",
         });
       }
+      assertCanModifyPurchaseOrders(ctx.user);
 
       const detail = await db.getPurchaseOrderById(input.id);
       if (!detail) {
@@ -1229,6 +1296,26 @@ export const purchaseOrdersRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "La orden de compra ya fue emitida",
+        });
+      }
+
+      if (!detail.purchaseOrder.supplierId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Seleccione un proveedor antes de emitir la OC",
+        });
+      }
+
+      const itemWithoutPrice = (detail.items ?? []).find(
+        (item: any) =>
+          !Number.isFinite(Number(item.unitPrice ?? 0)) ||
+          Number(item.unitPrice ?? 0) <= 0
+      );
+      if (itemWithoutPrice) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Ingrese un precio unitario mayor que cero antes de emitir la OC",
         });
       }
 

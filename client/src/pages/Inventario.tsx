@@ -220,7 +220,8 @@ export default function Inventario() {
 
   useEffect(() => {
     if (
-      userRole === "administrador_proyecto" &&
+      (userRole === "administrador_proyecto" ||
+        userRole === "bodeguero_proyecto") &&
       assignedProjectId &&
       projectFilter === "all"
     ) {

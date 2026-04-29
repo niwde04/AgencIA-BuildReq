@@ -46,7 +46,14 @@ const ROLE_LABELS: Record<string, string> = {
   jefe_bodega_central: "Jefe de Bodega Central",
   administracion_central: "Administración Central",
   administrador_proyecto: "Administrador del Proyecto",
+  bodeguero_proyecto: "Bodeguero de Proyecto",
 };
+
+const PROJECT_SCOPED_ROLES = new Set([
+  "ingeniero_residente",
+  "administrador_proyecto",
+  "bodeguero_proyecto",
+]);
 
 const STATUS_CONFIG: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive"; icon: any }> = {
   pendiente: { label: "Pendiente", variant: "secondary", icon: Clock },
@@ -75,7 +82,12 @@ export default function Usuarios() {
   const updateRoleMutation = trpc.userManagement.updateRole.useMutation({
     onSuccess: () => {
       toast.success("Rol actualizado");
-      utils.userManagement.list.invalidate();
+      void Promise.all([
+        utils.userManagement.list.invalidate(),
+        utils.auth.me.invalidate(),
+        utils.dashboard.sidebarCounts.invalidate(),
+        utils.dashboard.stats.invalidate(),
+      ]);
     },
     onError: (e) => toast.error(e.message),
   });
@@ -126,7 +138,7 @@ export default function Usuarios() {
       return;
     }
     if (
-      (invRole === "ingeniero_residente" || invRole === "administrador_proyecto") &&
+      PROJECT_SCOPED_ROLES.has(invRole) &&
       !invProject
     ) {
       toast.error("Debe asignar un proyecto a este rol");
@@ -219,7 +231,7 @@ export default function Usuarios() {
                                   userId: u.id,
                                   buildreqRole: val as any,
                                   assignedProjectId:
-                                    val === "ingeniero_residente" || val === "administrador_proyecto"
+                                    PROJECT_SCOPED_ROLES.has(val)
                                       ? u.assignedProjectId ?? undefined
                                       : undefined,
                                 });
@@ -234,12 +246,12 @@ export default function Usuarios() {
                                 <SelectItem value="jefe_bodega_central">Jefe de Bodega Central</SelectItem>
                                 <SelectItem value="administracion_central">Administración Central</SelectItem>
                                 <SelectItem value="administrador_proyecto">Administrador del Proyecto</SelectItem>
+                                <SelectItem value="bodeguero_proyecto">Bodeguero de Proyecto</SelectItem>
                               </SelectContent>
                             </Select>
                           </td>
                           <td className="p-3">
-                            {u.buildreqRole === "ingeniero_residente" ||
-                            u.buildreqRole === "administrador_proyecto" ? (
+                            {PROJECT_SCOPED_ROLES.has(u.buildreqRole) ? (
                               <Select
                                 value={u.assignedProjectId ? String(u.assignedProjectId) : "none"}
                                 onValueChange={(val) => {
@@ -415,10 +427,11 @@ export default function Usuarios() {
                   <SelectItem value="jefe_bodega_central">Jefe de Bodega Central</SelectItem>
                   <SelectItem value="administracion_central">Administración Central</SelectItem>
                   <SelectItem value="administrador_proyecto">Administrador del Proyecto</SelectItem>
+                  <SelectItem value="bodeguero_proyecto">Bodeguero de Proyecto</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            {(invRole === "ingeniero_residente" || invRole === "administrador_proyecto") && (
+            {PROJECT_SCOPED_ROLES.has(invRole) && (
               <div className="space-y-2">
                 <Label>Proyecto asignado</Label>
                 <Select value={invProject} onValueChange={setInvProject}>

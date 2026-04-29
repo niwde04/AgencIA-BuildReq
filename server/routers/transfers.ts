@@ -8,8 +8,32 @@ function canAccessTransfers(user: { role: string; buildreqRole?: string | null }
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administracion_central" ||
-    user.buildreqRole === "administrador_proyecto"
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto"
   );
+}
+
+function assertProjectScopedAccess(
+  user: { role: string; buildreqRole?: string | null; assignedProjectId?: number | null },
+  transferRequest: { projectId: number; destinationProjectId?: number | null } | null
+) {
+  if (user.role === "admin") return;
+  if (
+    user.buildreqRole !== "administrador_proyecto" &&
+    user.buildreqRole !== "bodeguero_proyecto"
+  ) {
+    return;
+  }
+  if (
+    !transferRequest ||
+    user.assignedProjectId !== transferRequest.projectId &&
+    user.assignedProjectId !== transferRequest.destinationProjectId
+  ) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene acceso a traslados de otro proyecto",
+    });
+  }
 }
 
 export const transfersRouter = router({
@@ -32,13 +56,24 @@ export const transfersRouter = router({
         });
       }
 
+      const isProjectAdmin = ctx.user.buildreqRole === "administrador_proyecto";
+      const isProjectBodeguero = ctx.user.buildreqRole === "bodeguero_proyecto";
+      const scopedProjectId =
+        isProjectAdmin || isProjectBodeguero
+          ? ctx.user.assignedProjectId ?? -1
+          : undefined;
+      const sourceProjectId =
+        isProjectAdmin && !input?.receivableOnly
+          ? scopedProjectId
+          : input?.sourceProjectId;
       const destinationProjectId =
-        ctx.user.buildreqRole === "administrador_proyecto"
-          ? ctx.user.assignedProjectId ?? undefined
+        isProjectBodeguero || (isProjectAdmin && input?.receivableOnly)
+          ? scopedProjectId
           : input?.destinationProjectId;
 
       return db.listTransfers({
         ...(input ?? {}),
+        sourceProjectId,
         destinationProjectId,
       });
     }),
@@ -60,6 +95,7 @@ export const transfersRouter = router({
           message: "Traslado no encontrado",
         });
       }
+      assertProjectScopedAccess(ctx.user, detail.transferRequest);
       return detail;
     }),
 });

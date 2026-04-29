@@ -100,7 +100,8 @@ type BuildReqRole =
   | "ingeniero_residente"
   | "jefe_bodega_central"
   | "administracion_central"
-  | "administrador_proyecto";
+  | "administrador_proyecto"
+  | "bodeguero_proyecto";
 
 function parseDecimal(value: string | number | null | undefined) {
   if (value === null || value === undefined) return 0;
@@ -575,10 +576,21 @@ export async function updateUserRole(
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
+
+  const [targetUser] = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  const where = targetUser?.email?.trim()
+    ? sql`lower(${users.email}) = lower(${targetUser.email})`
+    : eq(users.id, userId);
+
   await db
     .update(users)
     .set({ buildreqRole, assignedProjectId: assignedProjectId ?? null })
-    .where(eq(users.id, userId));
+    .where(where);
   return { success: true };
 }
 
@@ -875,6 +887,44 @@ async function getStockByItem(params: {
 
   const total = rows.reduce((sum, row) => sum + parseDecimal(row.currentStock), 0);
   return toDecimalString(total);
+}
+
+export async function listProjectStockForItems(params: {
+  projectId: number;
+  items: Array<{
+    id: number;
+    sapItemCode?: string | null;
+    itemName: string;
+  }>;
+}) {
+  const stockByKey = new Map<string, string>();
+
+  for (const item of params.items) {
+    const sapItemCode = item.sapItemCode?.trim() || null;
+    const itemName = item.itemName.trim();
+    const key = sapItemCode ? `sap:${sapItemCode}` : `name:${itemName.toLowerCase()}`;
+    if (stockByKey.has(key)) continue;
+
+    stockByKey.set(
+      key,
+      await getStockByItem({
+        sapItemCode,
+        itemName,
+        projectId: params.projectId,
+      })
+    );
+  }
+
+  return params.items.map((item) => {
+    const sapItemCode = item.sapItemCode?.trim() || null;
+    const itemName = item.itemName.trim();
+    const key = sapItemCode ? `sap:${sapItemCode}` : `name:${itemName.toLowerCase()}`;
+
+    return {
+      itemId: item.id,
+      quantity: stockByKey.get(key) ?? "0.00",
+    };
+  });
 }
 
 export async function getMaterialRequestById(id: number) {
@@ -2091,6 +2141,8 @@ export async function updateSupplyFlowRecord(
 export async function listSupplyFlowRecords(filters?: {
   flowType?: string;
   status?: string;
+  requestedById?: number;
+  projectId?: number;
 }) {
   const db = await getDb();
   if (!db) return [];
@@ -2098,6 +2150,12 @@ export async function listSupplyFlowRecords(filters?: {
   const conditions = [];
   if (filters?.flowType) conditions.push(eq(supplyFlowRecords.flowType, filters.flowType as any));
   if (filters?.status) conditions.push(eq(supplyFlowRecords.status, filters.status as any));
+  if (filters?.requestedById) {
+    conditions.push(eq(materialRequests.requestedById, filters.requestedById));
+  }
+  if (filters?.projectId) {
+    conditions.push(eq(materialRequests.projectId, filters.projectId));
+  }
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -2114,7 +2172,11 @@ export async function listSupplyFlowRecords(filters?: {
     .orderBy(desc(supplyFlowRecords.createdAt));
 }
 
-export async function listPendingFlowQueueItems(filters?: { flowType?: string }) {
+export async function listPendingFlowQueueItems(filters?: {
+  flowType?: string;
+  requestedById?: number;
+  projectId?: number;
+}) {
   const db = await getDb();
   if (!db) return [];
 
@@ -2126,6 +2188,12 @@ export async function listPendingFlowQueueItems(filters?: { flowType?: string })
 
   if (filters?.flowType) {
     conditions.push(eq(requestItems.assignedFlow, filters.flowType as any));
+  }
+  if (filters?.requestedById) {
+    conditions.push(eq(materialRequests.requestedById, filters.requestedById));
+  }
+  if (filters?.projectId) {
+    conditions.push(eq(materialRequests.projectId, filters.projectId));
   }
 
   const candidateRows = await db
@@ -2498,6 +2566,13 @@ function buildPurchaseOrderDocument(params: {
   });
 }
 
+function getPurchaseTypeLabel(purchaseType?: string | null) {
+  if (purchaseType === "local") return "Compra Local";
+  if (purchaseType === "extranjera") return "Compra Extranjera";
+  if (purchaseType === "compra_directa") return "Compra Directa";
+  return "—";
+}
+
 export async function createPurchaseRequest(
   data: Omit<InsertPurchaseRequest, "requestNumber">,
   items: Omit<InsertPurchaseRequestItem, "purchaseRequestId">[]
@@ -2510,7 +2585,7 @@ export async function createPurchaseRequest(
   const printedDocumentContent = buildPurchaseRequestDocument({
     requestNumber,
     projectLabel: project ? `${project.code} - ${project.name}` : `Proyecto ${data.projectId}`,
-    purchaseType: data.purchaseType === "local" ? "Compra Local" : "Compra Extranjera",
+    purchaseType: getPurchaseTypeLabel(data.purchaseType),
     neededBy: data.neededBy,
     printedAt: new Date(),
     items: items.map((item) => ({
@@ -2700,10 +2775,7 @@ export async function getPurchaseRequestById(id: number) {
     projectLabel: rows[0].project
       ? `${rows[0].project.code} - ${rows[0].project.name}`
       : `Proyecto ${rows[0].purchaseRequest.projectId}`,
-    purchaseType:
-      rows[0].purchaseRequest.purchaseType === "local"
-        ? "Compra Local"
-        : "Compra Extranjera",
+    purchaseType: getPurchaseTypeLabel(rows[0].purchaseRequest.purchaseType),
     neededBy: rows[0].purchaseRequest.neededBy,
     printedAt: rows[0].purchaseRequest.printedAt,
     items: items.map((item) => ({
@@ -7095,9 +7167,36 @@ export async function getSapSyncLogByEntity(
 // ============================================================
 // DASHBOARD QUERIES
 // ============================================================
-export async function getDashboardStats() {
+export async function getDashboardStats(filters?: {
+  requestedById?: number;
+  projectId?: number;
+}) {
   const db = await getDb();
   if (!db) return null;
+
+  const requestConditions = [];
+  if (filters?.requestedById) {
+    requestConditions.push(eq(materialRequests.requestedById, filters.requestedById));
+  }
+  if (filters?.projectId) {
+    requestConditions.push(eq(materialRequests.projectId, filters.projectId));
+  }
+  const requestWhere =
+    requestConditions.length > 0 ? and(...requestConditions) : undefined;
+
+  const returnConditions = [];
+  if (filters?.requestedById) {
+    returnConditions.push(eq(reverseLogistics.createdById, filters.requestedById));
+  }
+  if (filters?.projectId) {
+    returnConditions.push(eq(reverseLogistics.sourceProjectId, filters.projectId));
+  }
+  const returnWhere =
+    returnConditions.length > 0 ? and(...returnConditions) : undefined;
+  const pendingReturnWhere =
+    returnConditions.length > 0
+      ? and(...returnConditions, eq(reverseLogistics.status, "pendiente"))
+      : eq(reverseLogistics.status, "pendiente");
 
   const [requestsByStatus] = await Promise.all([
     db
@@ -7106,19 +7205,37 @@ export async function getDashboardStats() {
         count: count(),
       })
       .from(materialRequests)
+      .where(requestWhere)
       .groupBy(materialRequests.status),
   ]);
 
-  const [totalRequests] = await db.select({ count: count() }).from(materialRequests);
-  const [totalProjects] = await db
+  const [totalRequests] = await db
     .select({ count: count() })
-    .from(projects)
-    .where(eq(projects.status, "activo"));
-  const [totalReturns] = await db.select({ count: count() }).from(reverseLogistics);
+    .from(materialRequests)
+    .where(requestWhere);
+  const [totalProjects] = filters?.projectId
+    ? await db
+        .select({ count: count() })
+        .from(projects)
+        .where(and(eq(projects.status, "activo"), eq(projects.id, filters.projectId)))
+    : filters?.requestedById
+      ? await db
+          .select({ count: sql<number>`count(distinct ${materialRequests.projectId})` })
+          .from(materialRequests)
+          .leftJoin(projects, eq(materialRequests.projectId, projects.id))
+          .where(and(eq(projects.status, "activo"), eq(materialRequests.requestedById, filters.requestedById)))
+      : await db
+          .select({ count: count() })
+          .from(projects)
+          .where(eq(projects.status, "activo"));
+  const [totalReturns] = await db
+    .select({ count: count() })
+    .from(reverseLogistics)
+    .where(returnWhere);
   const [pendingReturns] = await db
     .select({ count: count() })
     .from(reverseLogistics)
-    .where(eq(reverseLogistics.status, "pendiente"));
+    .where(pendingReturnWhere);
 
   const requestsByProject = await db
     .select({
@@ -7129,6 +7246,7 @@ export async function getDashboardStats() {
     })
     .from(materialRequests)
     .leftJoin(projects, eq(materialRequests.projectId, projects.id))
+    .where(requestWhere)
     .groupBy(materialRequests.projectId, projects.code, projects.name);
 
   const requestsByFlow = await db
@@ -7137,6 +7255,8 @@ export async function getDashboardStats() {
       count: count(),
     })
     .from(supplyFlowRecords)
+    .leftJoin(materialRequests, eq(supplyFlowRecords.requestId, materialRequests.id))
+    .where(requestWhere)
     .groupBy(supplyFlowRecords.flowType);
 
   const recentRequests = await db
@@ -7146,6 +7266,7 @@ export async function getDashboardStats() {
     })
     .from(materialRequests)
     .leftJoin(projects, eq(materialRequests.projectId, projects.id))
+    .where(requestWhere)
     .orderBy(desc(materialRequests.createdAt))
     .limit(10);
 

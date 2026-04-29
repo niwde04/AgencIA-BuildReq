@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { downloadBase64Document } from "@/lib/document-download";
 import { trpc } from "@/lib/trpc";
 import { Download, Eye, PackageMinus, Plus, RotateCcw, Send, XCircle } from "lucide-react";
@@ -96,6 +97,7 @@ function getSuggestedDeliveryQuantity(item: any) {
 
 export default function SalidasBodega() {
   const utils = trpc.useUtils();
+  const { user } = useAuth();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [returnPanelOpen, setReturnPanelOpen] = useState(false);
   const [returnReasonCategory, setReturnReasonCategory] = useState("error_pedido");
@@ -114,6 +116,8 @@ export default function SalidasBodega() {
   >({});
 
   const { data: exits, isLoading } = trpc.warehouseExits.list.useQuery();
+  const canCreateReturns =
+    user?.role === "admin" || (user as any)?.buildreqRole === "jefe_bodega_central";
   const { data: materialRequests } = trpc.materialRequests.list.useQuery({
     requestType: "bienes",
   });
@@ -600,7 +604,7 @@ export default function SalidasBodega() {
                 </table>
               </div>
 
-              {returnPanelOpen ? (
+              {canCreateReturns && returnPanelOpen ? (
                 <div className="space-y-4 rounded-xl border border-primary/20 bg-primary/5 p-4">
                   <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                     <div>
@@ -752,7 +756,7 @@ export default function SalidasBodega() {
               ) : null}
 
               <div className="flex flex-wrap justify-end gap-3 border-t pt-4">
-                {detail.warehouseExit.status === "emitida" ? (
+                {canCreateReturns && detail.warehouseExit.status === "emitida" ? (
                   <Button
                     variant="outline"
                     onClick={openReturnPanel}

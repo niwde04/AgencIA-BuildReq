@@ -3,8 +3,22 @@ import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 
 export const dashboardRouter = router({
-  stats: protectedProcedure.query(async () => {
-    return db.getDashboardStats();
+  stats: protectedProcedure.query(async ({ ctx }) => {
+    const user = ctx.user;
+    const userRole = user.buildreqRole;
+    const scopedProjectId =
+      userRole === "administrador_proyecto" || userRole === "bodeguero_proyecto"
+        ? user.assignedProjectId ?? -1
+        : userRole === "ingeniero_residente"
+          ? user.assignedProjectId ?? undefined
+          : undefined;
+
+    return db.getDashboardStats({
+      ...(userRole === "ingeniero_residente"
+        ? { requestedById: user.id }
+        : {}),
+      ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+    });
   }),
 
   sidebarCounts: protectedProcedure.query(async ({ ctx }) => {
@@ -12,14 +26,38 @@ export const dashboardRouter = router({
     const userRole = user.buildreqRole;
     const isAdmin = user.role === "admin";
     const scopedProjectId =
-      userRole === "administrador_proyecto"
-        ? user.assignedProjectId ?? undefined
+      userRole === "administrador_proyecto" || userRole === "bodeguero_proyecto"
+        ? user.assignedProjectId ?? -1
         : undefined;
     const canAccessProcurement =
       isAdmin ||
       userRole === "jefe_bodega_central" ||
       userRole === "administracion_central" ||
       userRole === "administrador_proyecto";
+    const canAccessPurchaseOrders =
+      canAccessProcurement || userRole === "bodeguero_proyecto";
+    const flowQueueScope =
+      userRole === "ingeniero_residente"
+        ? { requestedById: user.id }
+        : scopedProjectId
+          ? { projectId: scopedProjectId }
+          : undefined;
+    const visibleFlowTypes =
+      userRole === "bodeguero_proyecto"
+        ? ["despacho_bodega", "compra_directa"]
+        : userRole === "administrador_proyecto"
+          ? ["compra_directa", "solicitud_compra"]
+          : null;
+    const pendingFlowRowsPromise = visibleFlowTypes
+      ? Promise.all(
+          visibleFlowTypes.map((flowType) =>
+            db.listPendingFlowQueueItems({
+              ...(flowQueueScope ?? {}),
+              flowType,
+            })
+          )
+        ).then((rows) => rows.flat())
+      : db.listPendingFlowQueueItems(flowQueueScope);
 
     const [
       materialRequestsPendingApproval,
@@ -35,14 +73,14 @@ export const dashboardRouter = router({
           : {}),
         ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
       }),
-      db.listPendingFlowQueueItems(),
+      pendingFlowRowsPromise,
       canAccessProcurement
         ? db.listPurchaseRequests({
             status: "pendiente",
             ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
           })
         : Promise.resolve([]),
-      canAccessProcurement
+      canAccessPurchaseOrders
         ? db.listPurchaseOrders({
             status: "emitida",
             ...(scopedProjectId ? { projectId: scopedProjectId } : {}),

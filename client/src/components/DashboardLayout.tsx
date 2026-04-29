@@ -86,13 +86,18 @@ const allMenuItems: MenuItem[] = [
     icon: Warehouse,
     label: "Inventario",
     path: "/inventario",
-    roles: ["jefe_bodega_central", "administracion_central"],
+    roles: ["jefe_bodega_central", "administracion_central", "bodeguero_proyecto"],
   },
   {
     icon: PackageMinus,
     label: "Salidas de Inventario",
     path: "/salidas-inventario",
-    roles: ["jefe_bodega_central", "administracion_central", "admin"],
+    roles: [
+      "jefe_bodega_central",
+      "administracion_central",
+      "bodeguero_proyecto",
+      "admin",
+    ],
   },
   {
     icon: Building2,
@@ -125,6 +130,7 @@ const allMenuItems: MenuItem[] = [
       "jefe_bodega_central",
       "administracion_central",
       "administrador_proyecto",
+      "bodeguero_proyecto",
       "admin",
     ],
   },
@@ -158,6 +164,7 @@ const allMenuItems: MenuItem[] = [
       "jefe_bodega_central",
       "administracion_central",
       "administrador_proyecto",
+      "bodeguero_proyecto",
       "admin",
     ],
   },
@@ -309,6 +316,7 @@ function DashboardLayoutContent({
     jefe_bodega_central: "Jefe de Bodega",
     administracion_central: "Admin. Central",
     administrador_proyecto: "Admin. Proyecto",
+    bodeguero_proyecto: "Bodeguero de Proyecto",
   };
 
   return (

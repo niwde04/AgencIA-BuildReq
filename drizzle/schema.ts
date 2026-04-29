@@ -21,6 +21,7 @@ export const buildreqRoleEnum = pgEnum("buildreq_role", [
   "jefe_bodega_central",
   "administracion_central",
   "administrador_proyecto",
+  "bodeguero_proyecto",
 ]);
 export const projectStatusEnum = pgEnum("project_status", [
   "activo",
@@ -82,7 +83,11 @@ export const paymentMethodEnum = pgEnum("payment_method", [
   "linea_credito",
   "caja_chica",
 ]);
-export const purchaseTypeEnum = pgEnum("purchase_type", ["local", "extranjera"]);
+export const purchaseTypeEnum = pgEnum("purchase_type", [
+  "local",
+  "extranjera",
+  "compra_directa",
+]);
 export const sapDocumentTypeEnum = pgEnum("sap_document_type", [
   "entrada_mercancia",
   "salida_inventario",

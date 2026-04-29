@@ -210,7 +210,12 @@ export default function Recepciones() {
   const { data: transferDetail, isLoading: transferDetailLoading } =
     trpc.transfers.getById.useQuery(
       { id: Number(sourceId) },
-      { enabled: dialogOpen && sourceType === "transfer" && Boolean(sourceId) }
+      {
+        enabled:
+          dialogOpen &&
+          sourceType === "transfer" &&
+          Boolean(sourceId),
+      }
     );
 
   const activeSourceDetail =

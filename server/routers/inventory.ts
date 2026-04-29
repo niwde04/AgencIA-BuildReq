@@ -13,6 +13,38 @@ function assertCanReadInventory(ctx: { user: { buildreqRole?: string | null } })
 }
 
 export const inventoryRouter = router({
+  projectStockForItems: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.number().int().positive(),
+        items: z
+          .array(
+            z.object({
+              id: z.number().int().positive(),
+              sapItemCode: z.string().nullable().optional(),
+              itemName: z.string().min(1),
+            })
+          )
+          .max(200),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const canReadTransferOriginStock =
+        ctx.user.role === "admin" ||
+        ctx.user.buildreqRole === "jefe_bodega_central" ||
+        ctx.user.buildreqRole === "administracion_central" ||
+        ctx.user.buildreqRole === "bodeguero_proyecto";
+
+      if (!canReadTransferOriginStock) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a existencias de proyecto origen",
+        });
+      }
+
+      return db.listProjectStockForItems(input);
+    }),
+
   list: protectedProcedure
     .input(
       z
@@ -42,7 +74,13 @@ export const inventoryRouter = router({
     )
     .query(async ({ ctx, input }) => {
       assertCanReadInventory(ctx);
-      return db.listInventoryItems(input ?? undefined);
+      return db.listInventoryItems({
+        ...(input ?? {}),
+        ...(ctx.user.buildreqRole === "administrador_proyecto" ||
+        ctx.user.buildreqRole === "bodeguero_proyecto"
+          ? { projectId: ctx.user.assignedProjectId ?? -1 }
+          : {}),
+      });
     }),
 
   tracking: protectedProcedure
@@ -56,7 +94,13 @@ export const inventoryRouter = router({
     )
     .query(async ({ ctx, input }) => {
       assertCanReadInventory(ctx);
-      return db.getInventoryTracking(input);
+      return db.getInventoryTracking({
+        ...input,
+        ...(ctx.user.buildreqRole === "administrador_proyecto" ||
+        ctx.user.buildreqRole === "bodeguero_proyecto"
+          ? { projectId: ctx.user.assignedProjectId ?? -1 }
+          : {}),
+      });
     }),
 
   kardex: protectedProcedure
@@ -70,7 +114,13 @@ export const inventoryRouter = router({
     )
     .query(async ({ ctx, input }) => {
       assertCanReadInventory(ctx);
-      return db.getInventoryKardex(input);
+      return db.getInventoryKardex({
+        ...input,
+        ...(ctx.user.buildreqRole === "administrador_proyecto" ||
+        ctx.user.buildreqRole === "bodeguero_proyecto"
+          ? { projectId: ctx.user.assignedProjectId ?? -1 }
+          : {}),
+      });
     }),
 
   create: protectedProcedure

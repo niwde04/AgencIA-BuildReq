@@ -24,10 +24,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   CalendarDays,
   Download,
+  Eye,
   FileText,
   FileUp,
   FolderOpen,
   Save,
+  Search,
   ShoppingCart,
   XCircle,
 } from "lucide-react";
@@ -44,11 +46,29 @@ const STATUS_LABELS: Record<string, string> = {
   anulada: "Anulada",
 };
 
+const STATUS_COLORS: Record<string, string> = {
+  pendiente: "border-amber-300 bg-amber-50 text-amber-700",
+  en_revision: "border-blue-300 bg-blue-50 text-blue-700",
+  aprobada: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  rechazada: "border-rose-300 bg-rose-50 text-rose-700",
+  parcialmente_convertida: "border-cyan-300 bg-cyan-50 text-cyan-700",
+  convertida: "border-slate-300 bg-slate-50 text-slate-700",
+  anulada: "border-red-300 bg-red-50 text-red-700",
+};
+
 const UNIFIED_CONVERTIBLE_STATUSES = new Set([
   "pendiente",
   "en_revision",
   "aprobada",
 ]);
+type PurchaseType = "local" | "extranjera" | "compra_directa";
+const PURCHASE_TYPE_LABELS: Record<PurchaseType, string> = {
+  local: "Compra Local",
+  extranjera: "Compra Extranjera",
+  compra_directa: "Compra Directa",
+};
+const getPurchaseTypeLabel = (value?: string | null) =>
+  PURCHASE_TYPE_LABELS[value as PurchaseType] ?? "—";
 
 export default function PurchaseRequests() {
   const { user } = useAuth();
@@ -57,9 +77,11 @@ export default function PurchaseRequests() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editNotes, setEditNotes] = useState("");
   const [editNeededBy, setEditNeededBy] = useState("");
-  const [editPurchaseType, setEditPurchaseType] = useState<"local" | "extranjera">("local");
+  const [editPurchaseType, setEditPurchaseType] = useState<PurchaseType>("local");
   const [selectedRequestIds, setSelectedRequestIds] = useState<number[]>([]);
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [purchaseTypeFilter, setPurchaseTypeFilter] = useState<PurchaseType | "all">("all");
   const [rejectReason, setRejectReason] = useState("");
   const [emailDialog, setEmailDialog] = useState<{
     to: string;
@@ -79,8 +101,49 @@ export default function PurchaseRequests() {
 
   const canReject =
     user?.role === "admin" || (user as any)?.buildreqRole === "administrador_proyecto";
+  const buildreqRole = (user as any)?.buildreqRole;
+  const isProjectAdmin = buildreqRole === "administrador_proyecto";
   const canConvert =
-    user?.role === "admin" || (user as any)?.buildreqRole === "administracion_central";
+    user?.role === "admin" ||
+    buildreqRole === "administracion_central" ||
+    isProjectAdmin;
+
+  const filteredRequests = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+
+    return (requests ?? []).filter((row: any) => {
+      const purchaseRequest = row.purchaseRequest;
+      const matchesType =
+        purchaseTypeFilter === "all" ||
+        purchaseRequest.purchaseType === purchaseTypeFilter;
+      const projectLabel =
+        row.projectSummary?.label ||
+        (row.project ? `${row.project.code} ${row.project.name}` : "");
+      const matchesSearch =
+        !normalizedSearch ||
+        [
+          purchaseRequest.requestNumber,
+          purchaseRequest.sapDocumentNumber,
+          projectLabel,
+        ]
+          .filter(Boolean)
+          .some((value) =>
+            String(value).toLowerCase().includes(normalizedSearch)
+          );
+
+      return matchesType && matchesSearch;
+    });
+  }, [purchaseTypeFilter, requests, searchTerm]);
+
+  const canProjectAdminConvertPurchaseRequest = (
+    purchaseRequest: { purchaseType?: string | null; status?: string | null }
+  ) =>
+    !isProjectAdmin || purchaseRequest.purchaseType === "compra_directa";
+
+  const canConvertPurchaseRequestRow = (row: any) =>
+    canConvert &&
+    UNIFIED_CONVERTIBLE_STATUSES.has(row.purchaseRequest.status) &&
+    canProjectAdminConvertPurchaseRequest(row.purchaseRequest);
 
   const updateMutation = trpc.purchaseRequests.update.useMutation({
     onSuccess: () => {
@@ -183,22 +246,52 @@ export default function PurchaseRequests() {
     return detail?.items ?? [];
   }, [detail]);
 
+  const convertibleItemIds = useMemo(() => {
+    if (!canConvert) return [];
+    if (
+      isProjectAdmin &&
+      detail?.purchaseRequest.purchaseType !== "compra_directa"
+    ) {
+      return [];
+    }
+    const assignedProjectId = (user as any)?.assignedProjectId;
+
+    return selectedItems
+      .filter((item: any) => {
+        if (!isProjectAdmin) return true;
+        const itemProjectId =
+          item.sourceProject?.id ?? detail?.purchaseRequest.projectId;
+        return assignedProjectId === itemProjectId;
+      })
+      .map((item: any) => item.id);
+  }, [
+    canConvert,
+    detail?.purchaseRequest.projectId,
+    detail?.purchaseRequest.purchaseType,
+    isProjectAdmin,
+    selectedItems,
+    user,
+  ]);
+
+  const convertibleItemIdSet = useMemo(
+    () => new Set(convertibleItemIds),
+    [convertibleItemIds]
+  );
+
   const itemIdsToConvert = useMemo(
     () =>
       selectedItemIds.length > 0
-        ? selectedItemIds
-        : selectedItems.map((item: any) => item.id),
-    [selectedItemIds, selectedItems]
+        ? selectedItemIds.filter((id) => convertibleItemIdSet.has(id))
+        : convertibleItemIds,
+    [convertibleItemIdSet, convertibleItemIds, selectedItemIds]
   );
 
   const convertibleRequestIds = useMemo(
     () =>
-      (requests ?? [])
-        .filter((row: any) =>
-          UNIFIED_CONVERTIBLE_STATUSES.has(row.purchaseRequest.status)
-        )
+      filteredRequests
+        .filter((row: any) => canConvertPurchaseRequestRow(row))
         .map((row: any) => row.purchaseRequest.id),
-    [requests]
+    [filteredRequests, canConvert, isProjectAdmin]
   );
   const allConvertibleSelected =
     convertibleRequestIds.length > 0 &&
@@ -213,6 +306,12 @@ export default function PurchaseRequests() {
     );
   }, [convertibleRequestIds]);
 
+  useEffect(() => {
+    setSelectedItemIds((current) =>
+      current.filter((id) => convertibleItemIdSet.has(id))
+    );
+  }, [convertibleItemIdSet]);
+
   const projectLabel =
     detail?.projectSummary?.label ||
     (detail?.project
@@ -222,9 +321,16 @@ export default function PurchaseRequests() {
         : "Proyecto pendiente");
   const isMixedProjectRequest = Boolean(detail?.projectSummary?.isMixed);
   const isConvertedPurchaseRequest = detail?.purchaseRequest.status === "convertida";
+  const isProjectAdminReadOnlyRequest =
+    isProjectAdmin &&
+    Boolean(detail) &&
+    detail?.purchaseRequest.purchaseType !== "compra_directa";
+  const canEditSelectedPurchaseRequest =
+    !isConvertedPurchaseRequest && !isProjectAdminReadOnlyRequest;
+  const canConvertSelectedPurchaseRequest =
+    canConvert && canEditSelectedPurchaseRequest;
 
-  const purchaseTypeLabel =
-    editPurchaseType === "local" ? "Compra Local" : "Compra Extranjera";
+  const purchaseTypeLabel = getPurchaseTypeLabel(editPurchaseType);
 
   const openRequest = (id: number) => {
     setSelectedId(id);
@@ -235,7 +341,7 @@ export default function PurchaseRequests() {
         ? new Date(row.purchaseRequest.neededBy).toISOString().slice(0, 10)
         : ""
     );
-    setEditPurchaseType((row?.purchaseRequest.purchaseType || "local") as "local" | "extranjera");
+    setEditPurchaseType((row?.purchaseRequest.purchaseType || "local") as PurchaseType);
     setSelectedItemIds([]);
     setRejectReason("");
   };
@@ -294,6 +400,34 @@ export default function PurchaseRequests() {
         ) : null}
       </div>
 
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Buscar por número de SC, proyecto o documento..."
+            className="h-10 pl-9"
+          />
+        </div>
+        <Select
+          value={purchaseTypeFilter}
+          onValueChange={(value) =>
+            setPurchaseTypeFilter(value as PurchaseType | "all")
+          }
+        >
+          <SelectTrigger className="h-10 w-full lg:w-64">
+            <SelectValue placeholder="Tipo de compra" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos los tipos</SelectItem>
+            <SelectItem value="compra_directa">Compra Directa</SelectItem>
+            <SelectItem value="local">Compra Local</SelectItem>
+            <SelectItem value="extranjera">Compra Extranjera</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
@@ -303,6 +437,10 @@ export default function PurchaseRequests() {
           ) : !(requests || []).length ? (
             <div className="p-8 text-center text-muted-foreground">
               No hay solicitudes de compra registradas
+            </div>
+          ) : !filteredRequests.length ? (
+            <div className="p-8 text-center text-muted-foreground">
+              No hay solicitudes de compra que coincidan con los filtros
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -357,12 +495,8 @@ export default function PurchaseRequests() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(requests || []).map((row: any) => {
-                    const canSelectForUnified =
-                      canConvert &&
-                      UNIFIED_CONVERTIBLE_STATUSES.has(
-                        row.purchaseRequest.status
-                      );
+                  {filteredRequests.map((row: any) => {
+                    const canSelectForUnified = canConvertPurchaseRequestRow(row);
 
                     return (
                     <tr key={row.purchaseRequest.id} className="border-b border-border last:border-0">
@@ -389,9 +523,7 @@ export default function PurchaseRequests() {
                           (row.project ? `${row.project.code} — ${row.project.name}` : "—")}
                       </td>
                       <td className="p-3 text-xs">
-                        {row.purchaseRequest.purchaseType === "local"
-                          ? "Compra Local"
-                          : "Compra Extranjera"}
+                        {getPurchaseTypeLabel(row.purchaseRequest.purchaseType)}
                       </td>
                       <td className="p-3 text-xs">
                         {row.purchaseRequest.createdAt
@@ -400,7 +532,12 @@ export default function PurchaseRequests() {
                       </td>
                       <td className="p-3 text-xs">{row.purchaseRequest.sapDocumentNumber || "—"}</td>
                       <td className="p-3">
-                        <Badge variant="outline" className="text-xs">
+                        <Badge
+                          variant="outline"
+                          className={`text-xs ${
+                            STATUS_COLORS[row.purchaseRequest.status] || ""
+                          }`}
+                        >
                           {STATUS_LABELS[row.purchaseRequest.status] || row.purchaseRequest.status}
                         </Badge>
                       </td>
@@ -413,7 +550,12 @@ export default function PurchaseRequests() {
                         {row.purchaseRequest.printedDocumentContent ? "Listo" : "Pendiente"}
                       </td>
                       <td className="p-3 text-right">
-                        <Button variant="outline" size="sm" onClick={() => openRequest(row.purchaseRequest.id)}>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openRequest(row.purchaseRequest.id)}
+                        >
+                          <Eye className="mr-2 h-4 w-4" />
                           Ver
                         </Button>
                       </td>
@@ -443,6 +585,8 @@ export default function PurchaseRequests() {
                 <p className="text-sm text-muted-foreground">
                   {isConvertedPurchaseRequest
                     ? "Esta solicitud ya fue convertida a orden de compra y se muestra en modo solo lectura."
+                    : isProjectAdminReadOnlyRequest
+                    ? "Esta solicitud es informativa para el Administrador del Proyecto. Solo las compras directas pueden convertirse a OC desde este rol."
                     : "Revisa la solicitud, adjunta cotización y convierte los ítems seleccionados a orden de compra cuando ya esté lista."}
                 </p>
               </div>
@@ -482,9 +626,9 @@ export default function PurchaseRequests() {
                   <Select
                     value={editPurchaseType}
                     onValueChange={(value) =>
-                      setEditPurchaseType(value as "local" | "extranjera")
+                      setEditPurchaseType(value as PurchaseType)
                     }
-                    disabled={isConvertedPurchaseRequest}
+                    disabled={!canEditSelectedPurchaseRequest}
                   >
                     <SelectTrigger className="h-12 text-base">
                       <SelectValue />
@@ -492,6 +636,7 @@ export default function PurchaseRequests() {
                     <SelectContent>
                       <SelectItem value="local">Compra Local</SelectItem>
                       <SelectItem value="extranjera">Compra Extranjera</SelectItem>
+                      <SelectItem value="compra_directa">Compra Directa</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="mt-2 text-sm text-muted-foreground">{purchaseTypeLabel}</p>
@@ -507,7 +652,7 @@ export default function PurchaseRequests() {
                     type="date"
                     value={editNeededBy}
                     onChange={(event) => setEditNeededBy(event.target.value)}
-                    disabled={isConvertedPurchaseRequest}
+                    disabled={!canEditSelectedPurchaseRequest}
                   />
                   <p className="mt-2 text-sm text-muted-foreground">
                     Programa la fecha objetivo para gestionar esta compra.
@@ -540,10 +685,16 @@ export default function PurchaseRequests() {
                     rows={4}
                     className="min-h-[140px] resize-y text-sm"
                     placeholder="Detalles, condiciones o instrucciones importantes para esta solicitud de compra"
-                    disabled={isConvertedPurchaseRequest}
+                    disabled={!canEditSelectedPurchaseRequest}
                   />
                 </div>
               </div>
+
+              {isProjectAdminReadOnlyRequest && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  Solo consulta: las solicitudes de Compra Local o Compra Extranjera continúan con Administración Central.
+                </div>
+              )}
 
               <div className="rounded-2xl border border-border/70 bg-card">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-4">
@@ -552,16 +703,16 @@ export default function PurchaseRequests() {
                     <p className="text-sm text-muted-foreground">
                       {isConvertedPurchaseRequest
                         ? "Los ítems ya fueron convertidos y esta solicitud quedó cerrada para edición."
-                        : canConvert
+                        : canConvertSelectedPurchaseRequest
                         ? "Marca los renglones que deseas convertir a la próxima orden de compra."
                         : "Detalle de ítems incluidos en la solicitud."}
                     </p>
                   </div>
-                  {canConvert && !isConvertedPurchaseRequest && (
+                  {canConvertSelectedPurchaseRequest && (
                     <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
                       {selectedItemIds.length > 0
                         ? `${selectedItemIds.length} seleccionados`
-                        : `Se convertirán los ${selectedItems.length}`}
+                        : `Se convertirán ${convertibleItemIds.length}`}
                     </Badge>
                   )}
                 </div>
@@ -570,7 +721,7 @@ export default function PurchaseRequests() {
                   <table className="w-full min-w-[1080px] text-sm">
                     <thead>
                       <tr className="border-b border-border bg-muted/20">
-                        {canConvert && !isConvertedPurchaseRequest && (
+                        {canConvertSelectedPurchaseRequest && (
                           <th className="w-20 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             A OC
                           </th>
@@ -595,10 +746,11 @@ export default function PurchaseRequests() {
                     <tbody>
                       {selectedItems.map((item: any) => (
                         <tr key={item.id} className="border-b border-border/70 last:border-0">
-                        {canConvert && !isConvertedPurchaseRequest && (
+                        {canConvertSelectedPurchaseRequest && (
                           <td className="p-4 align-top">
                             <Checkbox
                                 checked={selectedItemIds.includes(item.id)}
+                                disabled={!convertibleItemIdSet.has(item.id)}
                                 onCheckedChange={(checked) => {
                                   setSelectedItemIds((current) =>
                                     checked
@@ -656,7 +808,7 @@ export default function PurchaseRequests() {
                     Descargar documento
                   </Button>
 
-                  {!isConvertedPurchaseRequest && (
+                  {canEditSelectedPurchaseRequest && (
                     <>
                       <input
                         ref={fileInputRef}
@@ -677,7 +829,7 @@ export default function PurchaseRequests() {
                   )}
                 </div>
 
-                {!isConvertedPurchaseRequest && (
+                {canEditSelectedPurchaseRequest && (
                   <div className="flex flex-wrap gap-3">
                     <Button
                       variant="outline"
@@ -696,7 +848,7 @@ export default function PurchaseRequests() {
                       Guardar cambios
                     </Button>
 
-                    {canReject && (
+                    {canReject && canEditSelectedPurchaseRequest && (
                       <Button
                         variant="destructive"
                         className="h-11 px-4"
@@ -717,7 +869,7 @@ export default function PurchaseRequests() {
                       </Button>
                     )}
 
-                    {canConvert && (
+                    {canConvertSelectedPurchaseRequest && (
                       <Button
                         className="h-11 px-5"
                         onClick={() =>
@@ -736,7 +888,7 @@ export default function PurchaseRequests() {
                 )}
               </div>
 
-              {canReject && !isConvertedPurchaseRequest && (
+              {canReject && canEditSelectedPurchaseRequest && (
                 <div className="rounded-2xl border border-border/70 bg-card p-5">
                   <div className="space-y-2">
                     <Label className="text-sm font-semibold">Motivo de anulación</Label>

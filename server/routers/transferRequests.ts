@@ -12,6 +12,34 @@ function canAccessTransfers(user: { role: string; buildreqRole?: string | null }
   );
 }
 
+function canCreateTransferRequests(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "administracion_central"
+  );
+}
+
+function assertProjectScopedAccess(
+  user: { role: string; buildreqRole?: string | null; assignedProjectId?: number | null },
+  transferRequest: { projectId: number; destinationProjectId?: number | null }
+) {
+  if (user.role === "admin") return;
+  if (user.buildreqRole !== "administrador_proyecto") return;
+  if (
+    user.assignedProjectId !== transferRequest.projectId &&
+    user.assignedProjectId !== transferRequest.destinationProjectId
+  ) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene acceso a solicitudes de traslado de otro proyecto",
+    });
+  }
+}
+
 async function releaseTransferRequestItems(
   materialRequestItemIds: Array<number | null | undefined>,
   userId: number,
@@ -93,7 +121,7 @@ export const transferRequestsRouter = router({
 
       const projectId =
         ctx.user.buildreqRole === "administrador_proyecto"
-          ? ctx.user.assignedProjectId ?? undefined
+          ? ctx.user.assignedProjectId ?? -1
           : input?.projectId;
 
       return db.listTransferRequests({
@@ -119,6 +147,7 @@ export const transferRequestsRouter = router({
           message: "Solicitud de traslado no encontrada",
         });
       }
+      assertProjectScopedAccess(ctx.user, detail.transferRequest);
       return detail;
     }),
 
@@ -135,7 +164,7 @@ export const transferRequestsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (!canAccessTransfers(ctx.user)) {
+      if (!canCreateTransferRequests(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para crear solicitudes de traslado",

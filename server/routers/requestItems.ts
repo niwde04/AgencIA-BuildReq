@@ -7,7 +7,9 @@ function canAssignFlows(user: { role: string; buildreqRole?: string | null }) {
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
-    user.buildreqRole === "administracion_central"
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto"
   );
 }
 
@@ -18,7 +20,9 @@ function canManageSapTranslation(user: {
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
-    user.buildreqRole === "administracion_central"
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto"
   );
 }
 
@@ -31,6 +35,59 @@ function canRejectApprovedItems(user: {
     user.buildreqRole === "administrador_proyecto" ||
     user.buildreqRole === "administracion_central"
   );
+}
+
+function canManageWarehouseDispatch(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "bodeguero_proyecto"
+  );
+}
+
+const BODEGUERO_PROJECT_FLOW_TYPES = new Set([
+  "despacho_bodega",
+  "compra_directa",
+  "traslado_proyecto",
+]);
+
+const PROJECT_ADMIN_FLOW_TYPES = new Set([
+  "compra_directa",
+  "solicitud_compra",
+]);
+
+const QUEUE_FLOW_TYPES = [
+  "compra_directa",
+  "despacho_bodega",
+  "traslado_proyecto",
+  "solicitud_compra",
+] as const;
+
+function canReturnQueuedFlowToRequisition(
+  user: { role: string; buildreqRole?: string | null },
+  flowType: (typeof QUEUE_FLOW_TYPES)[number]
+) {
+  if (
+    user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "administracion_central"
+  ) {
+    return true;
+  }
+
+  if (user.buildreqRole === "administrador_proyecto") {
+    return PROJECT_ADMIN_FLOW_TYPES.has(flowType);
+  }
+
+  if (user.buildreqRole === "bodeguero_proyecto") {
+    return BODEGUERO_PROJECT_FLOW_TYPES.has(flowType);
+  }
+
+  return false;
 }
 
 function canAccessRequest(
@@ -47,6 +104,9 @@ function canAccessRequest(
     return request.requestedById === user.id;
   }
   if (user.buildreqRole === "administrador_proyecto") {
+    return Boolean(user.assignedProjectId) && user.assignedProjectId === request.projectId;
+  }
+  if (user.buildreqRole === "bodeguero_proyecto") {
     return Boolean(user.assignedProjectId) && user.assignedProjectId === request.projectId;
   }
   return true;
@@ -73,7 +133,7 @@ async function assertItemApprovedForProcessing(requestItemId: number) {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message:
-        "La requisición todavía está pendiente de autorización del Administrador del Proyecto o Administración Central",
+        "La requisición todavía está pendiente de autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega",
     });
   }
 
@@ -137,10 +197,78 @@ async function assertSapTranslationCanBeChanged(item: {
   }
 }
 
+async function assertQueuedFlowCanBeCleared(
+  user: {
+    id: number;
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+  },
+  itemId: number,
+  flowType: (typeof QUEUE_FLOW_TYPES)[number]
+) {
+  const { item, detail } = await assertItemApprovedForProcessing(itemId);
+  if (!canAccessRequest(user, detail.request)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene acceso a esta solicitud",
+    });
+  }
+
+  if (item.assignedFlow !== flowType) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "El ítem ya no está en el flujo seleccionado",
+    });
+  }
+
+  if (
+    detail.request.status === "borrador" ||
+    detail.request.status === "flujo_completado" ||
+    detail.request.status === "cerrada" ||
+    detail.request.status === "cerrada_incompleta" ||
+    detail.request.status === "anulada"
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "La requisición ya no permite cambios de flujo",
+    });
+  }
+
+  const existingFlows = (await db.getSupplyFlowByRequestId(item.requestId)).filter(
+    (flow) => flow.requestItemId === item.id && flow.status !== "cancelado"
+  );
+  const hasMovement =
+    Number(item.deliveredQuantity ?? 0) > 0 ||
+    Number(item.dispatchedQuantity ?? 0) > 0;
+
+  if (existingFlows.length > 0 || hasMovement) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Este ítem ya tiene movimientos registrados y no se puede quitar del flujo",
+    });
+  }
+
+  return item;
+}
+
 export const requestItemsRouter = router({
   getByRequestId: protectedProcedure
     .input(z.object({ requestId: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
+      const detail = await db.getMaterialRequestById(input.requestId);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Requisición no encontrada",
+        });
+      }
+      if (!canAccessRequest(ctx.user, detail.request)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a esta solicitud",
+        });
+      }
       return db.getRequestItemsByRequestId(input.requestId);
     }),
 
@@ -190,7 +318,13 @@ export const requestItemsRouter = router({
           message: "No tiene permisos para traducir ítems a códigos SAP",
         });
       }
-      const { item } = await assertItemApprovedForProcessing(input.id);
+      const { item, detail } = await assertItemApprovedForProcessing(input.id);
+      if (!canAccessRequest(ctx.user, detail.request)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a esta solicitud",
+        });
+      }
       await assertSapTranslationCanBeChanged(item);
 
       return db.updateRequestItem(input.id, {
@@ -209,7 +343,13 @@ export const requestItemsRouter = router({
         });
       }
 
-      const { item } = await assertItemApprovedForProcessing(input.id);
+      const { item, detail } = await assertItemApprovedForProcessing(input.id);
+      if (!canAccessRequest(ctx.user, detail.request)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a esta solicitud",
+        });
+      }
       await assertSapTranslationCanBeChanged(item);
 
       const clearedFlow = Boolean(item.assignedFlow);
@@ -251,6 +391,34 @@ export const requestItemsRouter = router({
       }
 
       const { item, detail } = await assertItemApprovedForProcessing(input.id);
+      if (!canAccessRequest(ctx.user, detail.request)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a esta solicitud",
+        });
+      }
+      if (
+        ctx.user.buildreqRole === "bodeguero_proyecto" &&
+        input.flowType &&
+        !BODEGUERO_PROJECT_FLOW_TYPES.has(input.flowType)
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "El Bodeguero de Proyecto solo puede enviar ítems a Salida de bodega, Compra directa o Solicitud de traslado",
+        });
+      }
+      if (
+        ctx.user.buildreqRole === "administrador_proyecto" &&
+        input.flowType &&
+        !PROJECT_ADMIN_FLOW_TYPES.has(input.flowType)
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "El Administrador de Proyecto solo puede enviar ítems a Compra directa o Solicitud de compra",
+        });
+      }
 
       if (
         detail.request.status === "borrador" ||
@@ -324,6 +492,48 @@ export const requestItemsRouter = router({
       return { success: true };
     }),
 
+  returnQueuedToRequisition: protectedProcedure
+    .input(
+      z.object({
+        flowType: z.enum(QUEUE_FLOW_TYPES),
+        itemIds: z.array(z.number()).min(1),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canReturnQueuedFlowToRequisition(ctx.user, input.flowType)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para quitar ítems de este flujo",
+        });
+      }
+
+      const uniqueItemIds = Array.from(new Set(input.itemIds));
+      const itemsToClear = [];
+      for (const itemId of uniqueItemIds) {
+        itemsToClear.push(
+          await assertQueuedFlowCanBeCleared(ctx.user, itemId, input.flowType)
+        );
+      }
+
+      const requestIds = new Set<number>();
+      for (const item of itemsToClear) {
+        requestIds.add(item.requestId);
+        await db.updateRequestItem(item.id, {
+          assignedFlow: null,
+          status: "pendiente",
+        });
+      }
+
+      for (const requestId of Array.from(requestIds)) {
+        await syncRequestStatusFromAssignments(requestId, ctx.user.id);
+      }
+
+      return {
+        success: true,
+        returnedItems: itemsToClear.length,
+      };
+    }),
+
   updateDelivered: protectedProcedure
     .input(
       z.object({
@@ -334,6 +544,12 @@ export const requestItemsRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       if (ctx.user.buildreqRole === "ingeniero_residente") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para actualizar entregas",
+        });
+      }
+      if (ctx.user.buildreqRole === "bodeguero_proyecto") {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para actualizar entregas",
@@ -355,19 +571,27 @@ export const requestItemsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (
-        ctx.user.buildreqRole !== "jefe_bodega_central" &&
-        ctx.user.buildreqRole !== "administracion_central" &&
-        ctx.user.role !== "admin"
-      ) {
+      if (!canManageWarehouseDispatch(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo el Jefe de Bodega Central o Administración Central pueden registrar salida de bodega",
+            "Solo el Jefe de Bodega Central, Administración Central o Bodeguero de Proyecto pueden registrar salida de bodega",
         });
       }
 
-      await assertItemApprovedForProcessing(input.requestItemId);
+      const { item, detail } = await assertItemApprovedForProcessing(input.requestItemId);
+      if (item.requestId !== input.requestId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "El ítem no pertenece a la requisición indicada",
+        });
+      }
+      if (!canAccessRequest(ctx.user, detail.request)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a esta solicitud",
+        });
+      }
       return db.recordWarehouseExit({
         requestId: input.requestId,
         requestItemId: input.requestItemId,
@@ -393,20 +617,28 @@ export const requestItemsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (
-        ctx.user.buildreqRole !== "jefe_bodega_central" &&
-        ctx.user.buildreqRole !== "administracion_central" &&
-        ctx.user.role !== "admin"
-      ) {
+      if (!canManageWarehouseDispatch(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo el Jefe de Bodega Central o Administración Central pueden registrar salida de bodega",
+            "Solo el Jefe de Bodega Central, Administración Central o Bodeguero de Proyecto pueden registrar salida de bodega",
         });
       }
 
-      for (const item of input.items) {
-        await assertItemApprovedForProcessing(item.requestItemId);
+      for (const entry of input.items) {
+        const { item, detail } = await assertItemApprovedForProcessing(entry.requestItemId);
+        if (item.requestId !== input.requestId) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Uno de los ítems no pertenece a la requisición indicada",
+          });
+        }
+        if (!canAccessRequest(ctx.user, detail.request)) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "No tiene acceso a esta solicitud",
+          });
+        }
       }
 
       return db.recordWarehouseExitBatch({
@@ -423,19 +655,21 @@ export const requestItemsRouter = router({
   returnDispatchToRequisition: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      if (
-        ctx.user.buildreqRole !== "jefe_bodega_central" &&
-        ctx.user.buildreqRole !== "administracion_central" &&
-        ctx.user.role !== "admin"
-      ) {
+      if (!canManageWarehouseDispatch(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo el Jefe de Bodega Central o Administración Central pueden devolver una salida a requisición",
+            "Solo el Jefe de Bodega Central, Administración Central o Bodeguero de Proyecto pueden devolver una salida a requisición",
         });
       }
 
-      const { item } = await assertItemApprovedForProcessing(input.id);
+      const { item, detail } = await assertItemApprovedForProcessing(input.id);
+      if (!canAccessRequest(ctx.user, detail.request)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a esta solicitud",
+        });
+      }
       if (item.assignedFlow !== "despacho_bodega") {
         throw new TRPCError({
           code: "BAD_REQUEST",

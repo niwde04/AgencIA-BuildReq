@@ -7,19 +7,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -32,7 +19,6 @@ import {
   ArrowLeft,
   ArrowLeftRight,
   Check,
-  ChevronsUpDown,
   Package,
   RotateCcw,
   ShoppingCart,
@@ -47,6 +33,16 @@ type QueueFlowType =
   | "despacho_bodega"
   | "traslado_proyecto"
   | "solicitud_compra";
+type PurchaseType = "local" | "extranjera" | "compra_directa";
+
+const PURCHASE_TYPE_LABELS: Record<PurchaseType, string> = {
+  local: "Compra Local",
+  extranjera: "Compra Extranjera",
+  compra_directa: "Compra Directa",
+};
+
+const getPurchaseTypeLabel = (value?: string | null) =>
+  PURCHASE_TYPE_LABELS[value as PurchaseType] ?? "—";
 
 const FLOW_ORDER: QueueFlowType[] = [
   "despacho_bodega",
@@ -156,11 +152,6 @@ const formatSupplierReferenceLabel = (reference: {
   return reference?.supplierName || reference?.supplierCode || "Proveedor pendiente";
 };
 
-const formatSupplierOptionLabel = (supplier: any) => {
-  if (!supplier) return "Seleccione proveedor";
-  return `${supplier.supplierCode} — ${supplier.name}`;
-};
-
 export default function Flujos() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
@@ -168,6 +159,8 @@ export default function Flujos() {
   const [flowFilter, setFlowFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [processingFlowType, setProcessingFlowType] = useState<QueueFlowType | null>(null);
+  const [returningQueuedFlowType, setReturningQueuedFlowType] =
+    useState<QueueFlowType | null>(null);
   const [returningDispatchItemId, setReturningDispatchItemId] = useState<number | null>(null);
   const [returningTransferItemId, setReturningTransferItemId] = useState<number | null>(null);
   const [dispatchNotesByFlowType, setDispatchNotesByFlowType] = useState<
@@ -178,10 +171,6 @@ export default function Flujos() {
   );
   const [directPurchasePaymentMethodByFlowType, setDirectPurchasePaymentMethodByFlowType] =
     useState<Partial<Record<QueueFlowType, string>>>({});
-  const [directPurchaseSupplierIdByFlowType, setDirectPurchaseSupplierIdByFlowType] =
-    useState<Partial<Record<QueueFlowType, string>>>({});
-  const [directPurchaseSupplierPopoverOpenByFlowType, setDirectPurchaseSupplierPopoverOpenByFlowType] =
-    useState<Partial<Record<QueueFlowType, boolean>>>({});
   const [directPurchaseNotesByFlowType, setDirectPurchaseNotesByFlowType] = useState<
     Partial<Record<QueueFlowType, string>>
   >({});
@@ -206,25 +195,49 @@ export default function Flujos() {
   const [purchaseRequestNotesByFlowType, setPurchaseRequestNotesByFlowType] = useState<
     Partial<Record<QueueFlowType, string>>
   >({});
+  const [purchaseRequestCheckedByItemId, setPurchaseRequestCheckedByItemId] = useState<
+    Record<number, boolean>
+  >({});
 
   const userRole = (user as any)?.buildreqRole || "";
   const isAdmin = user?.role === "admin";
+  const canProcessAllFlows =
+    isAdmin ||
+    userRole === "jefe_bodega_central" ||
+    userRole === "administracion_central";
+  const canProcessAnyFlow =
+    canProcessAllFlows ||
+    userRole === "administrador_proyecto" ||
+    userRole === "bodeguero_proyecto";
+  const canProcessFlow = (flowType: QueueFlowType) =>
+    canProcessAllFlows ||
+    (userRole === "administrador_proyecto" &&
+      (flowType === "compra_directa" || flowType === "solicitud_compra")) ||
+    (userRole === "bodeguero_proyecto" &&
+      flowType === "despacho_bodega");
+  const isReadOnlyFlowViewer = !canProcessAnyFlow;
+  const readOnlyScopeLabel =
+    userRole === "ingeniero_residente" ? "tus requisiciones" : "tu proyecto";
 
   const allowedFlowTypes = useMemo(() => {
-    if (
-      isAdmin ||
-      userRole === "jefe_bodega_central" ||
-      userRole === "administracion_central"
-    ) {
+    if (canProcessAllFlows || userRole === "ingeniero_residente") {
       return FLOW_ORDER;
     }
 
     if (userRole === "administrador_proyecto") {
-      return ["solicitud_compra"] as QueueFlowType[];
+      return ["compra_directa", "solicitud_compra"] as QueueFlowType[];
     }
 
-    return ["compra_directa", "traslado_proyecto", "solicitud_compra"] as QueueFlowType[];
-  }, [isAdmin, userRole]);
+    if (userRole === "bodeguero_proyecto") {
+      return [
+        "despacho_bodega",
+        "compra_directa",
+        "traslado_proyecto",
+      ] as QueueFlowType[];
+    }
+
+    return [] as QueueFlowType[];
+  }, [canProcessAllFlows, userRole]);
 
   const pendingQueueQueryInput =
     flowFilter !== "all" ? { flowType: flowFilter } : undefined;
@@ -237,14 +250,21 @@ export default function Flujos() {
     trpc.supplyFlows.pendingQueue.useQuery(pendingQueueQueryInput);
   const { data: flowHistory, isLoading: historyLoading } =
     trpc.supplyFlows.list.useQuery(historyQueryInput);
-  const { data: suppliersList } = trpc.requestItems.listSuppliers.useQuery();
-  const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
+  const canSelectTransferSource = canProcessAllFlows;
+  const { data: projects } = trpc.projects.list.useQuery(
+    { status: "activo", forTransferSource: true },
+    { enabled: canSelectTransferSource }
+  );
 
   const directPurchaseMutation = trpc.supplyFlows.createDirectPurchaseBatch.useMutation();
   const projectTransferBatchMutation =
     trpc.supplyFlows.createProjectTransferBatch.useMutation();
   const purchaseRequestMutation = trpc.supplyFlows.createPurchaseRequest.useMutation();
+  const purchaseRequestBatchMutation =
+    trpc.supplyFlows.createPurchaseRequestBatch.useMutation();
   const warehouseExitBatchMutation = trpc.requestItems.recordWarehouseExitBatch.useMutation();
+  const returnQueuedMutation =
+    trpc.requestItems.returnQueuedToRequisition.useMutation();
   const returnDispatchMutation =
     trpc.requestItems.returnDispatchToRequisition.useMutation();
   const returnTransferMutation =
@@ -261,6 +281,7 @@ export default function Flujos() {
       utils.transfers.list.invalidate(),
       utils.warehouseExits.list.invalidate(),
       utils.inventory.list.invalidate(),
+      utils.inventory.projectStockForItems.invalidate(),
     ]);
 
   const visiblePendingRows = useMemo(
@@ -294,6 +315,42 @@ export default function Flujos() {
         ])
       ) as Record<QueueFlowType, number>,
     [pendingRowsByFlow]
+  );
+
+  const selectedTransferSourceProjectId = Number(
+    transferSourceProjectIdByFlowType.traslado_proyecto || 0
+  );
+  const transferStockItems = useMemo(
+    () =>
+      (pendingRowsByFlow.traslado_proyecto || []).map((row) => ({
+        id: row.item.id,
+        sapItemCode: row.item.sapItemCode || null,
+        itemName: row.item.itemName || "",
+      })),
+    [pendingRowsByFlow]
+  );
+  const { data: transferOriginStock, isFetching: transferOriginStockLoading } =
+    trpc.inventory.projectStockForItems.useQuery(
+      {
+        projectId: selectedTransferSourceProjectId || 1,
+        items: transferStockItems,
+      },
+      {
+        enabled:
+          canSelectTransferSource &&
+          selectedTransferSourceProjectId > 0 &&
+          transferStockItems.length > 0,
+      }
+    );
+  const transferOriginStockByItemId = useMemo(
+    () =>
+      new Map(
+        (transferOriginStock || []).map((entry: any) => [
+          Number(entry.itemId),
+          entry.quantity,
+        ])
+      ),
+    [transferOriginStock]
   );
 
   const visibleHistoryRows = useMemo(
@@ -344,22 +401,22 @@ export default function Flujos() {
       for (const itemId of itemIds) delete next[itemId];
       return next;
     });
+    setPurchaseRequestCheckedByItemId((current) => {
+      const next = { ...current };
+      for (const itemId of itemIds) delete next[itemId];
+      return next;
+    });
   };
 
   const processDirectPurchaseFlow = async (flowType: QueueFlowType) => {
     const rows = pendingRowsByFlow[flowType];
     const paymentMethod = directPurchasePaymentMethodByFlowType[flowType];
-    const supplierId = directPurchaseSupplierIdByFlowType[flowType];
     const selectedRows = rows.filter(
       (row) => directPurchaseCheckedByItemId[row.item.id] === true
     );
 
     if (!paymentMethod) {
       toast.error("Seleccione el método de pago para la compra directa");
-      return;
-    }
-    if (!supplierId) {
-      toast.error("Seleccione el proveedor para la compra directa");
       return;
     }
     if (selectedRows.length === 0) {
@@ -388,7 +445,6 @@ export default function Flujos() {
     setProcessingFlowType(flowType);
     try {
       const result = await directPurchaseMutation.mutateAsync({
-        supplierId: Number(supplierId),
         paymentMethod: paymentMethod as "linea_credito" | "caja_chica",
         notes: directPurchaseNotesByFlowType[flowType] || undefined,
         items: selectedRows.map((row) => ({
@@ -418,6 +474,49 @@ export default function Flujos() {
       toast.error(getErrorMessage(error));
     } finally {
       setProcessingFlowType(null);
+    }
+  };
+
+  const getSelectedQueuedRows = (flowType: QueueFlowType) => {
+    if (flowType === "compra_directa") {
+      return pendingRowsByFlow[flowType].filter(
+        (row) => directPurchaseCheckedByItemId[row.item.id] === true
+      );
+    }
+
+    if (flowType === "solicitud_compra") {
+      return pendingRowsByFlow[flowType].filter(
+        (row) => purchaseRequestCheckedByItemId[row.item.id] === true
+      );
+    }
+
+    return [] as PendingQueueRow[];
+  };
+
+  const returnSelectedQueuedToRequisition = async (flowType: QueueFlowType) => {
+    const selectedRows = getSelectedQueuedRows(flowType);
+
+    if (selectedRows.length === 0) {
+      toast.error("Seleccione al menos un detalle para quitar del flujo");
+      return;
+    }
+
+    setReturningQueuedFlowType(flowType);
+    try {
+      const result = await returnQueuedMutation.mutateAsync({
+        flowType,
+        itemIds: selectedRows.map((row) => row.item.id),
+      });
+
+      resetProcessedItemDrafts(selectedRows.map((row) => row.item.id));
+      await invalidateAll();
+      toast.success(
+        `Se quitaron ${result.returnedItems} ítem(s) del flujo y volvieron a la requisición`
+      );
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setReturningQueuedFlowType(null);
     }
   };
 
@@ -589,6 +688,48 @@ export default function Flujos() {
       );
       return;
     }
+    if (transferOriginStockLoading) {
+      toast.error("Espere a que se cargue la existencia del proyecto origen");
+      return;
+    }
+
+    const requestedTransferStockByKey = new Map<
+      string,
+      { itemName: string; availableQuantity: number; requestedQuantity: number }
+    >();
+    for (const row of selectedRows) {
+      const sapItemCode = row.item.sapItemCode?.trim();
+      const key = sapItemCode
+        ? `sap:${sapItemCode}`
+        : `name:${String(row.item.itemName || "").trim().toLowerCase()}`;
+      const availableQuantity = parseQuantityValue(
+        transferOriginStockByItemId.get(row.item.id) ?? 0
+      );
+      const requestedQuantity = parseQuantityValue(row.item.quantity);
+      const current = requestedTransferStockByKey.get(key) ?? {
+        itemName: row.item.itemName,
+        availableQuantity,
+        requestedQuantity: 0,
+      };
+      current.availableQuantity = availableQuantity;
+      current.requestedQuantity += requestedQuantity;
+      requestedTransferStockByKey.set(key, current);
+    }
+    const invalidStockEntry = Array.from(
+      requestedTransferStockByKey.values()
+    ).find(
+      (entry) =>
+        entry.availableQuantity <= 0 ||
+        entry.availableQuantity + 0.000001 < entry.requestedQuantity
+    );
+    if (invalidStockEntry) {
+      toast.error(
+        `El proyecto origen no tiene existencia suficiente para ${invalidStockEntry.itemName}. Disponible: ${formatQuantityValue(
+          invalidStockEntry.availableQuantity
+        )}.`
+      );
+      return;
+    }
 
     setProcessingFlowType(flowType);
     try {
@@ -614,25 +755,66 @@ export default function Flujos() {
   };
 
   const processPurchaseRequestFlow = async (flowType: QueueFlowType) => {
-    const rows = pendingRowsByFlow[flowType];
+    const selectedRows = pendingRowsByFlow[flowType].filter(
+      (row) => purchaseRequestCheckedByItemId[row.item.id] === true
+    );
     const purchaseType = purchaseRequestTypeByFlowType[flowType];
+    const consolidate = selectedRows.length > 1;
 
     if (!purchaseType) {
       toast.error("Seleccione el tipo de compra para la solicitud");
       return;
+    }
+    if (selectedRows.length === 0) {
+      toast.error("Seleccione al menos un detalle para la solicitud de compra");
+      return;
+    }
+
+    if (consolidate) {
+      const projectIds = Array.from(new Set(selectedRows.map((row) => row.request.projectId)));
+      if (projectIds.length !== 1) {
+        toast.error(
+          "Seleccione ítems del mismo proyecto para consolidar en una sola solicitud"
+        );
+        return;
+      }
     }
 
     setProcessingFlowType(flowType);
     const processedItemIds: number[] = [];
     const failedItems: string[] = [];
 
-    for (const row of rows) {
+    if (consolidate) {
+      try {
+        const result = await purchaseRequestBatchMutation.mutateAsync({
+          purchaseType: purchaseType as PurchaseType,
+          notes: purchaseRequestNotesByFlowType[flowType] || undefined,
+          items: selectedRows.map((row) => ({
+            requestId: row.request.id,
+            requestItemId: row.item.id,
+          })),
+        });
+
+        resetProcessedItemDrafts(selectedRows.map((row) => row.item.id));
+        await invalidateAll();
+        toast.success(
+          `Solicitud ${result.purchaseRequestNumber} generada con ${result.processedItems} ítem(s)`
+        );
+      } catch (error) {
+        toast.error(getErrorMessage(error));
+      } finally {
+        setProcessingFlowType(null);
+      }
+      return;
+    }
+
+    for (const row of selectedRows) {
       const item = row.item;
       try {
         await purchaseRequestMutation.mutateAsync({
           requestId: row.request.id,
           requestItemId: item.id,
-          purchaseType: purchaseType as "local" | "extranjera",
+          purchaseType: purchaseType as PurchaseType,
           notes: purchaseRequestNotesByFlowType[flowType] || undefined,
         });
 
@@ -651,7 +833,7 @@ export default function Flujos() {
       toast.success(`Solicitud de compra generada para ${processedItemIds.length} ítem(s)`);
     } else if (processedItemIds.length > 0) {
       toast.error(
-        `Se procesaron ${processedItemIds.length} de ${rows.length} ítems. ${failedItems[0]}`
+        `Se procesaron ${processedItemIds.length} de ${selectedRows.length} ítems. ${failedItems[0]}`
       );
     } else {
       toast.error(failedItems[0]);
@@ -681,7 +863,9 @@ export default function Flujos() {
           <div className="space-y-1">
             <h1>Flujos de Abastecimiento</h1>
             <p className="text-sm text-muted-foreground">
-              Panel principal para atender los procesos enviados desde las requisiciones.
+              {isReadOnlyFlowViewer
+                ? `Vista de seguimiento para los procesos enviados desde ${readOnlyScopeLabel}.`
+                : "Panel principal para atender los procesos enviados desde las requisiciones."}
             </p>
           </div>
         </div>
@@ -798,13 +982,8 @@ export default function Flujos() {
             const FlowIcon = FLOW_ICONS[flowType];
             const rows = pendingRowsByFlow[flowType];
             const isProcessing = processingFlowType === flowType;
-            const selectedDirectPurchaseSupplier = (suppliersList || []).find(
-              (supplier: any) =>
-                String(supplier.id) ===
-                (directPurchaseSupplierIdByFlowType[flowType] || "")
-            );
-            const isSupplierPopoverOpen =
-              directPurchaseSupplierPopoverOpenByFlowType[flowType] === true;
+            const isReturningQueued = returningQueuedFlowType === flowType;
+            const canProcessThisFlow = canProcessFlow(flowType);
 
             if (rows.length === 0) {
               return null;
@@ -835,12 +1014,53 @@ export default function Flujos() {
                 </CardHeader>
 
                 <CardContent className="space-y-4">
+                  {!canProcessThisFlow &&
+                    userRole === "bodeguero_proyecto" &&
+                    flowType === "compra_directa" ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      Siguiente responsable: Administrador del Proyecto.
+                    </div>
+                  ) : null}
+                  {!canProcessThisFlow &&
+                    userRole === "bodeguero_proyecto" &&
+                    flowType === "traslado_proyecto" ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      Solo seguimiento: este traslado lo procesa Jefe de Bodega o Administración Central.
+                    </div>
+                  ) : null}
+                  {canProcessThisFlow && flowType === "traslado_proyecto" && (
+                    <div className="w-full space-y-2">
+                      <Label className="text-sm font-medium">Proyecto origen *</Label>
+                      <Select
+                        value={transferSourceProjectIdByFlowType[flowType] || ""}
+                        onValueChange={(value) => {
+                          setTransferSourceProjectIdByFlowType((current) => ({
+                            ...current,
+                            [flowType]: value,
+                          }));
+                          setTransferCheckedByItemId({});
+                        }}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Seleccione proyecto origen" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(projects || []).map((entry: any) => (
+                            <SelectItem key={entry.id} value={String(entry.id)}>
+                              {entry.code} — {entry.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <div className="overflow-hidden rounded-lg border border-border/70">
                     <table className="w-full table-fixed text-sm">
                       <thead>
                         <tr className="border-b border-border bg-muted/30">
-                          {(flowType === "compra_directa" ||
-                            flowType === "traslado_proyecto") && (
+                          {canProcessThisFlow && (flowType === "compra_directa" ||
+                            flowType === "traslado_proyecto" ||
+                            flowType === "solicitud_compra") && (
                             <th className="w-16 p-2 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                               Sel.
                             </th>
@@ -854,22 +1074,27 @@ export default function Flujos() {
                           <th className="w-28 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                             Cant.
                           </th>
+                          {canProcessThisFlow && flowType === "traslado_proyecto" && (
+                            <th className="w-36 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              Exist. origen
+                            </th>
+                          )}
                           {flowType === "despacho_bodega" && (
                             <th className="w-32 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                               Disponible
                             </th>
                           )}
-                          {flowType === "compra_directa" && (
+                          {canProcessThisFlow && flowType === "compra_directa" && (
                             <th className="w-40 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                               Comprar
                             </th>
                           )}
-                          {flowType === "despacho_bodega" && (
+                          {canProcessThisFlow && flowType === "despacho_bodega" && (
                             <th className="w-40 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                               Despachar
                             </th>
                           )}
-                          {flowType === "despacho_bodega" && (
+                          {canProcessThisFlow && flowType === "despacho_bodega" && (
                             <th className="w-32 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                               Saldo
                             </th>
@@ -877,7 +1102,7 @@ export default function Flujos() {
                           <th className="w-24 p-2 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                             Unidad
                           </th>
-                          {(flowType === "despacho_bodega" ||
+                          {canProcessThisFlow && (flowType === "despacho_bodega" ||
                             flowType === "traslado_proyecto") && (
                             <th className="w-40 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                               Acciones
@@ -901,14 +1126,32 @@ export default function Flujos() {
                           );
                           const projectedStockQuantity =
                             availableDispatchQuantity - selectedDispatchQuantity;
+                          const transferOriginQuantity =
+                            flowType === "traslado_proyecto" &&
+                            selectedTransferSourceProjectId > 0
+                              ? parseQuantityValue(
+                                  transferOriginStockByItemId.get(item.id) ?? 0
+                                )
+                              : null;
+                          const transferHasEnoughStock =
+                            transferOriginQuantity !== null &&
+                            transferOriginQuantity + 0.000001 >=
+                              parseQuantityValue(item.quantity);
+                          const transferSelectionDisabled =
+                            isProcessing ||
+                            isReturningQueued ||
+                            !selectedTransferSourceProjectId ||
+                            transferOriginStockLoading ||
+                            !transferHasEnoughStock;
 
                           return (
                             <tr
                               key={`${flowType}:${row.request.id}:${item.id}`}
                               className="border-b border-border last:border-0"
                             >
-                              {(flowType === "compra_directa" ||
-                                flowType === "traslado_proyecto") && (
+                              {canProcessThisFlow && (flowType === "compra_directa" ||
+                                flowType === "traslado_proyecto" ||
+                                flowType === "solicitud_compra") && (
                                 <td className="p-2 text-center">
                                   {flowType === "compra_directa" ? (
                                     <Checkbox
@@ -919,9 +1162,9 @@ export default function Flujos() {
                                           [item.id]: checked === true,
                                         }))
                                       }
-                                      disabled={isProcessing}
+                                      disabled={isProcessing || isReturningQueued}
                                     />
-                                  ) : (
+                                  ) : flowType === "traslado_proyecto" ? (
                                     <Checkbox
                                       checked={transferCheckedByItemId[item.id] === true}
                                       onCheckedChange={(checked) =>
@@ -930,7 +1173,18 @@ export default function Flujos() {
                                           [item.id]: checked === true,
                                         }))
                                       }
-                                      disabled={isProcessing}
+                                      disabled={transferSelectionDisabled}
+                                    />
+                                  ) : (
+                                    <Checkbox
+                                      checked={purchaseRequestCheckedByItemId[item.id] === true}
+                                      onCheckedChange={(checked) =>
+                                        setPurchaseRequestCheckedByItemId((current) => ({
+                                          ...current,
+                                          [item.id]: checked === true,
+                                        }))
+                                      }
+                                      disabled={isProcessing || isReturningQueued}
                                     />
                                   )}
                                 </td>
@@ -1007,6 +1261,42 @@ export default function Flujos() {
                               <td className="p-2 text-right font-mono">
                                 {formatQuantityValue(item.quantity)}
                               </td>
+                              {canProcessThisFlow && flowType === "traslado_proyecto" && (
+                                <td className="p-2 text-right font-mono">
+                                  {!selectedTransferSourceProjectId ? (
+                                    <span className="font-sans text-xs text-muted-foreground">
+                                      Seleccione origen
+                                    </span>
+                                  ) : transferOriginStockLoading ? (
+                                    <span className="font-sans text-xs text-muted-foreground">
+                                      Cargando...
+                                    </span>
+                                  ) : (
+                                    <>
+                                      <span
+                                        className={
+                                          transferHasEnoughStock
+                                            ? "text-foreground"
+                                            : "font-semibold text-destructive"
+                                        }
+                                      >
+                                        {formatQuantityValue(transferOriginQuantity)}
+                                      </span>
+                                      {transferOriginQuantity !== null &&
+                                      transferOriginQuantity <= 0 ? (
+                                        <p className="font-sans text-[10px] font-medium text-destructive">
+                                          Sin existencia
+                                        </p>
+                                      ) : transferOriginQuantity !== null &&
+                                        !transferHasEnoughStock ? (
+                                        <p className="font-sans text-[10px] font-medium text-destructive">
+                                          Insuficiente
+                                        </p>
+                                      ) : null}
+                                    </>
+                                  )}
+                                </td>
+                              )}
                               {flowType === "despacho_bodega" && (
                                 <td className="p-2 text-right font-mono">
                                   <span
@@ -1020,7 +1310,7 @@ export default function Flujos() {
                                   </span>
                                 </td>
                               )}
-                              {flowType === "compra_directa" && (
+                              {canProcessThisFlow && flowType === "compra_directa" && (
                                 <td className="p-2">
                                   <Input
                                     value={
@@ -1037,14 +1327,14 @@ export default function Flujos() {
                                     min="0"
                                     step="any"
                                     className="ml-auto h-9 w-28 text-right"
-                                    disabled={isProcessing}
+                                    disabled={isProcessing || isReturningQueued}
                                   />
                                   <p className="mt-1 text-right text-[10px] text-muted-foreground">
                                     Max: {formatQuantityValue(item.quantity)}
                                   </p>
                                 </td>
                               )}
-                              {flowType === "despacho_bodega" && (
+                              {canProcessThisFlow && flowType === "despacho_bodega" && (
                                 <td className="p-2">
                                   <Input
                                     value={dispatchInputValue}
@@ -1085,7 +1375,7 @@ export default function Flujos() {
                                   )}
                                 </td>
                               )}
-                              {flowType === "despacho_bodega" && (
+                              {canProcessThisFlow && flowType === "despacho_bodega" && (
                                 <td className="p-2 text-right">
                                   <p className="font-mono">
                                     {dispatchBalanceQuantity.toFixed(2)}
@@ -1098,7 +1388,7 @@ export default function Flujos() {
                                 </td>
                               )}
                               <td className="p-2 text-xs">{item.unit || "—"}</td>
-                              {(flowType === "despacho_bodega" ||
+                              {canProcessThisFlow && (flowType === "despacho_bodega" ||
                                 flowType === "traslado_proyecto") && (
                                 <td className="p-2 text-right">
                                   {flowType === "despacho_bodega" ? (
@@ -1151,8 +1441,8 @@ export default function Flujos() {
                     </table>
                   </div>
 
-                  {flowType === "compra_directa" && (
-                    <div className="grid gap-3 md:grid-cols-2">
+                  {canProcessThisFlow && flowType === "compra_directa" && (
+                    <div className="grid gap-3">
                       <div className="min-w-0 space-y-2">
                         <Label className="text-sm font-medium">Método de pago *</Label>
                         <Select
@@ -1174,83 +1464,7 @@ export default function Flujos() {
                         </Select>
                       </div>
 
-                      <div className="min-w-0 space-y-2">
-                        <Label className="text-sm font-medium">Proveedor *</Label>
-                        <Popover
-                          open={isSupplierPopoverOpen}
-                          onOpenChange={(open) =>
-                            setDirectPurchaseSupplierPopoverOpenByFlowType((current) => ({
-                              ...current,
-                              [flowType]: open,
-                            }))
-                          }
-                        >
-                          <PopoverTrigger asChild>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              role="combobox"
-                              aria-expanded={isSupplierPopoverOpen}
-                              className="h-10 w-full justify-between overflow-hidden px-3 font-normal"
-                              disabled={isProcessing}
-                            >
-                              <span className="truncate">
-                                {formatSupplierOptionLabel(selectedDirectPurchaseSupplier)}
-                              </span>
-                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent
-                            align="start"
-                            className="w-[var(--radix-popover-trigger-width)] p-0"
-                          >
-                            <Command>
-                              <CommandInput placeholder="Buscar proveedor por código o nombre..." />
-                              <CommandList>
-                                <CommandEmpty>No se encontraron proveedores.</CommandEmpty>
-                                <CommandGroup>
-                                  {(suppliersList || []).map((supplier: any) => {
-                                    const supplierId = String(supplier.id);
-                                    const selected =
-                                      directPurchaseSupplierIdByFlowType[flowType] ===
-                                      supplierId;
-
-                                    return (
-                                      <CommandItem
-                                        key={supplier.id}
-                                        value={`${supplier.id} ${supplier.supplierCode} ${supplier.name}`}
-                                        onSelect={() => {
-                                          setDirectPurchaseSupplierIdByFlowType((current) => ({
-                                            ...current,
-                                            [flowType]: supplierId,
-                                          }));
-                                          setDirectPurchaseSupplierPopoverOpenByFlowType(
-                                            (current) => ({
-                                              ...current,
-                                              [flowType]: false,
-                                            })
-                                          );
-                                        }}
-                                      >
-                                        <Check
-                                          className={`h-4 w-4 ${
-                                            selected ? "opacity-100" : "opacity-0"
-                                          }`}
-                                        />
-                                        <span className="truncate">
-                                          {supplier.supplierCode} — {supplier.name}
-                                        </span>
-                                      </CommandItem>
-                                    );
-                                  })}
-                                </CommandGroup>
-                              </CommandList>
-                            </Command>
-                          </PopoverContent>
-                        </Popover>
-                      </div>
-
-                      <div className="space-y-2 md:col-span-2">
+                      <div className="space-y-2">
                         <Label className="text-sm font-medium">Notas</Label>
                         <Textarea
                           value={directPurchaseNotesByFlowType[flowType] || ""}
@@ -1265,13 +1479,13 @@ export default function Flujos() {
                         />
                       </div>
 
-                      <div className="rounded-lg border border-border/70 bg-muted/15 px-3 py-2 text-xs text-muted-foreground md:col-span-2">
+                      <div className="rounded-lg border border-border/70 bg-muted/15 px-3 py-2 text-xs text-muted-foreground">
                         Marca solo los detalles que quieres incluir en esta solicitud. También puedes bajar la cantidad para hacer compras parciales; el resto quedará pendiente en este mismo panel.
                       </div>
                     </div>
                   )}
 
-                  {flowType === "despacho_bodega" && (
+                  {canProcessThisFlow && flowType === "despacho_bodega" && (
                     <div className="space-y-2">
                       <Label className="text-sm font-medium">Notas del despacho</Label>
                       <Textarea
@@ -1288,32 +1502,8 @@ export default function Flujos() {
                     </div>
                   )}
 
-                  {flowType === "traslado_proyecto" && (
+                  {canProcessThisFlow && flowType === "traslado_proyecto" && (
                     <div className="space-y-3">
-                      <div className="space-y-2">
-                        <Label className="text-sm font-medium">Proyecto origen *</Label>
-                        <Select
-                          value={transferSourceProjectIdByFlowType[flowType] || ""}
-                          onValueChange={(value) =>
-                            setTransferSourceProjectIdByFlowType((current) => ({
-                              ...current,
-                              [flowType]: value,
-                            }))
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Seleccione proyecto origen" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {(projects || []).map((entry: any) => (
-                              <SelectItem key={entry.id} value={String(entry.id)}>
-                                {entry.code} — {entry.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
                       <div className="rounded-lg border border-border/70 bg-muted/15 p-3 text-xs text-muted-foreground">
                         El destino se tomará automáticamente desde la requisición indicada en la columna `Req.`.
                       </div>
@@ -1335,7 +1525,7 @@ export default function Flujos() {
                     </div>
                   )}
 
-                  {flowType === "solicitud_compra" && (
+                  {canProcessThisFlow && flowType === "solicitud_compra" && (
                     <div className="space-y-3">
                       <div className="space-y-2">
                         <Label className="text-sm font-medium">Tipo de compra *</Label>
@@ -1354,6 +1544,7 @@ export default function Flujos() {
                           <SelectContent>
                             <SelectItem value="local">Compra Local</SelectItem>
                             <SelectItem value="extranjera">Compra Extranjera</SelectItem>
+                            <SelectItem value="compra_directa">Compra Directa</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -1372,46 +1563,71 @@ export default function Flujos() {
                           rows={3}
                         />
                       </div>
+
+                      <div className="rounded-lg border border-border/70 bg-muted/15 px-3 py-2 text-xs text-muted-foreground">
+                        Si seleccionas más de un ítem del mismo proyecto, se generará una sola solicitud de compra consolidada.
+                      </div>
                     </div>
                   )}
 
-                  <div className="flex justify-end border-t border-border/70 pt-3">
-                    {flowType === "compra_directa" && (
-                      <Button
-                        onClick={() => void processDirectPurchaseFlow(flowType)}
-                        disabled={isProcessing}
-                      >
-                        {isProcessing ? "Procesando..." : "Procesar compra directa"}
-                      </Button>
-                    )}
+                  {canProcessThisFlow && (
+                    <div className="flex flex-wrap justify-end gap-3 border-t border-border/70 pt-3">
+                      {(flowType === "compra_directa" ||
+                        flowType === "solicitud_compra") && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() =>
+                            void returnSelectedQueuedToRequisition(flowType)
+                          }
+                          disabled={
+                            isProcessing ||
+                            isReturningQueued ||
+                            returnQueuedMutation.isPending
+                          }
+                        >
+                          <RotateCcw className="mr-2 h-4 w-4" />
+                          {isReturningQueued ? "Quitando..." : "Quitar del flujo"}
+                        </Button>
+                      )}
 
-                    {flowType === "despacho_bodega" && (
-                      <Button
-                        onClick={() => void processWarehouseDispatchFlow(flowType)}
-                        disabled={isProcessing}
-                      >
-                        {isProcessing ? "Creando..." : "Crear salida de inventario"}
-                      </Button>
-                    )}
+                      {flowType === "compra_directa" && (
+                        <Button
+                          onClick={() => void processDirectPurchaseFlow(flowType)}
+                          disabled={isProcessing || isReturningQueued}
+                        >
+                          {isProcessing ? "Procesando..." : "Procesar compra directa"}
+                        </Button>
+                      )}
 
-                    {flowType === "traslado_proyecto" && (
-                      <Button
-                        onClick={() => void processTransferFlow(flowType)}
-                        disabled={isProcessing}
-                      >
-                        {isProcessing ? "Procesando..." : "Procesar solicitud de traslado"}
-                      </Button>
-                    )}
+                      {flowType === "despacho_bodega" && (
+                        <Button
+                          onClick={() => void processWarehouseDispatchFlow(flowType)}
+                          disabled={isProcessing}
+                        >
+                          {isProcessing ? "Creando..." : "Crear salida de inventario"}
+                        </Button>
+                      )}
 
-                    {flowType === "solicitud_compra" && (
-                      <Button
-                        onClick={() => void processPurchaseRequestFlow(flowType)}
-                        disabled={isProcessing}
-                      >
-                        {isProcessing ? "Procesando..." : "Procesar solicitud de compra"}
-                      </Button>
-                    )}
-                  </div>
+                      {flowType === "traslado_proyecto" && (
+                        <Button
+                          onClick={() => void processTransferFlow(flowType)}
+                          disabled={isProcessing}
+                        >
+                          {isProcessing ? "Procesando..." : "Procesar solicitud de traslado"}
+                        </Button>
+                      )}
+
+                      {flowType === "solicitud_compra" && (
+                        <Button
+                          onClick={() => void processPurchaseRequestFlow(flowType)}
+                          disabled={isProcessing || isReturningQueued}
+                        >
+                          {isProcessing ? "Procesando..." : "Procesar solicitud de compra"}
+                        </Button>
+                      )}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             );
@@ -1474,9 +1690,7 @@ export default function Flujos() {
                               {row.flow.purchaseType && (
                                 <p className="text-xs text-muted-foreground">
                                   Tipo:{" "}
-                                  {row.flow.purchaseType === "local"
-                                    ? "Compra Local"
-                                    : "Compra Extranjera"}
+                                  {getPurchaseTypeLabel(row.flow.purchaseType)}
                                 </p>
                               )}
                               {row.flow.purchaseOrderNumber && (

@@ -16,6 +16,7 @@ export const userManagementRouter = router({
           "jefe_bodega_central",
           "administracion_central",
           "administrador_proyecto",
+          "bodeguero_proyecto",
         ]),
         assignedProjectId: z.number().int().positive().nullable().optional(),
       })

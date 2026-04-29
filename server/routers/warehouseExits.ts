@@ -10,8 +10,47 @@ function canManageWarehouseExits(user: {
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
-    user.buildreqRole === "administracion_central"
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "bodeguero_proyecto"
   );
+}
+
+function assertProjectScopedAccess(
+  user: {
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+  },
+  projectId: number
+) {
+  if (user.role === "admin") return;
+  if (user.buildreqRole !== "bodeguero_proyecto") return;
+  if (user.assignedProjectId !== projectId) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene acceso a salidas de bodega de otro proyecto",
+    });
+  }
+}
+
+async function assertWarehouseExitAccessForMutation(
+  user: {
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+  },
+  id: number
+) {
+  if (user.buildreqRole !== "bodeguero_proyecto") return;
+
+  const detail = await db.getWarehouseExitById(id);
+  if (!detail) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Salida de bodega no encontrada",
+    });
+  }
+  assertProjectScopedAccess(user, detail.warehouseExit.projectId);
 }
 
 export const warehouseExitsRouter = router({
@@ -32,7 +71,15 @@ export const warehouseExitsRouter = router({
         });
       }
 
-      return db.listWarehouseExits(input ?? undefined);
+      const projectId =
+        ctx.user.buildreqRole === "bodeguero_proyecto"
+          ? ctx.user.assignedProjectId ?? -1
+          : input?.projectId;
+
+      return db.listWarehouseExits({
+        ...(input ?? {}),
+        projectId,
+      });
     }),
 
   getById: protectedProcedure
@@ -52,6 +99,7 @@ export const warehouseExitsRouter = router({
           message: "Salida de bodega no encontrada",
         });
       }
+      assertProjectScopedAccess(ctx.user, detail.warehouseExit.projectId);
 
       return detail;
     }),
@@ -66,6 +114,7 @@ export const warehouseExitsRouter = router({
         });
       }
 
+      await assertWarehouseExitAccessForMutation(ctx.user, input.id);
       const result = await db.emitWarehouseExit(input.id, ctx.user.id);
       for (const requestId of result.materialRequestIds ?? []) {
         await db.syncMaterialRequestFulfillmentStatus(requestId, ctx.user.id);
@@ -89,6 +138,7 @@ export const warehouseExitsRouter = router({
         });
       }
 
+      await assertWarehouseExitAccessForMutation(ctx.user, input.id);
       return db.cancelWarehouseExitDraft(input.id, ctx.user.id, input.reason);
     }),
 });

@@ -70,6 +70,8 @@ export default function Solicitudes() {
   const [, setLocation] = useLocation();
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
+  const userRole = (user as any)?.buildreqRole || "";
+  const canCreateRequest = userRole !== "bodeguero_proyecto";
 
   const { data: requests, isLoading } = trpc.materialRequests.list.useQuery(
     statusFilter !== "all" ? { status: statusFilter } : undefined
@@ -89,10 +91,12 @@ export default function Solicitudes() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1>Requisiciones de Materiales</h1>
-        <Button onClick={() => setLocation("/solicitudes/nueva")} size="sm">
-          <Plus className="h-4 w-4 mr-2" />
-          Nueva Requisición
-        </Button>
+        {canCreateRequest ? (
+          <Button onClick={() => setLocation("/solicitudes/nueva")} size="sm">
+            <Plus className="h-4 w-4 mr-2" />
+            Nueva Requisición
+          </Button>
+        ) : null}
       </div>
 
       {/* Filters */}

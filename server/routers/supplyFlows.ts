@@ -11,6 +11,79 @@ function canManageSupply(user: { role: string; buildreqRole?: string | null }) {
   );
 }
 
+function canManageDirectPurchase(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto"
+  );
+}
+
+function canManagePurchaseRequestFlow(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto"
+  );
+}
+
+const purchaseTypeSchema = z.enum(["local", "extranjera", "compra_directa"]);
+
+function canConvertToPurchaseOrder(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto"
+  );
+}
+
+function assertProjectScopedConversionAccess(
+  user: {
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+  },
+  projectId: number
+) {
+  if (user.role === "admin") return;
+  if (
+    user.buildreqRole === "administrador_proyecto" &&
+    user.assignedProjectId !== projectId
+  ) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para crear OC de otro proyecto",
+    });
+  }
+}
+
+function assertProjectAdminCanConvertPurchaseType(
+  user: { buildreqRole?: string | null },
+  purchaseType?: string | null
+) {
+  if (
+    user.buildreqRole === "administrador_proyecto" &&
+    purchaseType !== "compra_directa"
+  ) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message:
+        "El Administrador del Proyecto solo puede convertir a OC solicitudes de compra directa",
+    });
+  }
+}
+
 function canManageWarehouseOrTransfers(user: {
   role: string;
   buildreqRole?: string | null;
@@ -20,6 +93,79 @@ function canManageWarehouseOrTransfers(user: {
     user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administracion_central"
   );
+}
+
+function canManageWarehouseDispatch(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "bodeguero_proyecto"
+  );
+}
+
+function canViewSupplyFlowRequest(
+  user: {
+    id: number;
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+  },
+  request: { requestedById: number; projectId: number }
+) {
+  if (user.role === "admin") return true;
+  if (user.buildreqRole === "ingeniero_residente") {
+    return request.requestedById === user.id;
+  }
+  if (
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto"
+  ) {
+    return Boolean(user.assignedProjectId) && user.assignedProjectId === request.projectId;
+  }
+  return true;
+}
+
+function scopeSupplyFlowFilters(
+  user: {
+    id: number;
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+  },
+  filters?: {
+    flowType?: string;
+    status?: string;
+  }
+) {
+  const scopedFilters: {
+    flowType?: string;
+    status?: string;
+    requestedById?: number;
+    projectId?: number;
+  } = { ...(filters ?? {}) };
+
+  if (user.role === "admin") {
+    return scopedFilters;
+  }
+
+  if (user.buildreqRole === "ingeniero_residente") {
+    return { ...scopedFilters, requestedById: user.id };
+  }
+
+  if (
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto"
+  ) {
+    return user.assignedProjectId
+      ? { ...scopedFilters, projectId: user.assignedProjectId }
+      : { ...scopedFilters, projectId: -1 };
+  }
+
+  return scopedFilters;
 }
 
 async function getRequestAndItem(requestId: number, requestItemId: number) {
@@ -43,7 +189,7 @@ function assertItemApprovedForProcessing(detail: any, item: any) {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message:
-        "La requisición todavía está pendiente de autorización del Administrador del Proyecto o Administración Central",
+        "La requisición todavía está pendiente de autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega",
     });
   }
 
@@ -62,6 +208,69 @@ function assertItemApprovedForProcessing(detail: any, item: any) {
       code: "BAD_REQUEST",
       message: `El ítem ${item.itemName} todavía no ha sido autorizado para procesarse`,
     });
+  }
+}
+
+function parseQuantity(value: unknown) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatQuantity(value: unknown) {
+  return parseQuantity(value).toFixed(2);
+}
+
+function getStockKey(item: { sapItemCode?: string | null; itemName: string }) {
+  const sapItemCode = item.sapItemCode?.trim();
+  return sapItemCode ? `sap:${sapItemCode}` : `name:${item.itemName.trim().toLowerCase()}`;
+}
+
+async function assertTransferSourceStock(
+  sourceProjectId: number,
+  preparedItems: Array<{ item: any }>
+) {
+  const stockRows = await db.listProjectStockForItems({
+    projectId: sourceProjectId,
+    items: preparedItems.map(({ item }) => ({
+      id: item.id,
+      sapItemCode: item.sapItemCode,
+      itemName: item.itemName,
+    })),
+  });
+  const stockByItemId = new Map(
+    stockRows.map((row: any) => [Number(row.itemId), row.quantity])
+  );
+  const stockByKey = new Map<
+    string,
+    { itemName: string; availableQuantity: number; requestedQuantity: number }
+  >();
+
+  for (const { item } of preparedItems) {
+    const availableQuantity = parseQuantity(stockByItemId.get(item.id));
+    const requestedQuantity = parseQuantity(item.quantity);
+    const key = getStockKey(item);
+    const current = stockByKey.get(key) ?? {
+      itemName: item.itemName,
+      availableQuantity,
+      requestedQuantity: 0,
+    };
+    current.availableQuantity = availableQuantity;
+    current.requestedQuantity += requestedQuantity;
+    stockByKey.set(key, current);
+  }
+
+  for (const stock of Array.from(stockByKey.values())) {
+    if (
+      stock.availableQuantity <= 0 ||
+      stock.availableQuantity + 0.000001 < stock.requestedQuantity
+    ) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `El proyecto origen no tiene existencia suficiente para ${stock.itemName}. Disponible: ${formatQuantity(
+          stock.availableQuantity
+        )}, solicitado: ${formatQuantity(stock.requestedQuantity)}.`,
+      });
+    }
   }
 }
 
@@ -92,7 +301,9 @@ export const supplyFlowsRouter = router({
         })
         .optional()
     )
-    .query(async ({ input }) => db.listSupplyFlowRecords(input ?? undefined)),
+    .query(async ({ ctx, input }) =>
+      db.listSupplyFlowRecords(scopeSupplyFlowFilters(ctx.user, input ?? undefined))
+    ),
 
   pendingQueue: protectedProcedure
     .input(
@@ -102,17 +313,42 @@ export const supplyFlowsRouter = router({
         })
         .optional()
     )
-    .query(async ({ input }) => db.listPendingFlowQueueItems(input ?? undefined)),
+    .query(async ({ ctx, input }) =>
+      db.listPendingFlowQueueItems(scopeSupplyFlowFilters(ctx.user, input ?? undefined))
+    ),
 
   getByRequestId: protectedProcedure
     .input(z.object({ requestId: z.number() }))
-    .query(async ({ input }) => db.getSupplyFlowByRequestId(input.requestId)),
+    .query(async ({ ctx, input }) => {
+      const detail = await db.getMaterialRequestById(input.requestId);
+      if (!detail) return [];
+      if (!canViewSupplyFlowRequest(ctx.user, detail.request)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a esta solicitud",
+        });
+      }
+      return db.getSupplyFlowByRequestId(input.requestId);
+    }),
 
   availableFlows: protectedProcedure.query(({ ctx }) => {
+    if (ctx.user.buildreqRole === "administrador_proyecto") {
+      return ["compra_directa", "solicitud_compra"];
+    }
+
+    if (ctx.user.buildreqRole === "bodeguero_proyecto") {
+      return ["compra_directa", "traslado_proyecto"];
+    }
+
     if (!canManageSupply(ctx.user)) return [];
 
     if (canManageWarehouseOrTransfers(ctx.user)) {
-      return ["compra_directa", "traslado_proyecto", "solicitud_compra"];
+      return [
+        "despacho_bodega",
+        "compra_directa",
+        "traslado_proyecto",
+        "solicitud_compra",
+      ];
     }
 
     return [];
@@ -160,7 +396,7 @@ export const supplyFlowsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (!canManageSupply(ctx.user) || ctx.user.buildreqRole === "ingeniero_residente") {
+      if (!canManageDirectPurchase(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para registrar compras directas",
@@ -168,6 +404,12 @@ export const supplyFlowsRouter = router({
       }
 
       const { detail, item } = await getRequestAndItem(input.requestId, input.requestItemId);
+      if (!canViewSupplyFlowRequest(ctx.user, detail.request)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a esta solicitud",
+        });
+      }
       assertItemApprovedForProcessing(detail, item);
 
       await db.updateRequestItem(input.requestItemId, {
@@ -180,7 +422,7 @@ export const supplyFlowsRouter = router({
           purchaseRequestId: null,
           projectId: detail.request.projectId,
           classification: "cd",
-          purchaseType: "local",
+          purchaseType: "compra_directa",
           supplierId: input.supplierId,
           supplierEmail: null,
           status: "emitida",
@@ -252,13 +494,13 @@ export const supplyFlowsRouter = router({
             })
           )
           .min(1),
-        supplierId: z.number(),
+        supplierId: z.number().optional(),
         paymentMethod: z.enum(["linea_credito", "caja_chica"]),
         notes: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (!canManageSupply(ctx.user) || ctx.user.buildreqRole === "ingeniero_residente") {
+      if (!canManageDirectPurchase(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para registrar compras directas",
@@ -308,7 +550,13 @@ export const supplyFlowsRouter = router({
           throw new TRPCError({
             code: "BAD_REQUEST",
             message:
-              "La requisición todavía está pendiente de autorización del Administrador del Proyecto o Administración Central",
+              "La requisición todavía está pendiente de autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega",
+          });
+        }
+        if (!canViewSupplyFlowRequest(ctx.user, detail.request)) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "No tiene acceso a esta solicitud",
           });
         }
 
@@ -464,7 +712,7 @@ export const supplyFlowsRouter = router({
           materialRequestId: sourceRequestIds.length === 1 ? sourceRequestIds[0] : null,
           sourcePurchaseOrderId: null,
           projectId: sourceProjectIds[0],
-          purchaseType: "local",
+          purchaseType: "compra_directa",
           status: "pendiente",
           neededBy: earliestNeededBy ?? null,
           sapDocumentNumber: null,
@@ -495,7 +743,7 @@ export const supplyFlowsRouter = router({
           requestItemId: entry.processedItemId,
           flowType: "compra_directa",
           paymentMethod: input.paymentMethod,
-          supplierId: input.supplierId,
+          supplierId: input.supplierId ?? null,
           purchaseOrderNumber: purchaseRequest.requestNumber,
           sapDocumentType: "solicitud_compra",
           processedById: ctx.user.id,
@@ -550,15 +798,21 @@ export const supplyFlowsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (!canManageWarehouseOrTransfers(ctx.user)) {
+      if (!canManageWarehouseDispatch(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo el Jefe de Bodega Central o Administración Central pueden despachar materiales",
+            "Solo el Jefe de Bodega Central, Administración Central o Bodeguero de Proyecto pueden despachar materiales",
         });
       }
 
       const { detail, item } = await getRequestAndItem(input.requestId, input.requestItemId);
+      if (!canViewSupplyFlowRequest(ctx.user, detail.request)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a esta solicitud",
+        });
+      }
       assertItemApprovedForProcessing(detail, item);
       await db.recordWarehouseExit({
         requestId: input.requestId,
@@ -592,6 +846,12 @@ export const supplyFlowsRouter = router({
       }
 
       const { detail, item } = await getRequestAndItem(input.requestId, input.requestItemId);
+      if (!canViewSupplyFlowRequest(ctx.user, detail.request)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a esta solicitud",
+        });
+      }
       assertItemApprovedForProcessing(detail, item);
       if (input.sourceProjectId === detail.request.projectId) {
         throw new TRPCError({
@@ -599,6 +859,8 @@ export const supplyFlowsRouter = router({
           message: "El proyecto origen debe ser distinto al proyecto solicitante",
         });
       }
+
+      await assertTransferSourceStock(input.sourceProjectId, [{ item }]);
 
       await db.updateRequestItem(input.requestItemId, {
         assignedFlow: "traslado_proyecto",
@@ -693,6 +955,12 @@ export const supplyFlowsRouter = router({
           entry.requestId,
           entry.requestItemId
         );
+        if (!canViewSupplyFlowRequest(ctx.user, detail.request)) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "No tiene acceso a esta solicitud",
+          });
+        }
         assertItemApprovedForProcessing(detail, item);
 
         const existingTransferFlow = await db.getActiveSupplyFlowForRequestItem({
@@ -728,6 +996,8 @@ export const supplyFlowsRouter = router({
           message: "El proyecto origen debe ser distinto al proyecto solicitante",
         });
       }
+
+      await assertTransferSourceStock(input.sourceProjectId, preparedItems);
 
       let earliestNeededBy: Date | null = null;
       for (const { detail, item } of preparedItems) {
@@ -804,12 +1074,12 @@ export const supplyFlowsRouter = router({
       z.object({
         requestId: z.number(),
         requestItemId: z.number(),
-        purchaseType: z.enum(["local", "extranjera"]),
+        purchaseType: purchaseTypeSchema,
         notes: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (!canManageSupply(ctx.user) || ctx.user.buildreqRole === "ingeniero_residente") {
+      if (!canManagePurchaseRequestFlow(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para crear solicitudes de compra",
@@ -817,6 +1087,12 @@ export const supplyFlowsRouter = router({
       }
 
       const { detail, item } = await getRequestAndItem(input.requestId, input.requestItemId);
+      if (!canViewSupplyFlowRequest(ctx.user, detail.request)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a esta solicitud",
+        });
+      }
       assertItemApprovedForProcessing(detail, item);
       const [existingPurchaseRequest, existingPurchaseRequestFlow] = await Promise.all([
         db.getActivePurchaseRequestByMaterialRequestItemId(item.id),
@@ -905,6 +1181,174 @@ export const supplyFlowsRouter = router({
       };
     }),
 
+  createPurchaseRequestBatch: protectedProcedure
+    .input(
+      z.object({
+        items: z
+          .array(
+            z.object({
+              requestId: z.number(),
+              requestItemId: z.number(),
+            })
+          )
+          .min(1),
+        purchaseType: purchaseTypeSchema,
+        notes: z.string().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canManagePurchaseRequestFlow(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para crear solicitudes de compra",
+        });
+      }
+
+      const uniqueItems = Array.from(
+        new Map(
+          input.items.map((item) => [
+            `${item.requestId}:${item.requestItemId}`,
+            item,
+          ])
+        ).values()
+      );
+
+      const preparedItems: Array<{ detail: any; item: any }> = [];
+      for (const entry of uniqueItems) {
+        const { detail, item } = await getRequestAndItem(
+          entry.requestId,
+          entry.requestItemId
+        );
+        if (!canViewSupplyFlowRequest(ctx.user, detail.request)) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "No tiene acceso a esta solicitud",
+          });
+        }
+        assertItemApprovedForProcessing(detail, item);
+
+        const [existingPurchaseRequest, existingPurchaseRequestFlow] =
+          await Promise.all([
+            db.getActivePurchaseRequestByMaterialRequestItemId(item.id),
+            db.getActiveSupplyFlowForRequestItem({
+              requestId: entry.requestId,
+              requestItemId: entry.requestItemId,
+              flowType: "solicitud_compra",
+            }),
+          ]);
+
+        if (existingPurchaseRequest || existingPurchaseRequestFlow) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: existingPurchaseRequest
+              ? `Ya existe la solicitud ${existingPurchaseRequest.purchaseRequest.requestNumber} para este ítem`
+              : `Ya existe una solicitud de compra para el ítem ${item.itemName}`,
+          });
+        }
+
+        preparedItems.push({ detail, item });
+      }
+
+      const projectIds = Array.from(
+        new Set(preparedItems.map(({ detail }) => detail.request.projectId))
+      );
+      if (projectIds.length !== 1) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Seleccione ítems del mismo proyecto para consolidar en una sola solicitud de compra",
+        });
+      }
+
+      const requestIds = Array.from(
+        new Set(preparedItems.map(({ detail }) => detail.request.id))
+      );
+      let earliestNeededBy: Date | null = null;
+      for (const { detail } of preparedItems) {
+        earliestNeededBy = resolveEarliestNeededBy(
+          earliestNeededBy,
+          detail.request.neededBy
+        );
+      }
+
+      for (const { item } of preparedItems) {
+        await db.updateRequestItem(item.id, {
+          assignedFlow: "solicitud_compra",
+          status: "pendiente",
+        });
+      }
+
+      const purchaseRequest = await db.createPurchaseRequest(
+        {
+          materialRequestId: requestIds.length === 1 ? requestIds[0] : null,
+          sourcePurchaseOrderId: null,
+          projectId: projectIds[0],
+          createdById: ctx.user.id,
+          purchaseType: input.purchaseType,
+          status: "pendiente",
+          neededBy: earliestNeededBy,
+          sapDocumentNumber: null,
+          notes: input.notes,
+          rejectionReason: null,
+          printedDocumentName: null,
+          printedDocumentMimeType: null,
+          printedDocumentContent: null,
+          printedAt: null,
+          quoteAttachmentId: null,
+        },
+        preparedItems.map(({ item }) => ({
+          materialRequestItemId: item.id,
+          originalSapItemCode: item.sapItemCode,
+          currentSapItemCode: item.sapItemCode,
+          itemName: item.sapItemDescription || item.itemName,
+          quantity: item.quantity,
+          receivedQuantity: "0.00",
+          unit: item.unit,
+          notes: input.notes,
+        }))
+      );
+
+      const flowResults = [];
+      for (const { detail, item } of preparedItems) {
+        const result = await db.createSupplyFlowRecord({
+          requestId: detail.request.id,
+          requestItemId: item.id,
+          flowType: "solicitud_compra",
+          purchaseType: input.purchaseType,
+          sapDocumentType: "solicitud_compra",
+          sapDocumentNumber: purchaseRequest.requestNumber,
+          processedById: ctx.user.id,
+          notes: input.notes,
+          status: "pendiente",
+        });
+        flowResults.push(result);
+      }
+
+      for (const requestId of requestIds) {
+        await checkAndUpdateRequestStatus(requestId, ctx.user.id);
+      }
+
+      const adminUsers = await db.getUsersByBuildreqRole("administracion_central");
+      for (const user of adminUsers) {
+        await db.createNotification({
+          userId: user.id,
+          title: "Nueva solicitud de compra",
+          message: `Se generó la ${purchaseRequest.requestNumber} (${input.purchaseType}) con ${preparedItems.length} ítem(s).`,
+          type: "solicitud_compra",
+          relatedEntityType: "purchase_request",
+          relatedEntityId: purchaseRequest.id,
+        });
+      }
+
+      return {
+        success: true,
+        purchaseRequestId: purchaseRequest.id,
+        purchaseRequestNumber: purchaseRequest.requestNumber,
+        processedItems: preparedItems.length,
+        flowIds: flowResults.map((result) => result.id),
+      };
+    }),
+
   convertToPurchaseOrder: protectedProcedure
     .input(
       z.object({
@@ -914,13 +1358,11 @@ export const supplyFlowsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (
-        ctx.user.buildreqRole !== "administracion_central" &&
-        ctx.user.role !== "admin"
-      ) {
+      if (!canConvertToPurchaseOrder(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo Administración Central puede convertir a Orden de Compra",
+          message:
+            "Solo Administración Central o el Administrador del Proyecto puede convertir a Orden de Compra",
         });
       }
 
@@ -939,6 +1381,14 @@ export const supplyFlowsRouter = router({
             message: "Solicitud de compra no encontrada",
           });
         }
+        assertProjectScopedConversionAccess(
+          ctx.user,
+          detail.purchaseRequest.projectId
+        );
+        assertProjectAdminCanConvertPurchaseType(
+          ctx.user,
+          detail.purchaseRequest.purchaseType
+        );
 
         const directPurchaseRequestItemIds = detail.items
           .map((item: any) => item.materialRequestItemId)
@@ -962,6 +1412,7 @@ export const supplyFlowsRouter = router({
         const itemsByProject = new Map<number, any[]>();
         for (const item of detail.items) {
           const sourceProjectId = item.sourceProject?.id ?? detail.purchaseRequest.projectId;
+          assertProjectScopedConversionAccess(ctx.user, sourceProjectId);
           const current = itemsByProject.get(sourceProjectId) ?? [];
           current.push(item);
           itemsByProject.set(sourceProjectId, current);
@@ -1050,6 +1501,14 @@ export const supplyFlowsRouter = router({
           success: true,
           purchaseOrders: createdOrders,
         };
+      }
+
+      if (ctx.user.buildreqRole === "administrador_proyecto") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "El Administrador del Proyecto debe crear la OC desde una solicitud de compra",
+        });
       }
 
       const purchaseOrderNumber = await db.generatePurchaseOrderNumber();
