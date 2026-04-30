@@ -106,15 +106,16 @@ export async function authenticateRequest(req: Request): Promise<User> {
     payload.user_metadata?.name ??
     null;
 
+  let user = await db.getUserByOpenId(openId);
   await db.upsertUser({
     openId,
     email,
-    name,
+    name: user ? undefined : name,
     loginMethod: "email",
     lastSignedIn: new Date(),
   });
 
-  let user = await db.getUserByOpenId(openId);
+  user = await db.getUserByOpenId(openId);
   if (!user) {
     throw ForbiddenError("User not found after upsert");
   }

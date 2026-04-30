@@ -28,37 +28,53 @@ import Transfers from "./pages/Transfers";
 import Recepciones from "./pages/Recepciones";
 import SaldosIniciales from "./pages/SaldosIniciales";
 import SalidasBodega from "./pages/SalidasBodega";
+import ActualizarContrasena from "./pages/ActualizarContrasena";
+
+function DashboardRoutes() {
+  return (
+    <Switch>
+      <Route path="/" component={Dashboard} />
+      <Route path="/solicitudes" component={Solicitudes} />
+      <Route path="/solicitudes/nueva" component={NuevaSolicitud} />
+      <Route path="/solicitudes/:id/editar" component={NuevaSolicitud} />
+      <Route path="/solicitudes/:id" component={SolicitudDetalle} />
+      <Route path="/flujos" component={Flujos} />
+      <Route path="/devoluciones" component={Devoluciones} />
+      <Route path="/devoluciones/nueva" component={NuevaDevolucion} />
+      <Route path="/inventario" component={Inventario} />
+      <Route path="/almacenes" component={Almacenes} />
+      <Route path="/solicitudes-compra" component={PurchaseRequests} />
+      <Route path="/ordenes-compra" component={OrdenesCompra} />
+      <Route path="/solicitudes-traslado" component={TransferRequests} />
+      <Route path="/traslados" component={Transfers} />
+      <Route path="/recepciones" component={Recepciones} />
+      <Route path="/salidas-inventario" component={SalidasBodega} />
+      <Route path="/salidas-bodega" component={SalidasBodega} />
+      <Route path="/saldos-iniciales" component={SaldosIniciales} />
+      <Route path="/proyectos" component={Proyectos} />
+      <Route path="/usuarios" component={Usuarios} />
+      <Route path="/datos-demo" component={DatosDemo} />
+      <Route path="/notificaciones" component={Notificaciones} />
+      <Route path="/404" component={NotFound} />
+      <Route component={NotFound} />
+    </Switch>
+  );
+}
+
+function DashboardShell() {
+  return (
+    <DashboardLayout>
+      <DashboardRoutes />
+    </DashboardLayout>
+  );
+}
 
 function Router() {
   return (
-    <DashboardLayout>
-      <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/solicitudes" component={Solicitudes} />
-        <Route path="/solicitudes/nueva" component={NuevaSolicitud} />
-        <Route path="/solicitudes/:id/editar" component={NuevaSolicitud} />
-        <Route path="/solicitudes/:id" component={SolicitudDetalle} />
-        <Route path="/flujos" component={Flujos} />
-        <Route path="/devoluciones" component={Devoluciones} />
-        <Route path="/devoluciones/nueva" component={NuevaDevolucion} />
-        <Route path="/inventario" component={Inventario} />
-        <Route path="/almacenes" component={Almacenes} />
-        <Route path="/solicitudes-compra" component={PurchaseRequests} />
-        <Route path="/ordenes-compra" component={OrdenesCompra} />
-        <Route path="/solicitudes-traslado" component={TransferRequests} />
-        <Route path="/traslados" component={Transfers} />
-        <Route path="/recepciones" component={Recepciones} />
-        <Route path="/salidas-inventario" component={SalidasBodega} />
-        <Route path="/salidas-bodega" component={SalidasBodega} />
-        <Route path="/saldos-iniciales" component={SaldosIniciales} />
-        <Route path="/proyectos" component={Proyectos} />
-        <Route path="/usuarios" component={Usuarios} />
-        <Route path="/datos-demo" component={DatosDemo} />
-        <Route path="/notificaciones" component={Notificaciones} />
-        <Route path="/404" component={NotFound} />
-        <Route component={NotFound} />
-      </Switch>
-    </DashboardLayout>
+    <Switch>
+      <Route path="/actualizar-contrasena" component={ActualizarContrasena} />
+      <Route component={DashboardShell} />
+    </Switch>
   );
 }
 

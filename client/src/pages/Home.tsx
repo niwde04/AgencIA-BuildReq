@@ -35,7 +35,7 @@ export default function Home() {
   const [showPassword, setShowPassword] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const [mode, setMode] = useState<"login" | "register" | "recover">("login");
 
   // After Supabase login, send the token to our backend to create/sync the session cookie
   const syncSessionMutation = trpc.auth.syncSupabaseSession.useMutation({
@@ -51,6 +51,19 @@ export default function Home() {
 
     try {
       let result;
+      if (mode === "recover") {
+        const redirectTo = `${getAppSiteUrl()}/actualizar-contrasena`;
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo,
+        });
+        if (error) {
+          setError(error.message);
+          return;
+        }
+        setError("✅ Te enviamos un enlace para actualizar tu contraseña.");
+        return;
+      }
+
       if (mode === "login") {
         result = await supabase.auth.signInWithPassword({ email, password });
       } else {
@@ -81,6 +94,11 @@ export default function Home() {
         await syncSessionMutation.mutateAsync({
           token: result.data.session.access_token,
         });
+        const refreshedUser = await meQuery.refetch();
+        if (!refreshedUser.data) {
+          setError("Sesión iniciada, pero no se pudo cargar el usuario. Actualiza la página e intenta de nuevo.");
+          return;
+        }
         setLocation("/");
       }
     } catch (err: any) {
@@ -175,12 +193,18 @@ export default function Home() {
             <div className="w-full border border-border p-8 space-y-6">
               <div>
                 <h2 className="text-xl font-bold tracking-tight">
-                  {mode === "login" ? "Iniciar Sesión" : "Crear Cuenta"}
+                  {mode === "login"
+                    ? "Iniciar Sesión"
+                    : mode === "register"
+                      ? "Crear Cuenta"
+                      : "Recuperar Contraseña"}
                 </h2>
                 <p className="text-sm text-muted-foreground mt-1">
                   {mode === "login"
                     ? "Accede con tu cuenta BuildReq"
-                    : "Registra una nueva cuenta"}
+                    : mode === "register"
+                      ? "Registra una nueva cuenta"
+                      : "Recibe un enlace seguro por correo"}
                 </p>
               </div>
 
@@ -202,35 +226,37 @@ export default function Home() {
                   />
                 </div>
 
-                {/* Password */}
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Contraseña
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="password"
-                      type={showPassword ? "text" : "password"}
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="w-full border border-border bg-background px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                      placeholder="••••••••"
-                      autoComplete={mode === "login" ? "current-password" : "new-password"}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword((v) => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {showPassword ? (
-                        <EyeOff className="w-4 h-4" />
-                      ) : (
-                        <Eye className="w-4 h-4" />
-                      )}
-                    </button>
+                {mode !== "recover" ? (
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Contraseña
+                    </label>
+                    <div className="relative">
+                      <input
+                        id="password"
+                        type={showPassword ? "text" : "password"}
+                        required
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full border border-border bg-background px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                        placeholder="••••••••"
+                        autoComplete={mode === "login" ? "current-password" : "new-password"}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                        aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                      >
+                        {showPassword ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
                   </div>
-                </div>
+                ) : null}
 
                 {/* Error message */}
                 {error && (
@@ -248,12 +274,16 @@ export default function Home() {
                   {loginLoading || syncSessionMutation.isPending ? (
                     <Loader2 className="w-4 h-4 animate-spin mr-2" />
                   ) : null}
-                  {mode === "login" ? "Ingresar" : "Crear Cuenta"}
+                  {mode === "login"
+                    ? "Ingresar"
+                    : mode === "register"
+                      ? "Crear Cuenta"
+                      : "Enviar enlace"}
                 </Button>
               </form>
 
               {/* Toggle mode */}
-              <div className="text-center">
+              <div className="text-center space-y-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -266,6 +296,19 @@ export default function Home() {
                     ? "¿No tienes cuenta? Regístrate"
                     : "¿Ya tienes cuenta? Inicia sesión"}
                 </button>
+                {mode === "login" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("recover");
+                      setPassword("");
+                      setError(null);
+                    }}
+                    className="block mx-auto text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
+                  >
+                    ¿Olvidaste tu contraseña?
+                  </button>
+                ) : null}
               </div>
             </div>
           </div>

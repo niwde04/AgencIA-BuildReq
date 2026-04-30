@@ -38,6 +38,9 @@ import {
   CheckCircle2,
   XCircle,
   Send,
+  KeyRound,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -70,6 +73,7 @@ export default function Usuarios() {
   const appSiteUrl = getAppSiteUrl();
 
   const [showInviteDialog, setShowInviteDialog] = useState(false);
+  const [showDirectUserDialog, setShowDirectUserDialog] = useState(false);
   const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [emailData, setEmailData] = useState<{ to: string; subject: string; content: string } | null>(null);
 
@@ -78,6 +82,12 @@ export default function Usuarios() {
   const [invEmail, setInvEmail] = useState("");
   const [invRole, setInvRole] = useState<string>("");
   const [invProject, setInvProject] = useState<string>("");
+  const [directName, setDirectName] = useState("");
+  const [directEmail, setDirectEmail] = useState("");
+  const [directPassword, setDirectPassword] = useState("");
+  const [directRole, setDirectRole] = useState<string>("");
+  const [directProject, setDirectProject] = useState<string>("");
+  const [showDirectPassword, setShowDirectPassword] = useState(false);
 
   const updateRoleMutation = trpc.userManagement.updateRole.useMutation({
     onSuccess: () => {
@@ -88,6 +98,16 @@ export default function Usuarios() {
         utils.dashboard.sidebarCounts.invalidate(),
         utils.dashboard.stats.invalidate(),
       ]);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const createDirectUserMutation = trpc.userManagement.createDirect.useMutation({
+    onSuccess: () => {
+      toast.success("Usuario creado. Debe cambiar la contraseña al ingresar.");
+      void utils.userManagement.list.invalidate();
+      setShowDirectUserDialog(false);
+      resetDirectForm();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -132,6 +152,40 @@ export default function Usuarios() {
     setInvProject("");
   }
 
+  function resetDirectForm() {
+    setDirectName("");
+    setDirectEmail("");
+    setDirectPassword("");
+    setDirectRole("");
+    setDirectProject("");
+    setShowDirectPassword(false);
+  }
+
+  function handleCreateDirectUser() {
+    if (!directName || !directEmail || !directPassword || !directRole) {
+      toast.error("Nombre, email, contraseña y rol son obligatorios");
+      return;
+    }
+    if (directPassword.length < 8) {
+      toast.error("La contraseña temporal debe tener al menos 8 caracteres");
+      return;
+    }
+    if (PROJECT_SCOPED_ROLES.has(directRole) && !directProject) {
+      toast.error("Debe asignar un proyecto a este rol");
+      return;
+    }
+    createDirectUserMutation.mutate({
+      name: directName,
+      email: directEmail,
+      password: directPassword,
+      buildreqRole: directRole as any,
+      assignedProjectId:
+        PROJECT_SCOPED_ROLES.has(directRole) && directProject
+          ? parseInt(directProject)
+          : undefined,
+    });
+  }
+
   function handleCreateInvitation() {
     if (!invName || !invEmail || !invRole) {
       toast.error("Nombre, email y rol son obligatorios");
@@ -148,7 +202,10 @@ export default function Usuarios() {
       email: invEmail,
       name: invName,
       buildreqRole: invRole as any,
-      assignedProjectId: invProject ? parseInt(invProject) : undefined,
+      assignedProjectId:
+        PROJECT_SCOPED_ROLES.has(invRole) && invProject
+          ? parseInt(invProject)
+          : undefined,
       origin: appSiteUrl,
     });
   }
@@ -164,10 +221,20 @@ export default function Usuarios() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1>Gestión de Usuarios</h1>
-        <Button onClick={() => setShowInviteDialog(true)} className="gap-2">
-          <UserPlus className="h-4 w-4" />
-          Invitar Usuario
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setShowInviteDialog(true)}
+            className="gap-2"
+          >
+            <Mail className="h-4 w-4" />
+            Invitar Usuario
+          </Button>
+          <Button onClick={() => setShowDirectUserDialog(true)} className="gap-2">
+            <UserPlus className="h-4 w-4" />
+            Crear Usuario
+          </Button>
+        </div>
       </div>
 
       <Tabs defaultValue="users">
@@ -216,7 +283,17 @@ export default function Usuarios() {
                       {(users || []).map((u: any) => (
                         <tr key={u.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
                           <td className="p-3 font-medium">{u.name || "—"}</td>
-                          <td className="p-3 text-xs text-muted-foreground">{u.email || "—"}</td>
+                          <td className="p-3 text-xs text-muted-foreground">
+                            <div className="space-y-1">
+                              <p>{u.email || "—"}</p>
+                              {u.mustChangePassword ? (
+                                <Badge variant="secondary" className="gap-1 text-[10px]">
+                                  <KeyRound className="h-3 w-3" />
+                                  Cambio pendiente
+                                </Badge>
+                              ) : null}
+                            </div>
+                          </td>
                           <td className="p-3">
                             <Badge variant="outline" className={`text-xs ${u.role === "admin" ? "border-primary text-primary" : ""}`}>
                               {u.role === "admin" ? "Administrador" : "Usuario"}
@@ -383,6 +460,119 @@ export default function Usuarios() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* DIRECT USER DIALOG */}
+      <Dialog open={showDirectUserDialog} onOpenChange={setShowDirectUserDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserPlus className="h-5 w-5" />
+              Crear Usuario
+            </DialogTitle>
+            <DialogDescription>
+              Crea una cuenta activa en Supabase con contraseña temporal.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="direct-name">Nombre completo</Label>
+              <Input
+                id="direct-name"
+                placeholder="Ej: Juan Pérez"
+                value={directName}
+                onChange={(e) => setDirectName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="direct-email">Correo electrónico</Label>
+              <Input
+                id="direct-email"
+                type="email"
+                placeholder="Ej: juan@empresa.com"
+                value={directEmail}
+                onChange={(e) => setDirectEmail(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="direct-password">Contraseña temporal</Label>
+              <div className="relative">
+                <Input
+                  id="direct-password"
+                  type={showDirectPassword ? "text" : "password"}
+                  value={directPassword}
+                  onChange={(e) => setDirectPassword(e.target.value)}
+                  autoComplete="new-password"
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowDirectPassword((value) => !value)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label={showDirectPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                >
+                  {showDirectPassword ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Rol en BuildReq</Label>
+              <Select value={directRole} onValueChange={setDirectRole}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccionar rol" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ingeniero_residente">Ing. Residente</SelectItem>
+                  <SelectItem value="jefe_bodega_central">Jefe de Bodega Central</SelectItem>
+                  <SelectItem value="administracion_central">Administración Central</SelectItem>
+                  <SelectItem value="administrador_proyecto">Administrador del Proyecto</SelectItem>
+                  <SelectItem value="bodeguero_proyecto">Bodeguero de Proyecto</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {PROJECT_SCOPED_ROLES.has(directRole) && (
+              <div className="space-y-2">
+                <Label>Proyecto asignado</Label>
+                <Select value={directProject} onValueChange={setDirectProject}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar proyecto" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(projects || []).map((p: any) => (
+                      <SelectItem key={p.id} value={String(p.id)}>
+                        {p.code} - {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowDirectUserDialog(false);
+                resetDirectForm();
+              }}
+              disabled={createDirectUserMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleCreateDirectUser}
+              disabled={createDirectUserMutation.isPending}
+              className="gap-2"
+            >
+              <UserPlus className="h-4 w-4" />
+              {createDirectUserMutation.isPending ? "Creando..." : "Crear Usuario"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* INVITE DIALOG */}
       <Dialog open={showInviteDialog} onOpenChange={setShowInviteDialog}>

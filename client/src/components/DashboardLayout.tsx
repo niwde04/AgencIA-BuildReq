@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,7 +40,9 @@ import {
   Bell,
   Database,
   FileText,
+  KeyRound,
   Truck,
+  UserRound,
 } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -48,6 +51,8 @@ import { Badge } from "./ui/badge";
 import { trpc } from "@/lib/trpc";
 import Home from "@/pages/Home";
 import UnassignedRoleScreen from "./UnassignedRoleScreen";
+import { ChangePasswordDialog } from "./ChangePasswordDialog";
+import { UserProfileDialog } from "./UserProfileDialog";
 
 type MenuItem = {
   icon: any;
@@ -211,6 +216,37 @@ export default function DashboardLayout({
     return <Home />;
   }
 
+  if (user.mustChangePassword) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+        <ChangePasswordDialog
+          open
+          onOpenChange={() => undefined}
+          userEmail={user.email}
+          requireChange
+          onPasswordChanged={() => {
+            void refresh();
+          }}
+        />
+        <div className="w-full max-w-xl border border-border bg-card p-8 space-y-6">
+          <div className="space-y-2">
+            <div className="w-5 h-5 bg-primary" />
+            <h1 className="text-2xl font-bold tracking-tight">
+              Contraseña temporal
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Tu cuenta fue creada por un administrador. Actualiza tu contraseña
+              para continuar.
+            </p>
+          </div>
+          <Button variant="outline" onClick={() => void logout()}>
+            Cerrar sesión
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (!user.buildreqRole && user.role !== "admin") {
     return (
       <UnassignedRoleScreen
@@ -255,6 +291,8 @@ function DashboardLayoutContent({
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [profileDialogOpen, setProfileDialogOpen] = useState(false);
 
   const { data: unreadCount } = trpc.notifications.unreadCount.useQuery(
     undefined,
@@ -321,6 +359,17 @@ function DashboardLayoutContent({
 
   return (
     <>
+      <ChangePasswordDialog
+        open={passwordDialogOpen}
+        onOpenChange={setPasswordDialogOpen}
+        userEmail={user?.email}
+      />
+      <UserProfileDialog
+        open={profileDialogOpen}
+        onOpenChange={setProfileDialogOpen}
+        user={user}
+        onOpenPassword={() => setPasswordDialogOpen(true)}
+      />
       <div className="relative" ref={sidebarRef}>
         <Sidebar
           collapsible="icon"
@@ -444,6 +493,20 @@ function DashboardLayoutContent({
                   <p className="text-xs text-muted-foreground">{user?.email}</p>
                 </div>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => setProfileDialogOpen(true)}
+                  className="cursor-pointer"
+                >
+                  <UserRound className="mr-2 h-4 w-4" />
+                  <span>Mi perfil</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setPasswordDialogOpen(true)}
+                  className="cursor-pointer"
+                >
+                  <KeyRound className="mr-2 h-4 w-4" />
+                  <span>Cambiar contraseña</span>
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={logout}
                   className="cursor-pointer text-destructive focus:text-destructive"

@@ -145,7 +145,12 @@ export function AuthSessionProvider({ children }: AuthSessionProviderProps) {
       if (!active) return;
 
       if (
-        (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") &&
+        (
+          event === "SIGNED_IN" ||
+          event === "TOKEN_REFRESHED" ||
+          event === "PASSWORD_RECOVERY" ||
+          event === "USER_UPDATED"
+        ) &&
         session?.access_token
       ) {
         void syncBackendSession(session.access_token).catch(error => {

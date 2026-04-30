@@ -24,6 +24,7 @@ function createUserContext(overrides: Partial<AuthenticatedUser> = {}): {
     role: "admin",
     buildreqRole: "jefe_bodega_central",
     assignedProjectId: null,
+    mustChangePassword: false,
     createdAt: new Date(),
     updatedAt: new Date(),
     lastSignedIn: new Date(),

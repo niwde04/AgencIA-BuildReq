@@ -514,6 +514,18 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     values.role = "admin";
     updateSet.role = "admin";
   }
+  if (user.buildreqRole !== undefined) {
+    values.buildreqRole = user.buildreqRole;
+    updateSet.buildreqRole = user.buildreqRole;
+  }
+  if (user.assignedProjectId !== undefined) {
+    values.assignedProjectId = user.assignedProjectId ?? null;
+    updateSet.assignedProjectId = user.assignedProjectId ?? null;
+  }
+  if (user.mustChangePassword !== undefined) {
+    values.mustChangePassword = user.mustChangePassword;
+    updateSet.mustChangePassword = user.mustChangePassword;
+  }
   if (!values.lastSignedIn) values.lastSignedIn = new Date();
   if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
 
@@ -591,6 +603,33 @@ export async function updateUserRole(
     .update(users)
     .set({ buildreqRole, assignedProjectId: assignedProjectId ?? null })
     .where(where);
+  return { success: true };
+}
+
+export async function updateUserName(userId: number, name: string) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  await db
+    .update(users)
+    .set({ name })
+    .where(eq(users.id, userId));
+
+  return { success: true };
+}
+
+export async function updateUserPasswordChangeRequirement(
+  userId: number,
+  mustChangePassword: boolean
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  await db
+    .update(users)
+    .set({ mustChangePassword })
+    .where(eq(users.id, userId));
+
   return { success: true };
 }
 
@@ -7415,7 +7454,7 @@ export async function getUserByEmail(email: string) {
   const result = await db
     .select()
     .from(users)
-    .where(eq(users.email, email))
+    .where(sql`lower(${users.email}) = lower(${email})`)
     .limit(1);
   return result[0];
 }

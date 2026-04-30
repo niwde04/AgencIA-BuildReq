@@ -251,6 +251,7 @@ export const users = pgTable("users", {
   buildreqRole: buildreqRoleEnum("buildreqRole"),
   /** If Ing. Residente, which project they are assigned to */
   assignedProjectId: integer("assignedProjectId"),
+  mustChangePassword: boolean("mustChangePassword").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
