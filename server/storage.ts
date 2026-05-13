@@ -24,6 +24,12 @@ function buildUploadUrl(baseUrl: string, relKey: string): URL {
   return url;
 }
 
+function buildDeleteUrl(baseUrl: string, relKey: string): URL {
+  const url = new URL("v1/storage/delete", ensureTrailingSlash(baseUrl));
+  url.searchParams.set("path", normalizeKey(relKey));
+  return url;
+}
+
 async function buildDownloadUrl(
   baseUrl: string,
   relKey: string,
@@ -99,4 +105,23 @@ export async function storageGet(relKey: string): Promise<{ key: string; url: st
     key,
     url: await buildDownloadUrl(baseUrl, key, apiKey),
   };
+}
+
+export async function storageDelete(relKey: string): Promise<{ key: string }> {
+  const { baseUrl, apiKey } = getStorageConfig();
+  const key = normalizeKey(relKey);
+  const deleteUrl = buildDeleteUrl(baseUrl, key);
+  const response = await fetch(deleteUrl, {
+    method: "DELETE",
+    headers: buildAuthHeaders(apiKey),
+  });
+
+  if (!response.ok && response.status !== 404) {
+    const message = await response.text().catch(() => response.statusText);
+    throw new Error(
+      `Storage delete failed (${response.status} ${response.statusText}): ${message}`
+    );
+  }
+
+  return { key };
 }
