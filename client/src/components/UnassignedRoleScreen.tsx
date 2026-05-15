@@ -53,8 +53,8 @@ export default function UnassignedRoleScreen({
         <div className="space-y-2 text-sm text-muted-foreground">
           <p>
             Un administrador debe asignarte uno de estos roles para continuar:
-            Ingeniero Residente, Jefe de Bodega Central, Administracion Central o
-            Administrador del Proyecto.
+            Requiriente, Bodega Central, Administración Central o
+            Administración Proyecto.
           </p>
           <p>
             Si entraste por invitacion, usa el boton de actualizar para reintentar cargar tu rol.

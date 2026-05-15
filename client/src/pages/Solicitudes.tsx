@@ -83,7 +83,10 @@ export default function Solicitudes() {
     return (
       r.request.requestNumber.toLowerCase().includes(searchLower) ||
       r.project?.name?.toLowerCase().includes(searchLower) ||
-      r.project?.code?.toLowerCase().includes(searchLower)
+      r.project?.code?.toLowerCase().includes(searchLower) ||
+      (r.itemTargets ?? []).some((target: any) =>
+        target.label?.toLowerCase().includes(searchLower)
+      )
     );
   });
 
@@ -178,6 +181,13 @@ export default function Solicitudes() {
                       r.request.createdAt
                     );
                     const dueStatus = getDueDateStatus(neededByDate);
+                    const targetLabels = Array.from(
+                      new Set<string>(
+                        (r.itemTargets ?? [])
+                          .map((target: any) => target.label)
+                          .filter(Boolean)
+                      )
+                    );
                     const targetPath =
                       r.request.status === "borrador"
                         ? `/solicitudes/${r.request.id}/editar`
@@ -196,6 +206,14 @@ export default function Solicitudes() {
                           <div>
                             <span className="font-medium text-xs">{r.project?.code}</span>
                             <p className="text-xs text-muted-foreground">{r.project?.name}</p>
+                            {targetLabels.length > 0 ? (
+                              <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                                <p>{targetLabels[0]}</p>
+                                {targetLabels.length > 1 ? (
+                                  <p>+{targetLabels.length - 1} destino(s) por ítem</p>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </div>
                         </td>
                         <td className="p-3 text-xs">

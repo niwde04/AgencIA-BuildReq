@@ -2,6 +2,14 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
+import {
+  CAI_FORMAT_EXAMPLE,
+  INVOICE_NUMBER_FORMAT_EXAMPLE,
+  formatCaiInput,
+  formatInvoiceNumberInput,
+  isValidCai,
+  isValidInvoiceNumber,
+} from "@shared/invoices";
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
   "emitida",
@@ -156,6 +164,7 @@ export const receiptsRouter = router({
           documentDate: z.string().optional(),
           postingDate: z.string(),
           receiptDate: z.string().optional(),
+          emissionDeadline: z.string().optional(),
           notes: z.string().optional(),
           items: z.array(receiptItemSchema).min(1),
         })
@@ -167,6 +176,12 @@ export const receiptsRouter = router({
                 path: ["cai"],
                 message: "Ingrese el CAI de la factura",
               });
+            } else if (!isValidCai(value.cai)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["cai"],
+                message: `El CAI debe tener el formato ${CAI_FORMAT_EXAMPLE}`,
+              });
             }
             if (!value.invoiceNumber?.trim()) {
               ctx.addIssue({
@@ -174,12 +189,25 @@ export const receiptsRouter = router({
                 path: ["invoiceNumber"],
                 message: "Ingrese el número de factura",
               });
+            } else if (!isValidInvoiceNumber(value.invoiceNumber)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["invoiceNumber"],
+                message: `El número de factura debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+              });
             }
             if (!value.documentDate) {
               ctx.addIssue({
                 code: z.ZodIssueCode.custom,
                 path: ["documentDate"],
                 message: "Seleccione la fecha del documento",
+              });
+            }
+            if (!value.emissionDeadline) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["emissionDeadline"],
+                message: "Seleccione la fecha límite de emisión",
               });
             }
           }
@@ -371,11 +399,16 @@ export const receiptsRouter = router({
           projectId: input.projectId,
           receivedById: ctx.user.id,
           status: "pendiente",
-          cai: input.cai?.trim() || null,
-          invoiceNumber: input.invoiceNumber?.trim() || null,
+          cai: input.cai ? formatCaiInput(input.cai) : null,
+          invoiceNumber: input.invoiceNumber
+            ? formatInvoiceNumberInput(input.invoiceNumber)
+            : null,
           documentDate: input.documentDate ? parseDateInput(input.documentDate) : null,
           postingDate: parseDateInput(input.postingDate),
           receiptDate: parseDateInput(input.receiptDate || input.postingDate),
+          emissionDeadline: input.emissionDeadline
+            ? parseDateInput(input.emissionDeadline)
+            : null,
           notes: input.notes,
         },
         input.items.map((item) => ({

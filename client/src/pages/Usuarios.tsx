@@ -45,11 +45,11 @@ import {
 import { toast } from "sonner";
 
 const ROLE_LABELS: Record<string, string> = {
-  ingeniero_residente: "Ing. Residente",
-  jefe_bodega_central: "Jefe de Bodega Central",
+  ingeniero_residente: "Requiriente",
+  jefe_bodega_central: "Bodega Central",
   administracion_central: "Administración Central",
-  administrador_proyecto: "Administrador del Proyecto",
-  bodeguero_proyecto: "Bodeguero de Proyecto",
+  administrador_proyecto: "Administración Proyecto",
+  bodeguero_proyecto: "Bodega Proyecto",
 };
 
 const PROJECT_SCOPED_ROLES = new Set([
@@ -319,11 +319,11 @@ export default function Usuarios() {
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="sin_rol" disabled>Sin rol asignado</SelectItem>
-                                <SelectItem value="ingeniero_residente">Ing. Residente</SelectItem>
-                                <SelectItem value="jefe_bodega_central">Jefe de Bodega Central</SelectItem>
+                                <SelectItem value="ingeniero_residente">Requiriente</SelectItem>
+                                <SelectItem value="jefe_bodega_central">Bodega Central</SelectItem>
                                 <SelectItem value="administracion_central">Administración Central</SelectItem>
-                                <SelectItem value="administrador_proyecto">Administrador del Proyecto</SelectItem>
-                                <SelectItem value="bodeguero_proyecto">Bodeguero de Proyecto</SelectItem>
+                                <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
+                                <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
                               </SelectContent>
                             </Select>
                           </td>
@@ -525,11 +525,11 @@ export default function Usuarios() {
                   <SelectValue placeholder="Seleccionar rol" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ingeniero_residente">Ing. Residente</SelectItem>
-                  <SelectItem value="jefe_bodega_central">Jefe de Bodega Central</SelectItem>
+                  <SelectItem value="ingeniero_residente">Requiriente</SelectItem>
+                  <SelectItem value="jefe_bodega_central">Bodega Central</SelectItem>
                   <SelectItem value="administracion_central">Administración Central</SelectItem>
-                  <SelectItem value="administrador_proyecto">Administrador del Proyecto</SelectItem>
-                  <SelectItem value="bodeguero_proyecto">Bodeguero de Proyecto</SelectItem>
+                  <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
+                  <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -613,11 +613,11 @@ export default function Usuarios() {
                   <SelectValue placeholder="Seleccionar rol" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ingeniero_residente">Ing. Residente</SelectItem>
-                  <SelectItem value="jefe_bodega_central">Jefe de Bodega Central</SelectItem>
+                  <SelectItem value="ingeniero_residente">Requiriente</SelectItem>
+                  <SelectItem value="jefe_bodega_central">Bodega Central</SelectItem>
                   <SelectItem value="administracion_central">Administración Central</SelectItem>
-                  <SelectItem value="administrador_proyecto">Administrador del Proyecto</SelectItem>
-                  <SelectItem value="bodeguero_proyecto">Bodeguero de Proyecto</SelectItem>
+                  <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
+                  <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
                 </SelectContent>
               </Select>
             </div>

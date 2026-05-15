@@ -31,16 +31,31 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Eye, Loader2, Plus, RotateCcw, ShieldX } from "lucide-react";
+import { Eye, Loader2, Plus, RotateCcw, Search, ShieldX } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
+import {
+  CAI_FORMAT_EXAMPLE,
+  INVOICE_NUMBER_FORMAT_EXAMPLE,
+  formatCaiInput,
+  formatInvoiceNumberInput,
+  isValidCai,
+  isValidInvoiceNumber,
+} from "@shared/invoices";
 
 const STATUS_LABELS: Record<string, string> = {
   pendiente: "Pendiente",
   parcial: "Parcial",
   completa: "Completa",
   cierre_incompleto: "Cierre incompleto",
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  pendiente: "border-amber-300 bg-amber-50 text-amber-700",
+  parcial: "border-cyan-300 bg-cyan-50 text-cyan-700",
+  completa: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  cierre_incompleto: "border-yellow-300 bg-yellow-50 text-yellow-700",
 };
 
 const SOURCE_TYPE_LABELS: Record<"purchase_order" | "transfer", string> = {
@@ -57,6 +72,15 @@ const PURCHASE_ORDER_STATUS_LABELS: Record<string, string> = {
   anulada: "Anulada",
 };
 
+const PURCHASE_ORDER_STATUS_COLORS: Record<string, string> = {
+  borrador: "border-slate-300 bg-slate-50 text-slate-700",
+  emitida: "border-blue-300 bg-blue-50 text-blue-700",
+  enviada: "border-blue-300 bg-blue-50 text-blue-700",
+  parcialmente_recibida: "border-cyan-300 bg-cyan-50 text-cyan-700",
+  recibida: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  anulada: "border-rose-300 bg-rose-50 text-rose-700",
+};
+
 const TRANSFER_STATUS_LABELS: Record<string, string> = {
   pendiente: "Pendiente",
   confirmado: "Confirmado",
@@ -65,6 +89,16 @@ const TRANSFER_STATUS_LABELS: Record<string, string> = {
   recibido: "Recibido",
   cerrado_incompleto: "Cerrado incompleto",
   anulado: "Anulado",
+};
+
+const TRANSFER_STATUS_COLORS: Record<string, string> = {
+  pendiente: "border-amber-300 bg-amber-50 text-amber-700",
+  confirmado: "border-blue-300 bg-blue-50 text-blue-700",
+  en_transito: "border-blue-300 bg-blue-50 text-blue-700",
+  parcialmente_recibido: "border-cyan-300 bg-cyan-50 text-cyan-700",
+  recibido: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  cerrado_incompleto: "border-yellow-300 bg-yellow-50 text-yellow-700",
+  anulado: "border-rose-300 bg-rose-50 text-rose-700",
 };
 
 const TRANSFER_CLOSE_REASONS = [
@@ -138,6 +172,16 @@ function formatProjectReference(project: any, fallback: string) {
   return project ? `${project.code} — ${project.name}` : fallback;
 }
 
+function getSourceStatusColor(
+  sourceType: "purchase_order" | "transfer",
+  status?: string | null
+) {
+  if (!status) return "";
+  return sourceType === "purchase_order"
+    ? PURCHASE_ORDER_STATUS_COLORS[status] || ""
+    : TRANSFER_STATUS_COLORS[status] || "";
+}
+
 function getTransferDestinationLabel(transferDetail: any, fallback: string) {
   if (!transferDetail?.transferRequest) return fallback;
   if (transferDetail.transferRequest.destinationType === "bodega_central") {
@@ -174,6 +218,7 @@ export default function Recepciones() {
   const [documentDate, setDocumentDate] = useState("");
   const [postingDate, setPostingDate] = useState(todayDateValue());
   const [receiptDate, setReceiptDate] = useState(todayDateValue());
+  const [emissionDeadline, setEmissionDeadline] = useState("");
   const [receivedMap, setReceivedMap] = useState<Record<number, string>>({});
   const [closeReceiptLineItem, setCloseReceiptLineItem] = useState<any | null>(
     null
@@ -188,6 +233,9 @@ export default function Recepciones() {
     TRANSFER_CLOSE_REASONS[0].value
   );
   const [transferCloseNote, setTransferCloseNote] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [sourceTypeFilter, setSourceTypeFilter] = useState("all");
 
   const { data: receipts, isLoading } = trpc.receipts.list.useQuery();
   const { data: receiptDetail, isLoading: receiptDetailLoading } =
@@ -254,6 +302,7 @@ export default function Recepciones() {
     setDocumentDate("");
     setPostingDate(todayDateValue());
     setReceiptDate(todayDateValue());
+    setEmissionDeadline("");
     setReceivedMap({});
     setTransferClosureDrafts({});
     setCloseTransferLineItem(null);
@@ -283,8 +332,12 @@ export default function Recepciones() {
   }, [sourceItems]);
 
   const registerMutation = trpc.receipts.register.useMutation({
-    onSuccess: () => {
-      toast.success("Recepción registrada");
+    onSuccess: result => {
+      toast.success(
+        result.invoiceDocumentNumber
+          ? `Recepción registrada y factura ${result.invoiceDocumentNumber} creada`
+          : "Recepción registrada"
+      );
       setDialogOpen(false);
       resetForm();
       void Promise.all([
@@ -423,12 +476,26 @@ export default function Recepciones() {
         toast.error("Ingresa el CAI de la factura");
         return;
       }
+      if (!isValidCai(cai)) {
+        toast.error(`El CAI debe tener el formato ${CAI_FORMAT_EXAMPLE}`);
+        return;
+      }
       if (!invoiceNumber.trim()) {
         toast.error("Ingresa el número de factura");
         return;
       }
+      if (!isValidInvoiceNumber(invoiceNumber)) {
+        toast.error(
+          `El número de factura debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`
+        );
+        return;
+      }
       if (!documentDate) {
         toast.error("Selecciona la fecha del documento");
+        return;
+      }
+      if (!emissionDeadline) {
+        toast.error("Selecciona la fecha límite de emisión");
         return;
       }
     }
@@ -484,11 +551,14 @@ export default function Recepciones() {
       sourceType,
       sourceId: Number(sourceId),
       projectId: sourceProjectId,
-      cai: cai || undefined,
-      invoiceNumber: invoiceNumber || undefined,
+      cai: cai ? formatCaiInput(cai) : undefined,
+      invoiceNumber: invoiceNumber
+        ? formatInvoiceNumberInput(invoiceNumber)
+        : undefined,
       documentDate: documentDate || undefined,
       postingDate: currentPostingDate,
       receiptDate,
+      emissionDeadline: emissionDeadline || undefined,
       notes: notes || undefined,
       items: receiptItems,
     });
@@ -534,6 +604,41 @@ export default function Recepciones() {
     receiptTransferDetail?.items,
   ]);
 
+  const filteredReceipts = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+
+    return (receipts ?? []).filter((row: any) => {
+      const receipt = row.receipt;
+      const sourceTypeLabel =
+        receipt.sourceType === "purchase_order"
+          ? SOURCE_TYPE_LABELS.purchase_order
+          : SOURCE_TYPE_LABELS.transfer;
+      const projectLabel = row.project
+        ? `${row.project.code} ${row.project.name}`
+        : "";
+      const matchesSearch =
+        !normalizedSearch ||
+        [
+          receipt.receiptNumber,
+          row.purchaseOrder?.orderNumber,
+          row.supplier?.name,
+          row.supplier?.supplierCode,
+          sourceTypeLabel,
+          projectLabel,
+        ]
+          .filter(Boolean)
+          .some(value =>
+            String(value).toLowerCase().includes(normalizedSearch)
+          );
+      const matchesStatus =
+        statusFilter === "all" || receipt.status === statusFilter;
+      const matchesSourceType =
+        sourceTypeFilter === "all" || receipt.sourceType === sourceTypeFilter;
+
+      return matchesSearch && matchesStatus && matchesSourceType;
+    });
+  }, [receipts, searchTerm, sourceTypeFilter, statusFilter]);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -564,7 +669,13 @@ export default function Recepciones() {
                   {sourceHeaderTitle}
                 </DialogTitle>
                 {sourceStatusLabel ? (
-                  <Badge variant="outline" className="text-sm">
+                  <Badge
+                    variant="outline"
+                    className={`text-sm ${getSourceStatusColor(
+                      sourceType,
+                      sourceStatusKey
+                    )}`}
+                  >
                     {sourceStatusLabel}
                   </Badge>
                 ) : null}
@@ -719,7 +830,7 @@ export default function Recepciones() {
                 <div
                   className={`grid gap-3 md:grid-cols-2 ${
                     sourceType === "purchase_order"
-                      ? "xl:grid-cols-5"
+                      ? "xl:grid-cols-[minmax(22rem,2fr)_minmax(12rem,1fr)_repeat(4,minmax(10.5rem,1fr))]"
                       : "xl:grid-cols-2"
                   }`}
                 >
@@ -730,8 +841,12 @@ export default function Recepciones() {
                         <Input
                           id="receipt-cai"
                           value={cai}
-                          onChange={event => setCai(event.target.value)}
-                          placeholder="CAI de la factura"
+                          onChange={event =>
+                            setCai(formatCaiInput(event.target.value))
+                          }
+                          placeholder={CAI_FORMAT_EXAMPLE}
+                          maxLength={CAI_FORMAT_EXAMPLE.length}
+                          autoCapitalize="characters"
                         />
                       </div>
                       <div className="space-y-2">
@@ -741,8 +856,14 @@ export default function Recepciones() {
                         <Input
                           id="receipt-invoice-number"
                           value={invoiceNumber}
-                          onChange={event => setInvoiceNumber(event.target.value)}
-                          placeholder="Correlativo de factura"
+                          onChange={event =>
+                            setInvoiceNumber(
+                              formatInvoiceNumberInput(event.target.value)
+                            )
+                          }
+                          placeholder={INVOICE_NUMBER_FORMAT_EXAMPLE}
+                          inputMode="numeric"
+                          maxLength={INVOICE_NUMBER_FORMAT_EXAMPLE.length}
                         />
                       </div>
                       <div className="space-y-2">
@@ -754,6 +875,19 @@ export default function Recepciones() {
                           type="date"
                           value={documentDate}
                           onChange={event => setDocumentDate(event.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="receipt-emission-deadline">
+                          Fecha límite de emisión
+                        </Label>
+                        <Input
+                          id="receipt-emission-deadline"
+                          type="date"
+                          value={emissionDeadline}
+                          onChange={event =>
+                            setEmissionDeadline(event.target.value)
+                          }
                         />
                       </div>
                     </>
@@ -1024,7 +1158,12 @@ export default function Recepciones() {
                 {receiptDetail?.receipt.receiptNumber || "Detalle de recepción"}
               </DialogTitle>
               {receiptDetail ? (
-                <Badge variant="outline" className="text-sm">
+                <Badge
+                  variant="outline"
+                  className={`text-sm ${
+                    STATUS_COLORS[receiptDetail.receipt.status] || ""
+                  }`}
+                >
                   {STATUS_LABELS[receiptDetail.receipt.status] ||
                     receiptDetail.receipt.status}
                 </Badge>
@@ -1400,6 +1539,41 @@ export default function Recepciones() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchTerm}
+            onChange={event => setSearchTerm(event.target.value)}
+            placeholder="Buscar por recepción, origen, proveedor o proyecto..."
+            className="h-10 pl-9"
+          />
+        </div>
+        <Select value={sourceTypeFilter} onValueChange={setSourceTypeFilter}>
+          <SelectTrigger className="h-10 w-full lg:w-56">
+            <SelectValue placeholder="Tipo de origen" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos los tipos</SelectItem>
+            <SelectItem value="purchase_order">Orden de Compra</SelectItem>
+            <SelectItem value="transfer">Traslado</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="h-10 w-full lg:w-56">
+            <SelectValue placeholder="Estado" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos los estados</SelectItem>
+            {Object.entries(STATUS_LABELS).map(([value, label]) => (
+              <SelectItem key={value} value={value}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
@@ -1409,6 +1583,10 @@ export default function Recepciones() {
           ) : !(receipts || []).length ? (
             <div className="p-8 text-center text-muted-foreground">
               No hay recepciones registradas
+            </div>
+          ) : !filteredReceipts.length ? (
+            <div className="p-8 text-center text-muted-foreground">
+              No hay recepciones que coincidan con los filtros
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -1436,7 +1614,7 @@ export default function Recepciones() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(receipts || []).map((row: any) => (
+                  {filteredReceipts.map((row: any) => (
                     <tr
                       key={row.receipt.id}
                       className="border-b border-border last:border-0"
@@ -1455,7 +1633,12 @@ export default function Recepciones() {
                           : SOURCE_TYPE_LABELS.transfer}
                       </td>
                       <td className="p-3">
-                        <Badge variant="outline" className="text-xs">
+                        <Badge
+                          variant="outline"
+                          className={`text-xs ${
+                            STATUS_COLORS[row.receipt.status] || ""
+                          }`}
+                        >
                           {STATUS_LABELS[row.receipt.status] ||
                             row.receipt.status}
                         </Badge>

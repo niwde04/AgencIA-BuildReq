@@ -14,7 +14,50 @@ const UNIFIED_PURCHASE_REQUEST_STATUSES = new Set([
   "pendiente",
   "en_revision",
   "aprobada",
+  "parcialmente_convertida",
 ]);
+
+const quantityToConvertSchema = z.object({
+  purchaseRequestItemId: z.number(),
+  quantity: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((value) => Number.isFinite(Number(value)) && Number(value) > 0, {
+      message: "La cantidad a convertir debe ser mayor que cero",
+    }),
+  unitPrice: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0, {
+      message: "El precio unitario debe ser un número válido",
+    })
+    .optional(),
+  taxCode: z.enum(PURCHASE_ORDER_TAX_VALUES).optional(),
+});
+
+function toDecimalString(value: string | number | null | undefined) {
+  const parsed =
+    value === null || value === undefined || value === ""
+      ? 0
+      : Number(value);
+  return (Number.isFinite(parsed) ? parsed : 0).toFixed(2);
+}
+
+function getPendingConversionQuantity(item: {
+  quantity: string | number | null | undefined;
+  convertedQuantity?: string | number | null | undefined;
+  pendingConversionQuantity?: string | number | null | undefined;
+}) {
+  if (item.pendingConversionQuantity !== undefined && item.pendingConversionQuantity !== null) {
+    return Math.max(Number(item.pendingConversionQuantity), 0);
+  }
+  return Math.max(
+    Number(item.quantity ?? 0) - Number(item.convertedQuantity ?? 0),
+    0
+  );
+}
 
 function canAccessPurchaseOrders(user: {
   role: string;
@@ -284,7 +327,8 @@ export const purchaseOrdersRouter = router({
     .input(
       z.object({
         purchaseRequestId: z.number(),
-        selectedItemIds: z.array(z.number()).min(1),
+        selectedItemIds: z.array(z.number()).optional(),
+        itemsToConvert: z.array(quantityToConvertSchema).optional(),
         classification: z.enum(["oc", "cd"]).default("oc"),
         supplierId: z.number().optional(),
         supplierEmail: z.string().email().optional(),
@@ -321,17 +365,88 @@ export const purchaseOrdersRouter = router({
         });
       }
 
-      const selectedItems = detail.items.filter((item: any) =>
-        input.selectedItemIds.includes(item.id)
+      const itemById = new Map(
+        (detail.items ?? []).map((item: any) => [item.id, item])
       );
-      if (selectedItems.length === 0) {
+      const requestedConversions: Array<{
+        purchaseRequestItemId: number;
+        quantity: string;
+        unitPrice?: string;
+        taxCode?: (typeof PURCHASE_ORDER_TAX_VALUES)[number];
+      }> =
+        input.itemsToConvert && input.itemsToConvert.length > 0
+          ? input.itemsToConvert
+          : (input.selectedItemIds ?? []).map((id) => {
+              const item = itemById.get(id);
+              return {
+                purchaseRequestItemId: id,
+                quantity: toDecimalString(
+                  item ? getPendingConversionQuantity(item) : 0
+                ),
+              };
+            });
+
+      if (requestedConversions.length === 0) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Debe seleccionar al menos un ítem para la OC",
         });
       }
 
-      const directPurchaseRequestItemIds = selectedItems
+      const conversionQuantityByItemId = new Map<number, number>();
+      const conversionDraftByItemId = new Map<
+        number,
+        { unitPrice?: string; taxCode?: (typeof PURCHASE_ORDER_TAX_VALUES)[number] }
+      >();
+      for (const conversion of requestedConversions) {
+        conversionQuantityByItemId.set(
+          conversion.purchaseRequestItemId,
+          (conversionQuantityByItemId.get(conversion.purchaseRequestItemId) ??
+            0) + Number(conversion.quantity)
+        );
+        conversionDraftByItemId.set(conversion.purchaseRequestItemId, {
+          unitPrice: conversion.unitPrice,
+          taxCode: conversion.taxCode,
+        });
+      }
+
+      const conversionItems = Array.from(
+        conversionQuantityByItemId.entries()
+      ).map(([purchaseRequestItemId, requestedQuantity]) => {
+        const item = itemById.get(purchaseRequestItemId);
+        if (!item) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Uno de los ítems no pertenece a la solicitud de compra",
+          });
+        }
+
+        const pendingQuantity = getPendingConversionQuantity(item);
+        const quantityToConvert = requestedQuantity;
+        if (pendingQuantity <= 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `El ítem ${item.itemName} no tiene saldo pendiente por convertir`,
+          });
+        }
+        if (quantityToConvert > pendingQuantity) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `La cantidad a convertir de ${item.itemName} excede el saldo pendiente`,
+          });
+        }
+
+        return {
+          item,
+          quantityToConvert: toDecimalString(quantityToConvert),
+          unitPrice: conversionDraftByItemId.get(purchaseRequestItemId)
+            ?.unitPrice,
+          taxCode: conversionDraftByItemId.get(purchaseRequestItemId)?.taxCode,
+        };
+      });
+
+      const directPurchaseRequestItemIds = conversionItems
+        .map(({ item }) => item)
         .map((item: any) => item.materialRequestItemId)
         .filter(
           (value: number | null | undefined): value is number =>
@@ -355,12 +470,13 @@ export const purchaseOrdersRouter = router({
       }
 
       const selectedItemsByProject = new Map<number, any[]>();
-      for (const item of selectedItems) {
+      for (const conversionItem of conversionItems) {
+        const { item } = conversionItem;
         const sourceProjectId =
           item.sourceProject?.id ?? detail.purchaseRequest.projectId;
         assertProjectScopedAccess(ctx.user, sourceProjectId);
         const current = selectedItemsByProject.get(sourceProjectId) ?? [];
-        current.push(item);
+        current.push(conversionItem);
         selectedItemsByProject.set(sourceProjectId, current);
       }
 
@@ -373,7 +489,7 @@ export const purchaseOrdersRouter = router({
       for (const [projectId, projectItems] of Array.from(
         selectedItemsByProject.entries()
       )) {
-        const projectFlowItems = projectItems.flatMap((item: any) =>
+        const projectFlowItems = projectItems.flatMap(({ item }: any) =>
           item.materialRequestItemId
             ? (directPurchaseFlowByRequestItemId.get(
                 item.materialRequestItemId
@@ -408,15 +524,17 @@ export const purchaseOrdersRouter = router({
             emailError: null,
             createdById: ctx.user.id,
           },
-          projectItems.map((item: any) => ({
+          projectItems.map(({ item, quantityToConvert, unitPrice, taxCode }: any) => ({
             purchaseRequestItemId: item.id,
             materialRequestItemId: item.materialRequestItemId,
             originalSapItemCode: item.originalSapItemCode,
             currentSapItemCode: item.currentSapItemCode,
             itemName: item.itemName,
-            quantity: item.quantity,
-            receivedQuantity: item.receivedQuantity ?? "0.00",
+            quantity: quantityToConvert,
+            receivedQuantity: "0.00",
             unit: item.unit,
+            unitPrice: unitPrice ?? item.unitPrice ?? "0.00",
+            taxCode: taxCode ?? "exe",
             notes: item.notes,
           }))
         );
@@ -441,13 +559,13 @@ export const purchaseOrdersRouter = router({
         }
       }
 
-      const nextStatus =
-        selectedItems.length === detail.items.length
-          ? "convertida"
-          : "parcialmente_convertida";
-      await db.updatePurchaseRequest(input.purchaseRequestId, {
-        status: nextStatus,
-      });
+      for (const { item, quantityToConvert } of conversionItems) {
+        await db.adjustPurchaseRequestItemConvertedQuantity(
+          item.id,
+          quantityToConvert
+        );
+      }
+      await db.syncPurchaseRequestConversionStatus(input.purchaseRequestId);
 
       if (createdOrders.length === 1) {
         return {
@@ -536,12 +654,15 @@ export const purchaseOrdersRouter = router({
       }
 
       const allItems = purchaseRequests.flatMap((detail) =>
-        (detail.items ?? []).map((item: any) => ({
-          detail,
-          item,
-          sourceProjectId:
-            item.sourceProject?.id ?? detail.purchaseRequest.projectId,
-        }))
+        (detail.items ?? [])
+          .filter((item: any) => getPendingConversionQuantity(item) > 0)
+          .map((item: any) => ({
+            detail,
+            item,
+            quantityToConvert: toDecimalString(getPendingConversionQuantity(item)),
+            sourceProjectId:
+              item.sourceProject?.id ?? detail.purchaseRequest.projectId,
+          }))
       );
       if (allItems.length === 0) {
         throw new TRPCError({
@@ -628,15 +749,16 @@ export const purchaseOrdersRouter = router({
           emailError: null,
           createdById: ctx.user.id,
         },
-        allItems.map(({ item }) => ({
+        allItems.map(({ item, quantityToConvert }) => ({
           purchaseRequestItemId: item.id,
           materialRequestItemId: item.materialRequestItemId,
           originalSapItemCode: item.originalSapItemCode,
           currentSapItemCode: item.currentSapItemCode,
           itemName: item.itemName,
-          quantity: item.quantity,
-          receivedQuantity: item.receivedQuantity ?? "0.00",
+          quantity: quantityToConvert,
+          receivedQuantity: "0.00",
           unit: item.unit,
+          unitPrice: item.unitPrice ?? "0.00",
           notes: item.notes,
         }))
       );
@@ -654,10 +776,15 @@ export const purchaseOrdersRouter = router({
         });
       }
 
+      for (const { item, quantityToConvert } of allItems) {
+        await db.adjustPurchaseRequestItemConvertedQuantity(
+          item.id,
+          quantityToConvert
+        );
+      }
+
       for (const id of purchaseRequestIds) {
-        await db.updatePurchaseRequest(id, {
-          status: "convertida",
-        });
+        await db.syncPurchaseRequestConversionStatus(id);
       }
 
       return {
@@ -839,11 +966,51 @@ export const purchaseOrdersRouter = router({
         });
       }
 
-      return db.updatePurchaseOrderItem(input.purchaseOrderItemId, {
+      if (
+        itemDetail.item.purchaseRequestItemId &&
+        nextQuantity !== Number(itemDetail.item.quantity ?? 0)
+      ) {
+        const purchaseRequestItem = await db.getPurchaseRequestItemById(
+          itemDetail.item.purchaseRequestItemId
+        );
+        if (purchaseRequestItem) {
+          const currentLineQuantity = Number(itemDetail.item.quantity ?? 0);
+          const availableForLine =
+            Number(purchaseRequestItem.quantity ?? 0) -
+            Number(purchaseRequestItem.convertedQuantity ?? 0) +
+            currentLineQuantity;
+          if (nextQuantity > availableForLine) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "La cantidad excede el saldo pendiente de la solicitud de compra",
+            });
+          }
+        }
+      }
+
+      await db.updatePurchaseOrderItem(input.purchaseOrderItemId, {
         quantity: input.quantity,
         unitPrice: input.unitPrice,
         taxCode: input.taxCode,
       });
+
+      if (
+        itemDetail.item.purchaseRequestItemId &&
+        nextQuantity !== Number(itemDetail.item.quantity ?? 0)
+      ) {
+        const delta = nextQuantity - Number(itemDetail.item.quantity ?? 0);
+        const purchaseRequestItem =
+          await db.adjustPurchaseRequestItemConvertedQuantity(
+            itemDetail.item.purchaseRequestItemId,
+            delta
+          );
+        await db.syncPurchaseRequestConversionStatus(
+          purchaseRequestItem.purchaseRequestId
+        );
+      }
+
+      return { success: true };
     }),
 
   closeReceiptLine: protectedProcedure
@@ -1005,6 +1172,7 @@ export const purchaseOrdersRouter = router({
             quantity: pendingQuantity,
             receivedQuantity: "0.00",
             unit: itemDetail.item.unit,
+            unitPrice: itemDetail.item.unitPrice ?? "0.00",
             notes: lineNote,
           },
         ]);
@@ -1040,6 +1208,7 @@ export const purchaseOrdersRouter = router({
               quantity: pendingQuantity,
               receivedQuantity: "0.00",
               unit: itemDetail.item.unit,
+              unitPrice: itemDetail.item.unitPrice ?? "0.00",
               notes: lineNote,
             },
           ]
@@ -1103,6 +1272,17 @@ export const purchaseOrdersRouter = router({
         itemDetail.item.purchaseOrderId
       );
       await db.deletePurchaseOrderItem(input.purchaseOrderItemId);
+
+      if (itemDetail.item.purchaseRequestItemId) {
+        const purchaseRequestItem =
+          await db.adjustPurchaseRequestItemConvertedQuantity(
+            itemDetail.item.purchaseRequestItemId,
+            -Number(itemDetail.item.quantity ?? 0)
+          );
+        await db.syncPurchaseRequestConversionStatus(
+          purchaseRequestItem.purchaseRequestId
+        );
+      }
 
       const lineSapCode =
         itemDetail.item.currentSapItemCode ??
@@ -1182,12 +1362,27 @@ export const purchaseOrdersRouter = router({
         );
       }
 
+      const affectedPurchaseRequestIds = new Set<number>();
+      for (const item of detail.items ?? []) {
+        if (!item.purchaseRequestItemId) continue;
+        const purchaseRequestItem =
+          await db.adjustPurchaseRequestItemConvertedQuantity(
+            item.purchaseRequestItemId,
+            -Number(item.quantity ?? 0)
+          );
+        affectedPurchaseRequestIds.add(purchaseRequestItem.purchaseRequestId);
+      }
+
       await db.updatePurchaseOrder(input.id, {
         status: "anulada",
         emailStatus: "pendiente",
         emailedAt: null,
         emailError: "Orden anulada manualmente",
       });
+
+      for (const purchaseRequestId of Array.from(affectedPurchaseRequestIds)) {
+        await db.syncPurchaseRequestConversionStatus(purchaseRequestId);
+      }
 
       return { success: true };
     }),

@@ -38,14 +38,36 @@ function assertPurchaseRequestMutable(status: string) {
   }
 }
 
+const purchaseRequestQuantitySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => Number.isFinite(Number(value)) && Number(value) > 0, {
+    message: "La cantidad debe ser un numero mayor que cero",
+  });
+
+const purchaseRequestUnitPriceSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0, {
+    message: "El precio debe ser un numero valido",
+  });
+
 const purchaseRequestItemSchema = z.object({
   materialRequestItemId: z.number().optional(),
   originalSapItemCode: z.string().optional(),
   currentSapItemCode: z.string().optional(),
   itemName: z.string().min(1),
-  quantity: z.string().min(1),
+  quantity: purchaseRequestQuantitySchema,
   unit: z.string().optional(),
+  unitPrice: purchaseRequestUnitPriceSchema.optional(),
   notes: z.string().optional(),
+});
+const purchaseRequestItemUpdateSchema = z.object({
+  id: z.number(),
+  quantity: purchaseRequestQuantitySchema,
+  unitPrice: purchaseRequestUnitPriceSchema,
 });
 const purchaseTypeSchema = z.enum(["local", "extranjera", "compra_directa"]);
 
@@ -147,6 +169,7 @@ export const purchaseRequestsRouter = router({
           quantity: item.quantity,
           receivedQuantity: "0.00",
           unit: item.unit,
+          unitPrice: item.unitPrice ?? "0.00",
           notes: item.notes,
         }))
       );
@@ -159,6 +182,7 @@ export const purchaseRequestsRouter = router({
         purchaseType: purchaseTypeSchema.optional(),
         neededBy: z.string().optional(),
         notes: z.string().optional(),
+        items: z.array(purchaseRequestItemUpdateSchema).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -178,11 +202,59 @@ export const purchaseRequestsRouter = router({
       assertProjectScopedAccess(ctx.user, detail.purchaseRequest.projectId);
       assertPurchaseRequestMutable(detail.purchaseRequest.status);
 
-      return db.updatePurchaseRequest(input.id, {
+      const itemUpdates = input.items ?? [];
+      const itemById = new Map(
+        (detail.items ?? []).map((item: any) => [item.id, item])
+      );
+
+      for (const itemUpdate of itemUpdates) {
+        const existingItem = itemById.get(itemUpdate.id);
+        if (!existingItem) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Uno de los ítems no pertenece a la solicitud de compra",
+          });
+        }
+
+        const itemProjectId =
+          existingItem.sourceProject?.id ?? detail.purchaseRequest.projectId;
+        assertProjectScopedAccess(ctx.user, itemProjectId);
+
+        const receivedQuantity = Number(existingItem.receivedQuantity ?? 0);
+        const convertedQuantity = Number(existingItem.convertedQuantity ?? 0);
+        const nextQuantity = Number(itemUpdate.quantity);
+        if (nextQuantity < receivedQuantity) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "La cantidad no puede ser menor a lo ya recibido",
+          });
+        }
+        if (nextQuantity < convertedQuantity) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "La cantidad no puede ser menor a lo ya convertido a OC",
+          });
+        }
+      }
+
+      await db.updatePurchaseRequest(input.id, {
         purchaseType: input.purchaseType,
         neededBy: input.neededBy ? new Date(input.neededBy) : undefined,
         notes: input.notes,
       });
+
+      await Promise.all(
+        itemUpdates.map((itemUpdate) =>
+          db.updatePurchaseRequestItem(itemUpdate.id, {
+            quantity: itemUpdate.quantity,
+            unitPrice: itemUpdate.unitPrice,
+          })
+        )
+      );
+
+      await db.syncPurchaseRequestConversionStatus(input.id);
+
+      return { success: true };
     }),
 
   reject: protectedProcedure

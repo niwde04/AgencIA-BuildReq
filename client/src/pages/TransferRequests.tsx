@@ -30,8 +30,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Truck, Ban } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Plus, Truck, Ban, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -41,6 +41,20 @@ const STATUS_LABELS: Record<string, string> = {
   convertida: "Convertida",
   anulada: "Anulada",
 };
+
+const STATUS_COLORS: Record<string, string> = {
+  pendiente: "border-amber-300 bg-amber-50 text-amber-700",
+  aprobada: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  rechazada: "border-rose-300 bg-rose-50 text-rose-700",
+  convertida: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  anulada: "border-red-300 bg-red-50 text-red-700",
+};
+
+function getDestinationLabel(transferRequest: any) {
+  return transferRequest.destinationType === "bodega_central"
+    ? "Bodega Central"
+    : `Proyecto ${transferRequest.destinationProjectId ?? ""}`.trim();
+}
 
 export default function TransferRequests() {
   const utils = trpc.useUtils();
@@ -60,6 +74,8 @@ export default function TransferRequests() {
   const [itemName, setItemName] = useState("");
   const [quantity, setQuantity] = useState("");
   const [unit, setUnit] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
   const [transferQuantityByItemId, setTransferQuantityByItemId] = useState<
     Record<number, string>
@@ -144,6 +160,34 @@ export default function TransferRequests() {
             ).toFixed(2)
           : item.quantity ?? 0)
     );
+
+  const filteredTransferRequests = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+
+    return (transferRequests ?? []).filter((row: any) => {
+      const transferRequest = row.transferRequest;
+      const projectLabel = row.project
+        ? `${row.project.code} ${row.project.name}`
+        : "";
+      const destinationLabel = getDestinationLabel(transferRequest);
+      const matchesSearch =
+        !normalizedSearch ||
+        [
+          transferRequest.requestNumber,
+          row.materialRequest?.requestNumber,
+          projectLabel,
+          destinationLabel,
+        ]
+          .filter(Boolean)
+          .some(value =>
+            String(value).toLowerCase().includes(normalizedSearch)
+          );
+      const matchesStatus =
+        statusFilter === "all" || transferRequest.status === statusFilter;
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [searchTerm, statusFilter, transferRequests]);
 
   const handleConvertToTransfer = () => {
     if (!detail) return;
@@ -325,6 +369,31 @@ export default function TransferRequests() {
         ) : null}
       </div>
 
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchTerm}
+            onChange={event => setSearchTerm(event.target.value)}
+            placeholder="Buscar por solicitud, requisición, proyecto o destino..."
+            className="h-10 pl-9"
+          />
+        </div>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="h-10 w-full lg:w-56">
+            <SelectValue placeholder="Estado" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos los estados</SelectItem>
+            {Object.entries(STATUS_LABELS).map(([value, label]) => (
+              <SelectItem key={value} value={value}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
@@ -334,6 +403,10 @@ export default function TransferRequests() {
           ) : !(transferRequests || []).length ? (
             <div className="p-8 text-center text-muted-foreground">
               No hay solicitudes de traslado registradas
+            </div>
+          ) : !filteredTransferRequests.length ? (
+            <div className="p-8 text-center text-muted-foreground">
+              No hay solicitudes de traslado que coincidan con los filtros
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -358,7 +431,7 @@ export default function TransferRequests() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(transferRequests || []).map((row: any) => (
+                  {filteredTransferRequests.map((row: any) => (
                     <tr key={row.transferRequest.id} className="border-b border-border last:border-0">
                       <td className="p-3 font-medium">{row.transferRequest.requestNumber}</td>
                       <td className="p-3 text-xs">
@@ -370,7 +443,12 @@ export default function TransferRequests() {
                           : `Proyecto ${row.transferRequest.destinationProjectId ?? ""}`}
                       </td>
                       <td className="p-3">
-                        <Badge variant="outline" className="text-xs">
+                        <Badge
+                          variant="outline"
+                          className={`text-xs ${
+                            STATUS_COLORS[row.transferRequest.status] || ""
+                          }`}
+                        >
                           {STATUS_LABELS[row.transferRequest.status] || row.transferRequest.status}
                         </Badge>
                       </td>
@@ -420,9 +498,16 @@ export default function TransferRequests() {
                 </div>
                 <div>
                   <Label className="text-xs text-muted-foreground">Estatus</Label>
-                  <p className="text-sm font-medium">
+                  <div className="mt-1">
+                    <Badge
+                      variant="outline"
+                      className={`text-xs ${
+                        STATUS_COLORS[detail.transferRequest.status] || ""
+                      }`}
+                    >
                     {STATUS_LABELS[detail.transferRequest.status] || detail.transferRequest.status}
-                  </p>
+                    </Badge>
+                  </div>
                 </div>
               </div>
 

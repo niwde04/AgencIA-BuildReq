@@ -16,8 +16,11 @@ const requestItemSchema = z.object({
   quantity: z.string().optional(),
   unit: z.string().optional(),
   notes: z.string().optional(),
+  targetType: z.enum(["subproyecto", "activo_fijo"]).nullable().optional(),
+  subProjectId: z.number().int().positive().nullable().optional(),
+  fixedAssetSapItemCode: z.string().nullable().optional(),
+  fixedAssetName: z.string().nullable().optional(),
 });
-
 const createMaterialRequestInput = z
   .object({
     saveMode: z.enum(["draft", "submit"]).default("submit"),
@@ -43,7 +46,13 @@ const createMaterialRequestInput = z
     );
     const hasPartialItems = value.items.some((item) => {
       const hasAnyValue = Boolean(
-        item.itemName?.trim() || item.quantity?.trim() || item.unit?.trim() || item.notes?.trim()
+        item.itemName?.trim() ||
+          item.quantity?.trim() ||
+          item.unit?.trim() ||
+          item.notes?.trim() ||
+          item.targetType ||
+          item.subProjectId ||
+          item.fixedAssetSapItemCode?.trim()
       );
       const isComplete = Boolean(
         item.itemName?.trim() && item.quantity?.trim() && item.unit?.trim()
@@ -128,6 +137,10 @@ function getCompleteRequestItems(items: z.infer<typeof requestItemSchema>[]) {
       quantity: item.quantity!.trim(),
       unit: item.unit?.trim() || undefined,
       notes: item.notes?.trim() || undefined,
+      targetType: item.targetType ?? null,
+      subProjectId: item.subProjectId ?? null,
+      fixedAssetSapItemCode: item.fixedAssetSapItemCode?.trim() || null,
+      fixedAssetName: item.fixedAssetName?.trim() || null,
     }));
 }
 
@@ -225,6 +238,96 @@ function assertProjectScopedCreation(
       message: "No tiene acceso a requisiciones de otro proyecto",
     });
   }
+}
+
+async function resolveMaterialRequestTarget(input: {
+  projectId: number;
+  targetType?: "subproyecto" | "activo_fijo" | null;
+  subProjectId?: number | null;
+  fixedAssetSapItemCode?: string | null;
+}) {
+  if (!input.targetType) {
+    return {
+      targetType: null,
+      subProjectId: null,
+      fixedAssetSapItemCode: null,
+      fixedAssetName: null,
+    };
+  }
+
+  if (input.targetType === "subproyecto") {
+    if (!input.subProjectId) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Seleccione un subproyecto válido",
+      });
+    }
+
+    const subproject = await db.getProjectSubprojectById(input.subProjectId);
+    if (
+      !subproject ||
+      subproject.projectId !== input.projectId ||
+      !subproject.isActive
+    ) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "El subproyecto seleccionado no pertenece al proyecto o está inactivo",
+      });
+    }
+
+    return {
+      targetType: "subproyecto" as const,
+      subProjectId: subproject.id,
+      fixedAssetSapItemCode: null,
+      fixedAssetName: null,
+    };
+  }
+
+  const fixedAssetSapItemCode = input.fixedAssetSapItemCode?.trim();
+  if (!fixedAssetSapItemCode) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Seleccione un activo fijo válido",
+    });
+  }
+
+  const fixedAsset = await db.getActiveFixedAssetByCode(fixedAssetSapItemCode);
+  if (!fixedAsset) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "El activo fijo seleccionado no existe, está inactivo o no es activo fijo",
+    });
+  }
+
+  return {
+    targetType: "activo_fijo" as const,
+    subProjectId: null,
+    fixedAssetSapItemCode: fixedAsset.itemCode,
+    fixedAssetName: fixedAsset.description,
+  };
+}
+
+async function resolveRequestItemTargets(
+  projectId: number,
+  items: ReturnType<typeof getCompleteRequestItems>
+) {
+  const resolvedItems = [];
+
+  for (const item of items) {
+    const targetData = await resolveMaterialRequestTarget({
+      projectId,
+      targetType: item.targetType,
+      subProjectId: item.subProjectId,
+      fixedAssetSapItemCode: item.fixedAssetSapItemCode,
+    });
+
+    resolvedItems.push({
+      ...item,
+      ...targetData,
+    });
+  }
+
+  return resolvedItems;
 }
 
 function canEditRequestDraft(
@@ -344,6 +447,18 @@ async function notifyMaterialRequestSubmitted(params: {
 }
 
 export const materialRequestsRouter = router({
+  targetOptions: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.number().int().positive(),
+        search: z.string().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      assertProjectScopedCreation(ctx.user, input.projectId);
+      return db.listMaterialRequestTargetOptions(input.projectId, input.search);
+    }),
+
   list: protectedProcedure
     .input(
       z
@@ -434,10 +549,14 @@ export const materialRequestsRouter = router({
       }
       assertProjectScopedCreation(ctx.user, input.projectId);
       const completeItems = getCompleteRequestItems(items);
+      const resolvedItems = await resolveRequestItemTargets(
+        input.projectId,
+        completeItems
+      );
       const itemsForPersistence = buildRequestItemsForPersistence({
         requestType: input.requestType,
         saveMode: input.saveMode,
-        items: completeItems,
+        items: resolvedItems,
       });
       const defaults = resolveMaterialRequestDefaults(input);
 
@@ -494,10 +613,14 @@ export const materialRequestsRouter = router({
       assertProjectScopedCreation(ctx.user, input.projectId);
 
       const completeItems = getCompleteRequestItems(input.items);
+      const resolvedItems = await resolveRequestItemTargets(
+        input.projectId,
+        completeItems
+      );
       const itemsForPersistence = buildRequestItemsForPersistence({
         requestType: input.requestType,
         saveMode: input.saveMode,
-        items: completeItems,
+        items: resolvedItems,
       });
       const defaults = resolveMaterialRequestDefaults(input);
       const nextStatus =

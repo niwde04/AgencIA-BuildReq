@@ -44,11 +44,11 @@ export const invitationsRouter = router({
 
       // Build the role label for the email
       const roleLabels: Record<string, string> = {
-        ingeniero_residente: "Ingeniero Residente",
-        jefe_bodega_central: "Jefe de Bodega Central",
+        ingeniero_residente: "Requiriente",
+        jefe_bodega_central: "Bodega Central",
         administracion_central: "Administración Central",
-        administrador_proyecto: "Administrador del Proyecto",
-        bodeguero_proyecto: "Bodeguero de Proyecto",
+        administrador_proyecto: "Administración Proyecto",
+        bodeguero_proyecto: "Bodega Proyecto",
       };
       const roleLabel = roleLabels[input.buildreqRole] || input.buildreqRole;
 
@@ -99,11 +99,11 @@ export const invitationsRouter = router({
 
       const inv = found.invitation;
       const roleLabels: Record<string, string> = {
-        ingeniero_residente: "Ingeniero Residente",
-        jefe_bodega_central: "Jefe de Bodega Central",
+        ingeniero_residente: "Requiriente",
+        jefe_bodega_central: "Bodega Central",
         administracion_central: "Administración Central",
-        administrador_proyecto: "Administrador del Proyecto",
-        bodeguero_proyecto: "Bodeguero de Proyecto",
+        administrador_proyecto: "Administración Proyecto",
+        bodeguero_proyecto: "Bodega Proyecto",
       };
       const roleLabel = roleLabels[inv.buildreqRole] || inv.buildreqRole;
       const projectInfo = found.project

@@ -3,6 +3,9 @@ import { protectedProcedure, adminProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { TRPCError } from "@trpc/server";
 
+const optionalDateInput = z.string().optional().nullable();
+const subprojectStatusInput = z.boolean().default(true);
+
 function isProjectScopedUser(user: {
   buildreqRole?: string | null;
 }) {
@@ -26,6 +29,77 @@ function assertProjectScopedAccess(
     });
   }
 }
+
+function parseOptionalDate(value: string | null | undefined) {
+  if (value === undefined) return undefined;
+  if (value === null || value.trim() === "") return null;
+
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "La fecha indicada no es válida",
+    });
+  }
+
+  return date;
+}
+
+function assertDateRange(
+  startDate: Date | null | undefined,
+  endDate: Date | null | undefined
+) {
+  if (!startDate || !endDate) return;
+  if (endDate.getTime() < startDate.getTime()) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "La fecha de fin no puede ser anterior a la fecha de inicio",
+    });
+  }
+}
+
+async function assertProjectExists(projectId: number) {
+  const project = await db.getProjectById(projectId);
+  if (!project) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Proyecto no encontrado",
+    });
+  }
+  return project;
+}
+
+async function assertUniqueSubprojectCode(params: {
+  projectId: number;
+  code: string;
+  currentId?: number;
+}) {
+  const existing = await db.getProjectSubprojectByCode(
+    params.projectId,
+    params.code
+  );
+  if (existing && existing.id !== params.currentId) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "Ya existe un subproyecto con ese código en este proyecto",
+    });
+  }
+}
+
+const projectDateFieldsSchema = {
+  startDate: optionalDateInput,
+  endDate: optionalDateInput,
+};
+
+const subprojectInputSchema = z.object({
+  projectId: z.number().int().positive(),
+  code: z.string().trim().min(1).max(50),
+  name: z.string().trim().min(1).max(255),
+  description: z.string().trim().optional().nullable(),
+  startDate: optionalDateInput,
+  endDate: optionalDateInput,
+  isActive: subprojectStatusInput,
+});
 
 export const projectsRouter = router({
   list: protectedProcedure
@@ -78,31 +152,134 @@ export const projectsRouter = router({
   create: adminProcedure
     .input(
       z.object({
-        code: z.string().min(1).max(50),
-        name: z.string().min(1).max(255),
-        description: z.string().optional(),
-        location: z.string().optional(),
-        sapProjectCode: z.string().optional(),
+        code: z.string().trim().min(1).max(50),
+        name: z.string().trim().min(1).max(255),
+        description: z.string().trim().optional().nullable(),
+        location: z.string().trim().optional().nullable(),
+        sapProjectCode: z.string().trim().optional().nullable(),
+        status: z.enum(["activo", "inactivo"]).default("activo"),
+        ...projectDateFieldsSchema,
       })
     )
     .mutation(async ({ input }) => {
-      return db.createProject(input);
+      const startDate = parseOptionalDate(input.startDate);
+      const endDate = parseOptionalDate(input.endDate);
+      assertDateRange(startDate, endDate);
+
+      return db.createProject({
+        code: input.code,
+        name: input.name,
+        description: input.description?.trim() || null,
+        location: input.location?.trim() || null,
+        sapProjectCode: input.sapProjectCode?.trim() || null,
+        status: input.status,
+        ...(startDate !== undefined ? { startDate } : {}),
+        ...(endDate !== undefined ? { endDate } : {}),
+      });
     }),
 
   update: adminProcedure
     .input(
       z.object({
         id: z.number(),
-        code: z.string().min(1).max(50).optional(),
-        name: z.string().min(1).max(255).optional(),
-        description: z.string().optional(),
-        location: z.string().optional(),
-        status: z.enum(["activo", "inactivo", "completado"]).optional(),
-        sapProjectCode: z.string().optional(),
+        code: z.string().trim().min(1).max(50).optional(),
+        name: z.string().trim().min(1).max(255).optional(),
+        description: z.string().trim().optional().nullable(),
+        location: z.string().trim().optional().nullable(),
+        status: z.enum(["activo", "inactivo"]).optional(),
+        sapProjectCode: z.string().trim().optional().nullable(),
+        ...projectDateFieldsSchema,
       })
     )
     .mutation(async ({ input }) => {
-      const { id, ...data } = input;
-      return db.updateProject(id, data);
+      const startDate = parseOptionalDate(input.startDate);
+      const endDate = parseOptionalDate(input.endDate);
+      assertDateRange(startDate, endDate);
+
+      const data = {
+        ...(input.code !== undefined ? { code: input.code } : {}),
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description?.trim() || null }
+          : {}),
+        ...(input.location !== undefined
+          ? { location: input.location?.trim() || null }
+          : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.sapProjectCode !== undefined
+          ? { sapProjectCode: input.sapProjectCode?.trim() || null }
+          : {}),
+        ...(startDate !== undefined ? { startDate } : {}),
+        ...(endDate !== undefined ? { endDate } : {}),
+      };
+
+      return db.updateProject(input.id, data);
+    }),
+
+  listSubprojects: protectedProcedure
+    .input(z.object({ projectId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      assertProjectScopedAccess(ctx.user, input.projectId);
+      await assertProjectExists(input.projectId);
+      return db.listProjectSubprojects(input.projectId);
+    }),
+
+  createSubproject: adminProcedure
+    .input(subprojectInputSchema)
+    .mutation(async ({ input }) => {
+      const startDate = parseOptionalDate(input.startDate);
+      const endDate = parseOptionalDate(input.endDate);
+      assertDateRange(startDate, endDate);
+      await assertProjectExists(input.projectId);
+      await assertUniqueSubprojectCode({
+        projectId: input.projectId,
+        code: input.code,
+      });
+
+      return db.createProjectSubproject({
+        projectId: input.projectId,
+        code: input.code,
+        name: input.name,
+        description: input.description?.trim() || null,
+        ...(startDate !== undefined ? { startDate } : {}),
+        ...(endDate !== undefined ? { endDate } : {}),
+        isActive: input.isActive,
+      });
+    }),
+
+  updateSubproject: adminProcedure
+    .input(
+      subprojectInputSchema.extend({
+        id: z.number().int().positive(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const existing = await db.getProjectSubprojectById(input.id);
+      if (!existing) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Subproyecto no encontrado",
+        });
+      }
+
+      const startDate = parseOptionalDate(input.startDate);
+      const endDate = parseOptionalDate(input.endDate);
+      assertDateRange(startDate, endDate);
+      await assertProjectExists(input.projectId);
+      await assertUniqueSubprojectCode({
+        projectId: input.projectId,
+        code: input.code,
+        currentId: input.id,
+      });
+
+      return db.updateProjectSubproject(input.id, {
+        projectId: input.projectId,
+        code: input.code,
+        name: input.name,
+        description: input.description?.trim() || null,
+        ...(startDate !== undefined ? { startDate } : {}),
+        ...(endDate !== undefined ? { endDate } : {}),
+        isActive: input.isActive,
+      });
     }),
 });

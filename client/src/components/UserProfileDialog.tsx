@@ -31,11 +31,11 @@ type UserProfileDialogProps = {
 };
 
 const roleLabels: Record<string, string> = {
-  ingeniero_residente: "Ing. Residente",
-  jefe_bodega_central: "Jefe de Bodega Central",
-  administracion_central: "Administracion Central",
-  administrador_proyecto: "Administrador del Proyecto",
-  bodeguero_proyecto: "Bodeguero de Proyecto",
+  ingeniero_residente: "Requiriente",
+  jefe_bodega_central: "Bodega Central",
+  administracion_central: "Administración Central",
+  administrador_proyecto: "Administración Proyecto",
+  bodeguero_proyecto: "Bodega Proyecto",
 };
 
 export function UserProfileDialog({

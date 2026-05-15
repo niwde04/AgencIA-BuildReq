@@ -1,6 +1,10 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { downloadBase64Document } from "@/lib/document-download";
+import {
+  calculatePurchaseOrderLineAmounts,
+  formatPurchaseOrderCurrency,
+} from "@shared/purchase-orders";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -52,7 +56,7 @@ const STATUS_COLORS: Record<string, string> = {
   aprobada: "border-emerald-300 bg-emerald-50 text-emerald-700",
   rechazada: "border-rose-300 bg-rose-50 text-rose-700",
   parcialmente_convertida: "border-cyan-300 bg-cyan-50 text-cyan-700",
-  convertida: "border-slate-300 bg-slate-50 text-slate-700",
+  convertida: "border-emerald-300 bg-emerald-50 text-emerald-700",
   anulada: "border-red-300 bg-red-50 text-red-700",
 };
 
@@ -60,6 +64,7 @@ const UNIFIED_CONVERTIBLE_STATUSES = new Set([
   "pendiente",
   "en_revision",
   "aprobada",
+  "parcialmente_convertida",
 ]);
 type PurchaseType = "local" | "extranjera" | "compra_directa";
 const PURCHASE_TYPE_LABELS: Record<PurchaseType, string> = {
@@ -70,6 +75,40 @@ const PURCHASE_TYPE_LABELS: Record<PurchaseType, string> = {
 const getPurchaseTypeLabel = (value?: string | null) =>
   PURCHASE_TYPE_LABELS[value as PurchaseType] ?? "—";
 
+type PurchaseRequestItemDraft = {
+  quantity: string;
+  unitPrice: string;
+};
+
+const getItemDraftFromDetail = (item: any): PurchaseRequestItemDraft => ({
+  quantity: String(item.quantity ?? ""),
+  unitPrice: String(item.unitPrice ?? "0.00"),
+});
+
+const isPositiveNumberString = (value: string) => {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue > 0;
+};
+
+const isNonNegativeNumberString = (value: string) => {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue >= 0;
+};
+
+const formatQuantity = (value: string | number | null | undefined) =>
+  Number(value ?? 0).toLocaleString("es-HN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+const getConvertedQuantity = (item: any) => Number(item.convertedQuantity ?? 0);
+
+const getPendingConversionQuantity = (item: any, quantityOverride?: string) =>
+  Math.max(
+    Number(quantityOverride ?? item.quantity ?? 0) - getConvertedQuantity(item),
+    0
+  );
+
 export default function PurchaseRequests() {
   const { user } = useAuth();
   const utils = trpc.useUtils();
@@ -78,10 +117,13 @@ export default function PurchaseRequests() {
   const [editNotes, setEditNotes] = useState("");
   const [editNeededBy, setEditNeededBy] = useState("");
   const [editPurchaseType, setEditPurchaseType] = useState<PurchaseType>("local");
+  const [editItems, setEditItems] = useState<Record<number, PurchaseRequestItemDraft>>({});
+  const [convertQuantities, setConvertQuantities] = useState<Record<number, string>>({});
   const [selectedRequestIds, setSelectedRequestIds] = useState<number[]>([]);
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [purchaseTypeFilter, setPurchaseTypeFilter] = useState<PurchaseType | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [rejectReason, setRejectReason] = useState("");
   const [emailDialog, setEmailDialog] = useState<{
     to: string;
@@ -116,6 +158,8 @@ export default function PurchaseRequests() {
       const matchesType =
         purchaseTypeFilter === "all" ||
         purchaseRequest.purchaseType === purchaseTypeFilter;
+      const matchesStatus =
+        statusFilter === "all" || purchaseRequest.status === statusFilter;
       const projectLabel =
         row.projectSummary?.label ||
         (row.project ? `${row.project.code} ${row.project.name}` : "");
@@ -131,9 +175,9 @@ export default function PurchaseRequests() {
             String(value).toLowerCase().includes(normalizedSearch)
           );
 
-      return matchesType && matchesSearch;
+      return matchesType && matchesStatus && matchesSearch;
     });
-  }, [purchaseTypeFilter, requests, searchTerm]);
+  }, [purchaseTypeFilter, requests, searchTerm, statusFilter]);
 
   const canProjectAdminConvertPurchaseRequest = (
     purchaseRequest: { purchaseType?: string | null; status?: string | null }
@@ -246,6 +290,139 @@ export default function PurchaseRequests() {
     return detail?.items ?? [];
   }, [detail]);
 
+  useEffect(() => {
+    if (!detail) {
+      setEditItems({});
+      setConvertQuantities({});
+      return;
+    }
+
+    setEditItems(
+      Object.fromEntries(
+        (detail.items ?? []).map((item: any) => [
+          item.id,
+          getItemDraftFromDetail(item),
+        ])
+      )
+    );
+    setConvertQuantities(
+      Object.fromEntries(
+        (detail.items ?? []).map((item: any) => [
+          item.id,
+          String(item.pendingConversionQuantity ?? getPendingConversionQuantity(item).toFixed(2)),
+        ])
+      )
+    );
+  }, [detail]);
+
+  const getItemDraft = (item: any) =>
+    editItems[item.id] ?? getItemDraftFromDetail(item);
+
+  const updateItemDraft = (
+    item: any,
+    field: keyof PurchaseRequestItemDraft,
+    value: string
+  ) => {
+    setEditItems((current) => ({
+      ...current,
+      [item.id]: {
+        ...getItemDraftFromDetail(item),
+        ...current[item.id],
+        [field]: value,
+      },
+    }));
+  };
+
+  const getConvertQuantityDraft = (item: any) =>
+    convertQuantities[item.id] ??
+    String(item.pendingConversionQuantity ?? getPendingConversionQuantity(item).toFixed(2));
+
+  const updateConvertQuantityDraft = (item: any, value: string) => {
+    setConvertQuantities((current) => ({
+      ...current,
+      [item.id]: value,
+    }));
+  };
+
+  const buildItemUpdatePayload = () => {
+    const invalidQuantityItem = selectedItems.find(
+      (item: any) => !isPositiveNumberString(getItemDraft(item).quantity)
+    );
+    if (invalidQuantityItem) {
+      toast.error(`Ingrese una cantidad mayor que cero para ${invalidQuantityItem.itemName}`);
+      return null;
+    }
+
+    const invalidPriceItem = selectedItems.find(
+      (item: any) =>
+        !isNonNegativeNumberString(getItemDraft(item).unitPrice || "0")
+    );
+    if (invalidPriceItem) {
+      toast.error(`Ingrese un precio válido para ${invalidPriceItem.itemName}`);
+      return null;
+    }
+
+    const itemBelowConverted = selectedItems.find(
+      (item: any) =>
+        Number(getItemDraft(item).quantity || 0) < getConvertedQuantity(item)
+    );
+    if (itemBelowConverted) {
+      toast.error(
+        `La cantidad de ${itemBelowConverted.itemName} no puede ser menor a lo ya convertido`
+      );
+      return null;
+    }
+
+    return selectedItems.map((item: any) => {
+      const draft = getItemDraft(item);
+      return {
+        id: item.id,
+        quantity: draft.quantity,
+        unitPrice: draft.unitPrice || "0",
+      };
+    });
+  };
+
+  const buildConversionPayload = () => {
+    const selectedIds =
+      selectedItemIds.length > 0 ? selectedItemIds : convertibleItemIds;
+    const itemsToConvert = selectedItems
+      .filter((item: any) => selectedIds.includes(item.id))
+      .map((item: any) => {
+        const draft = getItemDraft(item);
+        const pendingQuantity = getPendingConversionQuantity(item, draft.quantity);
+        const quantity = Number(getConvertQuantityDraft(item) || 0);
+        return {
+          item,
+          pendingQuantity,
+          quantity,
+        };
+      });
+
+    const invalidItem = itemsToConvert.find(
+      ({ quantity }) => !Number.isFinite(quantity) || quantity <= 0
+    );
+    if (invalidItem) {
+      toast.error(`Ingrese una cantidad a convertir para ${invalidItem.item.itemName}`);
+      return null;
+    }
+
+    const excessItem = itemsToConvert.find(
+      ({ quantity, pendingQuantity }) => quantity > pendingQuantity
+    );
+    if (excessItem) {
+      toast.error(
+        `La cantidad a convertir de ${excessItem.item.itemName} excede el pendiente`
+      );
+      return null;
+    }
+
+    return itemsToConvert.map(({ item, quantity }) => ({
+      purchaseRequestItemId: item.id,
+      quantity: quantity.toFixed(2),
+    }));
+  };
+
   const convertibleItemIds = useMemo(() => {
     if (!canConvert) return [];
     if (
@@ -258,6 +435,7 @@ export default function PurchaseRequests() {
 
     return selectedItems
       .filter((item: any) => {
+        if (getPendingConversionQuantity(item) <= 0) return false;
         if (!isProjectAdmin) return true;
         const itemProjectId =
           item.sourceProject?.id ?? detail?.purchaseRequest.projectId;
@@ -276,6 +454,33 @@ export default function PurchaseRequests() {
   const convertibleItemIdSet = useMemo(
     () => new Set(convertibleItemIds),
     [convertibleItemIds]
+  );
+
+  const conversionEstimatedTotal = useMemo(
+    () =>
+      selectedItems.reduce((sum: number, item: any) => {
+        const draft = editItems[item.id] ?? getItemDraftFromDetail(item);
+        const selectedForConversion =
+          selectedItemIds.length > 0
+            ? selectedItemIds.includes(item.id)
+            : convertibleItemIdSet.has(item.id);
+        if (!selectedForConversion) return sum;
+        return (
+          sum +
+          calculatePurchaseOrderLineAmounts({
+            quantity: getConvertQuantityDraft(item),
+            unitPrice: draft.unitPrice || "0",
+            taxCode: "exe",
+          }).total
+        );
+      }, 0),
+    [
+      convertibleItemIdSet,
+      convertQuantities,
+      editItems,
+      selectedItemIds,
+      selectedItems,
+    ]
   );
 
   const itemIdsToConvert = useMemo(
@@ -342,6 +547,8 @@ export default function PurchaseRequests() {
         : ""
     );
     setEditPurchaseType((row?.purchaseRequest.purchaseType || "local") as PurchaseType);
+    setEditItems({});
+    setConvertQuantities({});
     setSelectedItemIds([]);
     setRejectReason("");
   };
@@ -377,6 +584,47 @@ export default function PurchaseRequests() {
     };
     reader.readAsDataURL(file);
     event.target.value = "";
+  };
+
+  const handleSaveChanges = () => {
+    if (!detail) return;
+    const items = buildItemUpdatePayload();
+    if (!items) return;
+
+    updateMutation.mutate({
+      id: detail.purchaseRequest.id,
+      purchaseType: editPurchaseType,
+      neededBy: editNeededBy || undefined,
+      notes: editNotes || undefined,
+      items,
+    });
+  };
+
+  const handleConvertToPurchaseOrder = async () => {
+    if (!detail) return;
+    const items = buildItemUpdatePayload();
+    if (!items) return;
+    const itemsToConvert = buildConversionPayload();
+    if (!itemsToConvert || itemsToConvert.length === 0) return;
+
+    try {
+      await updateMutation.mutateAsync({
+        id: detail.purchaseRequest.id,
+        purchaseType: editPurchaseType,
+        neededBy: editNeededBy || undefined,
+        notes: editNotes || undefined,
+        items,
+      });
+      convertMutation.mutate({
+        purchaseRequestId: detail.purchaseRequest.id,
+        selectedItemIds: itemsToConvert.map(
+          (item) => item.purchaseRequestItemId
+        ),
+        itemsToConvert,
+      });
+    } catch {
+      // updateMutation displays the validation or server error toast.
+    }
   };
 
   return (
@@ -424,6 +672,19 @@ export default function PurchaseRequests() {
             <SelectItem value="compra_directa">Compra Directa</SelectItem>
             <SelectItem value="local">Compra Local</SelectItem>
             <SelectItem value="extranjera">Compra Extranjera</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="h-10 w-full lg:w-56">
+            <SelectValue placeholder="Estado" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos los estados</SelectItem>
+            {Object.entries(STATUS_LABELS).map(([value, label]) => (
+              <SelectItem key={value} value={value}>
+                {label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -575,11 +836,11 @@ export default function PurchaseRequests() {
           if (!open) setSelectedId(null);
         }}
       >
-        <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl border border-border/70 p-4 shadow-2xl sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1460px] sm:p-6 lg:p-8">
-          <DialogHeader className="border-b border-border/70 pb-4 pr-10">
+        <DialogContent className="flex h-[calc(100dvh-0.75rem)] w-[calc(100vw-0.75rem)] max-w-[calc(100vw-0.75rem)] flex-col overflow-hidden rounded-2xl border border-border/70 p-0 shadow-2xl sm:h-[calc(100dvh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1500px]">
+          <DialogHeader className="shrink-0 border-b border-border/70 px-4 py-4 pr-12 sm:px-6 lg:px-8">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div className="space-y-2">
-                <DialogTitle className="text-[2rem] font-bold tracking-tight sm:text-[2.35rem]">
+                <DialogTitle className="text-3xl font-bold tracking-tight sm:text-[2.15rem]">
                   {detail?.purchaseRequest.requestNumber || "Solicitud de Compra"}
                 </DialogTitle>
                 <p className="text-sm text-muted-foreground">
@@ -592,7 +853,12 @@ export default function PurchaseRequests() {
               </div>
               {detail && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline" className="rounded-full px-3 py-1 text-xs uppercase">
+                  <Badge
+                    variant="outline"
+                    className={`rounded-full px-3 py-1 text-xs uppercase ${
+                      STATUS_COLORS[detail.purchaseRequest.status] || ""
+                    }`}
+                  >
                     {STATUS_LABELS[detail.purchaseRequest.status] || detail.purchaseRequest.status}
                   </Badge>
                   <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
@@ -604,7 +870,7 @@ export default function PurchaseRequests() {
           </DialogHeader>
 
           {detail && (
-            <div className="space-y-6 pt-2">
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-6 lg:px-8">
               <div className="grid gap-4 xl:grid-cols-[1.35fr_1fr_1fr_1fr]">
                 <div className="rounded-2xl border border-border/70 bg-card p-5">
                   <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
@@ -664,7 +930,12 @@ export default function PurchaseRequests() {
                     Estatus
                   </div>
                   <div className="flex min-h-[3rem] items-center">
-                    <Badge variant="outline" className="rounded-full px-3 py-1 text-sm">
+                    <Badge
+                      variant="outline"
+                      className={`rounded-full px-3 py-1 text-sm ${
+                        STATUS_COLORS[detail.purchaseRequest.status] || ""
+                      }`}
+                    >
                       {STATUS_LABELS[detail.purchaseRequest.status] || detail.purchaseRequest.status}
                     </Badge>
                   </div>
@@ -696,7 +967,7 @@ export default function PurchaseRequests() {
                 </div>
               )}
 
-              <div className="rounded-2xl border border-border/70 bg-card">
+              <div className="min-w-0 rounded-2xl border border-border/70 bg-card">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-4">
                   <div>
                     <p className="text-base font-semibold">Ítems de la solicitud</p>
@@ -708,17 +979,22 @@ export default function PurchaseRequests() {
                         : "Detalle de ítems incluidos en la solicitud."}
                     </p>
                   </div>
-                  {canConvertSelectedPurchaseRequest && (
-                    <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
-                      {selectedItemIds.length > 0
-                        ? `${selectedItemIds.length} seleccionados`
-                        : `Se convertirán ${convertibleItemIds.length}`}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline" className="rounded-full px-3 py-1 text-xs">
+                      Total a convertir {formatPurchaseOrderCurrency(conversionEstimatedTotal)}
                     </Badge>
-                  )}
+                    {canConvertSelectedPurchaseRequest && (
+                      <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                        {selectedItemIds.length > 0
+                          ? `${selectedItemIds.length} seleccionados`
+                          : `Se convertirán ${convertibleItemIds.length}`}
+                      </Badge>
+                    )}
+                  </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1080px] text-sm">
+                <div className="max-w-full overflow-x-auto">
+                  <table className="w-full min-w-[1420px] text-sm">
                     <thead>
                       <tr className="border-b border-border bg-muted/20">
                         {canConvertSelectedPurchaseRequest && (
@@ -739,59 +1015,149 @@ export default function PurchaseRequests() {
                           SAP
                         </th>
                         <th className="w-40 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Cantidad
+                          Cantidad solicitada
+                        </th>
+                        <th className="w-36 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Convertido
+                        </th>
+                        <th className="w-36 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Pendiente
+                        </th>
+                        <th className="w-40 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          A convertir
+                        </th>
+                        <th className="w-40 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Precio unit.
+                        </th>
+                        <th className="w-40 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Total a convertir
                         </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {selectedItems.map((item: any) => (
-                        <tr key={item.id} className="border-b border-border/70 last:border-0">
-                        {canConvertSelectedPurchaseRequest && (
+                      {selectedItems.map((item: any) => {
+                        const draft = getItemDraft(item);
+                        const convertedQuantity = getConvertedQuantity(item);
+                        const pendingQuantity = getPendingConversionQuantity(
+                          item,
+                          draft.quantity
+                        );
+                        const convertQuantity = getConvertQuantityDraft(item);
+                        const lineTotal = calculatePurchaseOrderLineAmounts({
+                          quantity: convertQuantity || "0",
+                          unitPrice: draft.unitPrice || "0",
+                          taxCode: "exe",
+                        }).total;
+                        const canConvertItem =
+                          canConvertSelectedPurchaseRequest &&
+                          convertibleItemIdSet.has(item.id) &&
+                          pendingQuantity > 0;
+
+                        return (
+                          <tr key={item.id} className="border-b border-border/70 last:border-0">
+                          {canConvertSelectedPurchaseRequest && (
+                            <td className="p-4 align-top">
+                              <Checkbox
+                                  checked={selectedItemIds.includes(item.id)}
+                                  disabled={!canConvertItem}
+                                  onCheckedChange={(checked) => {
+                                    setSelectedItemIds((current) =>
+                                      checked
+                                        ? [...current, item.id]
+                                        : current.filter((entry) => entry !== item.id)
+                                    );
+                                  }}
+                                />
+                            </td>
+                          )}
+                          <td className="p-4 align-top text-xs">
+                            {item.sourceRequest?.requestNumber || "—"}
+                          </td>
+                          <td className="p-4 align-top text-xs">
+                            {item.sourceProject
+                              ? `${item.sourceProject.code} — ${item.sourceProject.name}`
+                              : isMixedProjectRequest
+                                ? "Proyecto pendiente"
+                                : projectLabel}
+                          </td>
                           <td className="p-4 align-top">
-                            <Checkbox
-                                checked={selectedItemIds.includes(item.id)}
-                                disabled={!convertibleItemIdSet.has(item.id)}
-                                onCheckedChange={(checked) => {
-                                  setSelectedItemIds((current) =>
-                                    checked
-                                      ? [...current, item.id]
-                                      : current.filter((entry) => entry !== item.id)
-                                  );
-                                }}
+                            <p className="font-medium">{item.itemName}</p>
+                              {item.notes && (
+                                <p className="mt-1 text-xs text-muted-foreground">{item.notes}</p>
+                              )}
+                            </td>
+                            <td className="p-4 align-top text-xs font-mono">
+                              {item.currentSapItemCode || item.originalSapItemCode || "—"}
+                            </td>
+                            <td className="p-4 align-top">
+                              <div className="flex items-center justify-end gap-2">
+                                <Input
+                                  className="h-9 w-28 text-right"
+                                  type="number"
+                                  min="0.01"
+                                  step="0.01"
+                                  value={draft.quantity}
+                                  onChange={(event) =>
+                                    updateItemDraft(item, "quantity", event.target.value)
+                                  }
+                                  disabled={!canEditSelectedPurchaseRequest}
+                                />
+                                <span className="min-w-10 text-left text-xs text-muted-foreground">
+                                  {item.unit || ""}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="p-4 text-right align-top font-medium">
+                              {formatQuantity(convertedQuantity)} {item.unit || ""}
+                            </td>
+                            <td className="p-4 text-right align-top font-medium">
+                              {formatQuantity(pendingQuantity)} {item.unit || ""}
+                            </td>
+                            <td className="p-4 align-top">
+                              <div className="flex items-center justify-end gap-2">
+                                <Input
+                                  className="h-9 w-28 text-right"
+                                  type="number"
+                                  min="0.01"
+                                  max={pendingQuantity || undefined}
+                                  step="0.01"
+                                  value={convertQuantity}
+                                  onChange={(event) =>
+                                    updateConvertQuantityDraft(item, event.target.value)
+                                  }
+                                  disabled={!canConvertItem}
+                                />
+                                <span className="min-w-10 text-left text-xs text-muted-foreground">
+                                  {item.unit || ""}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="p-4 align-top">
+                              <Input
+                                className="ml-auto h-9 w-32 text-right"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={draft.unitPrice}
+                                onChange={(event) =>
+                                  updateItemDraft(item, "unitPrice", event.target.value)
+                                }
+                                disabled={!canEditSelectedPurchaseRequest}
                               />
-                          </td>
-                        )}
-                        <td className="p-4 align-top text-xs">
-                          {item.sourceRequest?.requestNumber || "—"}
-                        </td>
-                        <td className="p-4 align-top text-xs">
-                          {item.sourceProject
-                            ? `${item.sourceProject.code} — ${item.sourceProject.name}`
-                            : isMixedProjectRequest
-                              ? "Proyecto pendiente"
-                              : projectLabel}
-                        </td>
-                        <td className="p-4 align-top">
-                          <p className="font-medium">{item.itemName}</p>
-                            {item.notes && (
-                              <p className="mt-1 text-xs text-muted-foreground">{item.notes}</p>
-                            )}
-                          </td>
-                          <td className="p-4 align-top text-xs font-mono">
-                            {item.currentSapItemCode || item.originalSapItemCode || "—"}
-                          </td>
-                          <td className="p-4 text-right align-top font-medium">
-                            {item.quantity} {item.unit || ""}
-                          </td>
-                        </tr>
-                      ))}
+                            </td>
+                            <td className="p-4 text-right align-top font-medium">
+                              {formatPurchaseOrderCurrency(lineTotal)}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               </div>
 
-              <div className="flex flex-col gap-4 rounded-2xl border border-border/70 bg-card p-5 xl:flex-row xl:items-start xl:justify-between">
-                <div className="flex flex-wrap gap-3">
+              <div className="sticky bottom-0 z-10 flex flex-col gap-4 rounded-2xl border border-border/70 bg-card/95 p-4 shadow-sm backdrop-blur xl:flex-row xl:items-start xl:justify-between">
+                <div className="flex min-w-0 flex-wrap gap-3">
                   <Button
                     variant="outline"
                     className="h-11 px-4"
@@ -830,18 +1196,11 @@ export default function PurchaseRequests() {
                 </div>
 
                 {canEditSelectedPurchaseRequest && (
-                  <div className="flex flex-wrap gap-3">
+                  <div className="flex w-full min-w-0 flex-wrap justify-end gap-3 xl:w-auto">
                     <Button
                       variant="outline"
                       className="h-11 px-4"
-                      onClick={() =>
-                        updateMutation.mutate({
-                          id: detail.purchaseRequest.id,
-                          purchaseType: editPurchaseType,
-                          neededBy: editNeededBy || undefined,
-                          notes: editNotes || undefined,
-                        })
-                      }
+                      onClick={handleSaveChanges}
                       disabled={updateMutation.isPending}
                     >
                       <Save className="mr-2 h-4 w-4" />
@@ -872,13 +1231,12 @@ export default function PurchaseRequests() {
                     {canConvertSelectedPurchaseRequest && (
                       <Button
                         className="h-11 px-5"
-                        onClick={() =>
-                          convertMutation.mutate({
-                            purchaseRequestId: detail.purchaseRequest.id,
-                            selectedItemIds: itemIdsToConvert,
-                          })
+                        onClick={handleConvertToPurchaseOrder}
+                        disabled={
+                          updateMutation.isPending ||
+                          convertMutation.isPending ||
+                          itemIdsToConvert.length === 0
                         }
-                        disabled={convertMutation.isPending || itemIdsToConvert.length === 0}
                       >
                         <ShoppingCart className="mr-2 h-4 w-4" />
                         Convertir a OC

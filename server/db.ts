@@ -4,6 +4,7 @@ import {
   InsertUser,
   users,
   projects,
+  projectSubprojects,
   materialRequests,
   requestItems,
   supplyFlowRecords,
@@ -17,6 +18,9 @@ import {
   remissionGuides,
   receipts,
   receiptItems,
+  invoices,
+  invoiceItems,
+  invoiceRetentions,
   warehouseExits,
   warehouseExitItems,
   openingBalances,
@@ -34,6 +38,8 @@ import {
 } from "../drizzle/schema";
 import type {
   InsertProject,
+  InsertProjectSubproject,
+  ProjectSubproject,
   InsertMaterialRequest,
   InsertRequestItem,
   InsertSupplyFlowRecord,
@@ -47,6 +53,9 @@ import type {
   InsertRemissionGuide,
   InsertReceipt,
   InsertReceiptItem,
+  InsertInvoice,
+  InsertInvoiceItem,
+  InsertInvoiceRetention,
   InsertWarehouseExit,
   InsertWarehouseExitItem,
   InsertOpeningBalance,
@@ -111,6 +120,17 @@ function parseDecimal(value: string | number | null | undefined) {
 
 function toDecimalString(value: string | number | null | undefined) {
   return parseDecimal(value).toFixed(2);
+}
+
+function roundMoney(value: string | number | null | undefined) {
+  return Math.round((parseDecimal(value) + Number.EPSILON) * 100) / 100;
+}
+
+function getPendingConversionQuantity(item: {
+  quantity: string | number | null | undefined;
+  convertedQuantity?: string | number | null | undefined;
+}) {
+  return Math.max(parseDecimal(item.quantity) - parseDecimal(item.convertedQuantity), 0);
 }
 
 function getWarehouseExitPendingQuantityForRequestItem(item: {
@@ -639,7 +659,7 @@ export async function updateUserPasswordChangeRequirement(
 function mapProjectWithWarehouse(row: {
   project: typeof projects.$inferSelect;
   warehouse: typeof warehouses.$inferSelect | null;
-}) {
+}, subprojectsCount = 0) {
   return {
     ...row.project,
     warehouse: row.warehouse
@@ -651,6 +671,7 @@ function mapProjectWithWarehouse(row: {
           isActive: row.warehouse.isActive,
         }
       : null,
+    subprojectsCount,
   };
 }
 
@@ -661,7 +682,8 @@ export async function listProjects(statusFilter?: string) {
     ? eq(projects.status, statusFilter as any)
     : undefined;
 
-  const rows = await db
+  const [rows, subprojectCounts] = await Promise.all([
+    db
     .select({
       project: projects,
       warehouse: warehouses,
@@ -669,9 +691,23 @@ export async function listProjects(statusFilter?: string) {
     .from(projects)
     .leftJoin(warehouses, eq(warehouses.projectId, projects.id))
     .where(where)
-    .orderBy(desc(projects.createdAt));
+    .orderBy(desc(projects.createdAt)),
+    db
+      .select({
+        projectId: projectSubprojects.projectId,
+        total: count(),
+      })
+      .from(projectSubprojects)
+      .groupBy(projectSubprojects.projectId),
+  ]);
 
-  return rows.map(mapProjectWithWarehouse);
+  const countByProject = new Map(
+    subprojectCounts.map((entry) => [entry.projectId, entry.total])
+  );
+
+  return rows.map((row) =>
+    mapProjectWithWarehouse(row, countByProject.get(row.project.id) ?? 0)
+  );
 }
 
 export async function getProjectById(id: number) {
@@ -686,7 +722,14 @@ export async function getProjectById(id: number) {
     .leftJoin(warehouses, eq(warehouses.projectId, projects.id))
     .where(eq(projects.id, id))
     .limit(1);
-  return result[0] ? mapProjectWithWarehouse(result[0]) : undefined;
+  if (!result[0]) return undefined;
+
+  const [subprojects] = await db
+    .select({ total: count() })
+    .from(projectSubprojects)
+    .where(eq(projectSubprojects.projectId, id));
+
+  return mapProjectWithWarehouse(result[0], subprojects?.total ?? 0);
 }
 
 export async function getProjectByCode(code: string) {
@@ -718,10 +761,158 @@ export async function createProject(data: InsertProject) {
 export async function updateProject(id: number, data: Partial<InsertProject>) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  await db.update(projects).set(data).where(eq(projects.id, id));
+  await db
+    .update(projects)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(projects.id, id));
   const warehouse = await ensureProjectWarehouse(id);
   await syncInventoryItemsToProjectWarehouse(id, warehouse);
   return { success: true };
+}
+
+export async function listProjectSubprojects(projectId: number) {
+  const db = await getDb();
+  if (!db) return [] as ProjectSubproject[];
+
+  return db
+    .select()
+    .from(projectSubprojects)
+    .where(eq(projectSubprojects.projectId, projectId))
+    .orderBy(asc(projectSubprojects.code), asc(projectSubprojects.name));
+}
+
+export async function getProjectSubprojectByCode(projectId: number, code: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const rows = await db
+    .select()
+    .from(projectSubprojects)
+    .where(
+      and(
+        eq(projectSubprojects.projectId, projectId),
+        eq(projectSubprojects.code, code)
+      )
+    )
+    .limit(1);
+
+  return rows[0];
+}
+
+export async function getProjectSubprojectById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const rows = await db
+    .select()
+    .from(projectSubprojects)
+    .where(eq(projectSubprojects.id, id))
+    .limit(1);
+
+  return rows[0];
+}
+
+export async function createProjectSubproject(data: InsertProjectSubproject) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [subproject] = await db
+    .insert(projectSubprojects)
+    .values(data)
+    .returning();
+
+  return subproject;
+}
+
+export async function updateProjectSubproject(
+  id: number,
+  data: Partial<InsertProjectSubproject>
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [subproject] = await db
+    .update(projectSubprojects)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(projectSubprojects.id, id))
+    .returning();
+
+  return subproject;
+}
+
+export async function listMaterialRequestTargetOptions(
+  projectId: number,
+  search?: string
+) {
+  const db = await getDb();
+  if (!db) {
+    return { subprojects: [], fixedAssets: [] };
+  }
+
+  const normalizedSearch = search?.trim();
+  const subprojectConditions = [
+    eq(projectSubprojects.projectId, projectId),
+    eq(projectSubprojects.isActive, true),
+  ];
+  const fixedAssetConditions = [
+    eq(sapCatalog.isActive, true),
+    eq(sapCatalog.tipoArticulo, 3),
+  ];
+
+  if (normalizedSearch) {
+    subprojectConditions.push(
+      or(
+        ilike(projectSubprojects.code, `%${normalizedSearch}%`),
+        ilike(projectSubprojects.name, `%${normalizedSearch}%`),
+        ilike(projectSubprojects.description, `%${normalizedSearch}%`)
+      )!
+    );
+    fixedAssetConditions.push(
+      or(
+        ilike(sapCatalog.itemCode, `%${normalizedSearch}%`),
+        ilike(sapCatalog.description, `%${normalizedSearch}%`)
+      )!
+    );
+  }
+
+  const [subprojects, fixedAssets] = await Promise.all([
+    db
+      .select()
+      .from(projectSubprojects)
+      .where(and(...subprojectConditions))
+      .orderBy(asc(projectSubprojects.code), asc(projectSubprojects.name))
+      .limit(50),
+    db
+      .select()
+      .from(sapCatalog)
+      .where(and(...fixedAssetConditions))
+      .orderBy(asc(sapCatalog.itemCode))
+      .limit(50),
+  ]);
+
+  return { subprojects, fixedAssets };
+}
+
+export async function getActiveFixedAssetByCode(itemCode: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const normalizedItemCode = itemCode.trim();
+  if (!normalizedItemCode) return undefined;
+
+  const rows = await db
+    .select()
+    .from(sapCatalog)
+    .where(
+      and(
+        eq(sapCatalog.isActive, true),
+        eq(sapCatalog.tipoArticulo, 3),
+        eq(sapCatalog.itemCode, normalizedItemCode)
+      )
+    )
+    .limit(1);
+
+  return rows[0];
 }
 
 // ============================================================
@@ -773,6 +964,44 @@ export async function createMaterialRequest(
   }
 
   return { id: requestId, requestNumber };
+}
+
+function mapMaterialRequestTarget(
+  request: {
+    targetType?: "subproyecto" | "activo_fijo" | null;
+    subProjectId?: number | null;
+    fixedAssetSapItemCode?: string | null;
+    fixedAssetName?: string | null;
+  },
+  subproject?: ProjectSubproject | null
+) {
+  if (request.targetType === "subproyecto" && request.subProjectId) {
+    const subprojectLabel = subproject
+      ? `${subproject.code} - ${subproject.name}`
+      : `Subproyecto #${request.subProjectId}`;
+    return {
+      type: "subproyecto" as const,
+      subProjectId: request.subProjectId,
+      projectId: subproject?.projectId ?? null,
+      code: subproject?.code ?? null,
+      name: subproject?.name ?? null,
+      label: `Subproyecto: ${subprojectLabel}`,
+    };
+  }
+
+  if (request.targetType === "activo_fijo" && request.fixedAssetSapItemCode) {
+    const assetLabel = request.fixedAssetName
+      ? `${request.fixedAssetSapItemCode} - ${request.fixedAssetName}`
+      : request.fixedAssetSapItemCode;
+    return {
+      type: "activo_fijo" as const,
+      fixedAssetSapItemCode: request.fixedAssetSapItemCode,
+      fixedAssetName: request.fixedAssetName ?? null,
+      label: `Activo fijo: ${assetLabel}`,
+    };
+  }
+
+  return null;
 }
 
 export async function updateMaterialRequest(
@@ -844,7 +1073,53 @@ export async function listMaterialRequests(filters?: {
     .where(where)
     .orderBy(desc(materialRequests.createdAt));
 
-  return rows;
+  if (rows.length === 0) {
+    return rows;
+  }
+
+  const requestIds = rows.map((row) => row.request.id);
+  const targetRows = await db
+    .select({
+      requestId: requestItems.requestId,
+      itemId: requestItems.id,
+      itemName: requestItems.itemName,
+      targetType: requestItems.targetType,
+      subProjectId: requestItems.subProjectId,
+      fixedAssetSapItemCode: requestItems.fixedAssetSapItemCode,
+      fixedAssetName: requestItems.fixedAssetName,
+      targetSubproject: projectSubprojects,
+    })
+    .from(requestItems)
+    .leftJoin(
+      projectSubprojects,
+      eq(requestItems.subProjectId, projectSubprojects.id)
+    )
+    .where(
+      and(
+        inArray(requestItems.requestId, requestIds),
+        isNotNull(requestItems.targetType)
+      )
+    )
+    .orderBy(asc(requestItems.id));
+  const itemTargetsByRequestId = new Map<number, unknown[]>();
+
+  for (const row of targetRows) {
+    const target = mapMaterialRequestTarget(row, row.targetSubproject);
+    if (!target) continue;
+
+    const current = itemTargetsByRequestId.get(row.requestId) ?? [];
+    current.push({
+      ...target,
+      itemId: row.itemId,
+      itemName: row.itemName,
+    });
+    itemTargetsByRequestId.set(row.requestId, current);
+  }
+
+  return rows.map((row) => ({
+    ...row,
+    itemTargets: itemTargetsByRequestId.get(row.request.id) ?? [],
+  }));
 }
 
 async function getCommittedQuantityForItem(
@@ -853,10 +1128,7 @@ async function getCommittedQuantityForItem(
 ) {
   const db = await getDb();
   if (!db) return "0.00";
-
-  const matchCondition = item.sapItemCode
-    ? eq(requestItems.sapItemCode, item.sapItemCode)
-    : sql`lower(${requestItems.itemName}) = lower(${item.itemName})`;
+  if (!item.sapItemCode) return "0.00";
 
   const rows = await db
     .select({
@@ -868,7 +1140,7 @@ async function getCommittedQuantityForItem(
     .leftJoin(materialRequests, eq(requestItems.requestId, materialRequests.id))
     .where(
       and(
-        matchCondition,
+        eq(requestItems.sapItemCode, item.sapItemCode),
         sql`${requestItems.requestId} <> ${requestId}`,
         or(
           and(
@@ -988,24 +1260,54 @@ export async function getMaterialRequestById(id: number) {
     .select()
     .from(requestItems)
     .where(eq(requestItems.requestId, id));
+  const itemSubProjectIds = Array.from(
+    new Set(
+      items
+        .map((item) => item.subProjectId)
+        .filter((subProjectId): subProjectId is number => Boolean(subProjectId))
+    )
+  );
+  const itemSubprojects = itemSubProjectIds.length
+    ? await db
+        .select()
+        .from(projectSubprojects)
+        .where(inArray(projectSubprojects.id, itemSubProjectIds))
+    : [];
+  const itemSubprojectById = new Map(
+    itemSubprojects.map((subproject) => [subproject.id, subproject])
+  );
 
   const enrichedItems = await Promise.all(
     items.map(async (item) => {
-      const committedQuantity = await getCommittedQuantityForItem(id, item);
-      const sapStock = await getStockByItem({
-        sapItemCode: item.sapItemCode,
-        itemName: item.itemName,
-      });
-      const projectStock = await getStockByItem({
-        sapItemCode: item.sapItemCode,
-        itemName: item.itemName,
-        projectId: rows[0]?.request.projectId ?? null,
-      });
+      const sapItemCode = item.sapItemCode?.trim() || null;
+      const committedQuantity = sapItemCode
+        ? await getCommittedQuantityForItem(id, item)
+        : null;
+      const sapStock = sapItemCode
+        ? await getStockByItem({
+            sapItemCode,
+            itemName: item.itemName,
+          })
+        : null;
+      const projectStock = sapItemCode
+        ? await getStockByItem({
+            sapItemCode,
+            itemName: item.itemName,
+            projectId: rows[0]?.request.projectId ?? null,
+          })
+        : null;
 
       return {
         ...item,
-        committedQuantity:
-          item.committedQuantity ?? committedQuantity,
+        target: mapMaterialRequestTarget(
+          item,
+          item.subProjectId
+            ? itemSubprojectById.get(item.subProjectId) ?? null
+            : null
+        ),
+        committedQuantity: sapItemCode
+          ? item.committedQuantity ?? committedQuantity
+          : null,
         sapStock,
         projectStock,
         physicalDispatchedQuantity: item.dispatchedQuantity ?? "0.00",
@@ -1014,7 +1316,10 @@ export async function getMaterialRequestById(id: number) {
     })
   );
 
-  return { ...rows[0], items: enrichedItems };
+  return {
+    ...rows[0],
+    items: enrichedItems,
+  };
 }
 
 export async function updateMaterialRequestStatus(
@@ -2453,6 +2758,18 @@ export async function generateReceiptNumber() {
   return `REC-${year}-${String(num).padStart(4, "0")}`;
 }
 
+export async function generateInvoiceDocumentNumber() {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const year = new Date().getFullYear();
+  const result = await db
+    .select({ count: count() })
+    .from(invoices)
+    .where(sql`EXTRACT(YEAR FROM ${invoices.createdAt}) = ${year}`);
+  const num = (result[0]?.count ?? 0) + 1;
+  return `FT-${year}-${String(num).padStart(4, "0")}`;
+}
+
 export async function generateWarehouseExitNumber() {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -2483,8 +2800,25 @@ function buildPurchaseRequestDocument(params: {
   purchaseType: string;
   neededBy: Date | string | null | undefined;
   printedAt?: Date | string | null | undefined;
-  items: Array<{ itemName: string; quantity: string | number; unit?: string | null }>;
+  items: Array<{
+    itemName: string;
+    quantity: string | number;
+    unit?: string | null;
+    unitPrice?: string | number | null;
+  }>;
 }) {
+  const hasPricing = params.items.some((item) => parseDecimal(item.unitPrice) > 0);
+  const estimatedTotal = params.items.reduce(
+    (sum, item) =>
+      sum +
+      calculatePurchaseOrderLineAmounts({
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        taxCode: "exe",
+      }).total,
+    0
+  );
+
   return buildProcurementPdfBase64({
     title: "Solicitud de Compra",
     documentNumber: params.requestNumber,
@@ -2516,7 +2850,28 @@ function buildPurchaseRequestDocument(params: {
     items: params.items.map((item) => ({
       description: item.itemName,
       quantityLabel: `${item.quantity} ${item.unit ?? ""}`.trim(),
+      metaLines: hasPricing
+        ? [`Precio unitario: ${formatPurchaseOrderCurrency(item.unitPrice)}`]
+        : undefined,
+      amountLabel: hasPricing
+        ? formatPurchaseOrderCurrency(
+            calculatePurchaseOrderLineAmounts({
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              taxCode: "exe",
+            }).total
+          )
+        : undefined,
     })),
+    summaryRows: hasPricing
+      ? [
+          {
+            label: "Total estimado",
+            value: formatPurchaseOrderCurrency(estimatedTotal),
+            emphasized: true,
+          },
+        ]
+      : undefined,
     generatedLabel: formatDateLabel(params.printedAt ?? new Date()),
     footerNote: "Solicitud generada automáticamente por BuildReq.",
   });
@@ -2631,6 +2986,7 @@ export async function createPurchaseRequest(
       itemName: item.itemName,
       quantity: item.quantity,
       unit: item.unit,
+      unitPrice: item.unitPrice,
     })),
   });
 
@@ -2692,6 +3048,8 @@ export async function listPurchaseRequests(filters?: {
   const sourceRows = await db
     .select({
       purchaseRequestId: purchaseRequestItems.purchaseRequestId,
+      requestedQuantity: purchaseRequestItems.quantity,
+      convertedQuantity: purchaseRequestItems.convertedQuantity,
       projectId: materialRequests.projectId,
       projectCode: projects.code,
       projectName: projects.name,
@@ -2706,18 +3064,43 @@ export async function listPurchaseRequests(filters?: {
     number,
     Array<{ id: number; code: string | null; name: string | null }>
   >();
+  const pendingConversionByPurchaseRequestId = new Map<
+    number,
+    { itemCount: number; quantity: number }
+  >();
 
   for (const row of sourceRows) {
-    if (!row.purchaseRequestId || !row.projectId) continue;
-    const current = sourceProjectsByPurchaseRequestId.get(row.purchaseRequestId) ?? [];
-    if (!current.some((entry) => entry.id === row.projectId)) {
-      current.push({
-        id: row.projectId,
-        code: row.projectCode ?? null,
-        name: row.projectName ?? null,
-      });
+    if (!row.purchaseRequestId) continue;
+
+    const pendingConversionQuantity = getPendingConversionQuantity({
+      quantity: row.requestedQuantity,
+      convertedQuantity: row.convertedQuantity,
+    });
+    const pendingSummary =
+      pendingConversionByPurchaseRequestId.get(row.purchaseRequestId) ?? {
+        itemCount: 0,
+        quantity: 0,
+      };
+    if (pendingConversionQuantity > 0) {
+      pendingSummary.itemCount += 1;
+      pendingSummary.quantity += pendingConversionQuantity;
     }
-    sourceProjectsByPurchaseRequestId.set(row.purchaseRequestId, current);
+    pendingConversionByPurchaseRequestId.set(
+      row.purchaseRequestId,
+      pendingSummary
+    );
+
+    if (row.projectId) {
+      const current = sourceProjectsByPurchaseRequestId.get(row.purchaseRequestId) ?? [];
+      if (!current.some((entry) => entry.id === row.projectId)) {
+        current.push({
+          id: row.projectId,
+          code: row.projectCode ?? null,
+          name: row.projectName ?? null,
+        });
+      }
+      sourceProjectsByPurchaseRequestId.set(row.purchaseRequestId, current);
+    }
   }
 
   return rows.map((row) => {
@@ -2742,6 +3125,13 @@ export async function listPurchaseRequests(filters?: {
       ...row,
       projectSummary,
       sourceProjects,
+      pendingConversionItemCount:
+        pendingConversionByPurchaseRequestId.get(row.purchaseRequest.id)
+          ?.itemCount ?? 0,
+      pendingConversionQuantity: toDecimalString(
+        pendingConversionByPurchaseRequestId.get(row.purchaseRequest.id)
+          ?.quantity ?? 0
+      ),
     };
   });
 }
@@ -2777,6 +3167,9 @@ export async function getPurchaseRequestById(id: number) {
 
   const items = itemRows.map((row) => ({
     ...row.item,
+    pendingConversionQuantity: toDecimalString(
+      getPendingConversionQuantity(row.item)
+    ),
     sourceRequest: row.sourceRequest,
     sourceProject: row.sourceProject,
   }));
@@ -2821,6 +3214,7 @@ export async function getPurchaseRequestById(id: number) {
       itemName: item.itemName,
       quantity: item.quantity,
       unit: item.unit,
+      unitPrice: item.unitPrice,
     })),
   });
 
@@ -2893,6 +3287,97 @@ export async function updatePurchaseRequestItem(
     .set({ ...data, updatedAt: new Date() })
     .where(eq(purchaseRequestItems.id, id));
   return { success: true };
+}
+
+export async function getPurchaseRequestItemById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const rows = await db
+    .select()
+    .from(purchaseRequestItems)
+    .where(eq(purchaseRequestItems.id, id))
+    .limit(1);
+
+  return rows[0];
+}
+
+export async function adjustPurchaseRequestItemConvertedQuantity(
+  id: number,
+  delta: string | number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [item] = await db
+    .select()
+    .from(purchaseRequestItems)
+    .where(eq(purchaseRequestItems.id, id))
+    .limit(1);
+  if (!item) {
+    throw new Error("Ítem de solicitud de compra no encontrado");
+  }
+
+  const nextConvertedQuantity = Math.max(
+    parseDecimal(item.convertedQuantity) + parseDecimal(delta),
+    0
+  );
+  await updatePurchaseRequestItem(id, {
+    convertedQuantity: toDecimalString(nextConvertedQuantity),
+  });
+
+  return {
+    ...item,
+    convertedQuantity: toDecimalString(nextConvertedQuantity),
+  };
+}
+
+export async function syncPurchaseRequestConversionStatus(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [purchaseRequest] = await db
+    .select()
+    .from(purchaseRequests)
+    .where(eq(purchaseRequests.id, id))
+    .limit(1);
+  if (!purchaseRequest) {
+    throw new Error("Solicitud de compra no encontrada");
+  }
+  if (["rechazada", "anulada"].includes(purchaseRequest.status)) {
+    return purchaseRequest.status;
+  }
+
+  const items = await db
+    .select()
+    .from(purchaseRequestItems)
+    .where(eq(purchaseRequestItems.purchaseRequestId, id));
+
+  if (items.length === 0) {
+    return purchaseRequest.status;
+  }
+
+  const allConverted = items.every(
+    (item) => getPendingConversionQuantity(item) <= 0
+  );
+  const hasConverted = items.some(
+    (item) => parseDecimal(item.convertedQuantity) > 0
+  );
+  const nextStatus = allConverted
+    ? "convertida"
+    : hasConverted
+      ? "parcialmente_convertida"
+      : ["convertida", "parcialmente_convertida"].includes(
+            purchaseRequest.status
+          )
+        ? "pendiente"
+        : purchaseRequest.status;
+
+  if (nextStatus !== purchaseRequest.status) {
+    await updatePurchaseRequest(id, { status: nextStatus as any });
+  }
+
+  return nextStatus;
 }
 
 export async function addPurchaseRequestItems(
@@ -3666,8 +4151,163 @@ export async function getTransferById(id: number) {
   return { ...rows[0], destinationProject, items };
 }
 
+function calculateInvoiceTotals(
+  items: Array<{
+    quantity: string | number;
+    unitPrice: string | number | null | undefined;
+    taxCode?: string | null;
+  }>
+) {
+  return items.reduce(
+    (summary, item) => {
+      const amounts = calculatePurchaseOrderLineAmounts({
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        taxCode: item.taxCode,
+      });
+
+      summary.subtotal += amounts.subtotal;
+      summary.taxAmount += amounts.taxAmount;
+      summary.total += amounts.total;
+      return summary;
+    },
+    { subtotal: 0, taxAmount: 0, total: 0 }
+  );
+}
+
+async function createInvoiceFromPurchaseOrderReceipt(params: {
+  receiptId: number;
+  purchaseOrderDetail: NonNullable<Awaited<ReturnType<typeof getPurchaseOrderById>>>;
+  receiptData: Omit<InsertReceipt, "receiptNumber"> & {
+    emissionDeadline?: Date | null;
+  };
+  receiptItems: Array<
+    Omit<InsertReceiptItem, "receiptId"> & {
+      insertedReceiptItemId: number;
+    }
+  >;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const emissionDeadline = params.receiptData.emissionDeadline;
+  if (!emissionDeadline) {
+    throw new Error("La fecha límite de emisión es requerida para facturas");
+  }
+
+  const itemById = new Map(
+    (params.purchaseOrderDetail.items ?? []).map((item: any) => [item.id, item])
+  );
+  const invoiceLines = params.receiptItems
+    .map((receiptItem) => {
+      const sourceItem = itemById.get(receiptItem.sourceItemId);
+      if (!sourceItem) return null;
+      const amounts = calculatePurchaseOrderLineAmounts({
+        quantity: receiptItem.quantityReceived,
+        unitPrice: sourceItem.unitPrice ?? "0.00",
+        taxCode: sourceItem.taxCode,
+      });
+
+      return {
+        receiptItem,
+        sourceItem,
+        amounts,
+      };
+    })
+    .filter((line): line is NonNullable<typeof line> => Boolean(line));
+  const catalogCodes = Array.from(
+    new Set(
+      invoiceLines
+        .flatMap(({ sourceItem }) => [
+          sourceItem.currentSapItemCode,
+          sourceItem.originalSapItemCode,
+        ])
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    )
+  );
+  const catalogRows =
+    catalogCodes.length > 0
+      ? await db
+          .select({
+            itemCode: sapCatalog.itemCode,
+            allowsTaxWithholding: sapCatalog.allowsTaxWithholding,
+          })
+          .from(sapCatalog)
+          .where(inArray(sapCatalog.itemCode, catalogCodes))
+      : [];
+  const catalogByCode = new Map(
+    catalogRows.map((row) => [row.itemCode, row])
+  );
+
+  const totals = calculateInvoiceTotals(
+    invoiceLines.map(({ receiptItem, sourceItem }) => ({
+      quantity: receiptItem.quantityReceived,
+      unitPrice: sourceItem.unitPrice ?? "0.00",
+      taxCode: sourceItem.taxCode,
+    }))
+  );
+  const invoiceDocumentNumber = await generateInvoiceDocumentNumber();
+
+  const [createdInvoice] = await db
+    .insert(invoices)
+    .values({
+      invoiceDocumentNumber,
+      receiptId: params.receiptId,
+      purchaseOrderId: params.purchaseOrderDetail.purchaseOrder.id,
+      projectId: params.purchaseOrderDetail.purchaseOrder.projectId,
+      supplierId: params.purchaseOrderDetail.purchaseOrder.supplierId ?? null,
+      status: "borrador",
+      cai: params.receiptData.cai ?? null,
+      invoiceNumber: params.receiptData.invoiceNumber ?? null,
+      documentDate: params.receiptData.documentDate ?? null,
+      postingDate: params.receiptData.postingDate,
+      receiptDate: params.receiptData.receiptDate,
+      emissionDeadline,
+      notes: params.receiptData.notes ?? null,
+      subtotal: toDecimalString(totals.subtotal),
+      taxAmount: toDecimalString(totals.taxAmount),
+      total: toDecimalString(totals.total),
+      retentionTotal: "0.00",
+      netPayable: toDecimalString(totals.total),
+    } as any)
+    .returning({
+      id: invoices.id,
+      invoiceDocumentNumber: invoices.invoiceDocumentNumber,
+    });
+
+  if (invoiceLines.length > 0) {
+    await db.insert(invoiceItems).values(
+      invoiceLines.map(({ receiptItem, sourceItem, amounts }) => {
+        const catalogItem =
+          catalogByCode.get(sourceItem.currentSapItemCode ?? "") ??
+          catalogByCode.get(sourceItem.originalSapItemCode ?? "");
+        return {
+          invoiceId: createdInvoice.id,
+          receiptItemId: receiptItem.insertedReceiptItemId,
+          purchaseOrderItemId: sourceItem.id,
+          itemName: receiptItem.itemName,
+          currentSapItemCode: sourceItem.currentSapItemCode ?? null,
+          originalSapItemCode: sourceItem.originalSapItemCode ?? null,
+          quantity: toDecimalString(receiptItem.quantityReceived),
+          unit: receiptItem.unit ?? sourceItem.unit ?? null,
+          unitPrice: toDecimalString(sourceItem.unitPrice ?? "0.00"),
+          taxCode: amounts.taxCode,
+          allowsTaxWithholding: catalogItem?.allowsTaxWithholding ?? true,
+          subtotal: toDecimalString(amounts.subtotal),
+          taxAmount: toDecimalString(amounts.taxAmount),
+          total: toDecimalString(amounts.total),
+        };
+      })
+    );
+  }
+
+  return createdInvoice;
+}
+
 export async function registerReceipt(
-  data: Omit<InsertReceipt, "receiptNumber">,
+  data: Omit<InsertReceipt, "receiptNumber"> & {
+    emissionDeadline?: Date | null;
+  },
   items: Array<
     Omit<InsertReceiptItem, "receiptId"> & {
       closeRemaining?: boolean;
@@ -3698,33 +4338,68 @@ export async function registerReceipt(
       : totalReceived < totalExpected
       ? "parcial"
       : "completa";
+  const { emissionDeadline, ...receiptData } = data;
 
   const [created] = await db
     .insert(receipts)
     .values({
-      ...data,
+      ...receiptData,
       receiptNumber,
       status,
     })
     .returning({ id: receipts.id });
 
+  let insertedReceiptItems: Array<
+    Omit<InsertReceiptItem, "receiptId"> & {
+      insertedReceiptItemId: number;
+    }
+  > = [];
   if (items.length > 0) {
-    await db.insert(receiptItems).values(
-      items.map((item) => {
-        const {
-          closeRemaining: _closeRemaining,
-          closeReason: _closeReason,
-          closeNote: _closeNote,
-          closedById: _closedById,
-          ...receiptItem
-        } = item;
+    insertedReceiptItems = await db
+      .insert(receiptItems)
+      .values(
+        items.map((item) => {
+          const {
+            closeRemaining: _closeRemaining,
+            closeReason: _closeReason,
+            closeNote: _closeNote,
+            closedById: _closedById,
+            ...receiptItem
+          } = item;
 
-        return {
-          ...receiptItem,
-        receiptId: created.id,
-        };
-      })
-    );
+          return {
+            ...receiptItem,
+            receiptId: created.id,
+          };
+        })
+      )
+      .returning({
+        insertedReceiptItemId: receiptItems.id,
+        sourceItemId: receiptItems.sourceItemId,
+        itemName: receiptItems.itemName,
+        quantityExpected: receiptItems.quantityExpected,
+        quantityReceived: receiptItems.quantityReceived,
+        unit: receiptItems.unit,
+        notes: receiptItems.notes,
+        createdAt: receiptItems.createdAt,
+      });
+  }
+
+  let createdInvoice:
+    | { id: number; invoiceDocumentNumber: string }
+    | undefined;
+  if (data.sourceType === "purchase_order") {
+    const purchaseOrderDetail = await getPurchaseOrderById(data.sourceId);
+    if (!purchaseOrderDetail) {
+      throw new Error("Orden de compra no encontrada");
+    }
+
+    createdInvoice = await createInvoiceFromPurchaseOrderReceipt({
+      receiptId: created.id,
+      purchaseOrderDetail,
+      receiptData: data,
+      receiptItems: insertedReceiptItems,
+    });
   }
 
   if (data.sourceType === "purchase_order") {
@@ -4031,7 +4706,13 @@ export async function registerReceipt(
     }
   }
 
-  return { id: created.id, receiptNumber, status };
+  return {
+    id: created.id,
+    receiptNumber,
+    status,
+    invoiceId: createdInvoice?.id,
+    invoiceDocumentNumber: createdInvoice?.invoiceDocumentNumber,
+  };
 }
 
 export async function listReceipts(filters?: {
@@ -4095,6 +4776,238 @@ export async function getReceiptById(id: number) {
     .from(receiptItems)
     .where(eq(receiptItems.receiptId, id));
   return { ...rows[0], items };
+}
+
+export async function listInvoices(filters?: {
+  projectId?: number;
+  status?: string;
+  supplierId?: number;
+  search?: string;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters?.projectId) conditions.push(eq(invoices.projectId, filters.projectId));
+  if (filters?.status) conditions.push(eq(invoices.status, filters.status as any));
+  if (filters?.supplierId) conditions.push(eq(invoices.supplierId, filters.supplierId));
+  const normalizedSearch = filters?.search?.trim();
+  if (normalizedSearch) {
+    const searchPattern = `%${normalizedSearch}%`;
+    conditions.push(
+      or(
+        ilike(invoices.invoiceDocumentNumber, searchPattern),
+        ilike(invoices.invoiceNumber, searchPattern),
+        ilike(invoices.cai, searchPattern),
+        ilike(purchaseOrders.orderNumber, searchPattern),
+        ilike(receipts.receiptNumber, searchPattern),
+        ilike(suppliers.supplierCode, searchPattern),
+        ilike(suppliers.name, searchPattern),
+        ilike(projects.code, searchPattern),
+        ilike(projects.name, searchPattern)
+      )
+    );
+  }
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+  return db
+    .select({
+      invoice: invoices,
+      receipt: receipts,
+      purchaseOrder: purchaseOrders,
+      project: projects,
+      supplier: suppliers,
+    })
+    .from(invoices)
+    .leftJoin(receipts, eq(invoices.receiptId, receipts.id))
+    .leftJoin(purchaseOrders, eq(invoices.purchaseOrderId, purchaseOrders.id))
+    .leftJoin(projects, eq(invoices.projectId, projects.id))
+    .leftJoin(suppliers, eq(invoices.supplierId, suppliers.id))
+    .where(where)
+    .orderBy(desc(invoices.createdAt));
+}
+
+export async function getInvoiceById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const rows = await db
+    .select({
+      invoice: invoices,
+      receipt: receipts,
+      purchaseOrder: purchaseOrders,
+      project: projects,
+      supplier: suppliers,
+    })
+    .from(invoices)
+    .leftJoin(receipts, eq(invoices.receiptId, receipts.id))
+    .leftJoin(purchaseOrders, eq(invoices.purchaseOrderId, purchaseOrders.id))
+    .leftJoin(projects, eq(invoices.projectId, projects.id))
+    .leftJoin(suppliers, eq(invoices.supplierId, suppliers.id))
+    .where(eq(invoices.id, id))
+    .limit(1);
+  if (!rows[0]) return undefined;
+
+  const [items, retentions] = await Promise.all([
+    db
+      .select()
+      .from(invoiceItems)
+      .where(eq(invoiceItems.invoiceId, id))
+      .orderBy(asc(invoiceItems.id)),
+    db
+      .select()
+      .from(invoiceRetentions)
+      .where(eq(invoiceRetentions.invoiceId, id))
+      .orderBy(asc(invoiceRetentions.id)),
+  ]);
+
+  return { ...rows[0], items, retentions };
+}
+
+export async function updateInvoice(
+  id: number,
+  data: Partial<
+    Pick<
+      InsertInvoice,
+      | "cai"
+      | "invoiceNumber"
+      | "documentDate"
+      | "postingDate"
+      | "receiptDate"
+      | "emissionDeadline"
+      | "notes"
+    >
+  >
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [updated] = await db
+    .update(invoices)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(invoices.id, id))
+    .returning();
+
+  return updated;
+}
+
+export async function replaceInvoiceRetentions(
+  invoiceId: number,
+  retentions: Array<{
+    retentionType: "percentage" | "amount";
+    description: string;
+    baseAmount?: string | number | null;
+    percentage?: string | number | null;
+    amount?: string | number | null;
+  }>
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async (tx) => {
+    const [invoiceRow] = await tx
+      .select({
+        invoice: invoices,
+        supplier: suppliers,
+      })
+      .from(invoices)
+      .leftJoin(suppliers, eq(invoices.supplierId, suppliers.id))
+      .where(eq(invoices.id, invoiceId))
+      .limit(1);
+    if (!invoiceRow) {
+      throw new Error("Factura no encontrada");
+    }
+    const invoice = invoiceRow.invoice;
+    const hasRetentions = retentions.length > 0;
+    if (hasRetentions && invoiceRow.supplier?.allowsTaxWithholding === false) {
+      throw new Error("El proveedor no permite retención de impuestos");
+    }
+
+    const items = await tx
+      .select()
+      .from(invoiceItems)
+      .where(eq(invoiceItems.invoiceId, invoiceId));
+    const withholdingBase = roundMoney(
+      items
+        .filter((item) => item.allowsTaxWithholding)
+        .reduce((sum, item) => sum + parseDecimal(item.total), 0)
+    );
+
+    if (hasRetentions && withholdingBase <= 0) {
+      throw new Error(
+        "La factura no tiene líneas habilitadas para retención de impuestos"
+      );
+    }
+
+    const normalizedRetentions = retentions.map((retention) => {
+      const baseAmount =
+        retention.retentionType === "percentage"
+          ? parseDecimal(retention.baseAmount ?? withholdingBase)
+          : parseDecimal(retention.baseAmount);
+      if (
+        retention.retentionType === "percentage" &&
+        baseAmount - withholdingBase > 0.000001
+      ) {
+        throw new Error(
+          "La base de retención no puede exceder la base retenible de la factura"
+        );
+      }
+      const percentage =
+        retention.retentionType === "percentage"
+          ? parseDecimal(retention.percentage)
+          : null;
+      const amount =
+        retention.retentionType === "percentage"
+          ? roundMoney((baseAmount * (percentage ?? 0)) / 100)
+          : roundMoney(parseDecimal(retention.amount));
+
+      return {
+        invoiceId,
+        retentionType: retention.retentionType,
+        description: retention.description.trim(),
+        baseAmount: toDecimalString(baseAmount),
+        percentage:
+          retention.retentionType === "percentage"
+            ? toDecimalString(percentage)
+            : null,
+        amount: toDecimalString(amount),
+      };
+    });
+
+    const retentionTotal = roundMoney(
+      normalizedRetentions.reduce(
+        (sum, retention) => sum + parseDecimal(retention.amount),
+        0
+      )
+    );
+    const total = parseDecimal(invoice.total);
+    if (retentionTotal - total > 0.000001) {
+      throw new Error("El total de retenciones no puede exceder la factura");
+    }
+    if (retentionTotal - withholdingBase > 0.000001) {
+      throw new Error(
+        "El total de retenciones no puede exceder la base retenible de la factura"
+      );
+    }
+
+    await tx
+      .delete(invoiceRetentions)
+      .where(eq(invoiceRetentions.invoiceId, invoiceId));
+    if (normalizedRetentions.length > 0) {
+      await tx.insert(invoiceRetentions).values(normalizedRetentions);
+    }
+
+    const [updatedInvoice] = await tx
+      .update(invoices)
+      .set({
+        retentionTotal: toDecimalString(retentionTotal),
+        netPayable: toDecimalString(total - retentionTotal),
+        updatedAt: new Date(),
+      })
+      .where(eq(invoices.id, invoiceId))
+      .returning();
+
+    return updatedInvoice;
+  });
 }
 
 // ============================================================
@@ -7121,6 +8034,19 @@ export async function lookupSapItemByCode(sapItemCode: string) {
   const normalizedSapItemCode = sapItemCode.trim();
   if (!normalizedSapItemCode) return null;
 
+  const catalogTypeMatch = await db
+    .select({
+      tipoArticulo: sapCatalog.tipoArticulo,
+    })
+    .from(sapCatalog)
+    .where(
+      and(
+        eq(sapCatalog.isActive, true),
+        eq(sapCatalog.itemCode, normalizedSapItemCode)
+      )
+    )
+    .limit(1);
+
   const inventoryMatch = await db
     .select({
       sapItemCode: inventoryItems.sapItemCode,
@@ -7137,6 +8063,7 @@ export async function lookupSapItemByCode(sapItemCode: string) {
       sapItemCode: inventoryMatch[0].sapItemCode,
       itemName: inventoryMatch[0].itemName,
       unit: inventoryMatch[0].unit,
+      tipoArticulo: catalogTypeMatch[0]?.tipoArticulo ?? 1,
       source: "inventory" as const,
     };
   }
@@ -7145,6 +8072,7 @@ export async function lookupSapItemByCode(sapItemCode: string) {
     .select({
       itemCode: sapCatalog.itemCode,
       description: sapCatalog.description,
+      tipoArticulo: sapCatalog.tipoArticulo,
     })
     .from(sapCatalog)
     .where(
@@ -7160,6 +8088,7 @@ export async function lookupSapItemByCode(sapItemCode: string) {
       sapItemCode: catalogMatch[0].itemCode,
       itemName: catalogMatch[0].description,
       unit: null,
+      tipoArticulo: catalogMatch[0].tipoArticulo,
       source: "catalog" as const,
     };
   }
@@ -7170,6 +8099,7 @@ export async function lookupSapItemByCode(sapItemCode: string) {
       sapItemCode: fuzzyMatches[0].itemCode,
       itemName: fuzzyMatches[0].description,
       unit: null,
+      tipoArticulo: fuzzyMatches[0].tipoArticulo,
       source: "catalog" as const,
     };
   }
@@ -7463,6 +8393,115 @@ export async function getUserByEmail(email: string) {
 // ============================================================
 // SAP CATALOG
 // ============================================================
+export type ArticleType = 1 | 2 | 3;
+
+export type ArticleListFilters = {
+  search?: string;
+  tipoArticulo?: ArticleType;
+  isActive?: boolean;
+  allowsTaxWithholding?: boolean;
+  page?: number;
+  pageSize?: number;
+};
+
+function buildArticleWhere(filters?: ArticleListFilters) {
+  const conditions = [];
+
+  if (filters?.search?.trim()) {
+    const search = filters.search.trim();
+    conditions.push(
+      or(
+        ilike(sapCatalog.itemCode, `%${search}%`),
+        ilike(sapCatalog.description, `%${search}%`),
+        ilike(sapCatalog.itemGroup, `%${search}%`)
+      )!
+    );
+  }
+
+  if (filters?.tipoArticulo) {
+    conditions.push(eq(sapCatalog.tipoArticulo, filters.tipoArticulo));
+  }
+
+  if (filters?.isActive !== undefined) {
+    conditions.push(eq(sapCatalog.isActive, filters.isActive));
+  }
+
+  if (filters?.allowsTaxWithholding !== undefined) {
+    conditions.push(
+      eq(sapCatalog.allowsTaxWithholding, filters.allowsTaxWithholding)
+    );
+  }
+
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
+export async function listArticles(filters?: ArticleListFilters) {
+  const db = await getDb();
+  const requestedPage = Math.max(filters?.page ?? 1, 1);
+  const pageSize = Math.min(Math.max(filters?.pageSize ?? 25, 10), 200);
+
+  if (!db) {
+    return {
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize,
+      totalPages: 1,
+    };
+  }
+
+  const where = buildArticleWhere(filters);
+  const [totalResult] = await db
+    .select({ count: count() })
+    .from(sapCatalog)
+    .where(where);
+
+  const total = totalResult?.count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(requestedPage, totalPages);
+  const offset = (page - 1) * pageSize;
+
+  const items = await db
+    .select()
+    .from(sapCatalog)
+    .where(where)
+    .orderBy(asc(sapCatalog.itemCode))
+    .limit(pageSize)
+    .offset(offset);
+
+  return {
+    items,
+    total,
+    page,
+    pageSize,
+    totalPages,
+  };
+}
+
+export async function updateArticle(
+  id: number,
+  data: {
+    tipoArticulo?: ArticleType;
+    isActive?: boolean;
+    allowsTaxWithholding?: boolean;
+  }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [article] = await db
+    .update(sapCatalog)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(sapCatalog.id, id))
+    .returning();
+
+  if (!article) {
+    throw new Error("Artículo no encontrado");
+  }
+
+  return article;
+}
+
 export async function searchSapCatalog(search: string) {
   const db = await getDb();
   if (!db) return [];
@@ -7529,6 +8568,97 @@ export async function searchSuppliers(search: string) {
     )
     .orderBy(suppliers.name)
     .limit(20);
+}
+
+export type SupplierListFilters = {
+  search?: string;
+  isActive?: boolean;
+  page?: number;
+  pageSize?: number;
+};
+
+function buildSupplierWhere(filters?: SupplierListFilters) {
+  const conditions = [];
+
+  if (filters?.search?.trim()) {
+    const search = filters.search.trim();
+    conditions.push(
+      or(
+        ilike(suppliers.supplierCode, `%${search}%`),
+        ilike(suppliers.name, `%${search}%`),
+        ilike(suppliers.email, `%${search}%`)
+      )!
+    );
+  }
+
+  if (filters?.isActive !== undefined) {
+    conditions.push(eq(suppliers.isActive, filters.isActive));
+  }
+
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
+export async function listSupplierCatalog(filters?: SupplierListFilters) {
+  const db = await getDb();
+  const requestedPage = Math.max(filters?.page ?? 1, 1);
+  const pageSize = Math.min(Math.max(filters?.pageSize ?? 25, 10), 200);
+
+  if (!db) {
+    return {
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize,
+      totalPages: 1,
+    };
+  }
+
+  const where = buildSupplierWhere(filters);
+  const [totalResult] = await db
+    .select({ count: count() })
+    .from(suppliers)
+    .where(where);
+
+  const total = totalResult?.count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(requestedPage, totalPages);
+  const offset = (page - 1) * pageSize;
+
+  const items = await db
+    .select()
+    .from(suppliers)
+    .where(where)
+    .orderBy(asc(suppliers.name))
+    .limit(pageSize)
+    .offset(offset);
+
+  return {
+    items,
+    total,
+    page,
+    pageSize,
+    totalPages,
+  };
+}
+
+export async function updateSupplier(
+  id: number,
+  data: { allowsTaxWithholding?: boolean }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [supplier] = await db
+    .update(suppliers)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(suppliers.id, id))
+    .returning();
+
+  if (!supplier) {
+    throw new Error("Proveedor no encontrado");
+  }
+
+  return supplier;
 }
 
 export type DemoImportCounters = {

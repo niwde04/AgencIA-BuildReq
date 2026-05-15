@@ -93,6 +93,13 @@ const STATUS_LABELS: Record<string, string> = {
   cancelado: "Cancelado",
 };
 
+const STATUS_COLORS: Record<string, string> = {
+  pendiente: "border-amber-300 bg-amber-50 text-amber-700",
+  en_proceso: "border-blue-300 bg-blue-50 text-blue-700",
+  completado: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  cancelado: "border-rose-300 bg-rose-50 text-rose-700",
+};
+
 type PendingQueueRow = {
   item: any;
   request: any;
@@ -1664,7 +1671,12 @@ export default function Flujos() {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between gap-2">
                               <p className="font-medium text-sm">{FLOW_LABELS[flowType]}</p>
-                              <Badge variant="outline" className="text-xs capitalize shrink-0">
+                              <Badge
+                                variant="outline"
+                                className={`text-xs capitalize shrink-0 ${
+                                  STATUS_COLORS[row.flow.status] || ""
+                                }`}
+                              >
                                 {STATUS_LABELS[row.flow.status] || row.flow.status}
                               </Badge>
                             </div>

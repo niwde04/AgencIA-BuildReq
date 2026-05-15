@@ -1501,6 +1501,9 @@ export default function SolicitudDetalle() {
                         .filter(Boolean)
                     )
                   );
+                  const translatedSapCode =
+                    editableItem?.sapItemCode ?? item.sapItemCode ?? "";
+                  const hasSapTranslation = translatedSapCode.trim().length > 0;
 
                   return (
                     <tr
@@ -1509,6 +1512,11 @@ export default function SolicitudDetalle() {
                     >
                       <td className="p-3">
                         <p className="font-medium">{item.itemName}</p>
+                        {item.target?.label ? (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {item.target.label}
+                          </p>
+                        ) : null}
                         {item.notes && (
                           <p className="text-xs text-muted-foreground mt-0.5">{item.notes}</p>
                         )}
@@ -1524,8 +1532,12 @@ export default function SolicitudDetalle() {
                         {formatQuantityValue(unresolvedQuantity)}
                       </td>
                       <td className="p-3 text-xs">{item.unit || "—"}</td>
-                      <td className="p-3 text-right text-xs">{item.projectStock || "0.00"}</td>
-                      <td className="p-3 text-right text-xs">{item.committedQuantity || "0.00"}</td>
+                      <td className="p-3 text-right text-xs">
+                        {hasSapTranslation ? item.projectStock || "0.00" : "—"}
+                      </td>
+                      <td className="p-3 text-right text-xs">
+                        {hasSapTranslation ? item.committedQuantity || "0.00" : "—"}
+                      </td>
                       <td className="p-3">
                         <SapSearchBox
                           itemId={editableItem?.id ?? item.id}

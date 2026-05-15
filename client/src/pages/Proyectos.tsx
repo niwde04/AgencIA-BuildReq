@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Card, CardContent } from "@/components/ui/card";
@@ -6,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -13,56 +15,367 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Plus, FolderKanban } from "lucide-react";
-import { useState } from "react";
+import {
+  CalendarDays,
+  FolderKanban,
+  Pencil,
+  Plus,
+  Save,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 
-const STATUS_LABELS: Record<string, string> = {
-  activo: "Activo",
-  inactivo: "Inactivo",
-  completado: "Completado",
+type ProjectRecord = {
+  id: number;
+  code: string;
+  name: string;
+  description?: string | null;
+  location?: string | null;
+  status: string;
+  startDate?: Date | string | null;
+  endDate?: Date | string | null;
+  sapProjectCode?: string | null;
+  subprojectsCount?: number;
+  warehouse?: {
+    displayName: string;
+  } | null;
 };
+
+type SubprojectRecord = {
+  id: number;
+  projectId: number;
+  code: string;
+  name: string;
+  description?: string | null;
+  startDate?: Date | string | null;
+  endDate?: Date | string | null;
+  isActive: boolean;
+};
+
+type ProjectFormState = {
+  code: string;
+  name: string;
+  description: string;
+  location: string;
+  sapProjectCode: string;
+  startDate: string;
+  endDate: string;
+  isActive: boolean;
+};
+
+type SubprojectFormState = {
+  code: string;
+  name: string;
+  description: string;
+  startDate: string;
+  endDate: string;
+  isActive: boolean;
+};
+
+const EMPTY_PROJECT_FORM: ProjectFormState = {
+  code: "",
+  name: "",
+  description: "",
+  location: "",
+  sapProjectCode: "",
+  startDate: "",
+  endDate: "",
+  isActive: true,
+};
+
+const EMPTY_SUBPROJECT_FORM: SubprojectFormState = {
+  code: "",
+  name: "",
+  description: "",
+  startDate: "",
+  endDate: "",
+  isActive: true,
+};
+
+function formatDateInput(value?: Date | string | null) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDateLabel(value?: Date | string | null) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("es-HN");
+}
+
+function formatDateRange(startDate?: Date | string | null, endDate?: Date | string | null) {
+  const start = formatDateLabel(startDate);
+  const end = formatDateLabel(endDate);
+  if (start && end) return `${start} - ${end}`;
+  if (start) return `Inicio ${start}`;
+  if (end) return `Fin ${end}`;
+  return "";
+}
+
+function hasInvalidDateRange(startDate: string, endDate: string) {
+  return Boolean(startDate && endDate && endDate < startDate);
+}
+
+function projectToForm(project: ProjectRecord): ProjectFormState {
+  return {
+    code: project.code ?? "",
+    name: project.name ?? "",
+    description: project.description ?? "",
+    location: project.location ?? "",
+    sapProjectCode: project.sapProjectCode ?? "",
+    startDate: formatDateInput(project.startDate),
+    endDate: formatDateInput(project.endDate),
+    isActive: project.status === "activo",
+  };
+}
+
+function subprojectToForm(subproject: SubprojectRecord): SubprojectFormState {
+  return {
+    code: subproject.code ?? "",
+    name: subproject.name ?? "",
+    description: subproject.description ?? "",
+    startDate: formatDateInput(subproject.startDate),
+    endDate: formatDateInput(subproject.endDate),
+    isActive: subproject.isActive,
+  };
+}
+
+function DetailRow({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <div>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-sm font-medium">{value || "-"}</p>
+    </div>
+  );
+}
 
 export default function Proyectos() {
   const { user } = useAuth();
   const utils = trpc.useUtils();
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<ProjectRecord | null>(null);
+  const [projectForm, setProjectForm] =
+    useState<ProjectFormState>(EMPTY_PROJECT_FORM);
+  const [createForm, setCreateForm] =
+    useState<ProjectFormState>(EMPTY_PROJECT_FORM);
+  const [subprojectForm, setSubprojectForm] =
+    useState<SubprojectFormState>(EMPTY_SUBPROJECT_FORM);
+  const [editingSubproject, setEditingSubproject] =
+    useState<SubprojectRecord | null>(null);
 
-  const [code, setCode] = useState("");
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [location, setLocation] = useState("");
-  const [sapProjectCode, setSapProjectCode] = useState("");
+  const isAdmin = user?.role === "admin";
+  const selectedProjectId = selectedProject?.id ?? 0;
 
-  const { data: projects, isLoading } = trpc.projects.list.useQuery();
+  const {
+    data: projects,
+    isLoading,
+    error: projectsError,
+  } = trpc.projects.list.useQuery();
+  const { data: subprojects, isLoading: isLoadingSubprojects } =
+    trpc.projects.listSubprojects.useQuery(
+      { projectId: selectedProjectId },
+      { enabled: detailDialogOpen && selectedProjectId > 0 }
+    );
+
+  const activeProjectsCount = useMemo(
+    () => (projects ?? []).filter((project: any) => project.status === "activo").length,
+    [projects]
+  );
+  const hasSubprojectDraft = useMemo(
+    () =>
+      Boolean(
+        editingSubproject ||
+          subprojectForm.code.trim() ||
+          subprojectForm.name.trim() ||
+          subprojectForm.description.trim() ||
+          subprojectForm.startDate ||
+          subprojectForm.endDate ||
+          !subprojectForm.isActive
+      ),
+    [editingSubproject, subprojectForm]
+  );
 
   const createMutation = trpc.projects.create.useMutation({
     onSuccess: () => {
       toast.success("Proyecto creado con su bodega operativa");
       utils.projects.list.invalidate();
       utils.warehouses.list.invalidate();
-      setDialogOpen(false);
-      resetForm();
+      setCreateDialogOpen(false);
+      setCreateForm(EMPTY_PROJECT_FORM);
     },
     onError: (e) => toast.error(e.message),
   });
 
-  const resetForm = () => {
-    setCode("");
-    setName("");
-    setDescription("");
-    setLocation("");
-    setSapProjectCode("");
+  const updateProjectMutation = trpc.projects.update.useMutation({
+    onSuccess: () => {
+      toast.success(
+        hasSubprojectDraft
+          ? "Proyecto actualizado. El subproyecto sigue pendiente de guardar."
+          : "Proyecto actualizado"
+      );
+      utils.projects.list.invalidate();
+      utils.warehouses.list.invalidate();
+      setSelectedProject((current) =>
+        current
+          ? {
+              ...current,
+              code: projectForm.code,
+              name: projectForm.name,
+              description: projectForm.description || null,
+              location: projectForm.location || null,
+              sapProjectCode: projectForm.sapProjectCode || null,
+              startDate: projectForm.startDate || null,
+              endDate: projectForm.endDate || null,
+              status: projectForm.isActive ? "activo" : "inactivo",
+            }
+          : current
+      );
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const createSubprojectMutation = trpc.projects.createSubproject.useMutation({
+    onSuccess: (createdSubproject) => {
+      toast.success("Subproyecto creado");
+      utils.projects.listSubprojects.setData(
+        { projectId: selectedProjectId },
+        (current) => [...(current ?? []), createdSubproject]
+      );
+      setSelectedProject((current) =>
+        current
+          ? {
+              ...current,
+              subprojectsCount: (current.subprojectsCount ?? 0) + 1,
+            }
+          : current
+      );
+      utils.projects.list.invalidate();
+      utils.projects.listSubprojects.invalidate({ projectId: selectedProjectId });
+      resetSubprojectForm();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateSubprojectMutation = trpc.projects.updateSubproject.useMutation({
+    onSuccess: (updatedSubproject) => {
+      toast.success("Subproyecto actualizado");
+      utils.projects.listSubprojects.setData(
+        { projectId: selectedProjectId },
+        (current) =>
+          (current ?? []).map((subproject) =>
+            subproject.id === updatedSubproject.id ? updatedSubproject : subproject
+          )
+      );
+      utils.projects.list.invalidate();
+      utils.projects.listSubprojects.invalidate({ projectId: selectedProjectId });
+      resetSubprojectForm();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const isSavingSubproject =
+    createSubprojectMutation.isPending || updateSubprojectMutation.isPending;
+
+  const openProjectDetail = (project: ProjectRecord) => {
+    setSelectedProject(project);
+    setProjectForm(projectToForm(project));
+    setSubprojectForm(EMPTY_SUBPROJECT_FORM);
+    setEditingSubproject(null);
+    setDetailDialogOpen(true);
   };
 
-  const isAdmin = user?.role === "admin";
+  const resetSubprojectForm = () => {
+    setSubprojectForm(EMPTY_SUBPROJECT_FORM);
+    setEditingSubproject(null);
+  };
+
+  const validateProjectForm = (form: ProjectFormState) => {
+    if (!form.code.trim() || !form.name.trim()) {
+      toast.error("Código y nombre son obligatorios");
+      return false;
+    }
+    if (hasInvalidDateRange(form.startDate, form.endDate)) {
+      toast.error("La fecha de fin no puede ser anterior a la fecha de inicio");
+      return false;
+    }
+    return true;
+  };
+
+  const validateSubprojectForm = () => {
+    if (!subprojectForm.code.trim() || !subprojectForm.name.trim()) {
+      toast.error("Código y nombre del subproyecto son obligatorios");
+      return false;
+    }
+    if (hasInvalidDateRange(subprojectForm.startDate, subprojectForm.endDate)) {
+      toast.error("La fecha de fin no puede ser anterior a la fecha de inicio");
+      return false;
+    }
+    return true;
+  };
+
+  const submitCreateProject = () => {
+    if (!validateProjectForm(createForm)) return;
+    createMutation.mutate({
+      code: createForm.code.trim(),
+      name: createForm.name.trim(),
+      description: createForm.description.trim() || null,
+      location: createForm.location.trim() || null,
+      sapProjectCode: createForm.sapProjectCode.trim() || null,
+      startDate: createForm.startDate || null,
+      endDate: createForm.endDate || null,
+      status: createForm.isActive ? "activo" : "inactivo",
+    });
+  };
+
+  const submitProjectUpdate = () => {
+    if (!selectedProject || !validateProjectForm(projectForm)) return;
+    updateProjectMutation.mutate({
+      id: selectedProject.id,
+      code: projectForm.code.trim(),
+      name: projectForm.name.trim(),
+      description: projectForm.description.trim() || null,
+      location: projectForm.location.trim() || null,
+      sapProjectCode: projectForm.sapProjectCode.trim() || null,
+      startDate: projectForm.startDate || null,
+      endDate: projectForm.endDate || null,
+      status: projectForm.isActive ? "activo" : "inactivo",
+    });
+  };
+
+  const submitSubproject = () => {
+    if (!selectedProject || !validateSubprojectForm()) return;
+
+    const payload = {
+      projectId: selectedProject.id,
+      code: subprojectForm.code.trim(),
+      name: subprojectForm.name.trim(),
+      description: subprojectForm.description.trim() || null,
+      startDate: subprojectForm.startDate || null,
+      endDate: subprojectForm.endDate || null,
+      isActive: subprojectForm.isActive,
+    };
+
+    if (editingSubproject) {
+      updateSubprojectMutation.mutate({
+        id: editingSubproject.id,
+        ...payload,
+      });
+      return;
+    }
+
+    createSubprojectMutation.mutate(payload);
+  };
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1>Proyectos</h1>
         {isAdmin && (
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
             <DialogTrigger asChild>
               <Button size="sm">
                 <Plus className="h-4 w-4 mr-2" />
@@ -74,20 +387,24 @@ export default function Proyectos() {
                 <DialogTitle>Nuevo Proyecto</DialogTitle>
               </DialogHeader>
               <div className="space-y-3 pt-2">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <Label className="text-xs">Código *</Label>
                     <Input
-                      value={code}
-                      onChange={(e) => setCode(e.target.value)}
+                      value={createForm.code}
+                      onChange={(e) =>
+                        setCreateForm((form) => ({ ...form, code: e.target.value }))
+                      }
                       placeholder="PROY-001"
                     />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">Nombre *</Label>
                     <Input
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
+                      value={createForm.name}
+                      onChange={(e) =>
+                        setCreateForm((form) => ({ ...form, name: e.target.value }))
+                      }
                       placeholder="Torre Residencial Norte"
                     />
                   </div>
@@ -95,44 +412,84 @@ export default function Proyectos() {
                 <div className="space-y-1">
                   <Label className="text-xs">Descripción</Label>
                   <Textarea
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
+                    value={createForm.description}
+                    onChange={(e) =>
+                      setCreateForm((form) => ({
+                        ...form,
+                        description: e.target.value,
+                      }))
+                    }
                     placeholder="Descripción del proyecto..."
                     rows={2}
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <Label className="text-xs">Ubicación</Label>
                     <Input
-                      value={location}
-                      onChange={(e) => setLocation(e.target.value)}
+                      value={createForm.location}
+                      onChange={(e) =>
+                        setCreateForm((form) => ({
+                          ...form,
+                          location: e.target.value,
+                        }))
+                      }
                       placeholder="Ciudad, País"
                     />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">Código SAP</Label>
                     <Input
-                      value={sapProjectCode}
-                      onChange={(e) => setSapProjectCode(e.target.value)}
+                      value={createForm.sapProjectCode}
+                      onChange={(e) =>
+                        setCreateForm((form) => ({
+                          ...form,
+                          sapProjectCode: e.target.value,
+                        }))
+                      }
                       placeholder="SAP-PROY-001"
                     />
                   </div>
                 </div>
-                <Button
-                  onClick={() => {
-                    if (!code || !name) {
-                      toast.error("Código y nombre son obligatorios");
-                      return;
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Fecha inicio</Label>
+                    <Input
+                      type="date"
+                      value={createForm.startDate}
+                      onChange={(e) =>
+                        setCreateForm((form) => ({
+                          ...form,
+                          startDate: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Fecha fin</Label>
+                    <Input
+                      type="date"
+                      value={createForm.endDate}
+                      onChange={(e) =>
+                        setCreateForm((form) => ({
+                          ...form,
+                          endDate: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between rounded-md border p-3">
+                  <Label className="text-sm">Proyecto activo</Label>
+                  <Switch
+                    checked={createForm.isActive}
+                    onCheckedChange={(checked) =>
+                      setCreateForm((form) => ({ ...form, isActive: checked }))
                     }
-                    createMutation.mutate({
-                      code,
-                      name,
-                      description: description || undefined,
-                      location: location || undefined,
-                      sapProjectCode: sapProjectCode || undefined,
-                    });
-                  }}
+                  />
+                </div>
+                <Button
+                  onClick={submitCreateProject}
                   disabled={createMutation.isPending}
                   className="w-full"
                 >
@@ -144,8 +501,19 @@ export default function Proyectos() {
         )}
       </div>
 
-      {/* Project Grid */}
-      {isLoading ? (
+      {projectsError ? (
+        <Card>
+          <CardContent className="p-8 text-center">
+            <FolderKanban className="h-12 w-12 text-destructive/40 mx-auto mb-3" />
+            <p className="font-medium text-destructive">
+              No se pudieron cargar los proyectos
+            </p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {projectsError.message}
+            </p>
+          </CardContent>
+        </Card>
+      ) : isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => (
             <Card key={i}>
@@ -164,62 +532,440 @@ export default function Proyectos() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {(projects || []).map((project: any) => (
-            <Card
-              key={project.id}
-              className="hover:border-primary/20 transition-colors"
-            >
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-8 bg-primary" />
-                    <div>
-                      <p className="font-mono text-xs text-muted-foreground">
-                        {project.code}
-                      </p>
-                      <p className="font-medium text-sm">{project.name}</p>
+          {(projects || []).map((project: ProjectRecord) => {
+            const isProjectActive = project.status === "activo";
+            const dateRange = formatDateRange(project.startDate, project.endDate);
+
+            return (
+              <Card
+                key={project.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => openProjectDetail(project)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    openProjectDetail(project);
+                  }
+                }}
+                className="hover:border-primary/20 transition-colors cursor-pointer"
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between mb-2 gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-2 h-8 bg-primary shrink-0" />
+                      <div className="min-w-0">
+                        <p className="font-mono text-xs text-muted-foreground">
+                          {project.code}
+                        </p>
+                        <p className="font-medium text-sm line-clamp-2">
+                          {project.name}
+                        </p>
+                      </div>
                     </div>
+                    <Badge
+                      variant="outline"
+                      className={`text-xs shrink-0 ${
+                        isProjectActive
+                          ? "border-emerald-300 text-emerald-700"
+                          : "border-muted-foreground/30 text-muted-foreground"
+                      }`}
+                    >
+                      {isProjectActive ? "Activo" : "Inactivo"}
+                    </Badge>
                   </div>
-                  <Badge
-                    variant="outline"
-                    className={`text-xs ${project.status === "activo" ? "border-emerald-300 text-emerald-700" : ""}`}
-                  >
-                    {STATUS_LABELS[project.status]}
-                  </Badge>
-                </div>
-                {project.description && (
-                  <p className="text-xs text-muted-foreground mt-2 line-clamp-2">
-                    {project.description}
+                  {project.description && (
+                    <p className="text-xs text-muted-foreground mt-2 line-clamp-2">
+                      {project.description}
+                    </p>
+                  )}
+                  {project.location && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {project.location}
+                    </p>
+                  )}
+                  {dateRange && (
+                    <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                      <CalendarDays className="h-3.5 w-3.5" />
+                      {dateRange}
+                    </p>
+                  )}
+                  {project.sapProjectCode && (
+                    <p className="text-xs font-mono text-muted-foreground mt-1">
+                      SAP: {project.sapProjectCode}
+                    </p>
+                  )}
+                  {project.warehouse && (
+                    <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
+                      Bodega: {project.warehouse.displayName}
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {project.subprojectsCount ?? 0} subproyectos
                   </p>
-                )}
-                {project.location && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {project.location}
-                  </p>
-                )}
-                {project.sapProjectCode && (
-                  <p className="text-xs font-mono text-muted-foreground mt-1">
-                    SAP: {project.sapProjectCode}
-                  </p>
-                )}
-                {project.warehouse && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Bodega: {project.warehouse.displayName}
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
 
-      {/* Active count indicator */}
       {projects && (
         <p className="text-xs text-muted-foreground text-center">
-          {projects.filter((p: any) => p.status === "activo").length}
-          {" "}proyectos activos
+          {activeProjectsCount} proyectos activos
         </p>
       )}
+
+      <Dialog
+        open={detailDialogOpen}
+        onOpenChange={(open) => {
+          setDetailDialogOpen(open);
+          if (!open) {
+            setSelectedProject(null);
+            resetSubprojectForm();
+          }
+        }}
+      >
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {selectedProject
+                ? `${selectedProject.code} - ${selectedProject.name}`
+                : "Proyecto"}
+            </DialogTitle>
+          </DialogHeader>
+
+          {selectedProject && (
+            <div className="space-y-6 pt-2">
+              {isAdmin ? (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Código *</Label>
+                      <Input
+                        value={projectForm.code}
+                        onChange={(e) =>
+                          setProjectForm((form) => ({
+                            ...form,
+                            code: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Nombre *</Label>
+                      <Input
+                        value={projectForm.name}
+                        onChange={(e) =>
+                          setProjectForm((form) => ({
+                            ...form,
+                            name: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Descripción</Label>
+                    <Textarea
+                      value={projectForm.description}
+                      onChange={(e) =>
+                        setProjectForm((form) => ({
+                          ...form,
+                          description: e.target.value,
+                        }))
+                      }
+                      rows={2}
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Ubicación</Label>
+                      <Input
+                        value={projectForm.location}
+                        onChange={(e) =>
+                          setProjectForm((form) => ({
+                            ...form,
+                            location: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Código SAP</Label>
+                      <Input
+                        value={projectForm.sapProjectCode}
+                        onChange={(e) =>
+                          setProjectForm((form) => ({
+                            ...form,
+                            sapProjectCode: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Fecha inicio</Label>
+                      <Input
+                        type="date"
+                        value={projectForm.startDate}
+                        onChange={(e) =>
+                          setProjectForm((form) => ({
+                            ...form,
+                            startDate: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Fecha fin</Label>
+                      <Input
+                        type="date"
+                        value={projectForm.endDate}
+                        onChange={(e) =>
+                          setProjectForm((form) => ({
+                            ...form,
+                            endDate: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between rounded-md border p-3">
+                    <Label className="text-sm">Proyecto activo</Label>
+                    <Switch
+                      checked={projectForm.isActive}
+                      onCheckedChange={(checked) =>
+                        setProjectForm((form) => ({
+                          ...form,
+                          isActive: checked,
+                        }))
+                      }
+                    />
+                  </div>
+                  <Button
+                    onClick={submitProjectUpdate}
+                    disabled={updateProjectMutation.isPending}
+                  >
+                    <Save className="h-4 w-4 mr-2" />
+                    {updateProjectMutation.isPending ? "Guardando..." : "Guardar proyecto"}
+                  </Button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <DetailRow label="Código" value={selectedProject.code} />
+                  <DetailRow label="Nombre" value={selectedProject.name} />
+                  <DetailRow
+                    label="Estado"
+                    value={selectedProject.status === "activo" ? "Activo" : "Inactivo"}
+                  />
+                  <DetailRow label="Ubicación" value={selectedProject.location} />
+                  <DetailRow
+                    label="Fechas"
+                    value={formatDateRange(
+                      selectedProject.startDate,
+                      selectedProject.endDate
+                    )}
+                  />
+                  <DetailRow label="Código SAP" value={selectedProject.sapProjectCode} />
+                </div>
+              )}
+
+              <div className="border-t pt-4 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-semibold">Subproyectos</h2>
+                    <p className="text-xs text-muted-foreground">
+                      Estructura informativa del proyecto para uso futuro en requisiciones.
+                    </p>
+                  </div>
+                  <Badge variant="outline">{subprojects?.length ?? 0}</Badge>
+                </div>
+
+                {isLoadingSubprojects ? (
+                  <div className="h-20 animate-pulse bg-muted rounded-md" />
+                ) : (subprojects ?? []).length === 0 ? (
+                  <div className="rounded-md border border-dashed p-6 text-center">
+                    <p className="text-sm text-muted-foreground">
+                      Este proyecto todavía no tiene subproyectos.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {(subprojects ?? []).map((subproject: SubprojectRecord) => {
+                      const dateRange = formatDateRange(
+                        subproject.startDate,
+                        subproject.endDate
+                      );
+                      return (
+                        <div
+                          key={subproject.id}
+                          className="rounded-md border p-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-mono text-xs text-muted-foreground">
+                                {subproject.code}
+                              </p>
+                              <p className="font-medium text-sm">{subproject.name}</p>
+                              <Badge
+                                variant="outline"
+                                className={`text-xs ${
+                                  subproject.isActive
+                                    ? "border-emerald-300 text-emerald-700"
+                                    : "border-muted-foreground/30 text-muted-foreground"
+                                }`}
+                              >
+                                {subproject.isActive ? "Activo" : "Inactivo"}
+                              </Badge>
+                            </div>
+                            {subproject.description && (
+                              <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                                {subproject.description}
+                              </p>
+                            )}
+                            {dateRange && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {dateRange}
+                              </p>
+                            )}
+                          </div>
+                          {isAdmin && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setEditingSubproject(subproject);
+                                setSubprojectForm(subprojectToForm(subproject));
+                              }}
+                            >
+                              <Pencil className="h-4 w-4 mr-2" />
+                              Editar
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {isAdmin && (
+                  <div className="rounded-md border p-3 space-y-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <h3 className="text-sm font-semibold">
+                        {editingSubproject ? "Editar subproyecto" : "Nuevo subproyecto"}
+                      </h3>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        {editingSubproject && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={resetSubprojectForm}
+                            className="w-full sm:w-auto"
+                          >
+                            <X className="h-4 w-4 mr-2" />
+                            Cancelar
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Código *</Label>
+                        <Input
+                          value={subprojectForm.code}
+                          onChange={(e) =>
+                            setSubprojectForm((form) => ({
+                              ...form,
+                              code: e.target.value,
+                            }))
+                          }
+                          placeholder="SP-001"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Nombre *</Label>
+                        <Input
+                          value={subprojectForm.name}
+                          onChange={(e) =>
+                            setSubprojectForm((form) => ({
+                              ...form,
+                              name: e.target.value,
+                            }))
+                          }
+                          placeholder="Etapa 1"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Descripción</Label>
+                      <Textarea
+                        value={subprojectForm.description}
+                        onChange={(e) =>
+                          setSubprojectForm((form) => ({
+                            ...form,
+                            description: e.target.value,
+                          }))
+                        }
+                        rows={2}
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Fecha inicio</Label>
+                        <Input
+                          type="date"
+                          value={subprojectForm.startDate}
+                          onChange={(e) =>
+                            setSubprojectForm((form) => ({
+                              ...form,
+                              startDate: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Fecha fin</Label>
+                        <Input
+                          type="date"
+                          value={subprojectForm.endDate}
+                          onChange={(e) =>
+                            setSubprojectForm((form) => ({
+                              ...form,
+                              endDate: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="flex items-center justify-between rounded-md border p-3">
+                        <Label className="text-sm">Activo</Label>
+                        <Switch
+                          checked={subprojectForm.isActive}
+                          onCheckedChange={(checked) =>
+                            setSubprojectForm((form) => ({
+                              ...form,
+                              isActive: checked,
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+                    <Button
+                      onClick={submitSubproject}
+                      disabled={isSavingSubproject}
+                      className="w-full sm:w-auto"
+                    >
+                      <Save className="h-4 w-4 mr-2" />
+                      {editingSubproject ? "Guardar subproyecto" : "Crear subproyecto"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

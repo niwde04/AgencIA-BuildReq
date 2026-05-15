@@ -1,4 +1,5 @@
 import {
+  check,
   serial,
   pgEnum,
   pgTable,
@@ -9,7 +10,9 @@ import {
   boolean,
   integer,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { PURCHASE_ORDER_TAX_VALUES } from "../shared/purchase-orders";
 
 // ============================================================
@@ -68,6 +71,10 @@ export const purchaseUrgencyEnum = pgEnum("purchase_urgency", [
   "urgente",
   "no_urgente",
 ]);
+export const materialRequestTargetTypeEnum = pgEnum(
+  "material_request_target_type",
+  ["subproyecto", "activo_fijo"]
+);
 export const flowTypeEnum = pgEnum("flow_type", [
   "compra_directa",
   "despacho_bodega",
@@ -186,6 +193,15 @@ export const receiptSourceTypeEnum = pgEnum("receipt_source_type", [
   "purchase_order",
   "transfer",
 ]);
+export const invoiceStatusEnum = pgEnum("invoice_status", [
+  "borrador",
+  "registrada",
+  "anulada",
+]);
+export const invoiceRetentionTypeEnum = pgEnum("invoice_retention_type", [
+  "percentage",
+  "amount",
+]);
 export const itemConditionEnum = pgEnum("item_condition", [
   "nuevo",
   "usado_buen_estado",
@@ -270,6 +286,8 @@ export const projects = pgTable("projects", {
   description: text("description"),
   location: varchar("location", { length: 255 }),
   status: projectStatusEnum("status").default("activo").notNull(),
+  startDate: timestamp("startDate"),
+  endDate: timestamp("endDate"),
   /** SAP B1 project code for future integration */
   sapProjectCode: varchar("sapProjectCode", { length: 50 }),
   demoBatchKey: varchar("demoBatchKey", { length: 64 }),
@@ -281,6 +299,40 @@ export const projects = pgTable("projects", {
 
 export type Project = typeof projects.$inferSelect;
 export type InsertProject = typeof projects.$inferInsert;
+
+// ============================================================
+// PROJECT SUBPROJECTS - Informational child phases/work fronts
+// ============================================================
+export const projectSubprojects = pgTable(
+  "projectSubprojects",
+  {
+    id: serial("id").primaryKey(),
+    projectId: integer("projectId")
+      .notNull()
+      .references(() => projects.id, {
+        onDelete: "cascade",
+      }),
+    code: varchar("code", { length: 50 }).notNull(),
+    name: varchar("name", { length: 255 }).notNull(),
+    description: text("description"),
+    startDate: timestamp("startDate"),
+    endDate: timestamp("endDate"),
+    isActive: boolean("isActive").default(true).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    projectIdx: index("psp_project_idx").on(table.projectId),
+    activeIdx: index("psp_active_idx").on(table.isActive),
+    projectCodeUnique: uniqueIndex("psp_project_code_unique").on(
+      table.projectId,
+      table.code
+    ),
+  })
+);
+
+export type ProjectSubproject = typeof projectSubprojects.$inferSelect;
+export type InsertProjectSubproject = typeof projectSubprojects.$inferInsert;
 
 // ============================================================
 // MATERIAL REQUESTS - Main request header
@@ -355,6 +407,12 @@ export const requestItems = pgTable(
     sapItemCode: varchar("sapItemCode", { length: 50 }),
     /** SAP item description after translation */
     sapItemDescription: varchar("sapItemDescription", { length: 500 }),
+    targetType: materialRequestTargetTypeEnum("targetType"),
+    subProjectId: integer("subProjectId").references(() => projectSubprojects.id, {
+      onDelete: "set null",
+    }),
+    fixedAssetSapItemCode: varchar("fixedAssetSapItemCode", { length: 50 }),
+    fixedAssetName: varchar("fixedAssetName", { length: 500 }),
     /** Which supply flow was assigned to this specific item */
     assignedFlow: flowTypeEnum("assignedFlow"),
     /** Quantity actually delivered/fulfilled */
@@ -371,6 +429,8 @@ export const requestItems = pgTable(
   },
   (table) => ({
     requestIdx: index("ri_request_idx").on(table.requestId),
+    subProjectIdx: index("ri_subproject_idx").on(table.subProjectId),
+    fixedAssetIdx: index("ri_fixed_asset_idx").on(table.fixedAssetSapItemCode),
   })
 );
 
@@ -474,8 +534,14 @@ export const purchaseRequestItems = pgTable(
     currentSapItemCode: varchar("currentSapItemCode", { length: 50 }),
     itemName: varchar("itemName", { length: 500 }).notNull(),
     quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull(),
+    convertedQuantity: decimal("convertedQuantity", { precision: 12, scale: 2 })
+      .default("0.00")
+      .notNull(),
     receivedQuantity: decimal("receivedQuantity", { precision: 12, scale: 2 }),
     unit: varchar("unit", { length: 50 }),
+    unitPrice: decimal("unitPrice", { precision: 12, scale: 2 })
+      .default("0.00")
+      .notNull(),
     notes: text("notes"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
@@ -722,6 +788,125 @@ export const receiptItems = pgTable(
 
 export type ReceiptItem = typeof receiptItems.$inferSelect;
 export type InsertReceiptItem = typeof receiptItems.$inferInsert;
+
+// ============================================================
+// INVOICES
+// ============================================================
+export const invoices = pgTable(
+  "invoices",
+  {
+    id: serial("id").primaryKey(),
+    invoiceDocumentNumber: varchar("invoiceDocumentNumber", {
+      length: 20,
+    })
+      .notNull()
+      .unique(),
+    receiptId: integer("receiptId").notNull().unique(),
+    purchaseOrderId: integer("purchaseOrderId").notNull(),
+    projectId: integer("projectId").notNull(),
+    supplierId: integer("supplierId"),
+    status: invoiceStatusEnum("status").default("borrador").notNull(),
+    cai: varchar("cai", { length: 100 }),
+    invoiceNumber: varchar("invoiceNumber", { length: 100 }),
+    documentDate: timestamp("documentDate"),
+    postingDate: timestamp("postingDate").notNull(),
+    receiptDate: timestamp("receiptDate").notNull(),
+    emissionDeadline: timestamp("emissionDeadline").notNull(),
+    notes: text("notes"),
+    subtotal: decimal("subtotal", { precision: 12, scale: 2 })
+      .default("0.00")
+      .notNull(),
+    taxAmount: decimal("taxAmount", { precision: 12, scale: 2 })
+      .default("0.00")
+      .notNull(),
+    total: decimal("total", { precision: 12, scale: 2 })
+      .default("0.00")
+      .notNull(),
+    retentionTotal: decimal("retentionTotal", { precision: 12, scale: 2 })
+      .default("0.00")
+      .notNull(),
+    netPayable: decimal("netPayable", { precision: 12, scale: 2 })
+      .default("0.00")
+      .notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    receiptIdx: uniqueIndex("inv_receipt_idx").on(table.receiptId),
+    purchaseOrderIdx: index("inv_purchase_order_idx").on(table.purchaseOrderId),
+    projectIdx: index("inv_project_idx").on(table.projectId),
+    supplierIdx: index("inv_supplier_idx").on(table.supplierId),
+    statusIdx: index("inv_status_idx").on(table.status),
+  })
+);
+
+export type Invoice = typeof invoices.$inferSelect;
+export type InsertInvoice = typeof invoices.$inferInsert;
+
+export const invoiceItems = pgTable(
+  "invoiceItems",
+  {
+    id: serial("id").primaryKey(),
+    invoiceId: integer("invoiceId").notNull(),
+    receiptItemId: integer("receiptItemId").notNull(),
+    purchaseOrderItemId: integer("purchaseOrderItemId").notNull(),
+    itemName: varchar("itemName", { length: 500 }).notNull(),
+    currentSapItemCode: varchar("currentSapItemCode", { length: 50 }),
+    originalSapItemCode: varchar("originalSapItemCode", { length: 50 }),
+    quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull(),
+    unit: varchar("unit", { length: 50 }),
+    unitPrice: decimal("unitPrice", { precision: 12, scale: 2 })
+      .default("0.00")
+      .notNull(),
+    taxCode: purchaseOrderTaxCodeEnum("taxCode").default("exe").notNull(),
+    allowsTaxWithholding: boolean("allowsTaxWithholding").default(true).notNull(),
+    subtotal: decimal("subtotal", { precision: 12, scale: 2 })
+      .default("0.00")
+      .notNull(),
+    taxAmount: decimal("taxAmount", { precision: 12, scale: 2 })
+      .default("0.00")
+      .notNull(),
+    total: decimal("total", { precision: 12, scale: 2 })
+      .default("0.00")
+      .notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    invoiceIdx: index("invi_invoice_idx").on(table.invoiceId),
+    receiptItemIdx: uniqueIndex("invi_receipt_item_idx").on(
+      table.receiptItemId
+    ),
+    purchaseOrderItemIdx: index("invi_purchase_order_item_idx").on(
+      table.purchaseOrderItemId
+    ),
+  })
+);
+
+export type InvoiceItem = typeof invoiceItems.$inferSelect;
+export type InsertInvoiceItem = typeof invoiceItems.$inferInsert;
+
+export const invoiceRetentions = pgTable(
+  "invoiceRetentions",
+  {
+    id: serial("id").primaryKey(),
+    invoiceId: integer("invoiceId").notNull(),
+    retentionType: invoiceRetentionTypeEnum("retentionType").notNull(),
+    description: varchar("description", { length: 200 }).notNull(),
+    baseAmount: decimal("baseAmount", { precision: 12, scale: 2 })
+      .default("0.00")
+      .notNull(),
+    percentage: decimal("percentage", { precision: 8, scale: 4 }),
+    amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    invoiceIdx: index("invr_invoice_idx").on(table.invoiceId),
+  })
+);
+
+export type InvoiceRetention = typeof invoiceRetentions.$inferSelect;
+export type InsertInvoiceRetention = typeof invoiceRetentions.$inferInsert;
 
 // ============================================================
 // WAREHOUSE EXITS - Formal outbound inventory transactions
@@ -1091,6 +1276,8 @@ export const sapCatalog = pgTable(
     itemCode: varchar("itemCode", { length: 50 }).notNull().unique(),
     description: varchar("description", { length: 500 }).notNull(),
     itemGroup: varchar("itemGroup", { length: 255 }),
+    tipoArticulo: integer("tipoArticulo").default(1).notNull(),
+    allowsTaxWithholding: boolean("allowsTaxWithholding").default(true).notNull(),
     isActive: boolean("isActive").default(true).notNull(),
     demoBatchKey: varchar("demoBatchKey", { length: 64 }),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -1099,7 +1286,12 @@ export const sapCatalog = pgTable(
   (table) => ({
     codeIdx: index("sap_cat_code_idx").on(table.itemCode),
     descIdx: index("sap_cat_desc_idx").on(table.description),
+    tipoArticuloIdx: index("sap_cat_tipo_articulo_idx").on(table.tipoArticulo),
     demoBatchIdx: index("sap_cat_demo_batch_idx").on(table.demoBatchKey),
+    tipoArticuloCheck: check(
+      "sapCatalog_tipoArticulo_check",
+      sql`${table.tipoArticulo} in (1, 2, 3)`
+    ),
   })
 );
 
@@ -1116,6 +1308,7 @@ export const suppliers = pgTable(
     supplierCode: varchar("supplierCode", { length: 50 }).notNull().unique(),
     name: varchar("name", { length: 500 }).notNull(),
     email: varchar("email", { length: 320 }),
+    allowsTaxWithholding: boolean("allowsTaxWithholding").default(true).notNull(),
     isActive: boolean("isActive").default(true).notNull(),
     demoBatchKey: varchar("demoBatchKey", { length: 64 }),
     createdAt: timestamp("createdAt").defaultNow().notNull(),

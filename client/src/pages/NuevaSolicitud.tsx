@@ -7,6 +7,19 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -14,7 +27,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowLeft, CalendarClock, Info, Plus, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  CalendarClock,
+  Check,
+  ChevronsUpDown,
+  Info,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
@@ -59,23 +81,68 @@ type ItemRow = {
   itemName: string;
   quantity: string;
   unit: string;
+  targetSelection: RequestTargetSelection | null;
 };
+
+type RequestTargetSelection =
+  | {
+      targetType: "subproyecto";
+      subProjectId: number;
+      projectId: number;
+      label: string;
+    }
+  | {
+      targetType: "activo_fijo";
+      fixedAssetSapItemCode: string;
+      fixedAssetName: string;
+      label: string;
+    };
 
 const createItemRow = (overrides?: Partial<Omit<ItemRow, "id">>): ItemRow => ({
   id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
   itemName: "",
   quantity: "",
   unit: "",
+  targetSelection: null,
   ...overrides,
 });
 
-const mapRequestItemsToRows = (requestItems: any[]): ItemRow[] =>
+function mapRequestItemTargetToSelection(
+  item: any,
+  projectId?: number | null
+): RequestTargetSelection | null {
+  if (item.targetType === "subproyecto" && item.subProjectId) {
+    return {
+      targetType: "subproyecto",
+      subProjectId: item.subProjectId,
+      projectId: projectId ?? item.target?.projectId ?? item.projectId ?? 0,
+      label: item.target?.label ?? `Subproyecto #${item.subProjectId}`,
+    };
+  }
+
+  if (item.targetType === "activo_fijo" && item.fixedAssetSapItemCode) {
+    return {
+      targetType: "activo_fijo",
+      fixedAssetSapItemCode: item.fixedAssetSapItemCode,
+      fixedAssetName: item.fixedAssetName ?? "",
+      label: item.target?.label ?? `Activo fijo: ${item.fixedAssetSapItemCode}`,
+    };
+  }
+
+  return null;
+}
+
+const mapRequestItemsToRows = (
+  requestItems: any[],
+  projectId?: number | null
+): ItemRow[] =>
   requestItems.length > 0
     ? requestItems.map((item) => ({
         id: `existing-${item.id}`,
         itemName: item.itemName || "",
         quantity: String(item.quantity ?? ""),
         unit: item.unit || "",
+        targetSelection: mapRequestItemTargetToSelection(item, projectId),
       }))
     : [createItemRow()];
 
@@ -87,6 +154,24 @@ const formatDateForInput = (value: string | Date | null | undefined) => {
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 };
+
+function buildSubprojectTargetSelection(subproject: any): RequestTargetSelection {
+  return {
+    targetType: "subproyecto",
+    subProjectId: subproject.id,
+    projectId: subproject.projectId,
+    label: `Subproyecto: ${subproject.code} - ${subproject.name}`,
+  };
+}
+
+function buildFixedAssetTargetSelection(asset: any): RequestTargetSelection {
+  return {
+    targetType: "activo_fijo",
+    fixedAssetSapItemCode: asset.itemCode,
+    fixedAssetName: asset.description,
+    label: `Activo fijo: ${asset.itemCode} - ${asset.description}`,
+  };
+}
 
 export default function NuevaSolicitud() {
   const [, setLocation] = useLocation();
@@ -118,6 +203,9 @@ export default function NuevaSolicitud() {
     "no_urgente"
   );
   const [neededBy, setNeededBy] = useState("");
+  const [targetPopoverOpen, setTargetPopoverOpen] = useState<string | null>(null);
+  const [targetSearch, setTargetSearch] = useState("");
+  const [debouncedTargetSearch, setDebouncedTargetSearch] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<ItemRow[]>([createItemRow()]);
   const [loadedRequestSnapshot, setLoadedRequestSnapshot] = useState<string | null>(null);
@@ -138,6 +226,17 @@ export default function NuevaSolicitud() {
       (projects || []).find((project: any) => String(project.id) === effectiveProjectId) ?? null,
     [effectiveProjectId, projects]
   );
+  const effectiveProjectIdNumber = effectiveProjectId
+    ? Number(effectiveProjectId)
+    : 0;
+  const { data: targetOptions, isLoading: isLoadingTargetOptions } =
+    trpc.materialRequests.targetOptions.useQuery(
+      {
+        projectId: effectiveProjectIdNumber,
+        search: debouncedTargetSearch || undefined,
+      },
+      { enabled: effectiveProjectIdNumber > 0 }
+    );
   const requestSnapshotKey = existingRequest
     ? `${existingRequest.request.id}:${new Date(existingRequest.request.updatedAt).toISOString()}:${existingRequest.items.length}`
     : null;
@@ -159,6 +258,34 @@ export default function NuevaSolicitud() {
   }, [availableProjects, isProjectScopedUser, projectId]);
 
   useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedTargetSearch(targetSearch.trim());
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [targetSearch]);
+
+  useEffect(() => {
+    if (!effectiveProjectIdNumber) {
+      setItems((current) =>
+        current.map((item) =>
+          item.targetSelection ? { ...item, targetSelection: null } : item
+        )
+      );
+      return;
+    }
+
+    setItems((current) =>
+      current.map((item) =>
+        item.targetSelection?.targetType === "subproyecto" &&
+        item.targetSelection.projectId !== effectiveProjectIdNumber
+          ? { ...item, targetSelection: null }
+          : item
+      )
+    );
+  }, [effectiveProjectIdNumber]);
+
+  useEffect(() => {
     if (!existingRequest || !requestSnapshotKey || loadedRequestSnapshot === requestSnapshotKey) {
       return;
     }
@@ -172,7 +299,12 @@ export default function NuevaSolicitud() {
       formatDateForInput(existingRequest.request.neededBy)
     );
     setNotes(existingRequest.request.notes || "");
-    setItems(mapRequestItemsToRows(existingRequest.items));
+    setItems(
+      mapRequestItemsToRows(
+        existingRequest.items,
+        existingRequest.request.projectId
+      )
+    );
     setLoadedRequestSnapshot(requestSnapshotKey);
   }, [existingRequest, loadedRequestSnapshot, requestSnapshotKey]);
 
@@ -196,9 +328,22 @@ export default function NuevaSolicitud() {
     setItems(items.filter((_, i) => i !== index));
   };
 
-  const updateItem = (index: number, field: Exclude<keyof ItemRow, "id">, value: string) => {
+  const updateItem = (
+    index: number,
+    field: "itemName" | "quantity" | "unit",
+    value: string
+  ) => {
     const updated = [...items];
     updated[index] = { ...updated[index], [field]: value };
+    setItems(updated);
+  };
+
+  const updateItemTarget = (
+    index: number,
+    targetSelection: RequestTargetSelection | null
+  ) => {
+    const updated = [...items];
+    updated[index] = { ...updated[index], targetSelection };
     setItems(updated);
   };
 
@@ -207,7 +352,10 @@ export default function NuevaSolicitud() {
   );
   const hasIncompleteItems = items.some((item) => {
     const hasAnyValue = Boolean(
-      item.itemName.trim() || item.quantity.trim() || item.unit.trim()
+      item.itemName.trim() ||
+        item.quantity.trim() ||
+        item.unit.trim() ||
+        item.targetSelection
     );
     const isComplete = Boolean(
       item.itemName.trim() && item.quantity.trim() && item.unit.trim()
@@ -259,6 +407,19 @@ export default function NuevaSolicitud() {
         itemName: item.itemName,
         quantity: item.quantity,
         unit: item.unit || undefined,
+        targetType: item.targetSelection?.targetType ?? null,
+        subProjectId:
+          item.targetSelection?.targetType === "subproyecto"
+            ? item.targetSelection.subProjectId
+            : null,
+        fixedAssetSapItemCode:
+          item.targetSelection?.targetType === "activo_fijo"
+            ? item.targetSelection.fixedAssetSapItemCode
+            : null,
+        fixedAssetName:
+          item.targetSelection?.targetType === "activo_fijo"
+            ? item.targetSelection.fixedAssetName
+            : null,
       })),
     };
 
@@ -305,10 +466,157 @@ export default function NuevaSolicitud() {
     isEditMode && existingRequest?.request.status !== "borrador"
       ? "Guardar cambios"
       : "Crear Requisición";
+  const renderItemTargetCombobox = (item: ItemRow, index: number) => {
+    const open = targetPopoverOpen === item.id;
+
+    return (
+      <div className="flex gap-2">
+        <Popover
+          open={open}
+          onOpenChange={(nextOpen) => {
+            setTargetPopoverOpen(nextOpen ? item.id : null);
+            setTargetSearch("");
+          }}
+        >
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              role="combobox"
+              aria-expanded={open}
+              disabled={!effectiveProjectId}
+              className="min-w-0 flex-1 justify-between font-normal"
+            >
+              <span className="truncate">
+                {item.targetSelection?.label ?? "Subproyecto o activo fijo"}
+              </span>
+              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            className="w-[min(520px,calc(100vw-2rem))] p-0"
+            align="start"
+          >
+            <Command shouldFilter={false}>
+              <CommandInput
+                placeholder="Buscar subproyecto o activo fijo..."
+                value={targetSearch}
+                onValueChange={setTargetSearch}
+              />
+              <CommandList>
+                {isLoadingTargetOptions ? (
+                  <div className="p-3 text-sm text-muted-foreground">
+                    Buscando opciones...
+                  </div>
+                ) : (
+                  <>
+                    <CommandEmpty>No se encontraron opciones.</CommandEmpty>
+                    {(targetOptions?.subprojects ?? []).length > 0 ? (
+                      <CommandGroup heading="Subproyectos">
+                        {(targetOptions?.subprojects ?? []).map((subproject: any) => {
+                          const selected =
+                            item.targetSelection?.targetType === "subproyecto" &&
+                            item.targetSelection.subProjectId === subproject.id;
+
+                          return (
+                            <CommandItem
+                              key={`subproject-${subproject.id}`}
+                              value={`subproject-${subproject.id}-${subproject.code}-${subproject.name}`}
+                              onSelect={() => {
+                                updateItemTarget(
+                                  index,
+                                  buildSubprojectTargetSelection(subproject)
+                                );
+                                setTargetPopoverOpen(null);
+                                setTargetSearch("");
+                              }}
+                            >
+                              <Check
+                                className={`mr-2 h-4 w-4 ${
+                                  selected ? "opacity-100" : "opacity-0"
+                                }`}
+                              />
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium">
+                                  {subproject.code} - {subproject.name}
+                                </p>
+                                {subproject.description ? (
+                                  <p className="truncate text-xs text-muted-foreground">
+                                    {subproject.description}
+                                  </p>
+                                ) : null}
+                              </div>
+                            </CommandItem>
+                          );
+                        })}
+                      </CommandGroup>
+                    ) : null}
+
+                    {(targetOptions?.fixedAssets ?? []).length > 0 ? (
+                      <CommandGroup heading="Activos fijos">
+                        {(targetOptions?.fixedAssets ?? []).map((asset: any) => {
+                          const selected =
+                            item.targetSelection?.targetType === "activo_fijo" &&
+                            item.targetSelection.fixedAssetSapItemCode === asset.itemCode;
+
+                          return (
+                            <CommandItem
+                              key={`asset-${asset.itemCode}`}
+                              value={`asset-${asset.itemCode}-${asset.description}`}
+                              onSelect={() => {
+                                updateItemTarget(
+                                  index,
+                                  buildFixedAssetTargetSelection(asset)
+                                );
+                                setTargetPopoverOpen(null);
+                                setTargetSearch("");
+                              }}
+                            >
+                              <Check
+                                className={`mr-2 h-4 w-4 ${
+                                  selected ? "opacity-100" : "opacity-0"
+                                }`}
+                              />
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium">
+                                  {asset.itemCode} - {asset.description}
+                                </p>
+                                {asset.itemGroup ? (
+                                  <p className="truncate text-xs text-muted-foreground">
+                                    {asset.itemGroup}
+                                  </p>
+                                ) : null}
+                              </div>
+                            </CommandItem>
+                          );
+                        })}
+                      </CommandGroup>
+                    ) : null}
+                  </>
+                )}
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+
+        {item.targetSelection ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => updateItemTarget(index, null)}
+            aria-label="Limpiar destino del ítem"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        ) : null}
+      </div>
+    );
+  };
 
   if (isEditMode && isLoadingRequest) {
     return (
-      <div className="space-y-6 max-w-4xl">
+      <div className="w-full max-w-none space-y-6">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => setLocation("/solicitudes")}>
             <ArrowLeft className="h-4 w-4" />
@@ -321,7 +629,7 @@ export default function NuevaSolicitud() {
 
   if (isEditMode && existingRequestError) {
     return (
-      <div className="space-y-6 max-w-4xl">
+      <div className="w-full max-w-none space-y-6">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => setLocation("/solicitudes")}>
             <ArrowLeft className="h-4 w-4" />
@@ -339,7 +647,7 @@ export default function NuevaSolicitud() {
 
   if (isEditMode && existingRequest && !isEditableExistingRequest) {
     return (
-      <div className="space-y-6 max-w-4xl">
+      <div className="w-full max-w-none space-y-6">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => setLocation(`/solicitudes/${editingRequestId}`)}>
             <ArrowLeft className="h-4 w-4" />
@@ -363,7 +671,7 @@ export default function NuevaSolicitud() {
   }
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="w-full max-w-none space-y-6">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="sm" onClick={() => setLocation("/solicitudes")}>
           <ArrowLeft className="h-4 w-4" />
@@ -571,23 +879,27 @@ export default function NuevaSolicitud() {
           <CardContent>
             <div className="space-y-3">
               {/* Header */}
-              <div className="grid grid-cols-12 gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground px-1">
-                <div className="col-span-5">Nombre del ítem</div>
+              <div className="hidden md:grid grid-cols-12 gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground px-1">
+                <div className="col-span-4">Nombre del ítem</div>
+                <div className="col-span-3">Subproyecto / activo fijo</div>
                 <div className="col-span-2">Cantidad</div>
-                <div className="col-span-4">Unidad de medida</div>
+                <div className="col-span-2">Unidad</div>
                 <div className="col-span-1" />
               </div>
 
               {items.map((item, index) => (
                 <div key={item.id} className="grid grid-cols-12 gap-2 items-center">
-                  <div className="col-span-5">
+                  <div className="col-span-12 md:col-span-4">
                     <Input
                       placeholder="Ej: Cemento Portland Tipo I"
                       value={item.itemName}
                       onChange={(e) => updateItem(index, "itemName", e.target.value)}
                     />
                   </div>
-                  <div className="col-span-2">
+                  <div className="col-span-12 md:col-span-3">
+                    {renderItemTargetCombobox(item, index)}
+                  </div>
+                  <div className="col-span-5 md:col-span-2">
                     <Input
                       type="number"
                       placeholder="0"
@@ -597,7 +909,7 @@ export default function NuevaSolicitud() {
                       onChange={(e) => updateItem(index, "quantity", e.target.value)}
                     />
                   </div>
-                  <div className="col-span-4">
+                  <div className="col-span-5 md:col-span-2">
                     <Select
                       key={`${item.id}-${item.unit || "empty"}`}
                       value={item.unit}
@@ -615,7 +927,7 @@ export default function NuevaSolicitud() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="col-span-1 flex justify-center">
+                  <div className="col-span-2 md:col-span-1 flex justify-center">
                     <Button
                       type="button"
                       variant="ghost"

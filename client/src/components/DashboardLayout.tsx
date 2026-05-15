@@ -41,6 +41,7 @@ import {
   Database,
   FileText,
   KeyRound,
+  Tags,
   Truck,
   UserRound,
 } from "lucide-react";
@@ -92,6 +93,18 @@ const allMenuItems: MenuItem[] = [
     label: "Inventario",
     path: "/inventario",
     roles: ["jefe_bodega_central", "administracion_central", "bodeguero_proyecto"],
+  },
+  {
+    icon: Tags,
+    label: "Artículos",
+    path: "/articulos",
+    roles: ["jefe_bodega_central", "administracion_central", "admin"],
+  },
+  {
+    icon: Building2,
+    label: "Proveedores",
+    path: "/proveedores",
+    roles: ["jefe_bodega_central", "administracion_central", "admin"],
   },
   {
     icon: PackageMinus,
@@ -165,6 +178,18 @@ const allMenuItems: MenuItem[] = [
     icon: FileText,
     label: "Recepciones",
     path: "/recepciones",
+    roles: [
+      "jefe_bodega_central",
+      "administracion_central",
+      "administrador_proyecto",
+      "bodeguero_proyecto",
+      "admin",
+    ],
+  },
+  {
+    icon: FileText,
+    label: "Facturas",
+    path: "/facturas",
     roles: [
       "jefe_bodega_central",
       "administracion_central",
@@ -350,11 +375,11 @@ function DashboardLayoutContent({
   }, [isResizing, setSidebarWidth]);
 
   const roleLabels: Record<string, string> = {
-    ingeniero_residente: "Ing. Residente",
-    jefe_bodega_central: "Jefe de Bodega",
-    administracion_central: "Admin. Central",
-    administrador_proyecto: "Admin. Proyecto",
-    bodeguero_proyecto: "Bodeguero de Proyecto",
+    ingeniero_residente: "Requiriente",
+    jefe_bodega_central: "Bodega Central",
+    administracion_central: "Administración Central",
+    administrador_proyecto: "Administración Proyecto",
+    bodeguero_proyecto: "Bodega Proyecto",
   };
 
   return (

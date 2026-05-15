@@ -19,6 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -26,8 +27,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CreditCard, Eye, Plus, Printer } from "lucide-react";
-import { useState } from "react";
+import { CreditCard, Eye, Plus, Printer, Search } from "lucide-react";
+import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
@@ -45,6 +46,14 @@ const STATUS_LABELS: Record<string, string> = {
   en_transito: "En tránsito",
   recibida: "Recibida",
   rechazada: "Rechazada",
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  pendiente: "border-amber-300 bg-amber-50 text-amber-700",
+  aprobada: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  en_transito: "border-blue-300 bg-blue-50 text-blue-700",
+  recibida: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  rechazada: "border-rose-300 bg-rose-50 text-rose-700",
 };
 
 const REASON_LABELS: Record<string, string> = {
@@ -92,6 +101,7 @@ export default function Devoluciones() {
   const utils = trpc.useUtils();
   const [, setLocation] = useLocation();
   const { user } = useAuth();
+  const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [selectedReturnId, setSelectedReturnId] = useState<number | null>(null);
@@ -130,6 +140,31 @@ export default function Devoluciones() {
     selectedReturn?.returnType === "devolucion_proveedor" &&
     selectedReturn.status === "pendiente" &&
     !selectedReturn.sapDocumentNumber;
+
+  const filteredReturns = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+
+    return (returns ?? []).filter((row: any) => {
+      if (!normalizedSearch) return true;
+      const returnRow = row.return;
+      const sourceProjectLabel = row.sourceProject
+        ? `${row.sourceProject.code} ${row.sourceProject.name}`
+        : "";
+
+      return [
+        returnRow.returnNumber,
+        RETURN_TYPE_LABELS[returnRow.returnType],
+        REASON_LABELS[returnRow.reasonCategory],
+        STATUS_LABELS[returnRow.status],
+        returnRow.supplierName,
+        sourceProjectLabel,
+      ]
+        .filter(Boolean)
+        .some(value =>
+          String(value).toLowerCase().includes(normalizedSearch)
+        );
+    });
+  }, [returns, searchTerm]);
 
   const generateCreditNoteMutation =
     trpc.reverseLogistics.generateCreditNote.useMutation({
@@ -371,9 +406,18 @@ export default function Devoluciones() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchTerm}
+            onChange={event => setSearchTerm(event.target.value)}
+            placeholder="Buscar por devolución, tipo, motivo, proveedor o proyecto..."
+            className="h-10 pl-9"
+          />
+        </div>
         <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-52 h-9">
+          <SelectTrigger className="h-10 w-full lg:w-56">
             <SelectValue placeholder="Tipo de devolución" />
           </SelectTrigger>
           <SelectContent>
@@ -393,7 +437,7 @@ export default function Devoluciones() {
           </SelectContent>
         </Select>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-44 h-9">
+          <SelectTrigger className="h-10 w-full lg:w-56">
             <SelectValue placeholder="Estatus" />
           </SelectTrigger>
           <SelectContent>
@@ -417,6 +461,10 @@ export default function Devoluciones() {
           ) : (returns || []).length === 0 ? (
             <div className="p-8 text-center text-muted-foreground">
               No se encontraron devoluciones
+            </div>
+          ) : filteredReturns.length === 0 ? (
+            <div className="p-8 text-center text-muted-foreground">
+              No hay devoluciones que coincidan con los filtros
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -444,7 +492,7 @@ export default function Devoluciones() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(returns || []).map((r: any) => (
+                  {filteredReturns.map((r: any) => (
                     <tr
                       key={r.return.id}
                       className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors"
@@ -459,7 +507,12 @@ export default function Devoluciones() {
                         {REASON_LABELS[r.return.reasonCategory]}
                       </td>
                       <td className="p-3">
-                        <Badge variant="outline" className="text-xs capitalize">
+                        <Badge
+                          variant="outline"
+                          className={`text-xs capitalize ${
+                            STATUS_COLORS[r.return.status] || ""
+                          }`}
+                        >
                           {STATUS_LABELS[r.return.status]}
                         </Badge>
                       </td>
@@ -498,7 +551,12 @@ export default function Devoluciones() {
                 <DialogTitle className="flex flex-wrap items-center gap-3 text-2xl font-bold tracking-tight">
                   {selectedReturn?.returnNumber || "Devolución"}
                   {selectedReturn && (
-                    <Badge variant="outline" className="text-xs">
+                    <Badge
+                      variant="outline"
+                      className={`text-xs ${
+                        STATUS_COLORS[selectedReturn.status] || ""
+                      }`}
+                    >
                       {STATUS_LABELS[selectedReturn.status]}
                     </Badge>
                   )}

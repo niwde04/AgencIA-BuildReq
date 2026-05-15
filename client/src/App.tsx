@@ -16,6 +16,8 @@ import Flujos from "./pages/Flujos";
 import Devoluciones from "./pages/Devoluciones";
 import NuevaDevolucion from "./pages/NuevaDevolucion";
 import Inventario from "./pages/Inventario";
+import Articulos from "./pages/Articulos";
+import Proveedores from "./pages/Proveedores";
 import OrdenesCompra from "./pages/OrdenesCompra";
 import Proyectos from "./pages/Proyectos";
 import Usuarios from "./pages/Usuarios";
@@ -26,6 +28,7 @@ import PurchaseRequests from "./pages/PurchaseRequests";
 import TransferRequests from "./pages/TransferRequests";
 import Transfers from "./pages/Transfers";
 import Recepciones from "./pages/Recepciones";
+import Facturas from "./pages/Facturas";
 import SaldosIniciales from "./pages/SaldosIniciales";
 import SalidasBodega from "./pages/SalidasBodega";
 import ActualizarContrasena from "./pages/ActualizarContrasena";
@@ -42,12 +45,15 @@ function DashboardRoutes() {
       <Route path="/devoluciones" component={Devoluciones} />
       <Route path="/devoluciones/nueva" component={NuevaDevolucion} />
       <Route path="/inventario" component={Inventario} />
+      <Route path="/articulos" component={Articulos} />
+      <Route path="/proveedores" component={Proveedores} />
       <Route path="/almacenes" component={Almacenes} />
       <Route path="/solicitudes-compra" component={PurchaseRequests} />
       <Route path="/ordenes-compra" component={OrdenesCompra} />
       <Route path="/solicitudes-traslado" component={TransferRequests} />
       <Route path="/traslados" component={Transfers} />
       <Route path="/recepciones" component={Recepciones} />
+      <Route path="/facturas" component={Facturas} />
       <Route path="/salidas-inventario" component={SalidasBodega} />
       <Route path="/salidas-bodega" component={SalidasBodega} />
       <Route path="/saldos-iniciales" component={SaldosIniciales} />

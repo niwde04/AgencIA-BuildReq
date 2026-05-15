@@ -2,14 +2,22 @@ import { trpc } from "@/lib/trpc";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Eye } from "lucide-react";
-import { useState } from "react";
+import { Eye, Search } from "lucide-react";
+import { useMemo, useState } from "react";
 
 const STATUS_LABELS: Record<string, string> = {
   pendiente: "Pendiente",
@@ -21,6 +29,16 @@ const STATUS_LABELS: Record<string, string> = {
   anulado: "Anulado",
 };
 
+const STATUS_COLORS: Record<string, string> = {
+  pendiente: "border-amber-300 bg-amber-50 text-amber-700",
+  confirmado: "border-blue-300 bg-blue-50 text-blue-700",
+  en_transito: "border-blue-300 bg-blue-50 text-blue-700",
+  parcialmente_recibido: "border-cyan-300 bg-cyan-50 text-cyan-700",
+  recibido: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  cerrado_incompleto: "border-yellow-300 bg-yellow-50 text-yellow-700",
+  anulado: "border-rose-300 bg-rose-50 text-rose-700",
+};
+
 function formatDateLabel(value: Date | string | null | undefined) {
   if (!value) return "-";
   const date = new Date(value);
@@ -28,18 +46,85 @@ function formatDateLabel(value: Date | string | null | undefined) {
   return date.toLocaleDateString("es-HN");
 }
 
+function getDestinationLabel(row: any) {
+  if (row.transferRequest?.destinationType === "bodega_central") {
+    return "Bodega Central";
+  }
+  return row.destinationProject
+    ? `${row.destinationProject.code} — ${row.destinationProject.name}`
+    : row.transferRequest?.destinationProjectId
+      ? `Proyecto ${row.transferRequest.destinationProjectId}`
+      : "";
+}
+
 export default function Transfers() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const { data: transfers, isLoading } = trpc.transfers.list.useQuery();
   const { data: detail } = trpc.transfers.getById.useQuery(
     { id: selectedId ?? 0 },
     { enabled: Boolean(selectedId) }
   );
 
+  const filteredTransfers = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+
+    return (transfers ?? []).filter((row: any) => {
+      const projectLabel = row.project
+        ? `${row.project.code} ${row.project.name}`
+        : "";
+      const destinationLabel = getDestinationLabel(row);
+      const matchesSearch =
+        !normalizedSearch ||
+        [
+          row.transfer.transferNumber,
+          row.transferRequest?.requestNumber,
+          row.transfer.remissionGuideNumber,
+          row.transfer.sapCorrelative,
+          projectLabel,
+          destinationLabel,
+        ]
+          .filter(Boolean)
+          .some(value =>
+            String(value).toLowerCase().includes(normalizedSearch)
+          );
+      const matchesStatus =
+        statusFilter === "all" || row.transfer.status === statusFilter;
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [searchTerm, statusFilter, transfers]);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1>Traslados</h1>
+      </div>
+
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchTerm}
+            onChange={event => setSearchTerm(event.target.value)}
+            placeholder="Buscar por traslado, solicitud, proyecto, guía o SAP..."
+            className="h-10 pl-9"
+          />
+        </div>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="h-10 w-full lg:w-56">
+            <SelectValue placeholder="Estado" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos los estados</SelectItem>
+            {Object.entries(STATUS_LABELS).map(([value, label]) => (
+              <SelectItem key={value} value={value}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <Card>
@@ -51,6 +136,10 @@ export default function Transfers() {
           ) : !(transfers || []).length ? (
             <div className="p-8 text-center text-muted-foreground">
               No hay traslados registrados
+            </div>
+          ) : !filteredTransfers.length ? (
+            <div className="p-8 text-center text-muted-foreground">
+              No hay traslados que coincidan con los filtros
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -81,7 +170,7 @@ export default function Transfers() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(transfers || []).map((row: any) => (
+                  {filteredTransfers.map((row: any) => (
                     <tr key={row.transfer.id} className="border-b border-border last:border-0">
                       <td className="p-3 font-medium">{row.transfer.transferNumber}</td>
                       <td className="p-3 text-xs">{row.transferRequest?.requestNumber || "—"}</td>
@@ -91,7 +180,12 @@ export default function Transfers() {
                       <td className="p-3 text-xs">{row.transfer.remissionGuideNumber || "—"}</td>
                       <td className="p-3 text-xs font-mono">{row.transfer.sapCorrelative || "—"}</td>
                       <td className="p-3">
-                        <Badge variant="outline" className="text-xs">
+                        <Badge
+                          variant="outline"
+                          className={`text-xs ${
+                            STATUS_COLORS[row.transfer.status] || ""
+                          }`}
+                        >
                           {STATUS_LABELS[row.transfer.status] || row.transfer.status}
                         </Badge>
                       </td>
@@ -184,7 +278,12 @@ export default function Transfers() {
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Estatus
                   </p>
-                  <Badge variant="outline" className="mt-2 text-xs">
+                  <Badge
+                    variant="outline"
+                    className={`mt-2 text-xs ${
+                      STATUS_COLORS[detail.transfer.status] || ""
+                    }`}
+                  >
                     {STATUS_LABELS[detail.transfer.status] || detail.transfer.status}
                   </Badge>
                 </div>

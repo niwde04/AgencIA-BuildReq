@@ -20,7 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { downloadBase64Document } from "@/lib/document-download";
 import { trpc } from "@/lib/trpc";
-import { Download, Eye, PackageMinus, Plus, RotateCcw, Send, XCircle } from "lucide-react";
+import { Download, Eye, PackageMinus, Plus, RotateCcw, Search, Send, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -28,6 +28,12 @@ const STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
   emitida: "Emitida",
   anulada: "Anulada",
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  borrador: "border-slate-300 bg-slate-50 text-slate-700",
+  emitida: "border-blue-300 bg-blue-50 text-blue-700",
+  anulada: "border-rose-300 bg-rose-50 text-rose-700",
 };
 
 const RETURN_REASON_LABELS: Record<string, string> = {
@@ -108,6 +114,8 @@ export default function SalidasBodega() {
   const [returnConditionByItemId, setReturnConditionByItemId] = useState<
     Record<number, string>
   >({});
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false);
   const [deliveryRequestId, setDeliveryRequestId] = useState("");
   const [deliveryNotes, setDeliveryNotes] = useState("");
@@ -246,6 +254,33 @@ export default function SalidasBodega() {
     [deliveryRequestDetail?.items]
   );
 
+  const filteredExits = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+
+    return (exits ?? []).filter((row: any) => {
+      const warehouseExit = row.warehouseExit;
+      const projectLabel = row.project
+        ? `${row.project.code} ${row.project.name}`
+        : "";
+      const matchesSearch =
+        !normalizedSearch ||
+        [
+          warehouseExit.exitNumber,
+          row.warehouse?.displayName,
+          projectLabel,
+          STATUS_LABELS[warehouseExit.status],
+        ]
+          .filter(Boolean)
+          .some(value =>
+            String(value).toLowerCase().includes(normalizedSearch)
+          );
+      const matchesStatus =
+        statusFilter === "all" || warehouseExit.status === statusFilter;
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [exits, searchTerm, statusFilter]);
+
   const submitDelivery = () => {
     if (!deliveryRequestDetail) {
       toast.error("Seleccione una requisición");
@@ -368,6 +403,31 @@ export default function SalidasBodega() {
         </Button>
       </div>
 
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchTerm}
+            onChange={event => setSearchTerm(event.target.value)}
+            placeholder="Buscar por salida, proyecto o bodega..."
+            className="h-10 pl-9"
+          />
+        </div>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="h-10 w-full lg:w-56">
+            <SelectValue placeholder="Estado" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos los estados</SelectItem>
+            {Object.entries(STATUS_LABELS).map(([value, label]) => (
+              <SelectItem key={value} value={value}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
@@ -378,6 +438,10 @@ export default function SalidasBodega() {
             <div className="flex flex-col items-center gap-3 p-10 text-center text-muted-foreground">
               <PackageMinus className="h-9 w-9" />
               <p>No hay salidas de inventario generadas desde Flujos.</p>
+            </div>
+          ) : !filteredExits.length ? (
+            <div className="p-8 text-center text-muted-foreground">
+              No hay salidas de inventario que coincidan con los filtros
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -411,7 +475,7 @@ export default function SalidasBodega() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(exits ?? []).map((row: any) => (
+                  {filteredExits.map((row: any) => (
                     <tr
                       key={row.warehouseExit.id}
                       className="border-b border-border last:border-0"
@@ -431,7 +495,12 @@ export default function SalidasBodega() {
                         {formatDate(row.warehouseExit.exitDate)}
                       </td>
                       <td className="p-3">
-                        <Badge variant="outline" className="text-xs">
+                        <Badge
+                          variant="outline"
+                          className={`text-xs ${
+                            STATUS_COLORS[row.warehouseExit.status] || ""
+                          }`}
+                        >
                           {STATUS_LABELS[row.warehouseExit.status] ||
                             row.warehouseExit.status}
                         </Badge>
@@ -473,7 +542,12 @@ export default function SalidasBodega() {
             <DialogTitle className="flex flex-wrap items-center gap-3 text-2xl font-bold tracking-tight sm:text-3xl">
               {detail?.warehouseExit.exitNumber || "Salida de Inventario"}
               {detail?.warehouseExit.status ? (
-                <Badge variant="outline" className="text-xs">
+                <Badge
+                  variant="outline"
+                  className={`text-xs ${
+                    STATUS_COLORS[detail.warehouseExit.status] || ""
+                  }`}
+                >
                   {STATUS_LABELS[detail.warehouseExit.status] ||
                     detail.warehouseExit.status}
                 </Badge>

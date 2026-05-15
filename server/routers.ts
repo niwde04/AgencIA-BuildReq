@@ -23,8 +23,11 @@ import { purchaseOrdersRouter } from "./routers/purchaseOrders";
 import { transferRequestsRouter } from "./routers/transferRequests";
 import { transfersRouter } from "./routers/transfers";
 import { receiptsRouter } from "./routers/receipts";
+import { invoicesRouter } from "./routers/invoices";
 import { openingBalancesRouter } from "./routers/openingBalances";
 import { warehouseExitsRouter } from "./routers/warehouseExits";
+import { articlesRouter } from "./routers/articles";
+import { suppliersRouter } from "./routers/suppliers";
 
 export const appRouter = router({
   system: systemRouter,
@@ -77,8 +80,11 @@ export const appRouter = router({
   transferRequests: transferRequestsRouter,
   transfers: transfersRouter,
   receipts: receiptsRouter,
+  invoices: invoicesRouter,
   openingBalances: openingBalancesRouter,
   warehouseExits: warehouseExitsRouter,
+  articles: articlesRouter,
+  suppliers: suppliersRouter,
 });
 
 export type AppRouter = typeof appRouter;
