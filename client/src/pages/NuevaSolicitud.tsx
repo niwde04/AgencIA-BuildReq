@@ -204,6 +204,7 @@ export default function NuevaSolicitud() {
   );
   const [neededBy, setNeededBy] = useState("");
   const [targetPopoverOpen, setTargetPopoverOpen] = useState<string | null>(null);
+  const [unitPopoverOpen, setUnitPopoverOpen] = useState<string | null>(null);
   const [targetSearch, setTargetSearch] = useState("");
   const [debouncedTargetSearch, setDebouncedTargetSearch] = useState("");
   const [notes, setNotes] = useState("");
@@ -614,6 +615,64 @@ export default function NuevaSolicitud() {
     );
   };
 
+  const renderItemUnitCombobox = (item: ItemRow, index: number) => {
+    const open = unitPopoverOpen === item.id;
+    const selectedUnit = UNITS.find((unit) => unit.value === item.unit);
+
+    return (
+      <Popover
+        open={open}
+        onOpenChange={(nextOpen) => setUnitPopoverOpen(nextOpen ? item.id : null)}
+      >
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            role="combobox"
+            aria-expanded={open}
+            className="h-10 w-full justify-between px-3 font-normal"
+          >
+            <span className="truncate">
+              {selectedUnit?.label || item.unit || "Seleccione unidad"}
+            </span>
+            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[240px] p-0" align="start">
+          <Command>
+            <CommandInput placeholder="Buscar unidad..." />
+            <CommandList>
+              <CommandEmpty>No se encontraron unidades.</CommandEmpty>
+              <CommandGroup>
+                {UNITS.map((unit) => {
+                  const selected = item.unit === unit.value;
+
+                  return (
+                    <CommandItem
+                      key={unit.value}
+                      value={`${unit.value} ${unit.label}`}
+                      onSelect={() => {
+                        updateItem(index, "unit", unit.value);
+                        setUnitPopoverOpen(null);
+                      }}
+                    >
+                      <Check
+                        className={`mr-2 h-4 w-4 ${
+                          selected ? "opacity-100" : "opacity-0"
+                        }`}
+                      />
+                      <span>{unit.label}</span>
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    );
+  };
+
   if (isEditMode && isLoadingRequest) {
     return (
       <div className="w-full max-w-none space-y-6">
@@ -910,22 +969,7 @@ export default function NuevaSolicitud() {
                     />
                   </div>
                   <div className="col-span-5 md:col-span-2">
-                    <Select
-                      key={`${item.id}-${item.unit || "empty"}`}
-                      value={item.unit}
-                      onValueChange={(val) => updateItem(index, "unit", val)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleccione unidad" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {UNITS.map((u) => (
-                          <SelectItem key={u.value} value={u.value}>
-                            {u.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {renderItemUnitCombobox(item, index)}
                   </div>
                   <div className="col-span-2 md:col-span-1 flex justify-center">
                     <Button

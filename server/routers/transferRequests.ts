@@ -55,7 +55,7 @@ async function releaseTransferRequestItems(
 
     affectedRequestIds.add(requestItem.requestId);
     await db.updateRequestItem(requestItem.id, {
-      assignedFlow: "traslado_proyecto",
+      assignedFlow: null,
       status: "pendiente",
     });
 

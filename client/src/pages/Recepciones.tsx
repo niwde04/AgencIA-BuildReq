@@ -31,10 +31,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Eye, Loader2, Plus, RotateCcw, Search, ShieldX } from "lucide-react";
+import {
+  Eye,
+  Loader2,
+  Plus,
+  Printer,
+  RotateCcw,
+  Search,
+  ShieldX,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { calculatePurchaseOrderLineAmounts } from "@shared/purchase-orders";
 import {
   CAI_FORMAT_EXAMPLE,
   INVOICE_NUMBER_FORMAT_EXAMPLE,
@@ -137,6 +146,44 @@ function formatQuantity(value: string | number | null | undefined) {
         maximumFractionDigits: 2,
       })
     : "0.00";
+}
+
+function formatPrintDate(value: string | Date | null | undefined) {
+  if (!value) return "-";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("es-HN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+function formatPrintNumber(value: number | string | null | undefined) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return "0";
+  return parsed.toLocaleString("es-HN", {
+    minimumFractionDigits: Number.isInteger(parsed) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatPrintMoney(value: number | string | null | undefined) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return "L 0.00";
+  return `L ${parsed.toLocaleString("es-HN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function getPendingQuantity(item: any) {
@@ -273,7 +320,10 @@ export default function Recepciones() {
       ? purchaseOrderDetailLoading
       : transferDetailLoading;
 
-  const { data: receiptPurchaseOrderDetail } =
+  const {
+    data: receiptPurchaseOrderDetail,
+    isLoading: receiptPurchaseOrderDetailLoading,
+  } =
     trpc.purchaseOrders.getById.useQuery(
       { id: receiptDetail?.receipt.sourceId ?? 0 },
       {
@@ -283,15 +333,16 @@ export default function Recepciones() {
           Boolean(receiptDetail?.receipt.sourceId),
       }
     );
-  const { data: receiptTransferDetail } = trpc.transfers.getById.useQuery(
-    { id: receiptDetail?.receipt.sourceId ?? 0 },
-    {
-      enabled:
-        viewReceiptId !== null &&
-        receiptDetail?.receipt.sourceType === "transfer" &&
-        Boolean(receiptDetail?.receipt.sourceId),
-    }
-  );
+  const { data: receiptTransferDetail, isLoading: receiptTransferDetailLoading } =
+    trpc.transfers.getById.useQuery(
+      { id: receiptDetail?.receipt.sourceId ?? 0 },
+      {
+        enabled:
+          viewReceiptId !== null &&
+          receiptDetail?.receipt.sourceType === "transfer" &&
+          Boolean(receiptDetail?.receipt.sourceId),
+      }
+    );
 
   const resetForm = () => {
     setSourceType("purchase_order");
@@ -589,6 +640,13 @@ export default function Recepciones() {
         "—"
     : "—";
 
+  const receiptSourceDetailLoading =
+    receiptDetail?.receipt.sourceType === "purchase_order"
+      ? receiptPurchaseOrderDetailLoading
+      : receiptDetail?.receipt.sourceType === "transfer"
+        ? receiptTransferDetailLoading
+        : false;
+
   const receiptSourceItemCodes = useMemo(() => {
     const sourceItems =
       receiptDetail?.receipt.sourceType === "purchase_order"
@@ -603,6 +661,376 @@ export default function Recepciones() {
     receiptPurchaseOrderDetail?.items,
     receiptTransferDetail?.items,
   ]);
+
+  const handlePrintReceipt = () => {
+    if (!receiptDetail) return;
+
+    const receipt = receiptDetail.receipt;
+    const isPurchaseOrderReceipt = receipt.sourceType === "purchase_order";
+    const sourceItems = isPurchaseOrderReceipt
+      ? receiptPurchaseOrderDetail?.items ?? []
+      : receiptTransferDetail?.items ?? [];
+    const sourceItemsById = new Map(
+      sourceItems.map((item: any) => [item.id, item])
+    );
+    const projectLabel = receiptDetail.project
+      ? `${receiptDetail.project.code} ${receiptDetail.project.name}`
+      : `Proyecto ${receipt.projectId}`;
+    const warehouseLabel =
+      (receiptDetail as any).warehouse?.displayName ||
+      receiptDetail.project?.name ||
+      projectLabel;
+    const requestedByLabel = isPurchaseOrderReceipt
+      ? receiptPurchaseOrderDetail?.createdBy?.name ||
+        (receiptDetail as any).receivedBy?.name ||
+        `Usuario #${receipt.receivedById}`
+      : receiptTransferDetail?.transferRequest?.createdById
+        ? `Usuario #${receiptTransferDetail.transferRequest.createdById}`
+        : (receiptDetail as any).receivedBy?.name ||
+          `Usuario #${receipt.receivedById}`;
+    const destinationLabel = isPurchaseOrderReceipt
+      ? receiptPurchaseOrderDetail?.purchaseRequest?.printDestination?.trim() ||
+        receiptDetail.project?.name ||
+        projectLabel
+      : getTransferDestinationLabel(receiptTransferDetail, "-");
+    const sourceWarehouseLabel = isPurchaseOrderReceipt
+      ? "N/A"
+      : getTransferOriginLabel(receiptTransferDetail, "-");
+    const supplierLabel = isPurchaseOrderReceipt
+      ? receiptPurchaseOrderDetail?.supplier?.name ||
+        receiptDetail.supplier?.name ||
+        "-"
+      : "-";
+    const documentTypeLabel = isPurchaseOrderReceipt ? "Factura" : "Traslado";
+    const referenceLabel = isPurchaseOrderReceipt ? "Compra" : "Traslado";
+    const observations = receipt.notes?.trim() || "-";
+
+    let subtotal = 0;
+    let taxTotal = 0;
+    let total = 0;
+    const itemRows = receiptDetail.items
+      .map((item: any, index: number) => {
+        const sourceItem: any = sourceItemsById.get(item.sourceItemId);
+        const sourceCode =
+          getSourceItemCode(sourceItem ?? item) ||
+          receiptSourceItemCodes.get(item.sourceItemId) ||
+          "-";
+        const companyCode =
+          sourceItem?.originalSapItemCode ||
+          sourceItem?.sapItemCode ||
+          sourceItem?.currentSapItemCode ||
+          sourceCode;
+        const partNumber =
+          sourceItem?.currentSapItemCode ||
+          sourceItem?.sapItemCode ||
+          sourceItem?.originalSapItemCode ||
+          sourceCode;
+        const unitPrice = isPurchaseOrderReceipt
+          ? sourceItem?.unitPrice ?? "0.00"
+          : "0.00";
+        const amounts = calculatePurchaseOrderLineAmounts({
+          quantity: item.quantityReceived,
+          unitPrice,
+          taxCode: sourceItem?.taxCode,
+        });
+        subtotal += amounts.subtotal;
+        taxTotal += amounts.taxAmount;
+        total += amounts.total;
+
+        return `
+          <tr>
+            <td>${escapeHtml(companyCode || "-")}</td>
+            <td>${escapeHtml(item.itemName)}</td>
+            <td class="center">${escapeHtml(partNumber || "-")}</td>
+            <td class="numeric">${escapeHtml(formatPrintNumber(item.quantityReceived))}</td>
+            <td class="center">${escapeHtml(item.unit || "-")}</td>
+            <td class="numeric">${escapeHtml(formatPrintMoney(unitPrice))}</td>
+            <td class="numeric">${escapeHtml(formatPrintMoney(amounts.subtotal))}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    const printWindow = window.open("", "_blank", "width=1100,height=780");
+    if (!printWindow) {
+      toast.error("No se pudo abrir la ventana de impresión");
+      return;
+    }
+
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${escapeHtml(receipt.receiptNumber)}</title>
+          <style>
+            @page { size: A4 landscape; margin: 9mm; }
+            * { box-sizing: border-box; }
+            body {
+              background: #fff;
+              color: #000;
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 10px;
+              margin: 0;
+            }
+            .sheet {
+              margin: 0 auto;
+              max-width: 279mm;
+              padding: 6mm 4mm 8mm;
+            }
+            .header {
+              align-items: start;
+              display: grid;
+              gap: 18px;
+              grid-template-columns: 112px 1fr 120px;
+            }
+            .logo {
+              border: 1px solid #333;
+              border-radius: 3px;
+              height: 52px;
+              margin-left: 6px;
+              padding-top: 4px;
+              text-align: center;
+              width: 70px;
+            }
+            .logo-small {
+              font-size: 5px;
+              font-weight: 800;
+              letter-spacing: 0.02em;
+              line-height: 1;
+            }
+            .logo-main {
+              font-size: 28px;
+              font-weight: 900;
+              letter-spacing: 0.01em;
+              line-height: 1;
+            }
+            .logo-foot {
+              font-size: 7px;
+              font-weight: 800;
+              line-height: 1;
+            }
+            .title {
+              color: #06344f;
+              font-size: 13px;
+              font-weight: 800;
+              line-height: 1.5;
+              text-align: center;
+              text-transform: uppercase;
+            }
+            .company {
+              color: #000;
+              font-size: 15px;
+              margin-bottom: 2px;
+            }
+            .document-number {
+              border: 5px double #222;
+              color: #06344f;
+              font-size: 14px;
+              font-weight: 800;
+              margin-top: 1mm;
+              padding: 4px 8px;
+              text-align: center;
+            }
+            .meta {
+              display: grid;
+              gap: 22px;
+              grid-template-columns: 1fr 1.08fr;
+              margin-top: 12mm;
+            }
+            .meta-column {
+              display: grid;
+              gap: 5px;
+            }
+            .field {
+              display: grid;
+              gap: 8px;
+              grid-template-columns: 118px 1fr;
+              min-height: 14px;
+            }
+            .meta-column.right .field {
+              grid-template-columns: 96px 1fr;
+            }
+            .label {
+              font-weight: 800;
+            }
+            .value {
+              font-weight: 700;
+            }
+            table {
+              border-collapse: collapse;
+              margin-top: 5mm;
+              width: 100%;
+            }
+            th {
+              border-bottom: 2px solid #56a944;
+              border-top: 2px solid #56a944;
+              font-size: 9px;
+              font-weight: 800;
+              padding: 4px 5px;
+              text-align: left;
+            }
+            td {
+              border-bottom: 1px solid #8ac37c;
+              padding: 5px;
+              vertical-align: top;
+            }
+            .center { text-align: center; }
+            .numeric {
+              font-variant-numeric: tabular-nums;
+              text-align: right;
+            }
+            .summary {
+              display: grid;
+              grid-template-columns: 1fr 210px;
+              margin-top: 0;
+            }
+            .summary-table {
+              border-collapse: collapse;
+              grid-column: 2;
+              margin-top: 0;
+              width: 100%;
+            }
+            .summary-table td {
+              border-bottom: 1px solid #56a944;
+              font-weight: 800;
+              padding: 4px 5px;
+            }
+            .signatures {
+              display: grid;
+              grid-template-columns: 260px;
+              justify-content: center;
+              margin-top: 18mm;
+            }
+            .signature-line {
+              border-top: 2px solid #111;
+              font-weight: 700;
+              padding-top: 4px;
+              text-align: center;
+            }
+            @media print {
+              .sheet { max-width: none; padding: 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <main class="sheet">
+            <section class="header">
+              <div class="logo">
+                <div class="logo-small">HIDALGO e HIDALGO S.A.</div>
+                <div class="logo-main">HeH</div>
+                <div class="logo-foot">CONSTRUCTORES</div>
+              </div>
+              <div class="title">
+                <div class="company">HIDALGO E HIDALGO HONDURAS S.A. DE C.V.</div>
+                <div>${escapeHtml(warehouseLabel)}</div>
+                <div>INGRESO BODEGA</div>
+              </div>
+              <div class="document-number">${escapeHtml(receipt.receiptNumber)}</div>
+            </section>
+
+            <section class="meta">
+              <div class="meta-column">
+                <div class="field">
+                  <div class="label">Fecha Factura:</div>
+                  <div class="value">${escapeHtml(formatPrintDate(receipt.documentDate))}</div>
+                </div>
+                <div class="field">
+                  <div class="label">No Pedido:</div>
+                  <div class="value">${escapeHtml(receiptSourceHeaderTitle)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Job:</div>
+                  <div class="value">${escapeHtml(projectLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Solicitado por:</div>
+                  <div class="value">${escapeHtml(requestedByLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Destino:</div>
+                  <div class="value">${escapeHtml(destinationLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">De Bodega:</div>
+                  <div class="value">${escapeHtml(sourceWarehouseLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Fecha Ingreso:</div>
+                  <div class="value">${escapeHtml(formatPrintDate(receipt.receiptDate))}</div>
+                </div>
+              </div>
+              <div class="meta-column right">
+                <div class="field">
+                  <div class="label">Proveedor:</div>
+                  <div class="value">${escapeHtml(supplierLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Tipo Documento:</div>
+                  <div class="value">${escapeHtml(documentTypeLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">No Factura:</div>
+                  <div class="value">${escapeHtml(receipt.invoiceNumber || "-")}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Referencia:</div>
+                  <div class="value">${escapeHtml(referenceLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Observacion:</div>
+                  <div class="value">${escapeHtml(observations)}</div>
+                </div>
+              </div>
+            </section>
+
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 13%;">Código Empresa</th>
+                  <th>Descripción</th>
+                  <th style="width: 15%;" class="center">No. Parte/No. Serie</th>
+                  <th style="width: 9%;" class="numeric">Cantidad</th>
+                  <th style="width: 10%;" class="center">U Medida</th>
+                  <th style="width: 11%;" class="numeric">Valor U</th>
+                  <th style="width: 11%;" class="numeric">Valor T</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemRows || `<tr><td colspan="7">Sin ítems</td></tr>`}
+              </tbody>
+            </table>
+
+            <section class="summary">
+              <table class="summary-table">
+                <tbody>
+                  <tr>
+                    <td>Subtotal</td>
+                    <td class="numeric">${escapeHtml(formatPrintMoney(subtotal))}</td>
+                  </tr>
+                  <tr>
+                    <td>ISV 15%</td>
+                    <td class="numeric">${escapeHtml(formatPrintMoney(taxTotal))}</td>
+                  </tr>
+                  <tr>
+                    <td>Total</td>
+                    <td class="numeric">${escapeHtml(formatPrintMoney(total))}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+
+            <section class="signatures">
+              <div class="signature-line">Elaborado</div>
+            </section>
+          </main>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  };
 
   const filteredReceipts = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
@@ -989,6 +1417,12 @@ export default function Recepciones() {
                     ) : (
                       sourceItems.map((item: any) => {
                         const pendingQuantity = getPendingQuantity(item);
+                        const receivingQuantity =
+                          Number(receivedMap[item.id] ?? 0) || 0;
+                        const excessQuantity = Math.max(
+                          receivingQuantity - pendingQuantity,
+                          0
+                        );
                         const sourceCode = getSourceItemCode(item);
                         const transferCloseQuantity = getTransferCloseQuantity(item);
                         const transferClosureDraft =
@@ -1034,6 +1468,13 @@ export default function Recepciones() {
                                 }
                                 disabled={pendingQuantity <= 0}
                               />
+                              {excessQuantity > 0 ? (
+                                <p className="mt-1 text-xs font-medium text-emerald-700">
+                                  Exceso permitido:{" "}
+                                  {formatQuantity(excessQuantity)}{" "}
+                                  {item.unit || ""}
+                                </p>
+                              ) : null}
                             </td>
                             <td className="p-4 text-right">
                               {sourceType === "purchase_order" &&
@@ -1354,6 +1795,22 @@ export default function Recepciones() {
                     )}
                   </tbody>
                 </table>
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-3 border-t border-border/70 pt-1">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="h-10 min-w-[210px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
+                  onClick={handlePrintReceipt}
+                  disabled={
+                    receiptDetail.items.length === 0 ||
+                    receiptSourceDetailLoading
+                  }
+                >
+                  <Printer className="mr-2 h-4 w-4" />
+                  Imprimir documento
+                </Button>
               </div>
             </div>
           ) : null}

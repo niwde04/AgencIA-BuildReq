@@ -37,7 +37,6 @@ import {
   Trash2,
   Check,
   Search,
-  Send,
   AlertCircle,
   Pencil,
   XCircle,
@@ -93,6 +92,11 @@ const PURCHASE_TYPE_LABELS: Record<string, string> = {
   local: "Compra Local",
   extranjera: "Compra Extranjera",
   compra_directa: "Compra Directa",
+};
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  linea_credito: "Línea de Crédito",
+  fondo_proyecto: "Fondo del proyecto",
+  caja_chica: "Fondo del proyecto",
 };
 
 const WORKFLOW_STAGE_LABELS: Record<string, string> = {
@@ -524,14 +528,6 @@ export default function SolicitudDetalle() {
           ? "Traducción SAP eliminada y flujo retirado"
           : "Traducción SAP eliminada"
       );
-      invalidateAll();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const sendToSapMutation = trpc.materialRequests.sendToSap.useMutation({
-    onSuccess: (result) => {
-      toast.success(`Enviado a SAP: ${result.itemsProcessed} ítems procesados`);
       invalidateAll();
     },
     onError: (e) => toast.error(e.message),
@@ -1102,8 +1098,7 @@ export default function SolicitudDetalle() {
     request.approvalStatus === "pendiente" &&
     canApproveProjectRequests;
 
-  // Check if all items have flow + SAP code for "Send to SAP" button
-  const allItemsReady =
+  const allItemsAssigned =
     actionableRows.length > 0 &&
     !hasPendingApprovalRows &&
     actionableRows.every(
@@ -1798,7 +1793,7 @@ export default function SolicitudDetalle() {
             </div>
           )}
 
-          {/* Status bar below table - ONLY "Enviar a SAP" button here */}
+          {/* Status bar below table */}
           {canManageProcessing &&
             request.status !== "cerrada" &&
             request.status !== "flujo_completado" &&
@@ -1815,34 +1810,23 @@ export default function SolicitudDetalle() {
                     </span>
                   </>
                 )}
-                {!hasPendingApprovalRows && !allItemsReady && (
+                {!hasPendingApprovalRows && !allItemsAssigned && (
                   <>
                     <AlertCircle className="h-4 w-4" />
                     <span>
-                      Asigne flujo y código SAP a todos los ítems para habilitar el envío a SAP
+                      Asigne flujo y código SAP a todos los ítems para enviarlos al módulo correspondiente.
                     </span>
                   </>
                 )}
-                {allItemsReady && (
+                {allItemsAssigned && (
                   <>
                     <Check className="h-4 w-4 text-green-600" />
                     <span className="text-green-700 font-medium">
-                      Todos los ítems listos. Puede enviar a SAP.
+                      Todos los ítems tienen flujo y código SAP asignado.
                     </span>
                   </>
                 )}
               </div>
-              {allItemsReady && (
-                <Button
-                  onClick={() => sendToSapMutation.mutate({ requestId })}
-                  disabled={sendToSapMutation.isPending || anyQueueProcessing}
-                  size="sm"
-                  className="gap-2"
-                >
-                  <Send className="h-4 w-4" />
-                  {sendToSapMutation.isPending ? "Enviando..." : "Enviar todo a SAP"}
-                </Button>
-              )}
             </div>
           )}
         </CardContent>
@@ -1881,7 +1865,7 @@ export default function SolicitudDetalle() {
                       </div>
                       {flow.paymentMethod && (
                         <p className="text-xs opacity-80">
-                          Método: {flow.paymentMethod === "linea_credito" ? "Línea de Crédito" : "Caja Chica"}
+                          Método: {PAYMENT_METHOD_LABELS[flow.paymentMethod] || "—"}
                         </p>
                       )}
                       {flow.purchaseType && (

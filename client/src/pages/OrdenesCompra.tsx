@@ -49,6 +49,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Printer,
   Search,
   Send,
   ShoppingCart,
@@ -56,7 +57,7 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
@@ -118,6 +119,68 @@ function formatSupplierOptionLabel(supplier?: any | null) {
   return [supplier.supplierCode, supplier.name].filter(Boolean).join(" — ");
 }
 
+function SupplierCommandList({
+  suppliers,
+  selectedSupplierId,
+  onSelect,
+}: {
+  suppliers: any[];
+  selectedSupplierId: string;
+  onSelect: (supplierId: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const commandContainerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const list = commandContainerRef.current?.querySelector<HTMLElement>(
+        '[data-slot="command-list"]'
+      );
+      list?.scrollTo({ top: 0 });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [search]);
+
+  return (
+    <div ref={commandContainerRef}>
+      <Command>
+        <CommandInput
+          placeholder="Buscar proveedor por código o nombre..."
+          value={search}
+          onValueChange={setSearch}
+        />
+        <CommandList>
+          <CommandEmpty>No se encontraron proveedores.</CommandEmpty>
+          <CommandGroup>
+            {suppliers.map((supplier: any) => {
+              const supplierId = String(supplier.id);
+              const selected = selectedSupplierId === supplierId;
+
+              return (
+                <CommandItem
+                  key={supplier.id}
+                  value={`${supplier.id} ${supplier.supplierCode} ${supplier.name}`}
+                  onSelect={() => onSelect(supplierId)}
+                >
+                  <Check
+                    className={`h-4 w-4 ${
+                      selected ? "opacity-100" : "opacity-0"
+                    }`}
+                  />
+                  <span className="truncate">
+                    {formatSupplierOptionLabel(supplier)}
+                  </span>
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
+        </CommandList>
+      </Command>
+    </div>
+  );
+}
+
 function getPurchaseRequestProjectLabel(row: any) {
   return (
     row?.projectSummary?.label ||
@@ -153,6 +216,44 @@ function formatQuantity(value: number | string | null | undefined) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+function formatPrintNumber(value: number | string | null | undefined) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return "0";
+  return parsed.toLocaleString("es-HN", {
+    minimumFractionDigits: Number.isInteger(parsed) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatPrintMoney(value: number | string | null | undefined) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return "0.00";
+  return parsed.toLocaleString("es-HN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatPrintDate(value: string | Date | null | undefined) {
+  if (!value) return "-";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("es-HN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function formatQuantityPayload(value: number | string | null | undefined) {
@@ -1035,6 +1136,370 @@ export default function OrdenesCompra() {
     });
   };
 
+  const handlePrintPurchaseOrder = () => {
+    if (!detail) return;
+
+    const purchaseOrder = detail.purchaseOrder;
+    const supplierName = detail.supplier?.name ?? "Proveedor pendiente";
+    const projectLabel = detail.project
+      ? `${detail.project.code} ${detail.project.name}`
+      : `Proyecto ${purchaseOrder.projectId}`;
+    const destinationLabel =
+      detail.purchaseRequest?.printDestination?.trim() ||
+      detail.project?.name ||
+      projectLabel;
+    const requestedByLabel = detail.createdBy?.name || user?.name || "-";
+    const deliveryDate = purchaseOrder.neededBy
+      ? formatPrintDate(purchaseOrder.neededBy)
+      : "INMEDIATA";
+    const observations = purchaseOrder.notes?.trim() || "-";
+    const quoteLabel = detail.purchaseRequest?.quoteAttachmentId
+      ? String(detail.purchaseRequest.quoteAttachmentId)
+      : "-";
+    const itemRows = items
+      .map((item: any, index: number) => {
+        const draft = getItemDraft(item);
+        const amounts = calculatePurchaseOrderLineAmounts({
+          quantity: draft.quantity,
+          unitPrice: draft.unitPrice,
+          taxCode: draft.taxCode,
+        });
+        return `
+          <tr>
+            <td class="center">${index + 1}</td>
+            <td>${escapeHtml(item.itemName)}</td>
+            <td class="center">${escapeHtml(
+              item.currentSapItemCode || item.originalSapItemCode || "-"
+            )}</td>
+            <td class="numeric">${escapeHtml(formatPrintNumber(draft.quantity))}</td>
+            <td class="numeric">${escapeHtml(formatPrintMoney(draft.unitPrice))}</td>
+            <td class="numeric">${escapeHtml(formatPrintMoney(amounts.subtotal))}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    const printWindow = window.open("", "_blank", "width=1100,height=780");
+    if (!printWindow) {
+      toast.error("No se pudo abrir la ventana de impresión");
+      return;
+    }
+
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${escapeHtml(purchaseOrder.orderNumber)}</title>
+          <style>
+            @page { size: A4 landscape; margin: 8mm; }
+            * { box-sizing: border-box; }
+            body {
+              color: #000;
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 12px;
+              margin: 0;
+              background: #fff;
+            }
+            .sheet {
+              margin: 0 auto;
+              max-width: 280mm;
+              padding: 0 1mm 4mm;
+            }
+            .header {
+              align-items: start;
+              display: grid;
+              grid-template-columns: 150px 1fr 150px;
+              gap: 12px;
+            }
+            .logo {
+              border: 1px solid #333;
+              border-radius: 3px;
+              height: 70px;
+              padding-top: 7px;
+              text-align: center;
+              width: 134px;
+            }
+            .logo-small {
+              font-size: 8px;
+              font-weight: 700;
+              line-height: 1;
+            }
+            .logo-main {
+              font-size: 39px;
+              font-weight: 900;
+              letter-spacing: 0.01em;
+              line-height: 0.95;
+            }
+            .logo-foot {
+              font-size: 12px;
+              font-weight: 800;
+            }
+            .title {
+              font-size: 16px;
+              font-weight: 800;
+              line-height: 1.2;
+              text-align: center;
+              text-transform: uppercase;
+            }
+            .title .company {
+              font-size: 18px;
+            }
+            .rule {
+              border-top: 4px double #333;
+              margin: 4px 0 24px;
+            }
+            .meta {
+              display: grid;
+              gap: 12px;
+              grid-template-columns: 1.15fr 0.85fr;
+            }
+            .meta-left,
+            .meta-right {
+              display: grid;
+              gap: 6px;
+            }
+            .field {
+              display: grid;
+              gap: 8px;
+              grid-template-columns: 106px 1fr;
+            }
+            .meta-right .field {
+              grid-template-columns: 80px 1fr;
+            }
+            .label {
+              font-weight: 800;
+            }
+            .value {
+              font-weight: 700;
+            }
+            table {
+              border-collapse: collapse;
+              margin-top: 24px;
+              width: 100%;
+            }
+            th {
+              border-bottom: 2px solid #999;
+              font-weight: 800;
+              padding: 4px 5px;
+              text-align: center;
+            }
+            td {
+              border-bottom: 1px solid #d7d7d7;
+              padding: 5px;
+              vertical-align: top;
+            }
+            .center { text-align: center; }
+            .numeric {
+              font-variant-numeric: tabular-nums;
+              text-align: right;
+            }
+            .lower {
+              display: grid;
+              grid-template-columns: 1fr 245px;
+              gap: 34px;
+              margin-top: 12px;
+            }
+            .delivery {
+              display: grid;
+              gap: 5px;
+            }
+            .summary {
+              border-collapse: collapse;
+              margin-top: 0;
+              width: 100%;
+            }
+            .summary td {
+              border-bottom: 1px solid #999;
+              font-weight: 800;
+              padding: 4px 5px;
+            }
+            .summary td:first-child {
+              text-align: left;
+            }
+            .signatures {
+              display: grid;
+              gap: 80px;
+              grid-template-columns: repeat(2, 170px);
+              justify-content: center;
+              margin: 34px 0 28px;
+            }
+            .signature {
+              border-top: 2px solid #111;
+              font-weight: 700;
+              padding-top: 6px;
+              text-align: center;
+            }
+            .note {
+              border: 2px solid #111;
+              border-radius: 18px;
+              font-size: 15px;
+              line-height: 1.45;
+              margin: 22px auto 0;
+              max-width: 94%;
+              padding: 12px 22px;
+              text-align: center;
+            }
+            .note-title {
+              display: block;
+              font-weight: 800;
+              margin-bottom: 2px;
+            }
+            .footer-user {
+              font-size: 11px;
+              margin-top: 16px;
+            }
+            @media print {
+              .sheet { max-width: none; padding: 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <main class="sheet">
+            <section class="header">
+              <div class="logo">
+                <div class="logo-small">HIDALGO e HIDALGO S.A.</div>
+                <div class="logo-main">HeH</div>
+                <div class="logo-foot">CONSTRUCTORES</div>
+              </div>
+              <div class="title">
+                <div class="company">HIDALGO E HIDALGO HONDURAS SA DE CV</div>
+                <div>RTN: 08019013549808</div>
+                <div>ORDEN DE COMPRA</div>
+                <div>${escapeHtml(projectLabel)}</div>
+              </div>
+              <div></div>
+            </section>
+            <div class="rule"></div>
+
+            <section class="meta">
+              <div class="meta-left">
+                <div class="field">
+                  <div class="label">Fecha:</div>
+                  <div class="value">${escapeHtml(formatPrintDate(purchaseOrder.createdAt))}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Proveedor:</div>
+                  <div class="value">${escapeHtml(supplierName)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Asesor Vta:</div>
+                  <div class="value">-</div>
+                </div>
+                <div class="field">
+                  <div class="label">Destino:</div>
+                  <div class="value">${escapeHtml(destinationLabel)}</div>
+                </div>
+              </div>
+              <div class="meta-right">
+                <div class="field">
+                  <div class="label">Pedido:</div>
+                  <div class="value">${escapeHtml(purchaseOrder.id)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">F Pago:</div>
+                  <div class="value">CREDITO</div>
+                </div>
+                <div class="field">
+                  <div class="label">Moneda:</div>
+                  <div class="value">LEMPIRA</div>
+                </div>
+                <div class="field">
+                  <div class="label">O Compra:</div>
+                  <div class="value">${escapeHtml(purchaseOrder.orderNumber)}</div>
+                </div>
+              </div>
+            </section>
+
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 8%;">Ítem</th>
+                  <th>Descripcion</th>
+                  <th style="width: 16%;">No. Parte</th>
+                  <th style="width: 12%;">Cantidad</th>
+                  <th style="width: 14%;">Valor U</th>
+                  <th style="width: 14%;">Valor T</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemRows || `<tr><td colspan="6">Sin ítems</td></tr>`}
+              </tbody>
+            </table>
+
+            <section class="lower">
+              <div class="delivery">
+                <div class="field">
+                  <div class="label">Fecha Entrega:</div>
+                  <div class="value">${escapeHtml(deliveryDate)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Solicitado:</div>
+                  <div class="value">${escapeHtml(requestedByLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Observaciones:</div>
+                  <div class="value">${escapeHtml(observations)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Cotización:</div>
+                  <div class="value">${escapeHtml(quoteLabel)}</div>
+                </div>
+              </div>
+              <table class="summary">
+                <tbody>
+                  <tr>
+                    <td>Subtotal</td>
+                    <td class="numeric">${escapeHtml(formatPrintMoney(pricingSummary.subtotal))}</td>
+                  </tr>
+                  <tr>
+                    <td>ISV 15%</td>
+                    <td class="numeric">${escapeHtml(formatPrintMoney(pricingSummary.totalIsv))}</td>
+                  </tr>
+                  <tr>
+                    <td>Total</td>
+                    <td class="numeric">${escapeHtml(formatPrintMoney(pricingSummary.total))}</td>
+                  </tr>
+                  <tr>
+                    <td>(-) Ret. ISV</td>
+                    <td class="numeric">0.00</td>
+                  </tr>
+                  <tr>
+                    <td>(-) Ret. ISR y Hon.</td>
+                    <td class="numeric">0.00</td>
+                  </tr>
+                  <tr>
+                    <td>Neto Pagar</td>
+                    <td class="numeric">${escapeHtml(formatPrintMoney(pricingSummary.total))}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+
+            <section class="signatures">
+              <div class="signature">Elaborado por:</div>
+              <div class="signature">Autorizado por:</div>
+            </section>
+
+            <section class="note">
+              <span class="note-title">Tomar Nota:</span>
+              Emitir factura a nombre de: HIDALGO e HIDALGO HONDURAS SA DE CV; RTN: 08019013549808;
+              Dirección: Blvd. Suyapa, Edificio Metropolis, Torre 2, Piso 20, Ofi. 22004.
+              <br />
+              Presentar con la factura su constancia de estar sujetos al RÉGIMEN DE PAGOS A CUENTA vigente,
+              caso contrario se procederá
+            </section>
+
+            <div class="footer-user">${escapeHtml(requestedByLabel)}</div>
+          </main>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -1582,38 +2047,14 @@ export default function OrdenesCompra() {
                       align="start"
                       className="w-[var(--radix-popover-trigger-width)] p-0"
                     >
-                      <Command>
-                        <CommandInput placeholder="Buscar proveedor por código o nombre..." />
-                        <CommandList>
-                          <CommandEmpty>No se encontraron proveedores.</CommandEmpty>
-                          <CommandGroup>
-                            {(suppliersList || []).map((supplier: any) => {
-                              const supplierId = String(supplier.id);
-                              const selected = selectedSupplierId === supplierId;
-
-                              return (
-                                <CommandItem
-                                  key={supplier.id}
-                                  value={`${supplier.id} ${supplier.supplierCode} ${supplier.name}`}
-                                  onSelect={() => {
-                                    setSelectedSupplierId(supplierId);
-                                    setSupplierPopoverOpen(false);
-                                  }}
-                                >
-                                  <Check
-                                    className={`h-4 w-4 ${
-                                      selected ? "opacity-100" : "opacity-0"
-                                    }`}
-                                  />
-                                  <span className="truncate">
-                                    {formatSupplierOptionLabel(supplier)}
-                                  </span>
-                                </CommandItem>
-                              );
-                            })}
-                          </CommandGroup>
-                        </CommandList>
-                      </Command>
+                      <SupplierCommandList
+                        suppliers={suppliersList || []}
+                        selectedSupplierId={selectedSupplierId}
+                        onSelect={(supplierId) => {
+                          setSelectedSupplierId(supplierId);
+                          setSupplierPopoverOpen(false);
+                        }}
+                      />
                     </PopoverContent>
                   </Popover>
                   <p className="text-sm leading-relaxed text-muted-foreground">
@@ -1969,38 +2410,14 @@ export default function OrdenesCompra() {
                       align="start"
                       className="w-[var(--radix-popover-trigger-width)] p-0"
                     >
-                      <Command>
-                        <CommandInput placeholder="Buscar proveedor por código o nombre..." />
-                        <CommandList>
-                          <CommandEmpty>No se encontraron proveedores.</CommandEmpty>
-                          <CommandGroup>
-                            {(suppliersList || []).map((supplier: any) => {
-                              const supplierId = String(supplier.id);
-                              const selected = selectedSupplierId === supplierId;
-
-                              return (
-                                <CommandItem
-                                  key={supplier.id}
-                                  value={`${supplier.id} ${supplier.supplierCode} ${supplier.name}`}
-                                  onSelect={() => {
-                                    handleSupplierChange(supplierId);
-                                    setSupplierPopoverOpen(false);
-                                  }}
-                                >
-                                  <Check
-                                    className={`h-4 w-4 ${
-                                      selected ? "opacity-100" : "opacity-0"
-                                    }`}
-                                  />
-                                  <span className="truncate">
-                                    {formatSupplierOptionLabel(supplier)}
-                                  </span>
-                                </CommandItem>
-                              );
-                            })}
-                          </CommandGroup>
-                        </CommandList>
-                      </Command>
+                      <SupplierCommandList
+                        suppliers={suppliersList || []}
+                        selectedSupplierId={selectedSupplierId}
+                        onSelect={(supplierId) => {
+                          handleSupplierChange(supplierId);
+                          setSupplierPopoverOpen(false);
+                        }}
+                      />
                     </PopoverContent>
                   </Popover>
                   <div className="flex flex-wrap items-center gap-3">
@@ -2447,6 +2864,24 @@ export default function OrdenesCompra() {
                       : "Cancelar orden"}
                   </Button>
                 ) : null}
+
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="h-10 min-w-[210px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
+                  onClick={handlePrintPurchaseOrder}
+                  disabled={
+                    items.length === 0 ||
+                    updateItemLineMutation.isPending ||
+                    deleteItemMutation.isPending ||
+                    updateMutation.isPending ||
+                    cancelOrderMutation.isPending ||
+                    reopenDraftMutation.isPending
+                  }
+                >
+                  <Printer className="mr-2 h-4 w-4" />
+                  Imprimir documento
+                </Button>
 
                 <Button
                   variant="outline"

@@ -16,8 +16,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Eye, Search } from "lucide-react";
+import { Eye, Printer, Search } from "lucide-react";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 const STATUS_LABELS: Record<string, string> = {
   pendiente: "Pendiente",
@@ -44,6 +45,35 @@ function formatDateLabel(value: Date | string | null | undefined) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
   return date.toLocaleDateString("es-HN");
+}
+
+function formatPrintDate(value: Date | string | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("es-HN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+function formatPrintNumber(value: number | string | null | undefined) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return "0";
+  return parsed.toLocaleString("es-HN", {
+    minimumFractionDigits: Number.isInteger(parsed) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function getDestinationLabel(row: any) {
@@ -95,6 +125,300 @@ export default function Transfers() {
       return matchesSearch && matchesStatus;
     });
   }, [searchTerm, statusFilter, transfers]);
+
+  const handlePrintTransferExit = () => {
+    if (!detail) return;
+
+    const transfer = detail.transfer;
+    const transferRequest = detail.transferRequest;
+    const originProjectLabel = detail.project
+      ? `${detail.project.code} ${detail.project.name}`
+      : transferRequest?.projectId
+        ? `Proyecto ${transferRequest.projectId}`
+        : "-";
+    const originWarehouseLabel =
+      detail.originWarehouse?.displayName ||
+      detail.project?.name ||
+      originProjectLabel;
+    const destinationLabel = getDestinationLabel(detail) || "-";
+    const destinationWarehouseLabel =
+      transferRequest?.destinationType === "bodega_central"
+        ? "Bodega Central"
+        : detail.destinationWarehouse?.displayName ||
+          detail.destinationProject?.name ||
+          destinationLabel;
+    const requestedByLabel =
+      detail.createdBy?.name ||
+      (transferRequest?.createdById
+        ? `Usuario #${transferRequest.createdById}`
+        : "-");
+    const documentNumber =
+      detail.remissionGuide?.guideNumber ||
+      transfer.remissionGuideNumber ||
+      transfer.sapCorrelative ||
+      transfer.transferNumber;
+    const referenceLabel =
+      transferRequest?.notes?.trim() ||
+      transferRequest?.requestNumber ||
+      transfer.transferNumber;
+    const totalQuantity = (detail.items || []).reduce(
+      (sum: number, item: any) => {
+        const quantity = Number(item.quantity ?? 0);
+        return sum + (Number.isFinite(quantity) ? quantity : 0);
+      },
+      0
+    );
+    const itemRows = (detail.items || [])
+      .map(
+        (item: any) => `
+          <tr>
+            <td>${escapeHtml(item.sapItemCode || "-")}</td>
+            <td>${escapeHtml(item.itemName || "-")}</td>
+            <td class="numeric">${escapeHtml(formatPrintNumber(item.quantity))}</td>
+            <td class="center">${escapeHtml(item.unit || "-")}</td>
+            <td>${escapeHtml(referenceLabel)}</td>
+            <td class="numeric">${escapeHtml(formatPrintNumber(item.quantity))}</td>
+          </tr>
+        `
+      )
+      .join("");
+
+    const printWindow = window.open("", "_blank", "width=1100,height=780");
+    if (!printWindow) {
+      toast.error("No se pudo abrir la ventana de impresión");
+      return;
+    }
+
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${escapeHtml(transfer.transferNumber)}</title>
+          <style>
+            @page { size: A4 landscape; margin: 9mm; }
+            * { box-sizing: border-box; }
+            body {
+              background: #fff;
+              color: #000;
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 10px;
+              margin: 0;
+            }
+            .sheet {
+              margin: 0 auto;
+              max-width: 279mm;
+              padding: 4mm 4mm 8mm;
+            }
+            .header {
+              align-items: start;
+              display: grid;
+              gap: 18px;
+              grid-template-columns: 112px 1fr 120px;
+            }
+            .logo {
+              border: 1px solid #333;
+              border-radius: 3px;
+              height: 52px;
+              padding-top: 4px;
+              text-align: center;
+              width: 70px;
+            }
+            .logo-small {
+              font-size: 5px;
+              font-weight: 800;
+              letter-spacing: 0.02em;
+              line-height: 1;
+            }
+            .logo-main {
+              font-size: 28px;
+              font-weight: 900;
+              letter-spacing: 0.01em;
+              line-height: 1;
+            }
+            .logo-foot {
+              font-size: 7px;
+              font-weight: 800;
+              line-height: 1;
+            }
+            .title {
+              color: #06344f;
+              font-size: 13px;
+              font-weight: 800;
+              line-height: 1.5;
+              text-align: center;
+              text-transform: uppercase;
+            }
+            .company {
+              color: #000;
+              font-size: 15px;
+              margin-bottom: 2px;
+            }
+            .document-number {
+              border: 5px double #222;
+              color: #d00000;
+              font-size: 14px;
+              font-weight: 900;
+              margin-top: 0;
+              padding: 4px 8px;
+              text-align: center;
+            }
+            .meta {
+              display: grid;
+              gap: 34px;
+              grid-template-columns: 1fr 1fr;
+              margin-top: 8mm;
+            }
+            .meta-column {
+              display: grid;
+              gap: 5px;
+            }
+            .field {
+              display: grid;
+              gap: 8px;
+              grid-template-columns: 120px 1fr;
+              min-height: 14px;
+            }
+            .label {
+              font-weight: 800;
+            }
+            .value {
+              font-weight: 700;
+            }
+            table {
+              border-collapse: collapse;
+              margin-top: 5mm;
+              width: 100%;
+            }
+            th {
+              border-bottom: 2px solid #2c85a5;
+              border-top: 2px solid #2c85a5;
+              font-size: 9px;
+              font-weight: 800;
+              padding: 4px 5px;
+              text-align: left;
+            }
+            td {
+              border-bottom: 1px solid #78bed9;
+              padding: 5px;
+              vertical-align: top;
+            }
+            .center { text-align: center; }
+            .numeric {
+              font-variant-numeric: tabular-nums;
+              text-align: right;
+            }
+            .total-row td {
+              border-bottom: 2px solid #2c85a5;
+              font-weight: 800;
+            }
+            .signatures {
+              display: grid;
+              gap: 58px;
+              grid-template-columns: repeat(3, 180px);
+              justify-content: center;
+              margin-top: 14mm;
+            }
+            .signature-line {
+              border-top: 2px solid #111;
+              font-size: 13px;
+              font-weight: 700;
+              padding-top: 4px;
+              text-align: center;
+            }
+            @media print {
+              .sheet { max-width: none; padding: 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <main class="sheet">
+            <section class="header">
+              <div class="logo">
+                <div class="logo-small">HIDALGO e HIDALGO S.A.</div>
+                <div class="logo-main">HeH</div>
+                <div class="logo-foot">CONSTRUCTORES</div>
+              </div>
+              <div class="title">
+                <div class="company">HIDALGO E HIDALGO HONDURAS S.A. DE C.V.</div>
+                <div>${escapeHtml(originWarehouseLabel)}</div>
+                <div>EGRESO POR TRANSFERENCIA</div>
+              </div>
+              <div class="document-number">${escapeHtml(documentNumber)}</div>
+            </section>
+
+            <section class="meta">
+              <div class="meta-column">
+                <div class="field">
+                  <div class="label">Fecha:</div>
+                  <div class="value">${escapeHtml(formatPrintDate(transfer.confirmedAt || transfer.createdAt))}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Solicitado por:</div>
+                  <div class="value">${escapeHtml(requestedByLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Tipo Egreso:</div>
+                  <div class="value">EGRESO POR TRANSFERENCIA</div>
+                </div>
+                <div class="field">
+                  <div class="label">De Bodega:</div>
+                  <div class="value">${escapeHtml(originWarehouseLabel)}</div>
+                </div>
+              </div>
+              <div class="meta-column">
+                <div class="field">
+                  <div class="label">Job:</div>
+                  <div class="value">${escapeHtml(originProjectLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Destino:</div>
+                  <div class="value">${escapeHtml(destinationLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Referencia:</div>
+                  <div class="value">${escapeHtml(referenceLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">A Bodega:</div>
+                  <div class="value">${escapeHtml(destinationWarehouseLabel)}</div>
+                </div>
+              </div>
+            </section>
+
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 20%;">Código/No. Serie</th>
+                  <th>Identificador</th>
+                  <th style="width: 10%;" class="numeric">Cantidad</th>
+                  <th style="width: 10%;" class="center">U Medida</th>
+                  <th style="width: 20%;">Referencia</th>
+                  <th style="width: 10%;" class="numeric">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemRows || `<tr><td colspan="6">Sin ítems</td></tr>`}
+                <tr class="total-row">
+                  <td colspan="5">Total general</td>
+                  <td class="numeric">${escapeHtml(formatPrintNumber(totalQuantity))}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <section class="signatures">
+              <div class="signature-line">Elaborado por:</div>
+              <div class="signature-line">Entregado a:</div>
+              <div class="signature-line">Autorizado por:</div>
+            </section>
+          </main>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  };
 
   return (
     <div className="space-y-6">
@@ -340,6 +664,19 @@ export default function Transfers() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-3 border-t border-border/70 pt-1">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="h-10 min-w-[210px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
+                  onClick={handlePrintTransferExit}
+                  disabled={(detail.items || []).length === 0}
+                >
+                  <Printer className="mr-2 h-4 w-4" />
+                  Imprimir egreso
+                </Button>
               </div>
             </div>
           ) : null}

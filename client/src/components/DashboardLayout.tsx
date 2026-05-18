@@ -421,76 +421,80 @@ function DashboardLayoutContent({
             </div>
           </SidebarHeader>
 
-          <SidebarContent className="gap-0">
-            <SidebarMenu className="px-2 py-2">
-              {menuItems.map((item) => {
-                const isActive =
-                  item.path === "/"
-                    ? location === "/"
-                    : location.startsWith(item.path);
-                const countKey = MENU_COUNT_KEYS[item.path];
-                const badgeCount = countKey ? sidebarCounts?.[countKey] ?? 0 : 0;
-                const showBadge =
-                  badgeCount > 0 || MENU_ALWAYS_SHOW_COUNT_PATHS.has(item.path);
-                return (
-                  <SidebarMenuItem key={item.path}>
-                    <SidebarMenuButton
-                      isActive={isActive}
-                      onClick={() => setLocation(item.path)}
-                      tooltip={item.label}
-                      className="h-9 transition-all font-normal text-sm"
-                    >
-                      <item.icon
-                        className={`h-4 w-4 ${isActive ? "text-primary" : "text-muted-foreground"}`}
-                      />
-                      <span
-                        className={`flex min-w-0 flex-1 items-center justify-between gap-2 ${
-                          isActive ? "font-medium" : "font-normal"
-                        }`}
+          <SidebarContent className="gap-0 overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+              <SidebarMenu className="px-2 py-2">
+                {menuItems.map((item) => {
+                  const isActive =
+                    item.path === "/"
+                      ? location === "/"
+                      : location.startsWith(item.path);
+                  const countKey = MENU_COUNT_KEYS[item.path];
+                  const badgeCount = countKey ? sidebarCounts?.[countKey] ?? 0 : 0;
+                  const showBadge =
+                    badgeCount > 0 || MENU_ALWAYS_SHOW_COUNT_PATHS.has(item.path);
+                  return (
+                    <SidebarMenuItem key={item.path}>
+                      <SidebarMenuButton
+                        isActive={isActive}
+                        onClick={() => setLocation(item.path)}
+                        tooltip={item.label}
+                        className="h-9 transition-all font-normal text-sm"
                       >
-                        <span className="truncate">{item.label}</span>
-                        {showBadge ? (
-                          <Badge
-                            variant={badgeCount > 0 ? "destructive" : "outline"}
-                            className="h-5 min-w-5 shrink-0 rounded-sm px-1 text-xs"
-                          >
-                            {badgeCount}
-                          </Badge>
-                        ) : null}
-                      </span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
+                        <item.icon
+                          className={`h-4 w-4 ${isActive ? "text-primary" : "text-muted-foreground"}`}
+                        />
+                        <span
+                          className={`flex min-w-0 flex-1 items-center justify-between gap-2 ${
+                            isActive ? "font-medium" : "font-normal"
+                          }`}
+                        >
+                          <span className="truncate">{item.label}</span>
+                          {showBadge ? (
+                            <Badge
+                              variant={badgeCount > 0 ? "destructive" : "outline"}
+                              className="h-5 min-w-5 shrink-0 rounded-sm px-1 text-xs"
+                            >
+                              {badgeCount}
+                            </Badge>
+                          ) : null}
+                        </span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </div>
 
-            <SidebarSeparator />
+            <div className="shrink-0 bg-sidebar">
+              <SidebarSeparator className="my-2" />
 
-            <SidebarMenu className="px-2 py-1">
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={location === "/notificaciones"}
-                  onClick={() => setLocation("/notificaciones")}
-                  tooltip="Notificaciones"
-                  className="h-9 transition-all font-normal text-sm"
-                >
-                  <Bell
-                    className={`h-4 w-4 ${location === "/notificaciones" ? "text-primary" : "text-muted-foreground"}`}
-                  />
-                  <span className="flex items-center gap-2">
-                    Notificaciones
-                    {(unreadCount ?? 0) > 0 && (
-                      <Badge
-                        variant="destructive"
-                        className="h-5 min-w-5 text-xs px-1 rounded-sm"
-                      >
-                        {unreadCount}
-                      </Badge>
-                    )}
-                  </span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
+              <SidebarMenu className="px-2 pb-2">
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={location === "/notificaciones"}
+                    onClick={() => setLocation("/notificaciones")}
+                    tooltip="Notificaciones"
+                    className="h-9 transition-all font-normal text-sm"
+                  >
+                    <Bell
+                      className={`h-4 w-4 ${location === "/notificaciones" ? "text-primary" : "text-muted-foreground"}`}
+                    />
+                    <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                      <span className="truncate">Notificaciones</span>
+                      {(unreadCount ?? 0) > 0 && (
+                        <Badge
+                          variant="destructive"
+                          className="h-5 min-w-5 shrink-0 text-xs px-1 rounded-sm"
+                        >
+                          {unreadCount}
+                        </Badge>
+                      )}
+                    </span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </div>
           </SidebarContent>
 
           <SidebarFooter className="p-3 border-t border-border">

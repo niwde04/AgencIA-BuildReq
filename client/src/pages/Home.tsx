@@ -329,7 +329,7 @@ export default function Home() {
               {
                 icon: Package,
                 title: "Compra Directa",
-                desc: "Registro automático de entrada de inventario para compras con línea de crédito o caja chica",
+                desc: "Registro automático de entrada de inventario para compras con línea de crédito o fondo del proyecto",
               },
               {
                 icon: Truck,

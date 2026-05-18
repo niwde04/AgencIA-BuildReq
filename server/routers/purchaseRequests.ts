@@ -54,6 +54,8 @@ const purchaseRequestUnitPriceSchema = z
     message: "El precio debe ser un numero valido",
   });
 
+const optionalPrintTextSchema = z.string().trim().max(500).nullable().optional();
+
 const purchaseRequestItemSchema = z.object({
   materialRequestItemId: z.number().optional(),
   originalSapItemCode: z.string().optional(),
@@ -62,12 +64,16 @@ const purchaseRequestItemSchema = z.object({
   quantity: purchaseRequestQuantitySchema,
   unit: z.string().optional(),
   unitPrice: purchaseRequestUnitPriceSchema.optional(),
+  brand: z.string().trim().max(255).nullable().optional(),
+  costResponsible: z.string().trim().max(255).nullable().optional(),
   notes: z.string().optional(),
 });
 const purchaseRequestItemUpdateSchema = z.object({
   id: z.number(),
   quantity: purchaseRequestQuantitySchema,
   unitPrice: purchaseRequestUnitPriceSchema,
+  brand: z.string().trim().max(255).nullable().optional(),
+  costResponsible: z.string().trim().max(255).nullable().optional(),
 });
 const purchaseTypeSchema = z.enum(["local", "extranjera", "compra_directa"]);
 
@@ -129,6 +135,7 @@ export const purchaseRequestsRouter = router({
         projectId: z.number(),
         purchaseType: purchaseTypeSchema,
         neededBy: z.string().optional(),
+        printDestination: optionalPrintTextSchema,
         notes: z.string().optional(),
         items: z.array(purchaseRequestItemSchema).min(1),
       })
@@ -153,6 +160,7 @@ export const purchaseRequestsRouter = router({
           status: "pendiente",
           neededBy: input.neededBy ? new Date(input.neededBy) : null,
           sapDocumentNumber: null,
+          printDestination: input.printDestination ?? null,
           notes: input.notes,
           rejectionReason: null,
           printedDocumentName: null,
@@ -170,6 +178,8 @@ export const purchaseRequestsRouter = router({
           receivedQuantity: "0.00",
           unit: item.unit,
           unitPrice: item.unitPrice ?? "0.00",
+          brand: item.brand ?? null,
+          costResponsible: item.costResponsible ?? null,
           notes: item.notes,
         }))
       );
@@ -181,6 +191,7 @@ export const purchaseRequestsRouter = router({
         id: z.number(),
         purchaseType: purchaseTypeSchema.optional(),
         neededBy: z.string().optional(),
+        printDestination: optionalPrintTextSchema,
         notes: z.string().optional(),
         items: z.array(purchaseRequestItemUpdateSchema).optional(),
       })
@@ -240,6 +251,7 @@ export const purchaseRequestsRouter = router({
       await db.updatePurchaseRequest(input.id, {
         purchaseType: input.purchaseType,
         neededBy: input.neededBy ? new Date(input.neededBy) : undefined,
+        printDestination: input.printDestination,
         notes: input.notes,
       });
 
@@ -248,6 +260,11 @@ export const purchaseRequestsRouter = router({
           db.updatePurchaseRequestItem(itemUpdate.id, {
             quantity: itemUpdate.quantity,
             unitPrice: itemUpdate.unitPrice,
+            brand: "brand" in itemUpdate ? itemUpdate.brand ?? null : undefined,
+            costResponsible:
+              "costResponsible" in itemUpdate
+                ? itemUpdate.costResponsible ?? null
+                : undefined,
           })
         )
       );

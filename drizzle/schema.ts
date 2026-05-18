@@ -88,6 +88,7 @@ export const requestItemStatusEnum = pgEnum("request_item_status", [
 ]);
 export const paymentMethodEnum = pgEnum("payment_method", [
   "linea_credito",
+  "fondo_proyecto",
   "caja_chica",
 ]);
 export const purchaseTypeEnum = pgEnum("purchase_type", [
@@ -341,8 +342,8 @@ export const materialRequests = pgTable(
   "materialRequests",
   {
     id: serial("id").primaryKey(),
-    /** Auto-generated request number: REQ-YYYY-NNNN */
-    requestNumber: varchar("requestNumber", { length: 20 }).notNull().unique(),
+    /** Auto-generated request number: REQ-PROJECT-00000001 */
+    requestNumber: varchar("requestNumber", { length: 64 }).notNull().unique(),
     projectId: integer("projectId").notNull(),
     requestedById: integer("requestedById").notNull(),
     /** Who receives: bodega_central, administrador_proyecto, or solicitud_compra */
@@ -462,11 +463,11 @@ export const supplyFlowRecords = pgTable(
 
     // --- Flow 4: Solicitud de compra ---
     purchaseType: purchaseTypeEnum("purchaseType"),
-    purchaseOrderNumber: varchar("purchaseOrderNumber", { length: 50 }),
+    purchaseOrderNumber: varchar("purchaseOrderNumber", { length: 64 }),
 
     // --- SAP Integration fields ---
     sapDocumentType: sapDocumentTypeEnum("sapDocumentType"),
-    sapDocumentNumber: varchar("sapDocumentNumber", { length: 50 }),
+    sapDocumentNumber: varchar("sapDocumentNumber", { length: 64 }),
     sapSynced: boolean("sapSynced").default(false).notNull(),
     sapSyncedAt: timestamp("sapSyncedAt"),
     sapSyncError: text("sapSyncError"),
@@ -493,7 +494,7 @@ export const purchaseRequests = pgTable(
   "purchaseRequests",
   {
     id: serial("id").primaryKey(),
-    requestNumber: varchar("requestNumber", { length: 20 }).notNull().unique(),
+    requestNumber: varchar("requestNumber", { length: 64 }).notNull().unique(),
     materialRequestId: integer("materialRequestId"),
     sourcePurchaseOrderId: integer("sourcePurchaseOrderId"),
     projectId: integer("projectId").notNull(),
@@ -501,7 +502,8 @@ export const purchaseRequests = pgTable(
     purchaseType: purchaseTypeEnum("purchaseType").notNull(),
     status: purchaseRequestStatusEnum("status").default("pendiente").notNull(),
     neededBy: timestamp("neededBy"),
-    sapDocumentNumber: varchar("sapDocumentNumber", { length: 50 }),
+    sapDocumentNumber: varchar("sapDocumentNumber", { length: 64 }),
+    printDestination: varchar("printDestination", { length: 500 }),
     notes: text("notes"),
     rejectionReason: text("rejectionReason"),
     printedDocumentName: varchar("printedDocumentName", { length: 255 }),
@@ -542,6 +544,8 @@ export const purchaseRequestItems = pgTable(
     unitPrice: decimal("unitPrice", { precision: 12, scale: 2 })
       .default("0.00")
       .notNull(),
+    brand: varchar("brand", { length: 255 }),
+    costResponsible: varchar("costResponsible", { length: 255 }),
     notes: text("notes"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
@@ -561,7 +565,7 @@ export const purchaseOrders = pgTable(
   "purchaseOrders",
   {
     id: serial("id").primaryKey(),
-    orderNumber: varchar("orderNumber", { length: 20 }).notNull().unique(),
+    orderNumber: varchar("orderNumber", { length: 64 }).notNull().unique(),
     purchaseRequestId: integer("purchaseRequestId"),
     projectId: integer("projectId").notNull(),
     classification: purchaseOrderClassificationEnum("classification")
@@ -572,7 +576,7 @@ export const purchaseOrders = pgTable(
     supplierEmail: varchar("supplierEmail", { length: 320 }),
     status: purchaseOrderStatusEnum("status").default("borrador").notNull(),
     neededBy: timestamp("neededBy"),
-    sapDocumentNumber: varchar("sapDocumentNumber", { length: 50 }),
+    sapDocumentNumber: varchar("sapDocumentNumber", { length: 64 }),
     notes: text("notes"),
     printedDocumentName: varchar("printedDocumentName", { length: 255 }),
     printedDocumentMimeType: varchar("printedDocumentMimeType", { length: 100 }),
@@ -637,7 +641,7 @@ export const transferRequests = pgTable(
   "transferRequests",
   {
     id: serial("id").primaryKey(),
-    requestNumber: varchar("requestNumber", { length: 20 }).notNull().unique(),
+    requestNumber: varchar("requestNumber", { length: 64 }).notNull().unique(),
     materialRequestId: integer("materialRequestId"),
     projectId: integer("projectId").notNull(),
     destinationType: transferDestinationTypeEnum("destinationType").notNull(),
@@ -698,11 +702,11 @@ export const transfers = pgTable(
   "transfers",
   {
     id: serial("id").primaryKey(),
-    transferNumber: varchar("transferNumber", { length: 20 }).notNull().unique(),
+    transferNumber: varchar("transferNumber", { length: 64 }).notNull().unique(),
     transferRequestId: integer("transferRequestId").notNull(),
     status: transferStatusEnum("status").default("pendiente").notNull(),
-    remissionGuideNumber: varchar("remissionGuideNumber", { length: 50 }),
-    sapCorrelative: varchar("sapCorrelative", { length: 50 }),
+    remissionGuideNumber: varchar("remissionGuideNumber", { length: 64 }),
+    sapCorrelative: varchar("sapCorrelative", { length: 80 }),
     confirmedById: integer("confirmedById"),
     confirmedAt: timestamp("confirmedAt"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -721,9 +725,9 @@ export const remissionGuides = pgTable(
   "remissionGuides",
   {
     id: serial("id").primaryKey(),
-    guideNumber: varchar("guideNumber", { length: 50 }).notNull().unique(),
+    guideNumber: varchar("guideNumber", { length: 64 }).notNull().unique(),
     transferId: integer("transferId").notNull(),
-    sapCorrelative: varchar("sapCorrelative", { length: 50 }).notNull(),
+    sapCorrelative: varchar("sapCorrelative", { length: 80 }).notNull(),
     documentName: varchar("documentName", { length: 255 }),
     documentMimeType: varchar("documentMimeType", { length: 100 }),
     documentContent: text("documentContent"),
@@ -744,7 +748,7 @@ export const receipts = pgTable(
   "receipts",
   {
     id: serial("id").primaryKey(),
-    receiptNumber: varchar("receiptNumber", { length: 20 }).notNull().unique(),
+    receiptNumber: varchar("receiptNumber", { length: 64 }).notNull().unique(),
     sourceType: receiptSourceTypeEnum("sourceType").notNull(),
     sourceId: integer("sourceId").notNull(),
     projectId: integer("projectId").notNull(),
@@ -797,7 +801,7 @@ export const invoices = pgTable(
   {
     id: serial("id").primaryKey(),
     invoiceDocumentNumber: varchar("invoiceDocumentNumber", {
-      length: 20,
+      length: 64,
     })
       .notNull()
       .unique(),
@@ -915,7 +919,7 @@ export const warehouseExits = pgTable(
   "warehouseExits",
   {
     id: serial("id").primaryKey(),
-    exitNumber: varchar("exitNumber", { length: 20 }).notNull().unique(),
+    exitNumber: varchar("exitNumber", { length: 64 }).notNull().unique(),
     projectId: integer("projectId").notNull(),
     warehouseId: integer("warehouseId").references(() => warehouses.id, {
       onDelete: "set null",
@@ -980,7 +984,7 @@ export const openingBalances = pgTable(
   "openingBalances",
   {
     id: serial("id").primaryKey(),
-    balanceNumber: varchar("balanceNumber", { length: 20 }).notNull().unique(),
+    balanceNumber: varchar("balanceNumber", { length: 64 }).notNull().unique(),
     projectId: integer("projectId").notNull(),
     warehouseId: integer("warehouseId").notNull().unique(),
     createdById: integer("createdById").notNull(),
@@ -1028,8 +1032,8 @@ export const reverseLogistics = pgTable(
   "reverseLogistics",
   {
     id: serial("id").primaryKey(),
-    /** Auto-generated: DEV-YYYY-NNNN */
-    returnNumber: varchar("returnNumber", { length: 20 }).notNull().unique(),
+    /** Auto-generated: DEV-PROJECT-00000001 */
+    returnNumber: varchar("returnNumber", { length: 64 }).notNull().unique(),
     returnType: returnTypeEnum("returnType").notNull(),
     reasonCategory: reasonCategoryEnum("reasonCategory").notNull(),
     /** MANDATORY justification text */
@@ -1042,7 +1046,7 @@ export const reverseLogistics = pgTable(
     originalRequestId: integer("originalRequestId"),
     status: returnStatusEnum("status").default("pendiente").notNull(),
     sapDocumentType: varchar("sapDocumentType", { length: 50 }),
-    sapDocumentNumber: varchar("sapDocumentNumber", { length: 50 }),
+    sapDocumentNumber: varchar("sapDocumentNumber", { length: 64 }),
     sapSynced: boolean("sapSynced").default(false).notNull(),
     createdById: integer("createdById").notNull(),
     processedById: integer("processedById"),
@@ -1221,7 +1225,7 @@ export const sapSyncLog = pgTable(
     entityType: sapSyncEntityTypeEnum("entityType").notNull(),
     entityId: integer("entityId").notNull(),
     sapDocumentType: varchar("sapDocumentType", { length: 50 }).notNull(),
-    sapDocumentNumber: varchar("sapDocumentNumber", { length: 50 }),
+    sapDocumentNumber: varchar("sapDocumentNumber", { length: 64 }),
     requestPayload: text("requestPayload"),
     responsePayload: text("responsePayload"),
     status: sapSyncStatusEnum("status").default("pending").notNull(),

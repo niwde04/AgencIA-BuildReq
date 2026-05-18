@@ -18,9 +18,17 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { downloadBase64Document } from "@/lib/document-download";
 import { trpc } from "@/lib/trpc";
-import { Download, Eye, PackageMinus, Plus, RotateCcw, Search, Send, XCircle } from "lucide-react";
+import {
+  Eye,
+  PackageMinus,
+  Plus,
+  Printer,
+  RotateCcw,
+  Search,
+  Send,
+  XCircle,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -58,6 +66,17 @@ function formatDate(value: string | Date | null | undefined) {
   return date.toLocaleDateString("es-HN");
 }
 
+function formatPrintDate(value: string | Date | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("es-HN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
 function formatQuantity(value: string | number | null | undefined) {
   if (value === null || value === undefined || value === "") return "0.00";
   const numberValue = typeof value === "number" ? value : Number(value);
@@ -66,6 +85,24 @@ function formatQuantity(value: string | number | null | undefined) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+function formatPrintNumber(value: string | number | null | undefined) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return "0";
+  return parsed.toLocaleString("es-HN", {
+    minimumFractionDigits: Number.isInteger(parsed) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function parseQuantity(value: string | number | null | undefined) {
@@ -134,11 +171,10 @@ export default function SalidasBodega() {
       { id: Number(deliveryRequestId || 0) },
       { enabled: deliveryDialogOpen && Boolean(deliveryRequestId) }
     );
-  const { data: detail, refetch: refetchDetail } =
-    trpc.warehouseExits.getById.useQuery(
-      { id: selectedId ?? 0 },
-      { enabled: Boolean(selectedId) }
-    );
+  const { data: detail } = trpc.warehouseExits.getById.useQuery(
+    { id: selectedId ?? 0 },
+    { enabled: Boolean(selectedId) }
+  );
   const emitMutation = trpc.warehouseExits.emit.useMutation({
     onSuccess: (result) => {
       toast.success(`Salida ${result.exitNumber} emitida`);
@@ -298,7 +334,7 @@ export default function SalidasBodega() {
       .filter(({ quantity }) => quantity > 0);
 
     if (selectedItems.length === 0) {
-      toast.error("Ingrese al menos una cantidad a entregar");
+      toast.error("Ingrese al menos una cantidad a despachar");
       return;
     }
 
@@ -387,6 +423,276 @@ export default function SalidasBodega() {
     });
   };
 
+  const handlePrintWarehouseExit = () => {
+    if (!detail) return;
+
+    const warehouseExit = detail.warehouseExit;
+    const projectLabel = detail.project
+      ? `${detail.project.code} ${detail.project.name}`
+      : `Proyecto ${warehouseExit.projectId}`;
+    const warehouseLabel =
+      detail.warehouse?.displayName || detail.project?.name || projectLabel;
+    const requestedByLabel = detail.createdBy?.name || "-";
+    const referenceLabel =
+      warehouseExit.notes?.trim() ||
+      (warehouseExit.materialRequestId
+        ? `Requisición ${warehouseExit.materialRequestId}`
+        : warehouseExit.exitNumber);
+    const itemRows = (detail.items || [])
+      .map(
+        (item: any) => `
+          <tr>
+            <td>${escapeHtml(item.sapItemCode || "-")}</td>
+            <td>${escapeHtml(item.itemName || "-")}</td>
+            <td class="center"></td>
+            <td class="numeric">${escapeHtml(formatPrintNumber(item.quantity))}</td>
+            <td class="center">${escapeHtml(item.unit || "-")}</td>
+            <td>${escapeHtml(item.notes || referenceLabel)}</td>
+            <td class="numeric">1</td>
+          </tr>
+        `
+      )
+      .join("");
+    const totalLines = (detail.items || []).length;
+
+    const printWindow = window.open("", "_blank", "width=1100,height=780");
+    if (!printWindow) {
+      toast.error("No se pudo abrir la ventana de impresión");
+      return;
+    }
+
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${escapeHtml(warehouseExit.exitNumber)}</title>
+          <style>
+            @page { size: A4 landscape; margin: 9mm; }
+            * { box-sizing: border-box; }
+            body {
+              background: #fff;
+              color: #000;
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 10px;
+              margin: 0;
+            }
+            .sheet {
+              margin: 0 auto;
+              max-width: 279mm;
+              padding: 4mm 4mm 8mm;
+            }
+            .header {
+              align-items: start;
+              display: grid;
+              gap: 18px;
+              grid-template-columns: 112px 1fr 120px;
+            }
+            .logo {
+              border: 1px solid #333;
+              border-radius: 3px;
+              height: 52px;
+              padding-top: 4px;
+              text-align: center;
+              width: 70px;
+            }
+            .logo-small {
+              font-size: 5px;
+              font-weight: 800;
+              letter-spacing: 0.02em;
+              line-height: 1;
+            }
+            .logo-main {
+              font-size: 28px;
+              font-weight: 900;
+              letter-spacing: 0.01em;
+              line-height: 1;
+            }
+            .logo-foot {
+              font-size: 7px;
+              font-weight: 800;
+              line-height: 1;
+            }
+            .title {
+              color: #06344f;
+              font-size: 13px;
+              font-weight: 800;
+              line-height: 1.5;
+              text-align: center;
+              text-transform: uppercase;
+            }
+            .company {
+              color: #000;
+              font-size: 15px;
+              margin-bottom: 2px;
+            }
+            .document-number {
+              border: 5px double #222;
+              color: #d00000;
+              font-size: 14px;
+              font-weight: 900;
+              margin-top: 0;
+              padding: 4px 8px;
+              text-align: center;
+            }
+            .meta {
+              display: grid;
+              gap: 34px;
+              grid-template-columns: 1fr 1fr;
+              margin-top: 8mm;
+            }
+            .meta-column {
+              display: grid;
+              gap: 5px;
+            }
+            .field {
+              display: grid;
+              gap: 8px;
+              grid-template-columns: 120px 1fr;
+              min-height: 14px;
+            }
+            .label {
+              font-weight: 800;
+            }
+            .value {
+              font-weight: 700;
+            }
+            table {
+              border-collapse: collapse;
+              margin-top: 5mm;
+              width: 100%;
+            }
+            th {
+              border-bottom: 2px solid #2c85a5;
+              border-top: 2px solid #2c85a5;
+              font-size: 9px;
+              font-weight: 800;
+              padding: 4px 5px;
+              text-align: left;
+            }
+            td {
+              border-bottom: 1px solid #78bed9;
+              padding: 5px;
+              vertical-align: top;
+            }
+            .center { text-align: center; }
+            .numeric {
+              font-variant-numeric: tabular-nums;
+              text-align: right;
+            }
+            .total-row td {
+              border-bottom: 2px solid #2c85a5;
+              font-weight: 800;
+            }
+            .signatures {
+              display: grid;
+              gap: 58px;
+              grid-template-columns: repeat(3, 180px);
+              justify-content: center;
+              margin-top: 14mm;
+            }
+            .signature-line {
+              border-top: 2px solid #111;
+              font-size: 13px;
+              font-weight: 700;
+              padding-top: 4px;
+              text-align: center;
+            }
+            @media print {
+              .sheet { max-width: none; padding: 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <main class="sheet">
+            <section class="header">
+              <div class="logo">
+                <div class="logo-small">HIDALGO e HIDALGO S.A.</div>
+                <div class="logo-main">HeH</div>
+                <div class="logo-foot">CONSTRUCTORES</div>
+              </div>
+              <div class="title">
+                <div class="company">HIDALGO E HIDALGO HONDURAS S.A. DE C.V.</div>
+                <div>${escapeHtml(warehouseLabel)}</div>
+                <div>EGRESO DE BODEGA</div>
+              </div>
+              <div class="document-number">${escapeHtml(warehouseExit.exitNumber)}</div>
+            </section>
+
+            <section class="meta">
+              <div class="meta-column">
+                <div class="field">
+                  <div class="label">Fecha:</div>
+                  <div class="value">${escapeHtml(formatPrintDate(warehouseExit.exitDate || warehouseExit.emittedAt || warehouseExit.createdAt))}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Solicitado por:</div>
+                  <div class="value">${escapeHtml(requestedByLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Tipo Egreso:</div>
+                  <div class="value">EGRESO DE BODEGA</div>
+                </div>
+                <div class="field">
+                  <div class="label">De Bodega:</div>
+                  <div class="value">${escapeHtml(warehouseLabel)}</div>
+                </div>
+              </div>
+              <div class="meta-column">
+                <div class="field">
+                  <div class="label">Job:</div>
+                  <div class="value">${escapeHtml(projectLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Destino:</div>
+                  <div class="value">${escapeHtml(projectLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Referencia:</div>
+                  <div class="value">${escapeHtml(referenceLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">A Bodega:</div>
+                  <div class="value">N/A</div>
+                </div>
+              </div>
+            </section>
+
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 18%;">Código/No. Serie</th>
+                  <th>Identificador</th>
+                  <th style="width: 10%;" class="center">Costo</th>
+                  <th style="width: 10%;" class="numeric">Cantidad</th>
+                  <th style="width: 10%;" class="center">U Medida</th>
+                  <th style="width: 22%;">Referencia</th>
+                  <th style="width: 8%;" class="numeric">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemRows || `<tr><td colspan="7">Sin ítems</td></tr>`}
+                <tr class="total-row">
+                  <td colspan="6">Total general</td>
+                  <td class="numeric">${escapeHtml(formatPrintNumber(totalLines))}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <section class="signatures">
+              <div class="signature-line">Elaborado por:</div>
+              <div class="signature-line">Entregado a:</div>
+              <div class="signature-line">Autorizado por:</div>
+            </section>
+          </main>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -399,7 +705,7 @@ export default function SalidasBodega() {
         </div>
         <Button onClick={() => setDeliveryDialogOpen(true)} size="sm">
           <Plus className="mr-2 h-4 w-4" />
-          Nueva entrega
+          Nueva salida
         </Button>
       </div>
 
@@ -869,20 +1175,14 @@ export default function SalidasBodega() {
                 ) : null}
                 <Button
                   variant="outline"
-                  onClick={async () => {
-                    const latest = await refetchDetail();
-                    const documentDetail = latest.data ?? detail;
-                    const downloaded = downloadBase64Document({
-                      base64: documentDetail?.warehouseExit.printedDocumentContent,
-                      fileName: documentDetail?.warehouseExit.printedDocumentName,
-                      mimeType: documentDetail?.warehouseExit.printedDocumentMimeType,
-                    });
-                    if (!downloaded) toast.error("La salida no tiene PDF generado");
-                  }}
-                  disabled={detail.warehouseExit.status !== "emitida"}
+                  onClick={handlePrintWarehouseExit}
+                  disabled={
+                    detail.warehouseExit.status !== "emitida" ||
+                    detail.items.length === 0
+                  }
                 >
-                  <Download className="mr-2 h-4 w-4" />
-                  Descargar PDF
+                  <Printer className="mr-2 h-4 w-4" />
+                  Imprimir egreso
                 </Button>
               </div>
             </div>
@@ -908,7 +1208,7 @@ export default function SalidasBodega() {
         <DialogContent className="max-h-[92vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-2xl p-5 sm:w-[calc(100vw-3rem)] sm:max-w-6xl sm:p-8">
           <DialogHeader className="border-b border-border/70 pb-5">
             <DialogTitle className="text-2xl font-bold tracking-tight sm:text-3xl">
-              Nueva entrega de requisición
+              Nueva salida de requisición
             </DialogTitle>
           </DialogHeader>
 
@@ -958,13 +1258,13 @@ export default function SalidasBodega() {
                             Solicitado
                           </th>
                           <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                            Ya entregado
+                            Ya despachado
                           </th>
                           <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             Disponible
                           </th>
                           <th className="w-36 p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                            Entregar
+                            Despachar
                           </th>
                           <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             Saldo
@@ -1053,7 +1353,7 @@ export default function SalidasBodega() {
                   <Textarea
                     value={deliveryNotes}
                     onChange={(event) => setDeliveryNotes(event.target.value)}
-                    placeholder="Observaciones para la entrega"
+                    placeholder="Observaciones para la salida"
                     rows={3}
                   />
                 </div>

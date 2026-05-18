@@ -36,6 +36,19 @@ function canManagePurchaseRequestFlow(user: {
 }
 
 const purchaseTypeSchema = z.enum(["local", "extranjera", "compra_directa"]);
+const directPurchasePaymentMethodSchema = z.enum([
+  "linea_credito",
+  "fondo_proyecto",
+  "caja_chica",
+]);
+
+function getPaymentMethodLabel(paymentMethod?: string | null) {
+  if (paymentMethod === "linea_credito") return "Línea de crédito";
+  if (paymentMethod === "fondo_proyecto" || paymentMethod === "caja_chica") {
+    return "Fondo del proyecto";
+  }
+  return paymentMethod ?? "Sin método";
+}
 
 function canConvertToPurchaseOrder(user: {
   role: string;
@@ -390,7 +403,7 @@ export const supplyFlowsRouter = router({
       z.object({
         requestId: z.number(),
         requestItemId: z.number(),
-        paymentMethod: z.enum(["linea_credito", "caja_chica"]),
+        paymentMethod: directPurchasePaymentMethodSchema,
         supplierId: z.number().optional(),
         notes: z.string().optional(),
       })
@@ -428,7 +441,9 @@ export const supplyFlowsRouter = router({
           status: "emitida",
           neededBy: detail.request.neededBy,
           sapDocumentNumber: null,
-          notes: input.notes ?? `Compra directa por ${input.paymentMethod}`,
+          notes:
+            input.notes ??
+            `Compra directa por ${getPaymentMethodLabel(input.paymentMethod)}`,
           printedDocumentName: null,
           printedDocumentMimeType: null,
           printedDocumentContent: null,
@@ -495,7 +510,7 @@ export const supplyFlowsRouter = router({
           )
           .min(1),
         supplierId: z.number().optional(),
-        paymentMethod: z.enum(["linea_credito", "caja_chica"]),
+        paymentMethod: directPurchasePaymentMethodSchema,
         notes: z.string().optional(),
       })
     )
@@ -716,7 +731,9 @@ export const supplyFlowsRouter = router({
           status: "pendiente",
           neededBy: earliestNeededBy ?? null,
           sapDocumentNumber: null,
-          notes: input.notes ?? `Compra directa por ${input.paymentMethod}`,
+          notes:
+            input.notes ??
+            `Compra directa por ${getPaymentMethodLabel(input.paymentMethod)}`,
           rejectionReason: null,
           printedDocumentName: null,
           printedDocumentMimeType: null,
@@ -1511,7 +1528,19 @@ export const supplyFlowsRouter = router({
         });
       }
 
-      const purchaseOrderNumber = await db.generatePurchaseOrderNumber();
+      const flowDetail = await db.getSupplyFlowRecordById(input.flowId!);
+      if (!flowDetail?.request) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Flujo origen no encontrado",
+        });
+      }
+      assertProjectScopedConversionAccess(ctx.user, flowDetail.request.projectId);
+
+      const purchaseOrderNumber = await db.generatePurchaseOrderNumber(
+        flowDetail.request.projectId,
+        flowDetail.flow.flowType === "compra_directa" ? "cd" : "oc"
+      );
       const result = await db.updateSupplyFlowRecord(input.flowId!, {
         purchaseOrderNumber,
         sapDocumentType: "orden_compra",

@@ -34,6 +34,10 @@ type QueueFlowType =
   | "traslado_proyecto"
   | "solicitud_compra";
 type PurchaseType = "local" | "extranjera" | "compra_directa";
+type DirectPurchasePaymentMethod =
+  | "linea_credito"
+  | "fondo_proyecto"
+  | "caja_chica";
 
 const PURCHASE_TYPE_LABELS: Record<PurchaseType, string> = {
   local: "Compra Local",
@@ -43,6 +47,15 @@ const PURCHASE_TYPE_LABELS: Record<PurchaseType, string> = {
 
 const getPurchaseTypeLabel = (value?: string | null) =>
   PURCHASE_TYPE_LABELS[value as PurchaseType] ?? "—";
+
+const PAYMENT_METHOD_LABELS: Record<DirectPurchasePaymentMethod, string> = {
+  linea_credito: "Línea de Crédito",
+  fondo_proyecto: "Fondo del proyecto",
+  caja_chica: "Fondo del proyecto",
+};
+
+const getPaymentMethodLabel = (value?: string | null) =>
+  PAYMENT_METHOD_LABELS[value as DirectPurchasePaymentMethod] ?? "—";
 
 const FLOW_ORDER: QueueFlowType[] = [
   "despacho_bodega",
@@ -177,7 +190,7 @@ export default function Flujos() {
     {}
   );
   const [directPurchasePaymentMethodByFlowType, setDirectPurchasePaymentMethodByFlowType] =
-    useState<Partial<Record<QueueFlowType, string>>>({});
+    useState<Partial<Record<QueueFlowType, DirectPurchasePaymentMethod>>>({});
   const [directPurchaseNotesByFlowType, setDirectPurchaseNotesByFlowType] = useState<
     Partial<Record<QueueFlowType, string>>
   >({});
@@ -452,7 +465,7 @@ export default function Flujos() {
     setProcessingFlowType(flowType);
     try {
       const result = await directPurchaseMutation.mutateAsync({
-        paymentMethod: paymentMethod as "linea_credito" | "caja_chica",
+        paymentMethod: paymentMethod as "linea_credito" | "fondo_proyecto",
         notes: directPurchaseNotesByFlowType[flowType] || undefined,
         items: selectedRows.map((row) => ({
           requestId: row.request.id,
@@ -1457,7 +1470,7 @@ export default function Flujos() {
                           onValueChange={(value) =>
                             setDirectPurchasePaymentMethodByFlowType((current) => ({
                               ...current,
-                              [flowType]: value,
+                              [flowType]: value as DirectPurchasePaymentMethod,
                             }))
                           }
                         >
@@ -1466,7 +1479,7 @@ export default function Flujos() {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="linea_credito">Línea de Crédito</SelectItem>
-                            <SelectItem value="caja_chica">Caja Chica</SelectItem>
+                            <SelectItem value="fondo_proyecto">Fondo del proyecto</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -1693,10 +1706,7 @@ export default function Flujos() {
                               )}
                               {row.flow.paymentMethod && (
                                 <p className="text-xs text-muted-foreground">
-                                  Método:{" "}
-                                  {row.flow.paymentMethod === "linea_credito"
-                                    ? "Línea de Crédito"
-                                    : "Caja Chica"}
+                                  Método: {getPaymentMethodLabel(row.flow.paymentMethod)}
                                 </p>
                               )}
                               {row.flow.purchaseType && (

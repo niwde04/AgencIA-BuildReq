@@ -264,16 +264,12 @@ export const receiptsRouter = router({
             });
           }
 
-          const pendingQuantity = Math.max(
-            Number(sourceItem.quantity ?? 0) - Number(sourceItem.receivedQuantity ?? 0),
-            0
-          );
           const requestedQuantity = Number(item.quantityReceived ?? 0);
 
-          if (requestedQuantity > pendingQuantity) {
+          if (!Number.isFinite(requestedQuantity) || requestedQuantity < 0) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `La cantidad a recibir de ${sourceItem.itemName} excede lo pendiente`,
+              message: `La cantidad a recibir de ${sourceItem.itemName} debe ser cero o mayor`,
             });
           }
 
@@ -338,10 +334,10 @@ export const receiptsRouter = router({
             ? Math.max(pendingQuantity - requestedQuantity, 0)
             : 0;
 
-          if (requestedQuantity > pendingQuantity) {
+          if (!Number.isFinite(requestedQuantity) || requestedQuantity < 0) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `La cantidad a recibir de ${sourceItem.itemName} excede lo pendiente`,
+              message: `La cantidad a recibir de ${sourceItem.itemName} debe ser cero o mayor`,
             });
           }
 

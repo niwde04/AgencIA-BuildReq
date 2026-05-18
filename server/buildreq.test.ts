@@ -4872,6 +4872,81 @@ describe("BuildReq - Receipts", () => {
     registerReceiptSpy.mockRestore();
   });
 
+  it("allows receiving more than the pending purchase order quantity", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "emitida",
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "CEMENTO GRANEL",
+            quantity: "10.00",
+            receivedQuantity: "0.00",
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({
+        id: 6,
+        receiptNumber: "RC-2026-0001",
+        status: "completa",
+      } as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentDate: "2026-04-14",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            itemName: "CEMENTO GRANEL",
+            quantityExpected: "10.00",
+            quantityReceived: "12.00",
+            unit: "und",
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      id: 6,
+      receiptNumber: "RC-2026-0001",
+      status: "completa",
+    });
+
+    expect(registerReceiptSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+      }),
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceItemId: 15,
+          quantityExpected: "10.00",
+          quantityReceived: "12.00",
+        }),
+      ])
+    );
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
   it("Bodeguero de Proyecto cannot register receipts for another project's purchase order", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
@@ -5478,7 +5553,7 @@ describe("BuildReq - Receipts", () => {
     registerReceiptSpy.mockRestore();
   });
 
-  it("does not allow receiving more than the pending transfer balance", async () => {
+  it("allows receiving more than the pending transfer balance", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
     const getTransferByIdSpy = vi
@@ -5508,7 +5583,11 @@ describe("BuildReq - Receipts", () => {
       } as any);
     const registerReceiptSpy = vi
       .spyOn(db, "registerReceipt")
-      .mockResolvedValue({} as any);
+      .mockResolvedValue({
+        id: 7,
+        receiptNumber: "RC-2026-0002",
+        status: "completa",
+      } as any);
 
     await expect(
       caller.receipts.register({
@@ -5527,12 +5606,26 @@ describe("BuildReq - Receipts", () => {
           },
         ],
       })
-    ).rejects.toMatchObject({
-      code: "BAD_REQUEST",
-      message: "La cantidad a recibir de VARILLA #4 excede lo pendiente",
+    ).resolves.toEqual({
+      id: 7,
+      receiptNumber: "RC-2026-0002",
+      status: "completa",
     });
 
-    expect(registerReceiptSpy).not.toHaveBeenCalled();
+    expect(registerReceiptSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceType: "transfer",
+        sourceId: 8,
+        projectId: 1,
+      }),
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceItemId: 31,
+          quantityExpected: "15.00",
+          quantityReceived: "16.00",
+        }),
+      ])
+    );
 
     getTransferByIdSpy.mockRestore();
     registerReceiptSpy.mockRestore();
@@ -6170,7 +6263,56 @@ describe("BuildReq - Invoices", () => {
 // Tests: Transfer Requests
 // ============================================================
 describe("BuildReq - Transfer Requests", () => {
-  it("cancel annuls a pending transfer request and returns transfer items to the transfer flow", async () => {
+  it("convertToTransfer accepts partial and zero quantities for open-flow remainders", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getTransferRequestByIdSpy = vi
+      .spyOn(db, "getTransferRequestById")
+      .mockResolvedValue({
+        transferRequest: {
+          id: 6,
+          requestNumber: "ST-2026-0001",
+          status: "pendiente",
+        },
+        items: [
+          { id: 31, materialRequestItemId: 21, quantity: "10.00" },
+          { id: 32, materialRequestItemId: 22, quantity: "5.00" },
+        ],
+      } as any);
+    const createTransferFromRequestSpy = vi
+      .spyOn(db, "createTransferFromRequest")
+      .mockResolvedValue({
+        id: 44,
+        transferNumber: "TR-2026-0001",
+        guideNumber: "GR-2026-0001",
+        sapCorrelative: "SAP-GR-2026-0001",
+      } as any);
+
+    await expect(
+      caller.transferRequests.convertToTransfer({
+        id: 6,
+        items: [
+          { transferRequestItemId: 31, quantity: "6.00" },
+          { transferRequestItemId: 32, quantity: "0.00" },
+        ],
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 44,
+        transferNumber: "TR-2026-0001",
+      })
+    );
+
+    expect(createTransferFromRequestSpy).toHaveBeenCalledWith(6, 3, [
+      { transferRequestItemId: 31, quantity: "6.00" },
+      { transferRequestItemId: 32, quantity: "0.00" },
+    ]);
+
+    getTransferRequestByIdSpy.mockRestore();
+    createTransferFromRequestSpy.mockRestore();
+  });
+
+  it("cancel annuls a pending transfer request and returns transfer items to open flow selection", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
     const getTransferRequestByIdSpy = vi
@@ -6211,8 +6353,8 @@ describe("BuildReq - Transfer Requests", () => {
     const getRequestItemsByRequestIdSpy = vi
       .spyOn(db, "getRequestItemsByRequestId")
       .mockResolvedValue([
-        { id: 21, assignedFlow: "traslado_proyecto" },
-        { id: 22, assignedFlow: "traslado_proyecto" },
+        { id: 21, assignedFlow: null },
+        { id: 22, assignedFlow: null },
       ] as any);
     const updateMaterialRequestStatusSpy = vi
       .spyOn(db, "updateMaterialRequestStatus")
@@ -6226,11 +6368,11 @@ describe("BuildReq - Transfer Requests", () => {
     });
 
     expect(updateRequestItemSpy).toHaveBeenCalledWith(21, {
-      assignedFlow: "traslado_proyecto",
+      assignedFlow: null,
       status: "pendiente",
     });
     expect(updateRequestItemSpy).toHaveBeenCalledWith(22, {
-      assignedFlow: "traslado_proyecto",
+      assignedFlow: null,
       status: "pendiente",
     });
     expect(updateSupplyFlowRecordSpy).toHaveBeenCalledWith(321, {
@@ -6243,7 +6385,7 @@ describe("BuildReq - Transfer Requests", () => {
     });
     expect(updateMaterialRequestStatusSpy).toHaveBeenCalledWith(
       9,
-      "en_proceso",
+      "en_espera",
       3
     );
     expect(updateTransferRequestSpy).toHaveBeenCalledWith(6, {
@@ -6287,6 +6429,61 @@ describe("BuildReq - Transfer Requests", () => {
 // Tests: v6 Fixes - Auto-numbering and Supplier
 // ============================================================
 describe("BuildReq - v6 Auto-numbering and Supplier", () => {
+  it("builds project-scoped document numbers by type and project", () => {
+    expect(
+      db.buildProjectScopedDocumentNumber({
+        prefix: "OC",
+        projectCode: "004",
+        existingNumbers: [],
+      })
+    ).toBe("OC-004-00000001");
+
+    expect(
+      db.buildProjectScopedDocumentNumber({
+        prefix: "OC",
+        projectCode: "004",
+        existingNumbers: ["OC-004-00000001"],
+      })
+    ).toBe("OC-004-00000002");
+
+    expect(
+      db.buildProjectScopedDocumentNumber({
+        prefix: "OC",
+        projectCode: "006",
+        existingNumbers: ["OC-004-00000001", "OC-004-00000002"],
+      })
+    ).toBe("OC-006-00000001");
+
+    expect(
+      db.buildProjectScopedDocumentNumber({
+        prefix: "SC",
+        projectCode: "004",
+        existingNumbers: ["OC-004-00000001", "OC-004-00000002"],
+      })
+    ).toBe("SC-004-00000001");
+
+    expect(
+      db.buildProjectScopedDocumentNumber({
+        prefix: "OC",
+        projectCode: "004B",
+        existingNumbers: [],
+      })
+    ).toBe("OC-004B-00000001");
+
+    expect(
+      db.buildProjectScopedDocumentNumber({
+        prefix: "OC",
+        projectCode: "004",
+        existingNumbers: [
+          "OC-2026-0004",
+          "OC-004-00000002",
+          "OC-004-00000010",
+          "OC-004-9999",
+        ],
+      })
+    ).toBe("OC-004-00000011");
+  });
+
   it("createDirectPurchase accepts optional supplierId", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);

@@ -65,6 +65,49 @@ const DUE_STATUS_COLORS: Record<string, string> = {
   ok: "text-muted-foreground",
 };
 
+const TARGET_PREFIX_PATTERN = /^(Subproyecto|Activo fijo):\s*/;
+
+function getRequestTargetLabels(itemTargets: any[] = []) {
+  return Array.from(
+    new Set<string>(
+      itemTargets
+        .map((target: any) => target.label?.replace(TARGET_PREFIX_PATTERN, "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function RequestTargetBadges({ labels }: { labels: string[] }) {
+  if (labels.length === 0) {
+    return <span className="text-xs text-muted-foreground">Sin subproyecto</span>;
+  }
+
+  const visibleLabels = labels.slice(0, 2);
+  const hiddenCount = labels.length - visibleLabels.length;
+
+  return (
+    <div className="flex max-w-[280px] flex-wrap gap-1" title={labels.join("\n")}>
+      {visibleLabels.map((label) => (
+        <Badge
+          key={label}
+          variant="outline"
+          className="max-w-full border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700"
+        >
+          <span className="truncate">{label}</span>
+        </Badge>
+      ))}
+      {hiddenCount > 0 ? (
+        <Badge
+          variant="outline"
+          className="border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-600"
+        >
+          +{hiddenCount} más
+        </Badge>
+      ) : null}
+    </div>
+  );
+}
+
 export default function Solicitudes() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
@@ -144,7 +187,7 @@ export default function Solicitudes() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[1180px] text-sm">
                 <thead>
                   <tr className="border-b border-border">
                     <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
@@ -152,6 +195,9 @@ export default function Solicitudes() {
                     </th>
                     <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                       Proyecto
+                    </th>
+                    <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                      Subproyecto
                     </th>
                     <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                       Dirigida a
@@ -181,13 +227,7 @@ export default function Solicitudes() {
                       r.request.createdAt
                     );
                     const dueStatus = getDueDateStatus(neededByDate);
-                    const targetLabels = Array.from(
-                      new Set<string>(
-                        (r.itemTargets ?? [])
-                          .map((target: any) => target.label)
-                          .filter(Boolean)
-                      )
-                    );
+                    const targetLabels = getRequestTargetLabels(r.itemTargets ?? []);
                     const targetPath =
                       r.request.status === "borrador"
                         ? `/solicitudes/${r.request.id}/editar`
@@ -206,15 +246,10 @@ export default function Solicitudes() {
                           <div>
                             <span className="font-medium text-xs">{r.project?.code}</span>
                             <p className="text-xs text-muted-foreground">{r.project?.name}</p>
-                            {targetLabels.length > 0 ? (
-                              <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-                                <p>{targetLabels[0]}</p>
-                                {targetLabels.length > 1 ? (
-                                  <p>+{targetLabels.length - 1} destino(s) por ítem</p>
-                                ) : null}
-                              </div>
-                            ) : null}
                           </div>
+                        </td>
+                        <td className="p-3">
+                          <RequestTargetBadges labels={targetLabels} />
                         </td>
                         <td className="p-3 text-xs">
                           {RECIPIENT_LABELS[r.request.recipient] || r.request.recipient}

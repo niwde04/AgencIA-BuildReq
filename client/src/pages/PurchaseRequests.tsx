@@ -32,6 +32,8 @@ import {
   FileText,
   FileUp,
   FolderOpen,
+  MapPin,
+  Printer,
   Save,
   Search,
   ShoppingCart,
@@ -78,11 +80,15 @@ const getPurchaseTypeLabel = (value?: string | null) =>
 type PurchaseRequestItemDraft = {
   quantity: string;
   unitPrice: string;
+  brand: string;
+  costResponsible: string;
 };
 
 const getItemDraftFromDetail = (item: any): PurchaseRequestItemDraft => ({
   quantity: String(item.quantity ?? ""),
   unitPrice: String(item.unitPrice ?? "0.00"),
+  brand: item.brand ?? "",
+  costResponsible: item.costResponsible ?? "",
 });
 
 const isPositiveNumberString = (value: string) => {
@@ -109,6 +115,28 @@ const getPendingConversionQuantity = (item: any, quantityOverride?: string) =>
     0
   );
 
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function formatPrintDate(value: string | Date | null | undefined) {
+  if (!value) return "-";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("es-HN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+const toNullablePrintText = (value: string) => value.trim() || null;
+
 export default function PurchaseRequests() {
   const { user } = useAuth();
   const utils = trpc.useUtils();
@@ -116,6 +144,7 @@ export default function PurchaseRequests() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editNotes, setEditNotes] = useState("");
   const [editNeededBy, setEditNeededBy] = useState("");
+  const [editPrintDestination, setEditPrintDestination] = useState("");
   const [editPurchaseType, setEditPurchaseType] = useState<PurchaseType>("local");
   const [editItems, setEditItems] = useState<Record<number, PurchaseRequestItemDraft>>({});
   const [convertQuantities, setConvertQuantities] = useState<Record<number, string>>({});
@@ -134,6 +163,7 @@ export default function PurchaseRequests() {
   const {
     data: requests,
     isLoading,
+    error: requestsError,
     refetch: refetchPurchaseRequests,
   } = trpc.purchaseRequests.list.useQuery();
   const { data: detail } = trpc.purchaseRequests.getById.useQuery(
@@ -294,9 +324,11 @@ export default function PurchaseRequests() {
     if (!detail) {
       setEditItems({});
       setConvertQuantities({});
+      setEditPrintDestination("");
       return;
     }
 
+    setEditPrintDestination(detail.purchaseRequest.printDestination || "");
     setEditItems(
       Object.fromEntries(
         (detail.items ?? []).map((item: any) => [
@@ -379,6 +411,8 @@ export default function PurchaseRequests() {
         id: item.id,
         quantity: draft.quantity,
         unitPrice: draft.unitPrice || "0",
+        brand: toNullablePrintText(draft.brand),
+        costResponsible: toNullablePrintText(draft.costResponsible),
       };
     });
   };
@@ -546,6 +580,7 @@ export default function PurchaseRequests() {
         ? new Date(row.purchaseRequest.neededBy).toISOString().slice(0, 10)
         : ""
     );
+    setEditPrintDestination(row?.purchaseRequest.printDestination || "");
     setEditPurchaseType((row?.purchaseRequest.purchaseType || "local") as PurchaseType);
     setEditItems({});
     setConvertQuantities({});
@@ -595,6 +630,7 @@ export default function PurchaseRequests() {
       id: detail.purchaseRequest.id,
       purchaseType: editPurchaseType,
       neededBy: editNeededBy || undefined,
+      printDestination: toNullablePrintText(editPrintDestination),
       notes: editNotes || undefined,
       items,
     });
@@ -612,6 +648,7 @@ export default function PurchaseRequests() {
         id: detail.purchaseRequest.id,
         purchaseType: editPurchaseType,
         neededBy: editNeededBy || undefined,
+        printDestination: toNullablePrintText(editPrintDestination),
         notes: editNotes || undefined,
         items,
       });
@@ -625,6 +662,279 @@ export default function PurchaseRequests() {
     } catch {
       // updateMutation displays the validation or server error toast.
     }
+  };
+
+  const handlePrintDocument = () => {
+    if (!detail) return;
+
+    const purchaseRequest = detail.purchaseRequest;
+    const documentNumber =
+      purchaseRequest.sapDocumentNumber || purchaseRequest.requestNumber;
+    const jobLabel = detail.project
+      ? `${detail.project.code} ${detail.project.name}`
+      : projectLabel;
+    const warehouseLabel =
+      detail.warehouse?.displayName || detail.project?.name || projectLabel;
+    const requestedByLabel =
+      detail.requestedBy?.name || detail.createdBy?.name || "-";
+    const destinationLabel = editPrintDestination.trim() || "-";
+    const observations = editNotes.trim() || "-";
+    const totalQuantity = selectedItems.reduce(
+      (sum: number, item: any) => {
+        const quantity = Number(getItemDraft(item).quantity || 0);
+        return sum + (Number.isFinite(quantity) ? quantity : 0);
+      },
+      0
+    );
+    const itemRows = selectedItems
+      .map((item: any) => {
+        const draft = getItemDraft(item);
+        const quantity = formatQuantity(draft.quantity);
+        const code =
+          item.currentSapItemCode || item.originalSapItemCode || "-";
+        return `
+          <tr>
+            <td>${escapeHtml(code)}</td>
+            <td class="numeric">${escapeHtml(quantity)}</td>
+            <td>${escapeHtml(item.itemName)}</td>
+            <td class="highlight">${escapeHtml(draft.brand || "-")}</td>
+            <td>${escapeHtml(item.unit || "-")}</td>
+            <td>${escapeHtml(draft.costResponsible || "-")}</td>
+            <td class="numeric">${escapeHtml(quantity)}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    const printWindow = window.open("", "_blank", "width=1100,height=780");
+    if (!printWindow) {
+      toast.error("No se pudo abrir la ventana de impresión");
+      return;
+    }
+
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${escapeHtml(purchaseRequest.requestNumber)}</title>
+          <style>
+            @page { size: A4 landscape; margin: 10mm; }
+            * { box-sizing: border-box; }
+            body {
+              color: #0f172a;
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 10px;
+              margin: 0;
+              background: #ffffff;
+            }
+            .sheet {
+              margin: 0 auto;
+              max-width: 277mm;
+              padding: 8mm 6mm 10mm;
+            }
+            .header {
+              align-items: flex-start;
+              display: grid;
+              grid-template-columns: 86px 1fr 180px;
+              gap: 18px;
+            }
+            .logo {
+              border: 2px solid #737373;
+              height: 54px;
+              padding-top: 6px;
+              text-align: center;
+              width: 70px;
+            }
+            .logo-small {
+              font-size: 6px;
+              font-weight: 700;
+              letter-spacing: 0.02em;
+            }
+            .logo-main {
+              font-size: 27px;
+              font-weight: 800;
+              letter-spacing: 0.02em;
+              line-height: 1;
+            }
+            .logo-foot {
+              font-size: 6px;
+              font-weight: 700;
+            }
+            .company {
+              color: #06426f;
+              font-size: 16px;
+              font-weight: 800;
+              line-height: 1.55;
+              text-align: center;
+            }
+            .title-box {
+              border: 4px solid #18de0d;
+              display: inline-block;
+              font-size: 15px;
+              margin-top: 2px;
+              padding: 2px 34px;
+            }
+            .document-number {
+              border: 5px double #222;
+              color: #06344f;
+              font-size: 14px;
+              font-weight: 800;
+              margin-top: 1mm;
+              padding: 5px 12px;
+              text-align: center;
+            }
+            .meta {
+              display: grid;
+              gap: 6px 34px;
+              grid-template-columns: 1fr 1fr;
+              margin-top: 8mm;
+            }
+            .field {
+              display: grid;
+              grid-template-columns: 96px 1fr;
+              gap: 8px;
+              min-height: 16px;
+            }
+            .label {
+              color: #000;
+              font-weight: 800;
+            }
+            .value {
+              color: #000;
+              font-weight: 700;
+            }
+            .highlight {
+              background: #fff86a;
+            }
+            table {
+              border-collapse: collapse;
+              margin-top: 6mm;
+              width: 100%;
+            }
+            th, td {
+              border-bottom: 2px solid #23aee8;
+              border-top: 2px solid #23aee8;
+              padding: 3px 6px;
+              vertical-align: top;
+            }
+            th {
+              color: #000;
+              font-weight: 800;
+              text-align: left;
+            }
+            .numeric {
+              font-weight: 800;
+              text-align: right;
+            }
+            .summary td {
+              border-top: 2px solid #23aee8;
+              font-weight: 800;
+            }
+            .observations {
+              display: grid;
+              grid-template-columns: 96px 1fr;
+              gap: 34px;
+              margin-top: 9mm;
+            }
+            .observation-text {
+              font-weight: 700;
+              min-height: 34px;
+              white-space: pre-wrap;
+            }
+            .signatures {
+              align-items: end;
+              display: grid;
+              gap: 24px;
+              grid-template-columns: repeat(3, 1fr);
+              margin: 18mm auto 0;
+              max-width: 190mm;
+            }
+            .signature-line {
+              border-top: 2px solid #555;
+              font-size: 14px;
+              font-weight: 700;
+              padding-top: 4px;
+              text-align: center;
+            }
+            @media print {
+              .sheet { max-width: none; padding: 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <main class="sheet">
+            <section class="header">
+              <div class="logo">
+                <div class="logo-small">HIDALGO E HIDALGO S.A.</div>
+                <div class="logo-main">HH</div>
+                <div class="logo-foot">CONSTRUCTORES</div>
+              </div>
+              <div class="company">
+                <div>HIDALGO E HIDALGO HONDURAS S.A. DE C.V.</div>
+                <div>${escapeHtml(warehouseLabel)}</div>
+                <div class="title-box">SOLICITUD DE COMPRA</div>
+              </div>
+              <div class="document-number">${escapeHtml(documentNumber)}</div>
+            </section>
+
+            <section class="meta">
+              <div class="field">
+                <div class="label">Fecha:</div>
+                <div class="value">${escapeHtml(formatPrintDate(purchaseRequest.createdAt))}</div>
+              </div>
+              <div class="field">
+                <div class="label">Job:</div>
+                <div class="value">${escapeHtml(jobLabel)}</div>
+              </div>
+              <div class="field">
+                <div class="label">Solicitado:</div>
+                <div class="value highlight">${escapeHtml(requestedByLabel)}</div>
+              </div>
+              <div class="field">
+                <div class="label">Destino:</div>
+                <div class="value highlight">${escapeHtml(destinationLabel)}</div>
+              </div>
+            </section>
+
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 13%;">Codigo</th>
+                  <th style="width: 9%;" class="numeric">Cantidad</th>
+                  <th>Descripción</th>
+                  <th style="width: 13%;">Marca</th>
+                  <th style="width: 9%;">U.M</th>
+                  <th style="width: 18%;">Responsable C</th>
+                  <th style="width: 9%;" class="numeric">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemRows || `<tr><td colspan="7">Sin ítems</td></tr>`}
+                <tr class="summary">
+                  <td colspan="6">Total general</td>
+                  <td class="numeric">${escapeHtml(formatQuantity(totalQuantity))}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <section class="observations">
+              <div class="label">Observaciones:</div>
+              <div class="observation-text">${escapeHtml(observations)}</div>
+            </section>
+
+            <section class="signatures">
+              <div class="signature-line">Elaborado por:</div>
+              <div class="signature-line">Solicitado por:</div>
+              <div class="signature-line">Autorizado por:</div>
+            </section>
+          </main>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
   };
 
   return (
@@ -694,6 +1004,11 @@ export default function PurchaseRequests() {
           {isLoading ? (
             <div className="p-8 text-center text-muted-foreground">
               Cargando solicitudes de compra...
+            </div>
+          ) : requestsError ? (
+            <div className="p-8 text-center text-destructive">
+              No se pudieron cargar las solicitudes de compra:{" "}
+              {requestsError.message}
             </div>
           ) : !(requests || []).length ? (
             <div className="p-8 text-center text-muted-foreground">
@@ -871,7 +1186,7 @@ export default function PurchaseRequests() {
 
           {detail && (
             <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-6 lg:px-8">
-              <div className="grid gap-4 xl:grid-cols-[1.35fr_1fr_1fr_1fr]">
+              <div className="grid gap-4 xl:grid-cols-[1.25fr_1fr_1fr_1fr_1.2fr]">
                 <div className="rounded-2xl border border-border/70 bg-card p-5">
                   <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
                     <FolderOpen className="h-4 w-4" />
@@ -922,6 +1237,23 @@ export default function PurchaseRequests() {
                   />
                   <p className="mt-2 text-sm text-muted-foreground">
                     Programa la fecha objetivo para gestionar esta compra.
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-border/70 bg-card p-5">
+                  <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                    <MapPin className="h-4 w-4" />
+                    Destino
+                  </div>
+                  <Input
+                    className="h-12 text-base"
+                    value={editPrintDestination}
+                    onChange={(event) => setEditPrintDestination(event.target.value)}
+                    placeholder="Destino para impresión"
+                    disabled={!canEditSelectedPurchaseRequest}
+                  />
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Se mostrará en el documento impreso.
                   </p>
                 </div>
 
@@ -994,7 +1326,7 @@ export default function PurchaseRequests() {
                 </div>
 
                 <div className="max-w-full overflow-x-auto">
-                  <table className="w-full min-w-[1420px] text-sm">
+                  <table className="w-full min-w-[1700px] text-sm">
                     <thead>
                       <tr className="border-b border-border bg-muted/20">
                         {canConvertSelectedPurchaseRequest && (
@@ -1013,6 +1345,12 @@ export default function PurchaseRequests() {
                         </th>
                         <th className="w-48 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           SAP
+                        </th>
+                        <th className="w-44 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Marca
+                        </th>
+                        <th className="w-52 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Responsable C
                         </th>
                         <th className="w-40 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Cantidad solicitada
@@ -1088,6 +1426,32 @@ export default function PurchaseRequests() {
                             </td>
                             <td className="p-4 align-top text-xs font-mono">
                               {item.currentSapItemCode || item.originalSapItemCode || "—"}
+                            </td>
+                            <td className="p-4 align-top">
+                              <Input
+                                className="h-9 text-sm"
+                                value={draft.brand}
+                                onChange={(event) =>
+                                  updateItemDraft(item, "brand", event.target.value)
+                                }
+                                placeholder="Marca"
+                                disabled={!canEditSelectedPurchaseRequest}
+                              />
+                            </td>
+                            <td className="p-4 align-top">
+                              <Input
+                                className="h-9 text-sm"
+                                value={draft.costResponsible}
+                                onChange={(event) =>
+                                  updateItemDraft(
+                                    item,
+                                    "costResponsible",
+                                    event.target.value
+                                  )
+                                }
+                                placeholder="Responsable"
+                                disabled={!canEditSelectedPurchaseRequest}
+                              />
                             </td>
                             <td className="p-4 align-top">
                               <div className="flex items-center justify-end gap-2">
@@ -1172,6 +1536,15 @@ export default function PurchaseRequests() {
                   >
                     <Download className="mr-2 h-4 w-4" />
                     Descargar documento
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    className="h-11 px-4"
+                    onClick={handlePrintDocument}
+                  >
+                    <Printer className="mr-2 h-4 w-4" />
+                    Imprimir documento
                   </Button>
 
                   {canEditSelectedPurchaseRequest && (
