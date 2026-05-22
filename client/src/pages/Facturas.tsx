@@ -1001,7 +1001,7 @@ export default function Facturas() {
                   </div>
                   <div className="flex justify-between text-xs">
                     <span className="text-muted-foreground">
-                      Base retenible máxima
+                      Base retenible
                     </span>
                     <span className="font-medium text-muted-foreground">
                       {formatPurchaseOrderCurrency(withholdingBase)}
