@@ -31,8 +31,16 @@ type ArticleRecord = {
   description: string;
   itemGroup?: string | null;
   tipoArticulo: number;
+  projectId?: number | null;
   allowsTaxWithholding: boolean;
   isActive: boolean;
+};
+
+type ProjectOption = {
+  id: number;
+  code?: string | null;
+  name?: string | null;
+  status?: string | null;
 };
 
 const PAGE_SIZE = 25;
@@ -55,6 +63,24 @@ function getArticleTypeLabel(value: number | null | undefined) {
   return "Sin tipo";
 }
 
+function getProjectLabel(project: ProjectOption) {
+  const code = project.code?.trim();
+  const name = project.name?.trim();
+  const label = [code, name].filter(Boolean).join(" - ");
+  return label || `Proyecto ${project.id}`;
+}
+
+function getArticleProjectLabel(
+  article: ArticleRecord,
+  projectById: Map<number, ProjectOption>
+) {
+  if (article.tipoArticulo !== 3) return "-";
+  if (!article.projectId) return "Sin proyecto";
+
+  const project = projectById.get(article.projectId);
+  return project ? getProjectLabel(project) : `Proyecto ${article.projectId}`;
+}
+
 export default function Articulos() {
   const { user } = useAuth();
   const utils = trpc.useUtils();
@@ -69,6 +95,7 @@ export default function Articulos() {
   );
   const [editType, setEditType] = useState<ArticleType>(1);
   const [editActive, setEditActive] = useState(true);
+  const [editProjectId, setEditProjectId] = useState("none");
   const [editAllowsTaxWithholding, setEditAllowsTaxWithholding] =
     useState(true);
 
@@ -109,6 +136,8 @@ export default function Articulos() {
       placeholderData: (previousData) => previousData,
     });
 
+  const { data: projectsData } = trpc.projects.list.useQuery({});
+
   useEffect(() => {
     if (data?.page && data.page !== page) {
       setPage(data.page);
@@ -125,6 +154,15 @@ export default function Articulos() {
   });
 
   const items = data?.items ?? [];
+  const projectOptions = useMemo(
+    () => ((projectsData ?? []) as ProjectOption[]),
+    [projectsData]
+  );
+  const projectById = useMemo(
+    () =>
+      new Map(projectOptions.map((project) => [project.id, project] as const)),
+    [projectOptions]
+  );
   const total = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
   const rangeStart = total === 0 ? 0 : ((data?.page ?? page) - 1) * PAGE_SIZE + 1;
@@ -133,15 +171,20 @@ export default function Articulos() {
   const openEditDialog = (article: ArticleRecord) => {
     setSelectedArticle(article);
     setEditType(parseArticleType(String(article.tipoArticulo)) ?? 1);
+    setEditProjectId(article.projectId ? String(article.projectId) : "none");
     setEditActive(article.isActive);
     setEditAllowsTaxWithholding(article.allowsTaxWithholding);
   };
 
   const submitUpdate = () => {
     if (!selectedArticle) return;
+    const selectedProjectId =
+      editProjectId !== "none" ? Number(editProjectId) : null;
+
     updateMutation.mutate({
       id: selectedArticle.id,
       tipoArticulo: editType,
+      projectId: editType === 3 && selectedProjectId ? selectedProjectId : null,
       isActive: editActive,
       allowsTaxWithholding: editAllowsTaxWithholding,
     });
@@ -253,6 +296,9 @@ export default function Articulos() {
                         Tipo
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Proyecto
+                      </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Estado
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -284,6 +330,9 @@ export default function Articulos() {
                           <Badge variant="outline">
                             {getArticleTypeLabel(article.tipoArticulo)}
                           </Badge>
+                        </td>
+                        <td className="max-w-[240px] p-3 text-xs text-muted-foreground">
+                          {getArticleProjectLabel(article, projectById)}
                         </td>
                         <td className="p-3">
                           <Badge
@@ -394,9 +443,13 @@ export default function Articulos() {
                   <Label className="text-xs">Tipo</Label>
                   <Select
                     value={String(editType)}
-                    onValueChange={(value) =>
-                      setEditType(parseArticleType(value) ?? 1)
-                    }
+                    onValueChange={(value) => {
+                      const nextType = parseArticleType(value) ?? 1;
+                      setEditType(nextType);
+                      if (nextType !== 3) {
+                        setEditProjectId("none");
+                      }
+                    }}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Tipo" />
@@ -414,6 +467,32 @@ export default function Articulos() {
                   <Switch checked={editActive} onCheckedChange={setEditActive} />
                 </div>
               </div>
+
+              {editType === 3 ? (
+                <div className="space-y-1">
+                  <Label className="text-xs">Proyecto del activo fijo</Label>
+                  <Select value={editProjectId} onValueChange={setEditProjectId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccione proyecto" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Sin proyecto asignado</SelectItem>
+                      {projectOptions.map((project) => (
+                        <SelectItem key={project.id} value={String(project.id)}>
+                          {getProjectLabel(project)}
+                          {project.status && project.status !== "activo"
+                            ? " (inactivo)"
+                            : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Se usará para mostrar este activo fijo en las solicitudes de
+                    ese proyecto.
+                  </p>
+                </div>
+              ) : null}
 
               <div className="flex items-center justify-between rounded-md border p-3">
                 <Label className="text-sm">Permite retención</Label>

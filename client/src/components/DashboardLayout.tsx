@@ -41,6 +41,7 @@ import {
   Database,
   FileText,
   KeyRound,
+  Percent,
   Tags,
   Truck,
   UserRound,
@@ -197,6 +198,12 @@ const allMenuItems: MenuItem[] = [
       "bodeguero_proyecto",
       "admin",
     ],
+  },
+  {
+    icon: Percent,
+    label: "Retenciones",
+    path: "/retenciones",
+    roles: ["administracion_central", "admin"],
   },
   { icon: FolderKanban, label: "Proyectos", path: "/proyectos" },
   {

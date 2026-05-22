@@ -29,6 +29,7 @@ import TransferRequests from "./pages/TransferRequests";
 import Transfers from "./pages/Transfers";
 import Recepciones from "./pages/Recepciones";
 import Facturas from "./pages/Facturas";
+import Retenciones from "./pages/Retenciones";
 import SaldosIniciales from "./pages/SaldosIniciales";
 import SalidasBodega from "./pages/SalidasBodega";
 import ActualizarContrasena from "./pages/ActualizarContrasena";
@@ -54,6 +55,7 @@ function DashboardRoutes() {
       <Route path="/traslados" component={Transfers} />
       <Route path="/recepciones" component={Recepciones} />
       <Route path="/facturas" component={Facturas} />
+      <Route path="/retenciones" component={Retenciones} />
       <Route path="/salidas-inventario" component={SalidasBodega} />
       <Route path="/salidas-bodega" component={SalidasBodega} />
       <Route path="/saldos-iniciales" component={SaldosIniciales} />

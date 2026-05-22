@@ -7,6 +7,8 @@ type PdfFont = "F1" | "F2";
 type PdfRgb = [number, number, number];
 type PdfPage = {
   commands: string[];
+  width: number;
+  height: number;
 };
 
 type ProcurementField = {
@@ -65,16 +67,20 @@ function rgb(color: PdfRgb) {
   return `${formatNumber(color[0])} ${formatNumber(color[1])} ${formatNumber(color[2])}`;
 }
 
-function createPage(): PdfPage {
-  return { commands: [] };
+function createPage(options: { width?: number; height?: number } = {}): PdfPage {
+  return {
+    commands: [],
+    width: options.width ?? PAGE_WIDTH,
+    height: options.height ?? PAGE_HEIGHT,
+  };
 }
 
-function toPdfRectY(top: number, height: number) {
-  return PAGE_HEIGHT - top - height;
+function toPdfRectY(page: PdfPage, top: number, height: number) {
+  return page.height - top - height;
 }
 
-function toPdfTextY(top: number, fontSize: number) {
-  return PAGE_HEIGHT - top - fontSize;
+function toPdfTextY(page: PdfPage, top: number, fontSize: number) {
+  return page.height - top - fontSize;
 }
 
 function measureTextWidth(text: string, fontSize: number, font: PdfFont = "F1") {
@@ -181,7 +187,7 @@ function drawRect(
     lineWidth?: number;
   } = {}
 ) {
-  const y = toPdfRectY(top, height);
+  const y = toPdfRectY(page, top, height);
   page.commands.push("q");
   if (options.fill) page.commands.push(`${rgb(options.fill)} rg`);
   if (options.stroke) page.commands.push(`${rgb(options.stroke)} RG`);
@@ -208,8 +214,8 @@ function drawLine(
   page.commands.push(`${rgb(color)} RG`);
   page.commands.push(`${formatNumber(width)} w`);
   page.commands.push(
-    `${formatNumber(x1)} ${formatNumber(PAGE_HEIGHT - top1)} m ${formatNumber(x2)} ${formatNumber(
-      PAGE_HEIGHT - top2
+    `${formatNumber(x1)} ${formatNumber(page.height - top1)} m ${formatNumber(x2)} ${formatNumber(
+      page.height - top2
     )} l S`
   );
   page.commands.push("Q");
@@ -246,7 +252,7 @@ function drawText(
   page.commands.push(`/${font} ${formatNumber(params.fontSize)} Tf`);
   page.commands.push(`${rgb(color)} rg`);
   page.commands.push(
-    `1 0 0 1 ${formatNumber(x)} ${formatNumber(toPdfTextY(params.top, params.fontSize))} Tm`
+    `1 0 0 1 ${formatNumber(x)} ${formatNumber(toPdfTextY(page, params.top, params.fontSize))} Tm`
   );
   page.commands.push(`<${encodePdfHex(text)}> Tj`);
   page.commands.push("ET");
@@ -312,8 +318,8 @@ function drawWatermark(
   const cos = Math.cos(angleRadians);
   const sin = Math.sin(angleRadians);
   const width = measureTextWidth(text, fontSize, font);
-  const centerX = PAGE_WIDTH / 2;
-  const centerY = PAGE_HEIGHT / 2;
+  const centerX = page.width / 2;
+  const centerY = page.height / 2;
   const startX = centerX - (width * cos) / 2;
   const startY = centerY - (width * sin) / 2 - fontSize * 0.14;
 
@@ -347,7 +353,7 @@ function buildPdfBase64FromPages(pages: PdfPage[]) {
     const stream = page.commands.join("\n");
 
     objects.push(
-      `${pageObjectId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentObjectId} 0 R >>\nendobj`
+      `${pageObjectId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${formatNumber(page.width)} ${formatNumber(page.height)}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentObjectId} 0 R >>\nendobj`
     );
     objects.push(
       `${contentObjectId} 0 obj\n<< /Length ${Buffer.byteLength(stream, "ascii")} >>\nstream\n${stream}\nendstream\nendobj`
@@ -820,6 +826,636 @@ export function buildProcurementPdfBase64(params: {
       align: "right",
     });
   });
+
+  return buildPdfBase64FromPages(pages);
+}
+
+export function buildPurchaseOrderPrintPdfBase64(params: {
+  orderNumber: string;
+  orderId: string;
+  projectLabel: string;
+  supplierLabel: string;
+  createdDateLabel: string;
+  destinationLabel: string;
+  deliveryDateLabel: string;
+  requestedByLabel: string;
+  observations: string;
+  quoteLabel: string;
+  items: Array<{
+    itemNumber: string;
+    description: string;
+    partNumber: string;
+    quantityLabel: string;
+    unitPriceLabel: string;
+    subtotalLabel: string;
+  }>;
+  summaryRows: Array<{
+    label: string;
+    value: string;
+    emphasized?: boolean;
+  }>;
+}) {
+  const landscapeWidth = 842;
+  const landscapeHeight = 595;
+  const marginX = 32;
+  const contentWidth = landscapeWidth - marginX * 2;
+  const ink = [0, 0, 0] as PdfRgb;
+  const border = [0.62, 0.62, 0.62] as PdfRgb;
+  const lightBorder = [0.84, 0.84, 0.84] as PdfRgb;
+  const pages: PdfPage[] = [];
+  let page = createPage({ width: landscapeWidth, height: landscapeHeight });
+  pages.push(page);
+
+  function drawCenteredText(
+    x: number,
+    top: number,
+    width: number,
+    text: string,
+    fontSize: number,
+    font: PdfFont = "F1"
+  ) {
+    drawText(page, {
+      x,
+      top,
+      width,
+      text,
+      fontSize,
+      font,
+      color: ink,
+      align: "center",
+    });
+  }
+
+  function drawCenteredWrappedText(
+    x: number,
+    top: number,
+    width: number,
+    text: string,
+    fontSize: number,
+    font: PdfFont,
+    leading: number,
+    maxLines?: number
+  ) {
+    const lines = wrapText(text, width, fontSize, font, maxLines);
+    lines.forEach((line, index) => {
+      drawCenteredText(x, top + index * leading, width, line, fontSize, font);
+    });
+    return lines.length * leading;
+  }
+
+  function drawLabelValue(params: {
+    x: number;
+    top: number;
+    labelWidth: number;
+    valueWidth: number;
+    label: string;
+    value: string;
+    maxLines?: number;
+  }) {
+    drawText(page, {
+      x: params.x,
+      top: params.top,
+      text: params.label,
+      fontSize: 10.5,
+      font: "F2",
+      color: ink,
+    });
+
+    const valueLines = wrapText(
+      params.value || "-",
+      params.valueWidth,
+      10.5,
+      "F2",
+      params.maxLines ?? 2
+    );
+
+    valueLines.forEach((line, index) => {
+      drawText(page, {
+        x: params.x + params.labelWidth,
+        top: params.top + index * 13,
+        width: params.valueWidth,
+        text: line,
+        fontSize: 10.5,
+        font: "F2",
+        color: ink,
+      });
+    });
+
+    return Math.max(15, valueLines.length * 13);
+  }
+
+  function drawLogo(top: number) {
+    drawRect(page, marginX, top, 102, 56, {
+      stroke: ink,
+      lineWidth: 0.8,
+    });
+    drawCenteredText(
+      marginX,
+      top + 6,
+      102,
+      "HIDALGO e HIDALGO S.A.",
+      6.8,
+      "F2"
+    );
+    drawCenteredText(marginX, top + 17, 102, "HeH", 31, "F2");
+    drawCenteredText(marginX, top + 45, 102, "CONSTRUCTORES", 9.5, "F2");
+  }
+
+  function drawFirstPageHeader() {
+    const headerTop = 22;
+    const titleX = marginX + 124;
+    const titleWidth = contentWidth - 248;
+
+    drawLogo(headerTop);
+    drawCenteredText(
+      titleX,
+      headerTop + 2,
+      titleWidth,
+      "HIDALGO E HIDALGO HONDURAS SA DE CV",
+      13.5,
+      "F2"
+    );
+    drawCenteredText(
+      titleX,
+      headerTop + 20,
+      titleWidth,
+      "RTN: 08019013549808",
+      10.5,
+      "F2"
+    );
+    drawCenteredText(
+      titleX,
+      headerTop + 36,
+      titleWidth,
+      "ORDEN DE COMPRA",
+      12,
+      "F2"
+    );
+    drawCenteredWrappedText(
+      titleX,
+      headerTop + 52,
+      titleWidth,
+      params.projectLabel,
+      10.5,
+      "F2",
+      12,
+      2
+    );
+
+    drawLine(page, marginX, 91, marginX + contentWidth, 91, ink, 1.1);
+    drawLine(page, marginX, 95, marginX + contentWidth, 95, ink, 1.1);
+
+    let leftTop = 118;
+    let rightTop = 118;
+    const leftValueWidth = 375;
+    const rightX = marginX + 530;
+
+    leftTop +=
+      drawLabelValue({
+        x: marginX,
+        top: leftTop,
+        labelWidth: 96,
+        valueWidth: leftValueWidth,
+        label: "Fecha:",
+        value: params.createdDateLabel,
+      }) + 3;
+    leftTop +=
+      drawLabelValue({
+        x: marginX,
+        top: leftTop,
+        labelWidth: 96,
+        valueWidth: leftValueWidth,
+        label: "Proveedor:",
+        value: params.supplierLabel,
+        maxLines: 2,
+      }) + 3;
+    leftTop +=
+      drawLabelValue({
+        x: marginX,
+        top: leftTop,
+        labelWidth: 96,
+        valueWidth: leftValueWidth,
+        label: "Asesor Vta:",
+        value: "-",
+      }) + 3;
+    leftTop +=
+      drawLabelValue({
+        x: marginX,
+        top: leftTop,
+        labelWidth: 96,
+        valueWidth: leftValueWidth,
+        label: "Destino:",
+        value: params.destinationLabel,
+        maxLines: 2,
+      }) + 3;
+
+    rightTop +=
+      drawLabelValue({
+        x: rightX,
+        top: rightTop,
+        labelWidth: 78,
+        valueWidth: 160,
+        label: "Pedido:",
+        value: params.orderId,
+      }) + 3;
+    rightTop +=
+      drawLabelValue({
+        x: rightX,
+        top: rightTop,
+        labelWidth: 78,
+        valueWidth: 160,
+        label: "F Pago:",
+        value: "CREDITO",
+      }) + 3;
+    rightTop +=
+      drawLabelValue({
+        x: rightX,
+        top: rightTop,
+        labelWidth: 78,
+        valueWidth: 160,
+        label: "Moneda:",
+        value: "LEMPIRA",
+      }) + 3;
+    rightTop +=
+      drawLabelValue({
+        x: rightX,
+        top: rightTop,
+        labelWidth: 78,
+        valueWidth: 160,
+        label: "O Compra:",
+        value: params.orderNumber,
+      }) + 3;
+
+    return Math.max(198, leftTop, rightTop) + 12;
+  }
+
+  function drawContinuationHeader() {
+    drawText(page, {
+      x: marginX,
+      top: 24,
+      text: "ORDEN DE COMPRA",
+      fontSize: 10,
+      font: "F2",
+      color: ink,
+    });
+    drawText(page, {
+      x: marginX,
+      top: 42,
+      text: params.orderNumber,
+      fontSize: 16,
+      font: "F2",
+      color: ink,
+    });
+    drawLine(page, marginX, 67, marginX + contentWidth, 67, ink, 1);
+    return 84;
+  }
+
+  const tableColumns = [
+    { key: "item", label: "Ítem", x: marginX, width: 50 },
+    { key: "description", label: "Descripcion", x: marginX + 50, width: 294 },
+    { key: "part", label: "No. Parte", x: marginX + 344, width: 124 },
+    { key: "quantity", label: "Cantidad", x: marginX + 468, width: 88 },
+    { key: "unitPrice", label: "Valor U", x: marginX + 556, width: 104 },
+    { key: "subtotal", label: "Valor T", x: marginX + 660, width: 118 },
+  ];
+
+  function drawTableHeader(top: number) {
+    tableColumns.forEach(column => {
+      drawCenteredText(column.x, top + 6, column.width, column.label, 10, "F2");
+    });
+    drawLine(
+      page,
+      marginX,
+      top + 22,
+      marginX + contentWidth,
+      top + 22,
+      border,
+      1.1
+    );
+  }
+
+  function startNewPage(withTableHeader: boolean) {
+    page = createPage({ width: landscapeWidth, height: landscapeHeight });
+    pages.push(page);
+    const top = drawContinuationHeader();
+    if (!withTableHeader) return top;
+    drawTableHeader(top);
+    return top + 24;
+  }
+
+  function drawWrappedCell(params: {
+    x: number;
+    top: number;
+    width: number;
+    text: string;
+    fontSize: number;
+    font?: PdfFont;
+    align?: "left" | "center" | "right";
+    leading?: number;
+    maxLines?: number;
+  }) {
+    const lines = wrapText(
+      params.text || "-",
+      params.width,
+      params.fontSize,
+      params.font ?? "F1",
+      params.maxLines
+    );
+
+    lines.forEach((line, index) => {
+      drawText(page, {
+        x: params.x,
+        top: params.top + index * (params.leading ?? 12),
+        width: params.width,
+        text: line,
+        fontSize: params.fontSize,
+        font: params.font ?? "F1",
+        color: ink,
+        align: params.align,
+      });
+    });
+
+    return lines;
+  }
+
+  function drawItemRow(item: (typeof params.items)[number], top: number) {
+    const descriptionLines = wrapText(
+      item.description || "-",
+      278,
+      10,
+      "F1",
+      4
+    );
+    const partLines = wrapText(item.partNumber || "-", 112, 9, "F1", 3);
+    const rowHeight = Math.max(
+      28,
+      descriptionLines.length * 12 + 12,
+      partLines.length * 11 + 12
+    );
+
+    drawWrappedCell({
+      x: tableColumns[0].x,
+      top: top + 8,
+      width: tableColumns[0].width,
+      text: item.itemNumber,
+      fontSize: 10,
+      align: "center",
+      maxLines: 1,
+    });
+    drawWrappedCell({
+      x: tableColumns[1].x + 6,
+      top: top + 7,
+      width: 278,
+      text: item.description,
+      fontSize: 10,
+      leading: 12,
+      maxLines: 4,
+    });
+    drawWrappedCell({
+      x: tableColumns[2].x + 6,
+      top: top + 7,
+      width: 112,
+      text: item.partNumber,
+      fontSize: 9,
+      align: "center",
+      leading: 11,
+      maxLines: 3,
+    });
+    drawText(page, {
+      x: tableColumns[3].x + 6,
+      top: top + Math.max(8, rowHeight / 2 - 4),
+      width: tableColumns[3].width - 12,
+      text: item.quantityLabel,
+      fontSize: 10,
+      color: ink,
+      align: "right",
+    });
+    drawText(page, {
+      x: tableColumns[4].x + 6,
+      top: top + Math.max(8, rowHeight / 2 - 4),
+      width: tableColumns[4].width - 12,
+      text: item.unitPriceLabel,
+      fontSize: 10,
+      color: ink,
+      align: "right",
+    });
+    drawText(page, {
+      x: tableColumns[5].x + 6,
+      top: top + Math.max(8, rowHeight / 2 - 4),
+      width: tableColumns[5].width - 12,
+      text: item.subtotalLabel,
+      fontSize: 10,
+      color: ink,
+      align: "right",
+    });
+    drawLine(
+      page,
+      marginX,
+      top + rowHeight,
+      marginX + contentWidth,
+      top + rowHeight,
+      lightBorder,
+      0.8
+    );
+
+    return rowHeight;
+  }
+
+  function drawSummary(top: number) {
+    const summaryWidth = 196;
+    const summaryX = marginX + contentWidth - summaryWidth;
+    const rowHeight = 18;
+    const height = params.summaryRows.length * rowHeight;
+
+    drawRect(page, summaryX, top, summaryWidth, height, {
+      stroke: border,
+      lineWidth: 0.8,
+    });
+
+    params.summaryRows.forEach((row, index) => {
+      const rowTop = top + index * rowHeight;
+      if (index > 0) {
+        drawLine(
+          page,
+          summaryX,
+          rowTop,
+          summaryX + summaryWidth,
+          rowTop,
+          border,
+          0.7
+        );
+      }
+      drawText(page, {
+        x: summaryX + 8,
+        top: rowTop + 5,
+        text: row.label,
+        fontSize: row.emphasized ? 10 : 9.5,
+        font: row.emphasized ? "F2" : "F1",
+        color: ink,
+      });
+      drawText(page, {
+        x: summaryX + 86,
+        top: rowTop + 5,
+        width: summaryWidth - 94,
+        text: row.value,
+        fontSize: row.emphasized ? 10 : 9.5,
+        font: "F2",
+        color: ink,
+        align: "right",
+      });
+    });
+
+    return { summaryX, summaryWidth, height };
+  }
+
+  function drawLowerSection(top: number) {
+    const summary = drawSummary(top);
+    const leftValueWidth = summary.summaryX - marginX - 130;
+    let leftTop = top + 2;
+
+    leftTop +=
+      drawLabelValue({
+        x: marginX,
+        top: leftTop,
+        labelWidth: 108,
+        valueWidth: leftValueWidth,
+        label: "Fecha Entrega:",
+        value: params.deliveryDateLabel,
+      }) + 3;
+    leftTop +=
+      drawLabelValue({
+        x: marginX,
+        top: leftTop,
+        labelWidth: 108,
+        valueWidth: leftValueWidth,
+        label: "Solicitado:",
+        value: params.requestedByLabel,
+      }) + 3;
+    leftTop +=
+      drawLabelValue({
+        x: marginX,
+        top: leftTop,
+        labelWidth: 108,
+        valueWidth: leftValueWidth,
+        label: "Observaciones:",
+        value: params.observations,
+        maxLines: 3,
+      }) + 3;
+    leftTop +=
+      drawLabelValue({
+        x: marginX,
+        top: leftTop,
+        labelWidth: 108,
+        valueWidth: leftValueWidth,
+        label: "Cotización:",
+        value: params.quoteLabel,
+      }) + 3;
+
+    const signaturesTop = Math.max(leftTop, top + summary.height) + 43;
+    const signatureWidth = 170;
+    const firstSignatureX = marginX + 225;
+    const secondSignatureX = firstSignatureX + 220;
+
+    drawLine(
+      page,
+      firstSignatureX,
+      signaturesTop,
+      firstSignatureX + signatureWidth,
+      signaturesTop,
+      ink,
+      1.4
+    );
+    drawLine(
+      page,
+      secondSignatureX,
+      signaturesTop,
+      secondSignatureX + signatureWidth,
+      signaturesTop,
+      ink,
+      1.4
+    );
+    drawCenteredText(
+      firstSignatureX,
+      signaturesTop + 7,
+      signatureWidth,
+      "Elaborado por:",
+      10,
+      "F2"
+    );
+    drawCenteredText(
+      secondSignatureX,
+      signaturesTop + 7,
+      signatureWidth,
+      "Autorizado por:",
+      10,
+      "F2"
+    );
+
+    const noteTop = signaturesTop + 40;
+    const noteX = marginX + 24;
+    const noteWidth = contentWidth - 48;
+    const noteHeight = 64;
+    drawRect(page, noteX, noteTop, noteWidth, noteHeight, {
+      stroke: ink,
+      lineWidth: 1.2,
+    });
+    drawCenteredText(noteX, noteTop + 9, noteWidth, "Tomar Nota:", 11.5, "F2");
+    drawCenteredWrappedText(
+      noteX + 18,
+      noteTop + 25,
+      noteWidth - 36,
+      "Emitir factura a nombre de: HIDALGO e HIDALGO HONDURAS SA DE CV; RTN: 08019013549808; Dirección: Blvd. Suyapa, Edificio Metropolis, Torre 2, Piso 20, Ofi. 22004. Presentar con la factura su constancia de estar sujetos al RÉGIMEN DE PAGOS A CUENTA vigente, caso contrario se procederá",
+      9.5,
+      "F1",
+      11.5,
+      4
+    );
+
+    drawText(page, {
+      x: marginX,
+      top: noteTop + noteHeight + 12,
+      text: params.requestedByLabel,
+      fontSize: 9,
+      color: ink,
+    });
+  }
+
+  const tableTop = drawFirstPageHeader();
+  drawTableHeader(tableTop);
+  let currentTop = tableTop + 24;
+  const printableBottom = landscapeHeight - 32;
+  const rows =
+    params.items.length > 0
+      ? params.items
+      : [
+          {
+            itemNumber: "-",
+            description: "Sin ítems",
+            partNumber: "-",
+            quantityLabel: "-",
+            unitPriceLabel: "-",
+            subtotalLabel: "-",
+          },
+        ];
+
+  rows.forEach(item => {
+    const rowHeight = Math.max(
+      28,
+      wrapText(item.description || "-", 278, 10, "F1", 4).length * 12 + 12,
+      wrapText(item.partNumber || "-", 112, 9, "F1", 3).length * 11 + 12
+    );
+    if (currentTop + rowHeight > printableBottom) {
+      currentTop = startNewPage(true);
+    }
+    currentTop += drawItemRow(item, currentTop);
+  });
+
+  if (currentTop + 14 + 270 > printableBottom) {
+    currentTop = startNewPage(false);
+  } else {
+    currentTop += 14;
+  }
+  drawLowerSection(currentTop);
 
   return buildPdfBase64FromPages(pages);
 }

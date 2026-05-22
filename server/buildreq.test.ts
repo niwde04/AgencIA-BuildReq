@@ -107,6 +107,133 @@ const VALID_INVOICE_NUMBER = "000-001-01-00010571";
 const VALID_INVOICE_NUMBER_ALT = "000-001-01-00010572";
 
 // ============================================================
+// Tests: Tax retentions catalog
+// ============================================================
+describe("BuildReq - Tax retentions catalog", () => {
+  it("Admin central can list retentions with filters and pagination", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const listTaxRetentionsSpy = vi
+      .spyOn(db, "listTaxRetentions")
+      .mockResolvedValue({
+        items: [
+          {
+            id: 1,
+            taxCode: "RT125",
+            description: "Retención 12.5%",
+            ratePercent: "12.5000",
+            isActive: true,
+            note: "Base a ley x y o z",
+            erpCode: "R12",
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 25,
+        totalPages: 1,
+      } as any);
+
+    await expect(
+      caller.retentions.list({
+        search: "RT",
+        isActive: true,
+        page: 1,
+        pageSize: 25,
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        total: 1,
+        items: [expect.objectContaining({ taxCode: "RT125" })],
+      })
+    );
+
+    expect(listTaxRetentionsSpy).toHaveBeenCalledWith({
+      search: "RT",
+      isActive: true,
+      page: 1,
+      pageSize: 25,
+    });
+
+    listTaxRetentionsSpy.mockRestore();
+  });
+
+  it("Admin central can create retentions", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const createTaxRetentionSpy = vi
+      .spyOn(db, "createTaxRetention")
+      .mockResolvedValue({
+        id: 2,
+        taxCode: "RT01",
+        description: "Retención 1%",
+        ratePercent: "1.0000",
+        isActive: true,
+      } as any);
+
+    await expect(
+      caller.retentions.create({
+        taxCode: "rt01",
+        description: "Retención 1%",
+        ratePercent: "1",
+        isActive: true,
+        note: "Base a ley x y o z",
+        erpCode: "r01",
+      })
+    ).resolves.toEqual(expect.objectContaining({ taxCode: "RT01" }));
+
+    expect(createTaxRetentionSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taxCode: "RT01",
+        ratePercent: "1",
+        erpCode: "R01",
+      })
+    );
+
+    createTaxRetentionSpy.mockRestore();
+  });
+
+  it("Blocks retention maintenance for unauthorized roles", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const createTaxRetentionSpy = vi.spyOn(db, "createTaxRetention");
+
+    await expect(
+      caller.retentions.create({
+        taxCode: "RT99",
+        description: "Retención prueba",
+        ratePercent: "9",
+        isActive: true,
+      })
+    ).rejects.toThrow("No tiene permisos para modificar retenciones");
+
+    expect(createTaxRetentionSpy).not.toHaveBeenCalled();
+    createTaxRetentionSpy.mockRestore();
+  });
+
+  it("Returns active retentions for invoice combo", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const listActiveTaxRetentionsSpy = vi
+      .spyOn(db, "listActiveTaxRetentions")
+      .mockResolvedValue([
+        {
+          id: 3,
+          taxCode: "RT15",
+          description: "Retención 15%",
+          ratePercent: "15.0000",
+          isActive: true,
+        },
+      ] as any);
+
+    await expect(caller.retentions.activeOptions()).resolves.toEqual([
+      expect.objectContaining({ taxCode: "RT15", isActive: true }),
+    ]);
+
+    listActiveTaxRetentionsSpy.mockRestore();
+  });
+});
+
+// ============================================================
 // Tests: Articles catalog
 // ============================================================
 describe("BuildReq - Articles catalog", () => {
@@ -121,6 +248,7 @@ describe("BuildReq - Articles catalog", () => {
           description: "Servicio de transporte",
           itemGroup: "Servicios",
           tipoArticulo: 2,
+          projectId: null,
           allowsTaxWithholding: true,
           isActive: true,
         },
@@ -167,6 +295,7 @@ describe("BuildReq - Articles catalog", () => {
       .mockResolvedValue({
         id: 1,
         tipoArticulo: 3,
+        projectId: null,
         isActive: false,
         allowsTaxWithholding: false,
       } as any);
@@ -182,6 +311,7 @@ describe("BuildReq - Articles catalog", () => {
 
     expect(updateArticleSpy).toHaveBeenCalledWith(1, {
       tipoArticulo: 3,
+      projectId: null,
       isActive: false,
       allowsTaxWithholding: false,
     });
@@ -6101,7 +6231,7 @@ describe("BuildReq - Invoices", () => {
     updateInvoiceSpy.mockRestore();
   });
 
-  it("saves percentage and fixed amount retentions for draft invoices", async () => {
+  it("saves catalog retentions for draft invoices", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
     const getInvoiceByIdSpy = vi
@@ -6120,15 +6250,12 @@ describe("BuildReq - Invoices", () => {
         id: 10,
         retentions: [
           {
-            retentionType: "percentage",
-            description: "ISR 2%",
+            retentionCatalogId: 1,
             baseAmount: "1000.00",
-            percentage: "2.00",
           },
           {
-            retentionType: "amount",
-            description: "Retencion municipal",
-            amount: "50.00",
+            retentionCatalogId: 2,
+            baseAmount: "500.00",
           },
         ],
       })
@@ -6140,12 +6267,12 @@ describe("BuildReq - Invoices", () => {
     );
     expect(replaceInvoiceRetentionsSpy).toHaveBeenCalledWith(10, [
       expect.objectContaining({
-        retentionType: "percentage",
-        description: "ISR 2%",
+        retentionCatalogId: 1,
+        baseAmount: "1000.00",
       }),
       expect.objectContaining({
-        retentionType: "amount",
-        description: "Retencion municipal",
+        retentionCatalogId: 2,
+        baseAmount: "500.00",
       }),
     ]);
 
@@ -6170,9 +6297,8 @@ describe("BuildReq - Invoices", () => {
         id: 10,
         retentions: [
           {
-            retentionType: "amount",
-            description: "Retencion mayor",
-            amount: "1001.00",
+            retentionCatalogId: 1,
+            baseAmount: "1000.00",
           },
         ],
       })
@@ -6208,9 +6334,8 @@ describe("BuildReq - Invoices", () => {
         id: 10,
         retentions: [
           {
-            retentionType: "amount",
-            description: "Retencion proveedor",
-            amount: "10.00",
+            retentionCatalogId: 1,
+            baseAmount: "100.00",
           },
         ],
       })
@@ -6242,9 +6367,8 @@ describe("BuildReq - Invoices", () => {
         id: 10,
         retentions: [
           {
-            retentionType: "amount",
-            description: "Retencion alta",
-            amount: "600.00",
+            retentionCatalogId: 1,
+            baseAmount: "600.00",
           },
         ],
       })

@@ -291,11 +291,15 @@ async function resolveMaterialRequestTarget(input: {
     });
   }
 
-  const fixedAsset = await db.getActiveFixedAssetByCode(fixedAssetSapItemCode);
+  const fixedAsset = await db.getActiveFixedAssetByCode(
+    fixedAssetSapItemCode,
+    input.projectId
+  );
   if (!fixedAsset) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "El activo fijo seleccionado no existe, está inactivo o no es activo fijo",
+      message:
+        "El activo fijo seleccionado no existe, está inactivo, no es activo fijo o no pertenece al proyecto",
     });
   }
 

@@ -889,11 +889,39 @@ export const invoiceItems = pgTable(
 export type InvoiceItem = typeof invoiceItems.$inferSelect;
 export type InsertInvoiceItem = typeof invoiceItems.$inferInsert;
 
+export const taxRetentions = pgTable(
+  "taxRetentions",
+  {
+    id: serial("id").primaryKey(),
+    taxCode: varchar("taxCode", { length: 50 }).notNull(),
+    description: varchar("description", { length: 200 }).notNull(),
+    ratePercent: decimal("ratePercent", { precision: 8, scale: 4 }).notNull(),
+    isActive: boolean("isActive").default(true).notNull(),
+    note: text("note"),
+    erpCode: varchar("erpCode", { length: 50 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    taxCodeIdx: uniqueIndex("tax_ret_tax_code_idx").on(table.taxCode),
+    activeIdx: index("tax_ret_active_idx").on(table.isActive),
+  })
+);
+
+export type TaxRetention = typeof taxRetentions.$inferSelect;
+export type InsertTaxRetention = typeof taxRetentions.$inferInsert;
+
 export const invoiceRetentions = pgTable(
   "invoiceRetentions",
   {
     id: serial("id").primaryKey(),
     invoiceId: integer("invoiceId").notNull(),
+    retentionCatalogId: integer("retentionCatalogId").references(
+      () => taxRetentions.id,
+      { onDelete: "set null" }
+    ),
+    retentionCode: varchar("retentionCode", { length: 50 }),
+    retentionErpCode: varchar("retentionErpCode", { length: 50 }),
     retentionType: invoiceRetentionTypeEnum("retentionType").notNull(),
     description: varchar("description", { length: 200 }).notNull(),
     baseAmount: decimal("baseAmount", { precision: 12, scale: 2 })
@@ -906,6 +934,9 @@ export const invoiceRetentions = pgTable(
   },
   (table) => ({
     invoiceIdx: index("invr_invoice_idx").on(table.invoiceId),
+    retentionCatalogIdx: index("invr_retention_catalog_idx").on(
+      table.retentionCatalogId
+    ),
   })
 );
 
@@ -1281,6 +1312,9 @@ export const sapCatalog = pgTable(
     description: varchar("description", { length: 500 }).notNull(),
     itemGroup: varchar("itemGroup", { length: 255 }),
     tipoArticulo: integer("tipoArticulo").default(1).notNull(),
+    projectId: integer("projectId").references(() => projects.id, {
+      onDelete: "set null",
+    }),
     allowsTaxWithholding: boolean("allowsTaxWithholding").default(true).notNull(),
     isActive: boolean("isActive").default(true).notNull(),
     demoBatchKey: varchar("demoBatchKey", { length: 64 }),
@@ -1291,6 +1325,7 @@ export const sapCatalog = pgTable(
     codeIdx: index("sap_cat_code_idx").on(table.itemCode),
     descIdx: index("sap_cat_desc_idx").on(table.description),
     tipoArticuloIdx: index("sap_cat_tipo_articulo_idx").on(table.tipoArticulo),
+    projectIdx: index("sap_cat_project_idx").on(table.projectId),
     demoBatchIdx: index("sap_cat_demo_batch_idx").on(table.demoBatchKey),
     tipoArticuloCheck: check(
       "sapCatalog_tipoArticulo_check",

@@ -71,14 +71,28 @@ export const articlesRouter = router({
       z.object({
         id: z.number().int().positive(),
         tipoArticulo: articleTypeSchema,
+        projectId: z.number().int().positive().nullable().optional(),
         isActive: z.boolean(),
         allowsTaxWithholding: z.boolean(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       assertCanManageArticles(ctx.user);
+      const projectId = input.tipoArticulo === 3 ? input.projectId ?? null : null;
+
+      if (projectId) {
+        const project = await db.getProjectById(projectId);
+        if (!project) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Proyecto no encontrado",
+          });
+        }
+      }
+
       return db.updateArticle(input.id, {
         tipoArticulo: input.tipoArticulo,
+        projectId,
         isActive: input.isActive,
         allowsTaxWithholding: input.allowsTaxWithholding,
       });

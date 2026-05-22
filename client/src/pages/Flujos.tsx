@@ -871,6 +871,14 @@ export default function Flujos() {
     setLocation("/solicitudes");
   };
 
+  const handleViewPending = (flowType: QueueFlowType, pendingCount: number) => {
+    setFlowFilter(flowType);
+
+    if (!pendingQueueLoading && pendingCount === 0) {
+      toast("No hay pendientes");
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
@@ -971,7 +979,7 @@ export default function Flujos() {
                     variant="outline"
                     size="sm"
                     className="w-full"
-                    onClick={() => setFlowFilter(flowType)}
+                    onClick={() => handleViewPending(flowType, pendingCount)}
                   >
                     Ver pendientes
                   </Button>

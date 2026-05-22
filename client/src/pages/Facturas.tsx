@@ -45,11 +45,22 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 type RetentionDraft = {
-  retentionType: "percentage" | "amount";
+  retentionCatalogId: string;
+  retentionCode?: string | null;
+  retentionErpCode?: string | null;
   description: string;
   baseAmount: string;
   percentage: string;
   amount: string;
+};
+
+type RetentionOption = {
+  id: number;
+  taxCode: string;
+  description: string;
+  ratePercent: string | number;
+  isActive?: boolean;
+  erpCode?: string | null;
 };
 
 function dateInputValue(value: string | Date | null | undefined) {
@@ -73,15 +84,14 @@ function toNumber(value: string | number | null | undefined) {
 }
 
 function getRetentionAmount(draft: RetentionDraft) {
-  if (draft.retentionType === "percentage") {
-    return (toNumber(draft.baseAmount) * toNumber(draft.percentage)) / 100;
-  }
-  return toNumber(draft.amount);
+  return (toNumber(draft.baseAmount) * toNumber(draft.percentage)) / 100;
 }
 
 function emptyRetention(total: string | number): RetentionDraft {
   return {
-    retentionType: "percentage",
+    retentionCatalogId: "none",
+    retentionCode: null,
+    retentionErpCode: null,
     description: "",
     baseAmount: String(total ?? "0.00"),
     percentage: "",
@@ -98,6 +108,9 @@ function getFriendlyMutationError(message: string) {
 
     if (path.includes("description")) {
       return "Ingresa la descripción de cada retención";
+    }
+    if (path.includes("retentionCatalogId")) {
+      return "Seleccione una retención válida";
     }
     if (path.includes("percentage")) {
       return "Ingresa un porcentaje mayor que cero";
@@ -159,6 +172,10 @@ export default function Facturas() {
       { id: selectedId ?? 0 },
       { enabled: selectedId !== null }
     );
+  const { data: activeRetentionOptions } =
+    trpc.retentions.activeOptions.useQuery(undefined, {
+      enabled: selectedId !== null,
+    });
 
   const updateMutation = trpc.invoices.update.useMutation({
     onSuccess: () => {
@@ -190,7 +207,11 @@ export default function Facturas() {
     });
     setRetentionDrafts(
       (detail.retentions ?? []).map((retention: any) => ({
-        retentionType: retention.retentionType,
+        retentionCatalogId: retention.retentionCatalogId
+          ? String(retention.retentionCatalogId)
+          : "none",
+        retentionCode: retention.retentionCode ?? null,
+        retentionErpCode: retention.retentionErpCode ?? null,
         description: retention.description ?? "",
         baseAmount: String(retention.baseAmount ?? "0.00"),
         percentage: String(retention.percentage ?? ""),
@@ -226,8 +247,40 @@ export default function Facturas() {
     });
   }, [invoices, searchTerm, statusFilter]);
 
+  const retentionOptions = useMemo(() => {
+    const optionMap = new Map<number, RetentionOption>();
+    ((activeRetentionOptions ?? []) as RetentionOption[]).forEach((option) => {
+      optionMap.set(option.id, option);
+    });
+
+    retentionDrafts.forEach((draft) => {
+      if (draft.retentionCatalogId === "none") return;
+      const id = Number(draft.retentionCatalogId);
+      if (!Number.isFinite(id) || optionMap.has(id)) return;
+      optionMap.set(id, {
+        id,
+        taxCode: draft.retentionCode || `RET-${id}`,
+        description: draft.description || "Retención guardada",
+        ratePercent: draft.percentage || "0",
+        isActive: false,
+        erpCode: draft.retentionErpCode ?? null,
+      });
+    });
+
+    return Array.from(optionMap.values()).sort((a, b) =>
+      a.taxCode.localeCompare(b.taxCode)
+    );
+  }, [activeRetentionOptions, retentionDrafts]);
+
   const retentionTotal = retentionDrafts.reduce(
     (sum, retention) => sum + getRetentionAmount(retention),
+    0
+  );
+  const retainedBase = retentionDrafts.reduce(
+    (sum, retention) =>
+      retention.retentionCatalogId !== "none"
+        ? sum + toNumber(retention.baseAmount)
+        : sum,
     0
   );
   const invoiceTotal = toNumber(detail?.invoice.total);
@@ -291,34 +344,29 @@ export default function Facturas() {
       const retention = retentionDrafts[index];
       const retentionLabel =
         retentionDrafts.length > 1 ? ` #${index + 1}` : "";
-      if (!retention.description.trim()) {
-        toast.error(`Ingresa la descripción de la retención${retentionLabel}`);
+      if (retention.retentionCatalogId === "none") {
+        toast.error(`Seleccione la retención${retentionLabel}`);
         return;
       }
-      if (retention.retentionType === "percentage") {
-        if (toNumber(retention.baseAmount) <= 0) {
-          toast.error(
-            `La base de la retención${retentionLabel} debe ser mayor que cero`
-          );
-          return;
-        }
-        if (toNumber(retention.baseAmount) - withholdingBase > 0.000001) {
-          toast.error(
-            `La base de la retención${retentionLabel} no puede exceder la base retenible`
-          );
-          return;
-        }
-        if (toNumber(retention.percentage) <= 0) {
-          toast.error(
-            `El porcentaje de la retención${retentionLabel} debe ser mayor que cero`
-          );
-          return;
-        }
+      if (toNumber(retention.baseAmount) <= 0) {
+        toast.error(
+          `La base de la retención${retentionLabel} debe ser mayor que cero`
+        );
+        return;
       }
-      if (
-        retention.retentionType === "amount" &&
-        toNumber(retention.amount) <= 0
-      ) {
+      if (toNumber(retention.baseAmount) - withholdingBase > 0.000001) {
+        toast.error(
+          `La base de la retención${retentionLabel} no puede exceder la base retenible`
+        );
+        return;
+      }
+      if (toNumber(retention.percentage) <= 0) {
+        toast.error(
+          `La tasa de la retención${retentionLabel} debe ser mayor que cero`
+        );
+        return;
+      }
+      if (getRetentionAmount(retention) <= 0) {
         toast.error(
           `El monto de la retención${retentionLabel} debe ser mayor que cero`
         );
@@ -336,20 +384,8 @@ export default function Facturas() {
     replaceRetentionsMutation.mutate({
       id: selectedId,
       retentions: retentionDrafts.map(retention => ({
-        retentionType: retention.retentionType,
-        description: retention.description.trim(),
-        baseAmount:
-          retention.retentionType === "percentage"
-            ? String(toNumber(retention.baseAmount))
-            : undefined,
-        percentage:
-          retention.retentionType === "percentage"
-            ? retention.percentage.trim()
-            : undefined,
-        amount:
-          retention.retentionType === "amount"
-            ? retention.amount.trim()
-            : undefined,
+        retentionCatalogId: Number(retention.retentionCatalogId),
+        baseAmount: String(toNumber(retention.baseAmount)),
       })),
     });
   };
@@ -805,51 +841,61 @@ export default function Facturas() {
                           key={index}
                           className="grid min-w-0 gap-3 rounded-xl border border-border/70 p-3 md:grid-cols-12"
                         >
-                          <div className="space-y-2 md:col-span-3">
-                            <Label>Tipo</Label>
+                          <div className="space-y-2 md:col-span-5">
+                            <Label>Retención</Label>
                             <Select
-                              value={retention.retentionType}
+                              value={retention.retentionCatalogId}
                               disabled={!canEditRetentions}
-                              onValueChange={(value: "percentage" | "amount") =>
-                                setRetentionDrafts(current =>
-                                  current.map((entry, entryIndex) =>
-                                    entryIndex === index
-                                      ? { ...entry, retentionType: value }
-                                      : entry
-                                  )
-                                )
-                              }
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="percentage">
-                                  Porcentaje
-                                </SelectItem>
-                                <SelectItem value="amount">Monto fijo</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="space-y-2 md:col-span-4">
-                            <Label>Descripción</Label>
-                            <Input
-                              value={retention.description}
-                              disabled={!canEditRetentions}
-                              onChange={event =>
+                              onValueChange={(value) => {
+                                const selectedOption = retentionOptions.find(
+                                  (option) => String(option.id) === value
+                                );
+                                if (!selectedOption) return;
                                 setRetentionDrafts(current =>
                                   current.map((entry, entryIndex) =>
                                     entryIndex === index
                                       ? {
                                           ...entry,
-                                          description: event.target.value,
+                                          retentionCatalogId: value,
+                                          retentionCode: selectedOption.taxCode,
+                                          retentionErpCode:
+                                            selectedOption.erpCode ?? null,
+                                          description:
+                                            selectedOption.description,
+                                          percentage: String(
+                                            selectedOption.ratePercent
+                                          ),
                                         }
                                       : entry
                                   )
-                                )
-                              }
-                              placeholder="ISR, ISV retenido, municipal..."
-                            />
+                                );
+                              }}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Seleccione retención" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none" disabled>
+                                  Seleccione retención
+                                </SelectItem>
+                                {retentionOptions.map((option) => (
+                                  <SelectItem
+                                    key={option.id}
+                                    value={String(option.id)}
+                                  >
+                                    {option.taxCode} — {option.description} (
+                                    {Number(option.ratePercent).toLocaleString(
+                                      "es-HN",
+                                      { maximumFractionDigits: 4 }
+                                    )}
+                                    %)
+                                    {option.isActive === false
+                                      ? " - inactiva"
+                                      : ""}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </div>
                           <div className="space-y-2 md:col-span-2">
                             <Label>Base</Label>
@@ -858,10 +904,7 @@ export default function Facturas() {
                               min="0"
                               step="0.01"
                               value={retention.baseAmount}
-                              disabled={
-                                !canEditRetentions ||
-                                retention.retentionType === "amount"
-                              }
+                              disabled={!canEditRetentions}
                               onChange={event =>
                                 setRetentionDrafts(current =>
                                   current.map((entry, entryIndex) =>
@@ -873,52 +916,26 @@ export default function Facturas() {
                               }
                             />
                           </div>
-                          <div className="space-y-2 md:col-span-1">
+                          <div className="space-y-2 md:col-span-2">
                             <Label>%</Label>
                             <Input
                               type="number"
-                              min="0"
                               step="0.0001"
                               value={retention.percentage}
-                              disabled={
-                                !canEditRetentions ||
-                                retention.retentionType === "amount"
-                              }
-                              onChange={event =>
-                                setRetentionDrafts(current =>
-                                  current.map((entry, entryIndex) =>
-                                    entryIndex === index
-                                      ? { ...entry, percentage: event.target.value }
-                                      : entry
-                                  )
-                                )
-                              }
+                              readOnly
+                              disabled
                             />
                           </div>
-                          <div className="space-y-2 md:col-span-1">
+                          <div className="space-y-2 md:col-span-2">
                             <Label>Monto</Label>
                             <Input
+                              className="text-right"
                               type="number"
                               min="0"
                               step="0.01"
-                              value={
-                                retention.retentionType === "percentage"
-                                  ? getRetentionAmount(retention).toFixed(2)
-                                  : retention.amount
-                              }
-                              disabled={
-                                !canEditRetentions ||
-                                retention.retentionType === "percentage"
-                              }
-                              onChange={event =>
-                                setRetentionDrafts(current =>
-                                  current.map((entry, entryIndex) =>
-                                    entryIndex === index
-                                      ? { ...entry, amount: event.target.value }
-                                      : entry
-                                  )
-                                )
-                              }
+                              value={getRetentionAmount(retention).toFixed(2)}
+                              readOnly
+                              disabled
                             />
                           </div>
                           <div className="flex items-end justify-end md:col-span-1">
@@ -977,8 +994,16 @@ export default function Facturas() {
                     </span>
                   </div>
                   <div className="flex justify-between border-t border-border pt-3 text-sm">
-                    <span className="text-muted-foreground">Base retenible</span>
+                    <span className="text-muted-foreground">Base retenida</span>
                     <span className="font-medium">
+                      {formatPurchaseOrderCurrency(retainedBase)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted-foreground">
+                      Base retenible máxima
+                    </span>
+                    <span className="font-medium text-muted-foreground">
                       {formatPurchaseOrderCurrency(withholdingBase)}
                     </span>
                   </div>

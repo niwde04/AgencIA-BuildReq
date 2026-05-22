@@ -67,45 +67,19 @@ function parseDateInput(value?: string | null) {
 
 const invoiceRetentionSchema = z
   .object({
-    retentionType: z.enum(["percentage", "amount"]),
-    description: z.string().trim().min(1).max(200),
+    retentionCatalogId: z.number().int().positive(),
     baseAmount: z.string().trim().optional(),
-    percentage: z.string().trim().optional(),
-    amount: z.string().trim().optional(),
   })
   .superRefine((value, ctx) => {
-    if (value.retentionType === "percentage") {
-      if (
-        !value.percentage ||
-        !Number.isFinite(Number(value.percentage)) ||
-        Number(value.percentage) <= 0
-      ) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["percentage"],
-          message: "Ingrese un porcentaje mayor que cero",
-        });
-      }
-      if (
-        value.baseAmount &&
-        (!Number.isFinite(Number(value.baseAmount)) || Number(value.baseAmount) < 0)
-      ) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["baseAmount"],
-          message: "Ingrese una base válida",
-        });
-      }
-    }
-
     if (
-      value.retentionType === "amount" &&
-      (!value.amount || !Number.isFinite(Number(value.amount)) || Number(value.amount) <= 0)
+      !value.baseAmount ||
+      !Number.isFinite(Number(value.baseAmount)) ||
+      Number(value.baseAmount) <= 0
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["amount"],
-        message: "Ingrese un monto mayor que cero",
+        path: ["baseAmount"],
+        message: "Ingrese una base mayor que cero",
       });
     }
   });

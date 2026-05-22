@@ -144,7 +144,6 @@ export default function PurchaseRequests() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editNotes, setEditNotes] = useState("");
   const [editNeededBy, setEditNeededBy] = useState("");
-  const [editPrintDestination, setEditPrintDestination] = useState("");
   const [editPurchaseType, setEditPurchaseType] = useState<PurchaseType>("local");
   const [editItems, setEditItems] = useState<Record<number, PurchaseRequestItemDraft>>({});
   const [convertQuantities, setConvertQuantities] = useState<Record<number, string>>({});
@@ -324,11 +323,9 @@ export default function PurchaseRequests() {
     if (!detail) {
       setEditItems({});
       setConvertQuantities({});
-      setEditPrintDestination("");
       return;
     }
 
-    setEditPrintDestination(detail.purchaseRequest.printDestination || "");
     setEditItems(
       Object.fromEntries(
         (detail.items ?? []).map((item: any) => [
@@ -558,6 +555,41 @@ export default function PurchaseRequests() {
       : detail?.purchaseRequest
         ? `Proyecto ${detail.purchaseRequest.projectId}`
         : "Proyecto pendiente");
+  const destinationProjectLabel = useMemo(() => {
+    const sourceTargetLabels = Array.from(
+      new Set(
+        selectedItems
+          .map((item: any) =>
+            item.sourceTarget?.label
+              ?.replace(/^Subproyecto:\s*/i, "")
+              .trim()
+          )
+          .filter(Boolean)
+      )
+    );
+    if (sourceTargetLabels.length === 1) return sourceTargetLabels[0];
+    if (sourceTargetLabels.length > 1) return sourceTargetLabels.join(" / ");
+
+    const sourceProjectLabels = Array.from(
+      new Set(
+        selectedItems
+          .map((item: any) =>
+            item.sourceProject
+              ? `${item.sourceProject.code ?? ""} — ${
+                  item.sourceProject.name ?? ""
+                }`
+                  .replace(/^ — /, "")
+                  .trim()
+              : ""
+          )
+          .filter(Boolean)
+      )
+    );
+    if (sourceProjectLabels.length === 1) return sourceProjectLabels[0];
+    if (sourceProjectLabels.length > 1) return sourceProjectLabels.join(" / ");
+
+    return projectLabel;
+  }, [projectLabel, selectedItems]);
   const isMixedProjectRequest = Boolean(detail?.projectSummary?.isMixed);
   const isConvertedPurchaseRequest = detail?.purchaseRequest.status === "convertida";
   const isProjectAdminReadOnlyRequest =
@@ -580,7 +612,6 @@ export default function PurchaseRequests() {
         ? new Date(row.purchaseRequest.neededBy).toISOString().slice(0, 10)
         : ""
     );
-    setEditPrintDestination(row?.purchaseRequest.printDestination || "");
     setEditPurchaseType((row?.purchaseRequest.purchaseType || "local") as PurchaseType);
     setEditItems({});
     setConvertQuantities({});
@@ -630,7 +661,6 @@ export default function PurchaseRequests() {
       id: detail.purchaseRequest.id,
       purchaseType: editPurchaseType,
       neededBy: editNeededBy || undefined,
-      printDestination: toNullablePrintText(editPrintDestination),
       notes: editNotes || undefined,
       items,
     });
@@ -648,7 +678,6 @@ export default function PurchaseRequests() {
         id: detail.purchaseRequest.id,
         purchaseType: editPurchaseType,
         neededBy: editNeededBy || undefined,
-        printDestination: toNullablePrintText(editPrintDestination),
         notes: editNotes || undefined,
         items,
       });
@@ -676,8 +705,12 @@ export default function PurchaseRequests() {
     const warehouseLabel =
       detail.warehouse?.displayName || detail.project?.name || projectLabel;
     const requestedByLabel =
-      detail.requestedBy?.name || detail.createdBy?.name || "-";
-    const destinationLabel = editPrintDestination.trim() || "-";
+      detail.requestedBy?.name ||
+      detail.requestedBy?.email ||
+      detail.createdBy?.name ||
+      detail.createdBy?.email ||
+      "-";
+    const destinationLabel = destinationProjectLabel || "-";
     const observations = editNotes.trim() || "-";
     const totalQuantity = selectedItems.reduce(
       (sum: number, item: any) => {
@@ -769,11 +802,10 @@ export default function PurchaseRequests() {
               text-align: center;
             }
             .title-box {
-              border: 4px solid #18de0d;
               display: inline-block;
               font-size: 15px;
               margin-top: 2px;
-              padding: 2px 34px;
+              padding: 2px 0;
             }
             .document-number {
               border: 5px double #222;
@@ -1246,14 +1278,13 @@ export default function PurchaseRequests() {
                     Destino
                   </div>
                   <Input
-                    className="h-12 text-base"
-                    value={editPrintDestination}
-                    onChange={(event) => setEditPrintDestination(event.target.value)}
-                    placeholder="Destino para impresión"
-                    disabled={!canEditSelectedPurchaseRequest}
+                    className="h-12 cursor-default bg-muted/30 text-base"
+                    value={destinationProjectLabel}
+                    readOnly
+                    aria-readonly="true"
                   />
                   <p className="mt-2 text-sm text-muted-foreground">
-                    Se mostrará en el documento impreso.
+                    Se toma del proyecto destino de la requisición.
                   </p>
                 </div>
 

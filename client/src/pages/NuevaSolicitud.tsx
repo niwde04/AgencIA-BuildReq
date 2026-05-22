@@ -93,6 +93,7 @@ type RequestTargetSelection =
     }
   | {
       targetType: "activo_fijo";
+      projectId: number;
       fixedAssetSapItemCode: string;
       fixedAssetName: string;
       label: string;
@@ -123,6 +124,7 @@ function mapRequestItemTargetToSelection(
   if (item.targetType === "activo_fijo" && item.fixedAssetSapItemCode) {
     return {
       targetType: "activo_fijo",
+      projectId: projectId ?? item.target?.projectId ?? item.projectId ?? 0,
       fixedAssetSapItemCode: item.fixedAssetSapItemCode,
       fixedAssetName: item.fixedAssetName ?? "",
       label: item.target?.label ?? `Activo fijo: ${item.fixedAssetSapItemCode}`,
@@ -167,6 +169,7 @@ function buildSubprojectTargetSelection(subproject: any): RequestTargetSelection
 function buildFixedAssetTargetSelection(asset: any): RequestTargetSelection {
   return {
     targetType: "activo_fijo",
+    projectId: asset.projectId,
     fixedAssetSapItemCode: asset.itemCode,
     fixedAssetName: asset.description,
     label: `Activo fijo: ${asset.itemCode} - ${asset.description}`,
@@ -278,7 +281,7 @@ export default function NuevaSolicitud() {
 
     setItems((current) =>
       current.map((item) =>
-        item.targetSelection?.targetType === "subproyecto" &&
+        item.targetSelection &&
         item.targetSelection.projectId !== effectiveProjectIdNumber
           ? { ...item, targetSelection: null }
           : item

@@ -21,6 +21,7 @@ import {
   invoices,
   invoiceItems,
   invoiceRetentions,
+  taxRetentions,
   warehouseExits,
   warehouseExitItems,
   openingBalances,
@@ -56,6 +57,7 @@ import type {
   InsertInvoice,
   InsertInvoiceItem,
   InsertInvoiceRetention,
+  InsertTaxRetention,
   InsertWarehouseExit,
   InsertWarehouseExitItem,
   InsertOpeningBalance,
@@ -78,6 +80,7 @@ import { ENV } from "./_core/env";
 import {
   buildEmailPreview,
   buildProcurementPdfBase64,
+  buildPurchaseOrderPrintPdfBase64,
   buildSimplePdfBase64,
 } from "./_core/documents";
 import {
@@ -120,6 +123,10 @@ function parseDecimal(value: string | number | null | undefined) {
 
 function toDecimalString(value: string | number | null | undefined) {
   return parseDecimal(value).toFixed(2);
+}
+
+function toRateString(value: string | number | null | undefined) {
+  return parseDecimal(value).toFixed(4);
 }
 
 function roundMoney(value: string | number | null | undefined) {
@@ -474,6 +481,32 @@ export async function getLatestSupplierPurchasePrices(params: {
 function formatDateLabel(date: Date | string | null | undefined) {
   if (!date) return "Sin fecha";
   return new Date(date).toLocaleDateString("es-HN");
+}
+
+function formatPrintDateLabel(date: Date | string | null | undefined) {
+  if (!date) return "-";
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return "-";
+  return parsed.toLocaleDateString("es-HN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+function formatPrintNumberLabel(value: string | number | null | undefined) {
+  const parsed = parseDecimal(value);
+  return parsed.toLocaleString("es-HN", {
+    minimumFractionDigits: Number.isInteger(parsed) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatPrintMoneyLabel(value: string | number | null | undefined) {
+  return parseDecimal(value).toLocaleString("es-HN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function buildPurchaseOrderSummaryRows(items: Array<{
@@ -857,6 +890,7 @@ export async function listMaterialRequestTargetOptions(
   const fixedAssetConditions = [
     eq(sapCatalog.isActive, true),
     eq(sapCatalog.tipoArticulo, 3),
+    eq(sapCatalog.projectId, projectId),
   ];
 
   if (normalizedSearch) {
@@ -893,23 +927,30 @@ export async function listMaterialRequestTargetOptions(
   return { subprojects, fixedAssets };
 }
 
-export async function getActiveFixedAssetByCode(itemCode: string) {
+export async function getActiveFixedAssetByCode(
+  itemCode: string,
+  projectId?: number
+) {
   const db = await getDb();
   if (!db) return undefined;
 
   const normalizedItemCode = itemCode.trim();
   if (!normalizedItemCode) return undefined;
 
+  const conditions = [
+    eq(sapCatalog.isActive, true),
+    eq(sapCatalog.tipoArticulo, 3),
+    eq(sapCatalog.itemCode, normalizedItemCode),
+  ];
+
+  if (projectId) {
+    conditions.push(eq(sapCatalog.projectId, projectId));
+  }
+
   const rows = await db
     .select()
     .from(sapCatalog)
-    .where(
-      and(
-        eq(sapCatalog.isActive, true),
-        eq(sapCatalog.tipoArticulo, 3),
-        eq(sapCatalog.itemCode, normalizedItemCode)
-      )
-    )
+    .where(and(...conditions))
     .limit(1);
 
   return rows[0];
@@ -3022,84 +3063,91 @@ function buildPurchaseRequestDocument(params: {
 
 function buildPurchaseOrderDocument(params: {
   orderNumber: string;
+  orderId?: string | number | null;
   classification: string;
   status?: string | null;
   projectLabel: string;
   supplierLabel: string;
+  createdAt?: Date | string | null | undefined;
   neededBy: Date | string | null | undefined;
   printedAt?: Date | string | null | undefined;
+  destinationLabel?: string | null;
+  requestedByLabel?: string | null;
+  observations?: string | null;
+  quoteLabel?: string | null;
   items: Array<{
     itemName: string;
     currentSapItemCode?: string | null;
+    originalSapItemCode?: string | null;
     quantity: string | number;
     unit?: string | null;
     unitPrice?: string | number | null;
     taxCode?: string | null;
   }>;
 }) {
-  const isDraft =
-    !params.status ||
-    !["emitida", "enviada", "parcialmente_recibida", "recibida"].includes(params.status);
+  const summary = summarizePurchaseOrderLines(
+    params.items.map((item) => ({
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      taxCode: item.taxCode,
+    }))
+  );
 
-  return buildProcurementPdfBase64({
-    title: "Orden de Compra",
-    documentNumber: params.orderNumber,
-    badgeText: params.classification.toUpperCase(),
-    primaryFields: [
+  return buildPurchaseOrderPrintPdfBase64({
+    orderNumber: params.orderNumber,
+    orderId: String(params.orderId ?? params.orderNumber),
+    projectLabel: params.projectLabel,
+    supplierLabel: params.supplierLabel,
+    createdDateLabel: formatPrintDateLabel(params.createdAt ?? params.printedAt ?? new Date()),
+    destinationLabel: params.destinationLabel?.trim() || params.projectLabel,
+    deliveryDateLabel: params.neededBy ? formatPrintDateLabel(params.neededBy) : "INMEDIATA",
+    requestedByLabel: params.requestedByLabel?.trim() || "-",
+    observations: params.observations?.trim() || "-",
+    quoteLabel: params.quoteLabel?.trim() || "-",
+    items: params.items.map((item, index) => {
+      const amounts = calculatePurchaseOrderLineAmounts({
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        taxCode: item.taxCode,
+      });
+
+      return {
+        itemNumber: String(index + 1),
+        description: item.itemName,
+        partNumber: item.currentSapItemCode || item.originalSapItemCode || "-",
+        quantityLabel: formatPrintNumberLabel(item.quantity),
+        unitPriceLabel: formatPrintMoneyLabel(item.unitPrice),
+        subtotalLabel: formatPrintMoneyLabel(amounts.subtotal),
+      };
+    }),
+    summaryRows: [
       {
-        label: "Proyecto",
-        value: params.projectLabel,
+        label: "Subtotal",
+        value: formatPrintMoneyLabel(summary.subtotal),
       },
       {
-        label: "Proveedor",
-        value: params.supplierLabel,
+        label: "ISV 15%",
+        value: formatPrintMoneyLabel(summary.totalIsv),
+      },
+      {
+        label: "Total",
+        value: formatPrintMoneyLabel(summary.total),
+        emphasized: true,
+      },
+      {
+        label: "(-) Ret. ISV",
+        value: "0.00",
+      },
+      {
+        label: "(-) Ret. ISR y Hon.",
+        value: "0.00",
+      },
+      {
+        label: "Neto Pagar",
+        value: formatPrintMoneyLabel(summary.total),
+        emphasized: true,
       },
     ],
-    secondaryFields: [
-      {
-        label: "Clasificación",
-        value: params.classification.toUpperCase(),
-      },
-      {
-        label: "Fecha necesaria",
-        value: formatDateLabel(params.neededBy),
-      },
-      {
-        label: "Generado",
-        value: formatDateLabel(params.printedAt ?? new Date()),
-      },
-    ],
-    items: params.items.map((item) => ({
-      description: item.itemName,
-      quantityLabel: `${item.quantity} ${item.unit ?? ""}`.trim(),
-      amountLabel: formatPurchaseOrderCurrency(
-        calculatePurchaseOrderLineAmounts({
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          taxCode: item.taxCode,
-        }).total
-      ),
-      metaLines: [
-        ...(item.currentSapItemCode ? [`SAP: ${item.currentSapItemCode}`] : []),
-        [
-          `Precio unitario: ${formatPurchaseOrderCurrency(item.unitPrice)}`,
-          `Impuesto: ${getPurchaseOrderTaxMeta(item.taxCode).shortLabel}`,
-          `Total linea: ${formatPurchaseOrderCurrency(
-            calculatePurchaseOrderLineAmounts({
-              quantity: item.quantity,
-              unitPrice: item.unitPrice,
-              taxCode: item.taxCode,
-            }).total
-          )}`,
-        ].join(" | "),
-      ],
-    })),
-    summaryRows: buildPurchaseOrderSummaryRows(params.items),
-    generatedLabel: formatDateLabel(params.printedAt ?? new Date()),
-    footerNote: isDraft
-      ? "Documento generado en borrador por BuildReq."
-      : "Orden emitida automáticamente por BuildReq.",
-    watermarkText: isDraft ? "BORRADOR" : undefined,
   });
 }
 
@@ -3298,11 +3346,27 @@ export async function getPurchaseRequestById(id: number) {
     .limit(1);
 
   if (!rows[0]) return undefined;
+  const itemRows = await db
+    .select({
+      item: purchaseRequestItems,
+      sourceItem: requestItems,
+      sourceRequest: materialRequests,
+      sourceProject: projects,
+      sourceSubproject: projectSubprojects,
+    })
+    .from(purchaseRequestItems)
+    .leftJoin(requestItems, eq(purchaseRequestItems.materialRequestItemId, requestItems.id))
+    .leftJoin(materialRequests, eq(requestItems.requestId, materialRequests.id))
+    .leftJoin(projects, eq(materialRequests.projectId, projects.id))
+    .leftJoin(projectSubprojects, eq(requestItems.subProjectId, projectSubprojects.id))
+    .where(eq(purchaseRequestItems.purchaseRequestId, id));
+
   const userIds = Array.from(
     new Set(
       [
         rows[0].materialRequest?.requestedById,
         rows[0].purchaseRequest.createdById,
+        ...itemRows.map((row) => row.sourceRequest?.requestedById),
       ].filter((value): value is number => typeof value === "number")
     )
   );
@@ -3312,18 +3376,6 @@ export async function getPurchaseRequestById(id: number) {
       : [];
   const usersById = new Map(userRows.map((user) => [user.id, user]));
 
-  const itemRows = await db
-    .select({
-      item: purchaseRequestItems,
-      sourceRequest: materialRequests,
-      sourceProject: projects,
-    })
-    .from(purchaseRequestItems)
-    .leftJoin(requestItems, eq(purchaseRequestItems.materialRequestItemId, requestItems.id))
-    .leftJoin(materialRequests, eq(requestItems.requestId, materialRequests.id))
-    .leftJoin(projects, eq(materialRequests.projectId, projects.id))
-    .where(eq(purchaseRequestItems.purchaseRequestId, id));
-
   const items = itemRows.map((row) => ({
     ...row.item,
     pendingConversionQuantity: toDecimalString(
@@ -3331,6 +3383,9 @@ export async function getPurchaseRequestById(id: number) {
     ),
     sourceRequest: row.sourceRequest,
     sourceProject: row.sourceProject,
+    sourceTarget: row.sourceItem
+      ? mapMaterialRequestTarget(row.sourceItem, row.sourceSubproject)
+      : null,
   }));
 
   const sourceProjects = itemRows.reduce<
@@ -3358,8 +3413,11 @@ export async function getPurchaseRequestById(id: number) {
             label: `${sourceProjects[0].code ?? ""} — ${sourceProjects[0].name ?? ""}`
               .replace(/^ — /, "")
               .trim(),
-          }
-        : null;
+        }
+      : null;
+  const sourceRequestedById = itemRows.find(
+    (row) => row.sourceRequest?.requestedById
+  )?.sourceRequest?.requestedById;
 
   const printedDocumentContent = buildPurchaseRequestDocument({
     requestNumber: rows[0].purchaseRequest.requestNumber,
@@ -3392,7 +3450,9 @@ export async function getPurchaseRequestById(id: number) {
     sourceProjects,
     requestedBy: rows[0].materialRequest?.requestedById
       ? usersById.get(rows[0].materialRequest.requestedById) ?? null
-      : null,
+      : sourceRequestedById
+        ? usersById.get(sourceRequestedById) ?? null
+        : null,
     createdBy: usersById.get(rows[0].purchaseRequest.createdById) ?? null,
     items,
   };
@@ -3608,17 +3668,45 @@ export async function createPurchaseOrder(
   );
   const project = await getProjectById(data.projectId);
   const supplier = data.supplierId ? await getSupplierById(data.supplierId) : null;
+  const [sourcePurchaseRequest] = data.purchaseRequestId
+    ? await db
+        .select()
+        .from(purchaseRequests)
+        .where(eq(purchaseRequests.id, data.purchaseRequestId))
+        .limit(1)
+    : [null];
+  const [createdBy] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, data.createdById))
+    .limit(1);
+  const printedAt = new Date();
+  const projectLabel = project
+    ? `${project.code ?? ""} ${project.name ?? ""}`.trim()
+    : `Proyecto ${data.projectId}`;
   const printedDocumentContent = buildPurchaseOrderDocument({
     orderNumber,
+    orderId: orderNumber,
     classification: data.classification ?? "oc",
     status: data.status ?? "emitida",
-    projectLabel: project ? `${project.code} - ${project.name}` : `Proyecto ${data.projectId}`,
+    projectLabel,
     supplierLabel: supplier?.name ?? "Proveedor pendiente",
+    createdAt: printedAt,
     neededBy: data.neededBy,
-    printedAt: new Date(),
+    printedAt,
+    destinationLabel:
+      sourcePurchaseRequest?.printDestination?.trim() ||
+      project?.name ||
+      projectLabel,
+    requestedByLabel: createdBy?.name ?? "-",
+    observations: data.notes,
+    quoteLabel: sourcePurchaseRequest?.quoteAttachmentId
+      ? String(sourcePurchaseRequest.quoteAttachmentId)
+      : "-",
     items: items.map((item) => ({
       itemName: item.itemName,
       currentSapItemCode: item.currentSapItemCode,
+      originalSapItemCode: item.originalSapItemCode,
       quantity: item.quantity,
       unit: item.unit,
       unitPrice: item.unitPrice,
@@ -3634,7 +3722,7 @@ export async function createPurchaseOrder(
       printedDocumentName: `${orderNumber}.pdf`,
       printedDocumentMimeType: "application/pdf",
       printedDocumentContent,
-      printedAt: new Date(),
+      printedAt,
       supplierEmail: data.supplierEmail ?? supplier?.email ?? null,
       status: data.status ?? "emitida",
     })
@@ -3706,20 +3794,33 @@ export async function getPurchaseOrderById(id: number) {
     .select()
     .from(purchaseOrderItems)
     .where(eq(purchaseOrderItems.purchaseOrderId, id));
+  const projectLabel = rows[0].project
+    ? `${rows[0].project.code ?? ""} ${rows[0].project.name ?? ""}`.trim()
+    : `Proyecto ${rows[0].purchaseOrder.projectId}`;
 
   const printedDocumentContent = buildPurchaseOrderDocument({
     orderNumber: rows[0].purchaseOrder.orderNumber,
+    orderId: rows[0].purchaseOrder.id,
     classification: rows[0].purchaseOrder.classification,
     status: rows[0].purchaseOrder.status,
-    projectLabel: rows[0].project
-      ? `${rows[0].project.code} - ${rows[0].project.name}`
-      : `Proyecto ${rows[0].purchaseOrder.projectId}`,
+    projectLabel,
     supplierLabel: rows[0].supplier?.name ?? "Proveedor pendiente",
+    createdAt: rows[0].purchaseOrder.createdAt,
     neededBy: rows[0].purchaseOrder.neededBy,
     printedAt: rows[0].purchaseOrder.printedAt,
+    destinationLabel:
+      rows[0].purchaseRequest?.printDestination?.trim() ||
+      rows[0].project?.name ||
+      projectLabel,
+    requestedByLabel: rows[0].createdBy?.name ?? "-",
+    observations: rows[0].purchaseOrder.notes,
+    quoteLabel: rows[0].purchaseRequest?.quoteAttachmentId
+      ? String(rows[0].purchaseRequest.quoteAttachmentId)
+      : "-",
     items: items.map((item) => ({
       itemName: item.itemName,
       currentSapItemCode: item.currentSapItemCode,
+      originalSapItemCode: item.originalSapItemCode,
       quantity: item.quantity,
       unit: item.unit,
       unitPrice: item.unitPrice,
@@ -4987,6 +5088,142 @@ export async function getReceiptById(id: number) {
   return { ...rows[0], items };
 }
 
+// ============================================================
+// TAX RETENTIONS
+// ============================================================
+export type TaxRetentionListFilters = {
+  search?: string;
+  isActive?: boolean;
+  page?: number;
+  pageSize?: number;
+};
+
+function buildTaxRetentionWhere(filters?: TaxRetentionListFilters) {
+  const conditions = [];
+
+  if (filters?.search?.trim()) {
+    const search = `%${filters.search.trim()}%`;
+    conditions.push(
+      or(
+        ilike(taxRetentions.taxCode, search),
+        ilike(taxRetentions.description, search),
+        ilike(taxRetentions.erpCode, search),
+        ilike(taxRetentions.note, search)
+      )!
+    );
+  }
+
+  if (filters?.isActive !== undefined) {
+    conditions.push(eq(taxRetentions.isActive, filters.isActive));
+  }
+
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
+export async function listTaxRetentions(filters?: TaxRetentionListFilters) {
+  const db = await getDb();
+  const requestedPage = Math.max(filters?.page ?? 1, 1);
+  const pageSize = Math.min(Math.max(filters?.pageSize ?? 25, 10), 200);
+
+  if (!db) {
+    return {
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize,
+      totalPages: 1,
+    };
+  }
+
+  const where = buildTaxRetentionWhere(filters);
+  const [totalResult] = await db
+    .select({ count: count() })
+    .from(taxRetentions)
+    .where(where);
+  const total = totalResult?.count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(requestedPage, totalPages);
+  const offset = (page - 1) * pageSize;
+
+  const items = await db
+    .select()
+    .from(taxRetentions)
+    .where(where)
+    .orderBy(asc(taxRetentions.taxCode))
+    .limit(pageSize)
+    .offset(offset);
+
+  return {
+    items,
+    total,
+    page,
+    pageSize,
+    totalPages,
+  };
+}
+
+export async function listActiveTaxRetentions() {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db
+    .select()
+    .from(taxRetentions)
+    .where(eq(taxRetentions.isActive, true))
+    .orderBy(asc(taxRetentions.taxCode));
+}
+
+export async function createTaxRetention(
+  data: Pick<
+    InsertTaxRetention,
+    "taxCode" | "description" | "ratePercent" | "isActive" | "note" | "erpCode"
+  >
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [retention] = await db
+    .insert(taxRetentions)
+    .values({
+      ...data,
+      ratePercent: toRateString(data.ratePercent),
+    })
+    .returning();
+
+  return retention;
+}
+
+export async function updateTaxRetention(
+  id: number,
+  data: Partial<
+    Pick<
+      InsertTaxRetention,
+      "taxCode" | "description" | "ratePercent" | "isActive" | "note" | "erpCode"
+    >
+  >
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [retention] = await db
+    .update(taxRetentions)
+    .set({
+      ...data,
+      ...(data.ratePercent !== undefined
+        ? { ratePercent: toRateString(data.ratePercent) }
+        : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(taxRetentions.id, id))
+    .returning();
+
+  if (!retention) {
+    throw new Error("Retención no encontrada");
+  }
+
+  return retention;
+}
+
 export async function listInvoices(filters?: {
   projectId?: number;
   status?: string;
@@ -5102,11 +5339,8 @@ export async function updateInvoice(
 export async function replaceInvoiceRetentions(
   invoiceId: number,
   retentions: Array<{
-    retentionType: "percentage" | "amount";
-    description: string;
+    retentionCatalogId: number;
     baseAmount?: string | number | null;
-    percentage?: string | number | null;
-    amount?: string | number | null;
   }>
 ) {
   const db = await getDb();
@@ -5147,37 +5381,66 @@ export async function replaceInvoiceRetentions(
       );
     }
 
+    const requestedRetentionIds = Array.from(
+      new Set(retentions.map((retention) => retention.retentionCatalogId))
+    );
+    const [catalogRows, existingRows] = await Promise.all([
+      requestedRetentionIds.length > 0
+        ? tx
+            .select()
+            .from(taxRetentions)
+            .where(inArray(taxRetentions.id, requestedRetentionIds))
+        : Promise.resolve([]),
+      tx
+        .select({
+          retentionCatalogId: invoiceRetentions.retentionCatalogId,
+        })
+        .from(invoiceRetentions)
+        .where(eq(invoiceRetentions.invoiceId, invoiceId)),
+    ]);
+    const catalogById = new Map(
+      catalogRows.map((retention) => [retention.id, retention])
+    );
+    const existingCatalogIds = new Set(
+      existingRows
+        .map((retention) => retention.retentionCatalogId)
+        .filter((value): value is number => typeof value === "number")
+    );
+
     const normalizedRetentions = retentions.map((retention) => {
-      const baseAmount =
-        retention.retentionType === "percentage"
-          ? parseDecimal(retention.baseAmount ?? withholdingBase)
-          : parseDecimal(retention.baseAmount);
+      const catalogRetention = catalogById.get(retention.retentionCatalogId);
       if (
-        retention.retentionType === "percentage" &&
-        baseAmount - withholdingBase > 0.000001
+        !catalogRetention ||
+        (!catalogRetention.isActive &&
+          !existingCatalogIds.has(retention.retentionCatalogId))
       ) {
+        throw new Error("La retención seleccionada no existe o está inactiva");
+      }
+
+      const baseAmount = parseDecimal(retention.baseAmount ?? withholdingBase);
+      if (baseAmount <= 0) {
+        throw new Error("La base de retención debe ser mayor que cero");
+      }
+      if (baseAmount - withholdingBase > 0.000001) {
         throw new Error(
           "La base de retención no puede exceder la base retenible de la factura"
         );
       }
-      const percentage =
-        retention.retentionType === "percentage"
-          ? parseDecimal(retention.percentage)
-          : null;
-      const amount =
-        retention.retentionType === "percentage"
-          ? roundMoney((baseAmount * (percentage ?? 0)) / 100)
-          : roundMoney(parseDecimal(retention.amount));
+      const percentage = parseDecimal(catalogRetention.ratePercent);
+      const amount = roundMoney((baseAmount * percentage) / 100);
+      if (amount <= 0) {
+        throw new Error("El monto de la retención debe ser mayor que cero");
+      }
 
       return {
         invoiceId,
-        retentionType: retention.retentionType,
-        description: retention.description.trim(),
+        retentionCatalogId: catalogRetention.id,
+        retentionCode: catalogRetention.taxCode,
+        retentionErpCode: catalogRetention.erpCode,
+        retentionType: "percentage" as const,
+        description: catalogRetention.description,
         baseAmount: toDecimalString(baseAmount),
-        percentage:
-          retention.retentionType === "percentage"
-            ? toDecimalString(percentage)
-            : null,
+        percentage: toRateString(percentage),
         amount: toDecimalString(amount),
       };
     });
@@ -8696,6 +8959,7 @@ export async function updateArticle(
   id: number,
   data: {
     tipoArticulo?: ArticleType;
+    projectId?: number | null;
     isActive?: boolean;
     allowsTaxWithholding?: boolean;
   }
