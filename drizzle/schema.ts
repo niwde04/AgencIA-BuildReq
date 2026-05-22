@@ -838,9 +838,9 @@ export const invoices = pgTable(
   (table) => ({
     receiptIdx: uniqueIndex("inv_receipt_idx").on(table.receiptId),
     purchaseOrderIdx: index("inv_purchase_order_idx").on(table.purchaseOrderId),
-    projectIdx: index("inv_project_idx").on(table.projectId),
+    projectIdx: index("invoice_project_idx").on(table.projectId),
     supplierIdx: index("inv_supplier_idx").on(table.supplierId),
-    statusIdx: index("inv_status_idx").on(table.status),
+    statusIdx: index("invoice_status_idx").on(table.status),
   })
 );
 
