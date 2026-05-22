@@ -1,6 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
-import { downloadBase64Document } from "@/lib/document-download";
 import {
   calculatePurchaseOrderLineAmounts,
   formatPurchaseOrderCurrency,
@@ -27,7 +26,6 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   CalendarDays,
-  Download,
   Eye,
   FileText,
   FileUp,
@@ -1553,22 +1551,6 @@ export default function PurchaseRequests() {
 
               <div className="sticky bottom-0 z-10 flex flex-col gap-4 rounded-2xl border border-border/70 bg-card/95 p-4 shadow-sm backdrop-blur xl:flex-row xl:items-start xl:justify-between">
                 <div className="flex min-w-0 flex-wrap gap-3">
-                  <Button
-                    variant="outline"
-                    className="h-11 px-4"
-                    onClick={() => {
-                      const downloaded = downloadBase64Document({
-                        base64: detail.purchaseRequest.printedDocumentContent,
-                        fileName: detail.purchaseRequest.printedDocumentName,
-                        mimeType: detail.purchaseRequest.printedDocumentMimeType,
-                      });
-                      if (!downloaded) toast.error("La SC no tiene documento generado");
-                    }}
-                  >
-                    <Download className="mr-2 h-4 w-4" />
-                    Descargar documento
-                  </Button>
-
                   <Button
                     variant="outline"
                     className="h-11 px-4"
