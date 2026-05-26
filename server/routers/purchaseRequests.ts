@@ -16,11 +16,18 @@ function canAccessPurchaseRequests(user: {
 }
 
 function assertProjectScopedAccess(
-  user: { role: string; buildreqRole?: string | null; assignedProjectId?: number | null },
+  user: {
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+  },
   projectId: number
 ) {
   if (user.role === "admin") return;
-  if (user.buildreqRole === "administrador_proyecto" && user.assignedProjectId !== projectId) {
+  if (
+    user.buildreqRole === "administrador_proyecto" &&
+    user.assignedProjectId !== projectId
+  ) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene acceso a solicitudes de compra de otro proyecto",
@@ -42,7 +49,7 @@ const purchaseRequestQuantitySchema = z
   .string()
   .trim()
   .min(1)
-  .refine((value) => Number.isFinite(Number(value)) && Number(value) > 0, {
+  .refine(value => Number.isFinite(Number(value)) && Number(value) > 0, {
     message: "La cantidad debe ser un numero mayor que cero",
   });
 
@@ -50,11 +57,16 @@ const purchaseRequestUnitPriceSchema = z
   .string()
   .trim()
   .min(1)
-  .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0, {
+  .refine(value => Number.isFinite(Number(value)) && Number(value) >= 0, {
     message: "El precio debe ser un numero valido",
   });
 
-const optionalPrintTextSchema = z.string().trim().max(500).nullable().optional();
+const optionalPrintTextSchema = z
+  .string()
+  .trim()
+  .max(500)
+  .nullable()
+  .optional();
 
 const purchaseRequestItemSchema = z.object({
   materialRequestItemId: z.number().optional(),
@@ -66,16 +78,96 @@ const purchaseRequestItemSchema = z.object({
   unitPrice: purchaseRequestUnitPriceSchema.optional(),
   brand: z.string().trim().max(255).nullable().optional(),
   costResponsible: z.string().trim().max(255).nullable().optional(),
+  targetType: z.enum(["subproyecto", "activo_fijo"]).nullable().optional(),
+  subProjectId: z.number().int().positive().nullable().optional(),
+  fixedAssetSapItemCode: z.string().nullable().optional(),
+  fixedAssetName: z.string().nullable().optional(),
   notes: z.string().optional(),
 });
 const purchaseRequestItemUpdateSchema = z.object({
   id: z.number(),
   quantity: purchaseRequestQuantitySchema,
-  unitPrice: purchaseRequestUnitPriceSchema,
+  unitPrice: purchaseRequestUnitPriceSchema.optional(),
   brand: z.string().trim().max(255).nullable().optional(),
   costResponsible: z.string().trim().max(255).nullable().optional(),
+  targetType: z.enum(["subproyecto", "activo_fijo"]).nullable().optional(),
+  subProjectId: z.number().int().positive().nullable().optional(),
+  fixedAssetSapItemCode: z.string().nullable().optional(),
+  fixedAssetName: z.string().nullable().optional(),
 });
 const purchaseTypeSchema = z.enum(["local", "extranjera", "compra_directa"]);
+
+async function resolvePurchaseRequestItemTarget(input: {
+  projectId: number;
+  targetType?: "subproyecto" | "activo_fijo" | null;
+  subProjectId?: number | null;
+  fixedAssetSapItemCode?: string | null;
+}) {
+  if (!input.targetType) {
+    return {
+      targetType: null,
+      subProjectId: null,
+      fixedAssetSapItemCode: null,
+      fixedAssetName: null,
+    };
+  }
+
+  if (input.targetType === "subproyecto") {
+    if (!input.subProjectId) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Seleccione un subproyecto válido",
+      });
+    }
+
+    const subproject = await db.getProjectSubprojectById(input.subProjectId);
+    if (
+      !subproject ||
+      subproject.projectId !== input.projectId ||
+      !subproject.isActive
+    ) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message:
+          "El subproyecto seleccionado no pertenece al proyecto o está inactivo",
+      });
+    }
+
+    return {
+      targetType: "subproyecto" as const,
+      subProjectId: subproject.id,
+      fixedAssetSapItemCode: null,
+      fixedAssetName: null,
+    };
+  }
+
+  const fixedAssetSapItemCode = input.fixedAssetSapItemCode?.trim();
+  if (!fixedAssetSapItemCode) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Seleccione un activo fijo válido",
+    });
+  }
+
+  const fixedAsset = await db.getActiveFixedAssetByCode(
+    fixedAssetSapItemCode,
+    input.projectId
+  );
+  if (!fixedAsset) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "El activo fijo seleccionado no existe, está inactivo, no es activo fijo o no pertenece al proyecto",
+    });
+  }
+
+  return {
+    targetType: "activo_fijo" as const,
+    subProjectId: null,
+    fixedAssetSapItemCode: fixedAsset.itemCode,
+    fixedAssetName: fixedAsset.description,
+  };
+}
 
 export const purchaseRequestsRouter = router({
   list: protectedProcedure
@@ -97,7 +189,7 @@ export const purchaseRequestsRouter = router({
 
       const projectId =
         ctx.user.buildreqRole === "administrador_proyecto"
-          ? ctx.user.assignedProjectId ?? -1
+          ? (ctx.user.assignedProjectId ?? -1)
           : input?.projectId;
 
       return db.listPurchaseRequests({
@@ -150,6 +242,32 @@ export const purchaseRequestsRouter = router({
 
       assertProjectScopedAccess(ctx.user, input.projectId);
 
+      const items = await Promise.all(
+        input.items.map(async item => {
+          const target = await resolvePurchaseRequestItemTarget({
+            projectId: input.projectId,
+            targetType: item.targetType,
+            subProjectId: item.subProjectId,
+            fixedAssetSapItemCode: item.fixedAssetSapItemCode,
+          });
+
+          return {
+            materialRequestItemId: item.materialRequestItemId ?? null,
+            originalSapItemCode: item.originalSapItemCode,
+            currentSapItemCode: item.currentSapItemCode,
+            itemName: item.itemName,
+            quantity: item.quantity,
+            receivedQuantity: "0.00",
+            unit: item.unit,
+            unitPrice: item.unitPrice ?? "0.00",
+            brand: item.brand ?? null,
+            costResponsible: item.costResponsible ?? null,
+            ...target,
+            notes: item.notes,
+          };
+        })
+      );
+
       return db.createPurchaseRequest(
         {
           materialRequestId: input.materialRequestId ?? null,
@@ -169,19 +287,7 @@ export const purchaseRequestsRouter = router({
           printedAt: null,
           quoteAttachmentId: null,
         },
-        input.items.map((item) => ({
-          materialRequestItemId: item.materialRequestItemId ?? null,
-          originalSapItemCode: item.originalSapItemCode,
-          currentSapItemCode: item.currentSapItemCode,
-          itemName: item.itemName,
-          quantity: item.quantity,
-          receivedQuantity: "0.00",
-          unit: item.unit,
-          unitPrice: item.unitPrice ?? "0.00",
-          brand: item.brand ?? null,
-          costResponsible: item.costResponsible ?? null,
-          notes: item.notes,
-        }))
+        items
       );
     }),
 
@@ -256,17 +362,36 @@ export const purchaseRequestsRouter = router({
       });
 
       await Promise.all(
-        itemUpdates.map((itemUpdate) =>
-          db.updatePurchaseRequestItem(itemUpdate.id, {
+        itemUpdates.map(async itemUpdate => {
+          const existingItem = itemById.get(itemUpdate.id);
+          const itemProjectId =
+            existingItem?.sourceProject?.id ?? detail.purchaseRequest.projectId;
+          const hasTargetUpdate =
+            "targetType" in itemUpdate ||
+            "subProjectId" in itemUpdate ||
+            "fixedAssetSapItemCode" in itemUpdate;
+          const target = hasTargetUpdate
+            ? await resolvePurchaseRequestItemTarget({
+                projectId: itemProjectId,
+                targetType: itemUpdate.targetType,
+                subProjectId: itemUpdate.subProjectId,
+                fixedAssetSapItemCode: itemUpdate.fixedAssetSapItemCode,
+              })
+            : {};
+
+          return db.updatePurchaseRequestItem(itemUpdate.id, {
             quantity: itemUpdate.quantity,
-            unitPrice: itemUpdate.unitPrice,
-            brand: "brand" in itemUpdate ? itemUpdate.brand ?? null : undefined,
+            unitPrice:
+              "unitPrice" in itemUpdate ? itemUpdate.unitPrice : undefined,
+            brand:
+              "brand" in itemUpdate ? (itemUpdate.brand ?? null) : undefined,
             costResponsible:
               "costResponsible" in itemUpdate
-                ? itemUpdate.costResponsible ?? null
+                ? (itemUpdate.costResponsible ?? null)
                 : undefined,
-          })
-        )
+            ...target,
+          });
+        })
       );
 
       await db.syncPurchaseRequestConversionStatus(input.id);

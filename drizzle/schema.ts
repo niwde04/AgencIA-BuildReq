@@ -25,6 +25,7 @@ export const buildreqRoleEnum = pgEnum("buildreq_role", [
   "administracion_central",
   "administrador_proyecto",
   "bodeguero_proyecto",
+  "contable",
 ]);
 export const projectStatusEnum = pgEnum("project_status", [
   "activo",
@@ -142,6 +143,10 @@ export const purchaseOrderClassificationEnum = pgEnum(
   "purchase_order_classification",
   ["oc", "cd"]
 );
+export const contractPaymentFrequencyEnum = pgEnum(
+  "contract_payment_frequency",
+  ["semanal", "quincenal", "mensual", "trimestral", "semestral", "anual"]
+);
 export const purchaseOrderStatusEnum = pgEnum("purchase_order_status", [
   "borrador",
   "emitida",
@@ -159,10 +164,10 @@ export const documentDeliveryStatusEnum = pgEnum("document_delivery_status", [
   "enviado",
   "fallido",
 ]);
-export const transferDestinationTypeEnum = pgEnum(
-  "transfer_destination_type",
-  ["proyecto", "bodega_central"]
-);
+export const transferDestinationTypeEnum = pgEnum("transfer_destination_type", [
+  "proyecto",
+  "bodega_central",
+]);
 export const transferRequestStatusEnum = pgEnum("transfer_request_status", [
   "pendiente",
   "aprobada",
@@ -196,8 +201,18 @@ export const receiptSourceTypeEnum = pgEnum("receipt_source_type", [
 ]);
 export const invoiceStatusEnum = pgEnum("invoice_status", [
   "borrador",
+  "revisada",
+  "rechazada",
   "registrada",
   "anulada",
+]);
+export const supplierContactTypeEnum = pgEnum("supplier_contact_type", [
+  "ventas",
+  "compras",
+  "cobros",
+  "logistica",
+  "administracion",
+  "otro",
 ]);
 export const invoiceRetentionTypeEnum = pgEnum("invoice_retention_type", [
   "percentage",
@@ -218,6 +233,8 @@ export const attachmentEntityTypeEnum = pgEnum("attachment_entity_type", [
   "transfer_request",
   "transfer",
   "receipt",
+  "invoice",
+  "supplier",
 ]);
 export const attachmentCategoryEnum = pgEnum("attachment_category", [
   "factura",
@@ -253,6 +270,10 @@ export const invitationStatusEnum = pgEnum("invitation_status", [
   "expirada",
   "cancelada",
 ]);
+export const supplierDocumentExpirationModeEnum = pgEnum(
+  "supplier_document_expiration_mode",
+  ["required", "optional", "none"]
+);
 
 // ============================================================
 // USERS - Extended with BuildReq roles
@@ -280,23 +301,27 @@ export type InsertUser = typeof users.$inferInsert;
 // ============================================================
 // PROJECTS - Construction projects (up to 20 active)
 // ============================================================
-export const projects = pgTable("projects", {
-  id: serial("id").primaryKey(),
-  code: varchar("code", { length: 50 }).notNull().unique(),
-  name: varchar("name", { length: 255 }).notNull(),
-  description: text("description"),
-  location: varchar("location", { length: 255 }),
-  status: projectStatusEnum("status").default("activo").notNull(),
-  startDate: timestamp("startDate"),
-  endDate: timestamp("endDate"),
-  /** SAP B1 project code for future integration */
-  sapProjectCode: varchar("sapProjectCode", { length: 50 }),
-  demoBatchKey: varchar("demoBatchKey", { length: 64 }),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
-}, (table) => ({
-  demoBatchIdx: index("proj_demo_batch_idx").on(table.demoBatchKey),
-}));
+export const projects = pgTable(
+  "projects",
+  {
+    id: serial("id").primaryKey(),
+    code: varchar("code", { length: 50 }).notNull().unique(),
+    name: varchar("name", { length: 255 }).notNull(),
+    description: text("description"),
+    location: varchar("location", { length: 255 }),
+    status: projectStatusEnum("status").default("activo").notNull(),
+    startDate: timestamp("startDate"),
+    endDate: timestamp("endDate"),
+    /** SAP B1 project code for future integration */
+    sapProjectCode: varchar("sapProjectCode", { length: 50 }),
+    demoBatchKey: varchar("demoBatchKey", { length: 64 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    demoBatchIdx: index("proj_demo_batch_idx").on(table.demoBatchKey),
+  })
+);
 
 export type Project = typeof projects.$inferSelect;
 export type InsertProject = typeof projects.$inferInsert;
@@ -322,7 +347,7 @@ export const projectSubprojects = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     projectIdx: index("psp_project_idx").on(table.projectId),
     activeIdx: index("psp_active_idx").on(table.isActive),
     projectCodeUnique: uniqueIndex("psp_project_code_unique").on(
@@ -375,7 +400,7 @@ export const materialRequests = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     projectIdx: index("mr_project_idx").on(table.projectId),
     statusIdx: index("mr_status_idx").on(table.status),
     requestedByIdx: index("mr_requested_by_idx").on(table.requestedById),
@@ -409,17 +434,29 @@ export const requestItems = pgTable(
     /** SAP item description after translation */
     sapItemDescription: varchar("sapItemDescription", { length: 500 }),
     targetType: materialRequestTargetTypeEnum("targetType"),
-    subProjectId: integer("subProjectId").references(() => projectSubprojects.id, {
-      onDelete: "set null",
-    }),
+    subProjectId: integer("subProjectId").references(
+      () => projectSubprojects.id,
+      {
+        onDelete: "set null",
+      }
+    ),
     fixedAssetSapItemCode: varchar("fixedAssetSapItemCode", { length: 50 }),
     fixedAssetName: varchar("fixedAssetName", { length: 500 }),
     /** Which supply flow was assigned to this specific item */
     assignedFlow: flowTypeEnum("assignedFlow"),
     /** Quantity actually delivered/fulfilled */
-    deliveredQuantity: decimal("deliveredQuantity", { precision: 12, scale: 2 }),
-    dispatchedQuantity: decimal("dispatchedQuantity", { precision: 12, scale: 2 }),
-    committedQuantity: decimal("committedQuantity", { precision: 12, scale: 2 }),
+    deliveredQuantity: decimal("deliveredQuantity", {
+      precision: 12,
+      scale: 2,
+    }),
+    dispatchedQuantity: decimal("dispatchedQuantity", {
+      precision: 12,
+      scale: 2,
+    }),
+    committedQuantity: decimal("committedQuantity", {
+      precision: 12,
+      scale: 2,
+    }),
     projectStock: decimal("projectStock", { precision: 12, scale: 2 }),
     sapStock: decimal("sapStock", { precision: 12, scale: 2 }),
     warehouseExitNote: text("warehouseExitNote"),
@@ -428,7 +465,7 @@ export const requestItems = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     requestIdx: index("ri_request_idx").on(table.requestId),
     subProjectIdx: index("ri_subproject_idx").on(table.subProjectId),
     fixedAssetIdx: index("ri_fixed_asset_idx").on(table.fixedAssetSapItemCode),
@@ -478,7 +515,7 @@ export const supplyFlowRecords = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     requestIdx: index("sfr_request_idx").on(table.requestId),
     flowTypeIdx: index("sfr_flow_type_idx").on(table.flowType),
   })
@@ -507,17 +544,23 @@ export const purchaseRequests = pgTable(
     notes: text("notes"),
     rejectionReason: text("rejectionReason"),
     printedDocumentName: varchar("printedDocumentName", { length: 255 }),
-    printedDocumentMimeType: varchar("printedDocumentMimeType", { length: 100 }),
+    printedDocumentMimeType: varchar("printedDocumentMimeType", {
+      length: 100,
+    }),
     printedDocumentContent: text("printedDocumentContent"),
     printedAt: timestamp("printedAt"),
     quoteAttachmentId: integer("quoteAttachmentId"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     projectIdx: index("pr_project_idx").on(table.projectId),
-    materialRequestIdx: index("pr_material_request_idx").on(table.materialRequestId),
-    sourcePurchaseOrderIdx: index("pr_source_purchase_order_idx").on(table.sourcePurchaseOrderId),
+    materialRequestIdx: index("pr_material_request_idx").on(
+      table.materialRequestId
+    ),
+    sourcePurchaseOrderIdx: index("pr_source_purchase_order_idx").on(
+      table.sourcePurchaseOrderId
+    ),
     statusIdx: index("pr_status_idx").on(table.status),
   })
 );
@@ -546,17 +589,31 @@ export const purchaseRequestItems = pgTable(
       .notNull(),
     brand: varchar("brand", { length: 255 }),
     costResponsible: varchar("costResponsible", { length: 255 }),
+    targetType: materialRequestTargetTypeEnum("targetType"),
+    subProjectId: integer("subProjectId").references(
+      () => projectSubprojects.id,
+      {
+        onDelete: "set null",
+      }
+    ),
+    fixedAssetSapItemCode: varchar("fixedAssetSapItemCode", { length: 50 }),
+    fixedAssetName: varchar("fixedAssetName", { length: 500 }),
     notes: text("notes"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
-    purchaseRequestIdx: index("pri_purchase_request_idx").on(table.purchaseRequestId),
+  table => ({
+    purchaseRequestIdx: index("pri_purchase_request_idx").on(
+      table.purchaseRequestId
+    ),
+    subProjectIdx: index("pri_subproject_idx").on(table.subProjectId),
+    fixedAssetIdx: index("pri_fixed_asset_idx").on(table.fixedAssetSapItemCode),
   })
 );
 
 export type PurchaseRequestItem = typeof purchaseRequestItems.$inferSelect;
-export type InsertPurchaseRequestItem = typeof purchaseRequestItems.$inferInsert;
+export type InsertPurchaseRequestItem =
+  typeof purchaseRequestItems.$inferInsert;
 
 // ============================================================
 // PURCHASE ORDERS - Formal order module
@@ -579,7 +636,9 @@ export const purchaseOrders = pgTable(
     sapDocumentNumber: varchar("sapDocumentNumber", { length: 64 }),
     notes: text("notes"),
     printedDocumentName: varchar("printedDocumentName", { length: 255 }),
-    printedDocumentMimeType: varchar("printedDocumentMimeType", { length: 100 }),
+    printedDocumentMimeType: varchar("printedDocumentMimeType", {
+      length: 100,
+    }),
     printedDocumentContent: text("printedDocumentContent"),
     printedAt: timestamp("printedAt"),
     emailStatus: documentDeliveryStatusEnum("emailStatus")
@@ -587,12 +646,21 @@ export const purchaseOrders = pgTable(
       .notNull(),
     emailedAt: timestamp("emailedAt"),
     emailError: text("emailError"),
+    appliesContract: boolean("appliesContract").default(false).notNull(),
+    contractPaymentFrequency: contractPaymentFrequencyEnum(
+      "contractPaymentFrequency"
+    ),
+    contractFirstPaymentDate: timestamp("contractFirstPaymentDate"),
+    contractEndDate: timestamp("contractEndDate"),
+    contractExpiryNotifiedAt: timestamp("contractExpiryNotifiedAt"),
     createdById: integer("createdById").notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
-    purchaseRequestIdx: index("po_purchase_request_idx").on(table.purchaseRequestId),
+  table => ({
+    purchaseRequestIdx: index("po_purchase_request_idx").on(
+      table.purchaseRequestId
+    ),
     projectIdx: index("po_project_idx").on(table.projectId),
     statusIdx: index("po_status_idx").on(table.status),
   })
@@ -600,6 +668,34 @@ export const purchaseOrders = pgTable(
 
 export type PurchaseOrder = typeof purchaseOrders.$inferSelect;
 export type InsertPurchaseOrder = typeof purchaseOrders.$inferInsert;
+
+export const purchaseOrderAuditLogs = pgTable(
+  "purchaseOrderAuditLogs",
+  {
+    id: serial("id").primaryKey(),
+    purchaseOrderId: integer("purchaseOrderId").notNull(),
+    purchaseOrderItemId: integer("purchaseOrderItemId"),
+    action: varchar("action", { length: 80 }).notNull(),
+    field: varchar("field", { length: 100 }).notNull(),
+    oldValue: text("oldValue"),
+    newValue: text("newValue"),
+    changedById: integer("changedById").notNull(),
+    note: text("note"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => ({
+    purchaseOrderIdx: index("po_audit_order_idx").on(table.purchaseOrderId),
+    purchaseOrderItemIdx: index("po_audit_item_idx").on(
+      table.purchaseOrderItemId
+    ),
+    changedByIdx: index("po_audit_changed_by_idx").on(table.changedById),
+  })
+);
+
+export type PurchaseOrderAuditLog =
+  typeof purchaseOrderAuditLogs.$inferSelect;
+export type InsertPurchaseOrderAuditLog =
+  typeof purchaseOrderAuditLogs.$inferInsert;
 
 export const purchaseOrderItems = pgTable(
   "purchaseOrderItems",
@@ -626,7 +722,7 @@ export const purchaseOrderItems = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     purchaseOrderIdx: index("poi_purchase_order_idx").on(table.purchaseOrderId),
   })
 );
@@ -654,9 +750,11 @@ export const transferRequests = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     projectIdx: index("tr_project_idx").on(table.projectId),
-    materialRequestIdx: index("tr_material_request_idx").on(table.materialRequestId),
+    materialRequestIdx: index("tr_material_request_idx").on(
+      table.materialRequestId
+    ),
     statusIdx: index("tr_status_idx").on(table.status),
   })
 );
@@ -690,19 +788,24 @@ export const transferRequestItems = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
-    transferRequestIdx: index("tri_transfer_request_idx").on(table.transferRequestId),
+  table => ({
+    transferRequestIdx: index("tri_transfer_request_idx").on(
+      table.transferRequestId
+    ),
   })
 );
 
 export type TransferRequestItem = typeof transferRequestItems.$inferSelect;
-export type InsertTransferRequestItem = typeof transferRequestItems.$inferInsert;
+export type InsertTransferRequestItem =
+  typeof transferRequestItems.$inferInsert;
 
 export const transfers = pgTable(
   "transfers",
   {
     id: serial("id").primaryKey(),
-    transferNumber: varchar("transferNumber", { length: 64 }).notNull().unique(),
+    transferNumber: varchar("transferNumber", { length: 64 })
+      .notNull()
+      .unique(),
     transferRequestId: integer("transferRequestId").notNull(),
     status: transferStatusEnum("status").default("pendiente").notNull(),
     remissionGuideNumber: varchar("remissionGuideNumber", { length: 64 }),
@@ -712,8 +815,10 @@ export const transfers = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
-    transferRequestIdx: index("tf_transfer_request_idx").on(table.transferRequestId),
+  table => ({
+    transferRequestIdx: index("tf_transfer_request_idx").on(
+      table.transferRequestId
+    ),
     statusIdx: index("tf_status_idx").on(table.status),
   })
 );
@@ -733,7 +838,7 @@ export const remissionGuides = pgTable(
     documentContent: text("documentContent"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     transferIdx: index("rg_transfer_idx").on(table.transferId),
   })
 );
@@ -754,6 +859,7 @@ export const receipts = pgTable(
     projectId: integer("projectId").notNull(),
     receivedById: integer("receivedById").notNull(),
     status: receiptStatusEnum("status").default("pendiente").notNull(),
+    isFiscalDocument: boolean("isFiscalDocument").default(false).notNull(),
     cai: varchar("cai", { length: 100 }),
     invoiceNumber: varchar("invoiceNumber", { length: 100 }),
     documentDate: timestamp("documentDate"),
@@ -763,7 +869,7 @@ export const receipts = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     sourceIdx: index("rec_source_idx").on(table.sourceType, table.sourceId),
     projectIdx: index("rec_project_idx").on(table.projectId),
   })
@@ -779,13 +885,22 @@ export const receiptItems = pgTable(
     receiptId: integer("receiptId").notNull(),
     sourceItemId: integer("sourceItemId").notNull(),
     itemName: varchar("itemName", { length: 500 }).notNull(),
-    quantityExpected: decimal("quantityExpected", { precision: 12, scale: 2 }).notNull(),
-    quantityReceived: decimal("quantityReceived", { precision: 12, scale: 2 }).notNull(),
+    quantityExpected: decimal("quantityExpected", {
+      precision: 12,
+      scale: 2,
+    }).notNull(),
+    quantityReceived: decimal("quantityReceived", {
+      precision: 12,
+      scale: 2,
+    }).notNull(),
     unit: varchar("unit", { length: 50 }),
+    unitPrice: decimal("unitPrice", { precision: 12, scale: 2 })
+      .default("0.00")
+      .notNull(),
     notes: text("notes"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     receiptIdx: index("reci_receipt_idx").on(table.receiptId),
   })
 );
@@ -810,6 +925,7 @@ export const invoices = pgTable(
     projectId: integer("projectId").notNull(),
     supplierId: integer("supplierId"),
     status: invoiceStatusEnum("status").default("borrador").notNull(),
+    isFiscalDocument: boolean("isFiscalDocument").default(false).notNull(),
     cai: varchar("cai", { length: 100 }),
     invoiceNumber: varchar("invoiceNumber", { length: 100 }),
     documentDate: timestamp("documentDate"),
@@ -832,10 +948,18 @@ export const invoices = pgTable(
     netPayable: decimal("netPayable", { precision: 12, scale: 2 })
       .default("0.00")
       .notNull(),
+    reviewedById: integer("reviewedById"),
+    reviewedAt: timestamp("reviewedAt"),
+    accountedById: integer("accountedById"),
+    accountedAt: timestamp("accountedAt"),
+    accountingComment: text("accountingComment"),
+    rejectionComment: text("rejectionComment"),
+    rejectedById: integer("rejectedById"),
+    rejectedAt: timestamp("rejectedAt"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     receiptIdx: uniqueIndex("inv_receipt_idx").on(table.receiptId),
     purchaseOrderIdx: index("inv_purchase_order_idx").on(table.purchaseOrderId),
     projectIdx: index("invoice_project_idx").on(table.projectId),
@@ -863,7 +987,9 @@ export const invoiceItems = pgTable(
       .default("0.00")
       .notNull(),
     taxCode: purchaseOrderTaxCodeEnum("taxCode").default("exe").notNull(),
-    allowsTaxWithholding: boolean("allowsTaxWithholding").default(true).notNull(),
+    allowsTaxWithholding: boolean("allowsTaxWithholding")
+      .default(true)
+      .notNull(),
     subtotal: decimal("subtotal", { precision: 12, scale: 2 })
       .default("0.00")
       .notNull(),
@@ -875,7 +1001,7 @@ export const invoiceItems = pgTable(
       .notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     invoiceIdx: index("invi_invoice_idx").on(table.invoiceId),
     receiptItemIdx: uniqueIndex("invi_receipt_item_idx").on(
       table.receiptItemId
@@ -902,7 +1028,7 @@ export const taxRetentions = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     taxCodeIdx: uniqueIndex("tax_ret_tax_code_idx").on(table.taxCode),
     activeIdx: index("tax_ret_active_idx").on(table.isActive),
   })
@@ -916,6 +1042,9 @@ export const invoiceRetentions = pgTable(
   {
     id: serial("id").primaryKey(),
     invoiceId: integer("invoiceId").notNull(),
+    invoiceItemId: integer("invoiceItemId").references(() => invoiceItems.id, {
+      onDelete: "cascade",
+    }),
     retentionCatalogId: integer("retentionCatalogId").references(
       () => taxRetentions.id,
       { onDelete: "set null" }
@@ -932,8 +1061,9 @@ export const invoiceRetentions = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     invoiceIdx: index("invr_invoice_idx").on(table.invoiceId),
+    invoiceItemIdx: index("invr_invoice_item_idx").on(table.invoiceItemId),
     retentionCatalogIdx: index("invr_retention_catalog_idx").on(
       table.retentionCatalogId
     ),
@@ -966,16 +1096,20 @@ export const warehouseExits = pgTable(
     cancellationReason: text("cancellationReason"),
     notes: text("notes"),
     printedDocumentName: varchar("printedDocumentName", { length: 255 }),
-    printedDocumentMimeType: varchar("printedDocumentMimeType", { length: 100 }),
+    printedDocumentMimeType: varchar("printedDocumentMimeType", {
+      length: 100,
+    }),
     printedDocumentContent: text("printedDocumentContent"),
     printedAt: timestamp("printedAt"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     projectIdx: index("we_project_idx").on(table.projectId),
     warehouseIdx: index("we_warehouse_idx").on(table.warehouseId),
-    materialRequestIdx: index("we_material_request_idx").on(table.materialRequestId),
+    materialRequestIdx: index("we_material_request_idx").on(
+      table.materialRequestId
+    ),
     statusIdx: index("we_status_idx").on(table.status),
     createdByIdx: index("we_created_by_idx").on(table.createdById),
   })
@@ -998,9 +1132,11 @@ export const warehouseExitItems = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     warehouseExitIdx: index("wei_warehouse_exit_idx").on(table.warehouseExitId),
-    requestItemIdx: index("wei_request_item_idx").on(table.materialRequestItemId),
+    requestItemIdx: index("wei_request_item_idx").on(
+      table.materialRequestItemId
+    ),
     sapCodeIdx: index("wei_sap_code_idx").on(table.sapItemCode),
   })
 );
@@ -1024,7 +1160,7 @@ export const openingBalances = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     projectIdx: index("ob_project_idx").on(table.projectId),
     warehouseIdx: index("ob_warehouse_idx").on(table.warehouseId),
     createdByIdx: index("ob_created_by_idx").on(table.createdById),
@@ -1047,8 +1183,10 @@ export const openingBalanceItems = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
-    openingBalanceIdx: index("obi_opening_balance_idx").on(table.openingBalanceId),
+  table => ({
+    openingBalanceIdx: index("obi_opening_balance_idx").on(
+      table.openingBalanceId
+    ),
     sapCodeIdx: index("obi_sap_code_idx").on(table.sapItemCode),
   })
 );
@@ -1085,7 +1223,7 @@ export const reverseLogistics = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     sourceProjectIdx: index("rl_source_project_idx").on(table.sourceProjectId),
     sourceReceiptIdx: index("rl_source_receipt_idx").on(table.sourceReceiptId),
     returnTypeIdx: index("rl_return_type_idx").on(table.returnType),
@@ -1113,7 +1251,7 @@ export const reverseLogisticsItems = pgTable(
     notes: text("notes"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     reverseLogisticIdx: index("rli_reverse_logistic_idx").on(
       table.reverseLogisticId
     ),
@@ -1145,7 +1283,7 @@ export const attachments = pgTable(
     uploadedById: integer("uploadedById").notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     entityIdx: index("att_entity_idx").on(table.entityType, table.entityId),
   })
 );
@@ -1169,7 +1307,7 @@ export const notifications = pgTable(
     isRead: boolean("isRead").default(false).notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     userIdx: index("notif_user_idx").on(table.userId),
     readIdx: index("notif_read_idx").on(table.userId, table.isRead),
   })
@@ -1198,7 +1336,7 @@ export const warehouses = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     codeIdx: index("wh_code_idx").on(table.code),
     displayNameIdx: index("wh_display_name_idx").on(table.displayName),
     projectIdx: index("wh_project_idx").on(table.projectId),
@@ -1234,7 +1372,7 @@ export const inventoryItems = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     sapCodeIdx: index("inv_sap_code_idx").on(table.sapItemCode),
     categoryIdx: index("inv_category_idx").on(table.category),
     projectIdx: index("inv_project_idx").on(table.projectId),
@@ -1263,7 +1401,7 @@ export const sapSyncLog = pgTable(
     errorMessage: text("errorMessage"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     entityIdx: index("sap_entity_idx").on(table.entityType, table.entityId),
   })
 );
@@ -1291,7 +1429,7 @@ export const invitations = pgTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     emailIdx: index("inv_email_idx").on(table.email),
     tokenIdx: index("inv_token_idx").on(table.token),
     statusIdx: index("inv_status_idx").on(table.status),
@@ -1315,13 +1453,15 @@ export const sapCatalog = pgTable(
     projectId: integer("projectId").references(() => projects.id, {
       onDelete: "set null",
     }),
-    allowsTaxWithholding: boolean("allowsTaxWithholding").default(true).notNull(),
+    allowsTaxWithholding: boolean("allowsTaxWithholding")
+      .default(true)
+      .notNull(),
     isActive: boolean("isActive").default(true).notNull(),
     demoBatchKey: varchar("demoBatchKey", { length: 64 }),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     codeIdx: index("sap_cat_code_idx").on(table.itemCode),
     descIdx: index("sap_cat_desc_idx").on(table.description),
     tipoArticuloIdx: index("sap_cat_tipo_articulo_idx").on(table.tipoArticulo),
@@ -1347,13 +1487,15 @@ export const suppliers = pgTable(
     supplierCode: varchar("supplierCode", { length: 50 }).notNull().unique(),
     name: varchar("name", { length: 500 }).notNull(),
     email: varchar("email", { length: 320 }),
-    allowsTaxWithholding: boolean("allowsTaxWithholding").default(true).notNull(),
+    allowsTaxWithholding: boolean("allowsTaxWithholding")
+      .default(true)
+      .notNull(),
     isActive: boolean("isActive").default(true).notNull(),
     demoBatchKey: varchar("demoBatchKey", { length: 64 }),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
-  (table) => ({
+  table => ({
     codeIdx: index("sup_code_idx").on(table.supplierCode),
     demoBatchIdx: index("sup_demo_batch_idx").on(table.demoBatchKey),
   })
@@ -1361,3 +1503,92 @@ export const suppliers = pgTable(
 
 export type Supplier = typeof suppliers.$inferSelect;
 export type InsertSupplier = typeof suppliers.$inferInsert;
+
+export const supplierContacts = pgTable(
+  "supplierContacts",
+  {
+    id: serial("id").primaryKey(),
+    supplierId: integer("supplierId")
+      .notNull()
+      .references(() => suppliers.id, { onDelete: "cascade" }),
+    projectId: integer("projectId")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    contactType: supplierContactTypeEnum("contactType")
+      .default("ventas")
+      .notNull(),
+    branchName: varchar("branchName", { length: 255 }),
+    name: varchar("name", { length: 255 }).notNull(),
+    phone: varchar("phone", { length: 80 }),
+    email: varchar("email", { length: 320 }),
+    address: text("address"),
+    isActive: boolean("isActive").default(true).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    supplierProjectIdx: index("sup_contact_supplier_project_idx").on(
+      table.supplierId,
+      table.projectId
+    ),
+    activeIdx: index("sup_contact_active_idx").on(table.isActive),
+  })
+);
+
+export type SupplierContact = typeof supplierContacts.$inferSelect;
+export type InsertSupplierContact = typeof supplierContacts.$inferInsert;
+
+export const supplierDocumentTypes = pgTable(
+  "supplierDocumentTypes",
+  {
+    id: serial("id").primaryKey(),
+    code: varchar("code", { length: 80 }).notNull().unique(),
+    name: varchar("name", { length: 255 }).notNull(),
+    description: text("description"),
+    expirationMode: supplierDocumentExpirationModeEnum("expirationMode")
+      .default("optional")
+      .notNull(),
+    isActive: boolean("isActive").default(true).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    codeIdx: uniqueIndex("sup_doc_type_code_idx").on(table.code),
+    activeIdx: index("sup_doc_type_active_idx").on(table.isActive),
+  })
+);
+
+export type SupplierDocumentType = typeof supplierDocumentTypes.$inferSelect;
+export type InsertSupplierDocumentType =
+  typeof supplierDocumentTypes.$inferInsert;
+
+export const supplierDocuments = pgTable(
+  "supplierDocuments",
+  {
+    id: serial("id").primaryKey(),
+    supplierId: integer("supplierId")
+      .notNull()
+      .references(() => suppliers.id, { onDelete: "cascade" }),
+    documentTypeId: integer("documentTypeId")
+      .notNull()
+      .references(() => supplierDocumentTypes.id),
+    attachmentId: integer("attachmentId")
+      .notNull()
+      .unique()
+      .references(() => attachments.id, { onDelete: "cascade" }),
+    documentDate: timestamp("documentDate").notNull(),
+    expirationDate: timestamp("expirationDate"),
+    description: text("description"),
+    createdById: integer("createdById").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    supplierIdx: index("sup_doc_supplier_idx").on(table.supplierId),
+    typeIdx: index("sup_doc_type_idx").on(table.documentTypeId),
+    attachmentIdx: uniqueIndex("sup_doc_attachment_idx").on(table.attachmentId),
+  })
+);
+
+export type SupplierDocument = typeof supplierDocuments.$inferSelect;
+export type InsertSupplierDocument = typeof supplierDocuments.$inferInsert;

@@ -10,6 +10,7 @@ const buildreqRoleSchema = z.enum([
   "administracion_central",
   "administrador_proyecto",
   "bodeguero_proyecto",
+  "contable",
 ]);
 const projectScopedRoles = new Set([
   "ingeniero_residente",

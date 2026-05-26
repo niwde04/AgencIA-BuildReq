@@ -54,7 +54,7 @@ export default function UnassignedRoleScreen({
           <p>
             Un administrador debe asignarte uno de estos roles para continuar:
             Requiriente, Bodega Central, Administración Central o
-            Administración Proyecto.
+            Administración Proyecto, Bodega Proyecto o Contable.
           </p>
           <p>
             Si entraste por invitacion, usa el boton de actualizar para reintentar cargar tu rol.

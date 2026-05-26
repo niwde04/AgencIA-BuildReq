@@ -13,6 +13,8 @@ export const RESET_DEMO_ATTACHMENT_ENTITY_TYPES = [
   "transfer_request",
   "transfer",
   "receipt",
+  "invoice",
+  "supplier",
 ] as const;
 
 const OPERATIVE_ATTACHMENT_ENTITY_TYPES_SQL =

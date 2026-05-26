@@ -196,6 +196,7 @@ const allMenuItems: MenuItem[] = [
       "administracion_central",
       "administrador_proyecto",
       "bodeguero_proyecto",
+      "contable",
       "admin",
     ],
   },
@@ -340,6 +341,7 @@ function DashboardLayoutContent({
 
   const menuItems = useMemo(() => {
     return allMenuItems.filter((item) => {
+      if (userRole === "contable") return item.path === "/facturas";
       if (!item.roles) return true;
       if (item.roles.includes("admin") && isAdmin) return true;
       return item.roles.includes(userRole);
@@ -350,10 +352,17 @@ function DashboardLayoutContent({
     if (item.path === "/") return location === "/";
     return location.startsWith(item.path);
   });
+  const shouldRedirectContable = userRole === "contable" && location !== "/facturas";
 
   useEffect(() => {
     if (isCollapsed) setIsResizing(false);
   }, [isCollapsed]);
+
+  useEffect(() => {
+    if (shouldRedirectContable) {
+      setLocation("/facturas");
+    }
+  }, [setLocation, shouldRedirectContable]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -387,7 +396,12 @@ function DashboardLayoutContent({
     administracion_central: "Administración Central",
     administrador_proyecto: "Administración Proyecto",
     bodeguero_proyecto: "Bodega Proyecto",
+    contable: "Contable",
   };
+
+  if (shouldRedirectContable) {
+    return null;
+  }
 
   return (
     <>
@@ -476,31 +490,33 @@ function DashboardLayoutContent({
             <div className="shrink-0 bg-sidebar">
               <SidebarSeparator className="my-2" />
 
-              <SidebarMenu className="px-2 pb-2">
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={location === "/notificaciones"}
-                    onClick={() => setLocation("/notificaciones")}
-                    tooltip="Notificaciones"
-                    className="h-9 transition-all font-normal text-sm"
-                  >
-                    <Bell
-                      className={`h-4 w-4 ${location === "/notificaciones" ? "text-primary" : "text-muted-foreground"}`}
-                    />
-                    <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
-                      <span className="truncate">Notificaciones</span>
-                      {(unreadCount ?? 0) > 0 && (
-                        <Badge
-                          variant="destructive"
-                          className="h-5 min-w-5 shrink-0 text-xs px-1 rounded-sm"
-                        >
-                          {unreadCount}
-                        </Badge>
-                      )}
-                    </span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
+              {userRole !== "contable" ? (
+                <SidebarMenu className="px-2 pb-2">
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      isActive={location === "/notificaciones"}
+                      onClick={() => setLocation("/notificaciones")}
+                      tooltip="Notificaciones"
+                      className="h-9 transition-all font-normal text-sm"
+                    >
+                      <Bell
+                        className={`h-4 w-4 ${location === "/notificaciones" ? "text-primary" : "text-muted-foreground"}`}
+                      />
+                      <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                        <span className="truncate">Notificaciones</span>
+                        {(unreadCount ?? 0) > 0 && (
+                          <Badge
+                            variant="destructive"
+                            className="h-5 min-w-5 shrink-0 text-xs px-1 rounded-sm"
+                          >
+                            {unreadCount}
+                          </Badge>
+                        )}
+                      </span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              ) : null}
             </div>
           </SidebarContent>
 

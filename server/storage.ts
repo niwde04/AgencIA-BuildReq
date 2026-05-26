@@ -1,76 +1,92 @@
-// Preconfigured storage helpers for Manus WebDev templates
-// Uses the Biz-provided storage proxy (Authorization: Bearer <token>)
+import { ENV } from "./_core/env";
+import { getSupabaseAdminClient } from "./_core/supabaseAdmin";
 
-import { ENV } from './_core/env';
-
-type StorageConfig = { baseUrl: string; apiKey: string };
-
-function getStorageConfig(): StorageConfig {
-  const baseUrl = ENV.forgeApiUrl;
-  const apiKey = ENV.forgeApiKey;
-
-  if (!baseUrl || !apiKey) {
-    throw new Error(
-      "Storage proxy credentials missing: set BUILT_IN_FORGE_API_URL and BUILT_IN_FORGE_API_KEY"
-    );
-  }
-
-  return { baseUrl: baseUrl.replace(/\/+$/, ""), apiKey };
-}
-
-function buildUploadUrl(baseUrl: string, relKey: string): URL {
-  const url = new URL("v1/storage/upload", ensureTrailingSlash(baseUrl));
-  url.searchParams.set("path", normalizeKey(relKey));
-  return url;
-}
-
-function buildDeleteUrl(baseUrl: string, relKey: string): URL {
-  const url = new URL("v1/storage/delete", ensureTrailingSlash(baseUrl));
-  url.searchParams.set("path", normalizeKey(relKey));
-  return url;
-}
-
-async function buildDownloadUrl(
-  baseUrl: string,
-  relKey: string,
-  apiKey: string
-): Promise<string> {
-  const downloadApiUrl = new URL(
-    "v1/storage/downloadUrl",
-    ensureTrailingSlash(baseUrl)
-  );
-  downloadApiUrl.searchParams.set("path", normalizeKey(relKey));
-  const response = await fetch(downloadApiUrl, {
-    method: "GET",
-    headers: buildAuthHeaders(apiKey),
-  });
-  return (await response.json()).url;
-}
-
-function ensureTrailingSlash(value: string): string {
-  return value.endsWith("/") ? value : `${value}/`;
-}
+let bucketReadyPromise: Promise<void> | null = null;
 
 function normalizeKey(relKey: string): string {
   return relKey.replace(/^\/+/, "");
 }
 
-function toFormData(
-  data: Buffer | Uint8Array | string,
-  contentType: string,
-  fileName: string
-): FormData {
-  const blob =
-    typeof data === "string"
-      ? new Blob([data], { type: contentType })
-      : new Blob([data as any], { type: contentType });
-  const form = new FormData();
-  form.append("file", blob, fileName || "file");
-  return form;
+function getBucketName() {
+  const bucket = ENV.supabaseStorageBucket.trim();
+  if (!bucket) {
+    throw new Error("SUPABASE_STORAGE_BUCKET no esta configurado");
+  }
+  return bucket;
 }
 
-function buildAuthHeaders(apiKey: string): HeadersInit {
-  return { Authorization: `Bearer ${apiKey}` };
+function getSignedUrlTtl() {
+  const seconds = ENV.supabaseStorageSignedUrlSeconds;
+  return Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 3600;
+}
+
+function isMissingBucketError(error: unknown) {
+  const anyError = error as {
+    status?: number;
+    statusCode?: number | string;
+    message?: string;
+    name?: string;
+  };
+  const status = Number(anyError?.status ?? anyError?.statusCode);
+  const message = String(anyError?.message ?? "").toLowerCase();
+  return (
+    status === 404 ||
+    message.includes("bucket not found") ||
+    message.includes("not found")
+  );
+}
+
+async function ensureBucketExists() {
+  const supabase = getSupabaseAdminClient();
+  const bucket = getBucketName();
+  const { error: getError } = await supabase.storage.getBucket(bucket);
+
+  if (!getError) return;
+  if (!isMissingBucketError(getError)) {
+    throw new Error(`Supabase Storage bucket check failed: ${getError.message}`);
+  }
+
+  const { error: createError } = await supabase.storage.createBucket(bucket, {
+    public: false,
+    fileSizeLimit: "10MB",
+    allowedMimeTypes: [
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+    ],
+  });
+
+  if (createError && !isMissingBucketError(createError)) {
+    throw new Error(
+      `Supabase Storage bucket creation failed: ${createError.message}`
+    );
+  }
+}
+
+async function ensureStorageReady() {
+  if (!bucketReadyPromise) {
+    bucketReadyPromise = ensureBucketExists().catch(error => {
+      bucketReadyPromise = null;
+      throw error;
+    });
+  }
+  return bucketReadyPromise;
+}
+
+async function createSignedUrl(key: string) {
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase.storage
+    .from(getBucketName())
+    .createSignedUrl(key, getSignedUrlTtl());
+
+  if (error || !data?.signedUrl) {
+    throw new Error(
+      `Supabase Storage signed URL failed: ${error?.message ?? "No URL returned"}`
+    );
+  }
+
+  return data.signedUrl;
 }
 
 export async function storagePut(
@@ -78,49 +94,49 @@ export async function storagePut(
   data: Buffer | Uint8Array | string,
   contentType = "application/octet-stream"
 ): Promise<{ key: string; url: string }> {
-  const { baseUrl, apiKey } = getStorageConfig();
+  await ensureStorageReady();
+
+  const supabase = getSupabaseAdminClient();
   const key = normalizeKey(relKey);
-  const uploadUrl = buildUploadUrl(baseUrl, key);
-  const formData = toFormData(data, contentType, key.split("/").pop() ?? key);
-  const response = await fetch(uploadUrl, {
-    method: "POST",
-    headers: buildAuthHeaders(apiKey),
-    body: formData,
+  const body =
+    typeof data === "string" ? Buffer.from(data) : Buffer.from(data as any);
+  const { error } = await supabase.storage.from(getBucketName()).upload(key, body, {
+    cacheControl: "3600",
+    contentType,
+    upsert: false,
   });
 
-  if (!response.ok) {
-    const message = await response.text().catch(() => response.statusText);
-    throw new Error(
-      `Storage upload failed (${response.status} ${response.statusText}): ${message}`
-    );
+  if (error) {
+    throw new Error(`Supabase Storage upload failed: ${error.message}`);
   }
-  const url = (await response.json()).url;
-  return { key, url };
+
+  return {
+    key,
+    url: await createSignedUrl(key),
+  };
 }
 
-export async function storageGet(relKey: string): Promise<{ key: string; url: string; }> {
-  const { baseUrl, apiKey } = getStorageConfig();
+export async function storageGet(
+  relKey: string
+): Promise<{ key: string; url: string }> {
+  await ensureStorageReady();
+
   const key = normalizeKey(relKey);
   return {
     key,
-    url: await buildDownloadUrl(baseUrl, key, apiKey),
+    url: await createSignedUrl(key),
   };
 }
 
 export async function storageDelete(relKey: string): Promise<{ key: string }> {
-  const { baseUrl, apiKey } = getStorageConfig();
-  const key = normalizeKey(relKey);
-  const deleteUrl = buildDeleteUrl(baseUrl, key);
-  const response = await fetch(deleteUrl, {
-    method: "DELETE",
-    headers: buildAuthHeaders(apiKey),
-  });
+  await ensureStorageReady();
 
-  if (!response.ok && response.status !== 404) {
-    const message = await response.text().catch(() => response.statusText);
-    throw new Error(
-      `Storage delete failed (${response.status} ${response.statusText}): ${message}`
-    );
+  const supabase = getSupabaseAdminClient();
+  const key = normalizeKey(relKey);
+  const { error } = await supabase.storage.from(getBucketName()).remove([key]);
+
+  if (error && !isMissingBucketError(error)) {
+    throw new Error(`Supabase Storage delete failed: ${error.message}`);
   }
 
   return { key };

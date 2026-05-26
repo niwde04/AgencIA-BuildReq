@@ -4,6 +4,30 @@ export type PurchaseOrderTaxCode = (typeof PURCHASE_ORDER_TAX_VALUES)[number];
 
 export const DEFAULT_PURCHASE_ORDER_TAX_CODE: PurchaseOrderTaxCode = "exe";
 
+export const PURCHASE_ORDER_CONTRACT_FREQUENCIES = [
+  "semanal",
+  "quincenal",
+  "mensual",
+  "trimestral",
+  "semestral",
+  "anual",
+] as const;
+
+export type PurchaseOrderContractFrequency =
+  (typeof PURCHASE_ORDER_CONTRACT_FREQUENCIES)[number];
+
+export const PURCHASE_ORDER_CONTRACT_FREQUENCY_LABELS: Record<
+  PurchaseOrderContractFrequency,
+  string
+> = {
+  semanal: "Semanal",
+  quincenal: "Quincenal",
+  mensual: "Mensual",
+  trimestral: "Trimestral",
+  semestral: "Semestral",
+  anual: "Anual",
+};
+
 export const PURCHASE_ORDER_TAX_OPTIONS = [
   {
     value: "exe" as const,
@@ -120,4 +144,149 @@ export function formatPurchaseOrderCurrency(
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(toPurchaseOrderNumber(value));
+}
+
+function toContractDate(value: string | Date | null | undefined) {
+  if (!value) return null;
+  const date =
+    typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? new Date(
+          Number(value.slice(0, 4)),
+          Number(value.slice(5, 7)) - 1,
+          Number(value.slice(8, 10)),
+          12
+        )
+      : value instanceof Date
+        ? value
+        : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function addMonthsClamped(date: Date, months: number) {
+  const targetMonthStart = new Date(
+    date.getFullYear(),
+    date.getMonth() + months,
+    1,
+    12
+  );
+  const lastDay = new Date(
+    targetMonthStart.getFullYear(),
+    targetMonthStart.getMonth() + 1,
+    0
+  ).getDate();
+  targetMonthStart.setDate(Math.min(date.getDate(), lastDay));
+  return targetMonthStart;
+}
+
+export function normalizePurchaseOrderContractFrequency(
+  value: string | null | undefined
+): PurchaseOrderContractFrequency | null {
+  return PURCHASE_ORDER_CONTRACT_FREQUENCIES.includes(
+    value as PurchaseOrderContractFrequency
+  )
+    ? (value as PurchaseOrderContractFrequency)
+    : null;
+}
+
+export function calculateContractPaymentDates(params: {
+  frequency?: string | null;
+  firstPaymentDate?: string | Date | null;
+  endDate?: string | Date | null;
+}) {
+  const frequency = normalizePurchaseOrderContractFrequency(params.frequency);
+  const firstPaymentDate = toContractDate(params.firstPaymentDate);
+  const endDate = toContractDate(params.endDate);
+
+  if (!frequency || !firstPaymentDate || !endDate || firstPaymentDate > endDate) {
+    return [];
+  }
+
+  const dates: Date[] = [];
+  let cursor = firstPaymentDate;
+  let guard = 0;
+
+  while (cursor <= endDate && guard < 600) {
+    dates.push(cursor);
+    if (frequency === "semanal") {
+      cursor = addDays(cursor, 7);
+    } else if (frequency === "quincenal") {
+      cursor = addDays(cursor, 15);
+    } else {
+      const months =
+        frequency === "mensual"
+          ? 1
+          : frequency === "trimestral"
+            ? 3
+            : frequency === "semestral"
+              ? 6
+              : 12;
+      cursor = addMonthsClamped(cursor, months);
+    }
+    guard += 1;
+  }
+
+  return dates;
+}
+
+export function getPurchaseOrderContractSummary(params: {
+  appliesContract?: boolean | null;
+  contractPaymentFrequency?: string | null;
+  contractFirstPaymentDate?: string | Date | null;
+  contractEndDate?: string | Date | null;
+  registeredInvoiceCount?: number | string | null;
+  now?: Date;
+}) {
+  const appliesContract = params.appliesContract === true;
+  const paymentDates = appliesContract
+    ? calculateContractPaymentDates({
+        frequency: params.contractPaymentFrequency,
+        firstPaymentDate: params.contractFirstPaymentDate,
+        endDate: params.contractEndDate,
+      })
+    : [];
+  const registeredInvoiceCount = Math.max(
+    Number(params.registeredInvoiceCount ?? 0) || 0,
+    0
+  );
+  const expectedInvoiceCount = paymentDates.length;
+  const remainingInvoiceCount = Math.max(
+    expectedInvoiceCount - registeredInvoiceCount,
+    0
+  );
+  const now = toContractDate(params.now ?? new Date()) ?? new Date();
+  const endDate = toContractDate(params.contractEndDate);
+  const daysUntilEnd = endDate
+    ? Math.ceil((endDate.getTime() - now.getTime()) / 86_400_000)
+    : null;
+  const isExpired = endDate ? daysUntilEnd !== null && daysUntilEnd < 0 : false;
+  const expiresSoon =
+    endDate && daysUntilEnd !== null
+      ? !isExpired && daysUntilEnd <= 30
+      : false;
+  const isFullyInvoiced =
+    appliesContract &&
+    expectedInvoiceCount > 0 &&
+    registeredInvoiceCount >= expectedInvoiceCount;
+
+  return {
+    appliesContract,
+    paymentDates,
+    expectedInvoiceCount,
+    registeredInvoiceCount,
+    remainingInvoiceCount,
+    daysUntilEnd,
+    expiresSoon,
+    isExpired,
+    isFullyInvoiced,
+    statusLabel: appliesContract
+      ? `Pendiente ${registeredInvoiceCount} de ${expectedInvoiceCount}`
+      : "",
+  };
 }

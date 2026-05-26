@@ -50,6 +50,7 @@ const ROLE_LABELS: Record<string, string> = {
   administracion_central: "Administración Central",
   administrador_proyecto: "Administración Proyecto",
   bodeguero_proyecto: "Bodega Proyecto",
+  contable: "Contable",
 };
 
 const PROJECT_SCOPED_ROLES = new Set([
@@ -324,6 +325,7 @@ export default function Usuarios() {
                                 <SelectItem value="administracion_central">Administración Central</SelectItem>
                                 <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
                                 <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
+                                <SelectItem value="contable">Contable</SelectItem>
                               </SelectContent>
                             </Select>
                           </td>
@@ -530,6 +532,7 @@ export default function Usuarios() {
                   <SelectItem value="administracion_central">Administración Central</SelectItem>
                   <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
                   <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
+                  <SelectItem value="contable">Contable</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -618,6 +621,7 @@ export default function Usuarios() {
                   <SelectItem value="administracion_central">Administración Central</SelectItem>
                   <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
                   <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
+                  <SelectItem value="contable">Contable</SelectItem>
                 </SelectContent>
               </Select>
             </div>

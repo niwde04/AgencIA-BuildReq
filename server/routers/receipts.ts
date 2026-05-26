@@ -57,6 +57,7 @@ const receiptItemSchema = z.object({
   quantityExpected: z.string().min(1),
   quantityReceived: z.string().min(1),
   unit: z.string().optional(),
+  unitPrice: z.string().trim().optional(),
   notes: z.string().optional(),
   closeRemaining: z.boolean().optional(),
   closeReason: z.string().trim().max(120).optional(),
@@ -159,6 +160,7 @@ export const receiptsRouter = router({
           sourceType: z.enum(["purchase_order", "transfer"]),
           sourceId: z.number(),
           projectId: z.number(),
+          isFiscalDocument: z.boolean().optional(),
           cai: z.string().trim().max(100).optional(),
           invoiceNumber: z.string().trim().max(100).optional(),
           documentDate: z.string().optional(),
@@ -169,12 +171,15 @@ export const receiptsRouter = router({
           items: z.array(receiptItemSchema).min(1),
         })
         .superRefine((value, ctx) => {
-          if (value.sourceType === "purchase_order") {
+          const requiresFiscalFormat =
+            value.sourceType === "purchase_order" &&
+            value.isFiscalDocument !== false;
+          if (requiresFiscalFormat) {
             if (!value.cai?.trim()) {
               ctx.addIssue({
                 code: z.ZodIssueCode.custom,
                 path: ["cai"],
-                message: "Ingrese el CAI de la factura",
+                message: "Ingrese el CAI del documento",
               });
             } else if (!isValidCai(value.cai)) {
               ctx.addIssue({
@@ -187,13 +192,13 @@ export const receiptsRouter = router({
               ctx.addIssue({
                 code: z.ZodIssueCode.custom,
                 path: ["invoiceNumber"],
-                message: "Ingrese el número de factura",
+                message: "Ingrese el número documento",
               });
             } else if (!isValidInvoiceNumber(value.invoiceNumber)) {
               ctx.addIssue({
                 code: z.ZodIssueCode.custom,
                 path: ["invoiceNumber"],
-                message: `El número de factura debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+                message: `El número documento debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
               });
             }
             if (!value.documentDate) {
@@ -245,6 +250,35 @@ export const receiptsRouter = router({
           });
         }
 
+        if (detail.purchaseOrder.appliesContract) {
+          const contractSummary = detail.contractSummary;
+          if (
+            !detail.purchaseOrder.contractPaymentFrequency ||
+            !detail.purchaseOrder.contractFirstPaymentDate ||
+            !detail.purchaseOrder.contractEndDate ||
+            contractSummary.expectedInvoiceCount <= 0
+          ) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "La OC de contrato no tiene una programación de pagos válida",
+            });
+          }
+          if (contractSummary.isExpired) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "El contrato está vencido y ya no permite agregar facturas",
+            });
+          }
+          if (contractSummary.isFullyInvoiced) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "La OC de contrato ya alcanzó el total de facturas programadas",
+            });
+          }
+        }
+
         const itemsById = new Map((detail.items ?? []).map((item: any) => [item.id, item]));
         let hasPositiveReceipt = false;
 
@@ -275,6 +309,14 @@ export const receiptsRouter = router({
 
           if (requestedQuantity > 0) {
             hasPositiveReceipt = true;
+          }
+
+          const unitPrice = Number(item.unitPrice ?? 0);
+          if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `El precio confirmado de ${sourceItem.itemName} debe ser cero o mayor`,
+            });
           }
         }
 
@@ -388,6 +430,10 @@ export const receiptsRouter = router({
         }
       }
 
+      const isFiscalDocument =
+        input.sourceType === "purchase_order" &&
+        input.isFiscalDocument !== false;
+
       return db.registerReceipt(
         {
           sourceType: input.sourceType,
@@ -395,9 +441,16 @@ export const receiptsRouter = router({
           projectId: input.projectId,
           receivedById: ctx.user.id,
           status: "pendiente",
-          cai: input.cai ? formatCaiInput(input.cai) : null,
+          isFiscalDocument,
+          cai: input.cai?.trim()
+            ? isFiscalDocument
+              ? formatCaiInput(input.cai)
+              : input.cai.trim()
+            : null,
           invoiceNumber: input.invoiceNumber
-            ? formatInvoiceNumberInput(input.invoiceNumber)
+            ? isFiscalDocument
+              ? formatInvoiceNumberInput(input.invoiceNumber)
+              : input.invoiceNumber.trim()
             : null,
           documentDate: input.documentDate ? parseDateInput(input.documentDate) : null,
           postingDate: parseDateInput(input.postingDate),
@@ -413,6 +466,10 @@ export const receiptsRouter = router({
           quantityExpected: item.quantityExpected,
           quantityReceived: item.quantityReceived,
           unit: item.unit,
+          unitPrice:
+            input.sourceType === "purchase_order"
+              ? item.unitPrice ?? "0.00"
+              : "0.00",
           notes:
             item.notes ??
             (input.sourceType === "transfer" && item.closeRemaining

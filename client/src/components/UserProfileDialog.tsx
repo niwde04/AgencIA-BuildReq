@@ -36,6 +36,7 @@ const roleLabels: Record<string, string> = {
   administracion_central: "Administración Central",
   administrador_proyecto: "Administración Proyecto",
   bodeguero_proyecto: "Bodega Proyecto",
+  contable: "Contable",
 };
 
 export function UserProfileDialog({

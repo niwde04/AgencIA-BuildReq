@@ -137,7 +137,10 @@ function canViewSupplyFlowRequest(
     user.buildreqRole === "administrador_proyecto" ||
     user.buildreqRole === "bodeguero_proyecto"
   ) {
-    return Boolean(user.assignedProjectId) && user.assignedProjectId === request.projectId;
+    return (
+      Boolean(user.assignedProjectId) &&
+      user.assignedProjectId === request.projectId
+    );
   }
   return true;
 }
@@ -235,7 +238,9 @@ function formatQuantity(value: unknown) {
 
 function getStockKey(item: { sapItemCode?: string | null; itemName: string }) {
   const sapItemCode = item.sapItemCode?.trim();
-  return sapItemCode ? `sap:${sapItemCode}` : `name:${item.itemName.trim().toLowerCase()}`;
+  return sapItemCode
+    ? `sap:${sapItemCode}`
+    : `name:${item.itemName.trim().toLowerCase()}`;
 }
 
 async function assertTransferSourceStock(
@@ -301,7 +306,9 @@ function resolveEarliestNeededBy(
   const currentDate = new Date(current);
   const candidateDate = new Date(candidate);
 
-  return candidateDate.getTime() < currentDate.getTime() ? candidateDate : currentDate;
+  return candidateDate.getTime() < currentDate.getTime()
+    ? candidateDate
+    : currentDate;
 }
 
 export const supplyFlowsRouter = router({
@@ -315,7 +322,9 @@ export const supplyFlowsRouter = router({
         .optional()
     )
     .query(async ({ ctx, input }) =>
-      db.listSupplyFlowRecords(scopeSupplyFlowFilters(ctx.user, input ?? undefined))
+      db.listSupplyFlowRecords(
+        scopeSupplyFlowFilters(ctx.user, input ?? undefined)
+      )
     ),
 
   pendingQueue: protectedProcedure
@@ -327,7 +336,9 @@ export const supplyFlowsRouter = router({
         .optional()
     )
     .query(async ({ ctx, input }) =>
-      db.listPendingFlowQueueItems(scopeSupplyFlowFilters(ctx.user, input ?? undefined))
+      db.listPendingFlowQueueItems(
+        scopeSupplyFlowFilters(ctx.user, input ?? undefined)
+      )
     ),
 
   getByRequestId: protectedProcedure
@@ -416,7 +427,10 @@ export const supplyFlowsRouter = router({
         });
       }
 
-      const { detail, item } = await getRequestAndItem(input.requestId, input.requestItemId);
+      const { detail, item } = await getRequestAndItem(
+        input.requestId,
+        input.requestItemId
+      );
       if (!canViewSupplyFlowRequest(ctx.user, detail.request)) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -503,9 +517,12 @@ export const supplyFlowsRouter = router({
                 .string()
                 .trim()
                 .min(1)
-                .refine((value) => Number.isFinite(Number(value)) && Number(value) > 0, {
-                  message: "La cantidad debe ser un numero mayor que cero",
-                }),
+                .refine(
+                  value => Number.isFinite(Number(value)) && Number(value) > 0,
+                  {
+                    message: "La cantidad debe ser un numero mayor que cero",
+                  }
+                ),
             })
           )
           .min(1),
@@ -524,7 +541,7 @@ export const supplyFlowsRouter = router({
 
       const uniqueItems = Array.from(
         new Map(
-          input.items.map((item) => {
+          input.items.map(item => {
             const resolvedRequestId = item.requestId ?? input.requestId;
             if (!resolvedRequestId) {
               throw new TRPCError({
@@ -545,7 +562,7 @@ export const supplyFlowsRouter = router({
       );
 
       const requestIds = Array.from(
-        new Set(uniqueItems.map((item) => item.requestId))
+        new Set(uniqueItems.map(item => item.requestId))
       );
       const requestDetailsById = new Map<number, any>();
       const requestItemsByRequestId = new Map<number, Map<number, any>>();
@@ -602,11 +619,12 @@ export const supplyFlowsRouter = router({
         }
         assertItemApprovedForProcessing(detail, item);
 
-        const existingDirectPurchaseFlow = await db.getActiveSupplyFlowForRequestItem({
-          requestId: entry.requestId,
-          requestItemId: entry.requestItemId,
-          flowType: "compra_directa",
-        });
+        const existingDirectPurchaseFlow =
+          await db.getActiveSupplyFlowForRequestItem({
+            requestId: entry.requestId,
+            requestItemId: entry.requestItemId,
+            flowType: "compra_directa",
+          });
         if (existingDirectPurchaseFlow) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -655,7 +673,9 @@ export const supplyFlowsRouter = router({
           preparedItems.push({
             requestId: entry.requestId,
             projectId: detail.request.projectId,
-            neededBy: detail.request.neededBy ? new Date(detail.request.neededBy) : null,
+            neededBy: detail.request.neededBy
+              ? new Date(detail.request.neededBy)
+              : null,
             sourceItemId: item.id,
             processedItemId: createdItem.id,
             item: {
@@ -678,7 +698,9 @@ export const supplyFlowsRouter = router({
         preparedItems.push({
           requestId: entry.requestId,
           projectId: detail.request.projectId,
-          neededBy: detail.request.neededBy ? new Date(detail.request.neededBy) : null,
+          neededBy: detail.request.neededBy
+            ? new Date(detail.request.neededBy)
+            : null,
           sourceItemId: item.id,
           processedItemId: item.id,
           item: {
@@ -693,20 +715,31 @@ export const supplyFlowsRouter = router({
       let earliestNeededBy: Date | null = null;
 
       for (const entry of preparedItems) {
-        earliestNeededBy = resolveEarliestNeededBy(earliestNeededBy, entry.neededBy);
+        earliestNeededBy = resolveEarliestNeededBy(
+          earliestNeededBy,
+          entry.neededBy
+        );
         const aggregationKey = entry.item.sapItemCode?.trim()
           ? `project:${entry.projectId}:sap:${entry.item.sapItemCode.trim()}`
           : `project:${entry.projectId}:item:${entry.processedItemId}`;
-        const existingLine = aggregatedLines.get(aggregationKey);
+        const targetKey =
+          entry.item.targetType === "subproyecto"
+            ? `subproject:${entry.item.subProjectId ?? "none"}`
+            : entry.item.targetType === "activo_fijo"
+              ? `asset:${entry.item.fixedAssetSapItemCode ?? "none"}`
+              : "target:none";
+        const lineKey = `${aggregationKey}:${targetKey}`;
+        const existingLine = aggregatedLines.get(lineKey);
 
         if (existingLine) {
           const nextQuantity =
-            Number(existingLine.quantity ?? 0) + Number(entry.item.quantity ?? 0);
+            Number(existingLine.quantity ?? 0) +
+            Number(entry.item.quantity ?? 0);
           existingLine.quantity = nextQuantity.toFixed(2);
           continue;
         }
 
-        aggregatedLines.set(aggregationKey, {
+        aggregatedLines.set(lineKey, {
           purchaseRequestItemId: null,
           materialRequestItemId: entry.processedItemId,
           originalSapItemCode: entry.item.sapItemCode,
@@ -715,16 +748,25 @@ export const supplyFlowsRouter = router({
           quantity: entry.item.quantity,
           receivedQuantity: "0.00",
           unit: entry.item.unit,
+          targetType: entry.item.targetType,
+          subProjectId: entry.item.subProjectId,
+          fixedAssetSapItemCode: entry.item.fixedAssetSapItemCode,
+          fixedAssetName: entry.item.fixedAssetName,
           notes: input.notes,
         });
       }
 
-      const sourceRequestIds = Array.from(new Set(preparedItems.map((entry) => entry.requestId)));
-      const sourceProjectIds = Array.from(new Set(preparedItems.map((entry) => entry.projectId)));
+      const sourceRequestIds = Array.from(
+        new Set(preparedItems.map(entry => entry.requestId))
+      );
+      const sourceProjectIds = Array.from(
+        new Set(preparedItems.map(entry => entry.projectId))
+      );
 
       const purchaseRequest = await db.createPurchaseRequest(
         {
-          materialRequestId: sourceRequestIds.length === 1 ? sourceRequestIds[0] : null,
+          materialRequestId:
+            sourceRequestIds.length === 1 ? sourceRequestIds[0] : null,
           sourcePurchaseOrderId: null,
           projectId: sourceProjectIds[0],
           purchaseType: "compra_directa",
@@ -742,7 +784,7 @@ export const supplyFlowsRouter = router({
           quoteAttachmentId: null,
           createdById: ctx.user.id,
         },
-        Array.from(aggregatedLines.values()).map((line) => ({
+        Array.from(aggregatedLines.values()).map(line => ({
           materialRequestItemId: line.materialRequestItemId ?? null,
           originalSapItemCode: line.originalSapItemCode ?? null,
           currentSapItemCode: line.currentSapItemCode ?? null,
@@ -750,6 +792,10 @@ export const supplyFlowsRouter = router({
           quantity: line.quantity,
           receivedQuantity: "0.00",
           unit: line.unit,
+          targetType: line.targetType ?? null,
+          subProjectId: line.subProjectId ?? null,
+          fixedAssetSapItemCode: line.fixedAssetSapItemCode ?? null,
+          fixedAssetName: line.fixedAssetName ?? null,
           notes: line.notes,
         }))
       );
@@ -789,7 +835,10 @@ export const supplyFlowsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (!canManageSupply(ctx.user) || ctx.user.buildreqRole === "ingeniero_residente") {
+      if (
+        !canManageSupply(ctx.user) ||
+        ctx.user.buildreqRole === "ingeniero_residente"
+      ) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para confirmar recepción de mercancía",
@@ -823,7 +872,10 @@ export const supplyFlowsRouter = router({
         });
       }
 
-      const { detail, item } = await getRequestAndItem(input.requestId, input.requestItemId);
+      const { detail, item } = await getRequestAndItem(
+        input.requestId,
+        input.requestItemId
+      );
       if (!canViewSupplyFlowRequest(ctx.user, detail.request)) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -862,7 +914,10 @@ export const supplyFlowsRouter = router({
         });
       }
 
-      const { detail, item } = await getRequestAndItem(input.requestId, input.requestItemId);
+      const { detail, item } = await getRequestAndItem(
+        input.requestId,
+        input.requestItemId
+      );
       if (!canViewSupplyFlowRequest(ctx.user, detail.request)) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -873,7 +928,8 @@ export const supplyFlowsRouter = router({
       if (input.sourceProjectId === detail.request.projectId) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "El proyecto origen debe ser distinto al proyecto solicitante",
+          message:
+            "El proyecto origen debe ser distinto al proyecto solicitante",
         });
       }
 
@@ -956,7 +1012,7 @@ export const supplyFlowsRouter = router({
 
       const uniqueItems = Array.from(
         new Map(
-          input.items.map((item) => [
+          input.items.map(item => [
             `${item.requestId}:${item.requestItemId}`,
             item,
           ])
@@ -980,11 +1036,13 @@ export const supplyFlowsRouter = router({
         }
         assertItemApprovedForProcessing(detail, item);
 
-        const existingTransferFlow = await db.getActiveSupplyFlowForRequestItem({
-          requestId: entry.requestId,
-          requestItemId: entry.requestItemId,
-          flowType: "traslado_proyecto",
-        });
+        const existingTransferFlow = await db.getActiveSupplyFlowForRequestItem(
+          {
+            requestId: entry.requestId,
+            requestItemId: entry.requestItemId,
+            flowType: "traslado_proyecto",
+          }
+        );
         if (existingTransferFlow) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -1010,7 +1068,8 @@ export const supplyFlowsRouter = router({
       if (input.sourceProjectId === destinationProjectId) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "El proyecto origen debe ser distinto al proyecto solicitante",
+          message:
+            "El proyecto origen debe ser distinto al proyecto solicitante",
         });
       }
 
@@ -1082,7 +1141,7 @@ export const supplyFlowsRouter = router({
         transferRequestId: transferRequest.id,
         transferRequestNumber: transferRequest.requestNumber,
         processedItems: preparedItems.length,
-        flowIds: flowResults.map((result) => result.id),
+        flowIds: flowResults.map(result => result.id),
       };
     }),
 
@@ -1103,7 +1162,10 @@ export const supplyFlowsRouter = router({
         });
       }
 
-      const { detail, item } = await getRequestAndItem(input.requestId, input.requestItemId);
+      const { detail, item } = await getRequestAndItem(
+        input.requestId,
+        input.requestItemId
+      );
       if (!canViewSupplyFlowRequest(ctx.user, detail.request)) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -1111,14 +1173,15 @@ export const supplyFlowsRouter = router({
         });
       }
       assertItemApprovedForProcessing(detail, item);
-      const [existingPurchaseRequest, existingPurchaseRequestFlow] = await Promise.all([
-        db.getActivePurchaseRequestByMaterialRequestItemId(item.id),
-        db.getActiveSupplyFlowForRequestItem({
-          requestId: input.requestId,
-          requestItemId: input.requestItemId,
-          flowType: "solicitud_compra",
-        }),
-      ]);
+      const [existingPurchaseRequest, existingPurchaseRequestFlow] =
+        await Promise.all([
+          db.getActivePurchaseRequestByMaterialRequestItemId(item.id),
+          db.getActiveSupplyFlowForRequestItem({
+            requestId: input.requestId,
+            requestItemId: input.requestItemId,
+            flowType: "solicitud_compra",
+          }),
+        ]);
 
       if (existingPurchaseRequest || existingPurchaseRequestFlow) {
         throw new TRPCError({
@@ -1161,6 +1224,10 @@ export const supplyFlowsRouter = router({
             quantity: item.quantity,
             receivedQuantity: "0.00",
             unit: item.unit,
+            targetType: item.targetType,
+            subProjectId: item.subProjectId,
+            fixedAssetSapItemCode: item.fixedAssetSapItemCode,
+            fixedAssetName: item.fixedAssetName,
             notes: input.notes,
           },
         ]
@@ -1179,7 +1246,9 @@ export const supplyFlowsRouter = router({
 
       await checkAndUpdateRequestStatus(input.requestId, ctx.user.id);
 
-      const adminUsers = await db.getUsersByBuildreqRole("administracion_central");
+      const adminUsers = await db.getUsersByBuildreqRole(
+        "administracion_central"
+      );
       for (const user of adminUsers) {
         await db.createNotification({
           userId: user.id,
@@ -1223,7 +1292,7 @@ export const supplyFlowsRouter = router({
 
       const uniqueItems = Array.from(
         new Map(
-          input.items.map((item) => [
+          input.items.map(item => [
             `${item.requestId}:${item.requestItemId}`,
             item,
           ])
@@ -1321,6 +1390,10 @@ export const supplyFlowsRouter = router({
           quantity: item.quantity,
           receivedQuantity: "0.00",
           unit: item.unit,
+          targetType: item.targetType,
+          subProjectId: item.subProjectId,
+          fixedAssetSapItemCode: item.fixedAssetSapItemCode,
+          fixedAssetName: item.fixedAssetName,
           notes: input.notes,
         }))
       );
@@ -1345,7 +1418,9 @@ export const supplyFlowsRouter = router({
         await checkAndUpdateRequestStatus(requestId, ctx.user.id);
       }
 
-      const adminUsers = await db.getUsersByBuildreqRole("administracion_central");
+      const adminUsers = await db.getUsersByBuildreqRole(
+        "administracion_central"
+      );
       for (const user of adminUsers) {
         await db.createNotification({
           userId: user.id,
@@ -1362,7 +1437,7 @@ export const supplyFlowsRouter = router({
         purchaseRequestId: purchaseRequest.id,
         purchaseRequestNumber: purchaseRequest.requestNumber,
         processedItems: preparedItems.length,
-        flowIds: flowResults.map((result) => result.id),
+        flowIds: flowResults.map(result => result.id),
       };
     }),
 
@@ -1409,7 +1484,10 @@ export const supplyFlowsRouter = router({
 
         const directPurchaseRequestItemIds = detail.items
           .map((item: any) => item.materialRequestItemId)
-          .filter((value: number | null | undefined): value is number => typeof value === "number");
+          .filter(
+            (value: number | null | undefined): value is number =>
+              typeof value === "number"
+          );
         const directPurchaseFlowItems =
           directPurchaseRequestItemIds.length > 0
             ? await db.listDirectPurchaseFlowItemsByOrder({
@@ -1421,14 +1499,16 @@ export const supplyFlowsRouter = router({
         for (const linkedFlowItem of directPurchaseFlowItems) {
           const requestItemId = linkedFlowItem.item?.id;
           if (!requestItemId) continue;
-          const current = directPurchaseFlowByRequestItemId.get(requestItemId) ?? [];
+          const current =
+            directPurchaseFlowByRequestItemId.get(requestItemId) ?? [];
           current.push(linkedFlowItem);
           directPurchaseFlowByRequestItemId.set(requestItemId, current);
         }
 
         const itemsByProject = new Map<number, any[]>();
         for (const item of detail.items) {
-          const sourceProjectId = item.sourceProject?.id ?? detail.purchaseRequest.projectId;
+          const sourceProjectId =
+            item.sourceProject?.id ?? detail.purchaseRequest.projectId;
           assertProjectScopedConversionAccess(ctx.user, sourceProjectId);
           const current = itemsByProject.get(sourceProjectId) ?? [];
           current.push(item);
@@ -1441,10 +1521,14 @@ export const supplyFlowsRouter = router({
           purchaseOrderNumber: string;
         }> = [];
 
-        for (const [projectId, projectItems] of Array.from(itemsByProject.entries())) {
+        for (const [projectId, projectItems] of Array.from(
+          itemsByProject.entries()
+        )) {
           const projectFlowItems = projectItems.flatMap((item: any) =>
             item.materialRequestItemId
-              ? directPurchaseFlowByRequestItemId.get(item.materialRequestItemId) ?? []
+              ? (directPurchaseFlowByRequestItemId.get(
+                  item.materialRequestItemId
+                ) ?? [])
               : []
           );
 
@@ -1535,7 +1619,10 @@ export const supplyFlowsRouter = router({
           message: "Flujo origen no encontrado",
         });
       }
-      assertProjectScopedConversionAccess(ctx.user, flowDetail.request.projectId);
+      assertProjectScopedConversionAccess(
+        ctx.user,
+        flowDetail.request.projectId
+      );
 
       const purchaseOrderNumber = await db.generatePurchaseOrderNumber(
         flowDetail.request.projectId,
@@ -1579,7 +1666,7 @@ async function checkAndUpdateRequestStatus(requestId: number, userId: number) {
     }
 
     const items = await db.getRequestItemsByRequestId(requestId);
-    const someAssigned = items.some((item) => item.assignedFlow !== null);
+    const someAssigned = items.some(item => item.assignedFlow !== null);
 
     if (someAssigned) {
       await db.updateMaterialRequestStatus(requestId, "en_proceso", userId);

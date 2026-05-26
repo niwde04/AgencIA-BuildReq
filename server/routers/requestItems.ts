@@ -327,10 +327,25 @@ export const requestItemsRouter = router({
       }
       await assertSapTranslationCanBeChanged(item);
 
-      return db.updateRequestItem(input.id, {
+      const sapItem = await db.lookupSapItemByCode(input.sapItemCode);
+      const derivedRequestType =
+        sapItem?.tipoArticulo === 2 ? "servicios" : sapItem ? "bienes" : null;
+
+      const result = await db.updateRequestItem(input.id, {
         sapItemCode: input.sapItemCode,
         sapItemDescription: input.sapItemDescription,
       });
+
+      if (
+        derivedRequestType &&
+        detail.request.requestType !== derivedRequestType
+      ) {
+        await db.updateMaterialRequest(detail.request.id, {
+          requestType: derivedRequestType,
+        });
+      }
+
+      return result;
     }),
 
   clearSapTranslation: protectedProcedure

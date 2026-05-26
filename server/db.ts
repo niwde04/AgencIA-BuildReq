@@ -1,7 +1,20 @@
-import { eq, and, desc, asc, sql, count, ilike, or, inArray, isNotNull } from "drizzle-orm";
+import {
+  eq,
+  and,
+  desc,
+  asc,
+  sql,
+  count,
+  ilike,
+  or,
+  inArray,
+  isNotNull,
+} from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
+import { alias } from "drizzle-orm/pg-core";
 import {
   InsertUser,
+  User,
   users,
   projects,
   projectSubprojects,
@@ -11,6 +24,7 @@ import {
   purchaseRequests,
   purchaseRequestItems,
   purchaseOrders,
+  purchaseOrderAuditLogs,
   purchaseOrderItems,
   transferRequests,
   transferRequestItems,
@@ -35,6 +49,9 @@ import {
   invitations,
   sapCatalog,
   suppliers,
+  supplierContacts,
+  supplierDocumentTypes,
+  supplierDocuments,
   warehouses,
 } from "../drizzle/schema";
 import type {
@@ -47,6 +64,7 @@ import type {
   InsertPurchaseRequest,
   InsertPurchaseRequestItem,
   InsertPurchaseOrder,
+  InsertPurchaseOrderAuditLog,
   InsertPurchaseOrderItem,
   InsertTransferRequest,
   InsertTransferRequestItem,
@@ -72,6 +90,12 @@ import type {
   InsertInvitation,
   InsertSapCatalogItem,
   InsertSupplier,
+  InsertSupplierContact,
+  InsertSupplierDocumentType,
+  InsertSupplierDocument,
+  SupplierDocumentType,
+  SupplierDocument,
+  Attachment,
   InsertWarehouse,
   Warehouse,
   OpeningBalance,
@@ -86,6 +110,7 @@ import {
 import {
   calculatePurchaseOrderLineAmounts,
   formatPurchaseOrderCurrency,
+  getPurchaseOrderContractSummary,
   getPurchaseOrderTaxMeta,
   summarizePurchaseOrderLines,
 } from "@shared/purchase-orders";
@@ -113,7 +138,20 @@ type BuildReqRole =
   | "jefe_bodega_central"
   | "administracion_central"
   | "administrador_proyecto"
-  | "bodeguero_proyecto";
+  | "bodeguero_proyecto"
+  | "contable";
+
+type AttachmentEntityType =
+  | "material_request"
+  | "supply_flow"
+  | "reverse_logistic"
+  | "purchase_request"
+  | "purchase_order"
+  | "transfer_request"
+  | "transfer"
+  | "receipt"
+  | "invoice"
+  | "supplier";
 
 function parseDecimal(value: string | number | null | undefined) {
   if (value === null || value === undefined) return 0;
@@ -137,7 +175,10 @@ function getPendingConversionQuantity(item: {
   quantity: string | number | null | undefined;
   convertedQuantity?: string | number | null | undefined;
 }) {
-  return Math.max(parseDecimal(item.quantity) - parseDecimal(item.convertedQuantity), 0);
+  return Math.max(
+    parseDecimal(item.quantity) - parseDecimal(item.convertedQuantity),
+    0
+  );
 }
 
 function getWarehouseExitPendingQuantityForRequestItem(item: {
@@ -153,51 +194,56 @@ function getWarehouseExitPendingQuantityForRequestItem(item: {
     requestedQuantity
   );
   const dispatchableQuantity =
-    item.assignedFlow === "despacho_bodega" ? requestedQuantity : receivedQuantity;
+    item.assignedFlow === "despacho_bodega"
+      ? requestedQuantity
+      : receivedQuantity;
 
   return Math.max(dispatchableQuantity - alreadyDispatched, 0);
 }
 
-function getOpenQuantity(
-  item: {
-    quantity: string | number | null | undefined;
-    receivedQuantity?: string | number | null | undefined;
-    receiptClosed?: boolean | null | undefined;
-  }
-) {
-  if (item.receiptClosed) return 0;
-  return Math.max(parseDecimal(item.quantity) - parseDecimal(item.receivedQuantity), 0);
-}
-
-function getPurchaseOrderReceiptStatus(items: Array<{
+function getOpenQuantity(item: {
   quantity: string | number | null | undefined;
   receivedQuantity?: string | number | null | undefined;
   receiptClosed?: boolean | null | undefined;
-}>) {
+}) {
+  if (item.receiptClosed) return 0;
+  return Math.max(
+    parseDecimal(item.quantity) - parseDecimal(item.receivedQuantity),
+    0
+  );
+}
+
+function getPurchaseOrderReceiptStatus(
+  items: Array<{
+    quantity: string | number | null | undefined;
+    receivedQuantity?: string | number | null | undefined;
+    receiptClosed?: boolean | null | undefined;
+  }>
+) {
   if (items.length === 0) {
     return "emitida" as const;
   }
 
-  const allResolved = items.every((item) => getOpenQuantity(item) <= 0);
+  const allResolved = items.every(item => getOpenQuantity(item) <= 0);
   if (allResolved) {
     return "recibida" as const;
   }
 
   const hasProgress = items.some(
-    (item) => item.receiptClosed || parseDecimal(item.receivedQuantity) > 0
+    item => item.receiptClosed || parseDecimal(item.receivedQuantity) > 0
   );
 
-  return hasProgress ? ("parcialmente_recibida" as const) : ("emitida" as const);
+  return hasProgress
+    ? ("parcialmente_recibida" as const)
+    : ("emitida" as const);
 }
 
-function getTransferOpenQuantity(
-  item: {
-    quantity: string | number | null | undefined;
-    receivedQuantity?: string | number | null | undefined;
-    returnedToOriginQuantity?: string | number | null | undefined;
-    receiptClosed?: boolean | null | undefined;
-  }
-) {
+function getTransferOpenQuantity(item: {
+  quantity: string | number | null | undefined;
+  receivedQuantity?: string | number | null | undefined;
+  returnedToOriginQuantity?: string | number | null | undefined;
+  receiptClosed?: boolean | null | undefined;
+}) {
   if (item.receiptClosed) return 0;
   return Math.max(
     parseDecimal(item.quantity) -
@@ -207,21 +253,22 @@ function getTransferOpenQuantity(
   );
 }
 
-function getTransferReceiptStatus(items: Array<{
-  quantity: string | number | null | undefined;
-  receivedQuantity?: string | number | null | undefined;
-  returnedToOriginQuantity?: string | number | null | undefined;
-  receiptClosed?: boolean | null | undefined;
-}>) {
+function getTransferReceiptStatus(
+  items: Array<{
+    quantity: string | number | null | undefined;
+    receivedQuantity?: string | number | null | undefined;
+    returnedToOriginQuantity?: string | number | null | undefined;
+    receiptClosed?: boolean | null | undefined;
+  }>
+) {
   if (items.length === 0) {
     return "confirmado" as const;
   }
 
-  const allResolved = items.every((item) => getTransferOpenQuantity(item) <= 0);
+  const allResolved = items.every(item => getTransferOpenQuantity(item) <= 0);
   const hasReturnedToOrigin = items.some(
-    (item) =>
-      item.receiptClosed ||
-      parseDecimal(item.returnedToOriginQuantity) > 0
+    item =>
+      item.receiptClosed || parseDecimal(item.returnedToOriginQuantity) > 0
   );
 
   if (allResolved) {
@@ -231,7 +278,7 @@ function getTransferReceiptStatus(items: Array<{
   }
 
   const hasProgress = items.some(
-    (item) =>
+    item =>
       parseDecimal(item.receivedQuantity) > 0 ||
       parseDecimal(item.returnedToOriginQuantity) > 0 ||
       Boolean(item.receiptClosed)
@@ -262,13 +309,13 @@ async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
   const normalizedCodes = Array.from(
     new Set(
       sapCodes
-        .map((code) => code?.trim())
+        .map(code => code?.trim())
         .filter((code): code is string => Boolean(code))
     )
   );
 
   const emptyInsights = Object.fromEntries(
-    normalizedCodes.map((code) => [
+    normalizedCodes.map(code => [
       code,
       {
         sapDescription: null,
@@ -290,7 +337,10 @@ async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
       })
       .from(sapCatalog)
       .where(
-        and(eq(sapCatalog.isActive, true), inArray(sapCatalog.itemCode, normalizedCodes))
+        and(
+          eq(sapCatalog.isActive, true),
+          inArray(sapCatalog.itemCode, normalizedCodes)
+        )
       ),
     db
       .select({
@@ -313,7 +363,10 @@ async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
         supplierName: suppliers.name,
       })
       .from(purchaseOrderItems)
-      .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+      .innerJoin(
+        purchaseOrders,
+        eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id)
+      )
       .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
       .where(
         and(
@@ -336,7 +389,8 @@ async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
 
   for (const row of catalogRows) {
     if (!emptyInsights[row.sapItemCode]) continue;
-    emptyInsights[row.sapItemCode].sapDescription = row.description?.trim() || null;
+    emptyInsights[row.sapItemCode].sapDescription =
+      row.description?.trim() || null;
   }
 
   for (const row of inventoryRows) {
@@ -379,7 +433,8 @@ async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
 
       if (
         !insight.minimumPurchase ||
-        parseDecimal(reference.unitPrice) < parseDecimal(insight.minimumPurchase.unitPrice)
+        parseDecimal(reference.unitPrice) <
+          parseDecimal(insight.minimumPurchase.unitPrice)
       ) {
         insight.minimumPurchase = reference;
       }
@@ -398,7 +453,7 @@ export async function getLatestSupplierPurchasePrices(params: {
   const normalizedCodes = Array.from(
     new Set(
       params.sapCodes
-        .map((code) => code?.trim())
+        .map(code => code?.trim())
         .filter((code): code is string => Boolean(code))
     )
   );
@@ -439,7 +494,10 @@ export async function getLatestSupplierPurchasePrices(params: {
       supplierName: suppliers.name,
     })
     .from(purchaseOrderItems)
-    .innerJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+    .innerJoin(
+      purchaseOrders,
+      eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id)
+    )
     .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
     .where(and(...conditions))
     .orderBy(desc(purchaseOrders.createdAt), desc(purchaseOrderItems.id));
@@ -509,11 +567,13 @@ function formatPrintMoneyLabel(value: string | number | null | undefined) {
   });
 }
 
-function buildPurchaseOrderSummaryRows(items: Array<{
-  quantity: string | number | null | undefined;
-  unitPrice?: string | number | null;
-  taxCode?: string | null;
-}>) {
+function buildPurchaseOrderSummaryRows(
+  items: Array<{
+    quantity: string | number | null | undefined;
+    unitPrice?: string | number | null;
+    taxCode?: string | null;
+  }>
+) {
   const summary = summarizePurchaseOrderLines(items);
   return [
     {
@@ -596,7 +656,11 @@ export async function upsertUser(user: InsertUser): Promise<void> {
 export async function getUserByOpenId(openId: string) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.openId, openId))
+    .limit(1);
   return result.length > 0 ? result[0] : undefined;
 }
 
@@ -663,10 +727,7 @@ export async function updateUserName(userId: number, name: string) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  await db
-    .update(users)
-    .set({ name })
-    .where(eq(users.id, userId));
+  await db.update(users).set({ name }).where(eq(users.id, userId));
 
   return { success: true };
 }
@@ -689,10 +750,13 @@ export async function updateUserPasswordChangeRequirement(
 // ============================================================
 // PROJECTS
 // ============================================================
-function mapProjectWithWarehouse(row: {
-  project: typeof projects.$inferSelect;
-  warehouse: typeof warehouses.$inferSelect | null;
-}, subprojectsCount = 0) {
+function mapProjectWithWarehouse(
+  row: {
+    project: typeof projects.$inferSelect;
+    warehouse: typeof warehouses.$inferSelect | null;
+  },
+  subprojectsCount = 0
+) {
   return {
     ...row.project,
     warehouse: row.warehouse
@@ -717,14 +781,14 @@ export async function listProjects(statusFilter?: string) {
 
   const [rows, subprojectCounts] = await Promise.all([
     db
-    .select({
-      project: projects,
-      warehouse: warehouses,
-    })
-    .from(projects)
-    .leftJoin(warehouses, eq(warehouses.projectId, projects.id))
-    .where(where)
-    .orderBy(desc(projects.createdAt)),
+      .select({
+        project: projects,
+        warehouse: warehouses,
+      })
+      .from(projects)
+      .leftJoin(warehouses, eq(warehouses.projectId, projects.id))
+      .where(where)
+      .orderBy(desc(projects.createdAt)),
     db
       .select({
         projectId: projectSubprojects.projectId,
@@ -735,10 +799,10 @@ export async function listProjects(statusFilter?: string) {
   ]);
 
   const countByProject = new Map(
-    subprojectCounts.map((entry) => [entry.projectId, entry.total])
+    subprojectCounts.map(entry => [entry.projectId, entry.total])
   );
 
-  return rows.map((row) =>
+  return rows.map(row =>
     mapProjectWithWarehouse(row, countByProject.get(row.project.id) ?? 0)
   );
 }
@@ -814,7 +878,10 @@ export async function listProjectSubprojects(projectId: number) {
     .orderBy(asc(projectSubprojects.code), asc(projectSubprojects.name));
 }
 
-export async function getProjectSubprojectByCode(projectId: number, code: string) {
+export async function getProjectSubprojectByCode(
+  projectId: number,
+  code: string
+) {
   const db = await getDb();
   if (!db) return undefined;
 
@@ -1026,12 +1093,12 @@ export async function generateRequestNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "REQ",
     projectId,
-    selectExistingNumbers: async (documentPrefix) => {
+    selectExistingNumbers: async documentPrefix => {
       const rows = await db
         .select({ documentNumber: materialRequests.requestNumber })
         .from(materialRequests)
         .where(ilike(materialRequests.requestNumber, `${documentPrefix}%`));
-      return rows.map((row) => row.documentNumber);
+      return rows.map(row => row.documentNumber);
     },
   });
 }
@@ -1044,12 +1111,14 @@ export async function createMaterialRequest(
   if (!db) throw new Error("DB not available");
 
   const isService = data.requestType === "servicios";
-  const recipient = data.recipient ??
+  const recipient =
+    data.recipient ??
     (isService ? "administrador_proyecto" : "bodega_proyecto");
-  const workflowStage = data.workflowStage ??
+  const workflowStage =
+    data.workflowStage ??
     (isService ? "administrador_proyecto" : "bodega_proyecto");
-  const approvalStatus = data.approvalStatus ??
-    (isService ? "pendiente" : "no_requiere");
+  const approvalStatus =
+    data.approvalStatus ?? (isService ? "pendiente" : "no_requiere");
   const requestNumber = await generateRequestNumber(data.projectId);
   const [request] = await db
     .insert(materialRequests)
@@ -1064,9 +1133,9 @@ export async function createMaterialRequest(
   const requestId = request.id;
 
   if (items.length > 0) {
-    await db.insert(requestItems).values(
-      items.map((item) => ({ ...item, requestId }))
-    );
+    await db
+      .insert(requestItems)
+      .values(items.map(item => ({ ...item, requestId })));
   }
 
   return { id: requestId, requestNumber };
@@ -1136,7 +1205,7 @@ export async function replaceRequestItems(
 
   if (items.length > 0) {
     await db.insert(requestItems).values(
-      items.map((item) => ({
+      items.map(item => ({
         ...item,
         requestId,
       }))
@@ -1157,13 +1226,21 @@ export async function listMaterialRequests(filters?: {
   if (!db) return [];
 
   const conditions = [];
-  if (filters?.projectId) conditions.push(eq(materialRequests.projectId, filters.projectId));
+  if (filters?.projectId)
+    conditions.push(eq(materialRequests.projectId, filters.projectId));
   if (filters?.status) {
     conditions.push(sql`${materialRequests.status}::text = ${filters.status}`);
   }
-  if (filters?.requestedById) conditions.push(eq(materialRequests.requestedById, filters.requestedById));
-  if (filters?.requestType) conditions.push(eq(materialRequests.requestType, filters.requestType as any));
-  if (filters?.workflowStage) conditions.push(eq(materialRequests.workflowStage, filters.workflowStage as any));
+  if (filters?.requestedById)
+    conditions.push(eq(materialRequests.requestedById, filters.requestedById));
+  if (filters?.requestType)
+    conditions.push(
+      eq(materialRequests.requestType, filters.requestType as any)
+    );
+  if (filters?.workflowStage)
+    conditions.push(
+      eq(materialRequests.workflowStage, filters.workflowStage as any)
+    );
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -1183,7 +1260,7 @@ export async function listMaterialRequests(filters?: {
     return rows;
   }
 
-  const requestIds = rows.map((row) => row.request.id);
+  const requestIds = rows.map(row => row.request.id);
   const targetRows = await db
     .select({
       requestId: requestItems.requestId,
@@ -1222,7 +1299,7 @@ export async function listMaterialRequests(filters?: {
     itemTargetsByRequestId.set(row.requestId, current);
   }
 
-  return rows.map((row) => ({
+  return rows.map(row => ({
     ...row,
     itemTargets: itemTargetsByRequestId.get(row.request.id) ?? [],
   }));
@@ -1291,7 +1368,9 @@ async function getStockByItem(params: {
   if (params.sapItemCode) {
     conditions.push(eq(inventoryItems.sapItemCode, params.sapItemCode));
   } else {
-    conditions.push(sql`lower(${inventoryItems.name}) = lower(${params.itemName})`);
+    conditions.push(
+      sql`lower(${inventoryItems.name}) = lower(${params.itemName})`
+    );
   }
   if (params.projectId) {
     conditions.push(eq(inventoryItems.projectId, params.projectId));
@@ -1302,7 +1381,10 @@ async function getStockByItem(params: {
     .from(inventoryItems)
     .where(and(...conditions));
 
-  const total = rows.reduce((sum, row) => sum + parseDecimal(row.currentStock), 0);
+  const total = rows.reduce(
+    (sum, row) => sum + parseDecimal(row.currentStock),
+    0
+  );
   return toDecimalString(total);
 }
 
@@ -1319,7 +1401,9 @@ export async function listProjectStockForItems(params: {
   for (const item of params.items) {
     const sapItemCode = item.sapItemCode?.trim() || null;
     const itemName = item.itemName.trim();
-    const key = sapItemCode ? `sap:${sapItemCode}` : `name:${itemName.toLowerCase()}`;
+    const key = sapItemCode
+      ? `sap:${sapItemCode}`
+      : `name:${itemName.toLowerCase()}`;
     if (stockByKey.has(key)) continue;
 
     stockByKey.set(
@@ -1332,10 +1416,12 @@ export async function listProjectStockForItems(params: {
     );
   }
 
-  return params.items.map((item) => {
+  return params.items.map(item => {
     const sapItemCode = item.sapItemCode?.trim() || null;
     const itemName = item.itemName.trim();
-    const key = sapItemCode ? `sap:${sapItemCode}` : `name:${itemName.toLowerCase()}`;
+    const key = sapItemCode
+      ? `sap:${sapItemCode}`
+      : `name:${itemName.toLowerCase()}`;
 
     return {
       itemId: item.id,
@@ -1369,7 +1455,7 @@ export async function getMaterialRequestById(id: number) {
   const itemSubProjectIds = Array.from(
     new Set(
       items
-        .map((item) => item.subProjectId)
+        .map(item => item.subProjectId)
         .filter((subProjectId): subProjectId is number => Boolean(subProjectId))
     )
   );
@@ -1380,11 +1466,11 @@ export async function getMaterialRequestById(id: number) {
         .where(inArray(projectSubprojects.id, itemSubProjectIds))
     : [];
   const itemSubprojectById = new Map(
-    itemSubprojects.map((subproject) => [subproject.id, subproject])
+    itemSubprojects.map(subproject => [subproject.id, subproject])
   );
 
   const enrichedItems = await Promise.all(
-    items.map(async (item) => {
+    items.map(async item => {
       const sapItemCode = item.sapItemCode?.trim() || null;
       const committedQuantity = sapItemCode
         ? await getCommittedQuantityForItem(id, item)
@@ -1408,16 +1494,17 @@ export async function getMaterialRequestById(id: number) {
         target: mapMaterialRequestTarget(
           item,
           item.subProjectId
-            ? itemSubprojectById.get(item.subProjectId) ?? null
+            ? (itemSubprojectById.get(item.subProjectId) ?? null)
             : null
         ),
         committedQuantity: sapItemCode
-          ? item.committedQuantity ?? committedQuantity
+          ? (item.committedQuantity ?? committedQuantity)
           : null,
         sapStock,
         projectStock,
         physicalDispatchedQuantity: item.dispatchedQuantity ?? "0.00",
-        dispatchedQuantity: item.dispatchedQuantity ?? item.deliveredQuantity ?? "0.00",
+        dispatchedQuantity:
+          item.dispatchedQuantity ?? item.deliveredQuantity ?? "0.00",
       };
     })
   );
@@ -1466,7 +1553,10 @@ export async function updateMaterialRequestStatus(
   }
   if (status === "anulada") updateData.workflowStage = "rechazada";
 
-  await db.update(materialRequests).set(updateData).where(eq(materialRequests.id, id));
+  await db
+    .update(materialRequests)
+    .set(updateData)
+    .where(eq(materialRequests.id, id));
   return { success: true };
 }
 
@@ -1498,12 +1588,12 @@ export async function syncMaterialRequestFulfillmentStatus(
     .select()
     .from(requestItems)
     .where(eq(requestItems.requestId, requestId));
-  const activeItems = items.filter((item) => item.approvalStatus !== "rechazada");
+  const activeItems = items.filter(item => item.approvalStatus !== "rechazada");
   if (activeItems.length === 0) {
     return { success: true, status: request.status, changed: false };
   }
 
-  const activeItemIds = activeItems.map((item) => item.id);
+  const activeItemIds = activeItems.map(item => item.id);
   const purchaseReceiptRows =
     activeItemIds.length > 0
       ? await db
@@ -1512,7 +1602,9 @@ export async function syncMaterialRequestFulfillmentStatus(
             receivedQuantity: sql<string>`coalesce(sum(${purchaseOrderItems.receivedQuantity}), 0)`,
           })
           .from(purchaseOrderItems)
-          .where(inArray(purchaseOrderItems.materialRequestItemId, activeItemIds))
+          .where(
+            inArray(purchaseOrderItems.materialRequestItemId, activeItemIds)
+          )
           .groupBy(purchaseOrderItems.materialRequestItemId)
       : [];
   const purchaseReceivedByItemId = new Map<number, number>();
@@ -1545,7 +1637,8 @@ export async function syncMaterialRequestFulfillmentStatus(
           : "completo";
 
     if (
-      toDecimalString(nextDelivered) !== toDecimalString(item.deliveredQuantity) ||
+      toDecimalString(nextDelivered) !==
+        toDecimalString(item.deliveredQuantity) ||
       nextItemStatus !== item.status
     ) {
       await db
@@ -1574,7 +1667,9 @@ export async function syncMaterialRequestFulfillmentStatus(
             receiptClosed: transferRequestItems.receiptClosed,
           })
           .from(transferRequestItems)
-          .where(inArray(transferRequestItems.materialRequestItemId, activeItemIds))
+          .where(
+            inArray(transferRequestItems.materialRequestItemId, activeItemIds)
+          )
       : [];
   const transferClosureByItemId = new Map<
     number,
@@ -1632,39 +1727,42 @@ export async function syncMaterialRequestFulfillmentStatus(
   };
 
   const hasProgress = activeItems.some(
-    (item) =>
+    item =>
       Boolean(item.assignedFlow) ||
       item.status !== "pendiente" ||
       parseDecimal(item.deliveredQuantity) > 0 ||
       parseDecimal(item.dispatchedQuantity) > 0
   );
   const hasAttention = activeItems.some(
-    (item) =>
+    item =>
       item.status !== "pendiente" ||
       parseDecimal(item.deliveredQuantity) > 0 ||
       parseDecimal(item.dispatchedQuantity) > 0
   );
   const hasIncompleteClosure = activeItems.some(isItemClosedIncomplete);
   const hasPendingWarehouseExitForIncompleteClosure = activeItems.some(
-    (item) =>
+    item =>
       isItemClosedIncomplete(item) &&
-      parseDecimal(item.deliveredQuantity) > parseDecimal(item.dispatchedQuantity)
+      parseDecimal(item.deliveredQuantity) >
+        parseDecimal(item.dispatchedQuantity)
   );
   const allResolvedWithIncompleteClosure =
     hasIncompleteClosure &&
     !hasPendingWarehouseExitForIncompleteClosure &&
-    activeItems.every((item) => isItemPhysicallyDelivered(item) || isItemClosedIncomplete(item));
+    activeItems.every(
+      item => isItemPhysicallyDelivered(item) || isItemClosedIncomplete(item)
+    );
   const nextStatus = activeItems.every(isItemPhysicallyDelivered)
     ? "cerrada"
     : allResolvedWithIncompleteClosure
       ? "cerrada_incompleta"
-    : activeItems.every(isItemFlowCompleted)
-      ? "flujo_completado"
-      : hasAttention
-        ? "parcialmente_atendida"
-      : hasProgress
-        ? "en_proceso"
-        : "en_espera";
+      : activeItems.every(isItemFlowCompleted)
+        ? "flujo_completado"
+        : hasAttention
+          ? "parcialmente_atendida"
+          : hasProgress
+            ? "en_proceso"
+            : "en_espera";
 
   if (nextStatus === request.status) {
     return { success: true, status: request.status, changed: false };
@@ -1753,7 +1851,10 @@ export async function reviewMaterialRequestItems(params: {
       )
     );
 
-  return syncMaterialRequestApprovalState(params.requestId, params.approvedById);
+  return syncMaterialRequestApprovalState(
+    params.requestId,
+    params.approvedById
+  );
 }
 
 export async function syncMaterialRequestApprovalState(
@@ -1783,12 +1884,17 @@ export async function syncMaterialRequestApprovalState(
     .from(requestItems)
     .where(eq(requestItems.requestId, requestId));
 
-  const pendingCount = items.filter((item) => item.approvalStatus === "pendiente").length;
-  const approvedCount = items.filter(
-    (item) =>
-      item.approvalStatus === "aprobada" || item.approvalStatus === "no_requiere"
+  const pendingCount = items.filter(
+    item => item.approvalStatus === "pendiente"
   ).length;
-  const rejectedCount = items.filter((item) => item.approvalStatus === "rechazada").length;
+  const approvedCount = items.filter(
+    item =>
+      item.approvalStatus === "aprobada" ||
+      item.approvalStatus === "no_requiere"
+  ).length;
+  const rejectedCount = items.filter(
+    item => item.approvalStatus === "rechazada"
+  ).length;
   const now = new Date();
 
   if (request.requestType !== "bienes") {
@@ -1878,7 +1984,11 @@ export async function syncMaterialRequestApprovalState(
 
 export async function assignFlow(
   requestId: number,
-  flowType: "compra_directa" | "despacho_bodega" | "traslado_proyecto" | "solicitud_compra",
+  flowType:
+    | "compra_directa"
+    | "despacho_bodega"
+    | "traslado_proyecto"
+    | "solicitud_compra",
   processedById: number
 ) {
   const db = await getDb();
@@ -1886,7 +1996,12 @@ export async function assignFlow(
 
   await db
     .update(materialRequests)
-    .set({ assignedFlow: flowType, processedById, processedAt: new Date(), status: "en_proceso" })
+    .set({
+      assignedFlow: flowType,
+      processedById,
+      processedAt: new Date(),
+      status: "en_proceso",
+    })
     .where(eq(materialRequests.id, requestId));
 
   return { success: true };
@@ -1920,7 +2035,10 @@ export async function createRequestItem(data: InsertRequestItem) {
 export async function getRequestItemsByRequestId(requestId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(requestItems).where(eq(requestItems.requestId, requestId));
+  return db
+    .select()
+    .from(requestItems)
+    .where(eq(requestItems.requestId, requestId));
 }
 
 export async function getRequestItemById(id: number) {
@@ -1952,7 +2070,9 @@ export async function returnWarehouseDispatchItemToRequisition(params: {
     throw new Error("Ítem de requisición no encontrado");
   }
   if (item.assignedFlow !== "despacho_bodega") {
-    throw new Error("Solo se pueden devolver ítems asignados a salida de bodega");
+    throw new Error(
+      "Solo se pueden devolver ítems asignados a salida de bodega"
+    );
   }
 
   const requestedQuantity = parseDecimal(item.quantity);
@@ -1963,7 +2083,9 @@ export async function returnWarehouseDispatchItemToRequisition(params: {
   const pendingQuantity = Math.max(requestedQuantity - dispatchedQuantity, 0);
 
   if (pendingQuantity <= 0) {
-    throw new Error("Este ítem no tiene cantidad pendiente para devolver a requisición");
+    throw new Error(
+      "Este ítem no tiene cantidad pendiente para devolver a requisición"
+    );
   }
 
   const activeDraftFlows = await db
@@ -2053,7 +2175,10 @@ export async function returnWarehouseDispatchItemToRequisition(params: {
     pendingRequestItemId = item.id;
   }
 
-  await syncMaterialRequestFulfillmentStatus(item.requestId, params.processedById);
+  await syncMaterialRequestFulfillmentStatus(
+    item.requestId,
+    params.processedById
+  );
 
   return {
     success: true,
@@ -2103,7 +2228,10 @@ export async function returnTransferFlowItemToRequisition(params: {
     })
     .where(eq(requestItems.id, item.id));
 
-  await syncMaterialRequestFulfillmentStatus(item.requestId, params.processedById);
+  await syncMaterialRequestFulfillmentStatus(
+    item.requestId,
+    params.processedById
+  );
 
   return {
     success: true,
@@ -2180,7 +2308,10 @@ export async function rejectRequestItemPendingQuantity(params: {
         )
       );
 
-    await syncMaterialRequestFulfillmentStatus(item.requestId, params.rejectedById);
+    await syncMaterialRequestFulfillmentStatus(
+      item.requestId,
+      params.rejectedById
+    );
 
     return {
       success: true,
@@ -2228,7 +2359,10 @@ export async function rejectRequestItemPendingQuantity(params: {
     notes: rejectionNote,
   });
 
-  await syncMaterialRequestFulfillmentStatus(item.requestId, params.rejectedById);
+  await syncMaterialRequestFulfillmentStatus(
+    item.requestId,
+    params.rejectedById
+  );
 
   return {
     success: true,
@@ -2258,11 +2392,19 @@ export async function rejectApprovedRequestItem(params: {
   if (item.approvalStatus === "rechazada") {
     throw new Error("Este ítem ya fue rechazado");
   }
-  if (item.approvalStatus !== "aprobada" && item.approvalStatus !== "no_requiere") {
+  if (
+    item.approvalStatus !== "aprobada" &&
+    item.approvalStatus !== "no_requiere"
+  ) {
     throw new Error("Solo se pueden rechazar ítems aprobados");
   }
-  if (parseDecimal(item.deliveredQuantity) > 0 || parseDecimal(item.dispatchedQuantity) > 0) {
-    throw new Error("Este ítem ya tiene movimientos y no se puede rechazar completo");
+  if (
+    parseDecimal(item.deliveredQuantity) > 0 ||
+    parseDecimal(item.dispatchedQuantity) > 0
+  ) {
+    throw new Error(
+      "Este ítem ya tiene movimientos y no se puede rechazar completo"
+    );
   }
   if (item.assignedFlow) {
     throw new Error("Quite el flujo asignado antes de rechazar este ítem");
@@ -2278,7 +2420,9 @@ export async function rejectApprovedRequestItem(params: {
       )
     );
   if (activeFlows.length > 0) {
-    throw new Error("Este ítem tiene movimientos de flujo activos y no se puede rechazar");
+    throw new Error(
+      "Este ítem tiene movimientos de flujo activos y no se puede rechazar"
+    );
   }
 
   const reason = params.rejectionReason.trim();
@@ -2306,12 +2450,16 @@ export async function rejectApprovedRequestItem(params: {
     .from(requestItems)
     .where(eq(requestItems.requestId, item.requestId));
   const remainingApprovedCount = remainingItems.filter(
-    (entry) =>
-      entry.approvalStatus === "aprobada" || entry.approvalStatus === "no_requiere"
+    entry =>
+      entry.approvalStatus === "aprobada" ||
+      entry.approvalStatus === "no_requiere"
   ).length;
 
   if (remainingApprovedCount > 0) {
-    await syncMaterialRequestFulfillmentStatus(item.requestId, params.rejectedById);
+    await syncMaterialRequestFulfillmentStatus(
+      item.requestId,
+      params.rejectedById
+    );
   } else {
     await syncMaterialRequestApprovalState(item.requestId, params.rejectedById);
   }
@@ -2367,7 +2515,7 @@ export async function recordWarehouseExitBatch(params: {
     throw new Error("Debe registrar al menos un ítem");
   }
 
-  const requestItemIds = params.items.map((item) => item.requestItemId);
+  const requestItemIds = params.items.map(item => item.requestItemId);
   const uniqueRequestItemIds = Array.from(new Set(requestItemIds));
   if (uniqueRequestItemIds.length !== requestItemIds.length) {
     throw new Error("No se puede repetir el mismo ítem en una salida");
@@ -2389,7 +2537,7 @@ export async function recordWarehouseExitBatch(params: {
     .select()
     .from(requestItems)
     .where(inArray(requestItems.id, uniqueRequestItemIds));
-  const itemById = new Map(selectedItems.map((item) => [item.id, item]));
+  const itemById = new Map(selectedItems.map(item => [item.id, item]));
 
   for (const requestItemId of uniqueRequestItemIds) {
     const item = itemById.get(requestItemId);
@@ -2397,17 +2545,21 @@ export async function recordWarehouseExitBatch(params: {
       throw new Error("Ítem de requisición no encontrado");
     }
     if (item.requestId !== params.requestId) {
-      throw new Error("Todos los ítems de la salida deben pertenecer a la misma requisición");
+      throw new Error(
+        "Todos los ítems de la salida deben pertenecer a la misma requisición"
+      );
     }
 
     const quantity = params.items.find(
-      (entry) => entry.requestItemId === requestItemId
+      entry => entry.requestItemId === requestItemId
     )?.quantity;
     const dispatchedQuantity = parseDecimal(quantity);
     const pendingQuantity = getWarehouseExitPendingQuantityForRequestItem(item);
 
     if (dispatchedQuantity <= 0) {
-      throw new Error(`La cantidad despachada de ${item.itemName} debe ser mayor que cero`);
+      throw new Error(
+        `La cantidad despachada de ${item.itemName} debe ser mayor que cero`
+      );
     }
     if (dispatchedQuantity - pendingQuantity > 0.000001) {
       throw new Error(
@@ -2495,7 +2647,7 @@ export async function recordWarehouseExitBatch(params: {
       exitDate: new Date(),
       notes: params.note,
     },
-    params.items.map((entry) => {
+    params.items.map(entry => {
       const item = itemById.get(entry.requestItemId)!;
       return {
         materialRequestItemId: entry.requestItemId,
@@ -2509,7 +2661,7 @@ export async function recordWarehouseExitBatch(params: {
   );
 
   await db.insert(supplyFlowRecords).values(
-    params.items.map((entry) => ({
+    params.items.map(entry => ({
       requestId: params.requestId,
       requestItemId: entry.requestItemId,
       flowType: "despacho_bodega" as const,
@@ -2565,7 +2717,10 @@ export async function getSupplyFlowRecordById(id: number) {
       project: projects,
     })
     .from(supplyFlowRecords)
-    .leftJoin(materialRequests, eq(supplyFlowRecords.requestId, materialRequests.id))
+    .leftJoin(
+      materialRequests,
+      eq(supplyFlowRecords.requestId, materialRequests.id)
+    )
     .leftJoin(projects, eq(materialRequests.projectId, projects.id))
     .where(eq(supplyFlowRecords.id, id))
     .limit(1);
@@ -2601,7 +2756,10 @@ export async function listDirectPurchaseFlowItemsByOrder(params: {
       item: requestItems,
     })
     .from(supplyFlowRecords)
-    .innerJoin(requestItems, eq(supplyFlowRecords.requestItemId, requestItems.id))
+    .innerJoin(
+      requestItems,
+      eq(supplyFlowRecords.requestItemId, requestItems.id)
+    )
     .where(and(...conditions))
     .orderBy(desc(supplyFlowRecords.createdAt), asc(requestItems.id));
 }
@@ -2612,7 +2770,10 @@ export async function updateSupplyFlowRecord(
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  await db.update(supplyFlowRecords).set(data).where(eq(supplyFlowRecords.id, id));
+  await db
+    .update(supplyFlowRecords)
+    .set(data)
+    .where(eq(supplyFlowRecords.id, id));
   return { success: true };
 }
 
@@ -2626,8 +2787,10 @@ export async function listSupplyFlowRecords(filters?: {
   if (!db) return [];
 
   const conditions = [];
-  if (filters?.flowType) conditions.push(eq(supplyFlowRecords.flowType, filters.flowType as any));
-  if (filters?.status) conditions.push(eq(supplyFlowRecords.status, filters.status as any));
+  if (filters?.flowType)
+    conditions.push(eq(supplyFlowRecords.flowType, filters.flowType as any));
+  if (filters?.status)
+    conditions.push(eq(supplyFlowRecords.status, filters.status as any));
   if (filters?.requestedById) {
     conditions.push(eq(materialRequests.requestedById, filters.requestedById));
   }
@@ -2644,7 +2807,10 @@ export async function listSupplyFlowRecords(filters?: {
       project: projects,
     })
     .from(supplyFlowRecords)
-    .leftJoin(materialRequests, eq(supplyFlowRecords.requestId, materialRequests.id))
+    .leftJoin(
+      materialRequests,
+      eq(supplyFlowRecords.requestId, materialRequests.id)
+    )
     .leftJoin(projects, eq(materialRequests.projectId, projects.id))
     .where(where)
     .orderBy(desc(supplyFlowRecords.createdAt));
@@ -2681,7 +2847,10 @@ export async function listPendingFlowQueueItems(filters?: {
       project: projects,
     })
     .from(requestItems)
-    .innerJoin(materialRequests, eq(requestItems.requestId, materialRequests.id))
+    .innerJoin(
+      materialRequests,
+      eq(requestItems.requestId, materialRequests.id)
+    )
     .leftJoin(projects, eq(materialRequests.projectId, projects.id))
     .where(and(...conditions))
     .orderBy(
@@ -2692,7 +2861,7 @@ export async function listPendingFlowQueueItems(filters?: {
     );
 
   const requestItemIds = candidateRows
-    .map((row) => row.item.id)
+    .map(row => row.item.id)
     .filter((value): value is number => typeof value === "number");
 
   if (requestItemIds.length === 0) {
@@ -2700,7 +2869,7 @@ export async function listPendingFlowQueueItems(filters?: {
   }
 
   const sapCodes = candidateRows
-    .map((row) => row.item.sapItemCode?.trim())
+    .map(row => row.item.sapItemCode?.trim())
     .filter((value): value is string => Boolean(value));
 
   const [activeFlows, procurementInsightsByCode] = await Promise.all([
@@ -2725,31 +2894,34 @@ export async function listPendingFlowQueueItems(filters?: {
     activeFlowsByItemId.set(flow.requestItemId, current);
   }
 
-  const filteredRows = candidateRows.filter((row) => {
+  const filteredRows = candidateRows.filter(row => {
     const assignedFlow = row.item.assignedFlow;
     if (!assignedFlow) return false;
 
     if (assignedFlow === "despacho_bodega") {
       const hasDraftExit = (activeFlowsByItemId.get(row.item.id) ?? []).some(
-        (flow) =>
+        flow =>
           flow.flowType === "despacho_bodega" &&
           flow.status === "pendiente" &&
           Boolean(flow.sapDocumentNumber)
       );
       if (hasDraftExit) return false;
 
-      return parseDecimal(row.item.dispatchedQuantity) < parseDecimal(row.item.quantity);
+      return (
+        parseDecimal(row.item.dispatchedQuantity) <
+        parseDecimal(row.item.quantity)
+      );
     }
 
     const activeForSameFlow = (activeFlowsByItemId.get(row.item.id) ?? []).some(
-      (flow) => flow.flowType === assignedFlow
+      flow => flow.flowType === assignedFlow
     );
 
     return !activeForSameFlow;
   });
 
   return Promise.all(
-    filteredRows.map(async (row) => {
+    filteredRows.map(async row => {
       const sapCode = row.item.sapItemCode?.trim() || null;
       const insight = sapCode ? procurementInsightsByCode[sapCode] : undefined;
       const resolvedSapDescription =
@@ -2783,7 +2955,11 @@ export async function listPendingFlowQueueItems(filters?: {
 export async function getActiveSupplyFlowForRequestItem(params: {
   requestId: number;
   requestItemId: number;
-  flowType: "compra_directa" | "despacho_bodega" | "traslado_proyecto" | "solicitud_compra";
+  flowType:
+    | "compra_directa"
+    | "despacho_bodega"
+    | "traslado_proyecto"
+    | "solicitud_compra";
 }) {
   const db = await getDb();
   if (!db) return undefined;
@@ -2818,7 +2994,7 @@ export async function generatePurchaseOrderNumber(
   return generateProjectScopedDocumentNumber({
     prefix: classification === "cd" ? "CD" : "OC",
     projectId,
-    selectExistingNumbers: async (documentPrefix) => {
+    selectExistingNumbers: async documentPrefix => {
       const [legacyRows, orderRows] = await Promise.all([
         db
           .select({ documentNumber: supplyFlowRecords.purchaseOrderNumber })
@@ -2835,8 +3011,8 @@ export async function generatePurchaseOrderNumber(
           .where(ilike(purchaseOrders.orderNumber, `${documentPrefix}%`)),
       ]);
       return [
-        ...legacyRows.map((row) => row.documentNumber),
-        ...orderRows.map((row) => row.documentNumber),
+        ...legacyRows.map(row => row.documentNumber),
+        ...orderRows.map(row => row.documentNumber),
       ];
     },
   });
@@ -2849,12 +3025,12 @@ export async function generatePurchaseRequestNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "SC",
     projectId,
-    selectExistingNumbers: async (documentPrefix) => {
+    selectExistingNumbers: async documentPrefix => {
       const rows = await db
         .select({ documentNumber: purchaseRequests.requestNumber })
         .from(purchaseRequests)
         .where(ilike(purchaseRequests.requestNumber, `${documentPrefix}%`));
-      return rows.map((row) => row.documentNumber);
+      return rows.map(row => row.documentNumber);
     },
   });
 }
@@ -2866,12 +3042,12 @@ export async function generateTransferRequestNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "ST",
     projectId,
-    selectExistingNumbers: async (documentPrefix) => {
+    selectExistingNumbers: async documentPrefix => {
       const rows = await db
         .select({ documentNumber: transferRequests.requestNumber })
         .from(transferRequests)
         .where(ilike(transferRequests.requestNumber, `${documentPrefix}%`));
-      return rows.map((row) => row.documentNumber);
+      return rows.map(row => row.documentNumber);
     },
   });
 }
@@ -2883,12 +3059,12 @@ export async function generateTransferNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "TR",
     projectId,
-    selectExistingNumbers: async (documentPrefix) => {
+    selectExistingNumbers: async documentPrefix => {
       const rows = await db
         .select({ documentNumber: transfers.transferNumber })
         .from(transfers)
         .where(ilike(transfers.transferNumber, `${documentPrefix}%`));
-      return rows.map((row) => row.documentNumber);
+      return rows.map(row => row.documentNumber);
     },
   });
 }
@@ -2900,12 +3076,12 @@ export async function generateRemissionGuideNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "GR",
     projectId,
-    selectExistingNumbers: async (documentPrefix) => {
+    selectExistingNumbers: async documentPrefix => {
       const rows = await db
         .select({ documentNumber: remissionGuides.guideNumber })
         .from(remissionGuides)
         .where(ilike(remissionGuides.guideNumber, `${documentPrefix}%`));
-      return rows.map((row) => row.documentNumber);
+      return rows.map(row => row.documentNumber);
     },
   });
 }
@@ -2915,14 +3091,14 @@ export async function generateReceiptNumber(projectId: number) {
   if (!db) throw new Error("DB not available");
 
   return generateProjectScopedDocumentNumber({
-    prefix: "REC",
+    prefix: "RE",
     projectId,
-    selectExistingNumbers: async (documentPrefix) => {
+    selectExistingNumbers: async documentPrefix => {
       const rows = await db
         .select({ documentNumber: receipts.receiptNumber })
         .from(receipts)
         .where(ilike(receipts.receiptNumber, `${documentPrefix}%`));
-      return rows.map((row) => row.documentNumber);
+      return rows.map(row => row.documentNumber);
     },
   });
 }
@@ -2934,12 +3110,12 @@ export async function generateInvoiceDocumentNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "FT",
     projectId,
-    selectExistingNumbers: async (documentPrefix) => {
+    selectExistingNumbers: async documentPrefix => {
       const rows = await db
         .select({ documentNumber: invoices.invoiceDocumentNumber })
         .from(invoices)
         .where(ilike(invoices.invoiceDocumentNumber, `${documentPrefix}%`));
-      return rows.map((row) => row.documentNumber);
+      return rows.map(row => row.documentNumber);
     },
   });
 }
@@ -2951,12 +3127,12 @@ export async function generateWarehouseExitNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "SB",
     projectId,
-    selectExistingNumbers: async (documentPrefix) => {
+    selectExistingNumbers: async documentPrefix => {
       const rows = await db
         .select({ documentNumber: warehouseExits.exitNumber })
         .from(warehouseExits)
         .where(ilike(warehouseExits.exitNumber, `${documentPrefix}%`));
-      return rows.map((row) => row.documentNumber);
+      return rows.map(row => row.documentNumber);
     },
   });
 }
@@ -2968,12 +3144,12 @@ export async function generateOpeningBalanceNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "SI",
     projectId,
-    selectExistingNumbers: async (documentPrefix) => {
+    selectExistingNumbers: async documentPrefix => {
       const rows = await db
         .select({ documentNumber: openingBalances.balanceNumber })
         .from(openingBalances)
         .where(ilike(openingBalances.balanceNumber, `${documentPrefix}%`));
-      return rows.map((row) => row.documentNumber);
+      return rows.map(row => row.documentNumber);
     },
   });
 }
@@ -2991,18 +3167,6 @@ function buildPurchaseRequestDocument(params: {
     unitPrice?: string | number | null;
   }>;
 }) {
-  const hasPricing = params.items.some((item) => parseDecimal(item.unitPrice) > 0);
-  const estimatedTotal = params.items.reduce(
-    (sum, item) =>
-      sum +
-      calculatePurchaseOrderLineAmounts({
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        taxCode: "exe",
-      }).total,
-    0
-  );
-
   return buildProcurementPdfBase64({
     title: "Solicitud de Compra",
     documentNumber: params.requestNumber,
@@ -3031,31 +3195,10 @@ function buildPurchaseRequestDocument(params: {
         value: `${params.items.length} registrados`,
       },
     ],
-    items: params.items.map((item) => ({
+    items: params.items.map(item => ({
       description: item.itemName,
       quantityLabel: `${item.quantity} ${item.unit ?? ""}`.trim(),
-      metaLines: hasPricing
-        ? [`Precio unitario: ${formatPurchaseOrderCurrency(item.unitPrice)}`]
-        : undefined,
-      amountLabel: hasPricing
-        ? formatPurchaseOrderCurrency(
-            calculatePurchaseOrderLineAmounts({
-              quantity: item.quantity,
-              unitPrice: item.unitPrice,
-              taxCode: "exe",
-            }).total
-          )
-        : undefined,
     })),
-    summaryRows: hasPricing
-      ? [
-          {
-            label: "Total estimado",
-            value: formatPurchaseOrderCurrency(estimatedTotal),
-            emphasized: true,
-          },
-        ]
-      : undefined,
     generatedLabel: formatDateLabel(params.printedAt ?? new Date()),
     footerNote: "Solicitud generada automáticamente por BuildReq.",
   });
@@ -3086,7 +3229,7 @@ function buildPurchaseOrderDocument(params: {
   }>;
 }) {
   const summary = summarizePurchaseOrderLines(
-    params.items.map((item) => ({
+    params.items.map(item => ({
       quantity: item.quantity,
       unitPrice: item.unitPrice,
       taxCode: item.taxCode,
@@ -3098,9 +3241,13 @@ function buildPurchaseOrderDocument(params: {
     orderId: String(params.orderId ?? params.orderNumber),
     projectLabel: params.projectLabel,
     supplierLabel: params.supplierLabel,
-    createdDateLabel: formatPrintDateLabel(params.createdAt ?? params.printedAt ?? new Date()),
+    createdDateLabel: formatPrintDateLabel(
+      params.createdAt ?? params.printedAt ?? new Date()
+    ),
     destinationLabel: params.destinationLabel?.trim() || params.projectLabel,
-    deliveryDateLabel: params.neededBy ? formatPrintDateLabel(params.neededBy) : "INMEDIATA",
+    deliveryDateLabel: params.neededBy
+      ? formatPrintDateLabel(params.neededBy)
+      : "INMEDIATA",
     requestedByLabel: params.requestedByLabel?.trim() || "-",
     observations: params.observations?.trim() || "-",
     quoteLabel: params.quoteLabel?.trim() || "-",
@@ -3169,11 +3316,13 @@ export async function createPurchaseRequest(
   const project = await getProjectById(data.projectId);
   const printedDocumentContent = buildPurchaseRequestDocument({
     requestNumber,
-    projectLabel: project ? `${project.code} - ${project.name}` : `Proyecto ${data.projectId}`,
+    projectLabel: project
+      ? `${project.code} - ${project.name}`
+      : `Proyecto ${data.projectId}`,
     purchaseType: getPurchaseTypeLabel(data.purchaseType),
     neededBy: data.neededBy,
     printedAt: new Date(),
-    items: items.map((item) => ({
+    items: items.map(item => ({
       itemName: item.itemName,
       quantity: item.quantity,
       unit: item.unit,
@@ -3195,7 +3344,7 @@ export async function createPurchaseRequest(
 
   if (items.length > 0) {
     await db.insert(purchaseRequestItems).values(
-      items.map((item) => ({
+      items.map(item => ({
         ...item,
         purchaseRequestId: created.id,
       }))
@@ -3212,8 +3361,10 @@ export async function listPurchaseRequests(filters?: {
   const db = await getDb();
   if (!db) return [];
   const conditions = [];
-  if (filters?.projectId) conditions.push(eq(purchaseRequests.projectId, filters.projectId));
-  if (filters?.status) conditions.push(eq(purchaseRequests.status, filters.status as any));
+  if (filters?.projectId)
+    conditions.push(eq(purchaseRequests.projectId, filters.projectId));
+  if (filters?.status)
+    conditions.push(eq(purchaseRequests.status, filters.status as any));
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
   const rows = await db
@@ -3224,12 +3375,15 @@ export async function listPurchaseRequests(filters?: {
     })
     .from(purchaseRequests)
     .leftJoin(projects, eq(purchaseRequests.projectId, projects.id))
-    .leftJoin(materialRequests, eq(purchaseRequests.materialRequestId, materialRequests.id))
+    .leftJoin(
+      materialRequests,
+      eq(purchaseRequests.materialRequestId, materialRequests.id)
+    )
     .where(where)
     .orderBy(desc(purchaseRequests.createdAt));
 
   const purchaseRequestIds = rows
-    .map((row) => row.purchaseRequest.id)
+    .map(row => row.purchaseRequest.id)
     .filter((value): value is number => typeof value === "number");
 
   if (purchaseRequestIds.length === 0) {
@@ -3246,7 +3400,10 @@ export async function listPurchaseRequests(filters?: {
       projectName: projects.name,
     })
     .from(purchaseRequestItems)
-    .leftJoin(requestItems, eq(purchaseRequestItems.materialRequestItemId, requestItems.id))
+    .leftJoin(
+      requestItems,
+      eq(purchaseRequestItems.materialRequestItemId, requestItems.id)
+    )
     .leftJoin(materialRequests, eq(requestItems.requestId, materialRequests.id))
     .leftJoin(projects, eq(materialRequests.projectId, projects.id))
     .where(inArray(purchaseRequestItems.purchaseRequestId, purchaseRequestIds));
@@ -3267,11 +3424,12 @@ export async function listPurchaseRequests(filters?: {
       quantity: row.requestedQuantity,
       convertedQuantity: row.convertedQuantity,
     });
-    const pendingSummary =
-      pendingConversionByPurchaseRequestId.get(row.purchaseRequestId) ?? {
-        itemCount: 0,
-        quantity: 0,
-      };
+    const pendingSummary = pendingConversionByPurchaseRequestId.get(
+      row.purchaseRequestId
+    ) ?? {
+      itemCount: 0,
+      quantity: 0,
+    };
     if (pendingConversionQuantity > 0) {
       pendingSummary.itemCount += 1;
       pendingSummary.quantity += pendingConversionQuantity;
@@ -3282,8 +3440,9 @@ export async function listPurchaseRequests(filters?: {
     );
 
     if (row.projectId) {
-      const current = sourceProjectsByPurchaseRequestId.get(row.purchaseRequestId) ?? [];
-      if (!current.some((entry) => entry.id === row.projectId)) {
+      const current =
+        sourceProjectsByPurchaseRequestId.get(row.purchaseRequestId) ?? [];
+      if (!current.some(entry => entry.id === row.projectId)) {
         current.push({
           id: row.projectId,
           code: row.projectCode ?? null,
@@ -3294,7 +3453,7 @@ export async function listPurchaseRequests(filters?: {
     }
   }
 
-  return rows.map((row) => {
+  return rows.map(row => {
     const sourceProjects =
       sourceProjectsByPurchaseRequestId.get(row.purchaseRequest.id) ?? [];
     const projectSummary =
@@ -3306,9 +3465,10 @@ export async function listPurchaseRequests(filters?: {
         : sourceProjects.length === 1
           ? {
               isMixed: false,
-              label: `${sourceProjects[0].code ?? ""} — ${sourceProjects[0].name ?? ""}`
-                .replace(/^ — /, "")
-                .trim(),
+              label:
+                `${sourceProjects[0].code ?? ""} — ${sourceProjects[0].name ?? ""}`
+                  .replace(/^ — /, "")
+                  .trim(),
             }
           : null;
 
@@ -3340,25 +3500,47 @@ export async function getPurchaseRequestById(id: number) {
     })
     .from(purchaseRequests)
     .leftJoin(projects, eq(purchaseRequests.projectId, projects.id))
-    .leftJoin(materialRequests, eq(purchaseRequests.materialRequestId, materialRequests.id))
+    .leftJoin(
+      materialRequests,
+      eq(purchaseRequests.materialRequestId, materialRequests.id)
+    )
     .leftJoin(warehouses, eq(warehouses.projectId, purchaseRequests.projectId))
     .where(eq(purchaseRequests.id, id))
     .limit(1);
 
   if (!rows[0]) return undefined;
+  const purchaseRequestItemSubprojects = alias(
+    projectSubprojects,
+    "purchase_request_item_subprojects"
+  );
+  const sourceItemSubprojects = alias(
+    projectSubprojects,
+    "source_item_subprojects"
+  );
   const itemRows = await db
     .select({
       item: purchaseRequestItems,
       sourceItem: requestItems,
       sourceRequest: materialRequests,
       sourceProject: projects,
-      sourceSubproject: projectSubprojects,
+      itemSubproject: purchaseRequestItemSubprojects,
+      sourceSubproject: sourceItemSubprojects,
     })
     .from(purchaseRequestItems)
-    .leftJoin(requestItems, eq(purchaseRequestItems.materialRequestItemId, requestItems.id))
+    .leftJoin(
+      requestItems,
+      eq(purchaseRequestItems.materialRequestItemId, requestItems.id)
+    )
     .leftJoin(materialRequests, eq(requestItems.requestId, materialRequests.id))
     .leftJoin(projects, eq(materialRequests.projectId, projects.id))
-    .leftJoin(projectSubprojects, eq(requestItems.subProjectId, projectSubprojects.id))
+    .leftJoin(
+      purchaseRequestItemSubprojects,
+      eq(purchaseRequestItems.subProjectId, purchaseRequestItemSubprojects.id)
+    )
+    .leftJoin(
+      sourceItemSubprojects,
+      eq(requestItems.subProjectId, sourceItemSubprojects.id)
+    )
     .where(eq(purchaseRequestItems.purchaseRequestId, id));
 
   const userIds = Array.from(
@@ -3366,7 +3548,7 @@ export async function getPurchaseRequestById(id: number) {
       [
         rows[0].materialRequest?.requestedById,
         rows[0].purchaseRequest.createdById,
-        ...itemRows.map((row) => row.sourceRequest?.requestedById),
+        ...itemRows.map(row => row.sourceRequest?.requestedById),
       ].filter((value): value is number => typeof value === "number")
     )
   );
@@ -3374,15 +3556,20 @@ export async function getPurchaseRequestById(id: number) {
     userIds.length > 0
       ? await db.select().from(users).where(inArray(users.id, userIds))
       : [];
-  const usersById = new Map(userRows.map((user) => [user.id, user]));
+  const usersById = new Map(userRows.map(user => [user.id, user]));
 
-  const items = itemRows.map((row) => ({
+  const items = itemRows.map(row => ({
     ...row.item,
     pendingConversionQuantity: toDecimalString(
       getPendingConversionQuantity(row.item)
     ),
     sourceRequest: row.sourceRequest,
     sourceProject: row.sourceProject,
+    target:
+      mapMaterialRequestTarget(row.item, row.itemSubproject) ??
+      (row.sourceItem
+        ? mapMaterialRequestTarget(row.sourceItem, row.sourceSubproject)
+        : null),
     sourceTarget: row.sourceItem
       ? mapMaterialRequestTarget(row.sourceItem, row.sourceSubproject)
       : null,
@@ -3392,7 +3579,7 @@ export async function getPurchaseRequestById(id: number) {
     Array<{ id: number; code: string | null; name: string | null }>
   >((acc, row) => {
     if (!row.sourceProject?.id) return acc;
-    if (acc.some((entry) => entry.id === row.sourceProject?.id)) return acc;
+    if (acc.some(entry => entry.id === row.sourceProject?.id)) return acc;
     acc.push({
       id: row.sourceProject.id,
       code: row.sourceProject.code ?? null,
@@ -3410,13 +3597,14 @@ export async function getPurchaseRequestById(id: number) {
       : sourceProjects.length === 1
         ? {
             isMixed: false,
-            label: `${sourceProjects[0].code ?? ""} — ${sourceProjects[0].name ?? ""}`
-              .replace(/^ — /, "")
-              .trim(),
-        }
-      : null;
+            label:
+              `${sourceProjects[0].code ?? ""} — ${sourceProjects[0].name ?? ""}`
+                .replace(/^ — /, "")
+                .trim(),
+          }
+        : null;
   const sourceRequestedById = itemRows.find(
-    (row) => row.sourceRequest?.requestedById
+    row => row.sourceRequest?.requestedById
   )?.sourceRequest?.requestedById;
 
   const printedDocumentContent = buildPurchaseRequestDocument({
@@ -3427,7 +3615,7 @@ export async function getPurchaseRequestById(id: number) {
     purchaseType: getPurchaseTypeLabel(rows[0].purchaseRequest.purchaseType),
     neededBy: rows[0].purchaseRequest.neededBy,
     printedAt: rows[0].purchaseRequest.printedAt,
-    items: items.map((item) => ({
+    items: items.map(item => ({
       itemName: item.itemName,
       quantity: item.quantity,
       unit: item.unit,
@@ -3449,9 +3637,9 @@ export async function getPurchaseRequestById(id: number) {
     projectSummary,
     sourceProjects,
     requestedBy: rows[0].materialRequest?.requestedById
-      ? usersById.get(rows[0].materialRequest.requestedById) ?? null
+      ? (usersById.get(rows[0].materialRequest.requestedById) ?? null)
       : sourceRequestedById
-        ? usersById.get(sourceRequestedById) ?? null
+        ? (usersById.get(sourceRequestedById) ?? null)
         : null,
     createdBy: usersById.get(rows[0].purchaseRequest.createdById) ?? null,
     items,
@@ -3581,10 +3769,10 @@ export async function syncPurchaseRequestConversionStatus(id: number) {
   }
 
   const allConverted = items.every(
-    (item) => getPendingConversionQuantity(item) <= 0
+    item => getPendingConversionQuantity(item) <= 0
   );
   const hasConverted = items.some(
-    (item) => parseDecimal(item.convertedQuantity) > 0
+    item => parseDecimal(item.convertedQuantity) > 0
   );
   const nextStatus = allConverted
     ? "convertida"
@@ -3612,7 +3800,7 @@ export async function addPurchaseRequestItems(
 
   if (items.length > 0) {
     await db.insert(purchaseRequestItems).values(
-      items.map((item) => ({
+      items.map(item => ({
         ...item,
         purchaseRequestId,
       }))
@@ -3648,7 +3836,10 @@ export async function getReusablePurchaseRequestBySourcePurchaseOrderId(
   return rows[0];
 }
 
-export async function rejectPurchaseRequest(id: number, rejectionReason: string) {
+export async function rejectPurchaseRequest(
+  id: number,
+  rejectionReason: string
+) {
   return updatePurchaseRequest(id, {
     status: "rechazada",
     rejectionReason,
@@ -3667,7 +3858,9 @@ export async function createPurchaseOrder(
     data.classification ?? "oc"
   );
   const project = await getProjectById(data.projectId);
-  const supplier = data.supplierId ? await getSupplierById(data.supplierId) : null;
+  const supplier = data.supplierId
+    ? await getSupplierById(data.supplierId)
+    : null;
   const [sourcePurchaseRequest] = data.purchaseRequestId
     ? await db
         .select()
@@ -3703,7 +3896,7 @@ export async function createPurchaseOrder(
     quoteLabel: sourcePurchaseRequest?.quoteAttachmentId
       ? String(sourcePurchaseRequest.quoteAttachmentId)
       : "-",
-    items: items.map((item) => ({
+    items: items.map(item => ({
       itemName: item.itemName,
       currentSapItemCode: item.currentSapItemCode,
       originalSapItemCode: item.originalSapItemCode,
@@ -3730,7 +3923,7 @@ export async function createPurchaseOrder(
 
   if (items.length > 0) {
     await db.insert(purchaseOrderItems).values(
-      items.map((item) => ({
+      items.map(item => ({
         ...item,
         purchaseOrderId: created.id,
       }))
@@ -3738,6 +3931,40 @@ export async function createPurchaseOrder(
   }
 
   return { id: created.id, orderNumber };
+}
+
+async function getPurchaseOrderInvoiceCountMap(orderIds: number[]) {
+  const db = await getDb();
+  if (!db || orderIds.length === 0) return new Map<number, number>();
+
+  const rows = await db
+    .select({
+      purchaseOrderId: invoices.purchaseOrderId,
+      count: count(),
+    })
+    .from(invoices)
+    .where(
+      and(
+        inArray(invoices.purchaseOrderId, orderIds),
+        sql`${invoices.status} <> 'anulada'`
+      )
+    )
+    .groupBy(invoices.purchaseOrderId);
+
+  return new Map(rows.map(row => [row.purchaseOrderId, Number(row.count)]));
+}
+
+function buildPurchaseOrderContractSummary(
+  purchaseOrder: typeof purchaseOrders.$inferSelect,
+  registeredInvoiceCount: number
+) {
+  return getPurchaseOrderContractSummary({
+    appliesContract: purchaseOrder.appliesContract,
+    contractPaymentFrequency: purchaseOrder.contractPaymentFrequency,
+    contractFirstPaymentDate: purchaseOrder.contractFirstPaymentDate,
+    contractEndDate: purchaseOrder.contractEndDate,
+    registeredInvoiceCount,
+  });
 }
 
 export async function listPurchaseOrders(filters?: {
@@ -3748,14 +3975,18 @@ export async function listPurchaseOrders(filters?: {
   const db = await getDb();
   if (!db) return [];
   const conditions = [];
-  if (filters?.projectId) conditions.push(eq(purchaseOrders.projectId, filters.projectId));
+  if (filters?.projectId)
+    conditions.push(eq(purchaseOrders.projectId, filters.projectId));
   if (filters?.classification) {
-    conditions.push(eq(purchaseOrders.classification, filters.classification as any));
+    conditions.push(
+      eq(purchaseOrders.classification, filters.classification as any)
+    );
   }
-  if (filters?.status) conditions.push(eq(purchaseOrders.status, filters.status as any));
+  if (filters?.status)
+    conditions.push(eq(purchaseOrders.status, filters.status as any));
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  return db
+  const rows = await db
     .select({
       purchaseOrder: purchaseOrders,
       purchaseRequest: purchaseRequests,
@@ -3763,11 +3994,26 @@ export async function listPurchaseOrders(filters?: {
       supplier: suppliers,
     })
     .from(purchaseOrders)
-    .leftJoin(purchaseRequests, eq(purchaseOrders.purchaseRequestId, purchaseRequests.id))
+    .leftJoin(
+      purchaseRequests,
+      eq(purchaseOrders.purchaseRequestId, purchaseRequests.id)
+    )
     .leftJoin(projects, eq(purchaseOrders.projectId, projects.id))
     .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
     .where(where)
     .orderBy(desc(purchaseOrders.createdAt));
+
+  const invoiceCountMap = await getPurchaseOrderInvoiceCountMap(
+    rows.map(row => row.purchaseOrder.id)
+  );
+
+  return rows.map(row => ({
+    ...row,
+    contractSummary: buildPurchaseOrderContractSummary(
+      row.purchaseOrder,
+      invoiceCountMap.get(row.purchaseOrder.id) ?? 0
+    ),
+  }));
 }
 
 export async function getPurchaseOrderById(id: number) {
@@ -3782,7 +4028,10 @@ export async function getPurchaseOrderById(id: number) {
       createdBy: users,
     })
     .from(purchaseOrders)
-    .leftJoin(purchaseRequests, eq(purchaseOrders.purchaseRequestId, purchaseRequests.id))
+    .leftJoin(
+      purchaseRequests,
+      eq(purchaseOrders.purchaseRequestId, purchaseRequests.id)
+    )
     .leftJoin(projects, eq(purchaseOrders.projectId, projects.id))
     .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
     .leftJoin(users, eq(purchaseOrders.createdById, users.id))
@@ -3794,6 +4043,16 @@ export async function getPurchaseOrderById(id: number) {
     .select()
     .from(purchaseOrderItems)
     .where(eq(purchaseOrderItems.purchaseOrderId, id));
+  const invoiceCountMap = await getPurchaseOrderInvoiceCountMap([id]);
+  const auditLogs = await db
+    .select({
+      log: purchaseOrderAuditLogs,
+      changedBy: users,
+    })
+    .from(purchaseOrderAuditLogs)
+    .leftJoin(users, eq(purchaseOrderAuditLogs.changedById, users.id))
+    .where(eq(purchaseOrderAuditLogs.purchaseOrderId, id))
+    .orderBy(desc(purchaseOrderAuditLogs.createdAt));
   const projectLabel = rows[0].project
     ? `${rows[0].project.code ?? ""} ${rows[0].project.name ?? ""}`.trim()
     : `Proyecto ${rows[0].purchaseOrder.projectId}`;
@@ -3817,7 +4076,7 @@ export async function getPurchaseOrderById(id: number) {
     quoteLabel: rows[0].purchaseRequest?.quoteAttachmentId
       ? String(rows[0].purchaseRequest.quoteAttachmentId)
       : "-",
-    items: items.map((item) => ({
+    items: items.map(item => ({
       itemName: item.itemName,
       currentSapItemCode: item.currentSapItemCode,
       originalSapItemCode: item.originalSapItemCode,
@@ -3829,7 +4088,7 @@ export async function getPurchaseOrderById(id: number) {
   });
 
   const summary = summarizePurchaseOrderLines(
-    items.map((item) => ({
+    items.map(item => ({
       quantity: item.quantity,
       unitPrice: item.unitPrice,
       taxCode: item.taxCode,
@@ -3849,6 +4108,11 @@ export async function getPurchaseOrderById(id: number) {
     },
     items,
     summary,
+    contractSummary: buildPurchaseOrderContractSummary(
+      rows[0].purchaseOrder,
+      invoiceCountMap.get(id) ?? 0
+    ),
+    auditLogs,
   };
 }
 
@@ -3878,16 +4142,117 @@ export async function updatePurchaseOrderItem(
   return { success: true };
 }
 
+export async function createPurchaseOrderAuditLog(
+  data: InsertPurchaseOrderAuditLog
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const [created] = await db
+    .insert(purchaseOrderAuditLogs)
+    .values(data)
+    .returning({ id: purchaseOrderAuditLogs.id });
+  return created;
+}
+
+export async function updatePurchaseOrderContractTerms(params: {
+  purchaseOrderId: number;
+  changedById: number;
+  appliesContract: boolean;
+  contractPaymentFrequency?: InsertPurchaseOrder["contractPaymentFrequency"];
+  contractFirstPaymentDate?: Date | null;
+  contractEndDate?: Date | null;
+  note?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const [current] = await tx
+      .select()
+      .from(purchaseOrders)
+      .where(eq(purchaseOrders.id, params.purchaseOrderId))
+      .limit(1);
+    if (!current) throw new Error("Orden de compra no encontrada");
+
+    const nextData: Partial<InsertPurchaseOrder> = {
+      appliesContract: params.appliesContract,
+      contractPaymentFrequency: params.appliesContract
+        ? params.contractPaymentFrequency ?? null
+        : null,
+      contractFirstPaymentDate: params.appliesContract
+        ? params.contractFirstPaymentDate ?? null
+        : null,
+      contractEndDate: params.appliesContract
+        ? params.contractEndDate ?? null
+        : null,
+      updatedAt: new Date(),
+    };
+    if (
+      String(current.contractEndDate ?? "") !==
+      String(nextData.contractEndDate ?? "")
+    ) {
+      nextData.contractExpiryNotifiedAt = null;
+    }
+
+    await tx
+      .update(purchaseOrders)
+      .set(nextData)
+      .where(eq(purchaseOrders.id, params.purchaseOrderId));
+
+    const auditFields: Array<keyof typeof nextData> = [
+      "appliesContract",
+      "contractPaymentFrequency",
+      "contractFirstPaymentDate",
+      "contractEndDate",
+    ];
+    const logs = auditFields
+      .filter(field => String((current as any)[field] ?? "") !== String((nextData as any)[field] ?? ""))
+      .map(field => ({
+        purchaseOrderId: params.purchaseOrderId,
+        purchaseOrderItemId: null,
+        action: "actualizar_contrato",
+        field,
+        oldValue: formatAuditValue((current as any)[field]),
+        newValue: formatAuditValue((nextData as any)[field]),
+        changedById: params.changedById,
+        note: params.note?.trim() || null,
+      }));
+
+    if (logs.length > 0) {
+      await tx.insert(purchaseOrderAuditLogs).values(logs);
+    }
+
+    return { success: true };
+  });
+}
+
+function formatAuditValue(value: unknown) {
+  if (value instanceof Date) return value.toISOString();
+  if (value === null || value === undefined) return null;
+  return String(value);
+}
+
 export async function syncPurchaseOrderReceiptStatus(purchaseOrderId: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
+
+  const [purchaseOrder] = await db
+    .select()
+    .from(purchaseOrders)
+    .where(eq(purchaseOrders.id, purchaseOrderId))
+    .limit(1);
 
   const items = await db
     .select()
     .from(purchaseOrderItems)
     .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
 
-  const nextStatus = getPurchaseOrderReceiptStatus(items);
+  const invoiceCountMap = await getPurchaseOrderInvoiceCountMap([purchaseOrderId]);
+  const nextStatus = purchaseOrder?.appliesContract
+    ? invoiceCountMap.get(purchaseOrderId)
+      ? ("parcialmente_recibida" as const)
+      : ("emitida" as const)
+    : getPurchaseOrderReceiptStatus(items);
 
   await updatePurchaseOrder(purchaseOrderId, {
     status: nextStatus,
@@ -3906,7 +4271,10 @@ export async function getPurchaseOrderItemById(id: number) {
       purchaseOrder: purchaseOrders,
     })
     .from(purchaseOrderItems)
-    .leftJoin(purchaseOrders, eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id))
+    .leftJoin(
+      purchaseOrders,
+      eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id)
+    )
     .where(eq(purchaseOrderItems.id, id))
     .limit(1);
 
@@ -4001,7 +4369,7 @@ export async function createTransferRequest(
 
   if (items.length > 0) {
     await db.insert(transferRequestItems).values(
-      items.map((item) => ({
+      items.map(item => ({
         ...item,
         transferRequestId: created.id,
       }))
@@ -4018,8 +4386,10 @@ export async function listTransferRequests(filters?: {
   const db = await getDb();
   if (!db) return [];
   const conditions = [];
-  if (filters?.projectId) conditions.push(eq(transferRequests.projectId, filters.projectId));
-  if (filters?.status) conditions.push(eq(transferRequests.status, filters.status as any));
+  if (filters?.projectId)
+    conditions.push(eq(transferRequests.projectId, filters.projectId));
+  if (filters?.status)
+    conditions.push(eq(transferRequests.status, filters.status as any));
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
   return db
@@ -4030,7 +4400,10 @@ export async function listTransferRequests(filters?: {
     })
     .from(transferRequests)
     .leftJoin(projects, eq(transferRequests.projectId, projects.id))
-    .leftJoin(materialRequests, eq(transferRequests.materialRequestId, materialRequests.id))
+    .leftJoin(
+      materialRequests,
+      eq(transferRequests.materialRequestId, materialRequests.id)
+    )
     .where(where)
     .orderBy(desc(transferRequests.createdAt));
 }
@@ -4046,7 +4419,10 @@ export async function getTransferRequestById(id: number) {
     })
     .from(transferRequests)
     .leftJoin(projects, eq(transferRequests.projectId, projects.id))
-    .leftJoin(materialRequests, eq(transferRequests.materialRequestId, materialRequests.id))
+    .leftJoin(
+      materialRequests,
+      eq(transferRequests.materialRequestId, materialRequests.id)
+    )
     .where(eq(transferRequests.id, id))
     .limit(1);
   if (!rows[0]) return undefined;
@@ -4057,7 +4433,7 @@ export async function getTransferRequestById(id: number) {
     .orderBy(asc(transferRequestItems.id));
 
   const enrichedItems = await Promise.all(
-    items.map(async (item) => {
+    items.map(async item => {
       const currentOriginStock = parseDecimal(
         await getStockByItem({
           sapItemCode: item.sapItemCode,
@@ -4101,7 +4477,10 @@ export async function updateTransferRequest(
 export async function createTransferFromRequest(
   transferRequestId: number,
   confirmedById: number,
-  itemQuantities?: Array<{ transferRequestItemId: number; quantity: string | number }>
+  itemQuantities?: Array<{
+    transferRequestItemId: number;
+    quantity: string | number;
+  }>
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -4117,10 +4496,10 @@ export async function createTransferFromRequest(
   }
 
   const requestedItems = detail.items || [];
-  const transferItems = requestedItems.map((item) => {
+  const transferItems = requestedItems.map(item => {
     const requestedQuantity = parseDecimal(item.quantity);
     const transferQuantity = itemQuantities
-      ? quantityByItemId.get(item.id) ?? 0
+      ? (quantityByItemId.get(item.id) ?? 0)
       : requestedQuantity;
     const pendingQuantity = Math.max(requestedQuantity - transferQuantity, 0);
 
@@ -4141,7 +4520,7 @@ export async function createTransferFromRequest(
     };
   });
 
-  if (!transferItems.some((entry) => entry.transferQuantity > 0)) {
+  if (!transferItems.some(entry => entry.transferQuantity > 0)) {
     throw new Error("Debe trasladar al menos una cantidad mayor que cero");
   }
 
@@ -4274,17 +4653,20 @@ export async function createTransferFromRequest(
     detail.transferRequest.projectId
   );
   const sapCorrelative = `SAP-${guideNumber}`;
-  const documentContent = buildSimplePdfBase64(`Guía de Remisión ${guideNumber}`, [
-    `Traslado: ${transferNumber}`,
-    `Solicitud de traslado: ${detail.transferRequest.requestNumber}`,
-    `Proyecto origen: ${detail.project?.code ?? detail.transferRequest.projectId}`,
-    `Destino: ${
-      detail.transferRequest.destinationType === "bodega_central"
-        ? "Bodega Central"
-        : `Proyecto ${detail.transferRequest.destinationProjectId ?? ""}`
-    }`,
-    `Correlativo SAP: ${sapCorrelative}`,
-  ]);
+  const documentContent = buildSimplePdfBase64(
+    `Guía de Remisión ${guideNumber}`,
+    [
+      `Traslado: ${transferNumber}`,
+      `Solicitud de traslado: ${detail.transferRequest.requestNumber}`,
+      `Proyecto origen: ${detail.project?.code ?? detail.transferRequest.projectId}`,
+      `Destino: ${
+        detail.transferRequest.destinationType === "bodega_central"
+          ? "Bodega Central"
+          : `Proyecto ${detail.transferRequest.destinationProjectId ?? ""}`
+      }`,
+      `Correlativo SAP: ${sapCorrelative}`,
+    ]
+  );
 
   const [transfer] = await db
     .insert(transfers)
@@ -4326,7 +4708,8 @@ export async function listTransfers(filters?: {
   const db = await getDb();
   if (!db) return [];
   const conditions = [];
-  if (filters?.status) conditions.push(eq(transfers.status, filters.status as any));
+  if (filters?.status)
+    conditions.push(eq(transfers.status, filters.status as any));
   if (filters?.receivableOnly) {
     conditions.push(
       inArray(transfers.status, [
@@ -4341,10 +4724,7 @@ export async function listTransfers(filters?: {
   }
   if (filters?.destinationProjectId) {
     conditions.push(
-      eq(
-        transferRequests.destinationProjectId,
-        filters.destinationProjectId
-      )
+      eq(transferRequests.destinationProjectId, filters.destinationProjectId)
     );
   }
   const where = conditions.length > 0 ? and(...conditions) : undefined;
@@ -4355,7 +4735,10 @@ export async function listTransfers(filters?: {
       project: projects,
     })
     .from(transfers)
-    .leftJoin(transferRequests, eq(transfers.transferRequestId, transferRequests.id))
+    .leftJoin(
+      transferRequests,
+      eq(transfers.transferRequestId, transferRequests.id)
+    )
     .leftJoin(projects, eq(transferRequests.projectId, projects.id))
     .where(where)
     .orderBy(desc(transfers.createdAt));
@@ -4363,7 +4746,7 @@ export async function listTransfers(filters?: {
   const destinationProjectIds = Array.from(
     new Set(
       rows
-        .map((row) =>
+        .map(row =>
           row.transferRequest?.destinationType === "proyecto"
             ? row.transferRequest.destinationProjectId
             : null
@@ -4380,16 +4763,17 @@ export async function listTransfers(filters?: {
           .where(inArray(projects.id, destinationProjectIds))
       : [];
   const destinationProjectsById = new Map(
-    destinationRows.map((project) => [project.id, project])
+    destinationRows.map(project => [project.id, project])
   );
 
-  return rows.map((row) => ({
+  return rows.map(row => ({
     ...row,
     destinationProject:
       row.transferRequest?.destinationType === "proyecto" &&
       row.transferRequest.destinationProjectId
-        ? destinationProjectsById.get(row.transferRequest.destinationProjectId) ??
-          null
+        ? (destinationProjectsById.get(
+            row.transferRequest.destinationProjectId
+          ) ?? null)
         : null,
   }));
 }
@@ -4406,7 +4790,10 @@ export async function getTransferById(id: number) {
       createdBy: users,
     })
     .from(transfers)
-    .leftJoin(transferRequests, eq(transfers.transferRequestId, transferRequests.id))
+    .leftJoin(
+      transferRequests,
+      eq(transfers.transferRequestId, transferRequests.id)
+    )
     .leftJoin(projects, eq(transferRequests.projectId, projects.id))
     .leftJoin(remissionGuides, eq(remissionGuides.transferId, transfers.id))
     .leftJoin(users, eq(transferRequests.createdById, users.id))
@@ -4432,13 +4819,23 @@ export async function getTransferById(id: number) {
       ? await db
           .select()
           .from(warehouses)
-          .where(eq(warehouses.projectId, rows[0].transferRequest.destinationProjectId))
+          .where(
+            eq(
+              warehouses.projectId,
+              rows[0].transferRequest.destinationProjectId
+            )
+          )
           .limit(1)
       : [];
   const items = await db
     .select()
     .from(transferRequestItems)
-    .where(eq(transferRequestItems.transferRequestId, rows[0].transferRequest?.id ?? 0));
+    .where(
+      eq(
+        transferRequestItems.transferRequestId,
+        rows[0].transferRequest?.id ?? 0
+      )
+    );
   return {
     ...rows[0],
     originWarehouse: originWarehouseRows[0] ?? null,
@@ -4481,7 +4878,9 @@ function calculateInvoiceTotals(
 
 async function createInvoiceFromPurchaseOrderReceipt(params: {
   receiptId: number;
-  purchaseOrderDetail: NonNullable<Awaited<ReturnType<typeof getPurchaseOrderById>>>;
+  purchaseOrderDetail: NonNullable<
+    Awaited<ReturnType<typeof getPurchaseOrderById>>
+  >;
   receiptData: Omit<InsertReceipt, "receiptNumber"> & {
     emissionDeadline?: Date | null;
   };
@@ -4495,20 +4894,25 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
   if (!db) throw new Error("DB not available");
 
   const emissionDeadline = params.receiptData.emissionDeadline;
-  if (!emissionDeadline) {
+  if (params.receiptData.isFiscalDocument && !emissionDeadline) {
     throw new Error("La fecha límite de emisión es requerida para facturas");
   }
+  const invoiceEmissionDeadline =
+    emissionDeadline ??
+    params.receiptData.documentDate ??
+    params.receiptData.receiptDate ??
+    params.receiptData.postingDate;
 
   const itemById = new Map(
     (params.purchaseOrderDetail.items ?? []).map((item: any) => [item.id, item])
   );
   const invoiceLines = params.receiptItems
-    .map((receiptItem) => {
+    .map(receiptItem => {
       const sourceItem = itemById.get(receiptItem.sourceItemId);
       if (!sourceItem) return null;
       const amounts = calculatePurchaseOrderLineAmounts({
         quantity: receiptItem.quantityReceived,
-        unitPrice: sourceItem.unitPrice ?? "0.00",
+        unitPrice: receiptItem.unitPrice ?? sourceItem.unitPrice ?? "0.00",
         taxCode: sourceItem.taxCode,
       });
 
@@ -4526,7 +4930,10 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
           sourceItem.currentSapItemCode,
           sourceItem.originalSapItemCode,
         ])
-        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .filter(
+          (value): value is string =>
+            typeof value === "string" && value.trim().length > 0
+        )
     )
   );
   const catalogRows =
@@ -4539,14 +4946,12 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
           .from(sapCatalog)
           .where(inArray(sapCatalog.itemCode, catalogCodes))
       : [];
-  const catalogByCode = new Map(
-    catalogRows.map((row) => [row.itemCode, row])
-  );
+  const catalogByCode = new Map(catalogRows.map(row => [row.itemCode, row]));
 
   const totals = calculateInvoiceTotals(
     invoiceLines.map(({ receiptItem, sourceItem }) => ({
       quantity: receiptItem.quantityReceived,
-      unitPrice: sourceItem.unitPrice ?? "0.00",
+      unitPrice: receiptItem.unitPrice ?? sourceItem.unitPrice ?? "0.00",
       taxCode: sourceItem.taxCode,
     }))
   );
@@ -4563,12 +4968,13 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
       projectId: params.purchaseOrderDetail.purchaseOrder.projectId,
       supplierId: params.purchaseOrderDetail.purchaseOrder.supplierId ?? null,
       status: "borrador",
+      isFiscalDocument: params.receiptData.isFiscalDocument ?? false,
       cai: params.receiptData.cai ?? null,
       invoiceNumber: params.receiptData.invoiceNumber ?? null,
       documentDate: params.receiptData.documentDate ?? null,
       postingDate: params.receiptData.postingDate,
       receiptDate: params.receiptData.receiptDate,
-      emissionDeadline,
+      emissionDeadline: invoiceEmissionDeadline,
       notes: params.receiptData.notes ?? null,
       subtotal: toDecimalString(totals.subtotal),
       taxAmount: toDecimalString(totals.taxAmount),
@@ -4596,7 +5002,9 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
           originalSapItemCode: sourceItem.originalSapItemCode ?? null,
           quantity: toDecimalString(receiptItem.quantityReceived),
           unit: receiptItem.unit ?? sourceItem.unit ?? null,
-          unitPrice: toDecimalString(sourceItem.unitPrice ?? "0.00"),
+          unitPrice: toDecimalString(
+            receiptItem.unitPrice ?? sourceItem.unitPrice ?? "0.00"
+          ),
           taxCode: amounts.taxCode,
           allowsTaxWithholding: catalogItem?.allowsTaxWithholding ?? true,
           subtotal: toDecimalString(amounts.subtotal),
@@ -4635,15 +5043,14 @@ export async function registerReceipt(
     (sum, item) => sum + parseDecimal(item.quantityReceived),
     0
   );
-  const hasIncompleteClosure = items.some((item) => item.closeRemaining);
-  const status =
-    hasIncompleteClosure
-      ? "cierre_incompleto"
-      : totalReceived === 0
+  const hasIncompleteClosure = items.some(item => item.closeRemaining);
+  const status = hasIncompleteClosure
+    ? "cierre_incompleto"
+    : totalReceived === 0
       ? "pendiente"
       : totalReceived < totalExpected
-      ? "parcial"
-      : "completa";
+        ? "parcial"
+        : "completa";
   const { emissionDeadline, ...receiptData } = data;
 
   const [created] = await db
@@ -4664,7 +5071,7 @@ export async function registerReceipt(
     insertedReceiptItems = await db
       .insert(receiptItems)
       .values(
-        items.map((item) => {
+        items.map(item => {
           const {
             closeRemaining: _closeRemaining,
             closeReason: _closeReason,
@@ -4686,14 +5093,13 @@ export async function registerReceipt(
         quantityExpected: receiptItems.quantityExpected,
         quantityReceived: receiptItems.quantityReceived,
         unit: receiptItems.unit,
+        unitPrice: receiptItems.unitPrice,
         notes: receiptItems.notes,
         createdAt: receiptItems.createdAt,
       });
   }
 
-  let createdInvoice:
-    | { id: number; invoiceDocumentNumber: string }
-    | undefined;
+  let createdInvoice: { id: number; invoiceDocumentNumber: string } | undefined;
   if (data.sourceType === "purchase_order") {
     const purchaseOrderDetail = await getPurchaseOrderById(data.sourceId);
     if (!purchaseOrderDetail) {
@@ -4722,7 +5128,8 @@ export async function registerReceipt(
         .limit(1);
       if (!existingItem) continue;
       const nextReceived =
-        parseDecimal(existingItem.receivedQuantity) + parseDecimal(item.quantityReceived);
+        parseDecimal(existingItem.receivedQuantity) +
+        parseDecimal(item.quantityReceived);
       await updatePurchaseOrderItem(existingItem.id, {
         receivedQuantity: toDecimalString(nextReceived),
       });
@@ -4731,7 +5138,9 @@ export async function registerReceipt(
         const [purchaseRequestItem] = await db
           .select()
           .from(purchaseRequestItems)
-          .where(eq(purchaseRequestItems.id, existingItem.purchaseRequestItemId))
+          .where(
+            eq(purchaseRequestItems.id, existingItem.purchaseRequestItemId)
+          )
           .limit(1);
 
         if (purchaseRequestItem) {
@@ -4792,7 +5201,9 @@ export async function registerReceipt(
       new Set(
         (purchaseOrderDetail.items ?? [])
           .map((orderItem: any) => orderItem.materialRequestItemId)
-          .filter((value: unknown): value is number => typeof value === "number")
+          .filter(
+            (value: unknown): value is number => typeof value === "number"
+          )
       )
     );
     if (materialRequestIds.length > 0) {
@@ -4804,9 +5215,12 @@ export async function registerReceipt(
         .where(inArray(requestItems.id, materialRequestIds));
 
       for (const requestId of Array.from(
-        new Set(requestRows.map((row) => row.requestId))
+        new Set(requestRows.map(row => row.requestId))
       )) {
-        await syncMaterialRequestFulfillmentStatus(requestId, data.receivedById);
+        await syncMaterialRequestFulfillmentStatus(
+          requestId,
+          data.receivedById
+        );
       }
     }
   } else {
@@ -4829,7 +5243,10 @@ export async function registerReceipt(
 
         const receivedQuantity = parseDecimal(item.quantityReceived);
         const closeQuantity = item.closeRemaining
-          ? Math.max(getTransferOpenQuantity(existingItem) - receivedQuantity, 0)
+          ? Math.max(
+              getTransferOpenQuantity(existingItem) - receivedQuantity,
+              0
+            )
           : 0;
         const nextReceived =
           parseDecimal(existingItem.receivedQuantity) + receivedQuantity;
@@ -4864,7 +5281,9 @@ export async function registerReceipt(
 
           if (requestItem) {
             const requestedQuantity = parseDecimal(requestItem.quantity);
-            const currentDelivered = parseDecimal(requestItem.deliveredQuantity);
+            const currentDelivered = parseDecimal(
+              requestItem.deliveredQuantity
+            );
             const nextDelivered = Math.min(
               currentDelivered + receivedQuantity,
               requestedQuantity
@@ -5007,7 +5426,10 @@ export async function registerReceipt(
         .where(eq(transfers.id, data.sourceId));
 
       for (const requestId of Array.from(affectedRequestIds)) {
-        await syncMaterialRequestFulfillmentStatus(requestId, data.receivedById);
+        await syncMaterialRequestFulfillmentStatus(
+          requestId,
+          data.receivedById
+        );
       }
     }
   }
@@ -5029,13 +5451,17 @@ export async function listReceipts(filters?: {
   const db = await getDb();
   if (!db) return [];
   const conditions = [];
-  if (filters?.projectId) conditions.push(eq(receipts.projectId, filters.projectId));
-  if (filters?.sourceType) conditions.push(eq(receipts.sourceType, filters.sourceType as any));
-  if (filters?.status) conditions.push(eq(receipts.status, filters.status as any));
+  if (filters?.projectId)
+    conditions.push(eq(receipts.projectId, filters.projectId));
+  if (filters?.sourceType)
+    conditions.push(eq(receipts.sourceType, filters.sourceType as any));
+  if (filters?.status)
+    conditions.push(eq(receipts.status, filters.status as any));
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   return db
     .select({
       receipt: receipts,
+      invoice: invoices,
       project: projects,
       purchaseOrder: purchaseOrders,
       supplier: suppliers,
@@ -5049,6 +5475,7 @@ export async function listReceipts(filters?: {
         eq(receipts.sourceId, purchaseOrders.id)
       )
     )
+    .leftJoin(invoices, eq(invoices.receiptId, receipts.id))
     .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
     .where(where)
     .orderBy(desc(receipts.createdAt));
@@ -5060,6 +5487,7 @@ export async function getReceiptById(id: number) {
   const rows = await db
     .select({
       receipt: receipts,
+      invoice: invoices,
       project: projects,
       warehouse: warehouses,
       purchaseOrder: purchaseOrders,
@@ -5076,6 +5504,7 @@ export async function getReceiptById(id: number) {
         eq(receipts.sourceId, purchaseOrders.id)
       )
     )
+    .leftJoin(invoices, eq(invoices.receiptId, receipts.id))
     .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
     .leftJoin(users, eq(receipts.receivedById, users.id))
     .where(eq(receipts.id, id))
@@ -5198,7 +5627,12 @@ export async function updateTaxRetention(
   data: Partial<
     Pick<
       InsertTaxRetention,
-      "taxCode" | "description" | "ratePercent" | "isActive" | "note" | "erpCode"
+      | "taxCode"
+      | "description"
+      | "ratePercent"
+      | "isActive"
+      | "note"
+      | "erpCode"
     >
   >
 ) {
@@ -5227,15 +5661,21 @@ export async function updateTaxRetention(
 export async function listInvoices(filters?: {
   projectId?: number;
   status?: string;
+  excludeStatus?: string;
   supplierId?: number;
   search?: string;
 }) {
   const db = await getDb();
   if (!db) return [];
   const conditions = [];
-  if (filters?.projectId) conditions.push(eq(invoices.projectId, filters.projectId));
-  if (filters?.status) conditions.push(eq(invoices.status, filters.status as any));
-  if (filters?.supplierId) conditions.push(eq(invoices.supplierId, filters.supplierId));
+  if (filters?.projectId)
+    conditions.push(eq(invoices.projectId, filters.projectId));
+  if (filters?.status)
+    conditions.push(eq(invoices.status, filters.status as any));
+  if (filters?.excludeStatus)
+    conditions.push(sql`${invoices.status} <> ${filters.excludeStatus}`);
+  if (filters?.supplierId)
+    conditions.push(eq(invoices.supplierId, filters.supplierId));
   const normalizedSearch = filters?.search?.trim();
   if (normalizedSearch) {
     const searchPattern = `%${normalizedSearch}%`;
@@ -5315,6 +5755,7 @@ export async function updateInvoice(
     Pick<
       InsertInvoice,
       | "cai"
+      | "isFiscalDocument"
       | "invoiceNumber"
       | "documentDate"
       | "postingDate"
@@ -5336,9 +5777,88 @@ export async function updateInvoice(
   return updated;
 }
 
+export async function reviewInvoice(id: number, reviewedById: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const now = new Date();
+  const [updated] = await db
+    .update(invoices)
+    .set({
+      status: "revisada",
+      reviewedById,
+      reviewedAt: now,
+      accountedById: null,
+      accountedAt: null,
+      accountingComment: null,
+      rejectionComment: null,
+      rejectedById: null,
+      rejectedAt: null,
+      updatedAt: now,
+    })
+    .where(eq(invoices.id, id))
+    .returning();
+
+  return updated;
+}
+
+export async function accountInvoice(params: {
+  id: number;
+  accountedById: number;
+  accountingComment?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const now = new Date();
+  const [updated] = await db
+    .update(invoices)
+    .set({
+      status: "registrada",
+      accountedById: params.accountedById,
+      accountedAt: now,
+      accountingComment: params.accountingComment?.trim() || null,
+      updatedAt: now,
+    })
+    .where(eq(invoices.id, params.id))
+    .returning();
+
+  return updated;
+}
+
+export async function rejectInvoiceFromAccounting(params: {
+  id: number;
+  rejectedById: number;
+  rejectionComment: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const now = new Date();
+  const [updated] = await db
+    .update(invoices)
+    .set({
+      status: "rechazada",
+      rejectionComment: params.rejectionComment.trim(),
+      rejectedById: params.rejectedById,
+      rejectedAt: now,
+      reviewedById: null,
+      reviewedAt: null,
+      accountedById: null,
+      accountedAt: null,
+      accountingComment: null,
+      updatedAt: now,
+    })
+    .where(eq(invoices.id, params.id))
+    .returning();
+
+  return updated;
+}
+
 export async function replaceInvoiceRetentions(
   invoiceId: number,
   retentions: Array<{
+    invoiceItemId?: number | null;
     retentionCatalogId: number;
     baseAmount?: string | number | null;
   }>
@@ -5346,7 +5866,7 @@ export async function replaceInvoiceRetentions(
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  return db.transaction(async (tx) => {
+  return db.transaction(async tx => {
     const [invoiceRow] = await tx
       .select({
         invoice: invoices,
@@ -5369,10 +5889,11 @@ export async function replaceInvoiceRetentions(
       .select()
       .from(invoiceItems)
       .where(eq(invoiceItems.invoiceId, invoiceId));
+    const itemsById = new Map(items.map(item => [item.id, item]));
     const withholdingBase = roundMoney(
       items
-        .filter((item) => item.allowsTaxWithholding)
-        .reduce((sum, item) => sum + parseDecimal(item.total), 0)
+        .filter(item => item.allowsTaxWithholding !== false)
+        .reduce((sum, item) => sum + parseDecimal(item.subtotal), 0)
     );
 
     if (hasRetentions && withholdingBase <= 0) {
@@ -5382,7 +5903,7 @@ export async function replaceInvoiceRetentions(
     }
 
     const requestedRetentionIds = Array.from(
-      new Set(retentions.map((retention) => retention.retentionCatalogId))
+      new Set(retentions.map(retention => retention.retentionCatalogId))
     );
     const [catalogRows, existingRows] = await Promise.all([
       requestedRetentionIds.length > 0
@@ -5399,15 +5920,24 @@ export async function replaceInvoiceRetentions(
         .where(eq(invoiceRetentions.invoiceId, invoiceId)),
     ]);
     const catalogById = new Map(
-      catalogRows.map((retention) => [retention.id, retention])
+      catalogRows.map(retention => [retention.id, retention])
     );
     const existingCatalogIds = new Set(
       existingRows
-        .map((retention) => retention.retentionCatalogId)
+        .map(retention => retention.retentionCatalogId)
         .filter((value): value is number => typeof value === "number")
     );
 
-    const normalizedRetentions = retentions.map((retention) => {
+    const normalizedRetentions = retentions.map(retention => {
+      const invoiceItemId = retention.invoiceItemId ?? null;
+      const invoiceItem = invoiceItemId ? itemsById.get(invoiceItemId) : undefined;
+      if (invoiceItemId && !invoiceItem) {
+        throw new Error("La línea de factura seleccionada no existe");
+      }
+      if (invoiceItem && invoiceItem.allowsTaxWithholding === false) {
+        throw new Error("La línea seleccionada no permite retención de impuestos");
+      }
+
       const catalogRetention = catalogById.get(retention.retentionCatalogId);
       if (
         !catalogRetention ||
@@ -5417,13 +5947,18 @@ export async function replaceInvoiceRetentions(
         throw new Error("La retención seleccionada no existe o está inactiva");
       }
 
-      const baseAmount = parseDecimal(retention.baseAmount ?? withholdingBase);
+      const allowedBase = invoiceItem
+        ? roundMoney(parseDecimal(invoiceItem.subtotal))
+        : withholdingBase;
+      const baseAmount = parseDecimal(retention.baseAmount ?? allowedBase);
       if (baseAmount <= 0) {
         throw new Error("La base de retención debe ser mayor que cero");
       }
-      if (baseAmount - withholdingBase > 0.000001) {
+      if (baseAmount - allowedBase > 0.000001) {
         throw new Error(
-          "La base de retención no puede exceder la base retenible de la factura"
+          invoiceItem
+            ? "La base de retención no puede exceder el subtotal de la línea"
+            : "La base de retención no puede exceder la base imponible de la factura"
         );
       }
       const percentage = parseDecimal(catalogRetention.ratePercent);
@@ -5434,6 +5969,7 @@ export async function replaceInvoiceRetentions(
 
       return {
         invoiceId,
+        invoiceItemId,
         retentionCatalogId: catalogRetention.id,
         retentionCode: catalogRetention.taxCode,
         retentionErpCode: catalogRetention.erpCode,
@@ -5457,7 +5993,7 @@ export async function replaceInvoiceRetentions(
     }
     if (retentionTotal - withholdingBase > 0.000001) {
       throw new Error(
-        "El total de retenciones no puede exceder la base retenible de la factura"
+        "El total de retenciones no puede exceder la base imponible de la factura"
       );
     }
 
@@ -5528,12 +6064,14 @@ function buildWarehouseExitDocument(params: {
         value: `${params.items.length} registrados`,
       },
     ],
-    items: params.items.map((item) => ({
+    items: params.items.map(item => ({
       description: item.itemName,
       quantityLabel: `${item.quantity} ${item.unit ?? ""}`.trim(),
       metaLines: [
         ...(item.sapItemCode ? [`SAP: ${item.sapItemCode}`] : []),
-        ...(item.notes ?? params.notes ? [`Notas: ${item.notes ?? params.notes}`] : []),
+        ...((item.notes ?? params.notes)
+          ? [`Notas: ${item.notes ?? params.notes}`]
+          : []),
       ],
     })),
     generatedLabel: formatDateLabel(params.printedAt ?? new Date()),
@@ -5631,20 +6169,29 @@ export async function listWarehouseExits(filters?: {
     )
     .orderBy(desc(warehouseExits.createdAt));
 
-  return rows.map(({ warehouseExit, project, warehouse, createdBy, itemCount, totalQuantity }) => ({
-    warehouseExit,
-    project,
-    warehouse,
-    createdBy: createdBy
-      ? {
-          id: createdBy.id,
-          name: createdBy.name,
-          email: createdBy.email,
-        }
-      : null,
-    itemCount: Number(itemCount ?? 0),
-    totalQuantity: toDecimalString(totalQuantity),
-  }));
+  return rows.map(
+    ({
+      warehouseExit,
+      project,
+      warehouse,
+      createdBy,
+      itemCount,
+      totalQuantity,
+    }) => ({
+      warehouseExit,
+      project,
+      warehouse,
+      createdBy: createdBy
+        ? {
+            id: createdBy.id,
+            name: createdBy.name,
+            email: createdBy.email,
+          }
+        : null,
+      itemCount: Number(itemCount ?? 0),
+      totalQuantity: toDecimalString(totalQuantity),
+    })
+  );
 }
 
 export async function getWarehouseExitById(id: number) {
@@ -5674,11 +6221,12 @@ export async function getWarehouseExitById(id: number) {
     .orderBy(asc(warehouseExitItems.id));
 
   const returnedQuantityByExitItemId = new Map<number, number>();
-  const warehouseExitItemIds = items.map((item) => item.id);
+  const warehouseExitItemIds = items.map(item => item.id);
   if (warehouseExitItemIds.length > 0) {
     const returnedRows = await db
       .select({
-        sourceWarehouseExitItemId: reverseLogisticsItems.sourceWarehouseExitItemId,
+        sourceWarehouseExitItemId:
+          reverseLogisticsItems.sourceWarehouseExitItemId,
         quantity: reverseLogisticsItems.quantity,
       })
       .from(reverseLogisticsItems)
@@ -5707,7 +6255,7 @@ export async function getWarehouseExitById(id: number) {
   }
 
   const enrichedItems = await Promise.all(
-    items.map(async (item) => {
+    items.map(async item => {
       const stockRows = await listInventoryRowsForStock({
         sapItemCode: item.sapItemCode,
         itemName: item.itemName,
@@ -5756,7 +6304,7 @@ export async function getWarehouseExitById(id: number) {
               rows[0].warehouseExit.emittedAt ??
               new Date(),
             notes: rows[0].warehouseExit.notes,
-            items: enrichedItems.map((item) => ({
+            items: enrichedItems.map(item => ({
               sapItemCode: item.sapItemCode,
               itemName: item.itemName,
               quantity: item.quantity,
@@ -5822,7 +6370,7 @@ export async function createWarehouseExit(
     })
     .returning({ id: warehouseExits.id });
 
-  const normalizedItems = items.map((item) => {
+  const normalizedItems = items.map(item => {
     const sapItemCode = item.sapItemCode?.trim();
     if (!sapItemCode) {
       throw new Error("Todos los ítems deben tener código SAP");
@@ -5875,10 +6423,17 @@ async function applyWarehouseExitToRequestItem(params: {
   const dispatchedIncrement = parseDecimal(params.quantity);
   const pendingForExit = getWarehouseExitPendingQuantityForRequestItem(item);
   const nextDispatched = alreadyDispatched + dispatchedIncrement;
-  const nextDelivered = Math.max(parseDecimal(item.deliveredQuantity), nextDispatched);
+  const nextDelivered = Math.max(
+    parseDecimal(item.deliveredQuantity),
+    nextDispatched
+  );
   const nextFulfilled = Math.max(nextDelivered, nextDispatched);
   const nextStatus =
-    nextFulfilled <= 0 ? "pendiente" : nextFulfilled < requested ? "parcial" : "completo";
+    nextFulfilled <= 0
+      ? "pendiente"
+      : nextFulfilled < requested
+        ? "parcial"
+        : "completo";
 
   if (dispatchedIncrement <= 0) {
     throw new Error("La cantidad despachada debe ser mayor que cero");
@@ -5988,7 +6543,7 @@ export async function emitWarehouseExit(id: number, emittedById: number) {
     exitDate: detail.warehouseExit.exitDate,
     printedAt,
     notes: detail.warehouseExit.notes,
-    items: detail.items.map((item) => ({
+    items: detail.items.map(item => ({
       sapItemCode: item.sapItemCode,
       itemName: item.itemName,
       quantity: item.quantity,
@@ -6052,7 +6607,9 @@ export async function cancelWarehouseExitDraft(
       notes: reason ?? detail.warehouseExit.notes,
       updatedAt: new Date(),
     })
-    .where(eq(supplyFlowRecords.sapDocumentNumber, detail.warehouseExit.exitNumber));
+    .where(
+      eq(supplyFlowRecords.sapDocumentNumber, detail.warehouseExit.exitNumber)
+    );
 
   return { success: true };
 }
@@ -6132,7 +6689,14 @@ export async function listOpeningBalances(filters?: { projectId?: number }) {
     .orderBy(desc(openingBalances.createdAt));
 
   return rows.map(
-    ({ openingBalance, project, warehouse, createdBy, itemCount, totalQuantity }) => ({
+    ({
+      openingBalance,
+      project,
+      warehouse,
+      createdBy,
+      itemCount,
+      totalQuantity,
+    }) => ({
       openingBalance,
       project,
       warehouse,
@@ -6227,7 +6791,7 @@ export async function createOpeningBalance(
     })
     .returning({ id: openingBalances.id });
 
-  const normalizedItems = items.map((item) => ({
+  const normalizedItems = items.map(item => ({
     openingBalanceId: created.id,
     sapItemCode: item.sapItemCode.trim(),
     itemName: item.itemName.trim(),
@@ -6278,7 +6842,7 @@ export async function addOpeningBalanceItems(
   const warehouse =
     detail.warehouse ?? (await ensureProjectWarehouse(detail.project.id));
 
-  const normalizedItems = items.map((item) => {
+  const normalizedItems = items.map(item => {
     const quantity = parseDecimal(item.quantity);
     if (quantity <= 0) {
       throw new Error("Todas las cantidades deben ser mayores que cero");
@@ -6329,12 +6893,12 @@ export async function generateReturnNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "DEV",
     projectId,
-    selectExistingNumbers: async (documentPrefix) => {
+    selectExistingNumbers: async documentPrefix => {
       const rows = await db
         .select({ documentNumber: reverseLogistics.returnNumber })
         .from(reverseLogistics)
         .where(ilike(reverseLogistics.returnNumber, `${documentPrefix}%`));
-      return rows.map((row) => row.documentNumber);
+      return rows.map(row => row.documentNumber);
     },
   });
 }
@@ -6443,17 +7007,21 @@ export async function createWarehouseExitProjectReturn(params: {
     throw new Error("Solo se pueden devolver materiales de salidas emitidas");
   }
 
-  const sourceItemById = new Map(detail.items.map((item) => [item.id, item]));
-  const normalizedItems = params.items.map((item) => {
+  const sourceItemById = new Map(detail.items.map(item => [item.id, item]));
+  const normalizedItems = params.items.map(item => {
     const sourceItem = sourceItemById.get(item.sourceWarehouseExitItemId);
     if (!sourceItem) {
-      throw new Error("La devolución incluye un ítem que no pertenece a la salida");
+      throw new Error(
+        "La devolución incluye un ítem que no pertenece a la salida"
+      );
     }
 
     const quantity = parseDecimal(item.quantity);
     const returnableQuantity = parseDecimal(sourceItem.returnableQuantity);
     if (quantity <= 0) {
-      throw new Error(`La cantidad de ${sourceItem.itemName} debe ser mayor que cero`);
+      throw new Error(
+        `La cantidad de ${sourceItem.itemName} debe ser mayor que cero`
+      );
     }
     if (quantity - returnableQuantity > 0.000001) {
       throw new Error(
@@ -6469,7 +7037,9 @@ export async function createWarehouseExitProjectReturn(params: {
     };
   });
 
-  const returnNumber = await generateReturnNumber(detail.warehouseExit.projectId);
+  const returnNumber = await generateReturnNumber(
+    detail.warehouseExit.projectId
+  );
   const shouldReopenRequest = reverseLogisticReasonReopensRequest(
     params.reasonCategory
   );
@@ -6556,17 +7126,15 @@ export async function createReverseLogistic(
       processedById: isProjectWarehouseReturn
         ? data.createdById
         : data.processedById,
-      processedAt: isProjectWarehouseReturn
-        ? new Date()
-        : data.processedAt,
+      processedAt: isProjectWarehouseReturn ? new Date() : data.processedAt,
     })
     .returning({ id: reverseLogistics.id });
   const reverseLogisticId = reverseLogistic.id;
 
   if (items.length > 0) {
-    await db.insert(reverseLogisticsItems).values(
-      items.map((item) => ({ ...item, reverseLogisticId }))
-    );
+    await db
+      .insert(reverseLogisticsItems)
+      .values(items.map(item => ({ ...item, reverseLogisticId })));
   }
 
   if (isProjectWarehouseReturn) {
@@ -6593,9 +7161,14 @@ export async function listReverseLogistics(filters?: {
   if (!db) return [];
 
   const conditions = [];
-  if (filters?.returnType) conditions.push(eq(reverseLogistics.returnType, filters.returnType as any));
-  if (filters?.status) conditions.push(eq(reverseLogistics.status, filters.status as any));
-  if (filters?.sourceProjectId) conditions.push(eq(reverseLogistics.sourceProjectId, filters.sourceProjectId));
+  if (filters?.returnType)
+    conditions.push(eq(reverseLogistics.returnType, filters.returnType as any));
+  if (filters?.status)
+    conditions.push(eq(reverseLogistics.status, filters.status as any));
+  if (filters?.sourceProjectId)
+    conditions.push(
+      eq(reverseLogistics.sourceProjectId, filters.sourceProjectId)
+    );
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -6624,7 +7197,10 @@ export async function getReverseLogisticById(id: number) {
     })
     .from(reverseLogistics)
     .leftJoin(projects, eq(reverseLogistics.sourceProjectId, projects.id))
-    .leftJoin(warehouses, eq(warehouses.projectId, reverseLogistics.sourceProjectId))
+    .leftJoin(
+      warehouses,
+      eq(warehouses.projectId, reverseLogistics.sourceProjectId)
+    )
     .leftJoin(
       warehouseExits,
       eq(reverseLogistics.sourceWarehouseExitId, warehouseExits.id)
@@ -6651,7 +7227,8 @@ export async function updateReverseLogisticStatus(
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  const detail = status === "recibida" ? await getReverseLogisticById(id) : undefined;
+  const detail =
+    status === "recibida" ? await getReverseLogisticById(id) : undefined;
   if (
     detail?.return.returnType === "devolucion_bodega_proyecto" &&
     detail.return.status !== "recibida"
@@ -6673,7 +7250,10 @@ export async function updateReverseLogisticStatus(
     updateData.processedAt = new Date();
   }
 
-  await db.update(reverseLogistics).set(updateData).where(eq(reverseLogistics.id, id));
+  await db
+    .update(reverseLogistics)
+    .set(updateData)
+    .where(eq(reverseLogistics.id, id));
   return { success: true };
 }
 
@@ -6694,7 +7274,9 @@ export async function generateSupplierReturnCreditNote(
   }
 
   if (detail.return.returnType !== "devolucion_proveedor") {
-    throw new Error("Solo las devoluciones a proveedor generan nota de crédito");
+    throw new Error(
+      "Solo las devoluciones a proveedor generan nota de crédito"
+    );
   }
 
   if (detail.return.sapDocumentNumber) {
@@ -6712,7 +7294,9 @@ export async function generateSupplierReturnCreditNote(
   }
 
   if (detail.items.length === 0) {
-    throw new Error("La devolución no tiene ítems para generar nota de crédito");
+    throw new Error(
+      "La devolución no tiene ítems para generar nota de crédito"
+    );
   }
 
   const quantityByItem = new Map<
@@ -6727,7 +7311,9 @@ export async function generateSupplierReturnCreditNote(
   for (const item of detail.items) {
     const quantity = parseDecimal(item.quantity);
     if (quantity <= 0) {
-      throw new Error(`La cantidad de ${item.itemName} debe ser mayor que cero`);
+      throw new Error(
+        `La cantidad de ${item.itemName} debe ser mayor que cero`
+      );
     }
 
     const key = item.sapItemCode?.trim()
@@ -6807,15 +7393,7 @@ export async function createAttachment(data: InsertAttachment) {
 }
 
 export async function getAttachmentsByEntity(
-  entityType:
-    | "material_request"
-    | "supply_flow"
-    | "reverse_logistic"
-    | "purchase_request"
-    | "purchase_order"
-    | "transfer_request"
-    | "transfer"
-    | "receipt",
+  entityType: AttachmentEntityType,
   entityId: number
 ) {
   const db = await getDb();
@@ -6823,8 +7401,24 @@ export async function getAttachmentsByEntity(
   return db
     .select()
     .from(attachments)
-    .where(and(eq(attachments.entityType, entityType), eq(attachments.entityId, entityId)))
+    .where(
+      and(
+        eq(attachments.entityType, entityType),
+        eq(attachments.entityId, entityId)
+      )
+    )
     .orderBy(desc(attachments.createdAt));
+}
+
+export async function getAttachmentById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [attachment] = await db
+    .select()
+    .from(attachments)
+    .where(eq(attachments.id, id))
+    .limit(1);
+  return attachment;
 }
 
 export async function deleteAttachment(id: number) {
@@ -6864,14 +7458,19 @@ export async function getUnreadNotificationCount(userId: number) {
   const result = await db
     .select({ count: count() })
     .from(notifications)
-    .where(and(eq(notifications.userId, userId), eq(notifications.isRead, false)));
+    .where(
+      and(eq(notifications.userId, userId), eq(notifications.isRead, false))
+    );
   return result[0]?.count ?? 0;
 }
 
 export async function markNotificationAsRead(id: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  await db.update(notifications).set({ isRead: true }).where(eq(notifications.id, id));
+  await db
+    .update(notifications)
+    .set({ isRead: true })
+    .where(eq(notifications.id, id));
   return { success: true };
 }
 
@@ -6881,8 +7480,83 @@ export async function markAllNotificationsAsRead(userId: number) {
   await db
     .update(notifications)
     .set({ isRead: true })
-    .where(and(eq(notifications.userId, userId), eq(notifications.isRead, false)));
+    .where(
+      and(eq(notifications.userId, userId), eq(notifications.isRead, false))
+    );
   return { success: true };
+}
+
+export async function notifyExpiringPurchaseOrderContracts(now = new Date()) {
+  const db = await getDb();
+  if (!db) return { notifiedContracts: 0, notificationsCreated: 0 };
+
+  const rows = await db
+    .select({
+      purchaseOrder: purchaseOrders,
+      project: projects,
+    })
+    .from(purchaseOrders)
+    .leftJoin(projects, eq(purchaseOrders.projectId, projects.id))
+    .where(
+      and(
+        eq(purchaseOrders.appliesContract, true),
+        sql`${purchaseOrders.contractExpiryNotifiedAt} IS NULL`,
+        sql`${purchaseOrders.status} <> 'anulada'`
+      )
+    );
+
+  const invoiceCountMap = await getPurchaseOrderInvoiceCountMap(
+    rows.map(row => row.purchaseOrder.id)
+  );
+  let notifiedContracts = 0;
+  let notificationsCreated = 0;
+
+  for (const row of rows) {
+    const summary = getPurchaseOrderContractSummary({
+      appliesContract: row.purchaseOrder.appliesContract,
+      contractPaymentFrequency: row.purchaseOrder.contractPaymentFrequency,
+      contractFirstPaymentDate: row.purchaseOrder.contractFirstPaymentDate,
+      contractEndDate: row.purchaseOrder.contractEndDate,
+      registeredInvoiceCount: invoiceCountMap.get(row.purchaseOrder.id) ?? 0,
+      now,
+    });
+    if (!summary.expiresSoon || summary.isFullyInvoiced) continue;
+
+    const [centralAdmins, projectAdmins] = await Promise.all([
+      getUsersByBuildreqRole("administracion_central"),
+      getUsersByBuildreqRoleAndProject(
+        "administrador_proyecto",
+        row.purchaseOrder.projectId
+      ),
+    ]);
+    const recipients = new Map(
+      [...centralAdmins, ...projectAdmins].map(user => [user.id, user])
+    );
+    const endDateLabel = formatDateLabel(row.purchaseOrder.contractEndDate);
+    const projectLabel = row.project
+      ? `${row.project.code} — ${row.project.name}`
+      : `Proyecto ${row.purchaseOrder.projectId}`;
+
+    for (const recipient of Array.from(recipients.values())) {
+      await createNotification({
+        userId: recipient.id,
+        title: "Contrato próximo a vencer",
+        message: `La OC ${row.purchaseOrder.orderNumber} del ${projectLabel} vence el ${endDateLabel}. ${summary.statusLabel}.`,
+        type: "orden_compra",
+        relatedEntityType: "purchase_order",
+        relatedEntityId: row.purchaseOrder.id,
+      });
+      notificationsCreated += 1;
+    }
+
+    await db
+      .update(purchaseOrders)
+      .set({ contractExpiryNotifiedAt: now, updatedAt: new Date() })
+      .where(eq(purchaseOrders.id, row.purchaseOrder.id));
+    notifiedContracts += 1;
+  }
+
+  return { notifiedContracts, notificationsCreated };
 }
 
 // ============================================================
@@ -6926,7 +7600,10 @@ function buildProjectWarehouseName(projectName: string) {
   return `Bodega ${normalizeWarehouseName(projectName)}`;
 }
 
-function buildProjectWarehouseDisplayName(projectCode: string, projectName: string) {
+function buildProjectWarehouseDisplayName(
+  projectCode: string,
+  projectName: string
+) {
   return `${normalizeWarehouseName(projectCode).toUpperCase()} - ${normalizeWarehouseName(projectName).toUpperCase()} - BODEGA`;
 }
 
@@ -6982,7 +7659,9 @@ async function listInventoryRowsForStock(params: {
   if (normalizedSapItemCode) {
     conditions.push(eq(inventoryItems.sapItemCode, normalizedSapItemCode));
   } else {
-    conditions.push(sql`lower(${inventoryItems.name}) = lower(${params.itemName})`);
+    conditions.push(
+      sql`lower(${inventoryItems.name}) = lower(${params.itemName})`
+    );
   }
 
   if (params.projectId === null || params.projectId === undefined) {
@@ -6994,7 +7673,9 @@ async function listInventoryRowsForStock(params: {
   if (params.warehouseId) {
     conditions.push(eq(inventoryItems.warehouseId, params.warehouseId));
   } else if (params.warehouseLocation?.trim()) {
-    conditions.push(eq(inventoryItems.warehouseLocation, params.warehouseLocation.trim()));
+    conditions.push(
+      eq(inventoryItems.warehouseLocation, params.warehouseLocation.trim())
+    );
   }
 
   return db
@@ -7102,8 +7783,7 @@ async function addInventoryStock(params: {
   const existingRow = rows[0];
 
   if (existingRow) {
-    const nextStock =
-      parseDecimal(existingRow.currentStock) + quantityToAdd;
+    const nextStock = parseDecimal(existingRow.currentStock) + quantityToAdd;
     await db
       .update(inventoryItems)
       .set({
@@ -7220,7 +7900,8 @@ async function ensureProjectWarehouse(projectId: number) {
       .where(eq(warehouses.id, existingWarehouse.id))
       .limit(1);
 
-    if (!updatedWarehouse) throw new Error("No fue posible sincronizar la bodega del proyecto");
+    if (!updatedWarehouse)
+      throw new Error("No fue posible sincronizar la bodega del proyecto");
     return updatedWarehouse;
   }
 
@@ -7239,8 +7920,8 @@ async function ensureWarehouses(seedInputs: WarehouseSeedInput[]) {
   const uniqueInputs = Array.from(
     new Map(
       seedInputs
-        .filter((input) => input.code.trim() && input.name.trim())
-        .map((input) => {
+        .filter(input => input.code.trim() && input.name.trim())
+        .map(input => {
           const code = normalizeWarehouseCode(input.code);
           const name = normalizeWarehouseName(input.name);
           return [
@@ -7260,17 +7941,24 @@ async function ensureWarehouses(seedInputs: WarehouseSeedInput[]) {
 
   if (uniqueInputs.length === 0) return [] as Warehouse[];
 
-  const codes = uniqueInputs.map((input) => input.code);
+  const codes = uniqueInputs.map(input => input.code);
   const existingWarehouses = await db
     .select()
     .from(warehouses)
     .where(inArray(warehouses.code, codes));
 
-  const existingCodes = new Set(existingWarehouses.map((warehouse) => warehouse.code));
-  const warehousesToInsert = uniqueInputs.filter((input) => !existingCodes.has(input.code));
+  const existingCodes = new Set(
+    existingWarehouses.map(warehouse => warehouse.code)
+  );
+  const warehousesToInsert = uniqueInputs.filter(
+    input => !existingCodes.has(input.code)
+  );
 
   if (warehousesToInsert.length > 0) {
-    await db.insert(warehouses).values(warehousesToInsert).onConflictDoNothing();
+    await db
+      .insert(warehouses)
+      .values(warehousesToInsert)
+      .onConflictDoNothing();
   }
 
   return db
@@ -7280,7 +7968,9 @@ async function ensureWarehouses(seedInputs: WarehouseSeedInput[]) {
     .orderBy(asc(warehouses.code));
 }
 
-async function linkInventoryItemsToWarehousesByLocation(targetWarehouses?: Warehouse[]) {
+async function linkInventoryItemsToWarehousesByLocation(
+  targetWarehouses?: Warehouse[]
+) {
   const db = await getDb();
   if (!db) return { linkedRows: 0 };
 
@@ -7303,13 +7993,16 @@ async function linkInventoryItemsToWarehousesByLocation(targetWarehouses?: Wareh
     .where(isNotNull(inventoryItems.warehouseLocation));
 
   const warehouseMap = new Map(
-    warehouseRows.map((warehouse) => [
+    warehouseRows.map(warehouse => [
       normalizeWarehouseLocationKey(warehouse.displayName),
       warehouse,
     ])
   );
 
-  const updatesByWarehouse = new Map<number, { warehouse: Warehouse; ids: number[] }>();
+  const updatesByWarehouse = new Map<
+    number,
+    { warehouse: Warehouse; ids: number[] }
+  >();
 
   for (const row of inventoryRows) {
     const locationKey = normalizeWarehouseLocationKey(row.warehouseLocation);
@@ -7467,7 +8160,9 @@ export async function createWarehouse(data: {
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  const existingWarehouse = await getProjectWarehouseByProjectId(data.projectId);
+  const existingWarehouse = await getProjectWarehouseByProjectId(
+    data.projectId
+  );
   if (existingWarehouse) {
     throw new Error("Ese proyecto ya tiene un almacén asignado");
   }
@@ -7499,7 +8194,10 @@ export async function syncProjectWarehouses() {
   for (const project of allProjects) {
     const warehouse = await ensureProjectWarehouse(project.id);
     syncedWarehouses.push(warehouse);
-    const syncResult = await syncInventoryItemsToProjectWarehouse(project.id, warehouse);
+    const syncResult = await syncInventoryItemsToProjectWarehouse(
+      project.id,
+      warehouse
+    );
     linkedRows += syncResult.linkedRows;
   }
 
@@ -7540,10 +8238,14 @@ export type InventoryListFilters = {
 
 function buildInventoryWhere(filters?: InventoryListFilters) {
   const conditions = [];
-  if (filters?.category) conditions.push(eq(inventoryItems.category, filters.category));
-  if (filters?.isActive !== undefined) conditions.push(eq(inventoryItems.isActive, filters.isActive));
-  if (filters?.warehouseId) conditions.push(eq(inventoryItems.warehouseId, filters.warehouseId));
-  if (filters?.projectId) conditions.push(eq(inventoryItems.projectId, filters.projectId));
+  if (filters?.category)
+    conditions.push(eq(inventoryItems.category, filters.category));
+  if (filters?.isActive !== undefined)
+    conditions.push(eq(inventoryItems.isActive, filters.isActive));
+  if (filters?.warehouseId)
+    conditions.push(eq(inventoryItems.warehouseId, filters.warehouseId));
+  if (filters?.projectId)
+    conditions.push(eq(inventoryItems.projectId, filters.projectId));
   if (filters?.search) {
     conditions.push(
       or(
@@ -7572,7 +8274,7 @@ async function getInventoryIdsByFilters(filters?: InventoryListFilters) {
     .leftJoin(projects, eq(inventoryItems.projectId, projects.id))
     .where(buildInventoryWhere(filters));
 
-  return rows.map((row) => row.id);
+  return rows.map(row => row.id);
 }
 
 export async function listInventoryItems(filters?: InventoryListFilters) {
@@ -7678,11 +8380,14 @@ export async function listInventoryItems(filters?: InventoryListFilters) {
     Promise<{ totalRequiredQuantity: string; pendingReceiptQuantity: string }>
   >();
   await Promise.all(
-    items.map(async (item) => {
+    items.map(async item => {
       const scopeKey = [
         item.sapItemCode,
         item.project?.id ?? "no-project",
-        item.warehouse?.id ?? item.warehouseId ?? item.warehouseLocation ?? "no-warehouse",
+        item.warehouse?.id ??
+          item.warehouseId ??
+          item.warehouseLocation ??
+          "no-warehouse",
       ].join("::");
       if (!pendingQuantityPromises.has(scopeKey)) {
         pendingQuantityPromises.set(
@@ -7703,14 +8408,17 @@ export async function listInventoryItems(filters?: InventoryListFilters) {
   );
 
   return {
-    items: items.map((item) => ({
+    items: items.map(item => ({
       ...item,
       totalRequiredQuantity:
         pendingQuantityByScope.get(
           [
             item.sapItemCode,
             item.project?.id ?? "no-project",
-            item.warehouse?.id ?? item.warehouseId ?? item.warehouseLocation ?? "no-warehouse",
+            item.warehouse?.id ??
+              item.warehouseId ??
+              item.warehouseLocation ??
+              "no-warehouse",
           ].join("::")
         )?.totalRequiredQuantity ?? "0.00",
       pendingReceiptQuantity:
@@ -7718,7 +8426,10 @@ export async function listInventoryItems(filters?: InventoryListFilters) {
           [
             item.sapItemCode,
             item.project?.id ?? "no-project",
-            item.warehouse?.id ?? item.warehouseId ?? item.warehouseLocation ?? "no-warehouse",
+            item.warehouse?.id ??
+              item.warehouseId ??
+              item.warehouseLocation ??
+              "no-warehouse",
           ].join("::")
         )?.pendingReceiptQuantity ?? "0.00",
     })),
@@ -7761,7 +8472,7 @@ async function resolveInventoryScopeProjectIds(params: {
     .where(and(...conditions));
 
   return rows
-    .map((row) => row.projectId)
+    .map(row => row.projectId)
     .filter((projectId): projectId is number => typeof projectId === "number");
 }
 
@@ -7799,7 +8510,11 @@ async function getInventoryPendingProcessQuantities(params: {
     sql`${materialRequests.status}::text IN ('pendiente_aprobar', 'en_espera', 'en_proceso', 'parcialmente_atendida')`,
     sql`${requestItems.status} <> 'completo'`,
   ];
-  applyProjectScope(materialConditions, materialRequests.projectId, scopeProjectIds);
+  applyProjectScope(
+    materialConditions,
+    materialRequests.projectId,
+    scopeProjectIds
+  );
 
   const purchaseRequestConditions = [
     or(
@@ -7832,7 +8547,11 @@ async function getInventoryPendingProcessQuantities(params: {
     ]),
     eq(purchaseOrderItems.receiptClosed, false),
   ];
-  applyProjectScope(purchaseOrderConditions, purchaseOrders.projectId, scopeProjectIds);
+  applyProjectScope(
+    purchaseOrderConditions,
+    purchaseOrders.projectId,
+    scopeProjectIds
+  );
 
   const [materialRows, purchaseRequestRows, purchaseOrderRows] =
     await Promise.all([
@@ -7842,7 +8561,10 @@ async function getInventoryPendingProcessQuantities(params: {
           deliveredQuantity: requestItems.deliveredQuantity,
         })
         .from(requestItems)
-        .innerJoin(materialRequests, eq(requestItems.requestId, materialRequests.id))
+        .innerJoin(
+          materialRequests,
+          eq(requestItems.requestId, materialRequests.id)
+        )
         .where(and(...materialConditions)),
       db
         .select({
@@ -7869,16 +8591,25 @@ async function getInventoryPendingProcessQuantities(params: {
     ]);
 
   const totalRequiredQuantity = materialRows
-    .map((row) =>
-      Math.max(parseDecimal(row.quantity) - parseDecimal(row.deliveredQuantity), 0)
+    .map(row =>
+      Math.max(
+        parseDecimal(row.quantity) - parseDecimal(row.deliveredQuantity),
+        0
+      )
     )
     .reduce((sum, value) => sum + value, 0);
   const pendingReceiptQuantity = [
-    ...purchaseRequestRows.map((row) =>
-      Math.max(parseDecimal(row.quantity) - parseDecimal(row.receivedQuantity), 0)
+    ...purchaseRequestRows.map(row =>
+      Math.max(
+        parseDecimal(row.quantity) - parseDecimal(row.receivedQuantity),
+        0
+      )
     ),
-    ...purchaseOrderRows.map((row) =>
-      Math.max(parseDecimal(row.quantity) - parseDecimal(row.receivedQuantity), 0)
+    ...purchaseOrderRows.map(row =>
+      Math.max(
+        parseDecimal(row.quantity) - parseDecimal(row.receivedQuantity),
+        0
+      )
     ),
   ].reduce((sum, value) => sum + value, 0);
 
@@ -7910,7 +8641,11 @@ export async function getInventoryTracking(params: {
     sql`${materialRequests.status}::text IN ('pendiente_aprobar', 'en_espera', 'en_proceso', 'parcialmente_atendida')`,
     sql`${requestItems.status} <> 'completo'`,
   ];
-  applyProjectScope(materialConditions, materialRequests.projectId, scopeProjectIds);
+  applyProjectScope(
+    materialConditions,
+    materialRequests.projectId,
+    scopeProjectIds
+  );
 
   const purchaseRequestConditions = [
     or(
@@ -7943,7 +8678,11 @@ export async function getInventoryTracking(params: {
     ]),
     eq(purchaseOrderItems.receiptClosed, false),
   ];
-  applyProjectScope(purchaseOrderConditions, purchaseOrders.projectId, scopeProjectIds);
+  applyProjectScope(
+    purchaseOrderConditions,
+    purchaseOrders.projectId,
+    scopeProjectIds
+  );
 
   const [materialRows, purchaseRequestRows, purchaseOrderRows] =
     await Promise.all([
@@ -7954,7 +8693,10 @@ export async function getInventoryTracking(params: {
           project: projects,
         })
         .from(requestItems)
-        .innerJoin(materialRequests, eq(requestItems.requestId, materialRequests.id))
+        .innerJoin(
+          materialRequests,
+          eq(requestItems.requestId, materialRequests.id)
+        )
         .leftJoin(projects, eq(materialRequests.projectId, projects.id))
         .where(and(...materialConditions))
         .orderBy(desc(materialRequests.createdAt), desc(requestItems.id))
@@ -7972,7 +8714,10 @@ export async function getInventoryTracking(params: {
         )
         .leftJoin(projects, eq(purchaseRequests.projectId, projects.id))
         .where(and(...purchaseRequestConditions))
-        .orderBy(desc(purchaseRequests.createdAt), desc(purchaseRequestItems.id))
+        .orderBy(
+          desc(purchaseRequests.createdAt),
+          desc(purchaseRequestItems.id)
+        )
         .limit(50),
       db
         .select({
@@ -8101,28 +8846,46 @@ export async function getInventoryKardex(params: {
       eq(purchaseOrderItems.originalSapItemCode, sapItemCode)
     )!,
   ];
-  applyProjectScope(purchaseReceiptConditions, receipts.projectId, scopeProjectIds);
+  applyProjectScope(
+    purchaseReceiptConditions,
+    receipts.projectId,
+    scopeProjectIds
+  );
 
   const transferReceiptConditions = [
     eq(receipts.sourceType, "transfer"),
     eq(transferRequestItems.sapItemCode, sapItemCode),
   ];
-  applyProjectScope(transferReceiptConditions, receipts.projectId, scopeProjectIds);
+  applyProjectScope(
+    transferReceiptConditions,
+    receipts.projectId,
+    scopeProjectIds
+  );
 
   const warehouseExitConditions = [
     eq(warehouseExitItems.sapItemCode, sapItemCode),
     eq(warehouseExits.status, "emitida"),
   ];
-  applyProjectScope(warehouseExitConditions, warehouseExits.projectId, scopeProjectIds);
+  applyProjectScope(
+    warehouseExitConditions,
+    warehouseExits.projectId,
+    scopeProjectIds
+  );
   if (params.warehouseId) {
-    warehouseExitConditions.push(eq(warehouseExits.warehouseId, params.warehouseId));
+    warehouseExitConditions.push(
+      eq(warehouseExits.warehouseId, params.warehouseId)
+    );
   }
 
   const transferExitConditions = [
     eq(transferRequestItems.sapItemCode, sapItemCode),
     sql`${transfers.status} <> 'anulado'`,
   ];
-  applyProjectScope(transferExitConditions, transferRequests.projectId, scopeProjectIds);
+  applyProjectScope(
+    transferExitConditions,
+    transferRequests.projectId,
+    scopeProjectIds
+  );
 
   const [
     balanceRows,
@@ -8142,7 +8905,11 @@ export async function getInventoryKardex(params: {
       .leftJoin(warehouses, eq(inventoryItems.warehouseId, warehouses.id))
       .leftJoin(projects, eq(inventoryItems.projectId, projects.id))
       .where(and(...balanceConditions))
-      .orderBy(asc(projects.code), asc(warehouses.displayName), asc(inventoryItems.id)),
+      .orderBy(
+        asc(projects.code),
+        asc(warehouses.displayName),
+        asc(inventoryItems.id)
+      ),
     db
       .select({
         openingBalance: openingBalances,
@@ -8227,7 +8994,10 @@ export async function getInventoryKardex(params: {
         transferRequests,
         eq(transferRequestItems.transferRequestId, transferRequests.id)
       )
-      .innerJoin(transfers, eq(transfers.transferRequestId, transferRequests.id))
+      .innerJoin(
+        transfers,
+        eq(transfers.transferRequestId, transferRequests.id)
+      )
       .leftJoin(projects, eq(transferRequests.projectId, projects.id))
       .where(and(...transferExitConditions))
       .orderBy(desc(transfers.createdAt), desc(transferRequestItems.id))
@@ -8380,7 +9150,10 @@ export async function createInventoryItem(data: InsertInventoryItem) {
         warehouseId: projectAssignment.warehouseId,
         warehouseLocation: projectAssignment.warehouseLocation,
       }
-    : await resolveWarehouseAssignment(data.warehouseId, data.warehouseLocation);
+    : await resolveWarehouseAssignment(
+        data.warehouseId,
+        data.warehouseLocation
+      );
   const [inventoryItem] = await db
     .insert(inventoryItems)
     .values({
@@ -8393,7 +9166,10 @@ export async function createInventoryItem(data: InsertInventoryItem) {
   return { id: inventoryItem.id };
 }
 
-export async function updateInventoryItem(id: number, data: Partial<InsertInventoryItem>) {
+export async function updateInventoryItem(
+  id: number,
+  data: Partial<InsertInventoryItem>
+) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const projectAssignment =
@@ -8407,12 +9183,18 @@ export async function updateInventoryItem(id: number, data: Partial<InsertInvent
     if (projectAssignment) {
       nextData.warehouseId = projectAssignment.warehouseId;
       nextData.warehouseLocation = projectAssignment.warehouseLocation;
-    } else if (data.warehouseId === undefined && data.warehouseLocation === undefined) {
+    } else if (
+      data.warehouseId === undefined &&
+      data.warehouseLocation === undefined
+    ) {
       nextData.warehouseId = null;
       nextData.warehouseLocation = null;
     }
   }
-  if (data.projectId === undefined && (data.warehouseId !== undefined || data.warehouseLocation !== undefined)) {
+  if (
+    data.projectId === undefined &&
+    (data.warehouseId !== undefined || data.warehouseLocation !== undefined)
+  ) {
     const warehouseAssignment = await resolveWarehouseAssignment(
       data.warehouseId,
       data.warehouseLocation
@@ -8421,7 +9203,10 @@ export async function updateInventoryItem(id: number, data: Partial<InsertInvent
     nextData.warehouseLocation = warehouseAssignment.warehouseLocation;
   }
 
-  await db.update(inventoryItems).set(nextData).where(eq(inventoryItems.id, id));
+  await db
+    .update(inventoryItems)
+    .set(nextData)
+    .where(eq(inventoryItems.id, id));
   return { success: true };
 }
 
@@ -8606,7 +9391,12 @@ export async function getSapSyncLogByEntity(
   return db
     .select()
     .from(sapSyncLog)
-    .where(and(eq(sapSyncLog.entityType, entityType), eq(sapSyncLog.entityId, entityId)))
+    .where(
+      and(
+        eq(sapSyncLog.entityType, entityType),
+        eq(sapSyncLog.entityId, entityId)
+      )
+    )
     .orderBy(desc(sapSyncLog.createdAt));
 }
 
@@ -8622,7 +9412,9 @@ export async function getDashboardStats(filters?: {
 
   const requestConditions = [];
   if (filters?.requestedById) {
-    requestConditions.push(eq(materialRequests.requestedById, filters.requestedById));
+    requestConditions.push(
+      eq(materialRequests.requestedById, filters.requestedById)
+    );
   }
   if (filters?.projectId) {
     requestConditions.push(eq(materialRequests.projectId, filters.projectId));
@@ -8632,10 +9424,14 @@ export async function getDashboardStats(filters?: {
 
   const returnConditions = [];
   if (filters?.requestedById) {
-    returnConditions.push(eq(reverseLogistics.createdById, filters.requestedById));
+    returnConditions.push(
+      eq(reverseLogistics.createdById, filters.requestedById)
+    );
   }
   if (filters?.projectId) {
-    returnConditions.push(eq(reverseLogistics.sourceProjectId, filters.projectId));
+    returnConditions.push(
+      eq(reverseLogistics.sourceProjectId, filters.projectId)
+    );
   }
   const returnWhere =
     returnConditions.length > 0 ? and(...returnConditions) : undefined;
@@ -8663,13 +9459,22 @@ export async function getDashboardStats(filters?: {
     ? await db
         .select({ count: count() })
         .from(projects)
-        .where(and(eq(projects.status, "activo"), eq(projects.id, filters.projectId)))
+        .where(
+          and(eq(projects.status, "activo"), eq(projects.id, filters.projectId))
+        )
     : filters?.requestedById
       ? await db
-          .select({ count: sql<number>`count(distinct ${materialRequests.projectId})` })
+          .select({
+            count: sql<number>`count(distinct ${materialRequests.projectId})`,
+          })
           .from(materialRequests)
           .leftJoin(projects, eq(materialRequests.projectId, projects.id))
-          .where(and(eq(projects.status, "activo"), eq(materialRequests.requestedById, filters.requestedById)))
+          .where(
+            and(
+              eq(projects.status, "activo"),
+              eq(materialRequests.requestedById, filters.requestedById)
+            )
+          )
       : await db
           .select({ count: count() })
           .from(projects)
@@ -8701,7 +9506,10 @@ export async function getDashboardStats(filters?: {
       count: count(),
     })
     .from(supplyFlowRecords)
-    .leftJoin(materialRequests, eq(supplyFlowRecords.requestId, materialRequests.id))
+    .leftJoin(
+      materialRequests,
+      eq(supplyFlowRecords.requestId, materialRequests.id)
+    )
     .where(requestWhere)
     .groupBy(supplyFlowRecords.flowType);
 
@@ -8729,9 +9537,7 @@ export async function getDashboardStats(filters?: {
 }
 
 // Helper: notify users by role
-export async function getUsersByBuildreqRole(
-  role: BuildReqRole
-) {
+export async function getUsersByBuildreqRole(role: BuildReqRole) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(users).where(eq(users.buildreqRole, role));
@@ -8747,13 +9553,9 @@ export async function getUsersByBuildreqRoleAndProject(
     .select()
     .from(users)
     .where(
-      and(
-        eq(users.buildreqRole, role),
-        eq(users.assignedProjectId, projectId)
-      )
+      and(eq(users.buildreqRole, role), eq(users.assignedProjectId, projectId))
     );
 }
-
 
 // ============================================================
 // INVITATIONS
@@ -8786,10 +9588,7 @@ export async function getInvitationByEmail(email: string) {
     .select()
     .from(invitations)
     .where(
-      and(
-        eq(invitations.email, email),
-        eq(invitations.status, "pendiente")
-      )
+      and(eq(invitations.email, email), eq(invitations.status, "pendiente"))
     )
     .limit(1);
   return result[0];
@@ -8808,10 +9607,7 @@ export async function listInvitations() {
     .orderBy(desc(invitations.createdAt));
 }
 
-export async function acceptInvitation(
-  invitationId: number,
-  userId: number
-) {
+export async function acceptInvitation(invitationId: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   await db
@@ -8865,7 +9661,6 @@ export async function getUserByEmail(email: string) {
     .limit(1);
   return result[0];
 }
-
 
 // ============================================================
 // SAP CATALOG
@@ -9015,7 +9810,11 @@ export async function listSapCatalog() {
 export async function getSupplierById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(suppliers).where(eq(suppliers.id, id)).limit(1);
+  const result = await db
+    .select()
+    .from(suppliers)
+    .where(eq(suppliers.id, id))
+    .limit(1);
   return result[0];
 }
 
@@ -9139,6 +9938,263 @@ export async function updateSupplier(
   return supplier;
 }
 
+export async function listSupplierContacts(params: {
+  supplierId: number;
+  projectId?: number;
+  includeInactive?: boolean;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [eq(supplierContacts.supplierId, params.supplierId)];
+  if (params.projectId) {
+    conditions.push(eq(supplierContacts.projectId, params.projectId));
+  }
+  if (!params.includeInactive) {
+    conditions.push(eq(supplierContacts.isActive, true));
+  }
+
+  return db
+    .select({
+      contact: supplierContacts,
+      project: projects,
+    })
+    .from(supplierContacts)
+    .leftJoin(projects, eq(supplierContacts.projectId, projects.id))
+    .where(and(...conditions))
+    .orderBy(
+      asc(projects.code),
+      desc(supplierContacts.isActive),
+      asc(supplierContacts.name)
+    );
+}
+
+export async function getSupplierContactById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const [contact] = await db
+    .select()
+    .from(supplierContacts)
+    .where(eq(supplierContacts.id, id))
+    .limit(1);
+
+  return contact;
+}
+
+export async function createSupplierContact(data: InsertSupplierContact) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [contact] = await db
+    .insert(supplierContacts)
+    .values(data)
+    .returning();
+
+  return contact;
+}
+
+export async function updateSupplierContact(
+  id: number,
+  data: Partial<
+    Pick<
+      InsertSupplierContact,
+      | "projectId"
+      | "contactType"
+      | "branchName"
+      | "name"
+      | "phone"
+      | "email"
+      | "address"
+      | "isActive"
+    >
+  >
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [contact] = await db
+    .update(supplierContacts)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(supplierContacts.id, id))
+    .returning();
+
+  if (!contact) {
+    throw new Error("Contacto no encontrado");
+  }
+
+  return contact;
+}
+
+export type SupplierDocumentListRow = {
+  document: SupplierDocument;
+  documentType: SupplierDocumentType;
+  attachment: Attachment;
+  createdBy: Pick<User, "id" | "name" | "email"> | null;
+};
+
+export async function listSupplierDocumentTypes(params?: {
+  includeInactive?: boolean;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (!params?.includeInactive) {
+    conditions.push(eq(supplierDocumentTypes.isActive, true));
+  }
+
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  return db
+    .select()
+    .from(supplierDocumentTypes)
+    .where(where)
+    .orderBy(desc(supplierDocumentTypes.isActive), asc(supplierDocumentTypes.name));
+}
+
+export async function getSupplierDocumentTypeById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const [documentType] = await db
+    .select()
+    .from(supplierDocumentTypes)
+    .where(eq(supplierDocumentTypes.id, id))
+    .limit(1);
+
+  return documentType;
+}
+
+export async function createSupplierDocumentType(
+  data: InsertSupplierDocumentType
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [documentType] = await db
+    .insert(supplierDocumentTypes)
+    .values(data)
+    .returning();
+
+  return documentType;
+}
+
+export async function updateSupplierDocumentType(
+  id: number,
+  data: Partial<
+    Pick<
+      InsertSupplierDocumentType,
+      "code" | "name" | "description" | "expirationMode" | "isActive"
+    >
+  >
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [documentType] = await db
+    .update(supplierDocumentTypes)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(supplierDocumentTypes.id, id))
+    .returning();
+
+  if (!documentType) {
+    throw new Error("Tipo de documento no encontrado");
+  }
+
+  return documentType;
+}
+
+export async function listSupplierDocuments(supplierId: number) {
+  const db = await getDb();
+  if (!db) return [] as SupplierDocumentListRow[];
+
+  return db
+    .select({
+      document: supplierDocuments,
+      documentType: supplierDocumentTypes,
+      attachment: attachments,
+      createdBy: {
+        id: users.id,
+        name: users.name,
+        email: users.email,
+      },
+    })
+    .from(supplierDocuments)
+    .innerJoin(
+      supplierDocumentTypes,
+      eq(supplierDocuments.documentTypeId, supplierDocumentTypes.id)
+    )
+    .innerJoin(attachments, eq(supplierDocuments.attachmentId, attachments.id))
+    .leftJoin(users, eq(supplierDocuments.createdById, users.id))
+    .where(eq(supplierDocuments.supplierId, supplierId))
+    .orderBy(desc(supplierDocuments.documentDate), desc(supplierDocuments.createdAt));
+}
+
+export async function getSupplierDocumentById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const [document] = await db
+    .select({
+      document: supplierDocuments,
+      documentType: supplierDocumentTypes,
+      attachment: attachments,
+      createdBy: {
+        id: users.id,
+        name: users.name,
+        email: users.email,
+      },
+    })
+    .from(supplierDocuments)
+    .innerJoin(
+      supplierDocumentTypes,
+      eq(supplierDocuments.documentTypeId, supplierDocumentTypes.id)
+    )
+    .innerJoin(attachments, eq(supplierDocuments.attachmentId, attachments.id))
+    .leftJoin(users, eq(supplierDocuments.createdById, users.id))
+    .where(eq(supplierDocuments.id, id))
+    .limit(1);
+
+  return document;
+}
+
+export async function createSupplierDocument(data: InsertSupplierDocument) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [document] = await db
+    .insert(supplierDocuments)
+    .values(data)
+    .returning();
+
+  return document;
+}
+
+export async function updateSupplierDocument(
+  id: number,
+  data: Partial<
+    Pick<
+      InsertSupplierDocument,
+      "documentTypeId" | "documentDate" | "expirationDate" | "description"
+    >
+  >
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [document] = await db
+    .update(supplierDocuments)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(supplierDocuments.id, id))
+    .returning();
+
+  if (!document) {
+    throw new Error("Documento del proveedor no encontrado");
+  }
+
+  return document;
+}
+
 export type DemoImportCounters = {
   totalInput: number;
   inserted: number;
@@ -9214,7 +10270,9 @@ function createProgressReporter(
 
     const boundedProcessed = Math.min(processedRows, totalRows);
     const percent =
-      totalRows <= 0 ? 100 : Math.min(100, Math.round((boundedProcessed / totalRows) * 100));
+      totalRows <= 0
+        ? 100
+        : Math.min(100, Math.round((boundedProcessed / totalRows) * 100));
 
     await onProgress({
       stage,
@@ -9288,19 +10346,23 @@ export async function importDemoData(
   const inventorySummary = createDemoImportCounters(payload.articles.length);
   const supplierSummary = createDemoImportCounters(payload.suppliers.length);
   const catalogArticles = Array.from(
-    new Map(payload.articles.map((article) => [article.itemCode, article])).values()
+    new Map(
+      payload.articles.map(article => [article.itemCode, article])
+    ).values()
   );
   const articleSummary = createDemoImportCounters(catalogArticles.length);
   const importedWarehouses = await ensureWarehouses(
     payload.articles
-      .map((article) => {
+      .map(article => {
         const code = article.warehouseCode?.trim();
         const name = article.warehouseName?.trim();
         if (code && name) {
           return { code, name } satisfies WarehouseSeedInput;
         }
 
-        const parsedLocation = parseWarehouseLocation(article.warehouseLocation);
+        const parsedLocation = parseWarehouseLocation(
+          article.warehouseLocation
+        );
         if (!parsedLocation) return null;
 
         return {
@@ -9308,16 +10370,21 @@ export async function importDemoData(
           name: parsedLocation.name,
         } satisfies WarehouseSeedInput;
       })
-      .filter((warehouse): warehouse is WarehouseSeedInput => Boolean(warehouse))
+      .filter((warehouse): warehouse is WarehouseSeedInput =>
+        Boolean(warehouse)
+      )
   );
   const importedWarehouseMap = new Map(
-    importedWarehouses.map((warehouse) => [
+    importedWarehouses.map(warehouse => [
       normalizeWarehouseLocationKey(warehouse.displayName),
       warehouse,
     ])
   );
   const workload = getDemoImportWorkload(payload);
-  const reportProgress = createProgressReporter(workload.totalRows, options?.onProgress);
+  const reportProgress = createProgressReporter(
+    workload.totalRows,
+    options?.onProgress
+  );
 
   let projectStageProcessed = 0;
   await reportProgress({
@@ -9327,17 +10394,20 @@ export async function importDemoData(
     currentStageTotal: payload.projects.length,
   });
 
-  for (const projectChunk of chunkItems(payload.projects, DEMO_IMPORT_BATCH_SIZE)) {
+  for (const projectChunk of chunkItems(
+    payload.projects,
+    DEMO_IMPORT_BATCH_SIZE
+  )) {
     if (projectChunk.length === 0) continue;
 
-    const projectCodes = projectChunk.map((project) => project.code);
+    const projectCodes = projectChunk.map(project => project.code);
     const existingProjects = await db
       .select()
       .from(projects)
       .where(inArray(projects.code, projectCodes));
 
     const existingProjectMap = new Map(
-      existingProjects.map((project) => [project.code, project])
+      existingProjects.map(project => [project.code, project])
     );
 
     const projectsToPersist: InsertProject[] = [];
@@ -9406,17 +10476,20 @@ export async function importDemoData(
     currentStageTotal: catalogArticles.length,
   });
 
-  for (const articleChunk of chunkItems(catalogArticles, DEMO_IMPORT_BATCH_SIZE)) {
+  for (const articleChunk of chunkItems(
+    catalogArticles,
+    DEMO_IMPORT_BATCH_SIZE
+  )) {
     if (articleChunk.length === 0) continue;
 
-    const articleCodes = articleChunk.map((article) => article.itemCode);
+    const articleCodes = articleChunk.map(article => article.itemCode);
     const existingCatalog = await db
       .select()
       .from(sapCatalog)
       .where(inArray(sapCatalog.itemCode, articleCodes));
 
     const existingCatalogMap = new Map(
-      existingCatalog.map((article) => [article.itemCode, article])
+      existingCatalog.map(article => [article.itemCode, article])
     );
 
     const articlesToPersist: InsertSapCatalogItem[] = [];
@@ -9479,11 +10552,14 @@ export async function importDemoData(
     currentStageTotal: payload.articles.length,
   });
 
-  for (const inventoryChunk of chunkItems(payload.articles, DEMO_IMPORT_BATCH_SIZE)) {
+  for (const inventoryChunk of chunkItems(
+    payload.articles,
+    DEMO_IMPORT_BATCH_SIZE
+  )) {
     if (inventoryChunk.length === 0) continue;
 
     const articleCodes = Array.from(
-      new Set(inventoryChunk.map((article) => article.itemCode))
+      new Set(inventoryChunk.map(article => article.itemCode))
     );
     const existingInventory = await db
       .select()
@@ -9491,7 +10567,7 @@ export async function importDemoData(
       .where(inArray(inventoryItems.sapItemCode, articleCodes));
 
     const existingInventoryMap = new Map(
-      existingInventory.map((item) => [
+      existingInventory.map(item => [
         `${item.sapItemCode}::${item.warehouseLocation ?? ""}`,
         item,
       ])
@@ -9573,17 +10649,20 @@ export async function importDemoData(
     currentStageTotal: payload.suppliers.length,
   });
 
-  for (const supplierChunk of chunkItems(payload.suppliers, DEMO_IMPORT_BATCH_SIZE)) {
+  for (const supplierChunk of chunkItems(
+    payload.suppliers,
+    DEMO_IMPORT_BATCH_SIZE
+  )) {
     if (supplierChunk.length === 0) continue;
 
-    const supplierCodes = supplierChunk.map((supplier) => supplier.supplierCode);
+    const supplierCodes = supplierChunk.map(supplier => supplier.supplierCode);
     const existingSuppliers = await db
       .select()
       .from(suppliers)
       .where(inArray(suppliers.supplierCode, supplierCodes));
 
     const existingSuppliersMap = new Map(
-      existingSuppliers.map((supplier) => [supplier.supplierCode, supplier])
+      existingSuppliers.map(supplier => [supplier.supplierCode, supplier])
     );
 
     const suppliersToPersist: InsertSupplier[] = [];
@@ -9651,13 +10730,13 @@ export async function clearDemoData() {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  return db.transaction(async (tx) => {
+  return db.transaction(async tx => {
     const demoProjects = await tx
       .select()
       .from(projects)
       .where(isNotNull(projects.demoBatchKey));
 
-    const projectIds = demoProjects.map((project) => project.id);
+    const projectIds = demoProjects.map(project => project.id);
 
     if (projectIds.length > 0) {
       await tx

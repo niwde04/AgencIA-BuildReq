@@ -2,7 +2,10 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
-import { PURCHASE_ORDER_TAX_VALUES } from "@shared/purchase-orders";
+import {
+  PURCHASE_ORDER_CONTRACT_FREQUENCIES,
+  PURCHASE_ORDER_TAX_VALUES,
+} from "@shared/purchase-orders";
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
   "emitida",
@@ -44,6 +47,68 @@ function toDecimalString(value: string | number | null | undefined) {
       : Number(value);
   return (Number.isFinite(parsed) ? parsed : 0).toFixed(2);
 }
+
+function parseDateInput(value?: string | null) {
+  return value ? new Date(`${value}T12:00:00`) : null;
+}
+
+function dateKey(value?: string | Date | null) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+}
+
+const contractFieldsBaseSchema = z.object({
+  appliesContract: z.boolean().optional(),
+  contractPaymentFrequency: z
+    .enum(PURCHASE_ORDER_CONTRACT_FREQUENCIES)
+    .optional()
+    .nullable(),
+  contractFirstPaymentDate: z.string().optional().nullable(),
+  contractEndDate: z.string().optional().nullable(),
+  contractNote: z.string().trim().max(500).optional().nullable(),
+});
+
+function validateContractFields(
+  value: z.infer<typeof contractFieldsBaseSchema>,
+  ctx: z.RefinementCtx
+) {
+  if (!value.appliesContract) return;
+  if (!value.contractPaymentFrequency) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["contractPaymentFrequency"],
+      message: "Seleccione la frecuencia de pago del contrato",
+    });
+  }
+  if (!value.contractFirstPaymentDate) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["contractFirstPaymentDate"],
+      message: "Seleccione la primera fecha de pago del contrato",
+    });
+  }
+  if (!value.contractEndDate) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["contractEndDate"],
+      message: "Seleccione la fecha de terminación del contrato",
+    });
+  }
+  const firstDate = parseDateInput(value.contractFirstPaymentDate);
+  const endDate = parseDateInput(value.contractEndDate);
+  if (firstDate && endDate && endDate < firstDate) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["contractEndDate"],
+      message:
+        "La fecha de terminación no puede ser anterior a la primera fecha de pago",
+    });
+  }
+}
+
+const contractFieldsSchema =
+  contractFieldsBaseSchema.superRefine(validateContractFields);
 
 function getPendingConversionQuantity(item: {
   quantity: string | number | null | undefined;
@@ -325,15 +390,18 @@ export const purchaseOrdersRouter = router({
 
   createFromPurchaseRequest: protectedProcedure
     .input(
-      z.object({
-        purchaseRequestId: z.number(),
-        selectedItemIds: z.array(z.number()).optional(),
-        itemsToConvert: z.array(quantityToConvertSchema).optional(),
-        classification: z.enum(["oc", "cd"]).default("oc"),
-        supplierId: z.number().optional(),
-        supplierEmail: z.string().email().optional(),
-        notes: z.string().optional(),
-      })
+      z
+        .object({
+          purchaseRequestId: z.number(),
+          selectedItemIds: z.array(z.number()).optional(),
+          itemsToConvert: z.array(quantityToConvertSchema).optional(),
+          classification: z.enum(["oc", "cd"]).default("oc"),
+          supplierId: z.number().optional(),
+          supplierEmail: z.string().email().optional(),
+          notes: z.string().optional(),
+        })
+        .merge(contractFieldsBaseSchema)
+        .superRefine(validateContractFields)
     )
     .mutation(async ({ ctx, input }) => {
       if (!canConvertPurchaseRequestToOrder(ctx.user)) {
@@ -522,6 +590,17 @@ export const purchaseOrdersRouter = router({
             emailStatus: "pendiente",
             emailedAt: null,
             emailError: null,
+            appliesContract: input.appliesContract ?? false,
+            contractPaymentFrequency: input.appliesContract
+              ? input.contractPaymentFrequency
+              : null,
+            contractFirstPaymentDate: input.appliesContract
+              ? parseDateInput(input.contractFirstPaymentDate)
+              : null,
+            contractEndDate: input.appliesContract
+              ? parseDateInput(input.contractEndDate)
+              : null,
+            contractExpiryNotifiedAt: null,
             createdById: ctx.user.id,
           },
           projectItems.map(({ item, quantityToConvert, unitPrice, taxCode }: any) => ({
@@ -583,13 +662,16 @@ export const purchaseOrdersRouter = router({
 
   createUnifiedFromPurchaseRequests: protectedProcedure
     .input(
-      z.object({
-        purchaseRequestIds: z.array(z.number()).min(2),
-        classification: z.enum(["oc", "cd"]).default("oc"),
-        supplierId: z.number().optional(),
-        supplierEmail: z.string().email().optional(),
-        notes: z.string().optional(),
-      })
+      z
+        .object({
+          purchaseRequestIds: z.array(z.number()).min(2),
+          classification: z.enum(["oc", "cd"]).default("oc"),
+          supplierId: z.number().optional(),
+          supplierEmail: z.string().email().optional(),
+          notes: z.string().optional(),
+        })
+        .merge(contractFieldsBaseSchema)
+        .superRefine(validateContractFields)
     )
     .mutation(async ({ ctx, input }) => {
       if (!canConvertPurchaseRequestToOrder(ctx.user)) {
@@ -747,6 +829,17 @@ export const purchaseOrdersRouter = router({
           emailStatus: "pendiente",
           emailedAt: null,
           emailError: null,
+          appliesContract: input.appliesContract ?? false,
+          contractPaymentFrequency: input.appliesContract
+            ? input.contractPaymentFrequency
+            : null,
+          contractFirstPaymentDate: input.appliesContract
+            ? parseDateInput(input.contractFirstPaymentDate)
+            : null,
+          contractEndDate: input.appliesContract
+            ? parseDateInput(input.contractEndDate)
+            : null,
+          contractExpiryNotifiedAt: null,
           createdById: ctx.user.id,
         },
         allItems.map(({ item, quantityToConvert }) => ({
@@ -827,6 +920,85 @@ export const purchaseOrdersRouter = router({
         supplierId: input.supplierId,
         supplierEmail: input.supplierEmail,
         notes: input.notes,
+      });
+    }),
+
+  updateContractTerms: protectedProcedure
+    .input(
+      contractFieldsBaseSchema
+        .extend({
+          id: z.number(),
+        })
+        .superRefine(validateContractFields)
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canAccessPurchaseOrders(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para editar el contrato",
+        });
+      }
+      assertCanModifyPurchaseOrders(ctx.user);
+
+      const detail = await db.getPurchaseOrderById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Orden de compra no encontrada",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+      assertPurchaseOrderEditable(detail.purchaseOrder.status);
+
+      const isDraft = detail.purchaseOrder.status === "borrador";
+      const isContractEditableAfterIssue =
+        detail.purchaseOrder.appliesContract &&
+        ["emitida", "enviada", "parcialmente_recibida"].includes(
+          detail.purchaseOrder.status
+        );
+      if (!isDraft && !isContractEditableAfterIssue) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Solo se puede editar contrato en borrador o la fecha de vencimiento de una OC contrato emitida",
+        });
+      }
+
+      if (!isDraft) {
+        const firstPaymentDate = parseDateInput(input.contractFirstPaymentDate);
+        const sameFrequency =
+          input.contractPaymentFrequency ===
+          detail.purchaseOrder.contractPaymentFrequency;
+        const sameFirstPaymentDate =
+          dateKey(firstPaymentDate) ===
+          dateKey(detail.purchaseOrder.contractFirstPaymentDate);
+        if (
+          input.appliesContract !== true ||
+          !sameFrequency ||
+          !sameFirstPaymentDate
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "En una OC contrato emitida solo se puede cambiar la fecha de terminación",
+          });
+        }
+      }
+
+      return db.updatePurchaseOrderContractTerms({
+        purchaseOrderId: input.id,
+        changedById: ctx.user.id,
+        appliesContract: input.appliesContract ?? false,
+        contractPaymentFrequency: input.appliesContract
+          ? input.contractPaymentFrequency ?? null
+          : null,
+        contractFirstPaymentDate: input.appliesContract
+          ? parseDateInput(input.contractFirstPaymentDate)
+          : null,
+        contractEndDate: input.appliesContract
+          ? parseDateInput(input.contractEndDate)
+          : null,
+        note: input.contractNote,
       });
     }),
 
@@ -1009,6 +1181,78 @@ export const purchaseOrdersRouter = router({
           purchaseRequestItem.purchaseRequestId
         );
       }
+
+      return { success: true };
+    }),
+
+  updateContractItemPrice: protectedProcedure
+    .input(
+      z.object({
+        purchaseOrderItemId: z.number(),
+        unitPrice: z
+          .string()
+          .trim()
+          .min(1)
+          .refine(
+            value => Number.isFinite(Number(value)) && Number(value) >= 0,
+            {
+              message: "El precio debe ser un numero valido",
+            }
+          ),
+        note: z.string().trim().max(500).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canAccessPurchaseOrders(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para actualizar precios de contrato",
+        });
+      }
+      assertCanModifyPurchaseOrders(ctx.user);
+
+      const itemDetail = await db.getPurchaseOrderItemById(
+        input.purchaseOrderItemId
+      );
+      if (!itemDetail?.purchaseOrder) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Item de OC no encontrado",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
+      assertPurchaseOrderEditable(itemDetail.purchaseOrder.status);
+
+      if (
+        !itemDetail.purchaseOrder.appliesContract ||
+        !["emitida", "enviada", "parcialmente_recibida"].includes(
+          itemDetail.purchaseOrder.status
+        )
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Solo se puede editar el precio en una OC contrato emitida",
+        });
+      }
+
+      if (Number(input.unitPrice) === Number(itemDetail.item.unitPrice ?? 0)) {
+        return { success: true };
+      }
+
+      await db.updatePurchaseOrderItem(input.purchaseOrderItemId, {
+        unitPrice: input.unitPrice,
+      });
+      await db.createPurchaseOrderAuditLog({
+        purchaseOrderId: itemDetail.purchaseOrder.id,
+        purchaseOrderItemId: itemDetail.item.id,
+        action: "actualizar_precio_contrato",
+        field: "unitPrice",
+        oldValue: String(itemDetail.item.unitPrice ?? "0.00"),
+        newValue: input.unitPrice,
+        changedById: ctx.user.id,
+        note: input.note?.trim() || null,
+      });
 
       return { success: true };
     }),

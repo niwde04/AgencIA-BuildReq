@@ -1,12 +1,17 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
-import {
-  calculatePurchaseOrderLineAmounts,
-  formatPurchaseOrderCurrency,
-} from "@shared/purchase-orders";
+import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   Dialog,
   DialogContent,
@@ -23,21 +28,27 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   CalendarDays,
+  Check,
+  ChevronsUpDown,
   Eye,
   FileText,
-  FileUp,
   FolderOpen,
-  MapPin,
   Printer,
   Save,
   Search,
   ShoppingCart,
+  X,
   XCircle,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -75,28 +86,91 @@ const PURCHASE_TYPE_LABELS: Record<PurchaseType, string> = {
 const getPurchaseTypeLabel = (value?: string | null) =>
   PURCHASE_TYPE_LABELS[value as PurchaseType] ?? "—";
 
+type RequestTargetSelection =
+  | {
+      targetType: "subproyecto";
+      subProjectId: number;
+      projectId: number;
+      label: string;
+    }
+  | {
+      targetType: "activo_fijo";
+      projectId: number;
+      fixedAssetSapItemCode: string;
+      fixedAssetName: string;
+      label: string;
+    };
+
 type PurchaseRequestItemDraft = {
   quantity: string;
-  unitPrice: string;
   brand: string;
   costResponsible: string;
+  targetSelection: RequestTargetSelection | null;
 };
+
+type PurchaseRequestItemDraftTextField =
+  | "quantity"
+  | "brand"
+  | "costResponsible";
+
+function mapPurchaseRequestItemTargetToSelection(
+  item: any
+): RequestTargetSelection | null {
+  const target = item.target ?? item.sourceTarget;
+  if (target?.type === "subproyecto" && target.subProjectId) {
+    return {
+      targetType: "subproyecto",
+      subProjectId: target.subProjectId,
+      projectId:
+        target.projectId ?? item.sourceProject?.id ?? item.projectId ?? 0,
+      label: target.label ?? `Subproyecto #${target.subProjectId}`,
+    };
+  }
+
+  if (target?.type === "activo_fijo" && target.fixedAssetSapItemCode) {
+    return {
+      targetType: "activo_fijo",
+      projectId: item.sourceProject?.id ?? item.projectId ?? 0,
+      fixedAssetSapItemCode: target.fixedAssetSapItemCode,
+      fixedAssetName: target.fixedAssetName ?? "",
+      label: target.label ?? `Activo fijo: ${target.fixedAssetSapItemCode}`,
+    };
+  }
+
+  return null;
+}
+
+function buildSubprojectTargetSelection(
+  subproject: any
+): RequestTargetSelection {
+  return {
+    targetType: "subproyecto",
+    subProjectId: subproject.id,
+    projectId: subproject.projectId,
+    label: `Subproyecto: ${subproject.code} - ${subproject.name}`,
+  };
+}
+
+function buildFixedAssetTargetSelection(asset: any): RequestTargetSelection {
+  return {
+    targetType: "activo_fijo",
+    projectId: asset.projectId,
+    fixedAssetSapItemCode: asset.itemCode,
+    fixedAssetName: asset.description,
+    label: `Activo fijo: ${asset.itemCode} - ${asset.description}`,
+  };
+}
 
 const getItemDraftFromDetail = (item: any): PurchaseRequestItemDraft => ({
   quantity: String(item.quantity ?? ""),
-  unitPrice: String(item.unitPrice ?? "0.00"),
   brand: item.brand ?? "",
   costResponsible: item.costResponsible ?? "",
+  targetSelection: mapPurchaseRequestItemTargetToSelection(item),
 });
 
 const isPositiveNumberString = (value: string) => {
   const numericValue = Number(value);
   return Number.isFinite(numericValue) && numericValue > 0;
-};
-
-const isNonNegativeNumberString = (value: string) => {
-  const numericValue = Number(value);
-  return Number.isFinite(numericValue) && numericValue >= 0;
 };
 
 const formatQuantity = (value: string | number | null | undefined) =>
@@ -138,17 +212,28 @@ const toNullablePrintText = (value: string) => value.trim() || null;
 export default function PurchaseRequests() {
   const { user } = useAuth();
   const utils = trpc.useUtils();
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editNotes, setEditNotes] = useState("");
   const [editNeededBy, setEditNeededBy] = useState("");
-  const [editPurchaseType, setEditPurchaseType] = useState<PurchaseType>("local");
-  const [editItems, setEditItems] = useState<Record<number, PurchaseRequestItemDraft>>({});
-  const [convertQuantities, setConvertQuantities] = useState<Record<number, string>>({});
+  const [editPurchaseType, setEditPurchaseType] =
+    useState<PurchaseType>("local");
+  const [editItems, setEditItems] = useState<
+    Record<number, PurchaseRequestItemDraft>
+  >({});
+  const [convertQuantities, setConvertQuantities] = useState<
+    Record<number, string>
+  >({});
+  const [targetPopoverOpen, setTargetPopoverOpen] = useState<number | null>(
+    null
+  );
+  const [targetSearch, setTargetSearch] = useState("");
+  const [debouncedTargetSearch, setDebouncedTargetSearch] = useState("");
   const [selectedRequestIds, setSelectedRequestIds] = useState<number[]>([]);
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
-  const [purchaseTypeFilter, setPurchaseTypeFilter] = useState<PurchaseType | "all">("all");
+  const [purchaseTypeFilter, setPurchaseTypeFilter] = useState<
+    PurchaseType | "all"
+  >("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [rejectReason, setRejectReason] = useState("");
   const [emailDialog, setEmailDialog] = useState<{
@@ -163,13 +248,27 @@ export default function PurchaseRequests() {
     error: requestsError,
     refetch: refetchPurchaseRequests,
   } = trpc.purchaseRequests.list.useQuery();
-  const { data: detail } = trpc.purchaseRequests.getById.useQuery(
+  const {
+    data: detail,
+    isLoading: isLoadingDetail,
+    error: detailError,
+  } = trpc.purchaseRequests.getById.useQuery(
     { id: selectedId ?? 0 },
     { enabled: Boolean(selectedId) }
   );
+  const selectedProjectIdNumber = detail?.purchaseRequest.projectId ?? 0;
+  const { data: targetOptions, isLoading: isLoadingTargetOptions } =
+    trpc.materialRequests.targetOptions.useQuery(
+      {
+        projectId: selectedProjectIdNumber,
+        search: debouncedTargetSearch || undefined,
+      },
+      { enabled: selectedProjectIdNumber > 0 }
+    );
 
   const canReject =
-    user?.role === "admin" || (user as any)?.buildreqRole === "administrador_proyecto";
+    user?.role === "admin" ||
+    (user as any)?.buildreqRole === "administrador_proyecto";
   const buildreqRole = (user as any)?.buildreqRole;
   const isProjectAdmin = buildreqRole === "administrador_proyecto";
   const canConvert =
@@ -198,7 +297,7 @@ export default function PurchaseRequests() {
           projectLabel,
         ]
           .filter(Boolean)
-          .some((value) =>
+          .some(value =>
             String(value).toLowerCase().includes(normalizedSearch)
           );
 
@@ -206,10 +305,10 @@ export default function PurchaseRequests() {
     });
   }, [purchaseTypeFilter, requests, searchTerm, statusFilter]);
 
-  const canProjectAdminConvertPurchaseRequest = (
-    purchaseRequest: { purchaseType?: string | null; status?: string | null }
-  ) =>
-    !isProjectAdmin || purchaseRequest.purchaseType === "compra_directa";
+  const canProjectAdminConvertPurchaseRequest = (purchaseRequest: {
+    purchaseType?: string | null;
+    status?: string | null;
+  }) => !isProjectAdmin || purchaseRequest.purchaseType === "compra_directa";
 
   const canConvertPurchaseRequestRow = (row: any) =>
     canConvert &&
@@ -221,10 +320,12 @@ export default function PurchaseRequests() {
       toast.success("Solicitud de compra actualizada");
       void Promise.all([
         utils.purchaseRequests.list.invalidate(),
-        selectedId ? utils.purchaseRequests.getById.invalidate({ id: selectedId }) : Promise.resolve(),
+        selectedId
+          ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
+          : Promise.resolve(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
 
   const rejectMutation = trpc.purchaseRequests.reject.useMutation({
@@ -233,39 +334,44 @@ export default function PurchaseRequests() {
       setRejectReason("");
       void Promise.all([
         utils.purchaseRequests.list.invalidate(),
-        selectedId ? utils.purchaseRequests.getById.invalidate({ id: selectedId }) : Promise.resolve(),
+        selectedId
+          ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
+          : Promise.resolve(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
 
-  const convertMutation = trpc.purchaseOrders.createFromPurchaseRequest.useMutation({
-    onSuccess: (result) => {
-      const purchaseOrderNumbers =
-        "purchaseOrders" in result && Array.isArray(result.purchaseOrders)
-          ? result.purchaseOrders.map((entry) => entry.purchaseOrderNumber)
-          : result.purchaseOrderNumber
-            ? [result.purchaseOrderNumber]
-            : [];
+  const convertMutation =
+    trpc.purchaseOrders.createFromPurchaseRequest.useMutation({
+      onSuccess: result => {
+        const purchaseOrderNumbers =
+          "purchaseOrders" in result && Array.isArray(result.purchaseOrders)
+            ? result.purchaseOrders.map(entry => entry.purchaseOrderNumber)
+            : result.purchaseOrderNumber
+              ? [result.purchaseOrderNumber]
+              : [];
 
-      toast.success(
-        purchaseOrderNumbers.length === 1
-          ? `OC ${purchaseOrderNumbers[0]} generada`
-          : `Se generaron ${purchaseOrderNumbers.length} órdenes de compra`
-      );
-      setSelectedItemIds([]);
-      void Promise.all([
-        utils.purchaseRequests.list.invalidate(),
-        utils.purchaseOrders.list.invalidate(),
-        selectedId ? utils.purchaseRequests.getById.invalidate({ id: selectedId }) : Promise.resolve(),
-      ]);
-    },
-    onError: (error) => toast.error(error.message),
-  });
+        toast.success(
+          purchaseOrderNumbers.length === 1
+            ? `OC ${purchaseOrderNumbers[0]} generada`
+            : `Se generaron ${purchaseOrderNumbers.length} órdenes de compra`
+        );
+        setSelectedItemIds([]);
+        void Promise.all([
+          utils.purchaseRequests.list.invalidate(),
+          utils.purchaseOrders.list.invalidate(),
+          selectedId
+            ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
+            : Promise.resolve(),
+        ]);
+      },
+      onError: error => toast.error(error.message),
+    });
 
   const unifiedConvertMutation =
     trpc.purchaseOrders.createUnifiedFromPurchaseRequests.useMutation({
-      onSuccess: async (result) => {
+      onSuccess: async result => {
         const convertedIds = new Set(result.purchaseRequestIds ?? []);
         utils.purchaseRequests.list.setData(undefined, (current: any) =>
           current?.map((row: any) =>
@@ -288,7 +394,7 @@ export default function PurchaseRequests() {
           refetchPurchaseRequests(),
         ]);
       },
-      onError: (error) => toast.error(error.message),
+      onError: error => toast.error(error.message),
     });
 
   const attachQuoteMutation = trpc.purchaseRequests.attachQuote.useMutation({
@@ -296,26 +402,25 @@ export default function PurchaseRequests() {
       toast.success("Cotización aprobada adjuntada");
       void Promise.all([
         utils.purchaseRequests.list.invalidate(),
-        selectedId ? utils.purchaseRequests.getById.invalidate({ id: selectedId }) : Promise.resolve(),
+        selectedId
+          ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
+          : Promise.resolve(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
-  });
-
-  const uploadMutation = trpc.attachments.upload.useMutation({
-    onSuccess: (result) => {
-      if (!selectedId) return;
-      attachQuoteMutation.mutate({
-        id: selectedId,
-        attachmentId: result.id,
-      });
-    },
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
 
   const selectedItems = useMemo(() => {
     return detail?.items ?? [];
   }, [detail]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedTargetSearch(targetSearch.trim());
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [targetSearch]);
 
   useEffect(() => {
     if (!detail) {
@@ -336,7 +441,10 @@ export default function PurchaseRequests() {
       Object.fromEntries(
         (detail.items ?? []).map((item: any) => [
           item.id,
-          String(item.pendingConversionQuantity ?? getPendingConversionQuantity(item).toFixed(2)),
+          String(
+            item.pendingConversionQuantity ??
+              getPendingConversionQuantity(item).toFixed(2)
+          ),
         ])
       )
     );
@@ -347,10 +455,10 @@ export default function PurchaseRequests() {
 
   const updateItemDraft = (
     item: any,
-    field: keyof PurchaseRequestItemDraft,
+    field: PurchaseRequestItemDraftTextField,
     value: string
   ) => {
-    setEditItems((current) => ({
+    setEditItems(current => ({
       ...current,
       [item.id]: {
         ...getItemDraftFromDetail(item),
@@ -360,12 +468,29 @@ export default function PurchaseRequests() {
     }));
   };
 
+  const updateItemTargetDraft = (
+    item: any,
+    targetSelection: RequestTargetSelection | null
+  ) => {
+    setEditItems(current => ({
+      ...current,
+      [item.id]: {
+        ...getItemDraftFromDetail(item),
+        ...current[item.id],
+        targetSelection,
+      },
+    }));
+  };
+
   const getConvertQuantityDraft = (item: any) =>
     convertQuantities[item.id] ??
-    String(item.pendingConversionQuantity ?? getPendingConversionQuantity(item).toFixed(2));
+    String(
+      item.pendingConversionQuantity ??
+        getPendingConversionQuantity(item).toFixed(2)
+    );
 
   const updateConvertQuantityDraft = (item: any, value: string) => {
-    setConvertQuantities((current) => ({
+    setConvertQuantities(current => ({
       ...current,
       [item.id]: value,
     }));
@@ -376,16 +501,9 @@ export default function PurchaseRequests() {
       (item: any) => !isPositiveNumberString(getItemDraft(item).quantity)
     );
     if (invalidQuantityItem) {
-      toast.error(`Ingrese una cantidad mayor que cero para ${invalidQuantityItem.itemName}`);
-      return null;
-    }
-
-    const invalidPriceItem = selectedItems.find(
-      (item: any) =>
-        !isNonNegativeNumberString(getItemDraft(item).unitPrice || "0")
-    );
-    if (invalidPriceItem) {
-      toast.error(`Ingrese un precio válido para ${invalidPriceItem.itemName}`);
+      toast.error(
+        `Ingrese una cantidad mayor que cero para ${invalidQuantityItem.itemName}`
+      );
       return null;
     }
 
@@ -405,9 +523,21 @@ export default function PurchaseRequests() {
       return {
         id: item.id,
         quantity: draft.quantity,
-        unitPrice: draft.unitPrice || "0",
         brand: toNullablePrintText(draft.brand),
         costResponsible: toNullablePrintText(draft.costResponsible),
+        targetType: draft.targetSelection?.targetType ?? null,
+        subProjectId:
+          draft.targetSelection?.targetType === "subproyecto"
+            ? draft.targetSelection.subProjectId
+            : null,
+        fixedAssetSapItemCode:
+          draft.targetSelection?.targetType === "activo_fijo"
+            ? draft.targetSelection.fixedAssetSapItemCode
+            : null,
+        fixedAssetName:
+          draft.targetSelection?.targetType === "activo_fijo"
+            ? draft.targetSelection.fixedAssetName
+            : null,
       };
     });
   };
@@ -419,7 +549,10 @@ export default function PurchaseRequests() {
       .filter((item: any) => selectedIds.includes(item.id))
       .map((item: any) => {
         const draft = getItemDraft(item);
-        const pendingQuantity = getPendingConversionQuantity(item, draft.quantity);
+        const pendingQuantity = getPendingConversionQuantity(
+          item,
+          draft.quantity
+        );
         const quantity = Number(getConvertQuantityDraft(item) || 0);
         return {
           item,
@@ -432,7 +565,9 @@ export default function PurchaseRequests() {
       ({ quantity }) => !Number.isFinite(quantity) || quantity <= 0
     );
     if (invalidItem) {
-      toast.error(`Ingrese una cantidad a convertir para ${invalidItem.item.itemName}`);
+      toast.error(
+        `Ingrese una cantidad a convertir para ${invalidItem.item.itemName}`
+      );
       return null;
     }
 
@@ -485,37 +620,10 @@ export default function PurchaseRequests() {
     [convertibleItemIds]
   );
 
-  const conversionEstimatedTotal = useMemo(
-    () =>
-      selectedItems.reduce((sum: number, item: any) => {
-        const draft = editItems[item.id] ?? getItemDraftFromDetail(item);
-        const selectedForConversion =
-          selectedItemIds.length > 0
-            ? selectedItemIds.includes(item.id)
-            : convertibleItemIdSet.has(item.id);
-        if (!selectedForConversion) return sum;
-        return (
-          sum +
-          calculatePurchaseOrderLineAmounts({
-            quantity: getConvertQuantityDraft(item),
-            unitPrice: draft.unitPrice || "0",
-            taxCode: "exe",
-          }).total
-        );
-      }, 0),
-    [
-      convertibleItemIdSet,
-      convertQuantities,
-      editItems,
-      selectedItemIds,
-      selectedItems,
-    ]
-  );
-
   const itemIdsToConvert = useMemo(
     () =>
       selectedItemIds.length > 0
-        ? selectedItemIds.filter((id) => convertibleItemIdSet.has(id))
+        ? selectedItemIds.filter(id => convertibleItemIdSet.has(id))
         : convertibleItemIds,
     [convertibleItemIdSet, convertibleItemIds, selectedItemIds]
   );
@@ -529,20 +637,23 @@ export default function PurchaseRequests() {
   );
   const allConvertibleSelected =
     convertibleRequestIds.length > 0 &&
-    convertibleRequestIds.every((id: number) => selectedRequestIds.includes(id));
+    convertibleRequestIds.every((id: number) =>
+      selectedRequestIds.includes(id)
+    );
   const someConvertibleSelected =
-    convertibleRequestIds.some((id: number) => selectedRequestIds.includes(id)) &&
-    !allConvertibleSelected;
+    convertibleRequestIds.some((id: number) =>
+      selectedRequestIds.includes(id)
+    ) && !allConvertibleSelected;
 
   useEffect(() => {
-    setSelectedRequestIds((current) =>
-      current.filter((id) => convertibleRequestIds.includes(id))
+    setSelectedRequestIds(current =>
+      current.filter(id => convertibleRequestIds.includes(id))
     );
   }, [convertibleRequestIds]);
 
   useEffect(() => {
-    setSelectedItemIds((current) =>
-      current.filter((id) => convertibleItemIdSet.has(id))
+    setSelectedItemIds(current =>
+      current.filter(id => convertibleItemIdSet.has(id))
     );
   }, [convertibleItemIdSet]);
 
@@ -553,43 +664,11 @@ export default function PurchaseRequests() {
       : detail?.purchaseRequest
         ? `Proyecto ${detail.purchaseRequest.projectId}`
         : "Proyecto pendiente");
-  const destinationProjectLabel = useMemo(() => {
-    const sourceTargetLabels = Array.from(
-      new Set(
-        selectedItems
-          .map((item: any) =>
-            item.sourceTarget?.label
-              ?.replace(/^Subproyecto:\s*/i, "")
-              .trim()
-          )
-          .filter(Boolean)
-      )
-    );
-    if (sourceTargetLabels.length === 1) return sourceTargetLabels[0];
-    if (sourceTargetLabels.length > 1) return sourceTargetLabels.join(" / ");
-
-    const sourceProjectLabels = Array.from(
-      new Set(
-        selectedItems
-          .map((item: any) =>
-            item.sourceProject
-              ? `${item.sourceProject.code ?? ""} — ${
-                  item.sourceProject.name ?? ""
-                }`
-                  .replace(/^ — /, "")
-                  .trim()
-              : ""
-          )
-          .filter(Boolean)
-      )
-    );
-    if (sourceProjectLabels.length === 1) return sourceProjectLabels[0];
-    if (sourceProjectLabels.length > 1) return sourceProjectLabels.join(" / ");
-
-    return projectLabel;
-  }, [projectLabel, selectedItems]);
+  const getItemTargetLabel = (item: any) =>
+    getItemDraft(item).targetSelection?.label ?? "—";
   const isMixedProjectRequest = Boolean(detail?.projectSummary?.isMixed);
-  const isConvertedPurchaseRequest = detail?.purchaseRequest.status === "convertida";
+  const isConvertedPurchaseRequest =
+    detail?.purchaseRequest.status === "convertida";
   const isProjectAdminReadOnlyRequest =
     isProjectAdmin &&
     Boolean(detail) &&
@@ -601,6 +680,168 @@ export default function PurchaseRequests() {
 
   const purchaseTypeLabel = getPurchaseTypeLabel(editPurchaseType);
 
+  const renderItemTargetCombobox = (
+    item: any,
+    draft: PurchaseRequestItemDraft
+  ) => {
+    const open = targetPopoverOpen === item.id;
+    const disabled =
+      !canEditSelectedPurchaseRequest || !selectedProjectIdNumber;
+
+    return (
+      <div className="flex gap-2">
+        <Popover
+          open={open}
+          onOpenChange={nextOpen => {
+            setTargetPopoverOpen(nextOpen ? item.id : null);
+            setTargetSearch("");
+          }}
+        >
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              role="combobox"
+              aria-expanded={open}
+              disabled={disabled}
+              className="h-9 min-w-0 flex-1 justify-between px-3 font-normal"
+            >
+              <span className="truncate">
+                {draft.targetSelection?.label ?? "Subproyecto o activo fijo"}
+              </span>
+              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            className="w-[min(520px,calc(100vw-2rem))] p-0"
+            align="start"
+          >
+            <Command shouldFilter={false}>
+              <CommandInput
+                placeholder="Buscar subproyecto o activo fijo..."
+                value={targetSearch}
+                onValueChange={setTargetSearch}
+              />
+              <CommandList>
+                {isLoadingTargetOptions ? (
+                  <div className="p-3 text-sm text-muted-foreground">
+                    Buscando opciones...
+                  </div>
+                ) : (
+                  <>
+                    <CommandEmpty>No se encontraron opciones.</CommandEmpty>
+                    {(targetOptions?.subprojects ?? []).length > 0 ? (
+                      <CommandGroup heading="Subproyectos">
+                        {(targetOptions?.subprojects ?? []).map(
+                          (subproject: any) => {
+                            const selected =
+                              draft.targetSelection?.targetType ===
+                                "subproyecto" &&
+                              draft.targetSelection.subProjectId ===
+                                subproject.id;
+
+                            return (
+                              <CommandItem
+                                key={`subproject-${subproject.id}`}
+                                value={`subproject-${subproject.id}-${subproject.code}-${subproject.name}`}
+                                onSelect={() => {
+                                  updateItemTargetDraft(
+                                    item,
+                                    buildSubprojectTargetSelection(subproject)
+                                  );
+                                  setTargetPopoverOpen(null);
+                                  setTargetSearch("");
+                                }}
+                              >
+                                <Check
+                                  className={`mr-2 h-4 w-4 ${
+                                    selected ? "opacity-100" : "opacity-0"
+                                  }`}
+                                />
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-medium">
+                                    {subproject.code} - {subproject.name}
+                                  </p>
+                                  {subproject.description ? (
+                                    <p className="truncate text-xs text-muted-foreground">
+                                      {subproject.description}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              </CommandItem>
+                            );
+                          }
+                        )}
+                      </CommandGroup>
+                    ) : null}
+
+                    {(targetOptions?.fixedAssets ?? []).length > 0 ? (
+                      <CommandGroup heading="Activos fijos">
+                        {(targetOptions?.fixedAssets ?? []).map(
+                          (asset: any) => {
+                            const selected =
+                              draft.targetSelection?.targetType ===
+                                "activo_fijo" &&
+                              draft.targetSelection.fixedAssetSapItemCode ===
+                                asset.itemCode;
+
+                            return (
+                              <CommandItem
+                                key={`asset-${asset.itemCode}`}
+                                value={`asset-${asset.itemCode}-${asset.description}`}
+                                onSelect={() => {
+                                  updateItemTargetDraft(
+                                    item,
+                                    buildFixedAssetTargetSelection(asset)
+                                  );
+                                  setTargetPopoverOpen(null);
+                                  setTargetSearch("");
+                                }}
+                              >
+                                <Check
+                                  className={`mr-2 h-4 w-4 ${
+                                    selected ? "opacity-100" : "opacity-0"
+                                  }`}
+                                />
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-medium">
+                                    {asset.itemCode} - {asset.description}
+                                  </p>
+                                  {asset.itemGroup ? (
+                                    <p className="truncate text-xs text-muted-foreground">
+                                      {asset.itemGroup}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              </CommandItem>
+                            );
+                          }
+                        )}
+                      </CommandGroup>
+                    ) : null}
+                  </>
+                )}
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+
+        {draft.targetSelection && !disabled ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-9 w-9 shrink-0"
+            onClick={() => updateItemTargetDraft(item, null)}
+            aria-label="Limpiar destino del ítem"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        ) : null}
+      </div>
+    );
+  };
+
   const openRequest = (id: number) => {
     setSelectedId(id);
     const row = requests?.find((entry: any) => entry.purchaseRequest.id === id);
@@ -610,44 +851,28 @@ export default function PurchaseRequests() {
         ? new Date(row.purchaseRequest.neededBy).toISOString().slice(0, 10)
         : ""
     );
-    setEditPurchaseType((row?.purchaseRequest.purchaseType || "local") as PurchaseType);
+    setEditPurchaseType(
+      (row?.purchaseRequest.purchaseType || "local") as PurchaseType
+    );
     setEditItems({});
     setConvertQuantities({});
+    setTargetPopoverOpen(null);
+    setTargetSearch("");
+    setDebouncedTargetSearch("");
     setSelectedItemIds([]);
     setRejectReason("");
   };
 
   const toggleRequestSelection = (id: number, checked: boolean) => {
-    setSelectedRequestIds((current) =>
+    setSelectedRequestIds(current =>
       checked
         ? Array.from(new Set([...current, id]))
-        : current.filter((entry) => entry !== id)
+        : current.filter(entry => entry !== id)
     );
   };
 
   const toggleAllConvertibleRequests = (checked: boolean) => {
     setSelectedRequestIds(checked ? convertibleRequestIds : []);
-  };
-
-  const handleQuoteUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !selectedId) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = (reader.result as string).split(",")[1];
-      uploadMutation.mutate({
-        entityType: "purchase_request",
-        entityId: selectedId,
-        fileName: file.name,
-        fileData: base64,
-        mimeType: file.type,
-        fileSize: file.size,
-        category: "documento_proveedor",
-      });
-    };
-    reader.readAsDataURL(file);
-    event.target.value = "";
   };
 
   const handleSaveChanges = () => {
@@ -681,9 +906,7 @@ export default function PurchaseRequests() {
       });
       convertMutation.mutate({
         purchaseRequestId: detail.purchaseRequest.id,
-        selectedItemIds: itemsToConvert.map(
-          (item) => item.purchaseRequestItemId
-        ),
+        selectedItemIds: itemsToConvert.map(item => item.purchaseRequestItemId),
         itemsToConvert,
       });
     } catch {
@@ -708,30 +931,25 @@ export default function PurchaseRequests() {
       detail.createdBy?.name ||
       detail.createdBy?.email ||
       "-";
-    const destinationLabel = destinationProjectLabel || "-";
     const observations = editNotes.trim() || "-";
-    const totalQuantity = selectedItems.reduce(
-      (sum: number, item: any) => {
-        const quantity = Number(getItemDraft(item).quantity || 0);
-        return sum + (Number.isFinite(quantity) ? quantity : 0);
-      },
-      0
-    );
+    const totalQuantity = selectedItems.reduce((sum: number, item: any) => {
+      const quantity = Number(getItemDraft(item).quantity || 0);
+      return sum + (Number.isFinite(quantity) ? quantity : 0);
+    }, 0);
     const itemRows = selectedItems
       .map((item: any) => {
         const draft = getItemDraft(item);
         const quantity = formatQuantity(draft.quantity);
-        const code =
-          item.currentSapItemCode || item.originalSapItemCode || "-";
+        const code = item.currentSapItemCode || item.originalSapItemCode || "-";
         return `
           <tr>
             <td>${escapeHtml(code)}</td>
             <td class="numeric">${escapeHtml(quantity)}</td>
             <td>${escapeHtml(item.itemName)}</td>
+            <td>${escapeHtml(getItemTargetLabel(item))}</td>
             <td class="highlight">${escapeHtml(draft.brand || "-")}</td>
             <td>${escapeHtml(item.unit || "-")}</td>
             <td>${escapeHtml(draft.costResponsible || "-")}</td>
-            <td class="numeric">${escapeHtml(quantity)}</td>
           </tr>
         `;
       })
@@ -921,10 +1139,6 @@ export default function PurchaseRequests() {
                 <div class="label">Solicitado:</div>
                 <div class="value highlight">${escapeHtml(requestedByLabel)}</div>
               </div>
-              <div class="field">
-                <div class="label">Destino:</div>
-                <div class="value highlight">${escapeHtml(destinationLabel)}</div>
-              </div>
             </section>
 
             <table>
@@ -933,16 +1147,16 @@ export default function PurchaseRequests() {
                   <th style="width: 13%;">Codigo</th>
                   <th style="width: 9%;" class="numeric">Cantidad</th>
                   <th>Descripción</th>
-                  <th style="width: 13%;">Marca</th>
+                  <th style="width: 18%;">Destino</th>
+                  <th style="width: 12%;">Marca</th>
                   <th style="width: 9%;">U.M</th>
                   <th style="width: 18%;">Responsable C</th>
-                  <th style="width: 9%;" class="numeric">Total</th>
                 </tr>
               </thead>
               <tbody>
-                ${itemRows || `<tr><td colspan="7">Sin ítems</td></tr>`}
+                ${itemRows || `<tr><td colspan="6">Sin ítems</td></tr>`}
                 <tr class="summary">
-                  <td colspan="6">Total general</td>
+                  <td colspan="5">Total solicitado</td>
                   <td class="numeric">${escapeHtml(formatQuantity(totalQuantity))}</td>
                 </tr>
               </tbody>
@@ -993,14 +1207,14 @@ export default function PurchaseRequests() {
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
+            onChange={event => setSearchTerm(event.target.value)}
             placeholder="Buscar por número de SC, proyecto o documento..."
             className="h-10 pl-9"
           />
         </div>
         <Select
           value={purchaseTypeFilter}
-          onValueChange={(value) =>
+          onValueChange={value =>
             setPurchaseTypeFilter(value as PurchaseType | "all")
           }
         >
@@ -1063,7 +1277,7 @@ export default function PurchaseRequests() {
                                 ? "indeterminate"
                                 : false
                           }
-                          onCheckedChange={(checked) =>
+                          onCheckedChange={checked =>
                             toggleAllConvertibleRequests(checked === true)
                           }
                           aria-label="Seleccionar solicitudes convertibles"
@@ -1102,70 +1316,89 @@ export default function PurchaseRequests() {
                 </thead>
                 <tbody>
                   {filteredRequests.map((row: any) => {
-                    const canSelectForUnified = canConvertPurchaseRequestRow(row);
+                    const canSelectForUnified =
+                      canConvertPurchaseRequestRow(row);
 
                     return (
-                    <tr key={row.purchaseRequest.id} className="border-b border-border last:border-0">
-                      {canConvert ? (
-                        <td className="p-3">
-                          <Checkbox
-                            checked={selectedRequestIds.includes(
-                              row.purchaseRequest.id
-                            )}
-                            onCheckedChange={(checked) =>
-                              toggleRequestSelection(
-                                row.purchaseRequest.id,
-                                checked === true
-                              )
-                            }
-                            disabled={!canSelectForUnified}
-                            aria-label={`Seleccionar ${row.purchaseRequest.requestNumber}`}
-                          />
+                      <tr
+                        key={row.purchaseRequest.id}
+                        className="border-b border-border last:border-0"
+                      >
+                        {canConvert ? (
+                          <td className="p-3">
+                            <Checkbox
+                              checked={selectedRequestIds.includes(
+                                row.purchaseRequest.id
+                              )}
+                              onCheckedChange={checked =>
+                                toggleRequestSelection(
+                                  row.purchaseRequest.id,
+                                  checked === true
+                                )
+                              }
+                              disabled={!canSelectForUnified}
+                              aria-label={`Seleccionar ${row.purchaseRequest.requestNumber}`}
+                            />
+                          </td>
+                        ) : null}
+                        <td className="p-3 font-medium">
+                          {row.purchaseRequest.requestNumber}
                         </td>
-                      ) : null}
-                      <td className="p-3 font-medium">{row.purchaseRequest.requestNumber}</td>
-                      <td className="p-3 text-xs">
-                        {row.projectSummary?.label ||
-                          (row.project ? `${row.project.code} — ${row.project.name}` : "—")}
-                      </td>
-                      <td className="p-3 text-xs">
-                        {getPurchaseTypeLabel(row.purchaseRequest.purchaseType)}
-                      </td>
-                      <td className="p-3 text-xs">
-                        {row.purchaseRequest.createdAt
-                          ? new Date(row.purchaseRequest.createdAt).toLocaleDateString("es-HN")
-                          : "—"}
-                      </td>
-                      <td className="p-3 text-xs">{row.purchaseRequest.sapDocumentNumber || "—"}</td>
-                      <td className="p-3">
-                        <Badge
-                          variant="outline"
-                          className={`text-xs ${
-                            STATUS_COLORS[row.purchaseRequest.status] || ""
-                          }`}
-                        >
-                          {STATUS_LABELS[row.purchaseRequest.status] || row.purchaseRequest.status}
-                        </Badge>
-                      </td>
-                      <td className="p-3 text-xs">
-                        {row.purchaseRequest.neededBy
-                          ? new Date(row.purchaseRequest.neededBy).toLocaleDateString("es-HN")
-                          : "—"}
-                      </td>
-                      <td className="p-3 text-xs">
-                        {row.purchaseRequest.printedDocumentContent ? "Listo" : "Pendiente"}
-                      </td>
-                      <td className="p-3 text-right">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openRequest(row.purchaseRequest.id)}
-                        >
-                          <Eye className="mr-2 h-4 w-4" />
-                          Ver
-                        </Button>
-                      </td>
-                    </tr>
+                        <td className="p-3 text-xs">
+                          {row.projectSummary?.label ||
+                            (row.project
+                              ? `${row.project.code} — ${row.project.name}`
+                              : "—")}
+                        </td>
+                        <td className="p-3 text-xs">
+                          {getPurchaseTypeLabel(
+                            row.purchaseRequest.purchaseType
+                          )}
+                        </td>
+                        <td className="p-3 text-xs">
+                          {row.purchaseRequest.createdAt
+                            ? new Date(
+                                row.purchaseRequest.createdAt
+                              ).toLocaleDateString("es-HN")
+                            : "—"}
+                        </td>
+                        <td className="p-3 text-xs">
+                          {row.purchaseRequest.sapDocumentNumber || "—"}
+                        </td>
+                        <td className="p-3">
+                          <Badge
+                            variant="outline"
+                            className={`text-xs ${
+                              STATUS_COLORS[row.purchaseRequest.status] || ""
+                            }`}
+                          >
+                            {STATUS_LABELS[row.purchaseRequest.status] ||
+                              row.purchaseRequest.status}
+                          </Badge>
+                        </td>
+                        <td className="p-3 text-xs">
+                          {row.purchaseRequest.neededBy
+                            ? new Date(
+                                row.purchaseRequest.neededBy
+                              ).toLocaleDateString("es-HN")
+                            : "—"}
+                        </td>
+                        <td className="p-3 text-xs">
+                          {row.purchaseRequest.printedDocumentContent
+                            ? "Listo"
+                            : "Pendiente"}
+                        </td>
+                        <td className="p-3 text-right">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openRequest(row.purchaseRequest.id)}
+                          >
+                            <Eye className="mr-2 h-4 w-4" />
+                            Ver
+                          </Button>
+                        </td>
+                      </tr>
                     );
                   })}
                 </tbody>
@@ -1177,7 +1410,7 @@ export default function PurchaseRequests() {
 
       <Dialog
         open={Boolean(selectedId)}
-        onOpenChange={(open) => {
+        onOpenChange={open => {
           if (!open) setSelectedId(null);
         }}
       >
@@ -1186,14 +1419,15 @@ export default function PurchaseRequests() {
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div className="space-y-2">
                 <DialogTitle className="text-3xl font-bold tracking-tight sm:text-[2.15rem]">
-                  {detail?.purchaseRequest.requestNumber || "Solicitud de Compra"}
+                  {detail?.purchaseRequest.requestNumber ||
+                    "Solicitud de Compra"}
                 </DialogTitle>
                 <p className="text-sm text-muted-foreground">
                   {isConvertedPurchaseRequest
                     ? "Esta solicitud ya fue convertida a orden de compra y se muestra en modo solo lectura."
                     : isProjectAdminReadOnlyRequest
-                    ? "Esta solicitud es informativa para el Administrador del Proyecto. Solo las compras directas pueden convertirse a OC desde este rol."
-                    : "Revisa la solicitud, adjunta cotización y convierte los ítems seleccionados a orden de compra cuando ya esté lista."}
+                      ? "Esta solicitud es informativa para el Administrador del Proyecto. Solo las compras directas pueden convertirse a OC desde este rol."
+                      : "Revisa la solicitud, adjunta cotización y convierte los ítems seleccionados a orden de compra cuando ya esté lista."}
                 </p>
               </div>
               {detail && (
@@ -1204,9 +1438,13 @@ export default function PurchaseRequests() {
                       STATUS_COLORS[detail.purchaseRequest.status] || ""
                     }`}
                   >
-                    {STATUS_LABELS[detail.purchaseRequest.status] || detail.purchaseRequest.status}
+                    {STATUS_LABELS[detail.purchaseRequest.status] ||
+                      detail.purchaseRequest.status}
                   </Badge>
-                  <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                  <Badge
+                    variant="secondary"
+                    className="rounded-full px-3 py-1 text-xs"
+                  >
                     {selectedItems.length} ítem(s)
                   </Badge>
                 </div>
@@ -1214,18 +1452,39 @@ export default function PurchaseRequests() {
             </div>
           </DialogHeader>
 
+          {!detail && (isLoadingDetail || detailError) ? (
+            <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-16 text-center">
+              <div className="max-w-md space-y-2">
+                <p className="text-sm font-medium">
+                  {detailError
+                    ? "No se pudo cargar la solicitud de compra"
+                    : "Cargando solicitud de compra..."}
+                </p>
+                {detailError ? (
+                  <p className="text-sm text-muted-foreground">
+                    {detailError.message}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
           {detail && (
             <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-6 lg:px-8">
-              <div className="grid gap-4 xl:grid-cols-[1.25fr_1fr_1fr_1fr_1.2fr]">
+              <div className="grid gap-4 xl:grid-cols-[1.25fr_1fr_1fr_1.2fr]">
                 <div className="rounded-2xl border border-border/70 bg-card p-5">
                   <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
                     <FolderOpen className="h-4 w-4" />
                     Proyecto
                   </div>
-                  <p className="text-lg font-semibold leading-snug">{projectLabel}</p>
+                  <p className="text-lg font-semibold leading-snug">
+                    {projectLabel}
+                  </p>
                   <p className="mt-2 text-sm text-muted-foreground">
                     Documento:{" "}
-                    {detail.purchaseRequest.printedDocumentContent ? "Listo para descarga" : "Pendiente de generar"}
+                    {detail.purchaseRequest.printedDocumentContent
+                      ? "Listo para descarga"
+                      : "Pendiente de generar"}
                   </p>
                 </div>
 
@@ -1236,7 +1495,7 @@ export default function PurchaseRequests() {
                   </div>
                   <Select
                     value={editPurchaseType}
-                    onValueChange={(value) =>
+                    onValueChange={value =>
                       setEditPurchaseType(value as PurchaseType)
                     }
                     disabled={!canEditSelectedPurchaseRequest}
@@ -1246,11 +1505,17 @@ export default function PurchaseRequests() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="local">Compra Local</SelectItem>
-                      <SelectItem value="extranjera">Compra Extranjera</SelectItem>
-                      <SelectItem value="compra_directa">Compra Directa</SelectItem>
+                      <SelectItem value="extranjera">
+                        Compra Extranjera
+                      </SelectItem>
+                      <SelectItem value="compra_directa">
+                        Compra Directa
+                      </SelectItem>
                     </SelectContent>
                   </Select>
-                  <p className="mt-2 text-sm text-muted-foreground">{purchaseTypeLabel}</p>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {purchaseTypeLabel}
+                  </p>
                 </div>
 
                 <div className="rounded-2xl border border-border/70 bg-card p-5">
@@ -1262,27 +1527,11 @@ export default function PurchaseRequests() {
                     className="h-12 text-base"
                     type="date"
                     value={editNeededBy}
-                    onChange={(event) => setEditNeededBy(event.target.value)}
+                    onChange={event => setEditNeededBy(event.target.value)}
                     disabled={!canEditSelectedPurchaseRequest}
                   />
                   <p className="mt-2 text-sm text-muted-foreground">
                     Programa la fecha objetivo para gestionar esta compra.
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-border/70 bg-card p-5">
-                  <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                    <MapPin className="h-4 w-4" />
-                    Destino
-                  </div>
-                  <Input
-                    className="h-12 cursor-default bg-muted/30 text-base"
-                    value={destinationProjectLabel}
-                    readOnly
-                    aria-readonly="true"
-                  />
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Se toma del proyecto destino de la requisición.
                   </p>
                 </div>
 
@@ -1297,7 +1546,8 @@ export default function PurchaseRequests() {
                         STATUS_COLORS[detail.purchaseRequest.status] || ""
                       }`}
                     >
-                      {STATUS_LABELS[detail.purchaseRequest.status] || detail.purchaseRequest.status}
+                      {STATUS_LABELS[detail.purchaseRequest.status] ||
+                        detail.purchaseRequest.status}
                     </Badge>
                   </div>
                   <p className="mt-2 text-sm text-muted-foreground">
@@ -1313,7 +1563,7 @@ export default function PurchaseRequests() {
                   <Label className="text-sm font-semibold">Notas</Label>
                   <Textarea
                     value={editNotes}
-                    onChange={(event) => setEditNotes(event.target.value)}
+                    onChange={event => setEditNotes(event.target.value)}
                     rows={4}
                     className="min-h-[140px] resize-y text-sm"
                     placeholder="Detalles, condiciones o instrucciones importantes para esta solicitud de compra"
@@ -1322,30 +1572,49 @@ export default function PurchaseRequests() {
                 </div>
               </div>
 
+              <DocumentAttachmentsPanel
+                entityType="purchase_request"
+                entityId={selectedId}
+                category="documento_proveedor"
+                title="Adjuntos y cotizaciones"
+                canManage={canEditSelectedPurchaseRequest}
+                disabled={attachQuoteMutation.isPending}
+                onUploadSuccess={result => {
+                  if (!selectedId) return;
+                  attachQuoteMutation.mutate({
+                    id: selectedId,
+                    attachmentId: result.id,
+                  });
+                }}
+              />
+
               {isProjectAdminReadOnlyRequest && (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                  Solo consulta: las solicitudes de Compra Local o Compra Extranjera continúan con Administración Central.
+                  Solo consulta: las solicitudes de Compra Local o Compra
+                  Extranjera continúan con Administración Central.
                 </div>
               )}
 
               <div className="min-w-0 rounded-2xl border border-border/70 bg-card">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-4">
                   <div>
-                    <p className="text-base font-semibold">Ítems de la solicitud</p>
+                    <p className="text-base font-semibold">
+                      Ítems de la solicitud
+                    </p>
                     <p className="text-sm text-muted-foreground">
                       {isConvertedPurchaseRequest
                         ? "Los ítems ya fueron convertidos y esta solicitud quedó cerrada para edición."
                         : canConvertSelectedPurchaseRequest
-                        ? "Marca los renglones que deseas convertir a la próxima orden de compra."
-                        : "Detalle de ítems incluidos en la solicitud."}
+                          ? "Marca los renglones que deseas convertir a la próxima orden de compra."
+                          : "Detalle de ítems incluidos en la solicitud."}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="outline" className="rounded-full px-3 py-1 text-xs">
-                      Total a convertir {formatPurchaseOrderCurrency(conversionEstimatedTotal)}
-                    </Badge>
                     {canConvertSelectedPurchaseRequest && (
-                      <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                      <Badge
+                        variant="secondary"
+                        className="rounded-full px-3 py-1 text-xs"
+                      >
                         {selectedItemIds.length > 0
                           ? `${selectedItemIds.length} seleccionados`
                           : `Se convertirán ${convertibleItemIds.length}`}
@@ -1355,7 +1624,7 @@ export default function PurchaseRequests() {
                 </div>
 
                 <div className="max-w-full overflow-x-auto">
-                  <table className="w-full min-w-[1700px] text-sm">
+                  <table className="w-full min-w-[1680px] text-sm">
                     <thead>
                       <tr className="border-b border-border bg-muted/20">
                         {canConvertSelectedPurchaseRequest && (
@@ -1368,6 +1637,9 @@ export default function PurchaseRequests() {
                         </th>
                         <th className="w-56 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Proyecto
+                        </th>
+                        <th className="w-72 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Destino
                         </th>
                         <th className="p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Ítem
@@ -1393,12 +1665,6 @@ export default function PurchaseRequests() {
                         <th className="w-40 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           A convertir
                         </th>
-                        <th className="w-40 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Precio unit.
-                        </th>
-                        <th className="w-40 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Total a convertir
-                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1410,58 +1676,69 @@ export default function PurchaseRequests() {
                           draft.quantity
                         );
                         const convertQuantity = getConvertQuantityDraft(item);
-                        const lineTotal = calculatePurchaseOrderLineAmounts({
-                          quantity: convertQuantity || "0",
-                          unitPrice: draft.unitPrice || "0",
-                          taxCode: "exe",
-                        }).total;
                         const canConvertItem =
                           canConvertSelectedPurchaseRequest &&
                           convertibleItemIdSet.has(item.id) &&
                           pendingQuantity > 0;
 
                         return (
-                          <tr key={item.id} className="border-b border-border/70 last:border-0">
-                          {canConvertSelectedPurchaseRequest && (
-                            <td className="p-4 align-top">
-                              <Checkbox
+                          <tr
+                            key={item.id}
+                            className="border-b border-border/70 last:border-0"
+                          >
+                            {canConvertSelectedPurchaseRequest && (
+                              <td className="p-4 align-top">
+                                <Checkbox
                                   checked={selectedItemIds.includes(item.id)}
                                   disabled={!canConvertItem}
-                                  onCheckedChange={(checked) => {
-                                    setSelectedItemIds((current) =>
+                                  onCheckedChange={checked => {
+                                    setSelectedItemIds(current =>
                                       checked
                                         ? [...current, item.id]
-                                        : current.filter((entry) => entry !== item.id)
+                                        : current.filter(
+                                            entry => entry !== item.id
+                                          )
                                     );
                                   }}
                                 />
+                              </td>
+                            )}
+                            <td className="p-4 align-top text-xs">
+                              {item.sourceRequest?.requestNumber || "—"}
                             </td>
-                          )}
-                          <td className="p-4 align-top text-xs">
-                            {item.sourceRequest?.requestNumber || "—"}
-                          </td>
-                          <td className="p-4 align-top text-xs">
-                            {item.sourceProject
-                              ? `${item.sourceProject.code} — ${item.sourceProject.name}`
-                              : isMixedProjectRequest
-                                ? "Proyecto pendiente"
-                                : projectLabel}
-                          </td>
-                          <td className="p-4 align-top">
-                            <p className="font-medium">{item.itemName}</p>
+                            <td className="p-4 align-top text-xs">
+                              {item.sourceProject
+                                ? `${item.sourceProject.code} — ${item.sourceProject.name}`
+                                : isMixedProjectRequest
+                                  ? "Proyecto pendiente"
+                                  : projectLabel}
+                            </td>
+                            <td className="p-4 align-top">
+                              {renderItemTargetCombobox(item, draft)}
+                            </td>
+                            <td className="p-4 align-top">
+                              <p className="font-medium">{item.itemName}</p>
                               {item.notes && (
-                                <p className="mt-1 text-xs text-muted-foreground">{item.notes}</p>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  {item.notes}
+                                </p>
                               )}
                             </td>
                             <td className="p-4 align-top text-xs font-mono">
-                              {item.currentSapItemCode || item.originalSapItemCode || "—"}
+                              {item.currentSapItemCode ||
+                                item.originalSapItemCode ||
+                                "—"}
                             </td>
                             <td className="p-4 align-top">
                               <Input
                                 className="h-9 text-sm"
                                 value={draft.brand}
-                                onChange={(event) =>
-                                  updateItemDraft(item, "brand", event.target.value)
+                                onChange={event =>
+                                  updateItemDraft(
+                                    item,
+                                    "brand",
+                                    event.target.value
+                                  )
                                 }
                                 placeholder="Marca"
                                 disabled={!canEditSelectedPurchaseRequest}
@@ -1471,7 +1748,7 @@ export default function PurchaseRequests() {
                               <Input
                                 className="h-9 text-sm"
                                 value={draft.costResponsible}
-                                onChange={(event) =>
+                                onChange={event =>
                                   updateItemDraft(
                                     item,
                                     "costResponsible",
@@ -1490,8 +1767,12 @@ export default function PurchaseRequests() {
                                   min="0.01"
                                   step="0.01"
                                   value={draft.quantity}
-                                  onChange={(event) =>
-                                    updateItemDraft(item, "quantity", event.target.value)
+                                  onChange={event =>
+                                    updateItemDraft(
+                                      item,
+                                      "quantity",
+                                      event.target.value
+                                    )
                                   }
                                   disabled={!canEditSelectedPurchaseRequest}
                                 />
@@ -1501,10 +1782,12 @@ export default function PurchaseRequests() {
                               </div>
                             </td>
                             <td className="p-4 text-right align-top font-medium">
-                              {formatQuantity(convertedQuantity)} {item.unit || ""}
+                              {formatQuantity(convertedQuantity)}{" "}
+                              {item.unit || ""}
                             </td>
                             <td className="p-4 text-right align-top font-medium">
-                              {formatQuantity(pendingQuantity)} {item.unit || ""}
+                              {formatQuantity(pendingQuantity)}{" "}
+                              {item.unit || ""}
                             </td>
                             <td className="p-4 align-top">
                               <div className="flex items-center justify-end gap-2">
@@ -1515,8 +1798,11 @@ export default function PurchaseRequests() {
                                   max={pendingQuantity || undefined}
                                   step="0.01"
                                   value={convertQuantity}
-                                  onChange={(event) =>
-                                    updateConvertQuantityDraft(item, event.target.value)
+                                  onChange={event =>
+                                    updateConvertQuantityDraft(
+                                      item,
+                                      event.target.value
+                                    )
                                   }
                                   disabled={!canConvertItem}
                                 />
@@ -1524,22 +1810,6 @@ export default function PurchaseRequests() {
                                   {item.unit || ""}
                                 </span>
                               </div>
-                            </td>
-                            <td className="p-4 align-top">
-                              <Input
-                                className="ml-auto h-9 w-32 text-right"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={draft.unitPrice}
-                                onChange={(event) =>
-                                  updateItemDraft(item, "unitPrice", event.target.value)
-                                }
-                                disabled={!canEditSelectedPurchaseRequest}
-                              />
-                            </td>
-                            <td className="p-4 text-right align-top font-medium">
-                              {formatPurchaseOrderCurrency(lineTotal)}
                             </td>
                           </tr>
                         );
@@ -1559,26 +1829,6 @@ export default function PurchaseRequests() {
                     <Printer className="mr-2 h-4 w-4" />
                     Imprimir documento
                   </Button>
-
-                  {canEditSelectedPurchaseRequest && (
-                    <>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        className="hidden"
-                        onChange={handleQuoteUpload}
-                      />
-                      <Button
-                        variant="outline"
-                        className="h-11 px-4"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={uploadMutation.isPending || attachQuoteMutation.isPending}
-                      >
-                        <FileUp className="mr-2 h-4 w-4" />
-                        Adjuntar cotización
-                      </Button>
-                    </>
-                  )}
                 </div>
 
                 {canEditSelectedPurchaseRequest && (
@@ -1599,7 +1849,9 @@ export default function PurchaseRequests() {
                         className="h-11 px-4"
                         onClick={() => {
                           if (rejectReason.trim().length < 5) {
-                            toast.error("Indica un motivo de al menos 5 caracteres");
+                            toast.error(
+                              "Indica un motivo de al menos 5 caracteres"
+                            );
                             return;
                           }
                           rejectMutation.mutate({
@@ -1635,10 +1887,12 @@ export default function PurchaseRequests() {
               {canReject && canEditSelectedPurchaseRequest && (
                 <div className="rounded-2xl border border-border/70 bg-card p-5">
                   <div className="space-y-2">
-                    <Label className="text-sm font-semibold">Motivo de anulación</Label>
+                    <Label className="text-sm font-semibold">
+                      Motivo de anulación
+                    </Label>
                     <Textarea
                       value={rejectReason}
-                      onChange={(event) => setRejectReason(event.target.value)}
+                      onChange={event => setRejectReason(event.target.value)}
                       placeholder="Explique por qué se anula la solicitud de compra"
                       rows={3}
                       className="min-h-[120px] resize-y text-sm"
@@ -1651,7 +1905,10 @@ export default function PurchaseRequests() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(emailDialog)} onOpenChange={() => setEmailDialog(null)}>
+      <Dialog
+        open={Boolean(emailDialog)}
+        onOpenChange={() => setEmailDialog(null)}
+      >
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Correo preparado</DialogTitle>
@@ -1667,7 +1924,9 @@ export default function PurchaseRequests() {
                 <p className="text-sm font-medium">{emailDialog.subject}</p>
               </div>
               <div>
-                <Label className="text-xs text-muted-foreground">Contenido</Label>
+                <Label className="text-xs text-muted-foreground">
+                  Contenido
+                </Label>
                 <div className="rounded-md bg-muted p-3 whitespace-pre-wrap text-sm">
                   {emailDialog.content}
                 </div>

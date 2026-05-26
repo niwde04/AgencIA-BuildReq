@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -32,8 +33,6 @@ import {
   Truck,
   ArrowLeftRight,
   ShoppingCart,
-  Upload,
-  FileText,
   Trash2,
   Check,
   Search,
@@ -41,7 +40,7 @@ import {
   Pencil,
   XCircle,
 } from "lucide-react";
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import {
@@ -506,11 +505,6 @@ export default function SolicitudDetalle() {
 
   const { data: availableFlows } = trpc.supplyFlows.availableFlows.useQuery();
 
-  const { data: attachments } = trpc.attachments.getByEntity.useQuery(
-    { entityType: "material_request", entityId: requestId },
-    { enabled: requestId > 0 }
-  );
-
   const items = data?.items ?? [];
 
   const translateMutation = trpc.requestItems.translateToSap.useMutation({
@@ -597,29 +591,6 @@ export default function SolicitudDetalle() {
     },
     onError: (e) => toast.error(e.message),
   });
-
-  const uploadMutation = trpc.attachments.upload.useMutation({
-    onSuccess: () => {
-      toast.success("Archivo adjunto subido");
-      utils.attachments.getByEntity.invalidate({
-        entityType: "material_request",
-        entityId: requestId,
-      });
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const deleteAttachmentMutation = trpc.attachments.delete.useMutation({
-    onSuccess: () => {
-      toast.success("Archivo eliminado");
-      utils.attachments.getByEntity.invalidate({
-        entityType: "material_request",
-        entityId: requestId,
-      });
-    },
-  });
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [assigningFlowItemId, setAssigningFlowItemId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -898,29 +869,6 @@ export default function SolicitudDetalle() {
 
   const handleClearSapTranslation = (itemId: number) => {
     clearSapTranslationMutation.mutate({ id: itemId });
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error("El archivo no puede superar 10MB");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = (reader.result as string).split(",")[1];
-      uploadMutation.mutate({
-        entityType: "material_request",
-        entityId: requestId,
-        fileName: file.name,
-        fileData: base64,
-        mimeType: file.type,
-        fileSize: file.size,
-      });
-    };
-    reader.readAsDataURL(file);
-    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const getVisibleQueueOptionsForItem = () => {
@@ -1889,67 +1837,12 @@ export default function SolicitudDetalle() {
         </Card>
       )}
 
-      {/* Attachments */}
-      <Card>
-        <CardHeader className="pb-2 flex flex-row items-center justify-between">
-          <CardTitle className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-            Archivos Adjuntos
-          </CardTitle>
-          <div>
-            <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploadMutation.isPending}
-            >
-              <Upload className="h-4 w-4 mr-1" />
-              {uploadMutation.isPending ? "Subiendo..." : "Adjuntar"}
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {(attachments || []).length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4">
-              Sin archivos adjuntos
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {(attachments || []).map((att: any) => (
-                <div
-                  key={att.id}
-                  className="flex items-center justify-between p-2 border border-border rounded"
-                >
-                  <div className="flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <a
-                        href={att.fileUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sm font-medium hover:text-primary"
-                      >
-                        {att.fileName}
-                      </a>
-                      <p className="text-xs text-muted-foreground">
-                        {(att.fileSize / 1024).toFixed(0)} KB
-                      </p>
-                    </div>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => deleteAttachmentMutation.mutate({ id: att.id })}
-                    className="text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <DocumentAttachmentsPanel
+        entityType="material_request"
+        entityId={requestId}
+        title="Archivos Adjuntos"
+        canManage={canEditCurrentRequest}
+      />
 
       <Dialog
         open={Boolean(pendingBalanceRejection)}

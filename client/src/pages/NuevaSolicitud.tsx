@@ -780,22 +780,6 @@ export default function NuevaSolicitud() {
                   </p>
                 ) : null}
               </div>
-
-              <div className="space-y-2">
-                <Label>Tipo de requisición *</Label>
-                <Select
-                  value={requestType}
-                  onValueChange={(value) => setRequestType(value as "bienes" | "servicios")}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Seleccione tipo" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="bienes">Bienes</SelectItem>
-                    <SelectItem value="servicios">Servicios</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
             </div>
 
             {requestType === "bienes" && (
@@ -810,19 +794,17 @@ export default function NuevaSolicitud() {
                     : "Seleccione un proyecto para identificar la bodega operativa"}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Esta requisición de bienes se trabajará primero desde la bodega del
-                  proyecto seleccionado.
+                  La requisición se trabajará primero desde la bodega del proyecto
+                  seleccionado cuando aplique a materiales.
                 </p>
               </div>
             )}
 
             <Alert className="border-border bg-muted/20">
               <Info className="h-4 w-4" />
-              <AlertTitle>Enrutamiento automático</AlertTitle>
+              <AlertTitle>Clasificación automática</AlertTitle>
               <AlertDescription>
-                {requestType === "bienes"
-                  ? "Los bienes pasan primero por la bodega del proyecto. Desde ahí se registra salida de bodega, solicitud de compra o traslado según disponibilidad."
-                  : "Los servicios pasan al Administrador del Proyecto para aprobación. Si se aprueban, continúan a Oficina Central."}
+                El tipo se tomará del artículo SAP cuando Bodega traduzca los ítems.
               </AlertDescription>
             </Alert>
 

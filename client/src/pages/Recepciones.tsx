@@ -1,7 +1,14 @@
 import { trpc } from "@/lib/trpc";
+import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
+import {
+  formatAttachmentSize,
+  prepareDocumentAttachment,
+  type PreparedDocumentAttachment,
+} from "@/lib/document-attachments";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,22 +40,33 @@ import {
 } from "@/components/ui/select";
 import {
   Eye,
+  AlertTriangle,
+  FileText,
+  ImageIcon,
   Loader2,
   Plus,
   Printer,
   RotateCcw,
   Search,
   ShieldX,
+  Trash2,
+  Upload,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { calculatePurchaseOrderLineAmounts } from "@shared/purchase-orders";
+import {
+  calculatePurchaseOrderLineAmounts,
+  getPurchaseOrderContractSummary,
+} from "@shared/purchase-orders";
 import {
   CAI_FORMAT_EXAMPLE,
   INVOICE_NUMBER_FORMAT_EXAMPLE,
   formatCaiInput,
+  EMISSION_DEADLINE_ISSUE_MESSAGE,
+  getDocumentTypeLabelFromNumber,
   formatInvoiceNumberInput,
+  hasEmissionDeadlineIssue,
   isValidCai,
   isValidInvoiceNumber,
 } from "@shared/invoices";
@@ -66,6 +84,8 @@ const STATUS_COLORS: Record<string, string> = {
   completa: "border-emerald-300 bg-emerald-50 text-emerald-700",
   cierre_incompleto: "border-yellow-300 bg-yellow-50 text-yellow-700",
 };
+const EMISSION_DEADLINE_ISSUE_COLOR =
+  "border-rose-300 bg-rose-50 text-rose-700";
 
 const SOURCE_TYPE_LABELS: Record<"purchase_order" | "transfer", string> = {
   purchase_order: "Orden de Compra",
@@ -206,6 +226,33 @@ function canManuallyCloseReceiptLine(item: any) {
   );
 }
 
+function getReceiptHasEmissionDeadlineIssue(receipt: any, invoice?: any) {
+  return (
+    receipt?.sourceType === "purchase_order" &&
+    hasEmissionDeadlineIssue({
+      isFiscalDocument: receipt.isFiscalDocument,
+      documentDate: receipt.documentDate,
+      emissionDeadline: invoice?.emissionDeadline,
+    })
+  );
+}
+
+function getReceiptStatusLabel(receipt: any, invoice?: any) {
+  if (getReceiptHasEmissionDeadlineIssue(receipt, invoice)) {
+    if (receipt.status === "completa") return "Recibida con alerta";
+    if (receipt.status === "parcial") return "Parcial con alerta";
+    return "Recepción con alerta";
+  }
+
+  return STATUS_LABELS[receipt.status] || receipt.status;
+}
+
+function getReceiptStatusColor(receipt: any, invoice?: any) {
+  return getReceiptHasEmissionDeadlineIssue(receipt, invoice)
+    ? EMISSION_DEADLINE_ISSUE_COLOR
+    : STATUS_COLORS[receipt.status] || "";
+}
+
 function getSourceItemCode(item: any) {
   return (
     item.currentSapItemCode ??
@@ -217,6 +264,16 @@ function getSourceItemCode(item: any) {
 
 function formatProjectReference(project: any, fallback: string) {
   return project ? `${project.code} — ${project.name}` : fallback;
+}
+
+function formatUserReference(user: any, fallbackId?: number | null) {
+  const name = String(user?.name ?? "").trim();
+  if (name) return name;
+
+  const email = String(user?.email ?? "").trim();
+  if (email) return email;
+
+  return fallbackId ? `Usuario #${fallbackId}` : "Usuario no identificado";
 }
 
 function getSourceStatusColor(
@@ -250,9 +307,14 @@ function getTransferOriginLabel(transferDetail: any, fallback: string) {
       : fallback;
 }
 
+type PendingReceiptAttachment = PreparedDocumentAttachment & {
+  id: string;
+};
+
 export default function Recepciones() {
   const utils = trpc.useUtils();
   const { user } = useAuth();
+  const receiptAttachmentInputRef = useRef<HTMLInputElement>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [viewReceiptId, setViewReceiptId] = useState<number | null>(null);
   const [sourceType, setSourceType] = useState<"purchase_order" | "transfer">(
@@ -260,6 +322,7 @@ export default function Recepciones() {
   );
   const [sourceId, setSourceId] = useState("");
   const [notes, setNotes] = useState("");
+  const [isFiscalDocument, setIsFiscalDocument] = useState(true);
   const [cai, setCai] = useState("");
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [documentDate, setDocumentDate] = useState("");
@@ -267,6 +330,7 @@ export default function Recepciones() {
   const [receiptDate, setReceiptDate] = useState(todayDateValue());
   const [emissionDeadline, setEmissionDeadline] = useState("");
   const [receivedMap, setReceivedMap] = useState<Record<number, string>>({});
+  const [priceMap, setPriceMap] = useState<Record<number, string>>({});
   const [closeReceiptLineItem, setCloseReceiptLineItem] = useState<any | null>(
     null
   );
@@ -283,6 +347,11 @@ export default function Recepciones() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sourceTypeFilter, setSourceTypeFilter] = useState("all");
+  const [pendingReceiptAttachments, setPendingReceiptAttachments] = useState<
+    PendingReceiptAttachment[]
+  >([]);
+  const [preparingReceiptAttachment, setPreparingReceiptAttachment] =
+    useState(false);
 
   const { data: receipts, isLoading } = trpc.receipts.list.useQuery();
   const { data: receiptDetail, isLoading: receiptDetailLoading } =
@@ -319,6 +388,28 @@ export default function Recepciones() {
     sourceType === "purchase_order"
       ? purchaseOrderDetailLoading
       : transferDetailLoading;
+  const purchaseOrderContractSummary =
+    purchaseOrderDetail?.contractSummary ??
+    getPurchaseOrderContractSummary({
+      appliesContract: purchaseOrderDetail?.purchaseOrder.appliesContract,
+      contractPaymentFrequency:
+        purchaseOrderDetail?.purchaseOrder.contractPaymentFrequency,
+      contractFirstPaymentDate:
+        purchaseOrderDetail?.purchaseOrder.contractFirstPaymentDate,
+      contractEndDate: purchaseOrderDetail?.purchaseOrder.contractEndDate,
+    });
+  const isContractPurchaseOrder =
+    sourceType === "purchase_order" &&
+    purchaseOrderDetail?.purchaseOrder.appliesContract === true;
+  const contractReceiptBlockReason = isContractPurchaseOrder
+    ? purchaseOrderContractSummary.isExpired
+      ? "El contrato está vencido y ya no permite agregar facturas."
+      : purchaseOrderContractSummary.isFullyInvoiced
+        ? "La OC de contrato ya alcanzó el total de facturas programadas."
+        : purchaseOrderContractSummary.expectedInvoiceCount <= 0
+          ? "La OC de contrato no tiene una programación de pagos válida."
+          : ""
+    : "";
 
   const {
     data: receiptPurchaseOrderDetail,
@@ -348,6 +439,7 @@ export default function Recepciones() {
     setSourceType("purchase_order");
     setSourceId("");
     setNotes("");
+    setIsFiscalDocument(true);
     setCai("");
     setInvoiceNumber("");
     setDocumentDate("");
@@ -355,38 +447,55 @@ export default function Recepciones() {
     setReceiptDate(todayDateValue());
     setEmissionDeadline("");
     setReceivedMap({});
+    setPriceMap({});
     setTransferClosureDrafts({});
     setCloseTransferLineItem(null);
     setTransferCloseReason(TRANSFER_CLOSE_REASONS[0].value);
     setTransferCloseNote("");
+    setPendingReceiptAttachments([]);
+    setPreparingReceiptAttachment(false);
   };
 
   const sourceItems = useMemo(
     () =>
       (activeSourceDetail?.items ?? []).filter(
-        (item: any) => getPendingQuantity(item) > 0
+        (item: any) =>
+          isContractPurchaseOrder ? !item.receiptClosed : getPendingQuantity(item) > 0
       ),
-    [activeSourceDetail]
+    [activeSourceDetail, isContractPurchaseOrder]
   );
+  const getReceivableQuantity = (item: any) =>
+    isContractPurchaseOrder
+      ? Math.max(Number(item.quantity ?? item.quantityExpected ?? 0), 0)
+      : getPendingQuantity(item);
 
   useEffect(() => {
     if (!sourceItems.length) {
       setReceivedMap({});
+      setPriceMap({});
       return;
     }
 
     const nextMap: Record<number, string> = {};
+    const nextPriceMap: Record<number, string> = {};
     for (const item of sourceItems) {
-      nextMap[item.id] = String(getPendingQuantity(item));
+      nextMap[item.id] = String(getReceivableQuantity(item));
+      nextPriceMap[item.id] = String((item as any).unitPrice ?? "0.00");
     }
     setReceivedMap(nextMap);
+    setPriceMap(nextPriceMap);
   }, [sourceItems]);
 
+  const uploadPendingReceiptAttachmentMutation =
+    trpc.attachments.upload.useMutation();
+
   const registerMutation = trpc.receipts.register.useMutation({
-    onSuccess: result => {
+    onSuccess: async result => {
+      const attachmentsToUpload = [...pendingReceiptAttachments];
+
       toast.success(
         result.invoiceDocumentNumber
-          ? `Recepción registrada y factura ${result.invoiceDocumentNumber} creada`
+          ? `Recepción registrada y documento ${result.invoiceDocumentNumber} creado`
           : "Recepción registrada"
       );
       setDialogOpen(false);
@@ -405,6 +514,39 @@ export default function Recepciones() {
           ? utils.purchaseOrders.getById.invalidate({ id: Number(sourceId) })
           : Promise.resolve(),
       ]);
+
+      if (attachmentsToUpload.length > 0) {
+        try {
+          await Promise.all(
+            attachmentsToUpload.map(attachment =>
+              uploadPendingReceiptAttachmentMutation.mutateAsync({
+                entityType: "receipt",
+                entityId: result.id,
+                fileName: attachment.fileName,
+                fileData: attachment.fileData,
+                mimeType: attachment.mimeType,
+                fileSize: attachment.fileSize,
+                category: "comprobante_entrega",
+              })
+            )
+          );
+          toast.success(
+            attachmentsToUpload.length === 1
+              ? "Adjunto subido a la recepción"
+              : `${attachmentsToUpload.length} adjuntos subidos a la recepción`
+          );
+          void utils.attachments.getByEntity.invalidate({
+            entityType: "receipt",
+            entityId: result.id,
+          });
+        } catch (error) {
+          toast.error(
+            error instanceof Error
+              ? `La recepción fue registrada, pero falló un adjunto: ${error.message}`
+              : "La recepción fue registrada, pero no se pudieron subir todos los adjuntos"
+          );
+        }
+      }
     },
     onError: error => toast.error(error.message),
   });
@@ -457,6 +599,13 @@ export default function Recepciones() {
       ((user as any)?.buildreqRole === "administrador_proyecto" &&
         sourceProjectId !== undefined &&
         (user as any)?.assignedProjectId === sourceProjectId));
+  const userRole = (user as any)?.buildreqRole;
+  const canManageReceiptAttachments =
+    user?.role === "admin" ||
+    userRole === "jefe_bodega_central" ||
+    userRole === "administracion_central" ||
+    userRole === "administrador_proyecto" ||
+    userRole === "bodeguero_proyecto";
 
   const sourceProjectLabel =
     sourceType === "purchase_order"
@@ -478,7 +627,9 @@ export default function Recepciones() {
       : transferDetail?.transfer?.status;
   const sourceStatusLabel = sourceStatusKey
     ? sourceType === "purchase_order"
-      ? PURCHASE_ORDER_STATUS_LABELS[sourceStatusKey] || sourceStatusKey
+      ? isContractPurchaseOrder
+        ? purchaseOrderContractSummary.statusLabel
+        : PURCHASE_ORDER_STATUS_LABELS[sourceStatusKey] || sourceStatusKey
       : TRANSFER_STATUS_LABELS[sourceStatusKey] || sourceStatusKey
     : null;
 
@@ -502,7 +653,7 @@ export default function Recepciones() {
     () =>
       sourceItems.reduce(
         (acc, item: any) => {
-          acc.pending += getPendingQuantity(item);
+          acc.pending += getReceivableQuantity(item);
           acc.receiving += Number(receivedMap[item.id] ?? 0) || 0;
           return acc;
         },
@@ -510,6 +661,11 @@ export default function Recepciones() {
       ),
     [receivedMap, sourceItems]
   );
+  const currentDocumentHasEmissionDeadlineIssue = hasEmissionDeadlineIssue({
+    isFiscalDocument: sourceType === "purchase_order" && isFiscalDocument,
+    documentDate,
+    emissionDeadline,
+  });
 
   const getTransferCloseQuantity = (item: any) => {
     const requestedQuantity = Math.max(Number(receivedMap[item.id] ?? 0) || 0, 0);
@@ -521,10 +677,17 @@ export default function Recepciones() {
       toast.error("Selecciona un documento origen válido");
       return;
     }
+    if (contractReceiptBlockReason) {
+      toast.error(contractReceiptBlockReason);
+      return;
+    }
 
-    if (sourceType === "purchase_order") {
+    const isPurchaseOrderFiscalDocument =
+      sourceType === "purchase_order" && isFiscalDocument;
+
+    if (isPurchaseOrderFiscalDocument) {
       if (!cai.trim()) {
-        toast.error("Ingresa el CAI de la factura");
+        toast.error("Ingresa el CAI del documento");
         return;
       }
       if (!isValidCai(cai)) {
@@ -532,12 +695,12 @@ export default function Recepciones() {
         return;
       }
       if (!invoiceNumber.trim()) {
-        toast.error("Ingresa el número de factura");
+        toast.error("Ingresa el número documento");
         return;
       }
       if (!isValidInvoiceNumber(invoiceNumber)) {
         toast.error(
-          `El número de factura debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`
+          `El número documento debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`
         );
         return;
       }
@@ -561,9 +724,13 @@ export default function Recepciones() {
       return {
         sourceItemId: item.id,
         itemName: item.itemName,
-        quantityExpected: String(getPendingQuantity(item)),
+        quantityExpected: String(getReceivableQuantity(item)),
         quantityReceived: receivedMap[item.id] || "0",
         unit: item.unit || undefined,
+        unitPrice:
+          sourceType === "purchase_order"
+            ? priceMap[item.id] || String(item.unitPrice ?? "0.00")
+            : "0.00",
         closeRemaining: closeQuantity > 0,
         closeReason:
           closeQuantity > 0
@@ -602,9 +769,17 @@ export default function Recepciones() {
       sourceType,
       sourceId: Number(sourceId),
       projectId: sourceProjectId,
-      cai: cai ? formatCaiInput(cai) : undefined,
-      invoiceNumber: invoiceNumber
-        ? formatInvoiceNumberInput(invoiceNumber)
+      isFiscalDocument:
+        sourceType === "purchase_order" ? isFiscalDocument : false,
+      cai: cai.trim()
+        ? isPurchaseOrderFiscalDocument
+          ? formatCaiInput(cai)
+          : cai.trim()
+        : undefined,
+      invoiceNumber: invoiceNumber.trim()
+        ? isPurchaseOrderFiscalDocument
+          ? formatInvoiceNumberInput(invoiceNumber)
+          : invoiceNumber.trim()
         : undefined,
       documentDate: documentDate || undefined,
       postingDate: currentPostingDate,
@@ -613,6 +788,50 @@ export default function Recepciones() {
       notes: notes || undefined,
       items: receiptItems,
     });
+  };
+
+  const handlePendingReceiptAttachmentChange = async (
+    event: ChangeEvent<HTMLInputElement>
+  ) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (files.length === 0) return;
+
+    setPreparingReceiptAttachment(true);
+    try {
+      const preparedAttachments: PendingReceiptAttachment[] = [];
+      for (const file of files) {
+        const prepared = await prepareDocumentAttachment(file);
+        preparedAttachments.push({
+          ...prepared,
+          id: `${file.name}-${file.size}-${file.lastModified}-${Math.random()
+            .toString(36)
+            .slice(2)}`,
+        });
+      }
+
+      setPendingReceiptAttachments(current => [
+        ...current,
+        ...preparedAttachments,
+      ]);
+      toast.success(
+        preparedAttachments.length === 1
+          ? "Adjunto listo para subir"
+          : `${preparedAttachments.length} adjuntos listos para subir`
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "No se pudo preparar el adjunto"
+      );
+    } finally {
+      setPreparingReceiptAttachment(false);
+    }
+  };
+
+  const removePendingReceiptAttachment = (id: string) => {
+    setPendingReceiptAttachments(current =>
+      current.filter(attachment => attachment.id !== id)
+    );
   };
 
   const receiptSourceHeaderTitle =
@@ -680,14 +899,13 @@ export default function Recepciones() {
       (receiptDetail as any).warehouse?.displayName ||
       receiptDetail.project?.name ||
       projectLabel;
+    const receivedByLabel = formatUserReference(
+      (receiptDetail as any).receivedBy,
+      receipt.receivedById
+    );
     const requestedByLabel = isPurchaseOrderReceipt
-      ? receiptPurchaseOrderDetail?.createdBy?.name ||
-        (receiptDetail as any).receivedBy?.name ||
-        `Usuario #${receipt.receivedById}`
-      : receiptTransferDetail?.transferRequest?.createdById
-        ? `Usuario #${receiptTransferDetail.transferRequest.createdById}`
-        : (receiptDetail as any).receivedBy?.name ||
-          `Usuario #${receipt.receivedById}`;
+      ? receiptPurchaseOrderDetail?.createdBy?.name || receivedByLabel
+      : receivedByLabel;
     const destinationLabel = isPurchaseOrderReceipt
       ? receiptPurchaseOrderDetail?.purchaseRequest?.printDestination?.trim() ||
         receiptDetail.project?.name ||
@@ -701,7 +919,12 @@ export default function Recepciones() {
         receiptDetail.supplier?.name ||
         "-"
       : "-";
-    const documentTypeLabel = isPurchaseOrderReceipt ? "Factura" : "Traslado";
+    const documentTypeLabel = isPurchaseOrderReceipt
+      ? receipt.isFiscalDocument
+        ? getDocumentTypeLabelFromNumber(receipt.invoiceNumber) ||
+          "Documento fiscal"
+        : "Documento extranjero"
+      : "Traslado";
     const referenceLabel = isPurchaseOrderReceipt ? "Compra" : "Traslado";
     const observations = receipt.notes?.trim() || "-";
 
@@ -726,7 +949,7 @@ export default function Recepciones() {
           sourceItem?.originalSapItemCode ||
           sourceCode;
         const unitPrice = isPurchaseOrderReceipt
-          ? sourceItem?.unitPrice ?? "0.00"
+          ? item.unitPrice ?? sourceItem?.unitPrice ?? "0.00"
           : "0.00";
         const amounts = calculatePurchaseOrderLineAmounts({
           quantity: item.quantityReceived,
@@ -932,7 +1155,7 @@ export default function Recepciones() {
             <section class="meta">
               <div class="meta-column">
                 <div class="field">
-                  <div class="label">Fecha Factura:</div>
+                  <div class="label">Fecha Documento:</div>
                   <div class="value">${escapeHtml(formatPrintDate(receipt.documentDate))}</div>
                 </div>
                 <div class="field">
@@ -970,7 +1193,7 @@ export default function Recepciones() {
                   <div class="value">${escapeHtml(documentTypeLabel)}</div>
                 </div>
                 <div class="field">
-                  <div class="label">No Factura:</div>
+                  <div class="label">No Documento:</div>
                   <div class="value">${escapeHtml(receipt.invoiceNumber || "-")}</div>
                 </div>
                 <div class="field">
@@ -1099,10 +1322,15 @@ export default function Recepciones() {
                 {sourceStatusLabel ? (
                   <Badge
                     variant="outline"
-                    className={`text-sm ${getSourceStatusColor(
-                      sourceType,
-                      sourceStatusKey
-                    )}`}
+                    className={`text-sm ${
+                      isContractPurchaseOrder
+                        ? purchaseOrderContractSummary.isExpired
+                          ? "border-rose-300 bg-rose-50 text-rose-700"
+                          : purchaseOrderContractSummary.expiresSoon
+                            ? "border-amber-300 bg-amber-50 text-amber-800"
+                            : "border-cyan-300 bg-cyan-50 text-cyan-700"
+                        : getSourceStatusColor(sourceType, sourceStatusKey)
+                    }`}
                   >
                     {sourceStatusLabel}
                   </Badge>
@@ -1122,6 +1350,8 @@ export default function Recepciones() {
                       setSourceType(value as "purchase_order" | "transfer");
                       setSourceId("");
                       setReceivedMap({});
+                      setPriceMap({});
+                      setIsFiscalDocument(true);
                       setCai("");
                       setInvoiceNumber("");
                       setDocumentDate("");
@@ -1153,6 +1383,8 @@ export default function Recepciones() {
                     onValueChange={value => {
                       setSourceId(value);
                       setReceivedMap({});
+                      setPriceMap({});
+                      setIsFiscalDocument(true);
                       setCai("");
                       setInvoiceNumber("");
                       setDocumentDate("");
@@ -1174,6 +1406,10 @@ export default function Recepciones() {
                             >
                               {row.purchaseOrder.orderNumber} —{" "}
                               {row.supplier?.name || "Proveedor pendiente"}
+                              {row.purchaseOrder.appliesContract &&
+                              row.contractSummary?.statusLabel
+                                ? ` — ${row.contractSummary.statusLabel}`
+                                : ""}
                             </SelectItem>
                           ))
                         : availableTransfers.map((row: any) => (
@@ -1220,7 +1456,7 @@ export default function Recepciones() {
               </div>
 
               <div className="grid gap-3 md:grid-cols-12">
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-5">
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-4">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                     Referencia del origen
                   </Label>
@@ -1254,7 +1490,43 @@ export default function Recepciones() {
                 </div>
               </div>
 
+              {isContractPurchaseOrder ? (
+                <div
+                  className={`flex items-start gap-2 rounded-xl border p-3 text-sm ${
+                    contractReceiptBlockReason
+                      ? "border-rose-300 bg-rose-50 text-rose-700"
+                      : purchaseOrderContractSummary.expiresSoon
+                        ? "border-amber-300 bg-amber-50 text-amber-800"
+                        : "border-cyan-300 bg-cyan-50 text-cyan-700"
+                  }`}
+                >
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    {contractReceiptBlockReason ||
+                      `OC con contrato: ${purchaseOrderContractSummary.statusLabel}.`}
+                  </span>
+                </div>
+              ) : null}
+
               <div className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-4 sm:p-5">
+                {sourceType === "purchase_order" ? (
+                  <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border/70 bg-background px-3 py-2.5">
+                    <Checkbox
+                      id="receipt-fiscal-document"
+                      checked={isFiscalDocument}
+                      onCheckedChange={checked =>
+                        setIsFiscalDocument(checked === true)
+                      }
+                    />
+                    <Label htmlFor="receipt-fiscal-document">
+                      Documento fiscal
+                    </Label>
+                    <Badge variant="outline" className="text-xs">
+                      {isFiscalDocument ? "Fiscal" : "Extranjero"}
+                    </Badge>
+                  </div>
+                ) : null}
+
                 <div
                   className={`grid gap-3 md:grid-cols-2 ${
                     sourceType === "purchase_order"
@@ -1265,33 +1537,57 @@ export default function Recepciones() {
                   {sourceType === "purchase_order" ? (
                     <>
                       <div className="space-y-2">
-                        <Label htmlFor="receipt-cai">CAI</Label>
+                        <Label htmlFor="receipt-cai">
+                          {isFiscalDocument ? "CAI" : "CAI / referencia"}
+                        </Label>
                         <Input
                           id="receipt-cai"
                           value={cai}
                           onChange={event =>
-                            setCai(formatCaiInput(event.target.value))
+                            setCai(
+                              isFiscalDocument
+                                ? formatCaiInput(event.target.value)
+                                : event.target.value
+                            )
                           }
-                          placeholder={CAI_FORMAT_EXAMPLE}
-                          maxLength={CAI_FORMAT_EXAMPLE.length}
+                          placeholder={
+                            isFiscalDocument
+                              ? CAI_FORMAT_EXAMPLE
+                              : "Referencia del documento"
+                          }
+                          maxLength={
+                            isFiscalDocument
+                              ? CAI_FORMAT_EXAMPLE.length
+                              : undefined
+                          }
                           autoCapitalize="characters"
                         />
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="receipt-invoice-number">
-                          Número de factura
+                          Número documento
                         </Label>
                         <Input
                           id="receipt-invoice-number"
                           value={invoiceNumber}
                           onChange={event =>
                             setInvoiceNumber(
-                              formatInvoiceNumberInput(event.target.value)
+                              isFiscalDocument
+                                ? formatInvoiceNumberInput(event.target.value)
+                                : event.target.value
                             )
                           }
-                          placeholder={INVOICE_NUMBER_FORMAT_EXAMPLE}
-                          inputMode="numeric"
-                          maxLength={INVOICE_NUMBER_FORMAT_EXAMPLE.length}
+                          placeholder={
+                            isFiscalDocument
+                              ? INVOICE_NUMBER_FORMAT_EXAMPLE
+                              : "Ej. INV-EXT-001"
+                          }
+                          inputMode={isFiscalDocument ? "numeric" : "text"}
+                          maxLength={
+                            isFiscalDocument
+                              ? INVOICE_NUMBER_FORMAT_EXAMPLE.length
+                              : undefined
+                          }
                         />
                       </div>
                       <div className="space-y-2">
@@ -1345,6 +1641,16 @@ export default function Recepciones() {
                   </div>
                 </div>
 
+                {currentDocumentHasEmissionDeadlineIssue ? (
+                  <div className="flex items-start gap-2 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                      {EMISSION_DEADLINE_ISSUE_MESSAGE}. Se permitirá registrar
+                      la recepción, pero quedará marcada con alerta.
+                    </span>
+                  </div>
+                ) : null}
+
                 <div className="space-y-2">
                   <Label htmlFor="receipt-notes">Notas</Label>
                   <Textarea
@@ -1354,12 +1660,88 @@ export default function Recepciones() {
                     rows={3}
                     placeholder={
                       sourceType === "purchase_order"
-                        ? "Observaciones, referencia de factura o comentarios de recepción"
+                        ? "Observaciones, referencia de documento o comentarios de recepción"
                         : "Observaciones o comentarios de recepción"
                     }
                   />
                 </div>
               </div>
+
+              <section className="min-w-0 space-y-3 rounded-2xl border border-border/70 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="text-lg font-semibold">Adjuntos</h3>
+                  <div>
+                    <input
+                      ref={receiptAttachmentInputRef}
+                      type="file"
+                      multiple
+                      accept="application/pdf,image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      onChange={handlePendingReceiptAttachmentChange}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => receiptAttachmentInputRef.current?.click()}
+                      disabled={
+                        preparingReceiptAttachment ||
+                        registerMutation.isPending ||
+                        uploadPendingReceiptAttachmentMutation.isPending
+                      }
+                    >
+                      <Upload className="mr-2 h-4 w-4" />
+                      {preparingReceiptAttachment ? "Preparando..." : "Adjuntar"}
+                    </Button>
+                  </div>
+                </div>
+
+                {pendingReceiptAttachments.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                    Sin archivos seleccionados.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {pendingReceiptAttachments.map(attachment => {
+                      const AttachmentIcon = attachment.mimeType.startsWith("image/")
+                        ? ImageIcon
+                        : FileText;
+                      return (
+                        <div
+                          key={attachment.id}
+                          className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 p-3"
+                        >
+                          <div className="flex min-w-0 items-center gap-2">
+                            <AttachmentIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium">
+                                {attachment.fileName}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {formatAttachmentSize(attachment.fileSize)}
+                              </p>
+                            </div>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={() =>
+                              removePendingReceiptAttachment(attachment.id)
+                            }
+                            disabled={
+                              registerMutation.isPending ||
+                              uploadPendingReceiptAttachmentMutation.isPending
+                            }
+                            aria-label={`Quitar ${attachment.fileName}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
 
               <div className="rounded-2xl border border-border/70">
                 <table className="w-full text-sm">
@@ -1378,6 +1760,9 @@ export default function Recepciones() {
                         Recibido
                       </th>
                       <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                        Precio confirmado
+                      </th>
+                      <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                         Recibir ahora
                       </th>
                       <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
@@ -1390,7 +1775,7 @@ export default function Recepciones() {
                       <tr>
                         <td
                           className="p-4 text-sm text-muted-foreground"
-                          colSpan={6}
+                          colSpan={7}
                         >
                           Selecciona una orden de compra o traslado para cargar
                           sus ítems.
@@ -1400,7 +1785,7 @@ export default function Recepciones() {
                       <tr>
                         <td
                           className="p-4 text-sm text-muted-foreground"
-                          colSpan={6}
+                          colSpan={7}
                         >
                           Cargando detalle del documento...
                         </td>
@@ -1409,14 +1794,14 @@ export default function Recepciones() {
                       <tr>
                         <td
                           className="p-4 text-sm text-muted-foreground"
-                          colSpan={6}
+                          colSpan={7}
                         >
                           Este documento no tiene ítems pendientes por recibir.
                         </td>
                       </tr>
                     ) : (
                       sourceItems.map((item: any) => {
-                        const pendingQuantity = getPendingQuantity(item);
+                        const pendingQuantity = getReceivableQuantity(item);
                         const receivingQuantity =
                           Number(receivedMap[item.id] ?? 0) || 0;
                         const excessQuantity = Math.max(
@@ -1454,6 +1839,25 @@ export default function Recepciones() {
                               {item.unit || ""}
                             </td>
                             <td className="p-4 text-right">
+                              {sourceType === "purchase_order" ? (
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  className="ml-auto w-36 text-right"
+                                  value={priceMap[item.id] ?? ""}
+                                  onChange={event =>
+                                    setPriceMap(current => ({
+                                      ...current,
+                                      [item.id]: event.target.value,
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </td>
+                            <td className="p-4 text-right">
                               <Input
                                 type="number"
                                 min="0"
@@ -1478,6 +1882,7 @@ export default function Recepciones() {
                             </td>
                             <td className="p-4 text-right">
                               {sourceType === "purchase_order" &&
+                              !isContractPurchaseOrder &&
                               canManuallyCloseReceiptLine(item) ? (
                                 <Button
                                   variant="outline"
@@ -1573,7 +1978,8 @@ export default function Recepciones() {
                   disabled={
                     registerMutation.isPending ||
                     !sourceId ||
-                    activeSourceLoading
+                    activeSourceLoading ||
+                    Boolean(contractReceiptBlockReason)
                   }
                 >
                   {registerMutation.isPending
@@ -1602,11 +2008,16 @@ export default function Recepciones() {
                 <Badge
                   variant="outline"
                   className={`text-sm ${
-                    STATUS_COLORS[receiptDetail.receipt.status] || ""
+                    getReceiptStatusColor(
+                      receiptDetail.receipt,
+                      receiptDetail.invoice
+                    )
                   }`}
                 >
-                  {STATUS_LABELS[receiptDetail.receipt.status] ||
-                    receiptDetail.receipt.status}
+                  {getReceiptStatusLabel(
+                    receiptDetail.receipt,
+                    receiptDetail.invoice
+                  )}
                 </Badge>
               ) : null}
             </div>
@@ -1619,6 +2030,24 @@ export default function Recepciones() {
             </div>
           ) : receiptDetail ? (
             <div className="space-y-5">
+              {getReceiptHasEmissionDeadlineIssue(
+                receiptDetail.receipt,
+                receiptDetail.invoice
+              ) ? (
+                <div className="flex items-start gap-2 rounded-2xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-700">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    <p className="font-semibold">
+                      {EMISSION_DEADLINE_ISSUE_MESSAGE}
+                    </p>
+                    <p>
+                      La fecha del documento es posterior a la fecha límite de
+                      emisión autorizada.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
               <div className="grid gap-3 md:grid-cols-12">
                 <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
@@ -1659,7 +2088,7 @@ export default function Recepciones() {
               </div>
 
               <div className="grid gap-3 md:grid-cols-12">
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-5">
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-4">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                     Referencia del origen
                   </Label>
@@ -1669,7 +2098,23 @@ export default function Recepciones() {
                 </div>
                 <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    CAI
+                    Tipo documento
+                  </Label>
+                  <p className="text-sm font-semibold leading-snug sm:text-base">
+                    {receiptDetail.receipt.sourceType === "purchase_order"
+                      ? receiptDetail.receipt.isFiscalDocument
+                        ? getDocumentTypeLabelFromNumber(
+                            receiptDetail.receipt.invoiceNumber
+                          ) || "Documento fiscal"
+                        : "Documento extranjero"
+                      : "—"}
+                  </p>
+                </div>
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    {receiptDetail.receipt.isFiscalDocument
+                      ? "CAI"
+                      : "CAI / referencia"}
                   </Label>
                   <p className="text-sm font-semibold leading-snug sm:text-base">
                     {receiptDetail.receipt.cai || "—"}
@@ -1677,18 +2122,21 @@ export default function Recepciones() {
                 </div>
                 <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Número de factura
+                    Número documento
                   </Label>
                   <p className="text-sm font-semibold leading-snug sm:text-base">
                     {receiptDetail.receipt.invoiceNumber || "—"}
                   </p>
                 </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                     Registrada por
                   </Label>
                   <p className="text-sm font-semibold leading-snug sm:text-base">
-                    Usuario #{receiptDetail.receipt.receivedById}
+                    {formatUserReference(
+                      (receiptDetail as any).receivedBy,
+                      receiptDetail.receipt.receivedById
+                    )}
                   </p>
                 </div>
               </div>
@@ -1746,6 +2194,9 @@ export default function Recepciones() {
                       <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                         Recibido
                       </th>
+                      <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                        Precio confirmado
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1753,7 +2204,7 @@ export default function Recepciones() {
                       <tr>
                         <td
                           className="p-4 text-sm text-muted-foreground"
-                          colSpan={4}
+                          colSpan={5}
                         >
                           Esta recepción no tiene ítems registrados.
                         </td>
@@ -1789,6 +2240,9 @@ export default function Recepciones() {
                               {formatQuantity(item.quantityReceived)}{" "}
                               {item.unit || ""}
                             </td>
+                            <td className="p-4 text-right font-medium">
+                              {formatPrintMoney(item.unitPrice)}
+                            </td>
                           </tr>
                         );
                       })
@@ -1796,6 +2250,14 @@ export default function Recepciones() {
                   </tbody>
                 </table>
               </div>
+
+              <DocumentAttachmentsPanel
+                entityType="receipt"
+                entityId={receiptDetail.receipt.id}
+                category="comprobante_entrega"
+                title="Adjuntos"
+                canManage={canManageReceiptAttachments}
+              />
 
               <div className="flex flex-wrap justify-end gap-3 border-t border-border/70 pt-1">
                 <Button
@@ -2093,11 +2555,10 @@ export default function Recepciones() {
                         <Badge
                           variant="outline"
                           className={`text-xs ${
-                            STATUS_COLORS[row.receipt.status] || ""
+                            getReceiptStatusColor(row.receipt, row.invoice)
                           }`}
                         >
-                          {STATUS_LABELS[row.receipt.status] ||
-                            row.receipt.status}
+                          {getReceiptStatusLabel(row.receipt, row.invoice)}
                         </Badge>
                       </td>
                       <td className="p-3 text-xs">

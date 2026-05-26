@@ -1,9 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { appRouter } from "./routers";
 import * as db from "./db";
+import * as storage from "./storage";
+import { validateDocumentAttachmentFile } from "./routers/attachments";
 import { buildProcurementPdfBase64 } from "./_core/documents";
 import { COOKIE_NAME } from "../shared/const";
 import type { TrpcContext } from "./_core/context";
+import {
+  calculateContractPaymentDates,
+  getPurchaseOrderContractSummary,
+} from "../shared/purchase-orders";
 
 // ============================================================
 // Test helpers
@@ -102,9 +108,59 @@ function createProjectBodegueroContext(overrides: Partial<AuthenticatedUser> = {
   });
 }
 
+function createContableContext(overrides: Partial<AuthenticatedUser> = {}) {
+  return createUserContext({
+    id: 7,
+    openId: "test-contable-001",
+    role: "user",
+    buildreqRole: "contable",
+    assignedProjectId: null,
+    name: "Contable Test",
+    ...overrides,
+  });
+}
+
 const VALID_CAI = "338827-15203E-A419E0-63BE03-0909A6-53";
 const VALID_INVOICE_NUMBER = "000-001-01-00010571";
 const VALID_INVOICE_NUMBER_ALT = "000-001-01-00010572";
+const VALID_PDF_BASE64 = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF").toString(
+  "base64"
+);
+
+// ============================================================
+// Tests: Purchase order contract helpers
+// ============================================================
+describe("BuildReq - Purchase order contract helpers", () => {
+  it("calculates twelve monthly payments from January 1 to December 31", () => {
+    const paymentDates = calculateContractPaymentDates({
+      frequency: "mensual",
+      firstPaymentDate: "2026-01-01",
+      endDate: "2026-12-31",
+    });
+
+    expect(paymentDates).toHaveLength(12);
+    expect(paymentDates[0]?.toISOString().slice(0, 10)).toBe("2026-01-01");
+    expect(paymentDates[11]?.toISOString().slice(0, 10)).toBe("2026-12-01");
+  });
+
+  it("derives pending contract invoice progress and expiration flags", () => {
+    const summary = getPurchaseOrderContractSummary({
+      appliesContract: true,
+      contractPaymentFrequency: "mensual",
+      contractFirstPaymentDate: "2026-01-01",
+      contractEndDate: "2026-12-31",
+      registeredInvoiceCount: 1,
+      now: new Date("2026-12-05T12:00:00"),
+    });
+
+    expect(summary.expectedInvoiceCount).toBe(12);
+    expect(summary.registeredInvoiceCount).toBe(1);
+    expect(summary.remainingInvoiceCount).toBe(11);
+    expect(summary.expiresSoon).toBe(true);
+    expect(summary.isExpired).toBe(false);
+    expect(summary.statusLabel).toBe("Pendiente 1 de 12");
+  });
+});
 
 // ============================================================
 // Tests: Tax retentions catalog
@@ -452,6 +508,313 @@ describe("BuildReq - Suppliers catalog", () => {
 
     expect(listSupplierCatalogSpy).not.toHaveBeenCalled();
     listSupplierCatalogSpy.mockRestore();
+  });
+
+  it("Authorized users can create and deactivate supplier document types", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const createSupplierDocumentTypeSpy = vi
+      .spyOn(db, "createSupplierDocumentType")
+      .mockResolvedValue({
+        id: 9,
+        code: "constancia_pago_a_cuenta",
+        name: "Constancia de pagos a cuenta",
+        expirationMode: "required",
+        isActive: true,
+      } as any);
+    const updateSupplierDocumentTypeSpy = vi
+      .spyOn(db, "updateSupplierDocumentType")
+      .mockResolvedValue({ id: 9, isActive: false } as any);
+
+    await expect(
+      caller.suppliers.createDocumentType({
+        name: "Constancia de pagos a cuenta",
+        expirationMode: "required",
+        isActive: true,
+      })
+    ).resolves.toEqual(expect.objectContaining({ id: 9 }));
+
+    expect(createSupplierDocumentTypeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "constancia_de_pagos_a_cuenta",
+        expirationMode: "required",
+      })
+    );
+
+    await expect(
+      caller.suppliers.deactivateDocumentType({ id: 9 })
+    ).resolves.toEqual(expect.objectContaining({ isActive: false }));
+    expect(updateSupplierDocumentTypeSpy).toHaveBeenCalledWith(9, {
+      isActive: false,
+    });
+
+    createSupplierDocumentTypeSpy.mockRestore();
+    updateSupplierDocumentTypeSpy.mockRestore();
+  });
+
+  it("Rejects supplier documents with required expiration and no expiration date", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getSupplierByIdSpy = vi
+      .spyOn(db, "getSupplierById")
+      .mockResolvedValue({ id: 5, name: "Proveedor Demo" } as any);
+    const getSupplierDocumentTypeByIdSpy = vi
+      .spyOn(db, "getSupplierDocumentTypeById")
+      .mockResolvedValue({
+        id: 1,
+        name: "Constancia de pagos a cuenta",
+        expirationMode: "required",
+        isActive: true,
+      } as any);
+    const storagePutSpy = vi.spyOn(storage, "storagePut");
+    const createAttachmentSpy = vi.spyOn(db, "createAttachment");
+
+    await expect(
+      caller.suppliers.createDocument({
+        supplierId: 5,
+        documentTypeId: 1,
+        documentDate: "2026-05-01",
+        expirationDate: "",
+        description: "Constancia vigente",
+        fileName: "constancia.pdf",
+        fileData: VALID_PDF_BASE64,
+        mimeType: "application/pdf",
+        fileSize: 40,
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "Ingrese la fecha de vencimiento para este tipo de documento",
+    });
+
+    expect(storagePutSpy).not.toHaveBeenCalled();
+    expect(createAttachmentSpy).not.toHaveBeenCalled();
+
+    getSupplierByIdSpy.mockRestore();
+    getSupplierDocumentTypeByIdSpy.mockRestore();
+    storagePutSpy.mockRestore();
+    createAttachmentSpy.mockRestore();
+  });
+
+  it("Allows supplier RTN documents without expiration date", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const documentType = {
+      id: 3,
+      code: "rtn",
+      name: "RTN",
+      description: null,
+      expirationMode: "none",
+      isActive: true,
+    };
+    const attachment = {
+      id: 101,
+      entityType: "supplier",
+      entityId: 5,
+      fileName: "rtn.pdf",
+      fileKey: "buildreq/supplier/5/rtn.pdf",
+      fileUrl: "https://storage.local/old-rtn.pdf",
+      mimeType: "application/pdf",
+      fileSize: 40,
+      category: "documento_proveedor",
+      uploadedById: ctx.user!.id,
+      createdAt: new Date(),
+    };
+    const supplierDocument = {
+      id: 44,
+      supplierId: 5,
+      documentTypeId: 3,
+      attachmentId: 101,
+      documentDate: new Date("2026-05-01T00:00:00"),
+      expirationDate: null,
+      description: "RTN actualizado",
+      createdById: ctx.user!.id,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const getSupplierByIdSpy = vi
+      .spyOn(db, "getSupplierById")
+      .mockResolvedValue({ id: 5, name: "Proveedor Demo" } as any);
+    const getSupplierDocumentTypeByIdSpy = vi
+      .spyOn(db, "getSupplierDocumentTypeById")
+      .mockResolvedValue(documentType as any);
+    const storagePutSpy = vi.spyOn(storage, "storagePut").mockResolvedValue({
+      key: attachment.fileKey,
+      url: "https://storage.local/rtn.pdf",
+    });
+    const createAttachmentSpy = vi
+      .spyOn(db, "createAttachment")
+      .mockResolvedValue({ id: attachment.id });
+    const createSupplierDocumentSpy = vi
+      .spyOn(db, "createSupplierDocument")
+      .mockResolvedValue(supplierDocument as any);
+    const getSupplierDocumentByIdSpy = vi
+      .spyOn(db, "getSupplierDocumentById")
+      .mockResolvedValue({
+        document: supplierDocument,
+        documentType,
+        attachment,
+        createdBy: { id: ctx.user!.id, name: "Admin", email: "admin@test.com" },
+      } as any);
+    const storageGetSpy = vi.spyOn(storage, "storageGet").mockResolvedValue({
+      key: attachment.fileKey,
+      url: "https://storage.local/signed-rtn.pdf",
+    });
+
+    await expect(
+      caller.suppliers.createDocument({
+        supplierId: 5,
+        documentTypeId: 3,
+        documentDate: "2026-05-01",
+        description: "RTN actualizado",
+        fileName: "rtn.pdf",
+        fileData: VALID_PDF_BASE64,
+        mimeType: "application/pdf",
+        fileSize: 40,
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 44,
+        expirationDate: null,
+        status: "sin_vencimiento",
+        attachment: expect.objectContaining({
+          fileUrl: "https://storage.local/signed-rtn.pdf",
+        }),
+      })
+    );
+
+    expect(createAttachmentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: "supplier",
+        entityId: 5,
+        category: "documento_proveedor",
+      })
+    );
+    expect(createSupplierDocumentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        supplierId: 5,
+        documentTypeId: 3,
+        expirationDate: null,
+      })
+    );
+
+    getSupplierByIdSpy.mockRestore();
+    getSupplierDocumentTypeByIdSpy.mockRestore();
+    storagePutSpy.mockRestore();
+    createAttachmentSpy.mockRestore();
+    createSupplierDocumentSpy.mockRestore();
+    getSupplierDocumentByIdSpy.mockRestore();
+    storageGetSpy.mockRestore();
+  });
+
+  it("Lists supplier documents with computed expired status", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getSupplierByIdSpy = vi
+      .spyOn(db, "getSupplierById")
+      .mockResolvedValue({ id: 5, name: "Proveedor Demo" } as any);
+    const listSupplierDocumentsSpy = vi
+      .spyOn(db, "listSupplierDocuments")
+      .mockResolvedValue([
+        {
+          document: {
+            id: 45,
+            supplierId: 5,
+            documentTypeId: 2,
+            attachmentId: 102,
+            documentDate: new Date("2026-01-01T00:00:00"),
+            expirationDate: new Date("2000-01-01T00:00:00"),
+            description: "Contrato vencido",
+            createdById: 4,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+          documentType: {
+            id: 2,
+            code: "contrato",
+            name: "Contrato",
+            expirationMode: "required",
+            isActive: true,
+          },
+          attachment: {
+            id: 102,
+            entityType: "supplier",
+            entityId: 5,
+            fileName: "contrato.pdf",
+            fileKey: "buildreq/supplier/5/contrato.pdf",
+            fileUrl: "https://storage.local/old-contrato.pdf",
+            mimeType: "application/pdf",
+            fileSize: 40,
+            category: "documento_proveedor",
+            uploadedById: 4,
+            createdAt: new Date(),
+          },
+          createdBy: { id: 4, name: "Admin", email: "admin@test.com" },
+        } as any,
+      ]);
+    const storageGetSpy = vi.spyOn(storage, "storageGet").mockResolvedValue({
+      key: "buildreq/supplier/5/contrato.pdf",
+      url: "https://storage.local/signed-contrato.pdf",
+    });
+
+    await expect(caller.suppliers.listDocuments({ supplierId: 5 })).resolves.toEqual([
+      expect.objectContaining({
+        id: 45,
+        status: "vencido",
+        attachment: expect.objectContaining({
+          fileUrl: "https://storage.local/signed-contrato.pdf",
+        }),
+      }),
+    ]);
+
+    getSupplierByIdSpy.mockRestore();
+    listSupplierDocumentsSpy.mockRestore();
+    storageGetSpy.mockRestore();
+  });
+
+  it("Blocks supplier document listing for unauthorized roles", async () => {
+    const { ctx } = createIngenieroContext();
+    const caller = appRouter.createCaller(ctx);
+    const listSupplierDocumentsSpy = vi.spyOn(db, "listSupplierDocuments");
+
+    await expect(
+      caller.suppliers.listDocuments({ supplierId: 5 })
+    ).rejects.toThrow("No tiene acceso al catálogo de proveedores");
+    expect(listSupplierDocumentsSpy).not.toHaveBeenCalled();
+
+    listSupplierDocumentsSpy.mockRestore();
+  });
+
+  it("Deletes supplier document files and attachment records", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const attachment = {
+      id: 102,
+      fileKey: "buildreq/supplier/5/contrato.pdf",
+    };
+    const getSupplierDocumentByIdSpy = vi
+      .spyOn(db, "getSupplierDocumentById")
+      .mockResolvedValue({
+        document: { id: 45, supplierId: 5 },
+        documentType: { id: 2, name: "Contrato" },
+        attachment,
+        createdBy: null,
+      } as any);
+    const storageDeleteSpy = vi.spyOn(storage, "storageDelete").mockResolvedValue({
+      key: attachment.fileKey,
+    });
+    const deleteAttachmentSpy = vi
+      .spyOn(db, "deleteAttachment")
+      .mockResolvedValue(undefined);
+
+    await expect(caller.suppliers.deleteDocument({ id: 45 })).resolves.toEqual({
+      success: true,
+    });
+    expect(storageDeleteSpy).toHaveBeenCalledWith(attachment.fileKey);
+    expect(deleteAttachmentSpy).toHaveBeenCalledWith(attachment.id);
+
+    getSupplierDocumentByIdSpy.mockRestore();
+    storageDeleteSpy.mockRestore();
+    deleteAttachmentSpy.mockRestore();
   });
 });
 
@@ -3958,6 +4321,36 @@ describe("BuildReq - Invitation System", () => {
     }
   });
 
+  it("Admin can create invitation for Contable without a project", async () => {
+    const { ctx } = createUserContext({ role: "admin" });
+    const caller = appRouter.createCaller(ctx);
+    const createInvitationSpy = vi
+      .spyOn(db, "createInvitation")
+      .mockResolvedValue({ id: 77 } as any);
+
+    await expect(
+      caller.invitations.create({
+        email: "contable@empresa.com",
+        name: "Contable Invitado",
+        buildreqRole: "contable",
+        origin: "https://buildreq.example.com",
+      })
+    ).resolves.toMatchObject({
+      id: 77,
+      emailData: {
+        to: "contable@empresa.com",
+      },
+    });
+    expect(createInvitationSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        buildreqRole: "contable",
+        assignedProjectId: null,
+      })
+    );
+
+    createInvitationSpy.mockRestore();
+  });
+
   it("Validates email format in invitation", async () => {
     const { ctx } = createUserContext({ role: "admin" });
     const caller = appRouter.createCaller(ctx);
@@ -4014,6 +4407,26 @@ describe("BuildReq - User Management", () => {
       "ingeniero_residente",
       null
     );
+
+    updateUserRoleSpy.mockRestore();
+  });
+
+  it("Admin can assign Contable without a project", async () => {
+    const { ctx } = createUserContext({ role: "admin" });
+    const caller = appRouter.createCaller(ctx);
+    const updateUserRoleSpy = vi
+      .spyOn(db, "updateUserRole")
+      .mockResolvedValue({ success: true });
+
+    await expect(
+      caller.userManagement.updateRole({
+        userId: 8,
+        buildreqRole: "contable",
+        assignedProjectId: null,
+      })
+    ).resolves.toEqual({ success: true });
+
+    expect(updateUserRoleSpy).toHaveBeenCalledWith(8, "contable", null);
 
     updateUserRoleSpy.mockRestore();
   });
@@ -4188,6 +4601,210 @@ describe("BuildReq - Purchase Requests", () => {
 // Tests: Purchase Orders
 // ============================================================
 describe("BuildReq - Purchase Orders", () => {
+  it("createFromPurchaseRequest requires contract scheduling fields", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const createPurchaseOrderSpy = vi.spyOn(db, "createPurchaseOrder");
+
+    await expect(
+      caller.purchaseOrders.createFromPurchaseRequest({
+        purchaseRequestId: 72,
+        appliesContract: true,
+        itemsToConvert: [
+          {
+            purchaseRequestItemId: 7201,
+            quantity: "100.00",
+            unitPrice: "125.50",
+          },
+        ],
+      })
+    ).rejects.toThrow("Seleccione la frecuencia de pago del contrato");
+
+    expect(createPurchaseOrderSpy).not.toHaveBeenCalled();
+    createPurchaseOrderSpy.mockRestore();
+  });
+
+  it("createFromPurchaseRequest stores contract terms on the generated OC", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 72,
+          projectId: 3,
+          requestNumber: "SC-2026-0072",
+          purchaseType: "local",
+          neededBy: new Date("2026-05-20"),
+          notes: "Contrato mensual",
+        },
+        items: [
+          {
+            id: 7201,
+            itemName: "SERVICIO MENSUAL",
+            quantity: "12.00",
+            convertedQuantity: "0.00",
+            pendingConversionQuantity: "12.00",
+            receivedQuantity: "0.00",
+            unit: "mes",
+            unitPrice: "1000.00",
+          },
+        ],
+      } as any);
+    const listDirectPurchaseFlowItemsByOrderSpy = vi
+      .spyOn(db, "listDirectPurchaseFlowItemsByOrder")
+      .mockResolvedValue([] as any);
+    const createPurchaseOrderSpy = vi
+      .spyOn(db, "createPurchaseOrder")
+      .mockResolvedValue({ id: 1701, orderNumber: "OC-2026-0170" });
+    const adjustPurchaseRequestItemConvertedQuantitySpy = vi
+      .spyOn(db, "adjustPurchaseRequestItemConvertedQuantity")
+      .mockResolvedValue({ purchaseRequestId: 72 } as any);
+    const syncPurchaseRequestConversionStatusSpy = vi
+      .spyOn(db, "syncPurchaseRequestConversionStatus")
+      .mockResolvedValue("convertida" as any);
+
+    await expect(
+      caller.purchaseOrders.createFromPurchaseRequest({
+        purchaseRequestId: 72,
+        appliesContract: true,
+        contractPaymentFrequency: "mensual",
+        contractFirstPaymentDate: "2026-01-01",
+        contractEndDate: "2026-12-31",
+        itemsToConvert: [
+          {
+            purchaseRequestItemId: 7201,
+            quantity: "12.00",
+            unitPrice: "1000.00",
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      success: true,
+      purchaseOrderId: 1701,
+      purchaseOrderNumber: "OC-2026-0170",
+    });
+
+    expect(createPurchaseOrderSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appliesContract: true,
+        contractPaymentFrequency: "mensual",
+        contractFirstPaymentDate: expect.any(Date),
+        contractEndDate: expect.any(Date),
+        contractExpiryNotifiedAt: null,
+      }),
+      [expect.objectContaining({ purchaseRequestItemId: 7201 })]
+    );
+
+    getPurchaseRequestByIdSpy.mockRestore();
+    listDirectPurchaseFlowItemsByOrderSpy.mockRestore();
+    createPurchaseOrderSpy.mockRestore();
+    adjustPurchaseRequestItemConvertedQuantitySpy.mockRestore();
+    syncPurchaseRequestConversionStatusSpy.mockRestore();
+  });
+
+  it("updates an emitted contract line price and writes audit log", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderItemSpy = vi
+      .spyOn(db, "getPurchaseOrderItemById")
+      .mockResolvedValue({
+        item: {
+          id: 15,
+          purchaseOrderId: 4,
+          unitPrice: "100.00",
+        } as any,
+        purchaseOrder: {
+          id: 4,
+          projectId: 1,
+          status: "emitida",
+          appliesContract: true,
+        } as any,
+      });
+    const updatePurchaseOrderItemSpy = vi
+      .spyOn(db, "updatePurchaseOrderItem")
+      .mockResolvedValue({ success: true });
+    const createPurchaseOrderAuditLogSpy = vi
+      .spyOn(db, "createPurchaseOrderAuditLog")
+      .mockResolvedValue({ id: 1 } as any);
+
+    await expect(
+      caller.purchaseOrders.updateContractItemPrice({
+        purchaseOrderItemId: 15,
+        unitPrice: "125.50",
+        note: "Ajuste aprobado",
+      })
+    ).resolves.toEqual({ success: true });
+
+    expect(updatePurchaseOrderItemSpy).toHaveBeenCalledWith(15, {
+      unitPrice: "125.50",
+    });
+    expect(createPurchaseOrderAuditLogSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purchaseOrderId: 4,
+        purchaseOrderItemId: 15,
+        action: "actualizar_precio_contrato",
+        field: "unitPrice",
+        oldValue: "100.00",
+        newValue: "125.50",
+        changedById: 4,
+        note: "Ajuste aprobado",
+      })
+    );
+
+    getPurchaseOrderItemSpy.mockRestore();
+    updatePurchaseOrderItemSpy.mockRestore();
+    createPurchaseOrderAuditLogSpy.mockRestore();
+  });
+
+  it("allows changing only the end date on an emitted contract OC", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          projectId: 1,
+          status: "emitida",
+          appliesContract: true,
+          contractPaymentFrequency: "mensual",
+          contractFirstPaymentDate: new Date("2026-01-01T12:00:00"),
+          contractEndDate: new Date("2026-12-31T12:00:00"),
+        },
+        items: [],
+      } as any);
+    const updatePurchaseOrderContractTermsSpy = vi
+      .spyOn(db, "updatePurchaseOrderContractTerms")
+      .mockResolvedValue({ success: true } as any);
+
+    await expect(
+      caller.purchaseOrders.updateContractTerms({
+        id: 4,
+        appliesContract: true,
+        contractPaymentFrequency: "mensual",
+        contractFirstPaymentDate: "2026-01-01",
+        contractEndDate: "2027-01-31",
+        contractNote: "Prórroga aprobada",
+      })
+    ).resolves.toEqual({ success: true });
+
+    expect(updatePurchaseOrderContractTermsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purchaseOrderId: 4,
+        changedById: 4,
+        appliesContract: true,
+        contractPaymentFrequency: "mensual",
+        contractFirstPaymentDate: expect.any(Date),
+        contractEndDate: expect.any(Date),
+        note: "Prórroga aprobada",
+      })
+    );
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    updatePurchaseOrderContractTermsSpy.mockRestore();
+  });
+
   it("Admin Central can update pricing and tax code for a PO item", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -5392,6 +6009,76 @@ describe("BuildReq - Receipts", () => {
     registerReceiptSpy.mockRestore();
   });
 
+  it("allows foreign purchase order receipts without fiscal document format", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "emitida",
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "CEMENTO GRANEL",
+            quantity: "100.00",
+            receivedQuantity: "0.00",
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({
+        id: 6,
+        receiptNumber: "RC-2026-0001",
+        status: "completa",
+      } as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        isFiscalDocument: false,
+        cai: "AUTH-EXT/001",
+        invoiceNumber: "INV-USA-45",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            itemName: "CEMENTO GRANEL",
+            quantityExpected: "100.00",
+            quantityReceived: "100.00",
+            unit: "und",
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      id: 6,
+      receiptNumber: "RC-2026-0001",
+      status: "completa",
+    });
+
+    const receiptPayload = registerReceiptSpy.mock.calls[0]?.[0] as any;
+    expect(receiptPayload).toEqual(
+      expect.objectContaining({
+        isFiscalDocument: false,
+        cai: "AUTH-EXT/001",
+        invoiceNumber: "INV-USA-45",
+        documentDate: null,
+        emissionDeadline: null,
+      })
+    );
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
   it("allows registering a receipt from a confirmed transfer without invoice metadata", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -5870,6 +6557,227 @@ describe("BuildReq - Receipts", () => {
     getPurchaseOrderByIdSpy.mockRestore();
   });
 
+  it("allows another receipt from the same contract OC even when the line was fully received before", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "parcialmente_recibida",
+          appliesContract: true,
+          contractPaymentFrequency: "mensual",
+          contractFirstPaymentDate: new Date("2026-01-01T12:00:00"),
+          contractEndDate: new Date("2026-12-31T12:00:00"),
+        },
+        contractSummary: {
+          expectedInvoiceCount: 12,
+          registeredInvoiceCount: 1,
+          remainingInvoiceCount: 11,
+          isExpired: false,
+          isFullyInvoiced: false,
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "SERVICIO MENSUAL",
+            quantity: "12.00",
+            receivedQuantity: "12.00",
+            receiptClosed: false,
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({
+        id: 8,
+        receiptNumber: "RC-2026-0008",
+        status: "completa",
+      } as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER_ALT,
+        documentDate: "2026-04-14",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            itemName: "SERVICIO MENSUAL",
+            quantityExpected: "12.00",
+            quantityReceived: "12.00",
+            unitPrice: "1100.00",
+            unit: "mes",
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      id: 8,
+      receiptNumber: "RC-2026-0008",
+      status: "completa",
+    });
+
+    expect(registerReceiptSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceType: "purchase_order",
+        sourceId: 4,
+      }),
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceItemId: 15,
+          quantityExpected: "12.00",
+          quantityReceived: "12.00",
+          unitPrice: "1100.00",
+        }),
+      ])
+    );
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("blocks registering contract receipts after the contract end date", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "parcialmente_recibida",
+          appliesContract: true,
+          contractPaymentFrequency: "mensual",
+          contractFirstPaymentDate: new Date("2026-01-01T12:00:00"),
+          contractEndDate: new Date("2026-01-31T12:00:00"),
+        },
+        contractSummary: {
+          expectedInvoiceCount: 1,
+          registeredInvoiceCount: 0,
+          remainingInvoiceCount: 1,
+          isExpired: true,
+          isFullyInvoiced: false,
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "SERVICIO MENSUAL",
+            quantity: "12.00",
+            receivedQuantity: "0.00",
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi.spyOn(db, "registerReceipt");
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentDate: "2026-04-14",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            itemName: "SERVICIO MENSUAL",
+            quantityExpected: "12.00",
+            quantityReceived: "1.00",
+            unit: "mes",
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "El contrato está vencido y ya no permite agregar facturas",
+    });
+
+    expect(registerReceiptSpy).not.toHaveBeenCalled();
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("blocks registering contract receipts after all expected invoices exist", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "parcialmente_recibida",
+          appliesContract: true,
+          contractPaymentFrequency: "mensual",
+          contractFirstPaymentDate: new Date("2026-01-01T12:00:00"),
+          contractEndDate: new Date("2026-12-31T12:00:00"),
+        },
+        contractSummary: {
+          expectedInvoiceCount: 12,
+          registeredInvoiceCount: 12,
+          remainingInvoiceCount: 0,
+          isExpired: false,
+          isFullyInvoiced: true,
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "SERVICIO MENSUAL",
+            quantity: "12.00",
+            receivedQuantity: "12.00",
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi.spyOn(db, "registerReceipt");
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentDate: "2026-04-14",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            itemName: "SERVICIO MENSUAL",
+            quantityExpected: "12.00",
+            quantityReceived: "1.00",
+            unit: "mes",
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message:
+        "La OC de contrato ya alcanzó el total de facturas programadas",
+    });
+
+    expect(registerReceiptSpy).not.toHaveBeenCalled();
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
   it("allows closing a partially received purchase order line", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -6119,6 +7027,9 @@ describe("BuildReq - Invoices", () => {
       purchaseOrderId: 4,
       receiptId: 6,
       status: "borrador",
+      isFiscalDocument: true,
+      cai: VALID_CAI,
+      invoiceNumber: VALID_INVOICE_NUMBER,
       total: "1000.00",
       retentionTotal: "0.00",
       netPayable: "1000.00",
@@ -6149,6 +7060,56 @@ describe("BuildReq - Invoices", () => {
     listInvoicesSpy.mockRestore();
   });
 
+  it("Contable can list only reviewed invoices", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const listInvoicesSpy = vi.spyOn(db, "listInvoices").mockResolvedValue([]);
+
+    await expect(caller.invoices.list({ status: "borrador" as any })).resolves.toEqual([]);
+    expect(listInvoicesSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "revisada",
+      })
+    );
+
+    listInvoicesSpy.mockRestore();
+  });
+
+  it("Non-accounting users do not list reviewed invoices", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const listInvoicesSpy = vi.spyOn(db, "listInvoices").mockResolvedValue([]);
+
+    await expect(caller.invoices.list({ status: "revisada" })).resolves.toEqual(
+      []
+    );
+    expect(listInvoicesSpy).not.toHaveBeenCalled();
+
+    await expect(caller.invoices.list({})).resolves.toEqual([]);
+    expect(listInvoicesSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        excludeStatus: "revisada",
+      })
+    );
+
+    listInvoicesSpy.mockRestore();
+  });
+
+  it("blocks Contable from consulting draft invoices", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi
+      .spyOn(db, "getInvoiceById")
+      .mockResolvedValue(invoiceDetail);
+
+    await expect(caller.invoices.getById({ id: 10 })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "Contabilidad solo puede ver facturas revisadas",
+    });
+
+    getInvoiceByIdSpy.mockRestore();
+  });
+
   it("blocks project-scoped users from consulting invoices from another project", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
@@ -6166,6 +7127,193 @@ describe("BuildReq - Invoices", () => {
     });
 
     getInvoiceByIdSpy.mockRestore();
+  });
+
+  it("Project administrator can review a draft invoice with attachments", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi
+      .spyOn(db, "getInvoiceById")
+      .mockResolvedValue(invoiceDetail);
+    const getAttachmentsByEntitySpy = vi
+      .spyOn(db, "getAttachmentsByEntity")
+      .mockResolvedValue([{ id: 99 }] as any);
+    const reviewInvoiceSpy = vi.spyOn(db, "reviewInvoice").mockResolvedValue({
+      ...invoiceDetail.invoice,
+      status: "revisada",
+    } as any);
+
+    await expect(caller.invoices.review({ id: 10 })).resolves.toEqual(
+      expect.objectContaining({ status: "revisada" })
+    );
+    expect(getAttachmentsByEntitySpy).toHaveBeenCalledWith("invoice", 10);
+    expect(reviewInvoiceSpy).toHaveBeenCalledWith(10, ctx.user!.id);
+
+    getInvoiceByIdSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
+    reviewInvoiceSpy.mockRestore();
+  });
+
+  it("blocks reviewing invoices without attachments", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi
+      .spyOn(db, "getInvoiceById")
+      .mockResolvedValue(invoiceDetail);
+    const getAttachmentsByEntitySpy = vi
+      .spyOn(db, "getAttachmentsByEntity")
+      .mockResolvedValue([]);
+    const reviewInvoiceSpy = vi.spyOn(db, "reviewInvoice");
+
+    await expect(caller.invoices.review({ id: 10 })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "Adjunte al menos un archivo antes de enviar a revisión",
+    });
+    expect(reviewInvoiceSpy).not.toHaveBeenCalled();
+
+    getInvoiceByIdSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
+    reviewInvoiceSpy.mockRestore();
+  });
+
+  it("blocks reviewing invoices with invalid fiscal data", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        cai: "",
+      },
+    } as any);
+    const getAttachmentsByEntitySpy = vi.spyOn(db, "getAttachmentsByEntity");
+    const reviewInvoiceSpy = vi.spyOn(db, "reviewInvoice");
+
+    await expect(caller.invoices.review({ id: 10 })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "Ingrese el CAI del documento antes de enviar a revisión",
+    });
+    expect(getAttachmentsByEntitySpy).not.toHaveBeenCalled();
+    expect(reviewInvoiceSpy).not.toHaveBeenCalled();
+
+    getInvoiceByIdSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
+    reviewInvoiceSpy.mockRestore();
+  });
+
+  it("Contable can account reviewed invoices", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        status: "revisada",
+      },
+    } as any);
+    const accountInvoiceSpy = vi.spyOn(db, "accountInvoice").mockResolvedValue({
+      ...invoiceDetail.invoice,
+      status: "registrada",
+      accountingComment: "Listo",
+    } as any);
+
+    await expect(
+      caller.invoices.account({ id: 10, accountingComment: "Listo" })
+    ).resolves.toEqual(expect.objectContaining({ status: "registrada" }));
+    expect(accountInvoiceSpy).toHaveBeenCalledWith({
+      id: 10,
+      accountedById: ctx.user!.id,
+      accountingComment: "Listo",
+    });
+
+    getInvoiceByIdSpy.mockRestore();
+    accountInvoiceSpy.mockRestore();
+  });
+
+  it("Superuser can account reviewed invoices", async () => {
+    const { ctx } = createUserContext({ role: "admin", buildreqRole: null });
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        status: "revisada",
+      },
+    } as any);
+    const accountInvoiceSpy = vi.spyOn(db, "accountInvoice").mockResolvedValue({
+      ...invoiceDetail.invoice,
+      status: "registrada",
+    } as any);
+
+    await expect(caller.invoices.account({ id: 10 })).resolves.toEqual(
+      expect.objectContaining({ status: "registrada" })
+    );
+    expect(accountInvoiceSpy).toHaveBeenCalledWith({
+      id: 10,
+      accountedById: ctx.user!.id,
+      accountingComment: undefined,
+    });
+
+    getInvoiceByIdSpy.mockRestore();
+    accountInvoiceSpy.mockRestore();
+  });
+
+  it("Contable can reject reviewed invoices with a comment", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        status: "revisada",
+      },
+    } as any);
+    const rejectInvoiceSpy = vi
+      .spyOn(db, "rejectInvoiceFromAccounting")
+      .mockResolvedValue({
+        ...invoiceDetail.invoice,
+        status: "rechazada",
+        rejectionComment: "Falta soporte",
+      } as any);
+
+    await expect(
+      caller.invoices.reject({
+        id: 10,
+        rejectionComment: "Falta soporte",
+      })
+    ).resolves.toEqual(expect.objectContaining({ status: "rechazada" }));
+    expect(rejectInvoiceSpy).toHaveBeenCalledWith({
+      id: 10,
+      rejectedById: ctx.user!.id,
+      rejectionComment: "Falta soporte",
+    });
+
+    getInvoiceByIdSpy.mockRestore();
+    rejectInvoiceSpy.mockRestore();
+  });
+
+  it("Contable cannot edit invoice metadata", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const updateInvoiceSpy = vi.spyOn(db, "updateInvoice");
+
+    await expect(
+      caller.invoices.update({
+        id: 10,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentDate: "2026-05-01",
+        postingDate: "2026-05-02",
+        receiptDate: "2026-05-02",
+        emissionDeadline: "2026-05-31",
+      })
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para editar facturas",
+    });
+    expect(updateInvoiceSpy).not.toHaveBeenCalled();
+
+    updateInvoiceSpy.mockRestore();
   });
 
   it("Administracion Central can update draft invoice metadata", async () => {
@@ -6225,9 +7373,51 @@ describe("BuildReq - Invoices", () => {
         emissionDeadline: "2026-05-31",
         notes: "Ajuste de factura",
       })
-    ).rejects.toThrow("Ingrese el CAI de la factura");
+    ).rejects.toThrow("Ingrese el CAI del documento");
 
     expect(updateInvoiceSpy).not.toHaveBeenCalled();
+    updateInvoiceSpy.mockRestore();
+  });
+
+  it("allows updating foreign document invoice metadata without fiscal format", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi
+      .spyOn(db, "getInvoiceById")
+      .mockResolvedValue(invoiceDetail);
+    const updateInvoiceSpy = vi.spyOn(db, "updateInvoice").mockResolvedValue({
+      ...invoiceDetail.invoice,
+      isFiscalDocument: false,
+      invoiceNumber: "INV-USA-45",
+    } as any);
+
+    await expect(
+      caller.invoices.update({
+        id: 10,
+        isFiscalDocument: false,
+        cai: "AUTH-EXT/001",
+        invoiceNumber: "INV-USA-45",
+        postingDate: "2026-05-02",
+        receiptDate: "2026-05-02",
+        notes: "Documento extranjero",
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        isFiscalDocument: false,
+        invoiceNumber: "INV-USA-45",
+      })
+    );
+    expect(updateInvoiceSpy).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        isFiscalDocument: false,
+        cai: "AUTH-EXT/001",
+        invoiceNumber: "INV-USA-45",
+        emissionDeadline: expect.any(Date),
+      })
+    );
+
+    getInvoiceByIdSpy.mockRestore();
     updateInvoiceSpy.mockRestore();
   });
 
@@ -6358,7 +7548,7 @@ describe("BuildReq - Invoices", () => {
       .spyOn(db, "replaceInvoiceRetentions")
       .mockRejectedValue(
         new Error(
-          "El total de retenciones no puede exceder la base retenible de la factura"
+          "El total de retenciones no puede exceder la base imponible de la factura"
         )
       );
 
@@ -6375,11 +7565,293 @@ describe("BuildReq - Invoices", () => {
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
       message:
-        "El total de retenciones no puede exceder la base retenible de la factura",
+        "El total de retenciones no puede exceder la base imponible de la factura",
     });
 
     getInvoiceByIdSpy.mockRestore();
     replaceInvoiceRetentionsSpy.mockRestore();
+  });
+});
+
+// ============================================================
+// Tests: Attachments
+// ============================================================
+describe("BuildReq - Document attachments", () => {
+  const pdfBuffer = Buffer.from("%PDF-1.4\n% BuildReq test\n");
+  const jpegBuffer = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x43]);
+
+  function oversizedPdfBuffer() {
+    const buffer = Buffer.alloc(10 * 1024 * 1024 + 1);
+    buffer.write("%PDF-", 0, "ascii");
+    return buffer;
+  }
+
+  function oversizedJpegBuffer() {
+    const buffer = Buffer.alloc(5 * 1024 * 1024 + 1);
+    buffer[0] = 0xff;
+    buffer[1] = 0xd8;
+    buffer[2] = 0xff;
+    return buffer;
+  }
+
+  it("accepts valid PDFs and stores the real decoded size", () => {
+    expect(
+      validateDocumentAttachmentFile({
+        fileName: "factura.pdf",
+        mimeType: "application/pdf",
+        buffer: pdfBuffer,
+      })
+    ).toEqual(
+      expect.objectContaining({
+        fileName: "factura.pdf",
+        mimeType: "application/pdf",
+        fileSize: pdfBuffer.byteLength,
+      })
+    );
+  });
+
+  it("rejects oversized PDFs", () => {
+    expect(() =>
+      validateDocumentAttachmentFile({
+        fileName: "factura.pdf",
+        mimeType: "application/pdf",
+        buffer: oversizedPdfBuffer(),
+      })
+    ).toThrow("El PDF no puede superar 10 MB");
+  });
+
+  it("rejects unsupported file types", () => {
+    expect(() =>
+      validateDocumentAttachmentFile({
+        fileName: "nota.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("hola"),
+      })
+    ).toThrow("Solo se permiten archivos PDF o imagenes JPG, PNG y WebP");
+  });
+
+  it("rejects files with a false MIME or extension", () => {
+    expect(() =>
+      validateDocumentAttachmentFile({
+        fileName: "factura.pdf",
+        mimeType: "application/pdf",
+        buffer: Buffer.from("no soy pdf"),
+      })
+    ).toThrow("El archivo no parece ser un PDF valido");
+  });
+
+  it("rejects images over the compressed image limit", () => {
+    expect(() =>
+      validateDocumentAttachmentFile({
+        fileName: "evidencia.jpg",
+        mimeType: "image/jpeg",
+        buffer: oversizedJpegBuffer(),
+      })
+    ).toThrow("La imagen comprimida no puede superar 5 MB");
+  });
+
+  it("allows project administrators to upload purchase order attachments", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 44,
+          projectId: 1,
+          status: "emitida",
+        },
+      } as any);
+    const storagePutSpy = vi.spyOn(storage, "storagePut").mockResolvedValue({
+      key: "buildreq/purchase_order/44/test-factura.pdf",
+      url: "https://storage.local/factura.pdf",
+    });
+    const createAttachmentSpy = vi
+      .spyOn(db, "createAttachment")
+      .mockResolvedValue({ id: 700 });
+
+    await expect(
+      caller.attachments.upload({
+        entityType: "purchase_order",
+        entityId: 44,
+        fileName: "factura.pdf",
+        fileData: pdfBuffer.toString("base64"),
+        mimeType: "application/pdf",
+        fileSize: 1,
+        category: "orden_compra",
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 700,
+        url: "https://storage.local/factura.pdf",
+      })
+    );
+    expect(createAttachmentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: "purchase_order",
+        entityId: 44,
+        fileName: "factura.pdf",
+        mimeType: "application/pdf",
+        fileSize: pdfBuffer.byteLength,
+      })
+    );
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    storagePutSpy.mockRestore();
+    createAttachmentSpy.mockRestore();
+  });
+
+  it("blocks project warehouse users from uploading purchase order attachments", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 44,
+          projectId: 1,
+          status: "emitida",
+        },
+      } as any);
+    const storagePutSpy = vi.spyOn(storage, "storagePut");
+
+    await expect(
+      caller.attachments.upload({
+        entityType: "purchase_order",
+        entityId: 44,
+        fileName: "factura.pdf",
+        fileData: pdfBuffer.toString("base64"),
+        mimeType: "application/pdf",
+        fileSize: pdfBuffer.byteLength,
+        category: "orden_compra",
+      })
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para administrar adjuntos de órdenes de compra",
+    });
+    expect(storagePutSpy).not.toHaveBeenCalled();
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    storagePutSpy.mockRestore();
+  });
+
+  it("lets Contable view reviewed invoice attachments but not upload them", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      invoice: {
+        id: 10,
+        projectId: 1,
+        status: "revisada",
+      },
+    } as any);
+    const getAttachmentsByEntitySpy = vi
+      .spyOn(db, "getAttachmentsByEntity")
+      .mockResolvedValue([
+        {
+          id: 99,
+          fileName: "factura.pdf",
+          fileKey: "buildreq/invoice/10/factura.pdf",
+        },
+      ] as any);
+    const storageGetSpy = vi.spyOn(storage, "storageGet").mockResolvedValue({
+      key: "buildreq/invoice/10/factura.pdf",
+      url: "https://storage.local/factura.pdf",
+    });
+    const storagePutSpy = vi.spyOn(storage, "storagePut");
+
+    await expect(
+      caller.attachments.getByEntity({
+        entityType: "invoice",
+        entityId: 10,
+      })
+    ).resolves.toEqual([expect.objectContaining({ id: 99 })]);
+
+    await expect(
+      caller.attachments.upload({
+        entityType: "invoice",
+        entityId: 10,
+        fileName: "factura.pdf",
+        fileData: pdfBuffer.toString("base64"),
+        mimeType: "application/pdf",
+        fileSize: pdfBuffer.byteLength,
+        category: "factura",
+      })
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para administrar adjuntos de facturas",
+    });
+    expect(storagePutSpy).not.toHaveBeenCalled();
+
+    getInvoiceByIdSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
+    storageGetSpy.mockRestore();
+    storagePutSpy.mockRestore();
+  });
+
+  it("blocks Contable from viewing draft invoice attachments", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      invoice: {
+        id: 10,
+        projectId: 1,
+        status: "borrador",
+      },
+    } as any);
+    const getAttachmentsByEntitySpy = vi.spyOn(db, "getAttachmentsByEntity");
+
+    await expect(
+      caller.attachments.getByEntity({
+        entityType: "invoice",
+        entityId: 10,
+      })
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "Contabilidad solo puede ver adjuntos de facturas revisadas",
+    });
+    expect(getAttachmentsByEntitySpy).not.toHaveBeenCalled();
+
+    getInvoiceByIdSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
+  });
+
+  it("deletes attachment files from storage after authorization", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getAttachmentByIdSpy = vi.spyOn(db, "getAttachmentById").mockResolvedValue({
+      id: 700,
+      entityType: "purchase_order",
+      entityId: 44,
+      fileKey: "buildreq/purchase_order/44/factura.pdf",
+    } as any);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 44,
+          projectId: 1,
+          status: "emitida",
+        },
+      } as any);
+    const storageDeleteSpy = vi
+      .spyOn(storage, "storageDelete")
+      .mockResolvedValue({ key: "buildreq/purchase_order/44/factura.pdf" });
+    const deleteAttachmentSpy = vi
+      .spyOn(db, "deleteAttachment")
+      .mockResolvedValue({ success: true });
+
+    await expect(caller.attachments.delete({ id: 700 })).resolves.toEqual({
+      success: true,
+    });
+    expect(storageDeleteSpy).toHaveBeenCalledWith(
+      "buildreq/purchase_order/44/factura.pdf"
+    );
+
+    getAttachmentByIdSpy.mockRestore();
+    getPurchaseOrderByIdSpy.mockRestore();
+    storageDeleteSpy.mockRestore();
+    deleteAttachmentSpy.mockRestore();
   });
 });
 

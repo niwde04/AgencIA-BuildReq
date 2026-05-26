@@ -6,6 +6,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { notifyExpiringPurchaseOrderContracts } from "../db";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -64,6 +65,22 @@ async function startServer() {
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
   });
+
+  void runContractExpiryNotificationJob();
+  setInterval(
+    () => {
+      void runContractExpiryNotificationJob();
+    },
+    24 * 60 * 60 * 1000
+  );
+}
+
+async function runContractExpiryNotificationJob() {
+  try {
+    await notifyExpiringPurchaseOrderContracts();
+  } catch (error) {
+    console.warn("[Contracts] Failed to notify expiring contracts:", error);
+  }
 }
 
 startServer().catch(console.error);

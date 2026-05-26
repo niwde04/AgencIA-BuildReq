@@ -17,7 +17,8 @@ function canAccessInvoices(user: { role: string; buildreqRole?: string | null })
     user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administracion_central" ||
     user.buildreqRole === "administrador_proyecto" ||
-    user.buildreqRole === "bodeguero_proyecto"
+    user.buildreqRole === "bodeguero_proyecto" ||
+    user.buildreqRole === "contable"
   );
 }
 
@@ -27,6 +28,21 @@ function canEditInvoices(user: { role: string; buildreqRole?: string | null }) {
     user.buildreqRole === "administracion_central" ||
     user.buildreqRole === "administrador_proyecto"
   );
+}
+
+function canReviewInvoices(user: { role: string; buildreqRole?: string | null }) {
+  return canEditInvoices(user);
+}
+
+function canAccountInvoices(user: { role: string; buildreqRole?: string | null }) {
+  return user.role === "admin" || user.buildreqRole === "contable";
+}
+
+function canAccessReviewedInvoices(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return user.role === "admin" || user.buildreqRole === "contable";
 }
 
 function assertProjectScopedAccess(
@@ -52,12 +68,75 @@ function assertProjectScopedAccess(
   }
 }
 
+function assertAccountingAccess(
+  user: { role: string; buildreqRole?: string | null },
+  detail: NonNullable<Awaited<ReturnType<typeof db.getInvoiceById>>>
+) {
+  if (detail.invoice.status !== "revisada") {
+    if (user.buildreqRole !== "contable") return;
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Contabilidad solo puede ver facturas revisadas",
+    });
+  }
+  if (!canAccessReviewedInvoices(user)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Solo Contabilidad o Superusuario puede ver facturas revisadas",
+    });
+  }
+}
+
 function assertInvoiceDraft(detail: NonNullable<Awaited<ReturnType<typeof db.getInvoiceById>>>) {
-  if (detail.invoice.status !== "borrador") {
+  if (
+    detail.invoice.status !== "borrador" &&
+    detail.invoice.status !== "rechazada"
+  ) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "Solo se pueden editar facturas en borrador",
+      message: "Solo se pueden editar facturas en borrador o rechazadas",
     });
+  }
+}
+
+function assertInvoiceReviewed(detail: NonNullable<Awaited<ReturnType<typeof db.getInvoiceById>>>) {
+  if (detail.invoice.status !== "revisada") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Solo se pueden contabilizar o rechazar facturas revisadas",
+    });
+  }
+}
+
+function assertInvoiceReadyForReview(
+  detail: NonNullable<Awaited<ReturnType<typeof db.getInvoiceById>>>
+) {
+  const invoice = detail.invoice;
+  if (invoice.isFiscalDocument !== false) {
+    if (!invoice.cai?.trim()) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Ingrese el CAI del documento antes de enviar a revisión",
+      });
+    }
+    if (!isValidCai(invoice.cai)) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `El CAI debe tener el formato ${CAI_FORMAT_EXAMPLE}`,
+      });
+    }
+    if (!invoice.invoiceNumber?.trim()) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Ingrese el número documento antes de enviar a revisión",
+      });
+    }
+    if (!isValidInvoiceNumber(invoice.invoiceNumber)) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `El número documento debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+      });
+    }
   }
 }
 
@@ -67,6 +146,7 @@ function parseDateInput(value?: string | null) {
 
 const invoiceRetentionSchema = z
   .object({
+    invoiceItemId: z.number().int().positive().optional(),
     retentionCatalogId: z.number().int().positive(),
     baseAmount: z.string().trim().optional(),
   })
@@ -90,7 +170,9 @@ export const invoicesRouter = router({
       z
         .object({
           projectId: z.number().optional(),
-          status: z.enum(["borrador", "registrada", "anulada"]).optional(),
+          status: z
+            .enum(["borrador", "revisada", "rechazada", "registrada", "anulada"])
+            .optional(),
           supplierId: z.number().optional(),
           search: z.string().trim().optional(),
         })
@@ -109,10 +191,21 @@ export const invoicesRouter = router({
         ctx.user.buildreqRole === "bodeguero_proyecto"
           ? ctx.user.assignedProjectId ?? -1
           : input?.projectId;
+      const status =
+        ctx.user.buildreqRole === "contable" ? "revisada" : input?.status;
+      const excludeStatus =
+        !canAccessReviewedInvoices(ctx.user) && status !== "revisada"
+          ? "revisada"
+          : undefined;
+      if (!canAccessReviewedInvoices(ctx.user) && status === "revisada") {
+        return [];
+      }
 
       return db.listInvoices({
         ...input,
         projectId,
+        status,
+        excludeStatus,
       });
     }),
 
@@ -134,6 +227,7 @@ export const invoicesRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.invoice.projectId);
+      assertAccountingAccess(ctx.user, detail);
       return detail;
     }),
 
@@ -142,20 +236,24 @@ export const invoicesRouter = router({
       z
         .object({
           id: z.number(),
+          isFiscalDocument: z.boolean().optional(),
           cai: z.string().trim().max(100).optional(),
           invoiceNumber: z.string().trim().max(100).optional(),
           documentDate: z.string().optional(),
           postingDate: z.string(),
           receiptDate: z.string(),
-          emissionDeadline: z.string(),
+          emissionDeadline: z.string().optional(),
           notes: z.string().trim().max(2000).optional(),
         })
         .superRefine((value, ctx) => {
+          const requiresFiscalFormat = value.isFiscalDocument !== false;
+          if (!requiresFiscalFormat) return;
+
           if (!value.cai?.trim()) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               path: ["cai"],
-              message: "Ingrese el CAI de la factura",
+              message: "Ingrese el CAI del documento",
             });
           } else if (!isValidCai(value.cai)) {
             ctx.addIssue({
@@ -168,13 +266,13 @@ export const invoicesRouter = router({
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               path: ["invoiceNumber"],
-              message: "Ingrese el número de factura",
+              message: "Ingrese el número documento",
             });
           } else if (!isValidInvoiceNumber(value.invoiceNumber)) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               path: ["invoiceNumber"],
-              message: `El número de factura debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+              message: `El número documento debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
             });
           }
         })
@@ -197,16 +295,122 @@ export const invoicesRouter = router({
       assertProjectScopedAccess(ctx.user, detail.invoice.projectId);
       assertInvoiceDraft(detail);
 
+      const isFiscalDocument = input.isFiscalDocument !== false;
+
       return db.updateInvoice(input.id, {
-        cai: input.cai ? formatCaiInput(input.cai) : null,
+        isFiscalDocument,
+        cai: input.cai?.trim()
+          ? isFiscalDocument
+            ? formatCaiInput(input.cai)
+            : input.cai.trim()
+          : null,
         invoiceNumber: input.invoiceNumber
-          ? formatInvoiceNumberInput(input.invoiceNumber)
+          ? isFiscalDocument
+            ? formatInvoiceNumberInput(input.invoiceNumber)
+            : input.invoiceNumber.trim()
           : null,
         documentDate: parseDateInput(input.documentDate),
         postingDate: parseDateInput(input.postingDate) ?? new Date(),
         receiptDate: parseDateInput(input.receiptDate) ?? new Date(),
-        emissionDeadline: parseDateInput(input.emissionDeadline) ?? new Date(),
+        emissionDeadline:
+          parseDateInput(input.emissionDeadline) ??
+          parseDateInput(input.postingDate) ??
+          new Date(),
         notes: input.notes?.trim() || null,
+      });
+    }),
+
+  review: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (!canReviewInvoices(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para revisar facturas",
+        });
+      }
+
+      const detail = await db.getInvoiceById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Factura no encontrada",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.invoice.projectId);
+      assertInvoiceDraft(detail);
+      assertInvoiceReadyForReview(detail);
+
+      const attachments = await db.getAttachmentsByEntity("invoice", input.id);
+      if (attachments.length === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Adjunte al menos un archivo antes de enviar a revisión",
+        });
+      }
+
+      return db.reviewInvoice(input.id, ctx.user.id);
+    }),
+
+  account: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        accountingComment: z.string().trim().max(2000).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canAccountInvoices(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Solo Contabilidad o Superusuario puede contabilizar facturas",
+        });
+      }
+
+      const detail = await db.getInvoiceById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Factura no encontrada",
+        });
+      }
+      assertInvoiceReviewed(detail);
+
+      return db.accountInvoice({
+        id: input.id,
+        accountedById: ctx.user.id,
+        accountingComment: input.accountingComment,
+      });
+    }),
+
+  reject: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        rejectionComment: z.string().trim().min(5).max(2000),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canAccountInvoices(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Solo Contabilidad o Superusuario puede rechazar facturas",
+        });
+      }
+
+      const detail = await db.getInvoiceById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Factura no encontrada",
+        });
+      }
+      assertInvoiceReviewed(detail);
+
+      return db.rejectInvoiceFromAccounting({
+        id: input.id,
+        rejectedById: ctx.user.id,
+        rejectionComment: input.rejectionComment,
       });
     }),
 

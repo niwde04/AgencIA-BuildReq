@@ -6,6 +6,18 @@ export const dashboardRouter = router({
   stats: protectedProcedure.query(async ({ ctx }) => {
     const user = ctx.user;
     const userRole = user.buildreqRole;
+    if (userRole === "contable") {
+      return {
+        totalRequests: 0,
+        totalActiveProjects: 0,
+        totalReturns: 0,
+        pendingReturns: 0,
+        requestsByStatus: [],
+        requestsByProject: [],
+        requestsByFlow: [],
+        recentRequests: [],
+      };
+    }
     const scopedProjectId =
       userRole === "administrador_proyecto" || userRole === "bodeguero_proyecto"
         ? user.assignedProjectId ?? -1
@@ -24,6 +36,15 @@ export const dashboardRouter = router({
   sidebarCounts: protectedProcedure.query(async ({ ctx }) => {
     const user = ctx.user;
     const userRole = user.buildreqRole;
+    if (userRole === "contable") {
+      return {
+        materialRequestsPendingApproval: 0,
+        supplyFlowsPending: 0,
+        purchaseRequestsPending: 0,
+        purchaseOrdersEmitted: 0,
+        transferRequestsPending: 0,
+      };
+    }
     const isAdmin = user.role === "admin";
     const scopedProjectId =
       userRole === "administrador_proyecto" || userRole === "bodeguero_proyecto"
