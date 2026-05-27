@@ -211,7 +211,12 @@ const allMenuItems: MenuItem[] = [
     icon: Percent,
     label: "Retenciones",
     path: "/retenciones",
-    roles: ["administracion_central", "admin"],
+    roles: [
+      "administracion_central",
+      "administrador_proyecto",
+      "contable",
+      "admin",
+    ],
   },
   { icon: FolderKanban, label: "Proyectos", path: "/proyectos" },
   {
@@ -348,7 +353,9 @@ function DashboardLayoutContent({
 
   const menuItems = useMemo(() => {
     return allMenuItems.filter((item) => {
-      if (userRole === "contable") return item.path === "/facturas";
+      if (userRole === "contable") {
+        return item.path === "/facturas" || item.path === "/retenciones";
+      }
       if (!item.roles) return true;
       if (item.roles.includes("admin") && isAdmin) return true;
       return item.roles.includes(userRole);
@@ -359,7 +366,10 @@ function DashboardLayoutContent({
     if (item.path === "/") return location === "/";
     return location.startsWith(item.path);
   });
-  const shouldRedirectContable = userRole === "contable" && location !== "/facturas";
+  const shouldRedirectContable =
+    userRole === "contable" &&
+    location !== "/facturas" &&
+    location !== "/retenciones";
 
   useEffect(() => {
     if (isCollapsed) setIsResizing(false);

@@ -3,11 +3,34 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 
+function canReadRetentions(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  return (
+    canManageRetentions(user) ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto"
+  );
+}
+
 function canManageRetentions(user: {
   role?: string | null;
   buildreqRole?: string | null;
 }) {
-  return user.role === "admin" || user.buildreqRole === "administracion_central";
+  return user.role === "admin" || user.buildreqRole === "contable";
+}
+
+function assertCanReadRetentions(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  if (!canReadRetentions(user)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para consultar retenciones",
+    });
+  }
 }
 
 function assertCanManageRetentions(user: {
@@ -67,7 +90,7 @@ export const retentionsRouter = router({
         .optional()
     )
     .query(async ({ ctx, input }) => {
-      assertCanManageRetentions(ctx.user);
+      assertCanReadRetentions(ctx.user);
       return db.listTaxRetentions(input ?? {});
     }),
 

@@ -269,8 +269,39 @@ describe("BuildReq - Tax retentions catalog", () => {
     listTaxRetentionsSpy.mockRestore();
   });
 
-  it("Admin central can create retentions", async () => {
-    const { ctx } = createAdminCentralContext();
+  it("Project Administrator can list retentions in read-only mode", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const listTaxRetentionsSpy = vi
+      .spyOn(db, "listTaxRetentions")
+      .mockResolvedValue({
+        items: [
+          {
+            id: 1,
+            taxCode: "RT125",
+            description: "Retención 12.5%",
+            ratePercent: "12.5000",
+            isActive: true,
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 25,
+        totalPages: 1,
+      } as any);
+
+    await expect(caller.retentions.list({ page: 1, pageSize: 25 })).resolves.toEqual(
+      expect.objectContaining({
+        total: 1,
+        items: [expect.objectContaining({ taxCode: "RT125" })],
+      })
+    );
+
+    listTaxRetentionsSpy.mockRestore();
+  });
+
+  it("Accountant can create retentions", async () => {
+    const { ctx } = createContableContext();
     const caller = appRouter.createCaller(ctx);
     const createTaxRetentionSpy = vi
       .spyOn(db, "createTaxRetention")
@@ -301,6 +332,42 @@ describe("BuildReq - Tax retentions catalog", () => {
       })
     );
 
+    createTaxRetentionSpy.mockRestore();
+  });
+
+  it("Project Administrator cannot create retentions", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const createTaxRetentionSpy = vi.spyOn(db, "createTaxRetention");
+
+    await expect(
+      caller.retentions.create({
+        taxCode: "RT99",
+        description: "Retención prueba",
+        ratePercent: "9",
+        isActive: true,
+      })
+    ).rejects.toThrow("No tiene permisos para modificar retenciones");
+
+    expect(createTaxRetentionSpy).not.toHaveBeenCalled();
+    createTaxRetentionSpy.mockRestore();
+  });
+
+  it("Admin central can read but cannot create retentions", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const createTaxRetentionSpy = vi.spyOn(db, "createTaxRetention");
+
+    await expect(
+      caller.retentions.create({
+        taxCode: "RT98",
+        description: "Retención central",
+        ratePercent: "9",
+        isActive: true,
+      })
+    ).rejects.toThrow("No tiene permisos para modificar retenciones");
+
+    expect(createTaxRetentionSpy).not.toHaveBeenCalled();
     createTaxRetentionSpy.mockRestore();
   });
 

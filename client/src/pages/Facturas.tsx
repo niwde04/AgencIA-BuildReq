@@ -440,7 +440,7 @@ export default function Facturas() {
           value: (row: any) => row.receipt?.receiptNumber || "Recepción",
         },
         {
-          header: "Fecha vencimiento",
+          header: "Fecha vencimiento (crédito)",
           value: (row: any) => formatDateLabel(row.invoice.documentDueDate),
         },
         {
@@ -564,7 +564,7 @@ export default function Facturas() {
       return;
     }
     if (invoiceDraft.isFiscalDocument && !invoiceDraft.documentDueDate) {
-      toast.error("Selecciona la fecha de vencimiento del documento");
+      toast.error("Selecciona la fecha de vencimiento (crédito)");
       return;
     }
     updateMutation.mutate({
@@ -1211,7 +1211,7 @@ export default function Facturas() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label>Fecha vencimiento</Label>
+                        <Label>Fecha vencimiento (crédito)</Label>
                         <Input
                           type="date"
                           value={invoiceDraft.documentDueDate}

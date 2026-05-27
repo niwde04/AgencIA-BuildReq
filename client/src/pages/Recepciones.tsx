@@ -733,7 +733,7 @@ export default function Recepciones() {
         return;
       }
       if (!documentDueDate) {
-        toast.error("Selecciona la fecha de vencimiento del documento");
+        toast.error("Selecciona la fecha de vencimiento (crédito)");
         return;
       }
       if (!emissionDeadline) {
@@ -1165,7 +1165,7 @@ export default function Recepciones() {
                   <div class="value">${escapeHtml(formatPrintDate(receipt.documentDate))}</div>
                 </div>
                 <div class="field">
-                  <div class="label">Fecha Vencimiento:</div>
+                  <div class="label">Fecha Vencimiento (crédito):</div>
                   <div class="value">${escapeHtml(formatPrintDate(receipt.documentDueDate))}</div>
                 </div>
                 <div class="field">
@@ -1670,7 +1670,7 @@ export default function Recepciones() {
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="receipt-document-due-date">
-                          Fecha vencimiento documento
+                          Fecha vencimiento (crédito)
                         </Label>
                         <Input
                           id="receipt-document-due-date"
@@ -2219,7 +2219,7 @@ export default function Recepciones() {
                 </div>
                 <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Fecha vencimiento
+                    Fecha vencimiento (crédito)
                   </Label>
                   <p className="text-sm font-semibold leading-snug sm:text-base">
                     {formatDateLabel(receiptDetail.receipt.documentDueDate)}

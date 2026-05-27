@@ -82,7 +82,12 @@ export default function Retenciones() {
   const [form, setForm] = useState<RetentionForm>(emptyForm);
 
   const buildreqRole = (user as any)?.buildreqRole || "";
-  const canManage = user?.role === "admin" || buildreqRole === "administracion_central";
+  const canManageRetentions =
+    user?.role === "admin" || buildreqRole === "contable";
+  const canReadRetentions =
+    canManageRetentions ||
+    buildreqRole === "administracion_central" ||
+    buildreqRole === "administrador_proyecto";
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -109,7 +114,7 @@ export default function Retenciones() {
 
   const { data, isLoading, isFetching, error, refetch } =
     trpc.retentions.list.useQuery(listInput, {
-      enabled: canManage,
+      enabled: canReadRetentions,
       placeholderData: (previousData) => previousData,
     });
 
@@ -166,6 +171,11 @@ export default function Retenciones() {
   };
 
   const submitForm = () => {
+    if (!canManageRetentions) {
+      toast.error("No tiene permisos para modificar retenciones");
+      return;
+    }
+
     const payload = {
       taxCode: form.taxCode.trim().toUpperCase(),
       description: form.description.trim(),
@@ -196,10 +206,10 @@ export default function Retenciones() {
     createMutation.mutate(payload);
   };
 
-  if (!canManage) {
+  if (!canReadRetentions) {
     return (
       <div className="rounded-xl border border-border p-8 text-center text-muted-foreground">
-        No tiene permisos para administrar retenciones.
+        No tiene permisos para consultar retenciones.
       </div>
     );
   }
@@ -217,10 +227,12 @@ export default function Retenciones() {
                 : `${total.toLocaleString("es-HN")} registros encontrados`}
           </p>
         </div>
-        <Button type="button" onClick={openCreateDialog}>
-          <Plus className="mr-2 h-4 w-4" />
-          Crear retención
-        </Button>
+        {canManageRetentions ? (
+          <Button type="button" onClick={openCreateDialog}>
+            <Plus className="mr-2 h-4 w-4" />
+            Crear retención
+          </Button>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(240px,1fr)_180px]">
@@ -296,9 +308,11 @@ export default function Retenciones() {
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Código ERP
                       </th>
-                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Acciones
-                      </th>
+                      {canManageRetentions ? (
+                        <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Acciones
+                        </th>
+                      ) : null}
                     </tr>
                   </thead>
                   <tbody>
@@ -334,17 +348,19 @@ export default function Retenciones() {
                         <td className="p-3 font-mono text-xs">
                           {retention.erpCode || "-"}
                         </td>
-                        <td className="p-3 text-right">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openEditDialog(retention)}
-                          >
-                            <Pencil className="mr-2 h-3.5 w-3.5" />
-                            Editar
-                          </Button>
-                        </td>
+                        {canManageRetentions ? (
+                          <td className="p-3 text-right">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openEditDialog(retention)}
+                            >
+                              <Pencil className="mr-2 h-3.5 w-3.5" />
+                              Editar
+                            </Button>
+                          </td>
+                        ) : null}
                       </tr>
                     ))}
                   </tbody>
@@ -381,6 +397,7 @@ export default function Retenciones() {
         </CardContent>
       </Card>
 
+      {canManageRetentions ? (
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
@@ -487,6 +504,7 @@ export default function Retenciones() {
           </div>
         </DialogContent>
       </Dialog>
+      ) : null}
     </div>
   );
 }
