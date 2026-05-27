@@ -38,7 +38,7 @@ function canReceivePurchaseOrder(purchaseOrder: any, contractSummary?: any) {
   }
 
   if (!purchaseOrder.appliesContract) return false;
-  if (["borrador", "anulada"].includes(purchaseOrder.status)) return false;
+  if (purchaseOrder.status === "anulada") return false;
 
   return Boolean(
     contractSummary &&

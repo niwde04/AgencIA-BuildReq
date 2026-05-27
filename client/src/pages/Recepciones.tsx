@@ -160,7 +160,7 @@ function canReceivePurchaseOrderRow(row: any) {
   }
 
   if (!purchaseOrder.appliesContract) return false;
-  if (["borrador", "anulada"].includes(purchaseOrder.status)) return false;
+  if (purchaseOrder.status === "anulada") return false;
 
   const contractSummary = row.contractSummary;
   return Boolean(

@@ -6815,7 +6815,7 @@ describe("BuildReq - Receipts", () => {
     getPurchaseOrderByIdSpy.mockRestore();
   });
 
-  it("allows another receipt from the same contract OC even when regular receipt status is received", async () => {
+  it("allows contract receipts while scheduled invoices remain even if emission is pending", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
     const getPurchaseOrderByIdSpy = vi
@@ -6825,7 +6825,7 @@ describe("BuildReq - Receipts", () => {
           id: 4,
           orderNumber: "OC-2026-0005",
           projectId: 1,
-          status: "recibida",
+          status: "borrador",
           appliesContract: true,
           contractPaymentFrequency: "mensual",
           contractFirstPaymentDate: new Date("2026-01-01T12:00:00"),
