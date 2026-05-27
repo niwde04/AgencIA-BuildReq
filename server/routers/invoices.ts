@@ -42,7 +42,11 @@ function canAccessReviewedInvoices(user: {
   role: string;
   buildreqRole?: string | null;
 }) {
-  return user.role === "admin" || user.buildreqRole === "contable";
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "contable" ||
+    user.buildreqRole === "administracion_central"
+  );
 }
 
 function assertProjectScopedAccess(

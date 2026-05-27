@@ -1459,6 +1459,47 @@ describe("BuildReq - Role-based Access Control", () => {
     listInvoicesSpy.mockRestore();
   });
 
+  it("Admin Central sees sidebar reviewed invoice count", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const listMaterialRequestsSpy = vi
+      .spyOn(db, "listMaterialRequests")
+      .mockResolvedValue([] as any);
+    const listPendingFlowQueueItemsSpy = vi
+      .spyOn(db, "listPendingFlowQueueItems")
+      .mockResolvedValue([] as any);
+    const listPurchaseRequestsSpy = vi
+      .spyOn(db, "listPurchaseRequests")
+      .mockResolvedValue([] as any);
+    const listPurchaseOrdersSpy = vi
+      .spyOn(db, "listPurchaseOrders")
+      .mockResolvedValue([] as any);
+    const listTransferRequestsSpy = vi
+      .spyOn(db, "listTransferRequests")
+      .mockResolvedValue([] as any);
+    const listInvoicesSpy = vi
+      .spyOn(db, "listInvoices")
+      .mockImplementation(async (filters?: any) => {
+        if (filters?.status === "revisada") return [{}, {}] as any;
+        return [] as any;
+      });
+
+    await expect(caller.dashboard.sidebarCounts()).resolves.toEqual(
+      expect.objectContaining({
+        invoicesPendingAttention: 0,
+        invoicesReviewed: 2,
+      })
+    );
+    expect(listInvoicesSpy).toHaveBeenCalledWith({ status: "revisada" });
+
+    listMaterialRequestsSpy.mockRestore();
+    listPendingFlowQueueItemsSpy.mockRestore();
+    listPurchaseRequestsSpy.mockRestore();
+    listPurchaseOrdersSpy.mockRestore();
+    listTransferRequestsSpy.mockRestore();
+    listInvoicesSpy.mockRestore();
+  });
+
   it("Project Administrator without assigned project does not fall back to global lists", async () => {
     const { ctx } = createProjectAdminContext({ assignedProjectId: null });
     const caller = appRouter.createCaller(ctx);
@@ -7562,8 +7603,26 @@ describe("BuildReq - Invoices", () => {
     listInvoicesSpy.mockRestore();
   });
 
-  it("Non-accounting users do not list reviewed invoices", async () => {
+  it("Administracion Central can list reviewed invoices", async () => {
     const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const listInvoicesSpy = vi.spyOn(db, "listInvoices").mockResolvedValue([]);
+
+    await expect(caller.invoices.list({ status: "revisada" })).resolves.toEqual(
+      []
+    );
+    expect(listInvoicesSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "revisada",
+      })
+    );
+    expect(listInvoicesSpy.mock.calls[0]?.[0]?.excludeStatus).toBeUndefined();
+
+    listInvoicesSpy.mockRestore();
+  });
+
+  it("Project administrators do not list reviewed invoices", async () => {
+    const { ctx } = createProjectAdminContext();
     const caller = appRouter.createCaller(ctx);
     const listInvoicesSpy = vi.spyOn(db, "listInvoices").mockResolvedValue([]);
 
@@ -7575,6 +7634,7 @@ describe("BuildReq - Invoices", () => {
     await expect(caller.invoices.list({})).resolves.toEqual([]);
     expect(listInvoicesSpy).toHaveBeenCalledWith(
       expect.objectContaining({
+        projectId: 1,
         excludeStatus: "revisada",
       })
     );
@@ -7612,6 +7672,26 @@ describe("BuildReq - Invoices", () => {
     await expect(caller.invoices.getById({ id: 10 })).resolves.toEqual(
       expect.objectContaining({
         invoice: expect.objectContaining({ status: "registrada" }),
+      })
+    );
+
+    getInvoiceByIdSpy.mockRestore();
+  });
+
+  it("Administracion Central can consult reviewed invoices", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        status: "revisada",
+      },
+    } as any);
+
+    await expect(caller.invoices.getById({ id: 10 })).resolves.toEqual(
+      expect.objectContaining({
+        invoice: expect.objectContaining({ status: "revisada" }),
       })
     );
 

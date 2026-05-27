@@ -66,7 +66,8 @@ export const dashboardRouter = router({
       userRole === "administracion_central" ||
       userRole === "administrador_proyecto" ||
       userRole === "bodeguero_proyecto";
-    const canAccessReviewedInvoices = isAdmin;
+    const canAccessReviewedInvoices =
+      isAdmin || userRole === "administracion_central";
     const flowQueueScope =
       userRole === "ingeniero_residente"
         ? { requestedById: user.id }
