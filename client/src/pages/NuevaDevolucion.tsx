@@ -24,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, Check, ChevronsUpDown, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, ChevronsUpDown, Plus, Search, Trash2 } from "lucide-react";
 import { useMemo, useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -65,6 +65,108 @@ function formatCompletedReceiptLabel(row?: any | null) {
   return [receiptNumber, orderNumber, supplierName, projectLabel]
     .filter(Boolean)
     .join(" — ");
+}
+
+function SapItemSearchInput({
+  value,
+  disabled,
+  resolving,
+  onChange,
+  onSelect,
+  onResolve,
+}: {
+  value: string;
+  disabled: boolean;
+  resolving: boolean;
+  onChange: (value: string) => void;
+  onSelect: (sapItemCode: string, itemName: string) => void;
+  onResolve: () => void;
+}) {
+  const [search, setSearch] = useState(value);
+  const [open, setOpen] = useState(false);
+  const trimmedSearch = search.trim();
+  const { data: results, isFetching } = trpc.requestItems.searchSapCatalog.useQuery(
+    { search: trimmedSearch },
+    { enabled: trimmedSearch.length >= 2 }
+  );
+
+  useEffect(() => {
+    setSearch(value);
+  }, [value]);
+
+  const hasSearch = trimmedSearch.length >= 2;
+  const hasResults = Boolean(results?.length);
+  const showPopover = open && hasSearch;
+
+  return (
+    <Popover open={showPopover} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setSearch(nextValue);
+              onChange(nextValue);
+              setOpen(nextValue.trim().length >= 2);
+            }}
+            onFocus={() => setOpen(trimmedSearch.length >= 2)}
+            onBlur={() => {
+              window.setTimeout(() => setOpen(false), 120);
+              if (trimmedSearch && !hasResults && !isFetching) onResolve();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                onResolve();
+                setOpen(false);
+              }
+            }}
+            placeholder={resolving ? "Buscando..." : "Buscar código o descripción"}
+            className="pl-9"
+            disabled={disabled || resolving}
+          />
+        </div>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="max-h-[280px] w-[var(--radix-popover-trigger-width)] overflow-y-auto p-0"
+        onOpenAutoFocus={(event) => event.preventDefault()}
+      >
+        {isFetching ? (
+          <div className="p-3 text-sm text-muted-foreground">Buscando...</div>
+        ) : hasResults ? (
+          <div className="py-1">
+            {results?.map((item: any) => (
+              <button
+                key={item.id}
+                type="button"
+                className="flex w-full items-start gap-3 border-b border-border px-3 py-2 text-left transition-colors last:border-0 hover:bg-muted/60"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onSelect(item.itemCode, item.description);
+                  setSearch(item.itemCode);
+                  setOpen(false);
+                }}
+              >
+                <span className="shrink-0 font-mono text-xs font-semibold text-primary">
+                  {item.itemCode}
+                </span>
+                <span className="min-w-0 text-xs leading-snug text-foreground">
+                  {item.description}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="p-3 text-sm text-muted-foreground">
+            Sin resultados por código o descripción.
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 export default function NuevaDevolucion() {
@@ -260,7 +362,9 @@ export default function NuevaDevolucion() {
           };
           return next;
         });
-        toast.error(`No se encontró el código SAP ${normalizedSapItemCode}`);
+        toast.error(
+          `No se encontró una coincidencia única para ${normalizedSapItemCode}`
+        );
         return;
       }
 
@@ -629,27 +733,37 @@ export default function NuevaDevolucion() {
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   </div>
-                  <div className="grid grid-cols-12 gap-2">
-                    <div className="col-span-2">
-                      <Input
-                        placeholder={
-                          resolvingSapIndex === index ? "Buscando..." : "Código SAP"
-                        }
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
+                    <div className="space-y-1 md:col-span-3">
+                      <Label className="text-xs font-medium text-muted-foreground">
+                        Código SAP / descripción
+                      </Label>
+                      <SapItemSearchInput
                         value={item.sapItemCode}
-                        onChange={(e) =>
-                          updateItem(index, "sapItemCode", e.target.value)
-                        }
-                        onBlur={() => void resolveSapItem(index)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            void resolveSapItem(index);
-                          }
-                        }}
+                        resolving={resolvingSapIndex === index}
                         disabled={resolvingSapIndex === index}
+                        onChange={(value) =>
+                          updateItem(index, "sapItemCode", value)
+                        }
+                        onSelect={(sapItemCode, itemName) => {
+                          setItems((current) => {
+                            const next = [...current];
+                            if (!next[index]) return current;
+                            next[index] = {
+                              ...next[index],
+                              sapItemCode,
+                              itemName,
+                            };
+                            return next;
+                          });
+                        }}
+                        onResolve={() => void resolveSapItem(index)}
                       />
                     </div>
-                    <div className="col-span-4">
+                    <div className="space-y-1 md:col-span-4">
+                      <Label className="text-xs font-medium text-muted-foreground">
+                        Nombre del ítem
+                      </Label>
                       <Input
                         placeholder="Nombre del ítem"
                         value={item.itemName}
@@ -658,7 +772,10 @@ export default function NuevaDevolucion() {
                         }
                       />
                     </div>
-                    <div className="col-span-2">
+                    <div className="space-y-1 md:col-span-1">
+                      <Label className="text-xs font-medium text-muted-foreground">
+                        Cant.
+                      </Label>
                       <Input
                         type="number"
                         placeholder="Cant."
@@ -668,7 +785,10 @@ export default function NuevaDevolucion() {
                         }
                       />
                     </div>
-                    <div className="col-span-2">
+                    <div className="space-y-1 md:col-span-2">
+                      <Label className="text-xs font-medium text-muted-foreground">
+                        Unidad
+                      </Label>
                       <Input
                         placeholder="Unidad"
                         value={item.unit}
@@ -677,7 +797,10 @@ export default function NuevaDevolucion() {
                         }
                       />
                     </div>
-                    <div className="col-span-2">
+                    <div className="space-y-1 md:col-span-2">
+                      <Label className="text-xs font-medium text-muted-foreground">
+                        Condición
+                      </Label>
                       <Select
                         value={item.condition}
                         onValueChange={(val) =>
