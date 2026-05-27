@@ -30,6 +30,34 @@ import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 
+const UNITS = [
+  { value: "und", label: "Unidades (und)" },
+  { value: "m", label: "Metros (m)" },
+  { value: "m2", label: "Metros cuadrados (m²)" },
+  { value: "m3", label: "Metros cúbicos (m³)" },
+  { value: "ml", label: "Metros lineales (ml)" },
+  { value: "kg", label: "Kilogramos (kg)" },
+  { value: "ton", label: "Toneladas (ton)" },
+  { value: "lb", label: "Libras (lb)" },
+  { value: "gal", label: "Galones (gal)" },
+  { value: "lt", label: "Litros (lt)" },
+  { value: "saco", label: "Sacos" },
+  { value: "bolsa", label: "Bolsas" },
+  { value: "rollo", label: "Rollos" },
+  { value: "lamina", label: "Láminas" },
+  { value: "varilla", label: "Varillas" },
+  { value: "tubo", label: "Tubos" },
+  { value: "pieza", label: "Piezas" },
+  { value: "par", label: "Pares" },
+  { value: "caja", label: "Cajas" },
+  { value: "cubeta", label: "Cubetas" },
+  { value: "quintal", label: "Quintales (qq)" },
+  { value: "pie2", label: "Pies cuadrados (ft²)" },
+  { value: "plg", label: "Pulgadas (plg)" },
+  { value: "viaje", label: "Viajes" },
+  { value: "global", label: "Global" },
+];
+
 type ReturnItem = {
   sapItemCode: string;
   itemName: string;
@@ -169,6 +197,70 @@ function SapItemSearchInput({
   );
 }
 
+function UnitCombobox({
+  value,
+  open,
+  onOpenChange,
+  onChange,
+}: {
+  value: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChange: (value: string) => void;
+}) {
+  const selectedUnit = UNITS.find((unit) => unit.value === value);
+
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="h-10 w-full justify-between px-3 font-normal"
+        >
+          <span className="truncate">
+            {selectedUnit?.label || value || "Seleccione unidad"}
+          </span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[240px] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Buscar unidad..." />
+          <CommandList>
+            <CommandEmpty>No se encontraron unidades.</CommandEmpty>
+            <CommandGroup>
+              {UNITS.map((unit) => {
+                const selected = value === unit.value;
+
+                return (
+                  <CommandItem
+                    key={unit.value}
+                    value={`${unit.value} ${unit.label}`}
+                    onSelect={() => {
+                      onChange(unit.value);
+                      onOpenChange(false);
+                    }}
+                  >
+                    <Check
+                      className={`mr-2 h-4 w-4 ${
+                        selected ? "opacity-100" : "opacity-0"
+                      }`}
+                    />
+                    <span>{unit.label}</span>
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export default function NuevaDevolucion() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
@@ -194,6 +286,7 @@ export default function NuevaDevolucion() {
   const [sourceReceiptId, setSourceReceiptId] = useState("");
   const [receiptPopoverOpen, setReceiptPopoverOpen] = useState(false);
   const [resolvingSapIndex, setResolvingSapIndex] = useState<number | null>(null);
+  const [unitPopoverOpen, setUnitPopoverOpen] = useState<number | null>(null);
   const [items, setItems] = useState<ReturnItem[]>([blankReturnItem()]);
   const { data: completedPurchaseReceipts } = trpc.receipts.list.useQuery(
     { sourceType: "purchase_order", status: "completa" },
@@ -789,11 +882,14 @@ export default function NuevaDevolucion() {
                       <Label className="text-xs font-medium text-muted-foreground">
                         Unidad
                       </Label>
-                      <Input
-                        placeholder="Unidad"
+                      <UnitCombobox
                         value={item.unit}
-                        onChange={(e) =>
-                          updateItem(index, "unit", e.target.value)
+                        open={unitPopoverOpen === index}
+                        onOpenChange={(open) =>
+                          setUnitPopoverOpen(open ? index : null)
+                        }
+                        onChange={(value) =>
+                          updateItem(index, "unit", value)
                         }
                       />
                     </div>
