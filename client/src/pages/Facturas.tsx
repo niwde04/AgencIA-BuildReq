@@ -256,9 +256,7 @@ export default function Facturas() {
   const canReviewInvoices = canEditInvoices;
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState(
-    isAccountant ? "revisada" : "all"
-  );
+  const [statusFilter, setStatusFilter] = useState("all");
   const [accountingComment, setAccountingComment] = useState("");
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectionComment, setRejectionComment] = useState("");
@@ -349,12 +347,6 @@ export default function Facturas() {
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
   });
-  useEffect(() => {
-    if (isAccountant && statusFilter !== "revisada") {
-      setStatusFilter("revisada");
-    }
-  }, [isAccountant, statusFilter]);
-
   useEffect(() => {
     if (!detail?.invoice) return;
     setInvoiceDraft({
@@ -452,6 +444,8 @@ export default function Facturas() {
     .reduce((sum: number, item: any) => sum + toNumber(item.subtotal), 0);
   const supplierAllowsTaxWithholding =
     detail?.supplier?.allowsTaxWithholding !== false;
+  const supplierSubjectToAccountPayments =
+    detail?.supplier?.subjectToAccountPayments !== false;
   const canRetainSelectedInvoice =
     supplierAllowsTaxWithholding && withholdingBase > 0;
   const retentionDisabledReason = !supplierAllowsTaxWithholding
@@ -745,18 +739,26 @@ export default function Facturas() {
         <Select
           value={statusFilter}
           onValueChange={setStatusFilter}
-          disabled={isAccountant}
         >
           <SelectTrigger className="h-10 w-full lg:w-56">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Todos los estados</SelectItem>
-            {Object.entries(STATUS_LABELS).map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
+            <SelectItem value="all">
+              {isAccountant ? "Revisión y contabilizadas" : "Todos los estados"}
+            </SelectItem>
+            {Object.entries(STATUS_LABELS)
+              .filter(
+                ([value]) =>
+                  !isAccountant ||
+                  value === "revisada" ||
+                  value === "registrada"
+              )
+              .map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
           </SelectContent>
         </Select>
       </div>
@@ -983,18 +985,32 @@ export default function Facturas() {
                         ? `${detail.supplier.supplierCode} — ${detail.supplier.name}`
                         : "Proveedor pendiente"}
                     </p>
-                    <Badge
-                      variant="outline"
-                      className={`mt-3 text-xs ${
-                        supplierAllowsTaxWithholding
-                          ? "border-emerald-300 text-emerald-700"
-                          : "border-amber-300 text-amber-700"
-                      }`}
-                    >
-                      {supplierAllowsTaxWithholding
-                        ? "Permite retención"
-                        : "No permite retención"}
-                    </Badge>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Badge
+                        variant="outline"
+                        className={`text-xs ${
+                          supplierAllowsTaxWithholding
+                            ? "border-emerald-300 text-emerald-700"
+                            : "border-amber-300 text-amber-700"
+                        }`}
+                      >
+                        {supplierAllowsTaxWithholding
+                          ? "Permite retención"
+                          : "No permite retención"}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className={`text-xs ${
+                          supplierSubjectToAccountPayments
+                            ? "border-blue-300 text-blue-700"
+                            : "border-slate-300 text-slate-600"
+                        }`}
+                      >
+                        {supplierSubjectToAccountPayments
+                          ? "Sujeto a pagos a cuenta"
+                          : "No sujeto a pagos a cuenta"}
+                      </Badge>
+                    </div>
                   </div>
                   <div className="min-w-0 rounded-lg border border-border/70 bg-muted/20 p-4 md:col-span-4">
                     <Label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
@@ -1520,20 +1536,20 @@ export default function Facturas() {
               <aside className="min-w-0 space-y-4 xl:sticky xl:top-4 xl:self-start">
                 <section
                   className={`rounded-lg border p-4 text-sm ${
-                    supplierAllowsTaxWithholding
+                    supplierSubjectToAccountPayments
                       ? "border-blue-200 bg-blue-50 text-blue-800"
                       : "border-amber-200 bg-amber-50 text-amber-800"
                   }`}
                 >
                   <p className="font-semibold">
-                    {supplierAllowsTaxWithholding
+                    {supplierSubjectToAccountPayments
                       ? "Proveedor sujeto a pagos a cuenta"
                       : "Proveedor no sujeto a pagos a cuenta"}
                   </p>
                   <p className="mt-1">
                     {supplierAllowsTaxWithholding
-                      ? "Se aplican retenciones según normativa vigente."
-                      : "No se aplican retenciones para este proveedor."}
+                      ? "Permite aplicar retenciones según normativa vigente."
+                      : "No permite retenciones para este proveedor."}
                   </p>
                 </section>
 
@@ -1632,6 +1648,21 @@ export default function Facturas() {
                     <div className="flex justify-between gap-3">
                       <span className="text-muted-foreground">
                         Proveedor sujeto a pagos a cuenta
+                      </span>
+                      <Badge
+                        variant="outline"
+                        className={
+                          supplierSubjectToAccountPayments
+                            ? "border-emerald-300 text-emerald-700"
+                            : "border-slate-300 text-slate-600"
+                        }
+                      >
+                        {supplierSubjectToAccountPayments ? "Sí" : "No"}
+                      </Badge>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">
+                        Permite retención
                       </span>
                       <Badge
                         variant="outline"

@@ -220,13 +220,15 @@ export const suppliersRouter = router({
     .input(
       z.object({
         id: z.number().int().positive(),
-        allowsTaxWithholding: z.boolean(),
+        allowsTaxWithholding: z.boolean().optional(),
+        subjectToAccountPayments: z.boolean().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       assertCanReadSuppliers(ctx.user);
       return db.updateSupplier(input.id, {
         allowsTaxWithholding: input.allowsTaxWithholding,
+        subjectToAccountPayments: input.subjectToAccountPayments,
       });
     }),
 

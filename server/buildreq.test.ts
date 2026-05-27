@@ -498,6 +498,7 @@ describe("BuildReq - Suppliers catalog", () => {
             name: "Proveedor Demo",
             email: "proveedor@example.com",
             allowsTaxWithholding: true,
+            subjectToAccountPayments: true,
             isActive: true,
           },
         ],
@@ -531,23 +532,31 @@ describe("BuildReq - Suppliers catalog", () => {
     listSupplierCatalogSpy.mockRestore();
   });
 
-  it("Authorized users can update supplier withholding flag", async () => {
+  it("Authorized users can update supplier fiscal flags", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
     const updateSupplierSpy = vi.spyOn(db, "updateSupplier").mockResolvedValue({
       id: 5,
       allowsTaxWithholding: false,
+      subjectToAccountPayments: false,
     } as any);
 
     await expect(
       caller.suppliers.update({
         id: 5,
         allowsTaxWithholding: false,
+        subjectToAccountPayments: false,
       })
-    ).resolves.toEqual(expect.objectContaining({ allowsTaxWithholding: false }));
+    ).resolves.toEqual(
+      expect.objectContaining({
+        allowsTaxWithholding: false,
+        subjectToAccountPayments: false,
+      })
+    );
 
     expect(updateSupplierSpy).toHaveBeenCalledWith(5, {
       allowsTaxWithholding: false,
+      subjectToAccountPayments: false,
     });
 
     updateSupplierSpy.mockRestore();
@@ -7316,7 +7325,7 @@ describe("BuildReq - Invoices", () => {
     listInvoicesSpy.mockRestore();
   });
 
-  it("Contable can list only reviewed invoices", async () => {
+  it("Contable can list reviewed and accounted invoices", async () => {
     const { ctx } = createContableContext();
     const caller = appRouter.createCaller(ctx);
     const listInvoicesSpy = vi.spyOn(db, "listInvoices").mockResolvedValue([]);
@@ -7324,7 +7333,16 @@ describe("BuildReq - Invoices", () => {
     await expect(caller.invoices.list({ status: "borrador" as any })).resolves.toEqual([]);
     expect(listInvoicesSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "revisada",
+        status: undefined,
+        statuses: ["revisada", "registrada"],
+      })
+    );
+
+    await expect(caller.invoices.list({ status: "registrada" })).resolves.toEqual([]);
+    expect(listInvoicesSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "registrada",
+        statuses: undefined,
       })
     );
 
@@ -7360,8 +7378,29 @@ describe("BuildReq - Invoices", () => {
 
     await expect(caller.invoices.getById({ id: 10 })).rejects.toMatchObject({
       code: "FORBIDDEN",
-      message: "Contabilidad solo puede ver facturas revisadas",
+      message:
+        "Contabilidad solo puede ver facturas revisadas o contabilizadas",
     });
+
+    getInvoiceByIdSpy.mockRestore();
+  });
+
+  it("Contable can consult accounted invoices", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        status: "registrada",
+      },
+    } as any);
+
+    await expect(caller.invoices.getById({ id: 10 })).resolves.toEqual(
+      expect.objectContaining({
+        invoice: expect.objectContaining({ status: "registrada" }),
+      })
+    );
 
     getInvoiceByIdSpy.mockRestore();
   });
@@ -8069,7 +8108,7 @@ describe("BuildReq - Document attachments", () => {
     storagePutSpy.mockRestore();
   });
 
-  it("lets Contable view reviewed invoice attachments but not upload them", async () => {
+  it("lets Contable view reviewed and accounted invoice attachments but not upload them", async () => {
     const { ctx } = createContableContext();
     const caller = appRouter.createCaller(ctx);
     const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
@@ -8094,6 +8133,20 @@ describe("BuildReq - Document attachments", () => {
     });
     const storagePutSpy = vi.spyOn(storage, "storagePut");
 
+    await expect(
+      caller.attachments.getByEntity({
+        entityType: "invoice",
+        entityId: 10,
+      })
+    ).resolves.toEqual([expect.objectContaining({ id: 99 })]);
+
+    getInvoiceByIdSpy.mockResolvedValue({
+      invoice: {
+        id: 10,
+        projectId: 1,
+        status: "registrada",
+      },
+    } as any);
     await expect(
       caller.attachments.getByEntity({
         entityType: "invoice",
@@ -8142,7 +8195,8 @@ describe("BuildReq - Document attachments", () => {
       })
     ).rejects.toMatchObject({
       code: "FORBIDDEN",
-      message: "Contabilidad solo puede ver adjuntos de facturas revisadas",
+      message:
+        "Contabilidad solo puede ver adjuntos de facturas revisadas o contabilizadas",
     });
     expect(getAttachmentsByEntitySpy).not.toHaveBeenCalled();
 

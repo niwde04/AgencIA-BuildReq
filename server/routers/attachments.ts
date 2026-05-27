@@ -256,10 +256,15 @@ async function assertInvoiceAttachmentAccess(
     detail.invoice.projectId,
     "No tiene acceso a adjuntos de facturas de otro proyecto"
   );
-  if (user.buildreqRole === "contable" && detail.invoice.status !== "revisada") {
+  if (
+    user.buildreqRole === "contable" &&
+    detail.invoice.status !== "revisada" &&
+    detail.invoice.status !== "registrada"
+  ) {
     throw new TRPCError({
       code: "FORBIDDEN",
-      message: "Contabilidad solo puede ver adjuntos de facturas revisadas",
+      message:
+        "Contabilidad solo puede ver adjuntos de facturas revisadas o contabilizadas",
     });
   }
 

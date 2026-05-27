@@ -72,17 +72,20 @@ function assertAccountingAccess(
   user: { role: string; buildreqRole?: string | null },
   detail: NonNullable<Awaited<ReturnType<typeof db.getInvoiceById>>>
 ) {
-  if (detail.invoice.status !== "revisada") {
+  const accountingVisibleStatuses = ["revisada", "registrada"];
+  if (!accountingVisibleStatuses.includes(detail.invoice.status)) {
     if (user.buildreqRole !== "contable") return;
     throw new TRPCError({
       code: "FORBIDDEN",
-      message: "Contabilidad solo puede ver facturas revisadas",
+      message:
+        "Contabilidad solo puede ver facturas revisadas o contabilizadas",
     });
   }
   if (!canAccessReviewedInvoices(user)) {
     throw new TRPCError({
       code: "FORBIDDEN",
-      message: "Solo Contabilidad o Superusuario puede ver facturas revisadas",
+      message:
+        "Solo Contabilidad o Superusuario puede ver facturas revisadas o contabilizadas",
     });
   }
 }
@@ -198,8 +201,19 @@ export const invoicesRouter = router({
         ctx.user.buildreqRole === "bodeguero_proyecto"
           ? ctx.user.assignedProjectId ?? -1
           : input?.projectId;
+      const accountantStatuses = ["revisada", "registrada"];
       const status =
-        ctx.user.buildreqRole === "contable" ? "revisada" : input?.status;
+        ctx.user.buildreqRole === "contable" &&
+        input?.status &&
+        accountantStatuses.includes(input.status)
+          ? input.status
+          : ctx.user.buildreqRole === "contable"
+            ? undefined
+            : input?.status;
+      const statuses =
+        ctx.user.buildreqRole === "contable" && !status
+          ? accountantStatuses
+          : undefined;
       const excludeStatus =
         !canAccessReviewedInvoices(ctx.user) && status !== "revisada"
           ? "revisada"
@@ -212,6 +226,7 @@ export const invoicesRouter = router({
         ...input,
         projectId,
         status,
+        statuses,
         excludeStatus,
       });
     }),

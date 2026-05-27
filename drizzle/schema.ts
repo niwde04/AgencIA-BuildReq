@@ -1502,6 +1502,9 @@ export const suppliers = pgTable(
     allowsTaxWithholding: boolean("allowsTaxWithholding")
       .default(true)
       .notNull(),
+    subjectToAccountPayments: boolean("subjectToAccountPayments")
+      .default(true)
+      .notNull(),
     isActive: boolean("isActive").default(true).notNull(),
     demoBatchKey: varchar("demoBatchKey", { length: 64 }),
     createdAt: timestamp("createdAt").defaultNow().notNull(),

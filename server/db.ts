@@ -5774,6 +5774,7 @@ export async function updateTaxRetention(
 export async function listInvoices(filters?: {
   projectId?: number;
   status?: string;
+  statuses?: string[];
   excludeStatus?: string;
   supplierId?: number;
   search?: string;
@@ -5785,6 +5786,8 @@ export async function listInvoices(filters?: {
     conditions.push(eq(invoices.projectId, filters.projectId));
   if (filters?.status)
     conditions.push(eq(invoices.status, filters.status as any));
+  if (filters?.statuses?.length)
+    conditions.push(inArray(invoices.status, filters.statuses as any));
   if (filters?.excludeStatus)
     conditions.push(sql`${invoices.status} <> ${filters.excludeStatus}`);
   if (filters?.supplierId)
@@ -10055,7 +10058,10 @@ export async function listSupplierCatalog(filters?: SupplierListFilters) {
 
 export async function updateSupplier(
   id: number,
-  data: { allowsTaxWithholding?: boolean }
+  data: {
+    allowsTaxWithholding?: boolean;
+    subjectToAccountPayments?: boolean;
+  }
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");

@@ -49,6 +49,7 @@ type SupplierRecord = {
   name: string;
   email?: string | null;
   allowsTaxWithholding: boolean;
+  subjectToAccountPayments: boolean;
   isActive: boolean;
 };
 
@@ -171,6 +172,8 @@ export default function Proveedores() {
   const [selectedSupplier, setSelectedSupplier] =
     useState<SupplierRecord | null>(null);
   const [editAllowsTaxWithholding, setEditAllowsTaxWithholding] =
+    useState(true);
+  const [editSubjectToAccountPayments, setEditSubjectToAccountPayments] =
     useState(true);
   const [contactProjectId, setContactProjectId] = useState("");
   const [editingContactId, setEditingContactId] = useState<number | null>(null);
@@ -378,6 +381,9 @@ export default function Proveedores() {
   const openEditDialog = (supplier: SupplierRecord) => {
     setSelectedSupplier(supplier);
     setEditAllowsTaxWithholding(supplier.allowsTaxWithholding);
+    setEditSubjectToAccountPayments(
+      supplier.subjectToAccountPayments !== false
+    );
     setEditingContactId(null);
     setContactDraft(EMPTY_CONTACT_DRAFT);
   };
@@ -387,6 +393,7 @@ export default function Proveedores() {
     updateMutation.mutate({
       id: selectedSupplier.id,
       allowsTaxWithholding: editAllowsTaxWithholding,
+      subjectToAccountPayments: editSubjectToAccountPayments,
     });
   };
 
@@ -650,6 +657,9 @@ export default function Proveedores() {
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Retención
                       </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Pagos a cuenta
+                      </th>
                       {canManage ? (
                         <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Acciones
@@ -696,6 +706,20 @@ export default function Proveedores() {
                             {supplier.allowsTaxWithholding
                               ? "Permite"
                               : "No permite"}
+                          </Badge>
+                        </td>
+                        <td className="p-3">
+                          <Badge
+                            variant="outline"
+                            className={
+                              supplier.subjectToAccountPayments !== false
+                                ? "border-blue-300 text-blue-700"
+                                : "border-muted-foreground/30 text-muted-foreground"
+                            }
+                          >
+                            {supplier.subjectToAccountPayments !== false
+                              ? "Sujeto"
+                              : "No sujeto"}
                           </Badge>
                         </td>
                         {canManage ? (
@@ -789,6 +813,16 @@ export default function Proveedores() {
                 <Switch
                   checked={editAllowsTaxWithholding}
                   onCheckedChange={setEditAllowsTaxWithholding}
+                />
+              </div>
+
+              <div className="flex items-center justify-between rounded-md border p-3">
+                <Label className="text-sm">
+                  Proveedor sujeto a pagos a cuenta
+                </Label>
+                <Switch
+                  checked={editSubjectToAccountPayments}
+                  onCheckedChange={setEditSubjectToAccountPayments}
                 />
               </div>
 
