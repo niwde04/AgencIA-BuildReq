@@ -11,9 +11,29 @@ function canReadSuppliers(user: {
   buildreqRole?: string | null;
 }) {
   return (
+    canManageSupplierCatalog(user) ||
+    user.buildreqRole === "administrador_proyecto"
+  );
+}
+
+function canManageSupplierCatalog(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administracion_central"
+  );
+}
+
+function canManageSupplierContacts(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  return (
+    canManageSupplierCatalog(user) ||
+    user.buildreqRole === "administrador_proyecto"
   );
 }
 
@@ -25,6 +45,52 @@ function assertCanReadSuppliers(user: {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene acceso al catálogo de proveedores",
+    });
+  }
+}
+
+function assertCanManageSupplierCatalog(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  assertCanReadSuppliers(user);
+
+  if (!canManageSupplierCatalog(user)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para modificar el catálogo de proveedores",
+    });
+  }
+}
+
+function assertCanManageSupplierContacts(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  if (!canManageSupplierContacts(user)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para gestionar contactos de proveedores",
+    });
+  }
+}
+
+function assertProjectContactAccess(
+  user: {
+    role?: string | null;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+  },
+  projectId?: number | null
+) {
+  if (user.role === "admin" || user.buildreqRole !== "administrador_proyecto") {
+    return;
+  }
+
+  if (!projectId || !user.assignedProjectId || user.assignedProjectId !== projectId) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Solo puede gestionar contactos del proyecto asignado",
     });
   }
 }
@@ -225,7 +291,7 @@ export const suppliersRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      assertCanReadSuppliers(ctx.user);
+      assertCanManageSupplierCatalog(ctx.user);
       return db.updateSupplier(input.id, {
         allowsTaxWithholding: input.allowsTaxWithholding,
         subjectToAccountPayments: input.subjectToAccountPayments,
@@ -235,14 +301,14 @@ export const suppliersRouter = router({
   listDocumentTypes: protectedProcedure
     .input(z.object({ includeInactive: z.boolean().optional() }).optional())
     .query(async ({ ctx, input }) => {
-      assertCanReadSuppliers(ctx.user);
+      assertCanManageSupplierCatalog(ctx.user);
       return db.listSupplierDocumentTypes(input ?? {});
     }),
 
   createDocumentType: protectedProcedure
     .input(supplierDocumentTypePayloadSchema)
     .mutation(async ({ ctx, input }) => {
-      assertCanReadSuppliers(ctx.user);
+      assertCanManageSupplierCatalog(ctx.user);
       const code = slugifyDocumentTypeCode(input.code || input.name);
       if (!code) {
         throw new TRPCError({
@@ -263,7 +329,7 @@ export const suppliersRouter = router({
   updateDocumentType: protectedProcedure
     .input(supplierDocumentTypeUpdateSchema)
     .mutation(async ({ ctx, input }) => {
-      assertCanReadSuppliers(ctx.user);
+      assertCanManageSupplierCatalog(ctx.user);
       const data: Parameters<typeof db.updateSupplierDocumentType>[1] = {};
       if (input.code !== undefined) {
         const code = slugifyDocumentTypeCode(input.code);
@@ -290,14 +356,14 @@ export const suppliersRouter = router({
   deactivateDocumentType: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
-      assertCanReadSuppliers(ctx.user);
+      assertCanManageSupplierCatalog(ctx.user);
       return db.updateSupplierDocumentType(input.id, { isActive: false });
     }),
 
   listDocuments: protectedProcedure
     .input(z.object({ supplierId: z.number().int().positive() }))
     .query(async ({ ctx, input }) => {
-      assertCanReadSuppliers(ctx.user);
+      assertCanManageSupplierCatalog(ctx.user);
       const supplier = await db.getSupplierById(input.supplierId);
       if (!supplier) {
         throw new TRPCError({
@@ -312,7 +378,7 @@ export const suppliersRouter = router({
   createDocument: protectedProcedure
     .input(supplierDocumentCreateSchema)
     .mutation(async ({ ctx, input }) => {
-      assertCanReadSuppliers(ctx.user);
+      assertCanManageSupplierCatalog(ctx.user);
       const [supplier, documentType] = await Promise.all([
         db.getSupplierById(input.supplierId),
         db.getSupplierDocumentTypeById(input.documentTypeId),
@@ -389,7 +455,7 @@ export const suppliersRouter = router({
   updateDocument: protectedProcedure
     .input(supplierDocumentUpdateSchema)
     .mutation(async ({ ctx, input }) => {
-      assertCanReadSuppliers(ctx.user);
+      assertCanManageSupplierCatalog(ctx.user);
       const current = await db.getSupplierDocumentById(input.id);
       if (!current) {
         throw new TRPCError({
@@ -441,7 +507,7 @@ export const suppliersRouter = router({
   deleteDocument: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
-      assertCanReadSuppliers(ctx.user);
+      assertCanManageSupplierCatalog(ctx.user);
       const document = await db.getSupplierDocumentById(input.id);
       if (!document) {
         throw new TRPCError({
@@ -464,7 +530,8 @@ export const suppliersRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
-      assertCanReadSuppliers(ctx.user);
+      assertCanManageSupplierContacts(ctx.user);
+      assertProjectContactAccess(ctx.user, input.projectId);
       return db.listSupplierContacts(input);
     }),
 
@@ -475,7 +542,8 @@ export const suppliersRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      assertCanReadSuppliers(ctx.user);
+      assertCanManageSupplierContacts(ctx.user);
+      assertProjectContactAccess(ctx.user, input.projectId);
       await assertSupplierAndProjectExist(input.supplierId, input.projectId);
       return db.createSupplierContact({
         supplierId: input.supplierId,
@@ -497,7 +565,7 @@ export const suppliersRouter = router({
         .extend({ id: z.number().int().positive() })
     )
     .mutation(async ({ ctx, input }) => {
-      assertCanReadSuppliers(ctx.user);
+      assertCanManageSupplierContacts(ctx.user);
       const contact = await db.getSupplierContactById(input.id);
       if (!contact) {
         throw new TRPCError({
@@ -505,7 +573,9 @@ export const suppliersRouter = router({
           message: "Contacto no encontrado",
         });
       }
+      assertProjectContactAccess(ctx.user, contact.projectId);
       if (input.projectId) {
+        assertProjectContactAccess(ctx.user, input.projectId);
         await assertSupplierAndProjectExist(contact.supplierId, input.projectId);
       }
 

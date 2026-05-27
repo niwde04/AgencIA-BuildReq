@@ -194,10 +194,12 @@ export default function Proveedores() {
   const documentFileInputRef = useRef<HTMLInputElement>(null);
 
   const buildreqRole = (user as any)?.buildreqRole || "";
-  const canManage =
+  const canManageSupplierCatalog =
     user?.role === "admin" ||
     buildreqRole === "jefe_bodega_central" ||
     buildreqRole === "administracion_central";
+  const canManageSupplierContacts =
+    canManageSupplierCatalog || buildreqRole === "administrador_proyecto";
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -246,12 +248,16 @@ export default function Proveedores() {
   const { data: documentTypesRaw, isLoading: documentTypesLoading } =
     trpc.suppliers.listDocumentTypes.useQuery(
       { includeInactive: true },
-      { enabled: Boolean(selectedSupplier) || documentTypesDialogOpen }
+      {
+        enabled:
+          canManageSupplierCatalog &&
+          (Boolean(selectedSupplier) || documentTypesDialogOpen),
+      }
     );
   const { data: supplierDocumentsRaw, isLoading: documentsLoading } =
     trpc.suppliers.listDocuments.useQuery(
       { supplierId: selectedSupplier?.id ?? 0 },
-      { enabled: Boolean(selectedSupplier) }
+      { enabled: canManageSupplierCatalog && Boolean(selectedSupplier) }
     );
 
   useEffect(() => {
@@ -660,7 +666,7 @@ export default function Proveedores() {
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Pagos a cuenta
                       </th>
-                      {canManage ? (
+                      {canManageSupplierContacts ? (
                         <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Acciones
                         </th>
@@ -722,7 +728,7 @@ export default function Proveedores() {
                               : "No sujeto"}
                           </Badge>
                         </td>
-                        {canManage ? (
+                        {canManageSupplierContacts ? (
                           <td className="p-3 text-right">
                             <Button
                               type="button"
@@ -731,7 +737,7 @@ export default function Proveedores() {
                               onClick={() => openEditDialog(supplier)}
                             >
                               <Pencil className="mr-2 h-3.5 w-3.5" />
-                              Editar
+                              {canManageSupplierCatalog ? "Editar" : "Contactos"}
                             </Button>
                           </td>
                         ) : null}
@@ -779,7 +785,11 @@ export default function Proveedores() {
       >
         <DialogContent className="scrollbar-none max-h-[calc(100vh-1rem)] overflow-y-auto sm:max-w-5xl">
           <DialogHeader>
-            <DialogTitle>Editar proveedor</DialogTitle>
+            <DialogTitle>
+              {canManageSupplierCatalog
+                ? "Editar proveedor"
+                : "Contactos del proveedor"}
+            </DialogTitle>
           </DialogHeader>
 
           {selectedSupplier ? (
@@ -808,24 +818,29 @@ export default function Proveedores() {
                 <Input value={selectedSupplier.email || ""} readOnly />
               </div>
 
-              <div className="flex items-center justify-between rounded-md border p-3">
-                <Label className="text-sm">Permite retención</Label>
-                <Switch
-                  checked={editAllowsTaxWithholding}
-                  onCheckedChange={setEditAllowsTaxWithholding}
-                />
-              </div>
+              {canManageSupplierCatalog ? (
+                <>
+                  <div className="flex items-center justify-between rounded-md border p-3">
+                    <Label className="text-sm">Permite retención</Label>
+                    <Switch
+                      checked={editAllowsTaxWithholding}
+                      onCheckedChange={setEditAllowsTaxWithholding}
+                    />
+                  </div>
 
-              <div className="flex items-center justify-between rounded-md border p-3">
-                <Label className="text-sm">
-                  Proveedor sujeto a pagos a cuenta
-                </Label>
-                <Switch
-                  checked={editSubjectToAccountPayments}
-                  onCheckedChange={setEditSubjectToAccountPayments}
-                />
-              </div>
+                  <div className="flex items-center justify-between rounded-md border p-3">
+                    <Label className="text-sm">
+                      Proveedor sujeto a pagos a cuenta
+                    </Label>
+                    <Switch
+                      checked={editSubjectToAccountPayments}
+                      onCheckedChange={setEditSubjectToAccountPayments}
+                    />
+                  </div>
+                </>
+              ) : null}
 
+              {canManageSupplierContacts ? (
               <div className="space-y-4 rounded-md border p-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
@@ -1081,7 +1096,9 @@ export default function Proveedores() {
                   )}
                 </div>
               </div>
+              ) : null}
 
+              {canManageSupplierCatalog ? (
               <div className="space-y-4 rounded-md border p-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
@@ -1238,15 +1255,18 @@ export default function Proveedores() {
                   </div>
                 )}
               </div>
+              ) : null}
 
-              <Button
-                type="button"
-                onClick={submitUpdate}
-                disabled={updateMutation.isPending}
-                className="w-full"
-              >
-                Guardar cambios
-              </Button>
+              {canManageSupplierCatalog ? (
+                <Button
+                  type="button"
+                  onClick={submitUpdate}
+                  disabled={updateMutation.isPending}
+                  className="w-full"
+                >
+                  Guardar cambios
+                </Button>
+              ) : null}
             </div>
           ) : null}
         </DialogContent>

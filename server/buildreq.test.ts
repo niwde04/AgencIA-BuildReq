@@ -532,6 +532,41 @@ describe("BuildReq - Suppliers catalog", () => {
     listSupplierCatalogSpy.mockRestore();
   });
 
+  it("Project Administrator can list suppliers to manage project contacts", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const listSupplierCatalogSpy = vi
+      .spyOn(db, "listSupplierCatalog")
+      .mockResolvedValue({
+        items: [
+          {
+            id: 5,
+            supplierCode: "PL-00005",
+            name: "Proveedor Demo",
+            email: "proveedor@example.com",
+            allowsTaxWithholding: true,
+            subjectToAccountPayments: true,
+            isActive: true,
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 25,
+        totalPages: 1,
+      } as any);
+
+    await expect(
+      caller.suppliers.list({ page: 1, pageSize: 25 })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        total: 1,
+        items: [expect.objectContaining({ supplierCode: "PL-00005" })],
+      })
+    );
+
+    listSupplierCatalogSpy.mockRestore();
+  });
+
   it("Authorized users can update supplier fiscal flags", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -559,6 +594,25 @@ describe("BuildReq - Suppliers catalog", () => {
       subjectToAccountPayments: false,
     });
 
+    updateSupplierSpy.mockRestore();
+  });
+
+  it("Project Administrator cannot update supplier fiscal flags", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const updateSupplierSpy = vi.spyOn(db, "updateSupplier");
+
+    await expect(
+      caller.suppliers.update({
+        id: 5,
+        allowsTaxWithholding: false,
+        subjectToAccountPayments: false,
+      })
+    ).rejects.toThrow(
+      "No tiene permisos para modificar el catálogo de proveedores"
+    );
+
+    expect(updateSupplierSpy).not.toHaveBeenCalled();
     updateSupplierSpy.mockRestore();
   });
 
@@ -847,6 +901,97 @@ describe("BuildReq - Suppliers catalog", () => {
     expect(listSupplierDocumentsSpy).not.toHaveBeenCalled();
 
     listSupplierDocumentsSpy.mockRestore();
+  });
+
+  it("Project Administrator can create supplier contacts for the assigned project", async () => {
+    const { ctx } = createProjectAdminContext({ assignedProjectId: 1 });
+    const caller = appRouter.createCaller(ctx);
+    const getSupplierByIdSpy = vi
+      .spyOn(db, "getSupplierById")
+      .mockResolvedValue({ id: 5, name: "Proveedor Demo" } as any);
+    const getProjectByIdSpy = vi
+      .spyOn(db, "getProjectById")
+      .mockResolvedValue({ id: 1, code: "P-001", name: "Proyecto Uno" } as any);
+    const createSupplierContactSpy = vi
+      .spyOn(db, "createSupplierContact")
+      .mockResolvedValue({
+        id: 30,
+        supplierId: 5,
+        projectId: 1,
+        contactType: "ventas",
+        name: "Contacto Proyecto",
+        isActive: true,
+      } as any);
+
+    await expect(
+      caller.suppliers.createContact({
+        supplierId: 5,
+        projectId: 1,
+        contactType: "ventas",
+        name: "Contacto Proyecto",
+        phone: "9999-9999",
+        email: "contacto@proveedor.com",
+        isActive: true,
+      })
+    ).resolves.toEqual(expect.objectContaining({ id: 30, projectId: 1 }));
+
+    expect(createSupplierContactSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        supplierId: 5,
+        projectId: 1,
+        name: "Contacto Proyecto",
+      })
+    );
+
+    getSupplierByIdSpy.mockRestore();
+    getProjectByIdSpy.mockRestore();
+    createSupplierContactSpy.mockRestore();
+  });
+
+  it("Project Administrator cannot create supplier contacts for another project", async () => {
+    const { ctx } = createProjectAdminContext({ assignedProjectId: 1 });
+    const caller = appRouter.createCaller(ctx);
+    const createSupplierContactSpy = vi.spyOn(db, "createSupplierContact");
+
+    await expect(
+      caller.suppliers.createContact({
+        supplierId: 5,
+        projectId: 2,
+        contactType: "ventas",
+        name: "Contacto Otro Proyecto",
+        isActive: true,
+      })
+    ).rejects.toThrow("Solo puede gestionar contactos del proyecto asignado");
+
+    expect(createSupplierContactSpy).not.toHaveBeenCalled();
+    createSupplierContactSpy.mockRestore();
+  });
+
+  it("Project Administrator cannot update supplier contacts from another project", async () => {
+    const { ctx } = createProjectAdminContext({ assignedProjectId: 1 });
+    const caller = appRouter.createCaller(ctx);
+    const getSupplierContactByIdSpy = vi
+      .spyOn(db, "getSupplierContactById")
+      .mockResolvedValue({
+        id: 31,
+        supplierId: 5,
+        projectId: 2,
+        contactType: "ventas",
+        name: "Contacto Otro Proyecto",
+        isActive: true,
+      } as any);
+    const updateSupplierContactSpy = vi.spyOn(db, "updateSupplierContact");
+
+    await expect(
+      caller.suppliers.updateContact({
+        id: 31,
+        name: "No debe actualizar",
+      })
+    ).rejects.toThrow("Solo puede gestionar contactos del proyecto asignado");
+
+    expect(updateSupplierContactSpy).not.toHaveBeenCalled();
+    getSupplierContactByIdSpy.mockRestore();
+    updateSupplierContactSpy.mockRestore();
   });
 
   it("Deletes supplier document files and attachment records", async () => {

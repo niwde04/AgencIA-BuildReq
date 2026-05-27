@@ -107,7 +107,12 @@ const allMenuItems: MenuItem[] = [
     icon: Building2,
     label: "Proveedores",
     path: "/proveedores",
-    roles: ["jefe_bodega_central", "administracion_central", "admin"],
+    roles: [
+      "jefe_bodega_central",
+      "administracion_central",
+      "administrador_proyecto",
+      "admin",
+    ],
   },
   {
     icon: PackageMinus,
