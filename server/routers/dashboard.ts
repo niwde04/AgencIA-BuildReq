@@ -37,12 +37,15 @@ export const dashboardRouter = router({
     const user = ctx.user;
     const userRole = user.buildreqRole;
     if (userRole === "contable") {
+      const reviewedInvoices = await db.listInvoices({ status: "revisada" });
       return {
         materialRequestsPendingApproval: 0,
         supplyFlowsPending: 0,
         purchaseRequestsPending: 0,
         purchaseOrdersEmitted: 0,
         transferRequestsPending: 0,
+        invoicesPendingAttention: 0,
+        invoicesReviewed: reviewedInvoices.length,
       };
     }
     const isAdmin = user.role === "admin";
@@ -57,6 +60,13 @@ export const dashboardRouter = router({
       userRole === "administrador_proyecto";
     const canAccessPurchaseOrders =
       canAccessProcurement || userRole === "bodeguero_proyecto";
+    const canAccessInvoices =
+      isAdmin ||
+      userRole === "jefe_bodega_central" ||
+      userRole === "administracion_central" ||
+      userRole === "administrador_proyecto" ||
+      userRole === "bodeguero_proyecto";
+    const canAccessReviewedInvoices = isAdmin;
     const flowQueueScope =
       userRole === "ingeniero_residente"
         ? { requestedById: user.id }
@@ -86,6 +96,9 @@ export const dashboardRouter = router({
       pendingPurchaseRequests,
       emittedPurchaseOrders,
       pendingTransferRequests,
+      draftInvoices,
+      rejectedInvoices,
+      reviewedInvoices,
     ] = await Promise.all([
       db.listMaterialRequests({
         status: "pendiente_aprobar",
@@ -113,6 +126,24 @@ export const dashboardRouter = router({
             ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
           })
         : Promise.resolve([]),
+      canAccessInvoices
+        ? db.listInvoices({
+            status: "borrador",
+            ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+          })
+        : Promise.resolve([]),
+      canAccessInvoices
+        ? db.listInvoices({
+            status: "rechazada",
+            ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+          })
+        : Promise.resolve([]),
+      canAccessReviewedInvoices
+        ? db.listInvoices({
+            status: "revisada",
+            ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+          })
+        : Promise.resolve([]),
     ]);
 
     return {
@@ -122,6 +153,8 @@ export const dashboardRouter = router({
       purchaseRequestsPending: pendingPurchaseRequests.length,
       purchaseOrdersEmitted: emittedPurchaseOrders.length,
       transferRequestsPending: pendingTransferRequests.length,
+      invoicesPendingAttention: draftInvoices.length + rejectedInvoices.length,
+      invoicesReviewed: reviewedInvoices.length,
     };
   }),
 });

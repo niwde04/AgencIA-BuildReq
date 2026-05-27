@@ -1,4 +1,4 @@
-export const PURCHASE_ORDER_TAX_VALUES = ["exe", "isv_15"] as const;
+export const PURCHASE_ORDER_TAX_VALUES = ["exe", "isv_15", "isv_18"] as const;
 
 export type PurchaseOrderTaxCode = (typeof PURCHASE_ORDER_TAX_VALUES)[number];
 
@@ -40,6 +40,12 @@ export const PURCHASE_ORDER_TAX_OPTIONS = [
     label: "ISV 15%",
     shortLabel: "ISV 15%",
     rate: 0.15,
+  },
+  {
+    value: "isv_18" as const,
+    label: "ISV 18%",
+    shortLabel: "ISV 18%",
+    rate: 0.18,
   },
 ];
 
@@ -118,9 +124,25 @@ export function summarizePurchaseOrderLines(
       summary.totalIsv = roundPurchaseOrderMoney(
         summary.totalIsv + amounts.taxAmount
       );
+      summary.totalIsv15 = roundPurchaseOrderMoney(
+        summary.totalIsv15 +
+          (amounts.taxCode === "isv_15" ? amounts.taxAmount : 0)
+      );
+      summary.totalIsv18 = roundPurchaseOrderMoney(
+        summary.totalIsv18 +
+          (amounts.taxCode === "isv_18" ? amounts.taxAmount : 0)
+      );
       summary.totalExempt = roundPurchaseOrderMoney(
         summary.totalExempt +
           (amounts.taxRate === 0 ? amounts.subtotal : 0)
+      );
+      summary.totalTaxed15 = roundPurchaseOrderMoney(
+        summary.totalTaxed15 +
+          (amounts.taxCode === "isv_15" ? amounts.subtotal : 0)
+      );
+      summary.totalTaxed18 = roundPurchaseOrderMoney(
+        summary.totalTaxed18 +
+          (amounts.taxCode === "isv_18" ? amounts.subtotal : 0)
       );
       summary.total = roundPurchaseOrderMoney(summary.total + amounts.total);
 
@@ -129,10 +151,70 @@ export function summarizePurchaseOrderLines(
     {
       subtotal: 0,
       totalIsv: 0,
+      totalIsv15: 0,
+      totalIsv18: 0,
+      totalExonerated: 0,
       totalExempt: 0,
+      totalTaxed15: 0,
+      totalTaxed18: 0,
       total: 0,
     }
   );
+}
+
+export function getPurchaseOrderFiscalSummaryRows(
+  summary: ReturnType<typeof summarizePurchaseOrderLines>
+) {
+  return [
+    {
+      key: "subtotal",
+      label: "Sub-total L.",
+      value: summary.subtotal,
+      emphasized: false,
+    },
+    {
+      key: "exonerated",
+      label: "Importe exonerado L.",
+      value: summary.totalExonerated,
+      emphasized: false,
+    },
+    {
+      key: "exempt",
+      label: "Importe exento L.",
+      value: summary.totalExempt,
+      emphasized: false,
+    },
+    {
+      key: "taxed15",
+      label: "Importe gravado 15% L.",
+      value: summary.totalTaxed15,
+      emphasized: false,
+    },
+    {
+      key: "taxed18",
+      label: "Importe gravado 18% L.",
+      value: summary.totalTaxed18,
+      emphasized: false,
+    },
+    {
+      key: "isv15",
+      label: "I.S.V. 15% L.",
+      value: summary.totalIsv15,
+      emphasized: false,
+    },
+    {
+      key: "isv18",
+      label: "I.S.V. 18% L.",
+      value: summary.totalIsv18,
+      emphasized: false,
+    },
+    {
+      key: "total",
+      label: "Total a pagar L.",
+      value: summary.total,
+      emphasized: true,
+    },
+  ];
 }
 
 export function formatPurchaseOrderCurrency(

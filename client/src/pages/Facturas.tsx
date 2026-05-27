@@ -99,6 +99,17 @@ function formatDateLabel(value: string | Date | null | undefined) {
     : date.toLocaleDateString("es-HN");
 }
 
+function formatDateTimeLabel(value: string | Date | null | undefined) {
+  if (!value) return "Pendiente";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "Pendiente"
+    : date.toLocaleString("es-HN", {
+        dateStyle: "short",
+        timeStyle: "short",
+      });
+}
+
 function toNumber(value: string | number | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -129,6 +140,58 @@ function getInvoiceStatusColor(invoice: any) {
   return getInvoiceHasEmissionDeadlineIssue(invoice)
     ? EMISSION_DEADLINE_ISSUE_COLOR
     : STATUS_COLORS[invoice.status] || "";
+}
+
+function getInvoiceHistoryRows(invoice: any) {
+  if (!invoice) return [];
+
+  const rows: Array<{
+    label: string;
+    date?: string | Date | null;
+    state: "done" | "pending" | "danger";
+  }> = [
+    {
+      label: "Factura creada",
+      date: invoice.createdAt,
+      state: "done",
+    },
+  ];
+
+  if (invoice.reviewedAt) {
+    rows.push({
+      label: "Enviada a revisión",
+      date: invoice.reviewedAt,
+      state: "done",
+    });
+  } else if (invoice.status === "borrador" || invoice.status === "rechazada") {
+    rows.push({
+      label: "Pendiente de envío",
+      state: "pending",
+    });
+  }
+
+  if (invoice.rejectedAt) {
+    rows.push({
+      label: "Factura rechazada",
+      date: invoice.rejectedAt,
+      state: "danger",
+    });
+  }
+
+  if (invoice.accountedAt) {
+    rows.push({
+      label: "Factura contabilizada",
+      date: invoice.accountedAt,
+      state: "done",
+    });
+  } else if (invoice.status === "revisada") {
+    rows.push({
+      label: "Pendiente de contabilizar",
+      state: "pending",
+    });
+  }
+
+  return rows;
 }
 
 function emptyRetention(total: string | number, item?: any): RetentionDraft {
@@ -204,6 +267,7 @@ export default function Facturas() {
     cai: "",
     invoiceNumber: "",
     documentDate: "",
+    documentDueDate: "",
     postingDate: "",
     receiptDate: "",
     emissionDeadline: "",
@@ -298,6 +362,7 @@ export default function Facturas() {
       cai: detail.invoice.cai ?? "",
       invoiceNumber: detail.invoice.invoiceNumber ?? "",
       documentDate: dateInputValue(detail.invoice.documentDate),
+      documentDueDate: dateInputValue(detail.invoice.documentDueDate),
       postingDate: dateInputValue(detail.invoice.postingDate),
       receiptDate: dateInputValue(detail.invoice.receiptDate),
       emissionDeadline: dateInputValue(detail.invoice.emissionDeadline),
@@ -443,6 +508,10 @@ export default function Facturas() {
       );
       return;
     }
+    if (invoiceDraft.isFiscalDocument && !invoiceDraft.documentDueDate) {
+      toast.error("Selecciona la fecha de vencimiento del documento");
+      return;
+    }
     updateMutation.mutate({
       id: selectedId,
       isFiscalDocument: invoiceDraft.isFiscalDocument,
@@ -457,6 +526,7 @@ export default function Facturas() {
           : invoiceDraft.invoiceNumber.trim()
         : undefined,
       documentDate: invoiceDraft.documentDate,
+      documentDueDate: invoiceDraft.documentDueDate,
       postingDate: invoiceDraft.postingDate,
       receiptDate: invoiceDraft.receiptDate,
       emissionDeadline: invoiceDraft.emissionDeadline,
@@ -464,23 +534,60 @@ export default function Facturas() {
     });
   };
 
-  const getLineRetentionDraft = (itemId: number) =>
-    retentionDrafts.find(retention => retention.invoiceItemId === itemId);
+  const getLineRetentionDrafts = (itemId: number) =>
+    retentionDrafts.filter(retention => retention.invoiceItemId === itemId);
 
-  const handleLineRetentionChange = (item: any, value: string) => {
+  const getAvailableLineRetentionOptions = (itemId: number) => {
+    const selectedRetentionIds = new Set(
+      getLineRetentionDrafts(itemId).map(retention => retention.retentionCatalogId)
+    );
+    return retentionOptions.filter(
+      option => !selectedRetentionIds.has(String(option.id))
+    );
+  };
+
+  const sortRetentionDrafts = (drafts: RetentionDraft[]) =>
+    [...drafts].sort((a, b) => {
+      const lineComparison = (a.invoiceItemId ?? 0) - (b.invoiceItemId ?? 0);
+      if (lineComparison !== 0) return lineComparison;
+      return (a.retentionCode ?? "").localeCompare(b.retentionCode ?? "");
+    });
+
+  const handleAddLineRetention = (item: any, value: string) => {
+    const existingLineRetentions = getLineRetentionDrafts(item.id);
+    if (existingLineRetentions.length >= 2) {
+      toast.error("Este producto ya tiene dos retenciones");
+      return;
+    }
+    if (
+      existingLineRetentions.some(
+        retention => retention.retentionCatalogId === value
+      )
+    ) {
+      toast.error("Esta retención ya está aplicada a este producto");
+      return;
+    }
+
+    const selectedOption = retentionOptions.find(
+      option => String(option.id) === value
+    );
+    if (!selectedOption) return;
+
     setRetentionDrafts(current => {
-      const withoutLine = current.filter(
-        retention => retention.invoiceItemId !== item.id
+      const currentLineRetentions = current.filter(
+        retention => retention.invoiceItemId === item.id
       );
-      if (value === "none") return withoutLine;
+      if (currentLineRetentions.length >= 2) return current;
+      if (
+        currentLineRetentions.some(
+          retention => retention.retentionCatalogId === value
+        )
+      ) {
+        return current;
+      }
 
-      const selectedOption = retentionOptions.find(
-        option => String(option.id) === value
-      );
-      if (!selectedOption) return current;
-
-      return [
-        ...withoutLine,
+      return sortRetentionDrafts([
+        ...current,
         {
           ...emptyRetention(item.subtotal, item),
           retentionCatalogId: value,
@@ -490,7 +597,7 @@ export default function Facturas() {
           percentage: String(selectedOption.ratePercent),
           baseAmount: String(toNumber(item.subtotal).toFixed(2)),
         },
-      ].sort((a, b) => (a.invoiceItemId ?? 0) - (b.invoiceItemId ?? 0));
+      ]);
     });
   };
 
@@ -500,6 +607,8 @@ export default function Facturas() {
       toast.error(retentionDisabledReason || "La factura no permite retenciones");
       return;
     }
+    const lineRetentionCounts = new Map<number, number>();
+    const lineRetentionCatalogs = new Set<string>();
     for (let index = 0; index < retentionDrafts.length; index += 1) {
       const retention = retentionDrafts[index];
       const lineItem = retention.invoiceItemId
@@ -515,6 +624,26 @@ export default function Facturas() {
       if (retention.retentionCatalogId === "none") {
         toast.error(`Seleccione la retención${retentionLabel}`);
         return;
+      }
+      if (retention.invoiceItemId) {
+        const currentCount =
+          (lineRetentionCounts.get(retention.invoiceItemId) ?? 0) + 1;
+        lineRetentionCounts.set(retention.invoiceItemId, currentCount);
+        if (currentCount > 2) {
+          toast.error(
+            `El producto${retentionLabel} no puede tener más de dos retenciones`
+          );
+          return;
+        }
+
+        const duplicateKey = `${retention.invoiceItemId}:${retention.retentionCatalogId}`;
+        if (lineRetentionCatalogs.has(duplicateKey)) {
+          toast.error(
+            `La retención${retentionLabel} está repetida para el mismo producto`
+          );
+          return;
+        }
+        lineRetentionCatalogs.add(duplicateKey);
       }
       if (lineItem && lineItem.allowsTaxWithholding === false) {
         toast.error(`La línea ${lineItem.itemName} no permite retención`);
@@ -657,7 +786,7 @@ export default function Facturas() {
                       Origen
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Fecha límite
+                      Fechas
                     </th>
                     <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Total
@@ -702,7 +831,11 @@ export default function Facturas() {
                         </div>
                       </td>
                       <td className="p-3">
-                        {formatDateLabel(row.invoice.emissionDeadline)}
+                        <div>{formatDateLabel(row.invoice.documentDueDate)}</div>
+                        <div className="text-xs text-muted-foreground">
+                          Límite emisión:{" "}
+                          {formatDateLabel(row.invoice.emissionDeadline)}
+                        </div>
                       </td>
                       <td className="p-3 text-right font-medium">
                         {formatPurchaseOrderCurrency(row.invoice.total)}
@@ -747,19 +880,61 @@ export default function Facturas() {
           if (!open) setSelectedId(null);
         }}
       >
-        <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1500px] sm:p-6 lg:p-7">
-          <DialogHeader className="min-w-0 border-b border-border/70 pb-4 pr-10">
-            <div className="flex flex-wrap items-center gap-3">
-              <DialogTitle className="min-w-0 break-words text-2xl font-bold tracking-tight sm:text-3xl">
-                {detail?.invoice.invoiceDocumentNumber || "Factura"}
-              </DialogTitle>
-              {detail?.invoice.status ? (
-                <Badge
-                  variant="outline"
-                  className={`text-sm ${getInvoiceStatusColor(detail.invoice)}`}
-                >
-                  {getInvoiceStatusLabel(detail.invoice)}
-                </Badge>
+        <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-lg p-0 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1580px]">
+          <DialogHeader className="min-w-0 border-b border-border/70 px-4 py-4 pr-12 sm:px-6">
+            <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex min-w-0 flex-wrap items-center gap-3">
+                <DialogTitle className="min-w-0 break-words text-2xl font-bold tracking-tight sm:text-3xl">
+                  {detail?.invoice.invoiceDocumentNumber || "Factura"}
+                </DialogTitle>
+                {detail?.invoice.status ? (
+                  <Badge
+                    variant="outline"
+                    className={`text-sm ${getInvoiceStatusColor(detail.invoice)}`}
+                  >
+                    {getInvoiceStatusLabel(detail.invoice)}
+                  </Badge>
+                ) : null}
+              </div>
+              {detail ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {canReviewSelectedInvoice ? (
+                    <Button
+                      onClick={handleReviewInvoice}
+                      disabled={
+                        reviewMutation.isPending ||
+                        attachmentState.isLoading ||
+                        attachmentState.count === 0
+                      }
+                    >
+                      <Send className="mr-2 h-4 w-4" />
+                      {reviewMutation.isPending
+                        ? "Enviando..."
+                        : "Enviar a revisión"}
+                    </Button>
+                  ) : null}
+                  {canAccountSelectedInvoice ? (
+                    <>
+                      <Button
+                        onClick={handleAccountInvoice}
+                        disabled={accountMutation.isPending}
+                      >
+                        <CheckCircle2 className="mr-2 h-4 w-4" />
+                        {accountMutation.isPending
+                          ? "Contabilizando..."
+                          : "Contabilizar"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => setRejectDialogOpen(true)}
+                        disabled={rejectMutation.isPending}
+                      >
+                        <XCircle className="mr-2 h-4 w-4" />
+                        Rechazar
+                      </Button>
+                    </>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           </DialogHeader>
@@ -769,603 +944,773 @@ export default function Facturas() {
               Cargando factura...
             </div>
           ) : (
-            <div className="min-w-0 space-y-5">
-              {getInvoiceHasEmissionDeadlineIssue(detail.invoice) ? (
-                <div className="flex items-start gap-2 rounded-2xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-700">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <div>
-                    <p className="font-semibold">
-                      {EMISSION_DEADLINE_ISSUE_MESSAGE}
-                    </p>
-                    <p>
-                      Esta factura está pendiente de corrección, pero tiene
-                      problema en la fecha límite de emisión.
-                    </p>
-                  </div>
-                </div>
-              ) : null}
-
-              {isRejected && detail.invoice.rejectionComment ? (
-                <div className="flex items-start gap-2 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800">
-                  <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <div>
-                    <p className="font-semibold">Motivo de rechazo</p>
-                    <p className="whitespace-pre-wrap">
-                      {detail.invoice.rejectionComment}
-                    </p>
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="grid min-w-0 gap-3 md:grid-cols-12">
-                <div className="min-w-0 rounded-2xl border border-border/70 bg-muted/20 p-4 md:col-span-4">
-                  <Label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    Proveedor
-                  </Label>
-                  <p className="mt-2 break-words font-semibold">
-                    {detail.supplier
-                      ? `${detail.supplier.supplierCode} — ${detail.supplier.name}`
-                      : "Proveedor pendiente"}
-                  </p>
-                  <Badge
-                    variant="outline"
-                    className={`mt-3 text-xs ${
-                      supplierAllowsTaxWithholding
-                        ? "border-emerald-300 text-emerald-700"
-                        : "border-amber-300 text-amber-700"
-                    }`}
-                  >
-                    {supplierAllowsTaxWithholding
-                      ? "Permite retención"
-                      : "No permite retención"}
-                  </Badge>
-                </div>
-                <div className="min-w-0 rounded-2xl border border-border/70 bg-muted/20 p-4 md:col-span-4">
-                  <Label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    Origen
-                  </Label>
-                  <p className="mt-2 break-words font-semibold">
-                    {detail.purchaseOrder?.orderNumber || "OC"}
-                  </p>
-                  <p className="break-words text-sm text-muted-foreground">
-                    {detail.receipt?.receiptNumber || "Recepción"}
-                  </p>
-                </div>
-                <div className="min-w-0 rounded-2xl border border-border/70 bg-muted/20 p-4 md:col-span-4">
-                  <Label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    Proyecto
-                  </Label>
-                  <p className="mt-2 break-words font-semibold">
-                    {detail.project
-                      ? `${detail.project.code} — ${detail.project.name}`
-                      : "Proyecto pendiente"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid min-w-0 gap-3 rounded-2xl border border-border/70 p-4 md:grid-cols-2 xl:grid-cols-[minmax(22rem,2fr)_minmax(12rem,1fr)_repeat(4,minmax(10.5rem,1fr))]">
-                <div className="flex flex-wrap items-center gap-3 md:col-span-2 xl:col-span-6">
-                  <Checkbox
-                    id="invoice-fiscal-document"
-                    checked={invoiceDraft.isFiscalDocument}
-                    disabled={!canEditSelectedInvoice}
-                    onCheckedChange={checked =>
-                      setInvoiceDraft(current => ({
-                        ...current,
-                        isFiscalDocument: checked === true,
-                        cai: checked === true
-                          ? formatCaiInput(current.cai)
-                          : current.cai,
-                        invoiceNumber: checked === true
-                          ? formatInvoiceNumberInput(current.invoiceNumber)
-                          : current.invoiceNumber,
-                      }))
-                    }
-                  />
-                  <Label htmlFor="invoice-fiscal-document">
-                    Documento fiscal
-                  </Label>
-                  <Badge variant="outline" className="text-xs">
-                    {invoiceDraft.isFiscalDocument ? "Fiscal" : "Extranjero"}
-                  </Badge>
-                </div>
-                <div className="space-y-2">
-                  <Label>
-                    {invoiceDraft.isFiscalDocument ? "CAI" : "CAI / referencia"}
-                  </Label>
-                  <Input
-                    value={invoiceDraft.cai}
-                    disabled={!canEditSelectedInvoice}
-                    onChange={event =>
-                      setInvoiceDraft(current => ({
-                        ...current,
-                        cai: current.isFiscalDocument
-                          ? formatCaiInput(event.target.value)
-                          : event.target.value,
-                      }))
-                    }
-                    placeholder={
-                      invoiceDraft.isFiscalDocument
-                        ? CAI_FORMAT_EXAMPLE
-                        : "Referencia del documento"
-                    }
-                    maxLength={
-                      invoiceDraft.isFiscalDocument
-                        ? CAI_FORMAT_EXAMPLE.length
-                        : undefined
-                    }
-                    autoCapitalize="characters"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Número documento</Label>
-                  <Input
-                    value={invoiceDraft.invoiceNumber}
-                    disabled={!canEditSelectedInvoice}
-                    onChange={event =>
-                      setInvoiceDraft(current => ({
-                        ...current,
-                        invoiceNumber: current.isFiscalDocument
-                          ? formatInvoiceNumberInput(event.target.value)
-                          : event.target.value,
-                      }))
-                    }
-                    placeholder={
-                      invoiceDraft.isFiscalDocument
-                        ? INVOICE_NUMBER_FORMAT_EXAMPLE
-                        : "Ej. INV-EXT-001"
-                    }
-                    inputMode={
-                      invoiceDraft.isFiscalDocument ? "numeric" : "text"
-                    }
-                    maxLength={
-                      invoiceDraft.isFiscalDocument
-                        ? INVOICE_NUMBER_FORMAT_EXAMPLE.length
-                        : undefined
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Fecha documento</Label>
-                  <Input
-                    type="date"
-                    value={invoiceDraft.documentDate}
-                    disabled={!canEditSelectedInvoice}
-                    onChange={event =>
-                      setInvoiceDraft(current => ({
-                        ...current,
-                        documentDate: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Fecha contabilización</Label>
-                  <Input
-                    type="date"
-                    value={invoiceDraft.postingDate}
-                    disabled={!canEditSelectedInvoice}
-                    onChange={event =>
-                      setInvoiceDraft(current => ({
-                        ...current,
-                        postingDate: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Fecha recepción</Label>
-                  <Input
-                    type="date"
-                    value={invoiceDraft.receiptDate}
-                    disabled={!canEditSelectedInvoice}
-                    onChange={event =>
-                      setInvoiceDraft(current => ({
-                        ...current,
-                        receiptDate: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Fecha límite emisión</Label>
-                  <Input
-                    type="date"
-                    value={invoiceDraft.emissionDeadline}
-                    disabled={!canEditSelectedInvoice}
-                    onChange={event =>
-                      setInvoiceDraft(current => ({
-                        ...current,
-                        emissionDeadline: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2 md:col-span-2 xl:col-span-6">
-                  <Label>Notas</Label>
-                  <Textarea
-                    value={invoiceDraft.notes}
-                    disabled={!canEditSelectedInvoice}
-                    onChange={event =>
-                      setInvoiceDraft(current => ({
-                        ...current,
-                        notes: event.target.value,
-                      }))
-                    }
-                    rows={3}
-                  />
-                </div>
-                {canEditSelectedInvoice ? (
-                  <div className="md:col-span-2 xl:col-span-6">
-                    <Button
-                      onClick={handleSaveInvoice}
-                      disabled={updateMutation.isPending}
-                    >
-                      <Save className="mr-2 h-4 w-4" />
-                      Guardar factura
-                    </Button>
+            <div className="grid min-w-0 gap-4 p-4 sm:p-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <main className="min-w-0 space-y-4">
+                {getInvoiceHasEmissionDeadlineIssue(detail.invoice) ? (
+                  <div className="flex items-start gap-2 rounded-lg border border-rose-300 bg-rose-50 p-4 text-sm text-rose-700">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div>
+                      <p className="font-semibold">
+                        {EMISSION_DEADLINE_ISSUE_MESSAGE}
+                      </p>
+                      <p>
+                        Esta factura está pendiente de corrección, pero tiene
+                        problema en la fecha límite de emisión.
+                      </p>
+                    </div>
                   </div>
                 ) : null}
-              </div>
 
-              <DocumentAttachmentsPanel
-                entityType="invoice"
-                entityId={selectedId}
-                category="factura"
-                canManage={canManageInvoiceAttachments}
-                onStateChange={handleInvoiceAttachmentsState}
-              />
-
-              {canReviewSelectedInvoice || canAccountSelectedInvoice ? (
-                <div className="min-w-0 rounded-2xl border border-border/70 p-4">
-                  {canReviewSelectedInvoice ? (
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h3 className="text-lg font-semibold">
-                          Revisión administrativa
-                        </h3>
-                        <p className="text-sm text-muted-foreground">
-                          La factura pasará a Contabilidad para contabilizarla.
-                        </p>
-                      </div>
-                      <Button
-                        onClick={handleReviewInvoice}
-                        disabled={
-                          reviewMutation.isPending ||
-                          attachmentState.isLoading ||
-                          attachmentState.count === 0
-                        }
-                      >
-                        <Send className="mr-2 h-4 w-4" />
-                        {reviewMutation.isPending
-                          ? "Enviando..."
-                          : "Enviar a revisión"}
-                      </Button>
+                {isRejected && detail.invoice.rejectionComment ? (
+                  <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800">
+                    <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div>
+                      <p className="font-semibold">Motivo de rechazo</p>
+                      <p className="whitespace-pre-wrap">
+                        {detail.invoice.rejectionComment}
+                      </p>
                     </div>
-                  ) : null}
+                  </div>
+                ) : null}
 
-                  {canAccountSelectedInvoice ? (
-                    <div className="space-y-3">
-                      <div>
-                        <h3 className="text-lg font-semibold">Contabilidad</h3>
-                        <p className="text-sm text-muted-foreground">
-                          Marca la factura como contabilizada o recházala con motivo.
-                        </p>
-                      </div>
+                <div className="grid min-w-0 gap-3 md:grid-cols-12">
+                  <div className="min-w-0 rounded-lg border border-border/70 bg-muted/20 p-4 md:col-span-4">
+                    <Label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                      Proveedor
+                    </Label>
+                    <p className="mt-2 break-words font-semibold">
+                      {detail.supplier
+                        ? `${detail.supplier.supplierCode} — ${detail.supplier.name}`
+                        : "Proveedor pendiente"}
+                    </p>
+                    <Badge
+                      variant="outline"
+                      className={`mt-3 text-xs ${
+                        supplierAllowsTaxWithholding
+                          ? "border-emerald-300 text-emerald-700"
+                          : "border-amber-300 text-amber-700"
+                      }`}
+                    >
+                      {supplierAllowsTaxWithholding
+                        ? "Permite retención"
+                        : "No permite retención"}
+                    </Badge>
+                  </div>
+                  <div className="min-w-0 rounded-lg border border-border/70 bg-muted/20 p-4 md:col-span-4">
+                    <Label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                      Origen
+                    </Label>
+                    <p className="mt-2 break-words font-semibold">
+                      {detail.purchaseOrder?.orderNumber || "OC"}
+                    </p>
+                    <p className="break-words text-sm text-muted-foreground">
+                      {detail.receipt?.receiptNumber || "Recepción"}
+                    </p>
+                  </div>
+                  <div className="min-w-0 rounded-lg border border-border/70 bg-muted/20 p-4 md:col-span-4">
+                    <Label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                      Proyecto
+                    </Label>
+                    <p className="mt-2 break-words font-semibold">
+                      {detail.project
+                        ? `${detail.project.code} — ${detail.project.name}`
+                        : "Proyecto pendiente"}
+                    </p>
+                  </div>
+                </div>
+
+                <section className="min-w-0 rounded-lg border border-border/70">
+                  <div className="flex flex-wrap items-center gap-3 border-b border-border/70 px-4 py-3">
+                    <h3 className="font-semibold">Información de la factura</h3>
+                    <Badge variant="outline" className="text-xs">
+                      {invoiceDraft.isFiscalDocument ? "Fiscal" : "Extranjero"}
+                    </Badge>
+                  </div>
+                  <div className="space-y-4 p-4">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Checkbox
+                        id="invoice-fiscal-document"
+                        checked={invoiceDraft.isFiscalDocument}
+                        disabled={!canEditSelectedInvoice}
+                        onCheckedChange={checked =>
+                          setInvoiceDraft(current => ({
+                            ...current,
+                            isFiscalDocument: checked === true,
+                            cai: checked === true
+                              ? formatCaiInput(current.cai)
+                              : current.cai,
+                            invoiceNumber: checked === true
+                              ? formatInvoiceNumberInput(current.invoiceNumber)
+                              : current.invoiceNumber,
+                          }))
+                        }
+                      />
+                      <Label htmlFor="invoice-fiscal-document">
+                        Documento fiscal
+                      </Label>
+                    </div>
+                    <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                       <div className="space-y-2">
-                        <Label>Comentario contable</Label>
-                        <Textarea
-                          value={accountingComment}
+                        <Label>
+                          {invoiceDraft.isFiscalDocument
+                            ? "CAI"
+                            : "CAI / referencia"}
+                        </Label>
+                        <Input
+                          value={invoiceDraft.cai}
+                          disabled={!canEditSelectedInvoice}
                           onChange={event =>
-                            setAccountingComment(event.target.value)
+                            setInvoiceDraft(current => ({
+                              ...current,
+                              cai: current.isFiscalDocument
+                                ? formatCaiInput(event.target.value)
+                                : event.target.value,
+                            }))
                           }
-                          rows={3}
-                          maxLength={2000}
+                          placeholder={
+                            invoiceDraft.isFiscalDocument
+                              ? CAI_FORMAT_EXAMPLE
+                              : "Referencia del documento"
+                          }
+                          maxLength={
+                            invoiceDraft.isFiscalDocument
+                              ? CAI_FORMAT_EXAMPLE.length
+                              : undefined
+                          }
+                          autoCapitalize="characters"
                         />
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          onClick={handleAccountInvoice}
-                          disabled={accountMutation.isPending}
-                        >
-                          <CheckCircle2 className="mr-2 h-4 w-4" />
-                          {accountMutation.isPending
-                            ? "Contabilizando..."
-                            : "Contabilizar"}
-                        </Button>
-                        <Button
-                          variant="outline"
-                          onClick={() => setRejectDialogOpen(true)}
-                          disabled={rejectMutation.isPending}
-                        >
-                          <XCircle className="mr-2 h-4 w-4" />
-                          Rechazar
-                        </Button>
+                      <div className="space-y-2">
+                        <Label>Número documento</Label>
+                        <Input
+                          value={invoiceDraft.invoiceNumber}
+                          disabled={!canEditSelectedInvoice}
+                          onChange={event =>
+                            setInvoiceDraft(current => ({
+                              ...current,
+                              invoiceNumber: current.isFiscalDocument
+                                ? formatInvoiceNumberInput(event.target.value)
+                                : event.target.value,
+                            }))
+                          }
+                          placeholder={
+                            invoiceDraft.isFiscalDocument
+                              ? INVOICE_NUMBER_FORMAT_EXAMPLE
+                              : "Ej. INV-EXT-001"
+                          }
+                          inputMode={
+                            invoiceDraft.isFiscalDocument ? "numeric" : "text"
+                          }
+                          maxLength={
+                            invoiceDraft.isFiscalDocument
+                              ? INVOICE_NUMBER_FORMAT_EXAMPLE.length
+                              : undefined
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Fecha documento</Label>
+                        <Input
+                          type="date"
+                          value={invoiceDraft.documentDate}
+                          disabled={!canEditSelectedInvoice}
+                          onChange={event =>
+                            setInvoiceDraft(current => ({
+                              ...current,
+                              documentDate: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Fecha vencimiento</Label>
+                        <Input
+                          type="date"
+                          value={invoiceDraft.documentDueDate}
+                          disabled={!canEditSelectedInvoice}
+                          onChange={event =>
+                            setInvoiceDraft(current => ({
+                              ...current,
+                              documentDueDate: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Fecha contabilización</Label>
+                        <Input
+                          type="date"
+                          value={invoiceDraft.postingDate}
+                          disabled={!canEditSelectedInvoice}
+                          onChange={event =>
+                            setInvoiceDraft(current => ({
+                              ...current,
+                              postingDate: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Fecha recepción</Label>
+                        <Input
+                          type="date"
+                          value={invoiceDraft.receiptDate}
+                          disabled={!canEditSelectedInvoice}
+                          onChange={event =>
+                            setInvoiceDraft(current => ({
+                              ...current,
+                              receiptDate: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Fecha límite emisión</Label>
+                        <Input
+                          type="date"
+                          value={invoiceDraft.emissionDeadline}
+                          disabled={!canEditSelectedInvoice}
+                          onChange={event =>
+                            setInvoiceDraft(current => ({
+                              ...current,
+                              emissionDeadline: event.target.value,
+                            }))
+                          }
+                        />
                       </div>
                     </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              <div className="min-w-0 overflow-x-auto rounded-2xl border border-border/70">
-                <table className="min-w-[1120px] w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/30">
-                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Ítem
-                      </th>
-                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        SAP
-                      </th>
-                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Cantidad
-                      </th>
-                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Precio
-                      </th>
-                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Subtotal
-                      </th>
-                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        ISV
-                      </th>
-                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Total
-                      </th>
-                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Retención
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detail.items.map((item: any) => (
-                      <tr key={item.id} className="border-b border-border last:border-0">
-                        <td className="p-3 font-medium">{item.itemName}</td>
-                        <td className="p-3 font-mono text-xs">
-                          {item.currentSapItemCode ||
-                            item.originalSapItemCode ||
-                            "—"}
-                        </td>
-                        <td className="p-3 text-right">
-                          {item.quantity} {item.unit || ""}
-                        </td>
-                        <td className="p-3 text-right">
-                          {formatPurchaseOrderCurrency(item.unitPrice)}
-                        </td>
-                        <td className="p-3 text-right">
-                          {formatPurchaseOrderCurrency(item.subtotal)}
-                        </td>
-                        <td className="p-3 text-right">
-                          {formatPurchaseOrderCurrency(item.taxAmount)}
-                        </td>
-                        <td className="p-3 text-right font-semibold">
-                          {formatPurchaseOrderCurrency(item.total)}
-                        </td>
-                        <td className="min-w-[260px] p-3">
-                          {item.allowsTaxWithholding !== false ? (
-                            canEditRetentions ? (
-                              <Select
-                                value={
-                                  getLineRetentionDraft(item.id)
-                                    ?.retentionCatalogId ?? "none"
-                                }
-                                onValueChange={value =>
-                                  handleLineRetentionChange(item, value)
-                                }
-                                disabled={retentionOptions.length === 0}
-                              >
-                                <SelectTrigger className="h-9">
-                                  <SelectValue placeholder="Seleccione retención" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="none">
-                                    Sin retención
-                                  </SelectItem>
-                                  {retentionOptions.map(option => (
-                                    <SelectItem
-                                      key={option.id}
-                                      value={String(option.id)}
-                                    >
-                                      {option.taxCode} — {option.description} (
-                                      {Number(option.ratePercent).toLocaleString(
-                                        "es-HN",
-                                        { maximumFractionDigits: 4 }
-                                      )}
-                                      %)
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            ) : getLineRetentionDraft(item.id) ? (
-                              <Badge
-                                variant="outline"
-                                className="border-emerald-300 text-emerald-700"
-                              >
-                                {getLineRetentionDraft(item.id)?.retentionCode} -{" "}
-                                {getLineRetentionDraft(item.id)?.description}
-                              </Badge>
-                            ) : (
-                              <Badge
-                                variant="outline"
-                                className="border-amber-300 text-amber-700"
-                              >
-                                Sin retención
-                              </Badge>
-                            )
-                          ) : (
-                            <Badge
-                              variant="outline"
-                              className="border-slate-300 text-slate-600"
-                            >
-                              No aplica
-                            </Badge>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-                <div className="min-w-0 space-y-3 rounded-2xl border border-border/70 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <h3 className="text-lg font-semibold">
-                      Retenciones por línea
-                    </h3>
+                    <div className="space-y-2">
+                      <Label>Notas</Label>
+                      <Textarea
+                        value={invoiceDraft.notes}
+                        disabled={!canEditSelectedInvoice}
+                        onChange={event =>
+                          setInvoiceDraft(current => ({
+                            ...current,
+                            notes: event.target.value,
+                          }))
+                        }
+                        rows={3}
+                      />
+                    </div>
+                    {canEditSelectedInvoice ? (
+                      <Button
+                        onClick={handleSaveInvoice}
+                        disabled={updateMutation.isPending}
+                      >
+                        <Save className="mr-2 h-4 w-4" />
+                        Guardar factura
+                      </Button>
+                    ) : null}
                   </div>
-                  {!canRetainSelectedInvoice ? (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                      {retentionDisabledReason}
-                    </div>
-                  ) : null}
+                </section>
 
-                  {retentionDrafts.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-                      Selecciona una retención en la columna de cada línea.
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto rounded-xl border border-border/70">
-                      <table className="w-full min-w-[720px] text-sm">
-                        <thead>
-                          <tr className="border-b bg-muted/30">
-                            <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                              Línea
-                            </th>
-                            <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                              Retención
-                            </th>
-                            <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                              Base
-                            </th>
-                            <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                              %
-                            </th>
-                            <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                              Monto
-                            </th>
-                            {canEditRetentions ? (
-                              <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                                Quitar
-                              </th>
-                            ) : null}
-                          </tr>
-                        </thead>
-                        <tbody>
-                      {retentionDrafts.map((retention, index) => (
-                        <tr
-                          key={index}
-                          className="border-b last:border-0"
-                        >
-                          <td className="max-w-[260px] p-3 font-medium">
-                            <span className="line-clamp-2">
-                              {retention.itemName ||
-                                detail.items?.find(
-                                  (item: any) =>
-                                    item.id === retention.invoiceItemId
-                                )?.itemName ||
-                                "Retención general"}
-                            </span>
-                          </td>
-                          <td className="p-3">
-                            <Badge
-                              variant="outline"
-                              className="border-emerald-300 text-emerald-700"
-                            >
-                              {retention.retentionCode} -{" "}
-                              {retention.description}
-                            </Badge>
-                          </td>
-                          <td className="p-3 text-right">
-                            {formatPurchaseOrderCurrency(retention.baseAmount)}
-                          </td>
-                          <td className="p-3 text-right">
-                            {Number(retention.percentage).toLocaleString(
-                              "es-HN",
-                              { maximumFractionDigits: 4 }
-                            )}
-                            %
-                          </td>
-                          <td className="p-3 text-right font-semibold">
-                            {formatPurchaseOrderCurrency(
-                              getRetentionAmount(retention)
-                            )}
-                          </td>
-                          {canEditRetentions ? (
-                            <td className="p-3 text-right">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="icon"
-                                onClick={() =>
-                                  setRetentionDrafts(current =>
-                                    current.filter((_, entryIndex) => entryIndex !== index)
-                                  )
-                                }
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </td>
-                          ) : null}
+                <section className="min-w-0 rounded-lg border border-border/70">
+                  <div className="border-b border-border/70 px-4 py-3">
+                    <h3 className="font-semibold">Detalle de la factura</h3>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[1120px] text-sm">
+                      <thead>
+                        <tr className="border-b border-border bg-muted/30">
+                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Ítem
+                          </th>
+                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            SAP
+                          </th>
+                          <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Cantidad
+                          </th>
+                          <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Precio unitario
+                          </th>
+                          <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Subtotal
+                          </th>
+                          <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            ISV
+                          </th>
+                          <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Total
+                          </th>
+                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Retención
+                          </th>
                         </tr>
-                      ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                      </thead>
+                      <tbody>
+                        {detail.items.map((item: any) => {
+                          const lineRetentions = getLineRetentionDrafts(item.id);
+                          const availableRetentionOptions =
+                            getAvailableLineRetentionOptions(item.id);
+                          const canAddLineRetention =
+                            canEditRetentions &&
+                            lineRetentions.length < 2 &&
+                            availableRetentionOptions.length > 0;
 
-                  {canEditSelectedInvoice ? (
-                    <Button
-                      onClick={handleSaveRetentions}
-                      disabled={
-                        replaceRetentionsMutation.isPending ||
-                        (retentionDrafts.length > 0 &&
-                          !canRetainSelectedInvoice)
-                      }
-                    >
-                      <Save className="mr-2 h-4 w-4" />
-                      Guardar retenciones
-                    </Button>
-                  ) : null}
-                </div>
+                          return (
+                            <tr
+                              key={item.id}
+                              className="border-b border-border last:border-0"
+                            >
+                              <td className="p-3 font-medium">
+                                {item.itemName}
+                              </td>
+                              <td className="p-3 font-mono text-xs">
+                                {item.currentSapItemCode ||
+                                  item.originalSapItemCode ||
+                                  "—"}
+                              </td>
+                              <td className="p-3 text-right">
+                                {item.quantity} {item.unit || ""}
+                              </td>
+                              <td className="p-3 text-right">
+                                {formatPurchaseOrderCurrency(item.unitPrice)}
+                              </td>
+                              <td className="p-3 text-right">
+                                {formatPurchaseOrderCurrency(item.subtotal)}
+                              </td>
+                              <td className="p-3 text-right">
+                                {formatPurchaseOrderCurrency(item.taxAmount)}
+                              </td>
+                              <td className="p-3 text-right font-semibold">
+                                {formatPurchaseOrderCurrency(item.total)}
+                              </td>
+                              <td className="min-w-[300px] p-3">
+                                {item.allowsTaxWithholding !== false ? (
+                                  <div className="space-y-2">
+                                    {lineRetentions.length > 0 ? (
+                                      <div className="flex flex-wrap gap-1.5">
+                                        {lineRetentions.map(retention => (
+                                          <Badge
+                                            key={`${retention.invoiceItemId}-${retention.retentionCatalogId}`}
+                                            variant="outline"
+                                            className="border-emerald-300 text-emerald-700"
+                                          >
+                                            {retention.retentionCode} -{" "}
+                                            {retention.description}
+                                          </Badge>
+                                        ))}
+                                      </div>
+                                    ) : canEditRetentions ? null : (
+                                      <Badge
+                                        variant="outline"
+                                        className="border-amber-300 text-amber-700"
+                                      >
+                                        Sin retención
+                                      </Badge>
+                                    )}
 
-                <div className="h-fit space-y-2.5 rounded-2xl border border-border/70 bg-muted/10 p-4">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Subtotal</span>
-                    <span className="font-medium">
+                                    {canEditRetentions ? (
+                                      canAddLineRetention ? (
+                                        <Select
+                                          key={`${item.id}-${lineRetentions
+                                            .map(
+                                              retention =>
+                                                retention.retentionCatalogId
+                                            )
+                                            .join("-")}`}
+                                          onValueChange={value =>
+                                            handleAddLineRetention(item, value)
+                                          }
+                                        >
+                                          <SelectTrigger className="h-9">
+                                            <SelectValue placeholder="Agregar retención" />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            {availableRetentionOptions.map(
+                                              option => (
+                                                <SelectItem
+                                                  key={option.id}
+                                                  value={String(option.id)}
+                                                >
+                                                  {option.taxCode} —{" "}
+                                                  {option.description} (
+                                                  {Number(
+                                                    option.ratePercent
+                                                  ).toLocaleString("es-HN", {
+                                                    maximumFractionDigits: 4,
+                                                  })}
+                                                  %)
+                                                </SelectItem>
+                                              )
+                                            )}
+                                          </SelectContent>
+                                        </Select>
+                                      ) : (
+                                        <p className="text-xs text-muted-foreground">
+                                          {lineRetentions.length >= 2
+                                            ? "Máximo 2 retenciones"
+                                            : "Sin retenciones disponibles"}
+                                        </p>
+                                      )
+                                    ) : null}
+                                  </div>
+                                ) : (
+                                  <Badge
+                                    variant="outline"
+                                    className="border-slate-300 text-slate-600"
+                                  >
+                                    No aplica
+                                  </Badge>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-5 border-t border-border/70 px-4 py-3 text-sm font-semibold">
+                    <span>
+                      Subtotal:{" "}
                       {formatPurchaseOrderCurrency(detail.invoice.subtotal)}
                     </span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">ISV</span>
-                    <span className="font-medium">
-                      {formatPurchaseOrderCurrency(detail.invoice.taxAmount)}
+                    <span>
+                      ISV: {formatPurchaseOrderCurrency(detail.invoice.taxAmount)}
                     </span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Total</span>
-                    <span className="font-semibold">
+                    <span>
+                      Total factura:{" "}
                       {formatPurchaseOrderCurrency(detail.invoice.total)}
                     </span>
                   </div>
-                  <div className="flex justify-between border-t border-border pt-3 text-sm">
-                    <span className="text-muted-foreground">Base imponible</span>
-                    <span className="font-medium">
-                      {formatPurchaseOrderCurrency(withholdingBase)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Retenciones</span>
-                    <span className="font-medium">
+                </section>
+
+                <section className="min-w-0 rounded-lg border border-border/70">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-4 py-3">
+                    <h3 className="font-semibold">Retenciones aplicadas</h3>
+                    <span className="text-sm font-semibold">
+                      Total retenciones:{" "}
                       {formatPurchaseOrderCurrency(retentionTotal)}
                     </span>
                   </div>
-                  <div className="flex justify-between text-base font-semibold">
-                    <span>Neto a pagar</span>
-                    <span>{formatPurchaseOrderCurrency(netPayable)}</span>
+                  <div className="space-y-3 p-4">
+                    {!canRetainSelectedInvoice ? (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                        {retentionDisabledReason}
+                      </div>
+                    ) : null}
+
+                    {retentionDrafts.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                        Sin retenciones aplicadas.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto rounded-lg border border-border/70">
+                        <table className="w-full min-w-[720px] text-sm">
+                          <thead>
+                            <tr className="border-b bg-muted/30">
+                              <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Línea
+                              </th>
+                              <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Retención
+                              </th>
+                              <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Base
+                              </th>
+                              <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                %
+                              </th>
+                              <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Monto
+                              </th>
+                              {canEditRetentions ? (
+                                <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                  Quitar
+                                </th>
+                              ) : null}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {retentionDrafts.map((retention, index) => (
+                              <tr
+                                key={index}
+                                className="border-b last:border-0"
+                              >
+                                <td className="max-w-[260px] p-3 font-medium">
+                                  <span className="line-clamp-2">
+                                    {retention.itemName ||
+                                      detail.items?.find(
+                                        (item: any) =>
+                                          item.id ===
+                                          retention.invoiceItemId
+                                      )?.itemName ||
+                                      "Retención general"}
+                                  </span>
+                                </td>
+                                <td className="p-3">
+                                  <Badge
+                                    variant="outline"
+                                    className="border-emerald-300 text-emerald-700"
+                                  >
+                                    {retention.retentionCode} -{" "}
+                                    {retention.description}
+                                  </Badge>
+                                </td>
+                                <td className="p-3 text-right">
+                                  {formatPurchaseOrderCurrency(
+                                    retention.baseAmount
+                                  )}
+                                </td>
+                                <td className="p-3 text-right">
+                                  {Number(retention.percentage).toLocaleString(
+                                    "es-HN",
+                                    { maximumFractionDigits: 4 }
+                                  )}
+                                  %
+                                </td>
+                                <td className="p-3 text-right font-semibold">
+                                  {formatPurchaseOrderCurrency(
+                                    getRetentionAmount(retention)
+                                  )}
+                                </td>
+                                {canEditRetentions ? (
+                                  <td className="p-3 text-right">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="icon"
+                                      onClick={() =>
+                                        setRetentionDrafts(current =>
+                                          current.filter(
+                                            (_, entryIndex) =>
+                                              entryIndex !== index
+                                          )
+                                        )
+                                      }
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </td>
+                                ) : null}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {canEditSelectedInvoice ? (
+                      <Button
+                        onClick={handleSaveRetentions}
+                        disabled={
+                          replaceRetentionsMutation.isPending ||
+                          (retentionDrafts.length > 0 &&
+                            !canRetainSelectedInvoice)
+                        }
+                      >
+                        <Save className="mr-2 h-4 w-4" />
+                        Guardar retenciones
+                      </Button>
+                    ) : null}
                   </div>
-                </div>
-              </div>
+                </section>
+
+                <DocumentAttachmentsPanel
+                  entityType="invoice"
+                  entityId={selectedId}
+                  category="factura"
+                  canManage={canManageInvoiceAttachments}
+                  onStateChange={handleInvoiceAttachmentsState}
+                />
+              </main>
+
+              <aside className="min-w-0 space-y-4 xl:sticky xl:top-4 xl:self-start">
+                <section
+                  className={`rounded-lg border p-4 text-sm ${
+                    supplierAllowsTaxWithholding
+                      ? "border-blue-200 bg-blue-50 text-blue-800"
+                      : "border-amber-200 bg-amber-50 text-amber-800"
+                  }`}
+                >
+                  <p className="font-semibold">
+                    {supplierAllowsTaxWithholding
+                      ? "Proveedor sujeto a pagos a cuenta"
+                      : "Proveedor no sujeto a pagos a cuenta"}
+                  </p>
+                  <p className="mt-1">
+                    {supplierAllowsTaxWithholding
+                      ? "Se aplican retenciones según normativa vigente."
+                      : "No se aplican retenciones para este proveedor."}
+                  </p>
+                </section>
+
+                {canAccountSelectedInvoice ? (
+                  <section className="rounded-lg border border-border/70 p-4">
+                    <h3 className="font-semibold">Comentario contable</h3>
+                    <Textarea
+                      className="mt-3"
+                      value={accountingComment}
+                      onChange={event =>
+                        setAccountingComment(event.target.value)
+                      }
+                      rows={3}
+                      maxLength={2000}
+                    />
+                  </section>
+                ) : null}
+
+                <section className="rounded-lg border border-border/70 p-4">
+                  <h3 className="font-semibold">Resumen de la factura</h3>
+                  <div className="mt-4 space-y-2.5">
+                    <div className="flex justify-between gap-3 text-sm">
+                      <span className="text-muted-foreground">Subtotal</span>
+                      <span className="font-medium">
+                        {formatPurchaseOrderCurrency(detail.invoice.subtotal)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3 text-sm">
+                      <span className="text-muted-foreground">ISV</span>
+                      <span className="font-medium">
+                        {formatPurchaseOrderCurrency(detail.invoice.taxAmount)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3 border-b border-border pb-2 text-sm">
+                      <span className="text-muted-foreground">Total factura</span>
+                      <span className="font-semibold">
+                        {formatPurchaseOrderCurrency(detail.invoice.total)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3 text-sm">
+                      <span className="font-medium text-rose-700">
+                        (-) Total retenciones
+                      </span>
+                      <span className="font-semibold text-rose-700">
+                        {formatPurchaseOrderCurrency(retentionTotal)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3 border-t border-border pt-3 text-base font-semibold">
+                      <span>Neto a pagar</span>
+                      <span className="text-emerald-700">
+                        {formatPurchaseOrderCurrency(netPayable)}
+                      </span>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="rounded-lg border border-border/70 p-4">
+                  <h3 className="font-semibold">Detalle de retenciones</h3>
+                  {retentionDrafts.length === 0 ? (
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      Sin retenciones aplicadas.
+                    </p>
+                  ) : (
+                    <div className="mt-3 space-y-2">
+                      {retentionDrafts.map((retention, index) => (
+                        <div
+                          key={`${retention.retentionCatalogId}-${index}`}
+                          className="flex items-start justify-between gap-3 text-sm"
+                        >
+                          <span className="min-w-0">
+                            <span className="font-medium">
+                              {retention.retentionCode || "Retención"}
+                            </span>
+                            <span className="block text-muted-foreground">
+                              {retention.description}
+                            </span>
+                          </span>
+                          <span className="shrink-0 font-semibold">
+                            {formatPurchaseOrderCurrency(
+                              getRetentionAmount(retention)
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between border-t border-border pt-3 text-sm font-semibold">
+                        <span>Total retenciones</span>
+                        <span>{formatPurchaseOrderCurrency(retentionTotal)}</span>
+                      </div>
+                    </div>
+                  )}
+                </section>
+
+                <section className="rounded-lg border border-border/70 p-4">
+                  <h3 className="font-semibold">Información fiscal</h3>
+                  <div className="mt-4 space-y-2.5 text-sm">
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">
+                        Proveedor sujeto a pagos a cuenta
+                      </span>
+                      <Badge
+                        variant="outline"
+                        className={
+                          supplierAllowsTaxWithholding
+                            ? "border-emerald-300 text-emerald-700"
+                            : "border-slate-300 text-slate-600"
+                        }
+                      >
+                        {supplierAllowsTaxWithholding ? "Sí" : "No"}
+                      </Badge>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">
+                        Retenciones aplicadas
+                      </span>
+                      <Badge
+                        variant="outline"
+                        className={
+                          retentionDrafts.length > 0
+                            ? "border-emerald-300 text-emerald-700"
+                            : "border-slate-300 text-slate-600"
+                        }
+                      >
+                        {retentionDrafts.length > 0 ? "Sí" : "No"}
+                      </Badge>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">
+                        Documento fiscal
+                      </span>
+                      <span className="font-medium">
+                        {detail.invoice.isFiscalDocument
+                          ? "Fiscal"
+                          : "Extranjero"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">
+                        Alerta fecha límite
+                      </span>
+                      <span className="font-medium">
+                        {getInvoiceHasEmissionDeadlineIssue(detail.invoice)
+                          ? "Sí"
+                          : "No"}
+                      </span>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="rounded-lg border border-border/70 p-4">
+                  <h3 className="font-semibold">Historial</h3>
+                  <div className="mt-4 space-y-3">
+                    {getInvoiceHistoryRows(detail.invoice).map((entry, index) => (
+                      <div key={`${entry.label}-${index}`} className="flex gap-3">
+                        <span
+                          className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${
+                            entry.state === "danger"
+                              ? "bg-rose-500"
+                              : entry.state === "done"
+                                ? "bg-emerald-500"
+                                : "bg-muted-foreground/40"
+                          }`}
+                        />
+                        <span className="min-w-0 text-sm">
+                          <span className="block font-medium">
+                            {entry.label}
+                          </span>
+                          <span className="text-muted-foreground">
+                            {entry.date
+                              ? formatDateTimeLabel(entry.date)
+                              : "Pendiente"}
+                          </span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </aside>
             </div>
           )}
         </DialogContent>

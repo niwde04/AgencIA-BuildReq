@@ -76,6 +76,7 @@ import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import {
   calculatePurchaseOrderLineAmounts,
   formatPurchaseOrderCurrency,
+  getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderContractSummary,
   normalizePurchaseOrderTaxCode,
   PURCHASE_ORDER_CONTRACT_FREQUENCIES,
@@ -271,6 +272,32 @@ function formatPrintMoney(value: number | string | null | undefined) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+function FiscalSummaryCard({
+  summary,
+}: {
+  summary: ReturnType<typeof summarizePurchaseOrderLines>;
+}) {
+  const rows = getPurchaseOrderFiscalSummaryRows(summary);
+
+  return (
+    <div className="w-full max-w-[360px] overflow-hidden rounded-xl border border-border bg-background text-sm">
+      {rows.map((row, index) => (
+        <div
+          key={row.key}
+          className={`grid grid-cols-[1fr_auto] items-center border-border ${
+            index > 0 ? "border-t" : ""
+          } ${row.emphasized ? "font-semibold" : ""}`}
+        >
+          <span className="px-3 py-2 text-muted-foreground">{row.label}</span>
+          <span className="px-3 py-2 text-right tabular-nums text-foreground">
+            {formatPrintMoney(row.value)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function formatPrintDate(value: string | Date | null | undefined) {
@@ -1562,6 +1589,14 @@ export default function OrdenesCompra() {
         `;
       })
       .join("");
+    const fiscalSummaryRows = getPurchaseOrderFiscalSummaryRows(pricingSummary)
+      .map(row => `
+        <tr>
+          <td>${escapeHtml(row.label)}</td>
+          <td class="numeric">${escapeHtml(formatPrintMoney(row.value))}</td>
+        </tr>
+      `)
+      .join("");
 
     const printWindow = window.open("", "_blank", "width=1100,height=780");
     if (!printWindow) {
@@ -1663,7 +1698,7 @@ export default function OrdenesCompra() {
             }
             .lower {
               display: grid;
-              grid-template-columns: 1fr 245px;
+              grid-template-columns: 1fr 285px;
               gap: 34px;
               margin-top: 12px;
             }
@@ -1811,30 +1846,7 @@ export default function OrdenesCompra() {
               </div>
               <table class="summary">
                 <tbody>
-                  <tr>
-                    <td>Subtotal</td>
-                    <td class="numeric">${escapeHtml(formatPrintMoney(pricingSummary.subtotal))}</td>
-                  </tr>
-                  <tr>
-                    <td>ISV 15%</td>
-                    <td class="numeric">${escapeHtml(formatPrintMoney(pricingSummary.totalIsv))}</td>
-                  </tr>
-                  <tr>
-                    <td>Total</td>
-                    <td class="numeric">${escapeHtml(formatPrintMoney(pricingSummary.total))}</td>
-                  </tr>
-                  <tr>
-                    <td>(-) Ret. ISV</td>
-                    <td class="numeric">0.00</td>
-                  </tr>
-                  <tr>
-                    <td>(-) Ret. ISR y Hon.</td>
-                    <td class="numeric">0.00</td>
-                  </tr>
-                  <tr>
-                    <td>Neto Pagar</td>
-                    <td class="numeric">${escapeHtml(formatPrintMoney(pricingSummary.total))}</td>
-                  </tr>
+                  ${fiscalSummaryRows}
                 </tbody>
               </table>
             </section>
@@ -2863,32 +2875,7 @@ export default function OrdenesCompra() {
               </div>
 
               <div className="flex justify-end border-t border-border bg-muted/10 px-3 py-4 sm:px-4">
-                <div className="w-full max-w-[320px] space-y-2.5 rounded-2xl border border-border/70 bg-background p-4">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Subtotal</span>
-                    <span className="font-medium">
-                      {formatPurchaseOrderCurrency(originPricingSummary.subtotal)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Total exento</span>
-                    <span className="font-medium">
-                      {formatPurchaseOrderCurrency(
-                        originPricingSummary.totalExempt
-                      )}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Total ISV</span>
-                    <span className="font-medium">
-                      {formatPurchaseOrderCurrency(originPricingSummary.totalIsv)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between border-t border-border pt-3 text-base font-semibold">
-                    <span>Total</span>
-                    <span>{formatPurchaseOrderCurrency(originPricingSummary.total)}</span>
-                  </div>
-                </div>
+                <FiscalSummaryCard summary={originPricingSummary} />
               </div>
 
               <section className="min-w-0 space-y-3 rounded-2xl border border-border/70 p-4">
@@ -3442,32 +3429,7 @@ export default function OrdenesCompra() {
               </div>
 
               <div className="flex justify-end border-t border-border bg-muted/10 px-3 py-4 sm:px-4">
-                <div className="w-full max-w-[320px] space-y-2.5 rounded-2xl border border-border/70 bg-background p-4">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Subtotal</span>
-                    <span className="font-medium">
-                      {formatPurchaseOrderCurrency(pricingSummary.subtotal)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Total exento</span>
-                    <span className="font-medium">
-                      {formatPurchaseOrderCurrency(pricingSummary.totalExempt)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Total ISV</span>
-                    <span className="font-medium">
-                      {formatPurchaseOrderCurrency(pricingSummary.totalIsv)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between border-t border-border pt-3 text-base font-semibold">
-                    <span>Total</span>
-                    <span>
-                      {formatPurchaseOrderCurrency(pricingSummary.total)}
-                    </span>
-                  </div>
-                </div>
+                <FiscalSummaryCard summary={pricingSummary} />
               </div>
 
               <DocumentAttachmentsPanel

@@ -68,7 +68,9 @@ type SidebarCountKey =
   | "supplyFlowsPending"
   | "purchaseRequestsPending"
   | "purchaseOrdersEmitted"
-  | "transferRequestsPending";
+  | "transferRequestsPending"
+  | "invoicesPendingAttention"
+  | "invoicesReviewed";
 
 const MENU_COUNT_KEYS: Partial<Record<string, SidebarCountKey>> = {
   "/solicitudes": "materialRequestsPendingApproval",
@@ -452,8 +454,19 @@ function DashboardLayoutContent({
                       : location.startsWith(item.path);
                   const countKey = MENU_COUNT_KEYS[item.path];
                   const badgeCount = countKey ? sidebarCounts?.[countKey] ?? 0 : 0;
+                  const invoicePendingCount =
+                    item.path === "/facturas"
+                      ? sidebarCounts?.invoicesPendingAttention ?? 0
+                      : 0;
+                  const invoiceReviewedCount =
+                    item.path === "/facturas"
+                      ? sidebarCounts?.invoicesReviewed ?? 0
+                      : 0;
                   const showBadge =
                     badgeCount > 0 || MENU_ALWAYS_SHOW_COUNT_PATHS.has(item.path);
+                  const showInvoiceBadges =
+                    item.path === "/facturas" &&
+                    (invoicePendingCount > 0 || invoiceReviewedCount > 0);
                   return (
                     <SidebarMenuItem key={item.path}>
                       <SidebarMenuButton
@@ -471,7 +484,28 @@ function DashboardLayoutContent({
                           }`}
                         >
                           <span className="truncate">{item.label}</span>
-                          {showBadge ? (
+                          {showInvoiceBadges ? (
+                            <span className="flex shrink-0 items-center gap-1">
+                              {invoicePendingCount > 0 ? (
+                                <Badge
+                                  variant="destructive"
+                                  title="Borrador, borrador con alerta y rechazadas"
+                                  className="h-5 min-w-5 shrink-0 rounded-sm px-1 text-xs"
+                                >
+                                  {invoicePendingCount}
+                                </Badge>
+                              ) : null}
+                              {invoiceReviewedCount > 0 ? (
+                                <Badge
+                                  variant="outline"
+                                  title="Revisadas para contabilidad"
+                                  className="h-5 min-w-5 shrink-0 rounded-sm border-blue-300 bg-blue-50 px-1 text-xs text-blue-700"
+                                >
+                                  {invoiceReviewedCount}
+                                </Badge>
+                              ) : null}
+                            </span>
+                          ) : showBadge ? (
                             <Badge
                               variant={badgeCount > 0 ? "destructive" : "outline"}
                               className="h-5 min-w-5 shrink-0 rounded-sm px-1 text-xs"

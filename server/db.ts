@@ -111,6 +111,7 @@ import {
   calculatePurchaseOrderLineAmounts,
   formatPurchaseOrderCurrency,
   getPurchaseOrderContractSummary,
+  getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderTaxMeta,
   summarizePurchaseOrderLines,
 } from "@shared/purchase-orders";
@@ -3345,34 +3346,11 @@ function buildPurchaseOrderDocument(params: {
         subtotalLabel: formatPrintMoneyLabel(amounts.subtotal),
       };
     }),
-    summaryRows: [
-      {
-        label: "Subtotal",
-        value: formatPrintMoneyLabel(summary.subtotal),
-      },
-      {
-        label: "ISV 15%",
-        value: formatPrintMoneyLabel(summary.totalIsv),
-      },
-      {
-        label: "Total",
-        value: formatPrintMoneyLabel(summary.total),
-        emphasized: true,
-      },
-      {
-        label: "(-) Ret. ISV",
-        value: "0.00",
-      },
-      {
-        label: "(-) Ret. ISR y Hon.",
-        value: "0.00",
-      },
-      {
-        label: "Neto Pagar",
-        value: formatPrintMoneyLabel(summary.total),
-        emphasized: true,
-      },
-    ],
+    summaryRows: getPurchaseOrderFiscalSummaryRows(summary).map(row => ({
+      label: row.label,
+      value: formatPrintMoneyLabel(row.value),
+      emphasized: row.emphasized,
+    })),
   });
 }
 
@@ -5023,6 +5001,14 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
   if (params.receiptData.isFiscalDocument && !emissionDeadline) {
     throw new Error("La fecha límite de emisión es requerida para facturas");
   }
+  if (
+    params.receiptData.isFiscalDocument &&
+    !params.receiptData.documentDueDate
+  ) {
+    throw new Error(
+      "La fecha de vencimiento del documento es requerida para facturas"
+    );
+  }
   const invoiceEmissionDeadline =
     emissionDeadline ??
     params.receiptData.documentDate ??
@@ -5098,6 +5084,7 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
       cai: params.receiptData.cai ?? null,
       invoiceNumber: params.receiptData.invoiceNumber ?? null,
       documentDate: params.receiptData.documentDate ?? null,
+      documentDueDate: params.receiptData.documentDueDate ?? null,
       postingDate: params.receiptData.postingDate,
       receiptDate: params.receiptData.receiptDate,
       emissionDeadline: invoiceEmissionDeadline,
@@ -5884,6 +5871,7 @@ export async function updateInvoice(
       | "isFiscalDocument"
       | "invoiceNumber"
       | "documentDate"
+      | "documentDueDate"
       | "postingDate"
       | "receiptDate"
       | "emissionDeadline"
@@ -6026,6 +6014,27 @@ export async function replaceInvoiceRetentions(
       throw new Error(
         "La factura no tiene líneas habilitadas para retención de impuestos"
       );
+    }
+
+    const lineRetentionCounts = new Map<number, number>();
+    const lineRetentionCatalogs = new Set<string>();
+    for (const retention of retentions) {
+      const invoiceItemId = retention.invoiceItemId ?? null;
+      if (!invoiceItemId) continue;
+
+      const currentCount = (lineRetentionCounts.get(invoiceItemId) ?? 0) + 1;
+      lineRetentionCounts.set(invoiceItemId, currentCount);
+      if (currentCount > 2) {
+        throw new Error("Cada producto puede tener máximo dos retenciones");
+      }
+
+      const duplicateKey = `${invoiceItemId}:${retention.retentionCatalogId}`;
+      if (lineRetentionCatalogs.has(duplicateKey)) {
+        throw new Error(
+          "No se puede repetir la misma retención en el mismo producto"
+        );
+      }
+      lineRetentionCatalogs.add(duplicateKey);
     }
 
     const requestedRetentionIds = Array.from(

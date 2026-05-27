@@ -372,6 +372,10 @@ export default function Devoluciones() {
               <div class="value">${escapeHtml(formatDate(sourceReceipt?.documentDate))}</div>
             </div>
             <div class="box">
+              <div class="label">Fecha vencimiento</div>
+              <div class="value">${escapeHtml(formatDate(sourceReceipt?.documentDueDate))}</div>
+            </div>
+            <div class="box">
               <div class="label">Fecha recepción</div>
               <div class="value">${escapeHtml(formatDate(sourceReceipt?.receiptDate))}</div>
             </div>
@@ -609,7 +613,7 @@ export default function Devoluciones() {
             </div>
           ) : (
             <div className="space-y-5">
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
                 <div className="rounded-lg border border-border p-4">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Tipo
@@ -709,6 +713,14 @@ export default function Devoluciones() {
                   </p>
                   <p className="mt-2 text-sm font-medium">
                     {formatDate(sourceReceipt?.documentDate)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Fecha vencimiento
+                  </p>
+                  <p className="mt-2 text-sm font-medium">
+                    {formatDate(sourceReceipt?.documentDueDate)}
                   </p>
                 </div>
                 <div className="rounded-lg border border-border p-4">

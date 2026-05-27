@@ -1520,7 +1520,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   }
 
   function drawSummary(top: number) {
-    const summaryWidth = 196;
+    const summaryWidth = 240;
     const summaryX = marginX + contentWidth - summaryWidth;
     const rowHeight = 18;
     const height = params.summaryRows.length * rowHeight;
@@ -1547,16 +1547,16 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
         x: summaryX + 8,
         top: rowTop + 5,
         text: row.label,
-        fontSize: row.emphasized ? 10 : 9.5,
+        fontSize: row.emphasized ? 9.8 : 9.2,
         font: row.emphasized ? "F2" : "F1",
         color: ink,
       });
       drawText(page, {
-        x: summaryX + 86,
+        x: summaryX + 146,
         top: rowTop + 5,
-        width: summaryWidth - 94,
+        width: summaryWidth - 154,
         text: row.value,
-        fontSize: row.emphasized ? 10 : 9.5,
+        fontSize: row.emphasized ? 9.8 : 9.2,
         font: "F2",
         color: ink,
         align: "right",

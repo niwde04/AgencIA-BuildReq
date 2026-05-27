@@ -164,6 +164,7 @@ export const receiptsRouter = router({
           cai: z.string().trim().max(100).optional(),
           invoiceNumber: z.string().trim().max(100).optional(),
           documentDate: z.string().optional(),
+          documentDueDate: z.string().optional(),
           postingDate: z.string(),
           receiptDate: z.string().optional(),
           emissionDeadline: z.string().optional(),
@@ -206,6 +207,13 @@ export const receiptsRouter = router({
                 code: z.ZodIssueCode.custom,
                 path: ["documentDate"],
                 message: "Seleccione la fecha del documento",
+              });
+            }
+            if (!value.documentDueDate) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["documentDueDate"],
+                message: "Seleccione la fecha de vencimiento del documento",
               });
             }
             if (!value.emissionDeadline) {
@@ -453,6 +461,9 @@ export const receiptsRouter = router({
               : input.invoiceNumber.trim()
             : null,
           documentDate: input.documentDate ? parseDateInput(input.documentDate) : null,
+          documentDueDate: input.documentDueDate
+            ? parseDateInput(input.documentDueDate)
+            : null,
           postingDate: parseDateInput(input.postingDate),
           receiptDate: parseDateInput(input.receiptDate || input.postingDate),
           emissionDeadline: input.emissionDeadline

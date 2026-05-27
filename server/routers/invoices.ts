@@ -137,6 +137,13 @@ function assertInvoiceReadyForReview(
         message: `El número documento debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
       });
     }
+    if (!invoice.documentDueDate) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message:
+          "Seleccione la fecha de vencimiento del documento antes de enviar a revisión",
+      });
+    }
   }
 }
 
@@ -240,6 +247,7 @@ export const invoicesRouter = router({
           cai: z.string().trim().max(100).optional(),
           invoiceNumber: z.string().trim().max(100).optional(),
           documentDate: z.string().optional(),
+          documentDueDate: z.string().optional(),
           postingDate: z.string(),
           receiptDate: z.string(),
           emissionDeadline: z.string().optional(),
@@ -273,6 +281,13 @@ export const invoicesRouter = router({
               code: z.ZodIssueCode.custom,
               path: ["invoiceNumber"],
               message: `El número documento debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+            });
+          }
+          if (!value.documentDueDate) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["documentDueDate"],
+              message: "Seleccione la fecha de vencimiento del documento",
             });
           }
         })
@@ -310,6 +325,7 @@ export const invoicesRouter = router({
             : input.invoiceNumber.trim()
           : null,
         documentDate: parseDateInput(input.documentDate),
+        documentDueDate: parseDateInput(input.documentDueDate),
         postingDate: parseDateInput(input.postingDate) ?? new Date(),
         receiptDate: parseDateInput(input.receiptDate) ?? new Date(),
         emissionDeadline:

@@ -327,6 +327,7 @@ export default function Recepciones() {
   const [cai, setCai] = useState("");
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [documentDate, setDocumentDate] = useState("");
+  const [documentDueDate, setDocumentDueDate] = useState("");
   const [postingDate, setPostingDate] = useState(todayDateValue());
   const [receiptDate, setReceiptDate] = useState(todayDateValue());
   const [emissionDeadline, setEmissionDeadline] = useState("");
@@ -444,6 +445,7 @@ export default function Recepciones() {
     setCai("");
     setInvoiceNumber("");
     setDocumentDate("");
+    setDocumentDueDate("");
     setPostingDate(todayDateValue());
     setReceiptDate(todayDateValue());
     setEmissionDeadline("");
@@ -709,6 +711,10 @@ export default function Recepciones() {
         toast.error("Selecciona la fecha del documento");
         return;
       }
+      if (!documentDueDate) {
+        toast.error("Selecciona la fecha de vencimiento del documento");
+        return;
+      }
       if (!emissionDeadline) {
         toast.error("Selecciona la fecha límite de emisión");
         return;
@@ -783,6 +789,7 @@ export default function Recepciones() {
           : invoiceNumber.trim()
         : undefined,
       documentDate: documentDate || undefined,
+      documentDueDate: documentDueDate || undefined,
       postingDate: currentPostingDate,
       receiptDate,
       emissionDeadline: emissionDeadline || undefined,
@@ -1050,7 +1057,7 @@ export default function Recepciones() {
             .field {
               display: grid;
               gap: 8px;
-              grid-template-columns: 118px 1fr;
+              grid-template-columns: 132px 1fr;
               min-height: 14px;
             }
             .meta-column.right .field {
@@ -1135,6 +1142,10 @@ export default function Recepciones() {
                 <div class="field">
                   <div class="label">Fecha Documento:</div>
                   <div class="value">${escapeHtml(formatPrintDate(receipt.documentDate))}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Fecha Vencimiento:</div>
+                  <div class="value">${escapeHtml(formatPrintDate(receipt.documentDueDate))}</div>
                 </div>
                 <div class="field">
                   <div class="label">No Pedido:</div>
@@ -1507,8 +1518,8 @@ export default function Recepciones() {
                 <div
                   className={`grid gap-3 md:grid-cols-2 ${
                     sourceType === "purchase_order"
-                      ? "xl:grid-cols-[minmax(22rem,2fr)_minmax(12rem,1fr)_repeat(4,minmax(10.5rem,1fr))]"
-                      : "xl:grid-cols-2"
+                      ? "2xl:grid-cols-[minmax(22rem,2fr)_minmax(12rem,1fr)_repeat(5,minmax(10.5rem,1fr))]"
+                      : "2xl:grid-cols-2"
                   }`}
                 >
                   {sourceType === "purchase_order" ? (
@@ -1588,6 +1599,19 @@ export default function Recepciones() {
                           value={emissionDeadline}
                           onChange={event =>
                             setEmissionDeadline(event.target.value)
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="receipt-document-due-date">
+                          Fecha vencimiento documento
+                        </Label>
+                        <Input
+                          id="receipt-document-due-date"
+                          type="date"
+                          value={documentDueDate}
+                          onChange={event =>
+                            setDocumentDueDate(event.target.value)
                           }
                         />
                       </div>
@@ -2118,13 +2142,21 @@ export default function Recepciones() {
                 </div>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-3">
+              <div className="grid gap-3 md:grid-cols-4">
                 <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                     Fecha documento
                   </Label>
                   <p className="text-sm font-semibold leading-snug sm:text-base">
                     {formatDateLabel(receiptDetail.receipt.documentDate)}
+                  </p>
+                </div>
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Fecha vencimiento
+                  </Label>
+                  <p className="text-sm font-semibold leading-snug sm:text-base">
+                    {formatDateLabel(receiptDetail.receipt.documentDueDate)}
                   </p>
                 </div>
                 <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">

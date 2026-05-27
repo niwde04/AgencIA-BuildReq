@@ -10,8 +10,11 @@ import {
 import { COOKIE_NAME } from "../shared/const";
 import type { TrpcContext } from "./_core/context";
 import {
+  calculatePurchaseOrderLineAmounts,
   calculateContractPaymentDates,
+  getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderContractSummary,
+  summarizePurchaseOrderLines,
 } from "../shared/purchase-orders";
 
 // ============================================================
@@ -129,6 +132,56 @@ const VALID_INVOICE_NUMBER_ALT = "000-001-01-00010572";
 const VALID_PDF_BASE64 = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF").toString(
   "base64"
 );
+
+// ============================================================
+// Tests: Purchase order tax helpers
+// ============================================================
+describe("BuildReq - Purchase order tax helpers", () => {
+  it("calculates ISV 18% line amounts", () => {
+    expect(
+      calculatePurchaseOrderLineAmounts({
+        quantity: "2",
+        unitPrice: "100.00",
+        taxCode: "isv_18",
+      })
+    ).toMatchObject({
+      subtotal: 200,
+      taxAmount: 36,
+      total: 236,
+      taxCode: "isv_18",
+    });
+  });
+
+  it("summarizes purchase orders in invoice-style fiscal rows", () => {
+    const summary = summarizePurchaseOrderLines([
+      { quantity: "1", unitPrice: "100.00", taxCode: "exe" },
+      { quantity: "2", unitPrice: "100.00", taxCode: "isv_15" },
+      { quantity: "3", unitPrice: "100.00", taxCode: "isv_18" },
+    ]);
+    const rows = getPurchaseOrderFiscalSummaryRows(summary);
+
+    expect(summary).toMatchObject({
+      subtotal: 600,
+      totalExonerated: 0,
+      totalExempt: 100,
+      totalTaxed15: 200,
+      totalTaxed18: 300,
+      totalIsv15: 30,
+      totalIsv18: 54,
+      total: 684,
+    });
+    expect(rows.map(row => row.label)).toEqual([
+      "Sub-total L.",
+      "Importe exonerado L.",
+      "Importe exento L.",
+      "Importe gravado 15% L.",
+      "Importe gravado 18% L.",
+      "I.S.V. 15% L.",
+      "I.S.V. 18% L.",
+      "Total a pagar L.",
+    ]);
+  });
+});
 
 // ============================================================
 // Tests: Purchase order contract helpers
@@ -1138,6 +1191,51 @@ describe("BuildReq - Role-based Access Control", () => {
 
     listMaterialRequestsSpy.mockRestore();
     listPendingFlowQueueItemsSpy.mockRestore();
+  });
+
+  it("Superuser sees sidebar invoice counts by attention and reviewed status", async () => {
+    const { ctx } = createUserContext();
+    const caller = appRouter.createCaller(ctx);
+    const listMaterialRequestsSpy = vi
+      .spyOn(db, "listMaterialRequests")
+      .mockResolvedValue([] as any);
+    const listPendingFlowQueueItemsSpy = vi
+      .spyOn(db, "listPendingFlowQueueItems")
+      .mockResolvedValue([] as any);
+    const listPurchaseRequestsSpy = vi
+      .spyOn(db, "listPurchaseRequests")
+      .mockResolvedValue([] as any);
+    const listPurchaseOrdersSpy = vi
+      .spyOn(db, "listPurchaseOrders")
+      .mockResolvedValue([] as any);
+    const listTransferRequestsSpy = vi
+      .spyOn(db, "listTransferRequests")
+      .mockResolvedValue([] as any);
+    const listInvoicesSpy = vi
+      .spyOn(db, "listInvoices")
+      .mockImplementation(async (filters?: any) => {
+        if (filters?.status === "borrador") return [{}, {}] as any;
+        if (filters?.status === "rechazada") return [{}] as any;
+        if (filters?.status === "revisada") return [{}, {}] as any;
+        return [] as any;
+      });
+
+    await expect(caller.dashboard.sidebarCounts()).resolves.toEqual(
+      expect.objectContaining({
+        invoicesPendingAttention: 3,
+        invoicesReviewed: 2,
+      })
+    );
+    expect(listInvoicesSpy).toHaveBeenCalledWith({ status: "borrador" });
+    expect(listInvoicesSpy).toHaveBeenCalledWith({ status: "rechazada" });
+    expect(listInvoicesSpy).toHaveBeenCalledWith({ status: "revisada" });
+
+    listMaterialRequestsSpy.mockRestore();
+    listPendingFlowQueueItemsSpy.mockRestore();
+    listPurchaseRequestsSpy.mockRestore();
+    listPurchaseOrdersSpy.mockRestore();
+    listTransferRequestsSpy.mockRestore();
+    listInvoicesSpy.mockRestore();
   });
 
   it("Project Administrator without assigned project does not fall back to global lists", async () => {
@@ -5688,6 +5786,7 @@ describe("BuildReq - Receipts", () => {
         cai: "338827 15203e A419E0 63BE03 0909A6 53",
         invoiceNumber: "000 001 01 00010571",
         documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
         postingDate: "2026-04-15",
         receiptDate: "2026-04-15",
@@ -5763,6 +5862,7 @@ describe("BuildReq - Receipts", () => {
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
         documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
         postingDate: "2026-04-15",
         receiptDate: "2026-04-15",
@@ -5832,6 +5932,7 @@ describe("BuildReq - Receipts", () => {
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
         documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
         postingDate: "2026-04-15",
         receiptDate: "2026-04-15",
@@ -6021,6 +6122,7 @@ describe("BuildReq - Receipts", () => {
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
         documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
         postingDate: "2026-04-15",
         receiptDate: "2026-04-15",
@@ -6045,6 +6147,7 @@ describe("BuildReq - Receipts", () => {
     expect(receiptPayload.cai).toBe(VALID_CAI);
     expect(receiptPayload.invoiceNumber).toBe(VALID_INVOICE_NUMBER);
     expect(receiptPayload.documentDate).toBeInstanceOf(Date);
+    expect(receiptPayload.documentDueDate).toBeInstanceOf(Date);
     expect(receiptPayload.emissionDeadline).toBeInstanceOf(Date);
     expect(receiptPayload.postingDate).toBeInstanceOf(Date);
     expect(receiptPayload.receiptDate).toBeInstanceOf(Date);
@@ -6066,6 +6169,7 @@ describe("BuildReq - Receipts", () => {
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
         documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
         postingDate: "2026-04-15",
         receiptDate: "2026-04-15",
         items: [
@@ -6084,6 +6188,38 @@ describe("BuildReq - Receipts", () => {
     registerReceiptSpy.mockRestore();
   });
 
+  it("requires document due date for fiscal purchase order receipts", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const registerReceiptSpy = vi.spyOn(db, "registerReceipt");
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentDate: "2026-04-14",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            itemName: "CEMENTO GRANEL",
+            quantityExpected: "100.00",
+            quantityReceived: "100.00",
+            unit: "und",
+          },
+        ],
+      })
+    ).rejects.toThrow("Seleccione la fecha de vencimiento del documento");
+
+    expect(registerReceiptSpy).not.toHaveBeenCalled();
+    registerReceiptSpy.mockRestore();
+  });
+
   it("rejects invalid CAI and invoice number formats for purchase order receipts", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -6097,6 +6233,7 @@ describe("BuildReq - Receipts", () => {
         cai: "BFHJGJKH",
         invoiceNumber: "3654756",
         documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
         postingDate: "2026-04-15",
         receiptDate: "2026-04-15",
@@ -6178,6 +6315,7 @@ describe("BuildReq - Receipts", () => {
         cai: "AUTH-EXT/001",
         invoiceNumber: "INV-USA-45",
         documentDate: null,
+        documentDueDate: null,
         emissionDeadline: null,
       })
     );
@@ -6253,6 +6391,7 @@ describe("BuildReq - Receipts", () => {
     expect(receiptPayload.cai).toBeNull();
     expect(receiptPayload.invoiceNumber).toBeNull();
     expect(receiptPayload.documentDate).toBeNull();
+    expect(receiptPayload.documentDueDate).toBeNull();
 
     getTransferByIdSpy.mockRestore();
     registerReceiptSpy.mockRestore();
@@ -6588,6 +6727,7 @@ describe("BuildReq - Receipts", () => {
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
         documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
         postingDate: "2026-04-15",
         receiptDate: "2026-04-15",
@@ -6643,6 +6783,7 @@ describe("BuildReq - Receipts", () => {
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
         documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
         postingDate: "2026-04-15",
         receiptDate: "2026-04-15",
@@ -6713,6 +6854,7 @@ describe("BuildReq - Receipts", () => {
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER_ALT,
         documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
         postingDate: "2026-04-15",
         receiptDate: "2026-04-15",
@@ -6794,6 +6936,7 @@ describe("BuildReq - Receipts", () => {
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
         documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
         postingDate: "2026-04-15",
         receiptDate: "2026-04-15",
@@ -6860,6 +7003,7 @@ describe("BuildReq - Receipts", () => {
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
         documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
         postingDate: "2026-04-15",
         receiptDate: "2026-04-15",
@@ -7137,6 +7281,11 @@ describe("BuildReq - Invoices", () => {
       isFiscalDocument: true,
       cai: VALID_CAI,
       invoiceNumber: VALID_INVOICE_NUMBER,
+      documentDate: new Date("2026-05-01T12:00:00"),
+      documentDueDate: new Date("2026-06-01T12:00:00"),
+      postingDate: new Date("2026-05-02T12:00:00"),
+      receiptDate: new Date("2026-05-02T12:00:00"),
+      emissionDeadline: new Date("2026-05-31T12:00:00"),
       total: "1000.00",
       retentionTotal: "0.00",
       netPayable: "1000.00",
@@ -7410,6 +7559,7 @@ describe("BuildReq - Invoices", () => {
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
         documentDate: "2026-05-01",
+        documentDueDate: "2026-06-01",
         postingDate: "2026-05-02",
         receiptDate: "2026-05-02",
         emissionDeadline: "2026-05-31",
@@ -7440,6 +7590,7 @@ describe("BuildReq - Invoices", () => {
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER_ALT,
         documentDate: "2026-05-01",
+        documentDueDate: "2026-06-01",
         postingDate: "2026-05-02",
         receiptDate: "2026-05-02",
         emissionDeadline: "2026-05-31",
@@ -7456,6 +7607,7 @@ describe("BuildReq - Invoices", () => {
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER_ALT,
         documentDate: expect.any(Date),
+        documentDueDate: expect.any(Date),
         emissionDeadline: expect.any(Date),
       })
     );
@@ -7475,12 +7627,34 @@ describe("BuildReq - Invoices", () => {
         cai: "",
         invoiceNumber: "3654756",
         documentDate: "2026-05-01",
+        documentDueDate: "2026-06-01",
         postingDate: "2026-05-02",
         receiptDate: "2026-05-02",
         emissionDeadline: "2026-05-31",
         notes: "Ajuste de factura",
       })
     ).rejects.toThrow("Ingrese el CAI del documento");
+
+    expect(updateInvoiceSpy).not.toHaveBeenCalled();
+    updateInvoiceSpy.mockRestore();
+  });
+
+  it("requires document due date when updating fiscal invoice metadata", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const updateInvoiceSpy = vi.spyOn(db, "updateInvoice");
+
+    await expect(
+      caller.invoices.update({
+        id: 10,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentDate: "2026-05-01",
+        postingDate: "2026-05-02",
+        receiptDate: "2026-05-02",
+        emissionDeadline: "2026-05-31",
+      })
+    ).rejects.toThrow("Seleccione la fecha de vencimiento del documento");
 
     expect(updateInvoiceSpy).not.toHaveBeenCalled();
     updateInvoiceSpy.mockRestore();
@@ -7570,6 +7744,59 @@ describe("BuildReq - Invoices", () => {
       expect.objectContaining({
         retentionCatalogId: 2,
         baseAmount: "500.00",
+      }),
+    ]);
+
+    getInvoiceByIdSpy.mockRestore();
+    replaceInvoiceRetentionsSpy.mockRestore();
+  });
+
+  it("allows two different retentions on the same invoice line", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi
+      .spyOn(db, "getInvoiceById")
+      .mockResolvedValue(invoiceDetail);
+    const replaceInvoiceRetentionsSpy = vi
+      .spyOn(db, "replaceInvoiceRetentions")
+      .mockResolvedValue({
+        ...invoiceDetail.invoice,
+        retentionTotal: "135.00",
+        netPayable: "865.00",
+      } as any);
+
+    await expect(
+      caller.invoices.replaceRetentions({
+        id: 10,
+        retentions: [
+          {
+            invoiceItemId: 77,
+            retentionCatalogId: 1,
+            baseAmount: "1000.00",
+          },
+          {
+            invoiceItemId: 77,
+            retentionCatalogId: 2,
+            baseAmount: "1000.00",
+          },
+        ],
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        retentionTotal: "135.00",
+        netPayable: "865.00",
+      })
+    );
+    expect(replaceInvoiceRetentionsSpy).toHaveBeenCalledWith(10, [
+      expect.objectContaining({
+        invoiceItemId: 77,
+        retentionCatalogId: 1,
+        baseAmount: "1000.00",
+      }),
+      expect.objectContaining({
+        invoiceItemId: 77,
+        retentionCatalogId: 2,
+        baseAmount: "1000.00",
       }),
     ]);
 
