@@ -38,6 +38,7 @@ import {
   CalendarDays,
   Check,
   ChevronsUpDown,
+  Download,
   Eye,
   FileText,
   FolderOpen,
@@ -50,6 +51,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -1168,25 +1170,95 @@ export default function PurchaseRequests() {
     printWindowWhenReady(printWindow);
   };
 
+  const exportPurchaseRequestsCsv = () => {
+    downloadCsv(
+      buildDatedCsvFileName("solicitudes-compra"),
+      [
+        {
+          header: "No. Solicitud",
+          value: (row: any) => row.purchaseRequest.requestNumber,
+        },
+        {
+          header: "Proyecto",
+          value: (row: any) =>
+            row.projectSummary?.label ||
+            (row.project ? `${row.project.code} — ${row.project.name}` : "—"),
+        },
+        {
+          header: "Tipo de Compra",
+          value: (row: any) =>
+            getPurchaseTypeLabel(row.purchaseRequest.purchaseType),
+        },
+        {
+          header: "Fecha creación",
+          value: (row: any) =>
+            row.purchaseRequest.createdAt
+              ? new Date(row.purchaseRequest.createdAt).toLocaleDateString(
+                  "es-HN"
+                )
+              : "—",
+        },
+        {
+          header: "Doc SAP",
+          value: (row: any) => row.purchaseRequest.sapDocumentNumber || "—",
+        },
+        {
+          header: "Estatus",
+          value: (row: any) =>
+            STATUS_LABELS[row.purchaseRequest.status] ||
+            row.purchaseRequest.status,
+        },
+        {
+          header: "Fecha necesaria",
+          value: (row: any) =>
+            row.purchaseRequest.neededBy
+              ? new Date(row.purchaseRequest.neededBy).toLocaleDateString(
+                  "es-HN"
+                )
+              : "—",
+        },
+        {
+          header: "Documento",
+          value: (row: any) =>
+            row.purchaseRequest.printedDocumentContent
+              ? "Listo"
+              : "Pendiente",
+        },
+      ],
+      filteredRequests
+    );
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1>Solicitudes de Compra</h1>
-        {canConvert && selectedRequestIds.length > 1 ? (
+        <div className="flex flex-wrap items-center gap-2">
           <Button
-            onClick={() =>
-              unifiedConvertMutation.mutate({
-                purchaseRequestIds: selectedRequestIds,
-              })
-            }
-            disabled={unifiedConvertMutation.isPending}
+            type="button"
+            variant="outline"
+            onClick={exportPurchaseRequestsCsv}
+            disabled={!filteredRequests.length}
           >
-            <ShoppingCart className="mr-2 h-4 w-4" />
-            {unifiedConvertMutation.isPending
-              ? "Creando..."
-              : `Crear orden de compra unificada (${selectedRequestIds.length})`}
+            <Download className="mr-2 h-4 w-4" />
+            Exportar CSV
           </Button>
-        ) : null}
+          {canConvert && selectedRequestIds.length > 1 ? (
+            <Button
+              onClick={() =>
+                unifiedConvertMutation.mutate({
+                  purchaseRequestIds: selectedRequestIds,
+                })
+              }
+              disabled={unifiedConvertMutation.isPending}
+            >
+              <ShoppingCart className="mr-2 h-4 w-4" />
+              {unifiedConvertMutation.isPending
+                ? "Creando..."
+                : `Crear orden de compra unificada (${selectedRequestIds.length})`}
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">

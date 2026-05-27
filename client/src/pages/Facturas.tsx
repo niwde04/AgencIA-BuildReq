@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   AlertTriangle,
   CheckCircle2,
+  Download,
   Search,
   Save,
   Send,
@@ -409,6 +411,65 @@ export default function Facturas() {
     });
   }, [invoices, searchTerm, statusFilter]);
 
+  const exportInvoicesCsv = () => {
+    downloadCsv(
+      buildDatedCsvFileName("facturas"),
+      [
+        {
+          header: "Documento",
+          value: (row: any) => row.invoice.invoiceDocumentNumber,
+        },
+        {
+          header: "Número fiscal",
+          value: (row: any) =>
+            row.invoice.invoiceNumber || "Documento sin número",
+        },
+        {
+          header: "Proveedor",
+          value: (row: any) =>
+            row.supplier
+              ? `${row.supplier.supplierCode} — ${row.supplier.name}`
+              : "Proveedor pendiente",
+        },
+        {
+          header: "Origen OC",
+          value: (row: any) => row.purchaseOrder?.orderNumber || "OC",
+        },
+        {
+          header: "Recepción",
+          value: (row: any) => row.receipt?.receiptNumber || "Recepción",
+        },
+        {
+          header: "Fecha vencimiento",
+          value: (row: any) => formatDateLabel(row.invoice.documentDueDate),
+        },
+        {
+          header: "Fecha límite emisión",
+          value: (row: any) => formatDateLabel(row.invoice.emissionDeadline),
+        },
+        {
+          header: "Total",
+          value: (row: any) => formatPurchaseOrderCurrency(row.invoice.total),
+        },
+        {
+          header: "Retenciones",
+          value: (row: any) =>
+            formatPurchaseOrderCurrency(row.invoice.retentionTotal),
+        },
+        {
+          header: "Neto",
+          value: (row: any) =>
+            formatPurchaseOrderCurrency(row.invoice.netPayable),
+        },
+        {
+          header: "Estado",
+          value: (row: any) => getInvoiceStatusLabel(row.invoice),
+        },
+      ],
+      filteredInvoices
+    );
+  };
+
   const retentionOptions = useMemo(() => {
     const optionMap = new Map<number, RetentionOption>();
     ((activeRetentionOptions ?? []) as RetentionOption[]).forEach((option) => {
@@ -719,11 +780,22 @@ export default function Facturas() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1>Facturas</h1>
-        <p className="text-sm text-muted-foreground">
-          Documentos generados desde recepciones de órdenes de compra.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1>Facturas</h1>
+          <p className="text-sm text-muted-foreground">
+            Documentos generados desde recepciones de órdenes de compra.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={exportInvoicesCsv}
+          disabled={!filteredInvoices.length}
+        >
+          <Download className="mr-2 h-4 w-4" />
+          Exportar CSV
+        </Button>
       </div>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">

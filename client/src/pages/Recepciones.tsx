@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import {
   formatAttachmentSize,
@@ -39,6 +40,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Download,
   Eye,
   AlertTriangle,
   FileText,
@@ -149,6 +151,25 @@ const RECEIVABLE_TRANSFER_STATUSES = new Set([
   "en_transito",
   "parcialmente_recibido",
 ]);
+
+function canReceivePurchaseOrderRow(row: any) {
+  const purchaseOrder = row?.purchaseOrder;
+  if (!purchaseOrder) return false;
+  if (RECEIVABLE_PURCHASE_ORDER_STATUSES.has(purchaseOrder.status)) {
+    return true;
+  }
+
+  if (!purchaseOrder.appliesContract) return false;
+  if (["borrador", "anulada"].includes(purchaseOrder.status)) return false;
+
+  const contractSummary = row.contractSummary;
+  return Boolean(
+    contractSummary &&
+      contractSummary.expectedInvoiceCount > 0 &&
+      !contractSummary.isExpired &&
+      !contractSummary.isFullyInvoiced
+  );
+}
 
 function todayDateValue() {
   return new Date().toISOString().slice(0, 10);
@@ -576,7 +597,7 @@ export default function Recepciones() {
   const availablePurchaseOrders = useMemo(
     () =>
       (purchaseOrders ?? []).filter((row: any) =>
-        RECEIVABLE_PURCHASE_ORDER_STATUSES.has(row.purchaseOrder.status)
+        canReceivePurchaseOrderRow(row)
       ),
     [purchaseOrders]
   );
@@ -1278,23 +1299,68 @@ export default function Recepciones() {
     });
   }, [receipts, searchTerm, sourceTypeFilter, statusFilter]);
 
+  const exportReceiptsCsv = () => {
+    downloadCsv(
+      buildDatedCsvFileName("recepciones"),
+      [
+        {
+          header: "No. Recepción",
+          value: (row: any) => row.receipt.receiptNumber,
+        },
+        {
+          header: "Proyecto",
+          value: (row: any) =>
+            row.project ? `${row.project.code} — ${row.project.name}` : "—",
+        },
+        {
+          header: "Tipo",
+          value: (row: any) =>
+            row.receipt.sourceType === "purchase_order"
+              ? SOURCE_TYPE_LABELS.purchase_order
+              : SOURCE_TYPE_LABELS.transfer,
+        },
+        {
+          header: "Estatus",
+          value: (row: any) => getReceiptStatusLabel(row.receipt, row.invoice),
+        },
+        {
+          header: "Fecha",
+          value: (row: any) =>
+            formatDateLabel(row.receipt.receiptDate || row.receipt.createdAt),
+        },
+      ],
+      filteredReceipts
+    );
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1>Recepciones</h1>
 
-        <Dialog
-          open={dialogOpen}
-          onOpenChange={open => {
-            setDialogOpen(open);
-            if (open) {
-              setPostingDate(todayDateValue());
-              setReceiptDate(todayDateValue());
-            } else {
-              resetForm();
-            }
-          }}
-        >
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={exportReceiptsCsv}
+            disabled={!filteredReceipts.length}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Exportar CSV
+          </Button>
+
+          <Dialog
+            open={dialogOpen}
+            onOpenChange={open => {
+              setDialogOpen(open);
+              if (open) {
+                setPostingDate(todayDateValue());
+                setReceiptDate(todayDateValue());
+              } else {
+                resetForm();
+              }
+            }}
+          >
           <DialogTrigger asChild>
             <Button>
               <Plus className="mr-2 h-4 w-4" />
@@ -1326,7 +1392,7 @@ export default function Recepciones() {
               </div>
             </DialogHeader>
 
-            <div className="space-y-5">
+            <div className="min-w-0 space-y-5">
               <div className="grid gap-3 md:grid-cols-12">
                 <div className="space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
@@ -1419,7 +1485,7 @@ export default function Recepciones() {
                   </Select>
                   <p className="text-sm leading-relaxed text-muted-foreground">
                     {sourceType === "purchase_order"
-                      ? "Solo aparecen órdenes emitidas con saldo pendiente por recibir."
+                      ? "Solo aparecen órdenes emitidas con saldo pendiente o contratos vigentes por facturar."
                       : "Solo aparecen traslados confirmados con saldo pendiente por recibir."}
                   </p>
                 </div>
@@ -1516,10 +1582,10 @@ export default function Recepciones() {
                 ) : null}
 
                 <div
-                  className={`grid gap-3 md:grid-cols-2 ${
+                  className={`grid min-w-0 gap-3 md:grid-cols-2 ${
                     sourceType === "purchase_order"
-                      ? "2xl:grid-cols-[minmax(22rem,2fr)_minmax(12rem,1fr)_repeat(5,minmax(10.5rem,1fr))]"
-                      : "2xl:grid-cols-2"
+                      ? "lg:grid-cols-3 xl:grid-cols-4"
+                      : "lg:grid-cols-2"
                   }`}
                 >
                   {sourceType === "purchase_order" ? (
@@ -1744,8 +1810,8 @@ export default function Recepciones() {
                 )}
               </section>
 
-              <div className="rounded-2xl border border-border/70">
-                <table className="w-full text-sm">
+              <div className="overflow-x-auto rounded-2xl border border-border/70">
+                <table className="w-full min-w-[980px] text-sm">
                   <thead>
                     <tr className="border-b border-border/70 bg-muted/20">
                       <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
@@ -2415,6 +2481,7 @@ export default function Recepciones() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+        </div>
 
       <AlertDialog
         open={closeReceiptLineItem !== null}

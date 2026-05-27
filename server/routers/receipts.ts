@@ -32,6 +32,22 @@ function canAccessReceipts(user: { role: string; buildreqRole?: string | null })
   );
 }
 
+function canReceivePurchaseOrder(purchaseOrder: any, contractSummary?: any) {
+  if (RECEIVABLE_PURCHASE_ORDER_STATUSES.has(purchaseOrder.status)) {
+    return true;
+  }
+
+  if (!purchaseOrder.appliesContract) return false;
+  if (["borrador", "anulada"].includes(purchaseOrder.status)) return false;
+
+  return Boolean(
+    contractSummary &&
+      contractSummary.expectedInvoiceCount > 0 &&
+      !contractSummary.isExpired &&
+      !contractSummary.isFullyInvoiced
+  );
+}
+
 function assertProjectScopedAccess(
   user: { role: string; buildreqRole?: string | null; assignedProjectId?: number | null },
   projectId: number
@@ -251,10 +267,16 @@ export const receiptsRouter = router({
           });
         }
 
-        if (!RECEIVABLE_PURCHASE_ORDER_STATUSES.has(detail.purchaseOrder.status)) {
+        if (
+          !canReceivePurchaseOrder(
+            detail.purchaseOrder,
+            detail.contractSummary
+          )
+        ) {
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message: "Solo se pueden recibir órdenes emitidas con saldo pendiente",
+            message:
+              "Solo se pueden recibir órdenes emitidas con saldo pendiente o contratos vigentes",
           });
         }
 

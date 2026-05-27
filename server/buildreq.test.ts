@@ -6752,7 +6752,8 @@ describe("BuildReq - Receipts", () => {
       })
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
-      message: "Solo se pueden recibir órdenes emitidas con saldo pendiente",
+      message:
+        "Solo se pueden recibir órdenes emitidas con saldo pendiente o contratos vigentes",
     });
 
     expect(registerReceiptSpy).not.toHaveBeenCalled();
@@ -6814,7 +6815,7 @@ describe("BuildReq - Receipts", () => {
     getPurchaseOrderByIdSpy.mockRestore();
   });
 
-  it("allows another receipt from the same contract OC even when the line was fully received before", async () => {
+  it("allows another receipt from the same contract OC even when regular receipt status is received", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
     const getPurchaseOrderByIdSpy = vi
@@ -6824,7 +6825,7 @@ describe("BuildReq - Receipts", () => {
           id: 4,
           orderNumber: "OC-2026-0005",
           projectId: 1,
-          status: "parcialmente_recibida",
+          status: "recibida",
           appliesContract: true,
           contractPaymentFrequency: "mensual",
           contractFirstPaymentDate: new Date("2026-01-01T12:00:00"),

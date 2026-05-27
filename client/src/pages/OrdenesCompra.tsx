@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { downloadBase64Document } from "@/lib/document-download";
+import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import {
   formatAttachmentSize,
@@ -1874,16 +1875,71 @@ export default function OrdenesCompra() {
     printWindowWhenReady(printWindow);
   };
 
+  const exportPurchaseOrdersCsv = () => {
+    downloadCsv(
+      buildDatedCsvFileName("ordenes-compra"),
+      [
+        {
+          header: "No. OC",
+          value: (row: any) => row.purchaseOrder.orderNumber,
+        },
+        {
+          header: "Clasificación",
+          value: (row: any) => row.purchaseOrder.classification,
+        },
+        {
+          header: "Proyecto",
+          value: (row: any) =>
+            row.project ? `${row.project.code} — ${row.project.name}` : "—",
+        },
+        {
+          header: "Tipo Compra",
+          value: (row: any) =>
+            PURCHASE_TYPE_LABELS[row.purchaseOrder.purchaseType] || "—",
+        },
+        {
+          header: "Proveedor",
+          value: (row: any) => row.supplier?.name || "Proveedor pendiente",
+        },
+        {
+          header: "Estatus",
+          value: (row: any) =>
+            row.purchaseOrder.appliesContract
+              ? row.contractSummary?.statusLabel || "Contrato"
+              : STATUS_LABELS[row.purchaseOrder.status] ||
+                row.purchaseOrder.status,
+        },
+        {
+          header: "Emisión",
+          value: (row: any) =>
+            EMISSION_STATUS_LABELS[row.purchaseOrder.status] || "Pendiente",
+        },
+      ],
+      filteredOrders
+    );
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1>Órdenes de Compra</h1>
-        {canCreatePurchaseOrder ? (
-          <Button onClick={() => setNewOrderDialogOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Nueva OC
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={exportPurchaseOrdersCsv}
+            disabled={!filteredOrders.length}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Exportar CSV
           </Button>
-        ) : null}
+          {canCreatePurchaseOrder ? (
+            <Button onClick={() => setNewOrderDialogOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Nueva OC
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
