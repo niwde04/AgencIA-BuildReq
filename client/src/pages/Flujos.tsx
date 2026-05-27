@@ -863,6 +863,12 @@ export default function Flujos() {
   };
 
   const handleBack = () => {
+    if (flowFilter !== "all" || statusFilter !== "all") {
+      setFlowFilter("all");
+      setStatusFilter("all");
+      return;
+    }
+
     if (typeof window !== "undefined" && window.history.length > 1) {
       window.history.back();
       return;

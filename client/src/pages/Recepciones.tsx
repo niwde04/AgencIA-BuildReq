@@ -55,6 +55,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import {
   calculatePurchaseOrderLineAmounts,
   getPurchaseOrderContractSummary,
@@ -1008,30 +1009,11 @@ export default function Recepciones() {
               grid-template-columns: 112px 1fr 120px;
             }
             .logo {
-              border: 1px solid #333;
-              border-radius: 3px;
+              display: block;
               height: 52px;
               margin-left: 6px;
-              padding-top: 4px;
-              text-align: center;
+              object-fit: contain;
               width: 70px;
-            }
-            .logo-small {
-              font-size: 5px;
-              font-weight: 800;
-              letter-spacing: 0.02em;
-              line-height: 1;
-            }
-            .logo-main {
-              font-size: 28px;
-              font-weight: 900;
-              letter-spacing: 0.01em;
-              line-height: 1;
-            }
-            .logo-foot {
-              font-size: 7px;
-              font-weight: 800;
-              line-height: 1;
             }
             .title {
               color: #06344f;
@@ -1139,11 +1121,7 @@ export default function Recepciones() {
         <body>
           <main class="sheet">
             <section class="header">
-              <div class="logo">
-                <div class="logo-small">HIDALGO e HIDALGO S.A.</div>
-                <div class="logo-main">HeH</div>
-                <div class="logo-foot">CONSTRUCTORES</div>
-              </div>
+              ${getPrintLogoMarkup()}
               <div class="title">
                 <div class="company">HIDALGO E HIDALGO HONDURAS S.A. DE C.V.</div>
                 <div>${escapeHtml(warehouseLabel)}</div>
@@ -1251,8 +1229,7 @@ export default function Recepciones() {
       </html>
     `);
     printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
+    printWindowWhenReady(printWindow);
   };
 
   const filteredReceipts = useMemo(() => {

@@ -72,6 +72,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import {
   calculatePurchaseOrderLineAmounts,
   formatPurchaseOrderCurrency,
@@ -133,6 +134,26 @@ const PURCHASE_REQUEST_ORIGIN_STATUSES = new Set([
 function formatSupplierOptionLabel(supplier?: any | null) {
   if (!supplier) return "Seleccione proveedor";
   return [supplier.supplierCode, supplier.name].filter(Boolean).join(" — ");
+}
+
+function formatSupplierContactPrintLabel(contact?: any | null) {
+  if (!contact) return "-";
+
+  return (
+    [contact.name, contact.phone, contact.email]
+      .map(value => String(value ?? "").trim())
+      .filter(Boolean)
+      .join(" / ") || "-"
+  );
+}
+
+function formatSupplierContactMeta(contact?: any | null) {
+  if (!contact) return "";
+
+  return [contact.phone, contact.email, contact.address]
+    .map(value => String(value ?? "").trim())
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function SupplierCommandList({
@@ -1509,6 +1530,9 @@ export default function OrdenesCompra() {
       detail.project?.name ||
       projectLabel;
     const requestedByLabel = detail.createdBy?.name || user?.name || "-";
+    const salesAdvisorLabel = formatSupplierContactPrintLabel(
+      detail.preferredSupplierContact
+    );
     const deliveryDate = purchaseOrder.neededBy
       ? formatPrintDate(purchaseOrder.neededBy)
       : "INMEDIATA";
@@ -1573,27 +1597,10 @@ export default function OrdenesCompra() {
               gap: 12px;
             }
             .logo {
-              border: 1px solid #333;
-              border-radius: 3px;
+              display: block;
               height: 70px;
-              padding-top: 7px;
-              text-align: center;
+              object-fit: contain;
               width: 134px;
-            }
-            .logo-small {
-              font-size: 8px;
-              font-weight: 700;
-              line-height: 1;
-            }
-            .logo-main {
-              font-size: 39px;
-              font-weight: 900;
-              letter-spacing: 0.01em;
-              line-height: 0.95;
-            }
-            .logo-foot {
-              font-size: 12px;
-              font-weight: 800;
             }
             .title {
               font-size: 16px;
@@ -1717,11 +1724,7 @@ export default function OrdenesCompra() {
         <body>
           <main class="sheet">
             <section class="header">
-              <div class="logo">
-                <div class="logo-small">HIDALGO e HIDALGO S.A.</div>
-                <div class="logo-main">HeH</div>
-                <div class="logo-foot">CONSTRUCTORES</div>
-              </div>
+              ${getPrintLogoMarkup()}
               <div class="title">
                 <div class="company">HIDALGO E HIDALGO HONDURAS SA DE CV</div>
                 <div>RTN: 08019013549808</div>
@@ -1744,7 +1747,7 @@ export default function OrdenesCompra() {
                 </div>
                 <div class="field">
                   <div class="label">Asesor Vta:</div>
-                  <div class="value">-</div>
+                  <div class="value">${escapeHtml(salesAdvisorLabel)}</div>
                 </div>
                 <div class="field">
                   <div class="label">Destino:</div>
@@ -1847,7 +1850,7 @@ export default function OrdenesCompra() {
               Dirección: Blvd. Suyapa, Edificio Metropolis, Torre 2, Piso 20, Ofi. 22004.
               <br />
               Presentar con la factura su constancia de estar sujetos al RÉGIMEN DE PAGOS A CUENTA vigente,
-              caso contrario se procederá
+              caso contrario se procederá con las retenciones correspondientes.
             </section>
 
             <div class="footer-user">${escapeHtml(requestedByLabel)}</div>
@@ -1856,8 +1859,7 @@ export default function OrdenesCompra() {
       </html>
     `);
     printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
+    printWindowWhenReady(printWindow);
   };
 
   return (
@@ -3038,7 +3040,7 @@ export default function OrdenesCompra() {
                     {detail.purchaseOrder.classification}
                   </p>
                 </div>
-                <div className="space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-6 lg:col-span-5">
+                <div className="space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-6 lg:col-span-4">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                     Proveedor
                   </Label>
@@ -3085,6 +3087,35 @@ export default function OrdenesCompra() {
                         : detail.supplier?.name || "Proveedor pendiente"}
                     </p>
                   </div>
+                  <div className="rounded-xl border border-border/70 bg-background/80 px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Contacto preferible
+                    </p>
+                    <p className="mt-1 text-sm font-semibold leading-snug text-foreground">
+                      {detail.preferredSupplierContact?.name ||
+                        "Sin contacto preferible configurado"}
+                    </p>
+                    {formatSupplierContactMeta(
+                      detail.preferredSupplierContact
+                    ) ? (
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        {formatSupplierContactMeta(
+                          detail.preferredSupplierContact
+                        )}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3 lg:col-span-2">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Fecha de emisión
+                  </Label>
+                  <p className="text-base font-semibold leading-tight sm:text-lg">
+                    {formatPrintDate(
+                      detail.purchaseOrder.printedAt ??
+                        detail.purchaseOrder.createdAt
+                    )}
+                  </p>
                 </div>
                 <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3 lg:col-span-2">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
@@ -3098,7 +3129,7 @@ export default function OrdenesCompra() {
                       : "—"}
                   </p>
                 </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3 lg:col-span-3">
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3 lg:col-span-2">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                     Estado de emisión
                   </Label>

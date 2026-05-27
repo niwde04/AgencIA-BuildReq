@@ -3,7 +3,10 @@ import { appRouter } from "./routers";
 import * as db from "./db";
 import * as storage from "./storage";
 import { validateDocumentAttachmentFile } from "./routers/attachments";
-import { buildProcurementPdfBase64 } from "./_core/documents";
+import {
+  buildProcurementPdfBase64,
+  buildPurchaseOrderPrintPdfBase64,
+} from "./_core/documents";
 import { COOKIE_NAME } from "../shared/const";
 import type { TrpcContext } from "./_core/context";
 import {
@@ -4499,6 +4502,63 @@ describe("BuildReq - Purchase Requests", () => {
     syncPurchaseRequestConversionStatusSpy.mockRestore();
   });
 
+  it("allows only project or central admins to change purchase request item destination", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 36,
+          projectId: 1,
+          status: "pendiente",
+          purchaseType: "local",
+        },
+        items: [
+          {
+            id: 504,
+            itemName: "ARENA",
+            quantity: "12.00",
+            receivedQuantity: "0.00",
+            convertedQuantity: "0.00",
+            unitPrice: "0.00",
+            sourceProject: { id: 1 },
+          },
+        ],
+      } as any);
+    const updatePurchaseRequestSpy = vi
+      .spyOn(db, "updatePurchaseRequest")
+      .mockResolvedValue({ success: true } as any);
+    const updatePurchaseRequestItemSpy = vi
+      .spyOn(db, "updatePurchaseRequestItem")
+      .mockResolvedValue({ success: true } as any);
+
+    await expect(
+      caller.purchaseRequests.update({
+        id: 36,
+        items: [
+          {
+            id: 504,
+            quantity: "12.00",
+            targetType: "subproyecto",
+            subProjectId: 10,
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message:
+        "Solo el Administrador del Proyecto o Administración Central puede cambiar el destino",
+    });
+
+    expect(updatePurchaseRequestSpy).not.toHaveBeenCalled();
+    expect(updatePurchaseRequestItemSpy).not.toHaveBeenCalled();
+
+    getPurchaseRequestByIdSpy.mockRestore();
+    updatePurchaseRequestSpy.mockRestore();
+    updatePurchaseRequestItemSpy.mockRestore();
+  });
+
   it("does not allow reducing a purchase request item below the received quantity", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -5536,7 +5596,54 @@ describe("BuildReq - Purchase Orders", () => {
       .toUpperCase();
 
     expect(draftPdfText).toContain(`<${encodedWatermark}> Tj`);
+    expect(draftPdfText).toContain("/Subtype /Image");
+    expect(draftPdfText).toContain("/HehLogo Do");
     expect(emittedPdfText).not.toContain(`<${encodedWatermark}> Tj`);
+    expect(emittedPdfText).toContain("/Subtype /Image");
+    expect(emittedPdfText).toContain("/HehLogo Do");
+  });
+
+  it("prints the preferred supplier contact as the purchase order sales advisor", () => {
+    const salesAdvisorLabel = "ANA JOAQUINA MUNOZ";
+    const pdf = buildPurchaseOrderPrintPdfBase64({
+      orderNumber: "CD-006-00000006",
+      orderId: "88",
+      projectLabel: "006 CA5 - MANTENIMIENTO PERIODICO",
+      supplierLabel: "LARACH Y CIA S DE RL DE CV",
+      createdDateLabel: "26/05/2026",
+      destinationLabel: "CA5 - MANTENIMIENTO PERIODICO",
+      deliveryDateLabel: "31/05/2026",
+      requestedByLabel: "Edwin Barahona",
+      salesAdvisorLabel,
+      observations: "Compra directa por Linea de credito",
+      quoteLabel: "-",
+      items: [
+        {
+          itemNumber: "1",
+          description: "MASCARILLA MEDIA CARA GASES DOBLE FILTRO",
+          partNumber: "05050100046",
+          quantityLabel: "30",
+          unitPriceLabel: "450.00",
+          subtotalLabel: "13,500.00",
+        },
+      ],
+      summaryRows: [
+        { label: "Subtotal", value: "13,500.00" },
+        { label: "ISV 15%", value: "2,025.00" },
+        { label: "Total", value: "15,525.00", emphasized: true },
+        { label: "(-) Ret. ISV", value: "0.00" },
+        { label: "(-) Ret. ISR y Hon.", value: "0.00" },
+        { label: "Neto Pagar", value: "15,525.00", emphasized: true },
+      ],
+    });
+
+    const pdfText = Buffer.from(pdf, "base64").toString("latin1");
+    const encodedSalesAdvisor = Buffer.from(salesAdvisorLabel, "latin1")
+      .toString("hex")
+      .toUpperCase();
+
+    expect(pdfText).toContain(`<${encodedSalesAdvisor}> Tj`);
+    expect(pdfText).toContain("/Subtype /Image");
   });
 });
 

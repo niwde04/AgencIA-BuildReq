@@ -32,6 +32,7 @@ import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
+import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 
 const RETURN_TYPE_LABELS: Record<string, string> = {
   devolucion_bodega_proyecto: "Devolución a Bodega de Proyecto",
@@ -232,10 +233,17 @@ export default function Devoluciones() {
             header {
               align-items: flex-start;
               border-bottom: 1px solid #d9d9d9;
-              display: flex;
-              justify-content: space-between;
+              display: grid;
+              gap: 18px;
+              grid-template-columns: 112px 1fr auto;
               margin-bottom: 20px;
               padding-bottom: 16px;
+            }
+            .logo {
+              display: block;
+              height: 76px;
+              object-fit: contain;
+              width: 110px;
             }
             h1 { font-size: 26px; margin: 0 0 6px; }
             h2 {
@@ -307,6 +315,7 @@ export default function Devoluciones() {
         </head>
         <body>
           <header>
+            ${getPrintLogoMarkup()}
             <div>
               <h1>
                 ${escapeHtml(selectedReturn.returnNumber)}
@@ -389,8 +398,7 @@ export default function Devoluciones() {
       </html>
     `);
     printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
+    printWindowWhenReady(printWindow);
   };
 
   return (

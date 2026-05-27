@@ -50,6 +50,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 
 const STATUS_LABELS: Record<string, string> = {
   pendiente: "Pendiente",
@@ -520,25 +521,30 @@ export default function PurchaseRequests() {
 
     return selectedItems.map((item: any) => {
       const draft = getItemDraft(item);
-      return {
+      const payload: any = {
         id: item.id,
         quantity: draft.quantity,
         brand: toNullablePrintText(draft.brand),
         costResponsible: toNullablePrintText(draft.costResponsible),
-        targetType: draft.targetSelection?.targetType ?? null,
-        subProjectId:
+      };
+
+      if (canEditPurchaseRequestDestination) {
+        payload.targetType = draft.targetSelection?.targetType ?? null;
+        payload.subProjectId =
           draft.targetSelection?.targetType === "subproyecto"
             ? draft.targetSelection.subProjectId
-            : null,
-        fixedAssetSapItemCode:
+            : null;
+        payload.fixedAssetSapItemCode =
           draft.targetSelection?.targetType === "activo_fijo"
             ? draft.targetSelection.fixedAssetSapItemCode
-            : null,
-        fixedAssetName:
+            : null;
+        payload.fixedAssetName =
           draft.targetSelection?.targetType === "activo_fijo"
             ? draft.targetSelection.fixedAssetName
-            : null,
-      };
+            : null;
+      }
+
+      return payload;
     });
   };
 
@@ -675,6 +681,11 @@ export default function PurchaseRequests() {
     detail?.purchaseRequest.purchaseType !== "compra_directa";
   const canEditSelectedPurchaseRequest =
     !isConvertedPurchaseRequest && !isProjectAdminReadOnlyRequest;
+  const canEditPurchaseRequestDestination =
+    canEditSelectedPurchaseRequest &&
+    (user?.role === "admin" ||
+      buildreqRole === "administracion_central" ||
+      isProjectAdmin);
   const canConvertSelectedPurchaseRequest =
     canConvert && canEditSelectedPurchaseRequest;
 
@@ -686,7 +697,7 @@ export default function PurchaseRequests() {
   ) => {
     const open = targetPopoverOpen === item.id;
     const disabled =
-      !canEditSelectedPurchaseRequest || !selectedProjectIdNumber;
+      !canEditPurchaseRequestDestination || !selectedProjectIdNumber;
 
     return (
       <div className="flex gap-2">
@@ -947,7 +958,7 @@ export default function PurchaseRequests() {
             <td class="numeric">${escapeHtml(quantity)}</td>
             <td>${escapeHtml(item.itemName)}</td>
             <td>${escapeHtml(getItemTargetLabel(item))}</td>
-            <td class="highlight">${escapeHtml(draft.brand || "-")}</td>
+            <td>${escapeHtml(draft.brand || "-")}</td>
             <td>${escapeHtml(item.unit || "-")}</td>
             <td>${escapeHtml(draft.costResponsible || "-")}</td>
           </tr>
@@ -989,26 +1000,10 @@ export default function PurchaseRequests() {
               gap: 18px;
             }
             .logo {
-              border: 2px solid #737373;
+              display: block;
               height: 54px;
-              padding-top: 6px;
-              text-align: center;
-              width: 70px;
-            }
-            .logo-small {
-              font-size: 6px;
-              font-weight: 700;
-              letter-spacing: 0.02em;
-            }
-            .logo-main {
-              font-size: 27px;
-              font-weight: 800;
-              letter-spacing: 0.02em;
-              line-height: 1;
-            }
-            .logo-foot {
-              font-size: 6px;
-              font-weight: 700;
+              object-fit: contain;
+              width: 78px;
             }
             .company {
               color: #06426f;
@@ -1051,9 +1046,6 @@ export default function PurchaseRequests() {
             .value {
               color: #000;
               font-weight: 700;
-            }
-            .highlight {
-              background: #fff86a;
             }
             table {
               border-collapse: collapse;
@@ -1113,11 +1105,7 @@ export default function PurchaseRequests() {
         <body>
           <main class="sheet">
             <section class="header">
-              <div class="logo">
-                <div class="logo-small">HIDALGO E HIDALGO S.A.</div>
-                <div class="logo-main">HH</div>
-                <div class="logo-foot">CONSTRUCTORES</div>
-              </div>
+              ${getPrintLogoMarkup()}
               <div class="company">
                 <div>HIDALGO E HIDALGO HONDURAS S.A. DE C.V.</div>
                 <div>${escapeHtml(warehouseLabel)}</div>
@@ -1137,7 +1125,7 @@ export default function PurchaseRequests() {
               </div>
               <div class="field">
                 <div class="label">Solicitado:</div>
-                <div class="value highlight">${escapeHtml(requestedByLabel)}</div>
+                <div class="value">${escapeHtml(requestedByLabel)}</div>
               </div>
             </section>
 
@@ -1150,7 +1138,7 @@ export default function PurchaseRequests() {
                   <th style="width: 18%;">Destino</th>
                   <th style="width: 12%;">Marca</th>
                   <th style="width: 9%;">U.M</th>
-                  <th style="width: 18%;">Responsable C</th>
+                  <th style="width: 18%;">Responsable compra</th>
                 </tr>
               </thead>
               <tbody>
@@ -1177,8 +1165,7 @@ export default function PurchaseRequests() {
       </html>
     `);
     printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
+    printWindowWhenReady(printWindow);
   };
 
   return (
@@ -1624,7 +1611,23 @@ export default function PurchaseRequests() {
                 </div>
 
                 <div className="max-w-full overflow-x-auto">
-                  <table className="w-full min-w-[1680px] text-sm">
+                  <table className="w-full min-w-[1880px] table-fixed text-sm">
+                    <colgroup>
+                      {canConvertSelectedPurchaseRequest && (
+                        <col className="w-20" />
+                      )}
+                      <col className="w-44" />
+                      <col className="w-56" />
+                      <col className="w-72" />
+                      <col className="w-72" />
+                      <col className="w-48" />
+                      <col className="w-56" />
+                      <col className="w-64" />
+                      <col className="w-40" />
+                      <col className="w-36" />
+                      <col className="w-36" />
+                      <col className="w-40" />
+                    </colgroup>
                     <thead>
                       <tr className="border-b border-border bg-muted/20">
                         {canConvertSelectedPurchaseRequest && (
@@ -1651,7 +1654,7 @@ export default function PurchaseRequests() {
                           Marca
                         </th>
                         <th className="w-52 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Responsable C
+                          Responsable compra
                         </th>
                         <th className="w-40 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Cantidad solicitada
@@ -1731,7 +1734,7 @@ export default function PurchaseRequests() {
                             </td>
                             <td className="p-4 align-top">
                               <Input
-                                className="h-9 text-sm"
+                                className="h-9 min-w-0 text-sm"
                                 value={draft.brand}
                                 onChange={event =>
                                   updateItemDraft(
@@ -1746,7 +1749,7 @@ export default function PurchaseRequests() {
                             </td>
                             <td className="p-4 align-top">
                               <Input
-                                className="h-9 text-sm"
+                                className="h-9 min-w-0 text-sm"
                                 value={draft.costResponsible}
                                 onChange={event =>
                                   updateItemDraft(
@@ -1755,7 +1758,7 @@ export default function PurchaseRequests() {
                                     event.target.value
                                   )
                                 }
-                                placeholder="Responsable"
+                                placeholder="Responsable compra"
                                 disabled={!canEditSelectedPurchaseRequest}
                               />
                             </td>

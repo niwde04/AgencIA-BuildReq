@@ -1,7 +1,11 @@
+import { deflateSync, inflateSync } from "node:zlib";
+
 const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
 const PAGE_MARGIN_X = 42;
 const PAGE_MARGIN_BOTTOM = 52;
+const HEH_LOGO_PNG_BASE64 =
+  "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";
 
 type PdfFont = "F1" | "F2";
 type PdfRgb = [number, number, number];
@@ -9,6 +13,14 @@ type PdfPage = {
   commands: string[];
   width: number;
   height: number;
+  images: Set<string>;
+};
+
+type PdfImage = {
+  name: string;
+  width: number;
+  height: number;
+  rgbData: Buffer;
 };
 
 type ProcurementField = {
@@ -28,6 +40,169 @@ type ProcurementSummaryRow = {
   value: string;
   emphasized?: boolean;
 };
+
+function readPngChunks(buffer: Buffer) {
+  const signature = "89504e470d0a1a0a";
+  if (buffer.subarray(0, 8).toString("hex") !== signature) {
+    throw new Error("Invalid PNG signature");
+  }
+
+  const chunks: Array<{ type: string; data: Buffer }> = [];
+  let offset = 8;
+
+  while (offset < buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const type = buffer.subarray(offset + 4, offset + 8).toString("ascii");
+    const data = buffer.subarray(offset + 8, offset + 8 + length);
+    chunks.push({ type, data });
+    offset += 12 + length;
+    if (type === "IEND") break;
+  }
+
+  return chunks;
+}
+
+function paethPredictor(left: number, up: number, upLeft: number) {
+  const estimate = left + up - upLeft;
+  const leftDistance = Math.abs(estimate - left);
+  const upDistance = Math.abs(estimate - up);
+  const upLeftDistance = Math.abs(estimate - upLeft);
+
+  if (leftDistance <= upDistance && leftDistance <= upLeftDistance) return left;
+  if (upDistance <= upLeftDistance) return up;
+  return upLeft;
+}
+
+function readPackedSample(row: Buffer, index: number, bitDepth: number) {
+  if (bitDepth === 8) return row[index];
+
+  const samplesPerByte = 8 / bitDepth;
+  const byte = row[Math.floor(index / samplesPerByte)];
+  const shift = 8 - bitDepth - (index % samplesPerByte) * bitDepth;
+  return (byte >> shift) & ((1 << bitDepth) - 1);
+}
+
+function flattenOverWhite(red: number, green: number, blue: number, alpha = 255) {
+  const opacity = alpha / 255;
+  return [
+    Math.round(red * opacity + 255 * (1 - opacity)),
+    Math.round(green * opacity + 255 * (1 - opacity)),
+    Math.round(blue * opacity + 255 * (1 - opacity)),
+  ];
+}
+
+function createPdfImageFromPngBase64(name: string, base64: string): PdfImage {
+  const chunks = readPngChunks(Buffer.from(base64, "base64"));
+  const ihdr = chunks.find(chunk => chunk.type === "IHDR")?.data;
+  if (!ihdr) throw new Error("PNG missing IHDR chunk");
+
+  const width = ihdr.readUInt32BE(0);
+  const height = ihdr.readUInt32BE(4);
+  const bitDepth = ihdr[8];
+  const colorType = ihdr[9];
+  const compression = ihdr[10];
+  const filter = ihdr[11];
+  const interlace = ihdr[12];
+
+  if (compression !== 0 || filter !== 0 || interlace !== 0) {
+    throw new Error("Unsupported PNG encoding");
+  }
+
+  const paletteChunk = chunks.find(chunk => chunk.type === "PLTE")?.data;
+  const transparencyChunk = chunks.find(chunk => chunk.type === "tRNS")?.data;
+  const idat = Buffer.concat(
+    chunks.filter(chunk => chunk.type === "IDAT").map(chunk => chunk.data)
+  );
+  const inflated = inflateSync(idat);
+  const bitsPerPixel =
+    colorType === 6
+      ? bitDepth * 4
+      : colorType === 2
+        ? bitDepth * 3
+        : bitDepth;
+  const filterBytesPerPixel = Math.max(1, Math.ceil(bitsPerPixel / 8));
+  const scanlineBytes = Math.ceil((width * bitsPerPixel) / 8);
+  const rows: Buffer[] = [];
+  let sourceOffset = 0;
+
+  for (let rowIndex = 0; rowIndex < height; rowIndex += 1) {
+    const filterType = inflated[sourceOffset];
+    const source = inflated.subarray(sourceOffset + 1, sourceOffset + 1 + scanlineBytes);
+    const previous = rows[rowIndex - 1];
+    const row = Buffer.alloc(scanlineBytes);
+
+    for (let index = 0; index < scanlineBytes; index += 1) {
+      const left = index >= filterBytesPerPixel ? row[index - filterBytesPerPixel] : 0;
+      const up = previous?.[index] ?? 0;
+      const upLeft =
+        index >= filterBytesPerPixel ? (previous?.[index - filterBytesPerPixel] ?? 0) : 0;
+
+      if (filterType === 0) row[index] = source[index];
+      else if (filterType === 1) row[index] = (source[index] + left) & 0xff;
+      else if (filterType === 2) row[index] = (source[index] + up) & 0xff;
+      else if (filterType === 3) row[index] = (source[index] + Math.floor((left + up) / 2)) & 0xff;
+      else if (filterType === 4) {
+        row[index] = (source[index] + paethPredictor(left, up, upLeft)) & 0xff;
+      } else {
+        throw new Error(`Unsupported PNG filter ${filterType}`);
+      }
+    }
+
+    rows.push(row);
+    sourceOffset += scanlineBytes + 1;
+  }
+
+  const palette =
+    paletteChunk && colorType === 3
+      ? Array.from({ length: paletteChunk.length / 3 }, (_, index) => [
+          paletteChunk[index * 3],
+          paletteChunk[index * 3 + 1],
+          paletteChunk[index * 3 + 2],
+        ])
+      : [];
+  const rgbData = Buffer.alloc(width * height * 3);
+
+  rows.forEach((row, rowIndex) => {
+    for (let column = 0; column < width; column += 1) {
+      let red = 255;
+      let green = 255;
+      let blue = 255;
+      let alpha = 255;
+
+      if (colorType === 3) {
+        const paletteIndex = readPackedSample(row, column, bitDepth);
+        const paletteColor = palette[paletteIndex] ?? [255, 255, 255];
+        [red, green, blue] = paletteColor;
+        alpha = transparencyChunk?.[paletteIndex] ?? 255;
+      } else if (colorType === 6 && bitDepth === 8) {
+        const index = column * 4;
+        red = row[index];
+        green = row[index + 1];
+        blue = row[index + 2];
+        alpha = row[index + 3];
+      } else if (colorType === 2 && bitDepth === 8) {
+        const index = column * 3;
+        red = row[index];
+        green = row[index + 1];
+        blue = row[index + 2];
+      } else if (colorType === 0 && bitDepth === 8) {
+        red = green = blue = row[column];
+      } else {
+        throw new Error(`Unsupported PNG color type ${colorType} with bit depth ${bitDepth}`);
+      }
+
+      const outputIndex = (rowIndex * width + column) * 3;
+      const flattened = flattenOverWhite(red, green, blue, alpha);
+      rgbData[outputIndex] = flattened[0];
+      rgbData[outputIndex + 1] = flattened[1];
+      rgbData[outputIndex + 2] = flattened[2];
+    }
+  });
+
+  return { name, width, height, rgbData };
+}
+
+const HEH_LOGO_IMAGE = createPdfImageFromPngBase64("HehLogo", HEH_LOGO_PNG_BASE64);
 
 function sanitizePdfText(value: string) {
   return value
@@ -72,6 +247,7 @@ function createPage(options: { width?: number; height?: number } = {}): PdfPage 
     commands: [],
     width: options.width ?? PAGE_WIDTH,
     height: options.height ?? PAGE_HEIGHT,
+    images: new Set<string>(),
   };
 }
 
@@ -221,6 +397,56 @@ function drawLine(
   page.commands.push("Q");
 }
 
+function drawImage(
+  page: PdfPage,
+  image: PdfImage,
+  x: number,
+  top: number,
+  width: number,
+  height: number
+) {
+  page.images.add(image.name);
+  page.commands.push("q");
+  page.commands.push(
+    `${formatNumber(width)} 0 0 ${formatNumber(height)} ${formatNumber(x)} ${formatNumber(
+      toPdfRectY(page, top, height)
+    )} cm`
+  );
+  page.commands.push(`/${image.name} Do`);
+  page.commands.push("Q");
+}
+
+function drawImageContained(
+  page: PdfPage,
+  image: PdfImage,
+  params: {
+    x: number;
+    top: number;
+    width: number;
+    height: number;
+    background?: PdfRgb;
+  }
+) {
+  if (params.background) {
+    drawRect(page, params.x, params.top, params.width, params.height, {
+      fill: params.background,
+    });
+  }
+
+  const scale = Math.min(params.width / image.width, params.height / image.height);
+  const imageWidth = image.width * scale;
+  const imageHeight = image.height * scale;
+
+  drawImage(
+    page,
+    image,
+    params.x + (params.width - imageWidth) / 2,
+    params.top + (params.height - imageHeight) / 2,
+    imageWidth,
+    imageHeight
+  );
+}
+
 function drawText(
   page: PdfPage,
   params: {
@@ -338,22 +564,51 @@ function drawWatermark(
 }
 
 function buildPdfBase64FromPages(pages: PdfPage[]) {
+  const imageRegistry = new Map([[HEH_LOGO_IMAGE.name, HEH_LOGO_IMAGE]]);
+  const imageNames = Array.from(
+    new Set(pages.flatMap(page => Array.from(page.images)))
+  );
+  const images = imageNames.map(name => {
+    const image = imageRegistry.get(name);
+    if (!image) throw new Error(`Unknown PDF image ${name}`);
+    return image;
+  });
+  const imageObjectStartId = 5;
+  const pageObjectStartId = imageObjectStartId + images.length;
+  const imageObjectIds = new Map(
+    images.map((image, index) => [image.name, imageObjectStartId + index])
+  );
   const objects: string[] = [
     "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj",
     `2 0 obj\n<< /Type /Pages /Kids [${pages
-      .map((_, index) => `${5 + index * 2} 0 R`)
+      .map((_, index) => `${pageObjectStartId + index * 2} 0 R`)
       .join(" ")}] /Count ${pages.length} >>\nendobj`,
     "3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj",
     "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\nendobj",
   ];
 
-  pages.forEach((page, index) => {
-    const pageObjectId = 5 + index * 2;
-    const contentObjectId = pageObjectId + 1;
-    const stream = page.commands.join("\n");
+  images.forEach(image => {
+    const objectId = imageObjectIds.get(image.name)!;
+    const stream = `${deflateSync(image.rgbData).toString("hex").toUpperCase()}>`;
 
     objects.push(
-      `${pageObjectId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${formatNumber(page.width)} ${formatNumber(page.height)}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentObjectId} 0 R >>\nendobj`
+      `${objectId} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter [/ASCIIHexDecode /FlateDecode] /Length ${Buffer.byteLength(stream, "ascii")} >>\nstream\n${stream}\nendstream\nendobj`
+    );
+  });
+
+  pages.forEach((page, index) => {
+    const pageObjectId = pageObjectStartId + index * 2;
+    const contentObjectId = pageObjectId + 1;
+    const stream = page.commands.join("\n");
+    const xObjectEntries = Array.from(page.images)
+      .map(name => `/${name} ${imageObjectIds.get(name)!} 0 R`)
+      .join(" ");
+    const xObjectResources = xObjectEntries
+      ? ` /XObject << ${xObjectEntries} >>`
+      : "";
+
+    objects.push(
+      `${pageObjectId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${formatNumber(page.width)} ${formatNumber(page.height)}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>${xObjectResources} >> /Contents ${contentObjectId} 0 R >>\nendobj`
     );
     objects.push(
       `${contentObjectId} 0 obj\n<< /Length ${Buffer.byteLength(stream, "ascii")} >>\nstream\n${stream}\nendstream\nendobj`
@@ -509,11 +764,20 @@ export function buildProcurementPdfBase64(params: {
       color: [0.84, 0.87, 0.93],
     });
 
+    const logoX = 454;
+    drawImageContained(page, HEH_LOGO_IMAGE, {
+      x: logoX,
+      top: 47,
+      width: 96,
+      height: 66,
+      background: palette.white,
+    });
+
     const badgeWidth = Math.max(
       78,
       measureTextWidth(params.badgeText.toUpperCase(), 12, "F2") + 26
     );
-    const badgeX = 36 + 540 - badgeWidth - 24;
+    const badgeX = logoX - badgeWidth - 16;
     drawRect(page, badgeX, 58, badgeWidth, 30, {
       fill: palette.accent,
     });
@@ -839,6 +1103,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   destinationLabel: string;
   deliveryDateLabel: string;
   requestedByLabel: string;
+  salesAdvisorLabel: string;
   observations: string;
   quoteLabel: string;
   items: Array<{
@@ -945,20 +1210,12 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   }
 
   function drawLogo(top: number) {
-    drawRect(page, marginX, top, 102, 56, {
-      stroke: ink,
-      lineWidth: 0.8,
+    drawImageContained(page, HEH_LOGO_IMAGE, {
+      x: marginX,
+      top,
+      width: 102,
+      height: 56,
     });
-    drawCenteredText(
-      marginX,
-      top + 6,
-      102,
-      "HIDALGO e HIDALGO S.A.",
-      6.8,
-      "F2"
-    );
-    drawCenteredText(marginX, top + 17, 102, "HeH", 31, "F2");
-    drawCenteredText(marginX, top + 45, 102, "CONSTRUCTORES", 9.5, "F2");
   }
 
   function drawFirstPageHeader() {
@@ -1036,7 +1293,8 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
         labelWidth: 96,
         valueWidth: leftValueWidth,
         label: "Asesor Vta:",
-        value: "-",
+        value: params.salesAdvisorLabel || "-",
+        maxLines: 2,
       }) + 3;
     leftTop +=
       drawLabelValue({
@@ -1404,7 +1662,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       noteX + 18,
       noteTop + 25,
       noteWidth - 36,
-      "Emitir factura a nombre de: HIDALGO e HIDALGO HONDURAS SA DE CV; RTN: 08019013549808; Dirección: Blvd. Suyapa, Edificio Metropolis, Torre 2, Piso 20, Ofi. 22004. Presentar con la factura su constancia de estar sujetos al RÉGIMEN DE PAGOS A CUENTA vigente, caso contrario se procederá",
+      "Emitir factura a nombre de: HIDALGO e HIDALGO HONDURAS SA DE CV; RTN: 08019013549808; Dirección: Blvd. Suyapa, Edificio Metropolis, Torre 2, Piso 20, Ofi. 22004. Presentar con la factura su constancia de estar sujetos al RÉGIMEN DE PAGOS A CUENTA vigente, caso contrario se procederá con las retenciones correspondientes.",
       9.5,
       "F1",
       11.5,

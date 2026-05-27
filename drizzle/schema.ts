@@ -631,6 +631,13 @@ export const purchaseOrders = pgTable(
     purchaseType: purchaseTypeEnum("purchaseType"),
     supplierId: integer("supplierId"),
     supplierEmail: varchar("supplierEmail", { length: 320 }),
+    supplierContactId: integer("supplierContactId").references(
+      () => supplierContacts.id,
+      { onDelete: "set null" }
+    ),
+    salesAdvisorName: varchar("salesAdvisorName", { length: 255 }),
+    salesAdvisorPhone: varchar("salesAdvisorPhone", { length: 80 }),
+    salesAdvisorEmail: varchar("salesAdvisorEmail", { length: 320 }),
     status: purchaseOrderStatusEnum("status").default("borrador").notNull(),
     neededBy: timestamp("neededBy"),
     sapDocumentNumber: varchar("sapDocumentNumber", { length: 64 }),
@@ -662,6 +669,9 @@ export const purchaseOrders = pgTable(
       table.purchaseRequestId
     ),
     projectIdx: index("po_project_idx").on(table.projectId),
+    supplierContactIdx: index("po_supplier_contact_idx").on(
+      table.supplierContactId
+    ),
     statusIdx: index("po_status_idx").on(table.status),
   })
 );

@@ -15,6 +15,17 @@ function canAccessPurchaseRequests(user: {
   );
 }
 
+function canManagePurchaseRequestDestinations(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto"
+  );
+}
+
 function assertProjectScopedAccess(
   user: {
     role: string;
@@ -336,6 +347,21 @@ export const purchaseRequestsRouter = router({
         const itemProjectId =
           existingItem.sourceProject?.id ?? detail.purchaseRequest.projectId;
         assertProjectScopedAccess(ctx.user, itemProjectId);
+
+        const hasTargetUpdate =
+          "targetType" in itemUpdate ||
+          "subProjectId" in itemUpdate ||
+          "fixedAssetSapItemCode" in itemUpdate;
+        if (
+          hasTargetUpdate &&
+          !canManagePurchaseRequestDestinations(ctx.user)
+        ) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message:
+              "Solo el Administrador del Proyecto o Administración Central puede cambiar el destino",
+          });
+        }
 
         const receivedQuantity = Number(existingItem.receivedQuantity ?? 0);
         const convertedQuantity = Number(existingItem.convertedQuantity ?? 0);

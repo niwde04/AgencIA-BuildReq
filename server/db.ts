@@ -3204,6 +3204,82 @@ function buildPurchaseRequestDocument(params: {
   });
 }
 
+async function getPreferredSupplierSalesContact(params: {
+  supplierId?: number | null;
+  projectId?: number | null;
+}) {
+  if (!params.supplierId) return null;
+
+  const projectContacts = params.projectId
+    ? await listSupplierContacts({
+        supplierId: params.supplierId,
+        projectId: params.projectId,
+      })
+    : [];
+  const contactRows =
+    projectContacts.length > 0
+      ? projectContacts
+      : await listSupplierContacts({ supplierId: params.supplierId });
+
+  return (
+    contactRows.find(row => row.contact.contactType === "ventas")?.contact ??
+    contactRows[0]?.contact ??
+    null
+  );
+}
+
+type SupplierContactReference = {
+  id?: number | null;
+  name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+};
+
+function buildSupplierContactSnapshot(
+  contact: SupplierContactReference | null | undefined
+) {
+  return {
+    supplierContactId: contact?.id ?? null,
+    salesAdvisorName: contact?.name?.trim() || null,
+    salesAdvisorPhone: contact?.phone?.trim() || null,
+    salesAdvisorEmail: contact?.email?.trim() || null,
+  };
+}
+
+function buildPurchaseOrderSalesAdvisorContact(
+  purchaseOrder: typeof purchaseOrders.$inferSelect,
+  contact: (typeof supplierContacts.$inferSelect) | null | undefined
+) {
+  const name = purchaseOrder.salesAdvisorName?.trim() || contact?.name || "";
+  if (!name) return null;
+
+  return {
+    id: purchaseOrder.supplierContactId ?? contact?.id ?? null,
+    supplierId: contact?.supplierId ?? purchaseOrder.supplierId ?? null,
+    projectId: contact?.projectId ?? purchaseOrder.projectId,
+    contactType: contact?.contactType ?? "ventas",
+    branchName: contact?.branchName ?? null,
+    name,
+    phone: purchaseOrder.salesAdvisorPhone?.trim() || contact?.phone || null,
+    email: purchaseOrder.salesAdvisorEmail?.trim() || contact?.email || null,
+    address: contact?.address ?? null,
+    isActive: contact?.isActive ?? true,
+  };
+}
+
+function formatSupplierContactReference(
+  contact: SupplierContactReference | null | undefined
+) {
+  if (!contact) return "-";
+
+  return (
+    [contact.name, contact.phone, contact.email]
+      .map(value => value?.trim())
+      .filter((value): value is string => Boolean(value))
+      .join(" / ") || "-"
+  );
+}
+
 function buildPurchaseOrderDocument(params: {
   orderNumber: string;
   orderId?: string | number | null;
@@ -3216,6 +3292,7 @@ function buildPurchaseOrderDocument(params: {
   printedAt?: Date | string | null | undefined;
   destinationLabel?: string | null;
   requestedByLabel?: string | null;
+  salesAdvisorLabel?: string | null;
   observations?: string | null;
   quoteLabel?: string | null;
   items: Array<{
@@ -3249,6 +3326,7 @@ function buildPurchaseOrderDocument(params: {
       ? formatPrintDateLabel(params.neededBy)
       : "INMEDIATA",
     requestedByLabel: params.requestedByLabel?.trim() || "-",
+    salesAdvisorLabel: params.salesAdvisorLabel?.trim() || "-",
     observations: params.observations?.trim() || "-",
     quoteLabel: params.quoteLabel?.trim() || "-",
     items: params.items.map((item, index) => {
@@ -3861,6 +3939,10 @@ export async function createPurchaseOrder(
   const supplier = data.supplierId
     ? await getSupplierById(data.supplierId)
     : null;
+  const preferredSupplierContact = await getPreferredSupplierSalesContact({
+    supplierId: data.supplierId,
+    projectId: data.projectId,
+  });
   const [sourcePurchaseRequest] = data.purchaseRequestId
     ? await db
         .select()
@@ -3892,6 +3974,7 @@ export async function createPurchaseOrder(
       project?.name ||
       projectLabel,
     requestedByLabel: createdBy?.name ?? "-",
+    salesAdvisorLabel: formatSupplierContactReference(preferredSupplierContact),
     observations: data.notes,
     quoteLabel: sourcePurchaseRequest?.quoteAttachmentId
       ? String(sourcePurchaseRequest.quoteAttachmentId)
@@ -3912,6 +3995,7 @@ export async function createPurchaseOrder(
     .values({
       ...data,
       orderNumber,
+      ...buildSupplierContactSnapshot(preferredSupplierContact),
       printedDocumentName: `${orderNumber}.pdf`,
       printedDocumentMimeType: "application/pdf",
       printedDocumentContent,
@@ -4056,6 +4140,20 @@ export async function getPurchaseOrderById(id: number) {
   const projectLabel = rows[0].project
     ? `${rows[0].project.code ?? ""} ${rows[0].project.name ?? ""}`.trim()
     : `Proyecto ${rows[0].purchaseOrder.projectId}`;
+  const storedSupplierContact = rows[0].purchaseOrder.supplierContactId
+    ? await getSupplierContactById(rows[0].purchaseOrder.supplierContactId)
+    : null;
+  const fallbackSupplierContact =
+    !storedSupplierContact && !rows[0].purchaseOrder.salesAdvisorName
+      ? await getPreferredSupplierSalesContact({
+          supplierId: rows[0].purchaseOrder.supplierId,
+          projectId: rows[0].purchaseOrder.projectId,
+        })
+      : null;
+  const preferredSupplierContact = buildPurchaseOrderSalesAdvisorContact(
+    rows[0].purchaseOrder,
+    storedSupplierContact ?? fallbackSupplierContact
+  );
 
   const printedDocumentContent = buildPurchaseOrderDocument({
     orderNumber: rows[0].purchaseOrder.orderNumber,
@@ -4072,6 +4170,7 @@ export async function getPurchaseOrderById(id: number) {
       rows[0].project?.name ||
       projectLabel,
     requestedByLabel: rows[0].createdBy?.name ?? "-",
+    salesAdvisorLabel: formatSupplierContactReference(preferredSupplierContact),
     observations: rows[0].purchaseOrder.notes,
     quoteLabel: rows[0].purchaseRequest?.quoteAttachmentId
       ? String(rows[0].purchaseRequest.quoteAttachmentId)
@@ -4112,6 +4211,7 @@ export async function getPurchaseOrderById(id: number) {
       rows[0].purchaseOrder,
       invoiceCountMap.get(id) ?? 0
     ),
+    preferredSupplierContact,
     auditLogs,
   };
 }
@@ -4122,9 +4222,35 @@ export async function updatePurchaseOrder(
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
+
+  const nextData: Partial<InsertPurchaseOrder> = {
+    ...data,
+    updatedAt: new Date(),
+  };
+
+  if (data.supplierId !== undefined) {
+    const [current] = await db
+      .select({
+        projectId: purchaseOrders.projectId,
+      })
+      .from(purchaseOrders)
+      .where(eq(purchaseOrders.id, id))
+      .limit(1);
+
+    const preferredSupplierContact = await getPreferredSupplierSalesContact({
+      supplierId: data.supplierId,
+      projectId: current?.projectId,
+    });
+
+    Object.assign(
+      nextData,
+      buildSupplierContactSnapshot(preferredSupplierContact)
+    );
+  }
+
   await db
     .update(purchaseOrders)
-    .set({ ...data, updatedAt: new Date() })
+    .set(nextData)
     .where(eq(purchaseOrders.id, id));
   return { success: true };
 }
