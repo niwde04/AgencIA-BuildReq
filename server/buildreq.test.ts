@@ -14,6 +14,7 @@ import {
   calculateContractPaymentDates,
   getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderContractSummary,
+  getPurchaseOrderTaxSelectionError,
   summarizePurchaseOrderLines,
 } from "../shared/purchase-orders";
 
@@ -129,6 +130,8 @@ function createContableContext(overrides: Partial<AuthenticatedUser> = {}) {
 const VALID_CAI = "338827-15203E-A419E0-63BE03-0909A6-53";
 const VALID_INVOICE_NUMBER = "000-001-01-00010571";
 const VALID_INVOICE_NUMBER_ALT = "000-001-01-00010572";
+const VALID_DOCUMENT_RANGE_START = "000-001-01-00000001";
+const VALID_DOCUMENT_RANGE_END = "000-001-01-99999999";
 const VALID_PDF_BASE64 = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF").toString(
   "base64"
 );
@@ -149,6 +152,22 @@ describe("BuildReq - Purchase order tax helpers", () => {
       taxAmount: 36,
       total: 236,
       taxCode: "isv_18",
+    });
+  });
+
+  it("calculates ISV 4% line amounts separately", () => {
+    expect(
+      calculatePurchaseOrderLineAmounts({
+        quantity: "1",
+        unitPrice: "1000.00",
+        taxCode: "isv_4",
+      })
+    ).toMatchObject({
+      subtotal: 1000,
+      taxAmount: 40,
+      total: 1040,
+      taxCode: "isv_4",
+      additionalTaxCodes: [],
     });
   });
 
@@ -176,8 +195,10 @@ describe("BuildReq - Purchase order tax helpers", () => {
       "Importe exento L.",
       "Importe gravado 15% L.",
       "Importe gravado 18% L.",
+      "Importe gravado 4% L.",
       "I.S.V. 15% L.",
       "I.S.V. 18% L.",
+      "I.S.V. 4% L.",
       "Total a pagar L.",
     ]);
   });
@@ -413,6 +434,95 @@ describe("BuildReq - Tax retentions catalog", () => {
 });
 
 // ============================================================
+// Tests: Sales taxes catalog
+// ============================================================
+describe("BuildReq - Sales taxes catalog", () => {
+  it("Admin central can create sales taxes", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const createSalesTaxSpy = vi.spyOn(db, "createSalesTax").mockResolvedValue({
+      id: 10,
+      taxCode: "isv_4",
+      description: "ISV 4%",
+      shortLabel: "ISV 4%",
+      ratePercent: "4.0000",
+      taxType: "base",
+      fiscalCategory: "gravado",
+      isActive: true,
+      displayOrder: 40,
+      appliesToTaxCodes: [],
+    } as any);
+
+    await expect(
+      caller.taxes.create({
+        taxCode: "ISV 4",
+        description: "ISV 4%",
+        shortLabel: "ISV 4%",
+        ratePercent: "4",
+        taxType: "base",
+        fiscalCategory: "gravado",
+        isActive: true,
+        displayOrder: 40,
+        appliesToTaxCodes: [],
+      })
+    ).resolves.toEqual(expect.objectContaining({ taxCode: "isv_4" }));
+
+    expect(createSalesTaxSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taxCode: "ISV 4",
+        ratePercent: "4",
+        appliesToTaxCodes: [],
+      })
+    );
+
+    createSalesTaxSpy.mockRestore();
+  });
+
+  it("Project Administrator can list sales taxes read-only", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const listSalesTaxesSpy = vi.spyOn(db, "listSalesTaxes").mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          taxCode: "isv_15",
+          description: "ISV 15%",
+          shortLabel: "ISV 15%",
+          ratePercent: "15.0000",
+          taxType: "base",
+          fiscalCategory: "gravado",
+          isActive: true,
+          displayOrder: 20,
+          appliesToTaxCodes: [],
+        },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 25,
+      totalPages: 1,
+    } as any);
+
+    await expect(caller.taxes.list({ page: 1, pageSize: 25 })).resolves.toEqual(
+      expect.objectContaining({
+        total: 1,
+        items: [expect.objectContaining({ taxCode: "isv_15" })],
+      })
+    );
+
+    listSalesTaxesSpy.mockRestore();
+  });
+
+  it("Treats ISV 4% as a standalone selectable tax", () => {
+    expect(
+      getPurchaseOrderTaxSelectionError({
+        taxCode: "isv_4",
+        additionalTaxCodes: [],
+      })
+    ).toBeNull();
+  });
+});
+
+// ============================================================
 // Tests: Articles catalog
 // ============================================================
 describe("BuildReq - Articles catalog", () => {
@@ -464,6 +574,171 @@ describe("BuildReq - Articles catalog", () => {
     });
 
     listArticlesSpy.mockRestore();
+  });
+
+  it("Contable lists pending temporary fixed assets by default", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const listArticlesSpy = vi.spyOn(db, "listArticles").mockResolvedValue({
+      items: [
+        {
+          id: 10,
+          itemCode: "OC-006-0001",
+          temporaryItemCode: "OC-006-0001",
+          description: "COMPUTADORA ESCRITORIO",
+          tipoArticulo: 3,
+          fixedAssetStatus: "pendiente",
+          isActive: true,
+        },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 25,
+      totalPages: 1,
+    } as any);
+
+    await expect(
+      caller.articles.list({ page: 1, pageSize: 25 })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        items: [expect.objectContaining({ fixedAssetStatus: "pendiente" })],
+      })
+    );
+
+    expect(listArticlesSpy).toHaveBeenCalledWith({
+      page: 1,
+      pageSize: 25,
+      tipoArticulo: 3,
+      fixedAssetStatus: "pendiente",
+      temporaryOnly: true,
+    });
+
+    listArticlesSpy.mockRestore();
+  });
+
+  it("Contable can resolve a temporary fixed asset code", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const resolveFixedAssetArticleCodeSpy = vi
+      .spyOn(db, "resolveFixedAssetArticleCode")
+      .mockResolvedValue({
+        id: 10,
+        itemCode: "12120100014",
+        temporaryItemCode: "OC-006-0001",
+        fixedAssetStatus: "resuelto",
+      } as any);
+
+    await expect(
+      caller.articles.resolveFixedAssetCode({
+        id: 10,
+        itemCode: "12120100014",
+      })
+    ).resolves.toEqual(expect.objectContaining({ fixedAssetStatus: "resuelto" }));
+
+    expect(resolveFixedAssetArticleCodeSpy).toHaveBeenCalledWith({
+      id: 10,
+      itemCode: "12120100014",
+    });
+
+    resolveFixedAssetArticleCodeSpy.mockRestore();
+  });
+
+  it("Contable can edit temporary fixed asset details", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const updateFixedAssetArticleDetailsSpy = vi
+      .spyOn(db, "updateFixedAssetArticleDetails")
+      .mockResolvedValue({
+        id: 10,
+        itemCode: "OC-006-0001",
+        temporaryItemCode: "OC-006-0001",
+        fixedAssetSerialNumber: "SN-EDIT",
+        fixedAssetCondition: "usado_buen_estado",
+        fixedAssetColor: "Azul",
+      } as any);
+
+    await expect(
+      caller.articles.updateFixedAssetDetails({
+        id: 10,
+        isLeasing: true,
+        observation: "Equipo verificado",
+        assetDetail: {
+          serialNumber: "SN-EDIT",
+          condition: "usado_buen_estado",
+          color: "Azul",
+          model: "Modelo X",
+          brand: "Marca Y",
+          chassisSeries: "CH-2",
+          motorSeries: "MT-2",
+          plateOrCode: "PL-2",
+        },
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({ fixedAssetSerialNumber: "SN-EDIT" })
+    );
+
+    expect(updateFixedAssetArticleDetailsSpy).toHaveBeenCalledWith({
+      id: 10,
+      isLeasing: true,
+      observation: "Equipo verificado",
+      assetDetail: expect.objectContaining({
+        serialNumber: "SN-EDIT",
+        condition: "usado_buen_estado",
+        color: "Azul",
+      }),
+    });
+
+    updateFixedAssetArticleDetailsSpy.mockRestore();
+  });
+
+  it("Blocks resolving fixed asset codes for users without permission", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const resolveFixedAssetArticleCodeSpy = vi.spyOn(
+      db,
+      "resolveFixedAssetArticleCode"
+    );
+
+    await expect(
+      caller.articles.resolveFixedAssetCode({
+        id: 10,
+        itemCode: "12120100014",
+      })
+    ).rejects.toThrow("No tiene permisos para resolver activos fijos");
+
+    expect(resolveFixedAssetArticleCodeSpy).not.toHaveBeenCalled();
+    resolveFixedAssetArticleCodeSpy.mockRestore();
+  });
+
+  it("Blocks editing fixed asset details for users without permission", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const updateFixedAssetArticleDetailsSpy = vi.spyOn(
+      db,
+      "updateFixedAssetArticleDetails"
+    );
+
+    await expect(
+      caller.articles.updateFixedAssetDetails({
+        id: 10,
+        assetDetail: {
+          serialNumber: "SN-001",
+          condition: "nuevo",
+        },
+      })
+    ).rejects.toThrow("No tiene permisos para editar datos del activo fijo");
+
+    expect(updateFixedAssetArticleDetailsSpy).not.toHaveBeenCalled();
+    updateFixedAssetArticleDetailsSpy.mockRestore();
+  });
+
+  it("Builds project-scoped temporary fixed asset codes with four digits", () => {
+    expect(
+      db.buildTemporaryFixedAssetItemCode({
+        projectCode: "006",
+        existingCodes: ["OC-006-0001", "OC-006-0007"],
+      })
+    ).toBe("OC-006-0008");
   });
 
   it("Admin or Jefe de Bodega can update article type and status", async () => {
@@ -5246,10 +5521,17 @@ describe("BuildReq - Purchase Orders", () => {
       })
     ).resolves.toEqual({ success: true });
 
-    expect(updatePurchaseOrderItemSpy).toHaveBeenCalledWith(15, {
-      unitPrice: "125.50",
-      taxCode: "isv_15",
-    });
+    expect(updatePurchaseOrderItemSpy).toHaveBeenCalledWith(
+      15,
+      expect.objectContaining({
+        unitPrice: "125.50",
+        taxCode: "isv_15",
+        additionalTaxCodes: [],
+        taxBreakdown: [
+          expect.objectContaining({ taxCode: "isv_15", ratePercent: 15 }),
+        ],
+      })
+    );
 
     getPurchaseOrderItemSpy.mockRestore();
     updatePurchaseOrderItemSpy.mockRestore();
@@ -5277,14 +5559,89 @@ describe("BuildReq - Purchase Orders", () => {
       })
     ).resolves.toEqual({ success: true });
 
-    expect(updatePurchaseOrderItemSpy).toHaveBeenCalledWith(15, {
-      quantity: "125.00",
-      unitPrice: "125.50",
-      taxCode: "isv_15",
-    });
+    expect(updatePurchaseOrderItemSpy).toHaveBeenCalledWith(
+      15,
+      expect.objectContaining({
+        quantity: "125.00",
+        unitPrice: "125.50",
+        taxCode: "isv_15",
+        additionalTaxCodes: [],
+        taxBreakdown: [
+          expect.objectContaining({
+            taxCode: "isv_15",
+            amount: 2353.13,
+          }),
+        ],
+      })
+    );
 
     getPurchaseOrderItemSpy.mockRestore();
     updatePurchaseOrderItemSpy.mockRestore();
+  });
+
+  it("Bodeguero de Proyecto can save a fixed asset draft line", async () => {
+    const { ctx } = createProjectBodegueroContext({ assignedProjectId: 1 });
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderItemSpy = vi
+      .spyOn(db, "getPurchaseOrderItemById")
+      .mockResolvedValue({
+        item: { id: 15, purchaseOrderId: 4 } as any,
+        purchaseOrder: { id: 4, projectId: 1, status: "emitida" } as any,
+      });
+    const savePurchaseOrderFixedAssetDraftLineSpy = vi
+      .spyOn(db, "savePurchaseOrderFixedAssetDraftLine")
+      .mockResolvedValue({
+        article: {
+          id: 80,
+          itemCode: "OC-006-0001",
+          temporaryItemCode: "OC-006-0001",
+          tipoArticulo: 3,
+          fixedAssetStatus: "pendiente",
+        },
+        item: {
+          id: 15,
+          isFixedAsset: true,
+          currentSapItemCode: "OC-006-0001",
+        },
+      } as any);
+
+    await expect(
+      caller.purchaseOrders.saveFixedAssetDraftLine({
+        purchaseOrderItemId: 15,
+        isLeasing: true,
+        lineObservation: "Equipo asignado a gerencia",
+        assetDetail: {
+          serialNumber: "SN-001",
+          condition: "nuevo",
+          color: "Negro",
+          model: "OptiPlex",
+          brand: "Dell",
+          chassisSeries: "",
+          motorSeries: "",
+          plateOrCode: "PLACA-001",
+        },
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        article: expect.objectContaining({
+          temporaryItemCode: "OC-006-0001",
+          fixedAssetStatus: "pendiente",
+        }),
+      })
+    );
+
+    expect(savePurchaseOrderFixedAssetDraftLineSpy).toHaveBeenCalledWith({
+      purchaseOrderItemId: 15,
+      isLeasing: true,
+      lineObservation: "Equipo asignado a gerencia",
+      assetDetail: expect.objectContaining({
+        serialNumber: "SN-001",
+        condition: "nuevo",
+      }),
+    });
+
+    getPurchaseOrderItemSpy.mockRestore();
+    savePurchaseOrderFixedAssetDraftLineSpy.mockRestore();
   });
 
   it("adjusts converted SC quantity when editing a draft PO line", async () => {
@@ -5329,11 +5686,16 @@ describe("BuildReq - Purchase Orders", () => {
       })
     ).resolves.toEqual({ success: true });
 
-    expect(updatePurchaseOrderItemSpy).toHaveBeenCalledWith(15, {
-      quantity: "80.00",
-      unitPrice: "125.50",
-      taxCode: "exe",
-    });
+    expect(updatePurchaseOrderItemSpy).toHaveBeenCalledWith(
+      15,
+      expect.objectContaining({
+        quantity: "80.00",
+        unitPrice: "125.50",
+        taxCode: "exe",
+        additionalTaxCodes: [],
+        taxBreakdown: [],
+      })
+    );
     expect(adjustPurchaseRequestItemConvertedQuantitySpy).toHaveBeenCalledWith(
       503,
       -20
@@ -6011,6 +6373,100 @@ describe("BuildReq - Purchase Orders", () => {
 // Tests: Receipts
 // ============================================================
 describe("BuildReq - Receipts", () => {
+  it("saves or updates a purchase order receipt draft", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "emitida",
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "COMPUTADORA ESCRITORIO",
+            quantity: "1.00",
+            receivedQuantity: "0.00",
+          },
+        ],
+      } as any);
+    const saveReceiptDraftSpy = vi.spyOn(db, "saveReceiptDraft").mockResolvedValue({
+      id: 9,
+      receiptNumber: "RC-006-0001",
+      status: "borrador",
+      updated: false,
+    } as any);
+
+    await expect(
+      caller.receipts.saveDraft({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        isFiscalDocument: true,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            itemName: "COMPUTADORA ESCRITORIO",
+            quantityExpected: "1.00",
+            quantityReceived: "1",
+            unit: "und",
+            unitPrice: "1000.00",
+            notes: "Activo temporal",
+            isFixedAsset: true,
+            isLeasing: true,
+            assetDetails: [
+              {
+                serialNumber: "SN-001",
+                condition: "nuevo",
+                color: "Negro",
+              },
+            ],
+          },
+        ],
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        status: "borrador",
+        receiptNumber: "RC-006-0001",
+      })
+    );
+
+    expect(saveReceiptDraftSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        receivedById: 6,
+      }),
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceItemId: 15,
+          isFixedAsset: true,
+          isLeasing: true,
+          assetDetails: [
+            expect.objectContaining({
+              serialNumber: "SN-001",
+              condition: "nuevo",
+            }),
+          ],
+        }),
+      ])
+    );
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    saveReceiptDraftSpy.mockRestore();
+  });
+
   it("Bodeguero de Proyecto can register purchase order receipts for their project", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
@@ -6047,6 +6503,8 @@ describe("BuildReq - Receipts", () => {
         projectId: 1,
         cai: "338827 15203e A419E0 63BE03 0909A6 53",
         invoiceNumber: "000 001 01 00010571",
+        documentRangeStart: "000 001 01 00000001",
+        documentRangeEnd: "000 001 01 99999999",
         documentDate: "2026-04-14",
         documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
@@ -6123,6 +6581,8 @@ describe("BuildReq - Receipts", () => {
         projectId: 1,
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
         documentDate: "2026-04-14",
         documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
@@ -6163,6 +6623,251 @@ describe("BuildReq - Receipts", () => {
     registerReceiptSpy.mockRestore();
   });
 
+  it("stores fixed asset details and line notes on receipt items", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "emitida",
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "COMPUTADORA ESCRITORIO",
+            quantity: "1.00",
+            receivedQuantity: "0.00",
+            isFixedAsset: true,
+            isLeasing: true,
+            fixedAssetArticleId: 80,
+            fixedAssetStatus: "resuelto",
+            lineObservation: "Equipo recibido con caja sellada",
+            assetDetails: [
+              {
+                serialNumber: "SN-001",
+                condition: "nuevo",
+                color: "Negro",
+                model: "OptiPlex",
+                brand: "Dell",
+                chassisSeries: "CH-001",
+                motorSeries: "",
+                plateOrCode: "PLACA-001",
+              },
+            ],
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({
+        id: 6,
+        receiptNumber: "RC-2026-0001",
+        status: "completa",
+      } as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            itemName: "COMPUTADORA ESCRITORIO",
+            quantityExpected: "1.00",
+            quantityReceived: "1",
+            unit: "und",
+            notes: "Esta nota se reemplaza por la observación de la línea OC",
+            isFixedAsset: true,
+            isLeasing: true,
+            assetDetails: [
+              {
+                serialNumber: "SN-001",
+                condition: "nuevo",
+                color: "Negro",
+                model: "OptiPlex",
+                brand: "Dell",
+                chassisSeries: "CH-001",
+                motorSeries: "",
+                plateOrCode: "PLACA-001",
+              },
+            ],
+          },
+        ],
+      })
+    ).resolves.toEqual(expect.objectContaining({ id: 6 }));
+
+    expect(registerReceiptSpy).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceItemId: 15,
+          notes: "Equipo recibido con caja sellada",
+          isFixedAsset: true,
+          isLeasing: true,
+          assetDetails: [
+            expect.objectContaining({
+              serialNumber: "SN-001",
+              condition: "nuevo",
+              color: "Negro",
+              brand: "Dell",
+            }),
+          ],
+        }),
+      ])
+    );
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("blocks receipt while fixed asset code is pending in accounting", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "emitida",
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "COMPUTADORA ESCRITORIO",
+            quantity: "1.00",
+            receivedQuantity: "0.00",
+            isFixedAsset: true,
+            fixedAssetArticleId: 80,
+            fixedAssetStatus: "pendiente",
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi.spyOn(db, "registerReceipt");
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            itemName: "COMPUTADORA ESCRITORIO",
+            quantityExpected: "1.00",
+            quantityReceived: "1",
+            unit: "und",
+          },
+        ],
+      })
+    ).rejects.toThrow("pendiente de código real");
+
+    expect(registerReceiptSpy).not.toHaveBeenCalled();
+    getPurchaseOrderByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("rejects fixed asset receipt lines with decimal quantities", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const registerReceiptSpy = vi.spyOn(db, "registerReceipt");
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            itemName: "COMPUTADORA ESCRITORIO",
+            quantityExpected: "2.00",
+            quantityReceived: "1.5",
+            unit: "und",
+            isFixedAsset: true,
+            assetDetails: [
+              { serialNumber: "SN-001", condition: "nuevo" },
+              { serialNumber: "SN-002", condition: "nuevo" },
+            ],
+          },
+        ],
+      })
+    ).rejects.toThrow("Activo fijo requiere una cantidad recibida entera");
+
+    expect(registerReceiptSpy).not.toHaveBeenCalled();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("rejects fixed asset receipt lines without serial number", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const registerReceiptSpy = vi.spyOn(db, "registerReceipt");
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            itemName: "COMPUTADORA ESCRITORIO",
+            quantityExpected: "1.00",
+            quantityReceived: "1",
+            unit: "und",
+            isFixedAsset: true,
+            assetDetails: [{ serialNumber: "", condition: "nuevo" }],
+          },
+        ],
+      })
+    ).rejects.toThrow("Ingrese el número de serie del activo");
+
+    expect(registerReceiptSpy).not.toHaveBeenCalled();
+    registerReceiptSpy.mockRestore();
+  });
+
   it("Bodeguero de Proyecto cannot register receipts for another project's purchase order", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
@@ -6193,6 +6898,8 @@ describe("BuildReq - Receipts", () => {
         projectId: 2,
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
         documentDate: "2026-04-14",
         documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
@@ -6383,6 +7090,8 @@ describe("BuildReq - Receipts", () => {
         projectId: 1,
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
         documentDate: "2026-04-14",
         documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
@@ -6408,6 +7117,8 @@ describe("BuildReq - Receipts", () => {
     const receiptPayload = registerReceiptSpy.mock.calls[0]?.[0] as any;
     expect(receiptPayload.cai).toBe(VALID_CAI);
     expect(receiptPayload.invoiceNumber).toBe(VALID_INVOICE_NUMBER);
+    expect(receiptPayload.documentRangeStart).toBe(VALID_DOCUMENT_RANGE_START);
+    expect(receiptPayload.documentRangeEnd).toBe(VALID_DOCUMENT_RANGE_END);
     expect(receiptPayload.documentDate).toBeInstanceOf(Date);
     expect(receiptPayload.documentDueDate).toBeInstanceOf(Date);
     expect(receiptPayload.emissionDeadline).toBeInstanceOf(Date);
@@ -6430,6 +7141,8 @@ describe("BuildReq - Receipts", () => {
         projectId: 1,
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
         documentDate: "2026-04-14",
         documentDueDate: "2026-05-14",
         postingDate: "2026-04-15",
@@ -6462,6 +7175,8 @@ describe("BuildReq - Receipts", () => {
         projectId: 1,
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
         documentDate: "2026-04-14",
         emissionDeadline: "2026-04-30",
         postingDate: "2026-04-15",
@@ -6988,6 +7703,8 @@ describe("BuildReq - Receipts", () => {
         projectId: 1,
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
         documentDate: "2026-04-14",
         documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
@@ -7045,6 +7762,8 @@ describe("BuildReq - Receipts", () => {
         projectId: 1,
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
         documentDate: "2026-04-14",
         documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
@@ -7116,6 +7835,8 @@ describe("BuildReq - Receipts", () => {
         projectId: 1,
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER_ALT,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
         documentDate: "2026-04-14",
         documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
@@ -7198,6 +7919,8 @@ describe("BuildReq - Receipts", () => {
         projectId: 1,
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
         documentDate: "2026-04-14",
         documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
@@ -7265,6 +7988,8 @@ describe("BuildReq - Receipts", () => {
         projectId: 1,
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
         documentDate: "2026-04-14",
         documentDueDate: "2026-05-14",
         emissionDeadline: "2026-04-30",
@@ -7544,6 +8269,8 @@ describe("BuildReq - Invoices", () => {
       isFiscalDocument: true,
       cai: VALID_CAI,
       invoiceNumber: VALID_INVOICE_NUMBER,
+      documentRangeStart: VALID_DOCUMENT_RANGE_START,
+      documentRangeEnd: VALID_DOCUMENT_RANGE_END,
       documentDate: new Date("2026-05-01T12:00:00"),
       documentDueDate: new Date("2026-06-01T12:00:00"),
       postingDate: new Date("2026-05-02T12:00:00"),
@@ -7890,6 +8617,8 @@ describe("BuildReq - Invoices", () => {
         id: 10,
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
         documentDate: "2026-05-01",
         documentDueDate: "2026-06-01",
         postingDate: "2026-05-02",
@@ -7914,6 +8643,8 @@ describe("BuildReq - Invoices", () => {
     const updateInvoiceSpy = vi.spyOn(db, "updateInvoice").mockResolvedValue({
       ...invoiceDetail.invoice,
       invoiceNumber: VALID_INVOICE_NUMBER_ALT,
+      documentRangeStart: VALID_DOCUMENT_RANGE_START,
+      documentRangeEnd: VALID_DOCUMENT_RANGE_END,
     } as any);
 
     await expect(
@@ -7921,6 +8652,8 @@ describe("BuildReq - Invoices", () => {
         id: 10,
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER_ALT,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
         documentDate: "2026-05-01",
         documentDueDate: "2026-06-01",
         postingDate: "2026-05-02",
@@ -7931,6 +8664,8 @@ describe("BuildReq - Invoices", () => {
     ).resolves.toEqual(
       expect.objectContaining({
         invoiceNumber: VALID_INVOICE_NUMBER_ALT,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
       })
     );
     expect(updateInvoiceSpy).toHaveBeenCalledWith(
@@ -7938,6 +8673,8 @@ describe("BuildReq - Invoices", () => {
       expect.objectContaining({
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER_ALT,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
         documentDate: expect.any(Date),
         documentDueDate: expect.any(Date),
         emissionDeadline: expect.any(Date),
@@ -7981,6 +8718,8 @@ describe("BuildReq - Invoices", () => {
         id: 10,
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
         documentDate: "2026-05-01",
         postingDate: "2026-05-02",
         receiptDate: "2026-05-02",
@@ -8032,6 +8771,121 @@ describe("BuildReq - Invoices", () => {
 
     getInvoiceByIdSpy.mockRestore();
     updateInvoiceSpy.mockRestore();
+  });
+
+  it("Administracion Central can update draft invoice fixed asset details", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      items: [
+        {
+          id: 77,
+          invoiceId: 10,
+          itemName: "COMPUTADORA ESCRITORIO",
+          quantity: "1.00",
+        },
+      ],
+    } as any);
+    const updateInvoiceItemAssetDetailsSpy = vi
+      .spyOn(db, "updateInvoiceItemAssetDetails")
+      .mockResolvedValue({
+        id: 77,
+        isFixedAsset: true,
+        isLeasing: true,
+      } as any);
+
+    await expect(
+      caller.invoices.updateItemAssetDetails({
+        id: 10,
+        invoiceItemId: 77,
+        isFixedAsset: true,
+        isLeasing: true,
+        lineObservation: "Activo recibido en buen estado",
+        assetDetails: [
+          {
+            serialNumber: "SN-001",
+            condition: "nuevo",
+            color: "Negro",
+          },
+        ],
+      })
+    ).resolves.toEqual(expect.objectContaining({ id: 77 }));
+
+    expect(updateInvoiceItemAssetDetailsSpy).toHaveBeenCalledWith(
+      77,
+      expect.objectContaining({
+        isFixedAsset: true,
+        isLeasing: true,
+        lineObservation: "Activo recibido en buen estado",
+        assetDetails: [
+          expect.objectContaining({
+            serialNumber: "SN-001",
+            condition: "nuevo",
+            color: "Negro",
+          }),
+        ],
+      })
+    );
+
+    getInvoiceByIdSpy.mockRestore();
+    updateInvoiceItemAssetDetailsSpy.mockRestore();
+  });
+
+  it("blocks fixed asset invoice updates outside draft statuses", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        status: "revisada",
+      },
+      items: [{ id: 77, quantity: "1.00" }],
+    } as any);
+    const updateInvoiceItemAssetDetailsSpy = vi.spyOn(
+      db,
+      "updateInvoiceItemAssetDetails"
+    );
+
+    await expect(
+      caller.invoices.updateItemAssetDetails({
+        id: 10,
+        invoiceItemId: 77,
+        isFixedAsset: true,
+        assetDetails: [{ serialNumber: "SN-001", condition: "nuevo" }],
+      })
+    ).rejects.toThrow("Solo se pueden editar facturas en borrador o rechazadas");
+
+    expect(updateInvoiceItemAssetDetailsSpy).not.toHaveBeenCalled();
+    getInvoiceByIdSpy.mockRestore();
+    updateInvoiceItemAssetDetailsSpy.mockRestore();
+  });
+
+  it("rejects invoice fixed asset details when quantity is decimal", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      items: [{ id: 77, quantity: "1.50" }],
+    } as any);
+    const updateInvoiceItemAssetDetailsSpy = vi.spyOn(
+      db,
+      "updateInvoiceItemAssetDetails"
+    );
+
+    await expect(
+      caller.invoices.updateItemAssetDetails({
+        id: 10,
+        invoiceItemId: 77,
+        isFixedAsset: true,
+        assetDetails: [{ serialNumber: "SN-001", condition: "nuevo" }],
+      })
+    ).rejects.toThrow("Activo fijo requiere una cantidad de factura entera");
+
+    expect(updateInvoiceItemAssetDetailsSpy).not.toHaveBeenCalled();
+    getInvoiceByIdSpy.mockRestore();
+    updateInvoiceItemAssetDetailsSpy.mockRestore();
   });
 
   it("saves catalog retentions for draft invoices", async () => {

@@ -4,8 +4,8 @@ import * as db from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import {
   PURCHASE_ORDER_CONTRACT_FREQUENCIES,
-  PURCHASE_ORDER_TAX_VALUES,
 } from "@shared/purchase-orders";
+import { ASSET_CONDITION_VALUES } from "@shared/fixed-assets";
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
   "emitida",
@@ -37,7 +37,8 @@ const quantityToConvertSchema = z.object({
       message: "El precio unitario debe ser un número válido",
     })
     .optional(),
-  taxCode: z.enum(PURCHASE_ORDER_TAX_VALUES).optional(),
+  taxCode: z.string().trim().min(1).optional(),
+  additionalTaxCodes: z.array(z.string().trim().min(1)).optional(),
 });
 
 function toDecimalString(value: string | number | null | undefined) {
@@ -109,6 +110,17 @@ function validateContractFields(
 
 const contractFieldsSchema =
   contractFieldsBaseSchema.superRefine(validateContractFields);
+
+const fixedAssetDetailSchema = z.object({
+  serialNumber: z.string().trim().min(1).max(120),
+  condition: z.enum(ASSET_CONDITION_VALUES),
+  color: z.string().trim().max(120).nullish(),
+  model: z.string().trim().max(120).nullish(),
+  brand: z.string().trim().max(120).nullish(),
+  chassisSeries: z.string().trim().max(120).nullish(),
+  motorSeries: z.string().trim().max(120).nullish(),
+  plateOrCode: z.string().trim().max(120).nullish(),
+});
 
 function getPendingConversionQuantity(item: {
   quantity: string | number | null | undefined;
@@ -440,7 +452,8 @@ export const purchaseOrdersRouter = router({
         purchaseRequestItemId: number;
         quantity: string;
         unitPrice?: string;
-        taxCode?: (typeof PURCHASE_ORDER_TAX_VALUES)[number];
+        taxCode?: string;
+        additionalTaxCodes?: string[];
       }> =
         input.itemsToConvert && input.itemsToConvert.length > 0
           ? input.itemsToConvert
@@ -464,7 +477,7 @@ export const purchaseOrdersRouter = router({
       const conversionQuantityByItemId = new Map<number, number>();
       const conversionDraftByItemId = new Map<
         number,
-        { unitPrice?: string; taxCode?: (typeof PURCHASE_ORDER_TAX_VALUES)[number] }
+        { unitPrice?: string; taxCode?: string; additionalTaxCodes?: string[] }
       >();
       for (const conversion of requestedConversions) {
         conversionQuantityByItemId.set(
@@ -475,6 +488,7 @@ export const purchaseOrdersRouter = router({
         conversionDraftByItemId.set(conversion.purchaseRequestItemId, {
           unitPrice: conversion.unitPrice,
           taxCode: conversion.taxCode,
+          additionalTaxCodes: conversion.additionalTaxCodes,
         });
       }
 
@@ -510,6 +524,9 @@ export const purchaseOrdersRouter = router({
           unitPrice: conversionDraftByItemId.get(purchaseRequestItemId)
             ?.unitPrice,
           taxCode: conversionDraftByItemId.get(purchaseRequestItemId)?.taxCode,
+          additionalTaxCodes:
+            conversionDraftByItemId.get(purchaseRequestItemId)
+              ?.additionalTaxCodes,
         };
       });
 
@@ -603,7 +620,7 @@ export const purchaseOrdersRouter = router({
             contractExpiryNotifiedAt: null,
             createdById: ctx.user.id,
           },
-          projectItems.map(({ item, quantityToConvert, unitPrice, taxCode }: any) => ({
+          projectItems.map(({ item, quantityToConvert, unitPrice, taxCode, additionalTaxCodes }: any) => ({
             purchaseRequestItemId: item.id,
             materialRequestItemId: item.materialRequestItemId,
             originalSapItemCode: item.originalSapItemCode,
@@ -614,6 +631,7 @@ export const purchaseOrdersRouter = router({
             unit: item.unit,
             unitPrice: unitPrice ?? item.unitPrice ?? "0.00",
             taxCode: taxCode ?? "exe",
+            additionalTaxCodes,
             notes: item.notes,
           }))
         );
@@ -894,6 +912,7 @@ export const purchaseOrdersRouter = router({
       z.object({
         id: z.number(),
         supplierId: z.number().optional(),
+        supplierContactId: z.number().nullable().optional(),
         supplierEmail: z.string().email().nullable().optional(),
         notes: z.string().optional(),
       })
@@ -916,8 +935,29 @@ export const purchaseOrdersRouter = router({
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
       assertPurchaseOrderStructureEditable(detail.purchaseOrder.status);
 
+      if (input.supplierContactId) {
+        const contact = await db.getSupplierContactById(input.supplierContactId);
+        if (!contact || !contact.isActive) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Seleccione un contacto activo del proveedor",
+          });
+        }
+        const supplierId = input.supplierId ?? detail.purchaseOrder.supplierId;
+        if (
+          contact.supplierId !== supplierId ||
+          contact.projectId !== detail.purchaseOrder.projectId
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "El contacto no pertenece a este proveedor/proyecto",
+          });
+        }
+      }
+
       return db.updatePurchaseOrder(input.id, {
         supplierId: input.supplierId,
+        supplierContactId: input.supplierContactId,
         supplierEmail: input.supplierEmail,
         notes: input.notes,
       });
@@ -1051,7 +1091,8 @@ export const purchaseOrdersRouter = router({
               message: "El precio debe ser un numero valido",
             }
           ),
-        taxCode: z.enum(PURCHASE_ORDER_TAX_VALUES),
+        taxCode: z.string().trim().min(1),
+        additionalTaxCodes: z.array(z.string().trim().min(1)).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -1075,9 +1116,16 @@ export const purchaseOrdersRouter = router({
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
       assertPurchaseOrderStructureEditable(itemDetail.purchaseOrder.status);
 
-      return db.updatePurchaseOrderItem(input.purchaseOrderItemId, {
+      const taxData = await db.preparePurchaseOrderTaxDataForLine({
+        quantity: itemDetail.item.quantity,
         unitPrice: input.unitPrice,
         taxCode: input.taxCode,
+        additionalTaxCodes: input.additionalTaxCodes,
+      });
+
+      return db.updatePurchaseOrderItem(input.purchaseOrderItemId, {
+        unitPrice: input.unitPrice,
+        ...taxData,
       });
     }),
 
@@ -1105,7 +1153,8 @@ export const purchaseOrdersRouter = router({
               message: "El precio debe ser un numero valido",
             }
           ),
-        taxCode: z.enum(PURCHASE_ORDER_TAX_VALUES),
+        taxCode: z.string().trim().min(1),
+        additionalTaxCodes: z.array(z.string().trim().min(1)).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -1161,10 +1210,17 @@ export const purchaseOrdersRouter = router({
         }
       }
 
-      await db.updatePurchaseOrderItem(input.purchaseOrderItemId, {
+      const taxData = await db.preparePurchaseOrderTaxDataForLine({
         quantity: input.quantity,
         unitPrice: input.unitPrice,
         taxCode: input.taxCode,
+        additionalTaxCodes: input.additionalTaxCodes,
+      });
+
+      await db.updatePurchaseOrderItem(input.purchaseOrderItemId, {
+        quantity: input.quantity,
+        unitPrice: input.unitPrice,
+        ...taxData,
       });
 
       if (
@@ -1183,6 +1239,48 @@ export const purchaseOrdersRouter = router({
       }
 
       return { success: true };
+    }),
+
+  saveFixedAssetDraftLine: protectedProcedure
+    .input(
+      z.object({
+        purchaseOrderItemId: z.number().int().positive(),
+        isLeasing: z.boolean().optional(),
+        lineObservation: z.string().trim().max(1000).optional(),
+        assetDetail: fixedAssetDetailSchema,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canAccessPurchaseOrders(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para guardar activos fijos",
+        });
+      }
+
+      const itemDetail = await db.getPurchaseOrderItemById(
+        input.purchaseOrderItemId
+      );
+      if (!itemDetail?.purchaseOrder) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Item de OC no encontrado",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
+      assertPurchaseOrderMutable(itemDetail.purchaseOrder.status);
+
+      try {
+        return await db.savePurchaseOrderFixedAssetDraftLine(input);
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudo guardar el activo fijo",
+        });
+      }
     }),
 
   updateContractItemPrice: protectedProcedure

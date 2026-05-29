@@ -48,6 +48,8 @@ type SupplierRecord = {
   supplierCode: string;
   name: string;
   email?: string | null;
+  rtn?: string | null;
+  address?: string | null;
   allowsTaxWithholding: boolean;
   subjectToAccountPayments: boolean;
   isActive: boolean;
@@ -135,6 +137,7 @@ const EMPTY_DOCUMENT_TYPE_DRAFT = {
   expirationMode: "optional" as SupplierDocumentExpirationMode,
   isActive: true,
 };
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i;
 
 const DOCUMENT_STATUS_LABELS: Record<SupplierDocumentRecord["status"], string> = {
   vigente: "Vigente",
@@ -162,6 +165,32 @@ function formatDateLabel(value?: string | Date | null) {
   return date.toLocaleDateString("es-HN");
 }
 
+function getFriendlyMutationError(message?: string | null) {
+  const raw = String(message ?? "").trim();
+  if (!raw) return "No fue posible completar la acción";
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const validationMessage = parsed.find(
+        issue => typeof issue?.message === "string" && issue.message.trim()
+      )?.message;
+      if (validationMessage) return validationMessage;
+    }
+    if (typeof parsed?.message === "string" && parsed.message.trim()) {
+      return parsed.message;
+    }
+  } catch {
+    // tRPC can expose Zod issues as a JSON string; non-JSON errors are fine.
+  }
+
+  if (raw.includes("Ingrese un correo válido")) {
+    return "Ingrese un correo válido";
+  }
+
+  return raw;
+}
+
 export default function Proveedores() {
   const { user } = useAuth();
   const utils = trpc.useUtils();
@@ -175,6 +204,8 @@ export default function Proveedores() {
     useState(true);
   const [editSubjectToAccountPayments, setEditSubjectToAccountPayments] =
     useState(true);
+  const [editRtn, setEditRtn] = useState("");
+  const [editAddress, setEditAddress] = useState("");
   const [contactProjectId, setContactProjectId] = useState("");
   const [editingContactId, setEditingContactId] = useState<number | null>(null);
   const [contactDraft, setContactDraft] = useState(EMPTY_CONTACT_DRAFT);
@@ -298,7 +329,7 @@ export default function Proveedores() {
       setContactDraft(EMPTY_CONTACT_DRAFT);
       utils.suppliers.listContacts.invalidate();
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getFriendlyMutationError(e.message)),
   });
   const updateContactMutation = trpc.suppliers.updateContact.useMutation({
     onSuccess: () => {
@@ -307,7 +338,7 @@ export default function Proveedores() {
       setContactDraft(EMPTY_CONTACT_DRAFT);
       utils.suppliers.listContacts.invalidate();
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getFriendlyMutationError(e.message)),
   });
   const createDocumentTypeMutation =
     trpc.suppliers.createDocumentType.useMutation({
@@ -390,6 +421,8 @@ export default function Proveedores() {
     setEditSubjectToAccountPayments(
       supplier.subjectToAccountPayments !== false
     );
+    setEditRtn(supplier.rtn ?? "");
+    setEditAddress(supplier.address ?? "");
     setEditingContactId(null);
     setContactDraft(EMPTY_CONTACT_DRAFT);
   };
@@ -398,6 +431,8 @@ export default function Proveedores() {
     if (!selectedSupplier) return;
     updateMutation.mutate({
       id: selectedSupplier.id,
+      rtn: editRtn.trim(),
+      address: editAddress.trim(),
       allowsTaxWithholding: editAllowsTaxWithholding,
       subjectToAccountPayments: editSubjectToAccountPayments,
     });
@@ -427,19 +462,24 @@ export default function Proveedores() {
       toast.error("Seleccione un proyecto para el contacto");
       return;
     }
+    const email = contactDraft.email.trim().toLowerCase();
     if (!contactDraft.name.trim()) {
       toast.error("Ingrese el nombre del contacto");
+      return;
+    }
+    if (email && !EMAIL_PATTERN.test(email)) {
+      toast.error("Ingrese un correo válido");
       return;
     }
 
     const payload = {
       projectId: selectedContactProjectId,
       contactType: contactDraft.contactType,
-      branchName: contactDraft.branchName,
-      name: contactDraft.name,
-      phone: contactDraft.phone,
-      email: contactDraft.email,
-      address: contactDraft.address,
+      branchName: contactDraft.branchName.trim(),
+      name: contactDraft.name.trim(),
+      phone: contactDraft.phone.trim(),
+      email,
+      address: contactDraft.address.trim(),
       isActive: contactDraft.isActive,
     };
 
@@ -818,6 +858,33 @@ export default function Proveedores() {
                 <Input value={selectedSupplier.email || ""} readOnly />
               </div>
 
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">RTN</Label>
+                  <Input
+                    value={canManageSupplierCatalog ? editRtn : selectedSupplier.rtn || ""}
+                    readOnly={!canManageSupplierCatalog}
+                    onChange={event => setEditRtn(event.target.value)}
+                    placeholder="RTN del proveedor"
+                    maxLength={50}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Dirección</Label>
+                  <Input
+                    value={
+                      canManageSupplierCatalog
+                        ? editAddress
+                        : selectedSupplier.address || ""
+                    }
+                    readOnly={!canManageSupplierCatalog}
+                    onChange={event => setEditAddress(event.target.value)}
+                    placeholder="Dirección fiscal del proveedor"
+                    maxLength={1000}
+                  />
+                </div>
+              </div>
+
               {canManageSupplierCatalog ? (
                 <>
                   <div className="flex items-center justify-between rounded-md border p-3">
@@ -955,6 +1022,8 @@ export default function Proveedores() {
                   <div className="space-y-1">
                     <Label className="text-xs">Correo</Label>
                     <Input
+                      type="email"
+                      autoComplete="email"
                       value={contactDraft.email}
                       onChange={(event) =>
                         setContactDraft((current) => ({

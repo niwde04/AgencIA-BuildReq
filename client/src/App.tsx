@@ -1,6 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
+import { useEffect } from "react";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { AuthSessionProvider } from "./contexts/AuthSessionContext";
@@ -29,10 +30,91 @@ import TransferRequests from "./pages/TransferRequests";
 import Transfers from "./pages/Transfers";
 import Recepciones from "./pages/Recepciones";
 import Facturas from "./pages/Facturas";
+import Impuestos from "./pages/Impuestos";
 import Retenciones from "./pages/Retenciones";
 import SaldosIniciales from "./pages/SaldosIniciales";
 import SalidasBodega from "./pages/SalidasBodega";
 import ActualizarContrasena from "./pages/ActualizarContrasena";
+
+const UPPERCASE_TEXT_INPUT_TYPES = new Set([
+  "",
+  "email",
+  "search",
+  "tel",
+  "text",
+  "url",
+]);
+
+function shouldUppercaseInput(
+  element: EventTarget | null
+): element is HTMLInputElement | HTMLTextAreaElement {
+  if (
+    !(element instanceof HTMLInputElement) &&
+    !(element instanceof HTMLTextAreaElement)
+  ) {
+    return false;
+  }
+
+  if (
+    element.disabled ||
+    element.readOnly ||
+    element.dataset.preserveCase === "true"
+  ) {
+    return false;
+  }
+
+  if (element instanceof HTMLTextAreaElement) {
+    return true;
+  }
+
+  return UPPERCASE_TEXT_INPUT_TYPES.has(element.type.toLowerCase());
+}
+
+function uppercaseInputValue(
+  element: HTMLInputElement | HTMLTextAreaElement
+) {
+  const originalValue = element.value;
+  const upperValue = originalValue.toLocaleUpperCase("es-HN");
+
+  if (originalValue === upperValue) return;
+
+  const selectionStart = element.selectionStart;
+  const selectionEnd = element.selectionEnd;
+  const selectionDirection = element.selectionDirection;
+
+  element.value = upperValue;
+
+  if (
+    document.activeElement === element &&
+    selectionStart !== null &&
+    selectionEnd !== null
+  ) {
+    try {
+      element.setSelectionRange(
+        selectionStart,
+        selectionEnd,
+        selectionDirection ?? "none"
+      );
+    } catch {
+      // Some input types do not support manual cursor restoration.
+    }
+  }
+}
+
+function useUppercaseTextEntry() {
+  useEffect(() => {
+    const handleInput = (event: Event) => {
+      if (!shouldUppercaseInput(event.target)) return;
+      uppercaseInputValue(event.target);
+    };
+
+    document.addEventListener("input", handleInput, true);
+
+    return () => {
+      document.removeEventListener("input", handleInput, true);
+    };
+  }, []);
+}
 
 function DashboardRoutes() {
   return (
@@ -55,6 +137,7 @@ function DashboardRoutes() {
       <Route path="/traslados" component={Transfers} />
       <Route path="/recepciones" component={Recepciones} />
       <Route path="/facturas" component={Facturas} />
+      <Route path="/impuestos" component={Impuestos} />
       <Route path="/retenciones" component={Retenciones} />
       <Route path="/salidas-inventario" component={SalidasBodega} />
       <Route path="/salidas-bodega" component={SalidasBodega} />
@@ -87,6 +170,8 @@ function Router() {
 }
 
 function App() {
+  useUppercaseTextEntry();
+
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light">

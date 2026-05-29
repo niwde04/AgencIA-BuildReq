@@ -27,13 +27,14 @@ import {
   AlertTriangle,
   CheckCircle2,
   Download,
+  Printer,
   Search,
   Save,
   Send,
   Trash2,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { formatPurchaseOrderCurrency } from "@shared/purchase-orders";
 import {
@@ -46,6 +47,13 @@ import {
   isValidCai,
   isValidInvoiceNumber,
 } from "@shared/invoices";
+import {
+  ASSET_CONDITION_LABELS,
+  ASSET_CONDITION_VALUES,
+  normalizeFixedAssetDetails,
+  parseFixedAssetDetails,
+  type FixedAssetDetail,
+} from "@shared/fixed-assets";
 
 const STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
@@ -85,6 +93,53 @@ type RetentionOption = {
   isActive?: boolean;
   erpCode?: string | null;
 };
+
+type InvoiceAssetDraft = {
+  isFixedAsset: boolean;
+  isLeasing: boolean;
+  lineObservation: string;
+  assetDetails: FixedAssetDetail[];
+};
+
+const ASSET_DETAIL_OPTIONAL_FIELDS: Array<{
+  key: keyof FixedAssetDetail;
+  label: string;
+  placeholder: string;
+}> = [
+  { key: "color", label: "Color", placeholder: "Color" },
+  { key: "model", label: "Modelo", placeholder: "Modelo" },
+  { key: "brand", label: "Marca", placeholder: "Marca" },
+  { key: "chassisSeries", label: "Serie chasis", placeholder: "Serie chasis" },
+  { key: "motorSeries", label: "Serie motor", placeholder: "Serie motor" },
+  { key: "plateOrCode", label: "Placa/código", placeholder: "Placa o código" },
+];
+
+function getPositiveIntegerQuantity(value: string | number | null | undefined) {
+  const quantity = Number(value ?? 0);
+  return Number.isFinite(quantity) && quantity > 0 && Number.isInteger(quantity)
+    ? quantity
+    : 0;
+}
+
+function getAssetDetailSummary(detail: FixedAssetDetail) {
+  return [
+    detail.serialNumber ? `Serie ${detail.serialNumber}` : null,
+    ASSET_CONDITION_LABELS[detail.condition],
+    detail.color ? `Color ${detail.color}` : null,
+    detail.brand ? `Marca ${detail.brand}` : null,
+    detail.model ? `Modelo ${detail.model}` : null,
+    detail.chassisSeries ? `Chasis ${detail.chassisSeries}` : null,
+    detail.motorSeries ? `Motor ${detail.motorSeries}` : null,
+    detail.plateOrCode ? `Placa/código ${detail.plateOrCode}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function formatSupplierRtnLabel(supplier?: any | null) {
+  const rtn = String(supplier?.rtn ?? "").trim();
+  return rtn || "RTN no configurado";
+}
 
 function dateInputValue(value: string | Date | null | undefined) {
   if (!value) return "";
@@ -238,11 +293,400 @@ function getFriendlyMutationError(message: string) {
     if (path.includes("invoiceNumber")) {
       return `El número documento debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`;
     }
+    if (path.includes("documentRangeStart")) {
+      return `El rango autorizado inicial debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`;
+    }
+    if (path.includes("documentRangeEnd")) {
+      return `El rango autorizado final debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`;
+    }
 
     return typeof issue?.message === "string" ? issue.message : message;
   } catch {
     return message;
   }
+}
+
+function escapePrintHtml(value: unknown) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function formatRetentionPrintDate(value: string | Date | null | undefined) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("es-HN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+function formatRetentionPrintNumber(value: string | number | null | undefined) {
+  return toNumber(value).toLocaleString("es-HN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function wordsUnderThousand(value: number): string {
+  const units = [
+    "",
+    "uno",
+    "dos",
+    "tres",
+    "cuatro",
+    "cinco",
+    "seis",
+    "siete",
+    "ocho",
+    "nueve",
+  ];
+  const teens: Record<number, string> = {
+    10: "diez",
+    11: "once",
+    12: "doce",
+    13: "trece",
+    14: "catorce",
+    15: "quince",
+    16: "dieciseis",
+    17: "diecisiete",
+    18: "dieciocho",
+    19: "diecinueve",
+    20: "veinte",
+    21: "veintiuno",
+    22: "veintidos",
+    23: "veintitres",
+    24: "veinticuatro",
+    25: "veinticinco",
+    26: "veintiseis",
+    27: "veintisiete",
+    28: "veintiocho",
+    29: "veintinueve",
+  };
+  const tens = [
+    "",
+    "",
+    "veinte",
+    "treinta",
+    "cuarenta",
+    "cincuenta",
+    "sesenta",
+    "setenta",
+    "ochenta",
+    "noventa",
+  ];
+  const hundreds = [
+    "",
+    "ciento",
+    "doscientos",
+    "trescientos",
+    "cuatrocientos",
+    "quinientos",
+    "seiscientos",
+    "setecientos",
+    "ochocientos",
+    "novecientos",
+  ];
+
+  if (value === 0) return "";
+  if (value === 100) return "cien";
+  if (value < 10) return units[value];
+  if (value < 30) return teens[value];
+  if (value < 100) {
+    const ten = Math.floor(value / 10);
+    const unit = value % 10;
+    return unit ? `${tens[ten]} y ${units[unit]}` : tens[ten];
+  }
+
+  const hundred = Math.floor(value / 100);
+  const rest = value % 100;
+  return rest
+    ? `${hundreds[hundred]} ${wordsUnderThousand(rest)}`
+    : hundreds[hundred];
+}
+
+function integerToSpanishWords(value: number): string {
+  if (value === 0) return "cero";
+
+  const millions = Math.floor(value / 1_000_000);
+  const thousands = Math.floor((value % 1_000_000) / 1_000);
+  const rest = value % 1_000;
+  const parts: string[] = [];
+
+  if (millions > 0) {
+    parts.push(
+      millions === 1
+        ? "un millon"
+        : `${integerToSpanishWords(millions)} millones`
+    );
+  }
+  if (thousands > 0) {
+    parts.push(
+      thousands === 1 ? "mil" : `${wordsUnderThousand(thousands)} mil`
+    );
+  }
+  if (rest > 0) {
+    parts.push(wordsUnderThousand(rest));
+  }
+
+  return parts.join(" ");
+}
+
+function amountToSpanishLempiras(value: number) {
+  const centsTotal = Math.max(0, Math.round(value * 100));
+  const lempiras = Math.floor(centsTotal / 100);
+  const cents = centsTotal % 100;
+  const unitLabel = lempiras === 1 ? "LEMPIRA" : "LEMPIRAS";
+  return `${integerToSpanishWords(lempiras).toUpperCase()} ${unitLabel} CON ${String(cents).padStart(2, "0")}/100`;
+}
+
+function InvoiceAssetDetailsEditor({
+  invoiceId,
+  item,
+  canEdit,
+}: {
+  invoiceId: number;
+  item: any;
+  canEdit: boolean;
+}) {
+  const utils = trpc.useUtils();
+  const [draft, setDraft] = useState<InvoiceAssetDraft>({
+    isFixedAsset: item.isFixedAsset === true,
+    isLeasing: item.isLeasing === true,
+    lineObservation: item.lineObservation ?? "",
+    assetDetails: parseFixedAssetDetails(item.assetDetails),
+  });
+  const updateAssetDetailsMutation =
+    trpc.invoices.updateItemAssetDetails.useMutation({
+      onSuccess: () => {
+        toast.success("Datos de activo actualizados");
+        void utils.invoices.list.invalidate();
+        void utils.invoices.getById.invalidate({ id: invoiceId });
+      },
+      onError: error => toast.error(getFriendlyMutationError(error.message)),
+    });
+
+  useEffect(() => {
+    setDraft({
+      isFixedAsset: item.isFixedAsset === true,
+      isLeasing: item.isLeasing === true,
+      lineObservation: item.lineObservation ?? "",
+      assetDetails: parseFixedAssetDetails(item.assetDetails),
+    });
+  }, [item.id, item.isFixedAsset, item.isLeasing, item.lineObservation, item.assetDetails]);
+
+  const assetUnitCount = getPositiveIntegerQuantity(item.quantity);
+  const assetDetails = draft.isFixedAsset
+    ? normalizeFixedAssetDetails(draft.assetDetails, assetUnitCount)
+    : [];
+
+  const updateAssetDetail = (
+    index: number,
+    field: keyof FixedAssetDetail,
+    value: string
+  ) => {
+    setDraft(current => {
+      const details = normalizeFixedAssetDetails(
+        current.assetDetails,
+        assetUnitCount
+      );
+      details[index] = {
+        ...details[index],
+        [field]: value,
+      };
+      return {
+        ...current,
+        assetDetails: details,
+      };
+    });
+  };
+
+  const handleSave = () => {
+    if (!canEdit) return;
+    if (draft.isFixedAsset && assetUnitCount === 0) {
+      toast.error("Activo fijo requiere cantidad entera mayor que cero");
+      return;
+    }
+    if (draft.isFixedAsset) {
+      const missingIndex = assetDetails.findIndex(
+        detail => !detail.serialNumber.trim() || !detail.condition
+      );
+      if (missingIndex >= 0) {
+        toast.error(`Complete serie y condición de la unidad ${missingIndex + 1}`);
+        return;
+      }
+    }
+
+    updateAssetDetailsMutation.mutate({
+      id: invoiceId,
+      invoiceItemId: item.id,
+      isFixedAsset: draft.isFixedAsset,
+      isLeasing: draft.isFixedAsset ? draft.isLeasing : false,
+      lineObservation: draft.lineObservation.trim() || undefined,
+      assetDetails: draft.isFixedAsset ? assetDetails : [],
+    });
+  };
+
+  return (
+    <div className="space-y-4 rounded-lg border border-border/70 bg-background p-3">
+      <div className="flex flex-wrap items-center gap-4">
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <Checkbox
+            checked={draft.isFixedAsset}
+            disabled={!canEdit}
+            onCheckedChange={checked =>
+              setDraft(current => ({
+                ...current,
+                isFixedAsset: checked === true,
+                isLeasing: checked === true ? current.isLeasing : false,
+                assetDetails:
+                  checked === true
+                    ? normalizeFixedAssetDetails(
+                        current.assetDetails,
+                        assetUnitCount
+                      )
+                    : [],
+              }))
+            }
+          />
+          Activo fijo
+        </label>
+        {draft.isFixedAsset ? (
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <Checkbox
+              checked={draft.isLeasing}
+              disabled={!canEdit}
+              onCheckedChange={checked =>
+                setDraft(current => ({
+                  ...current,
+                  isLeasing: checked === true,
+                }))
+              }
+            />
+            Leasing
+          </label>
+        ) : null}
+        {draft.isFixedAsset ? (
+          <Badge variant="outline" className="border-blue-300 text-blue-700">
+            {assetDetails.length} unidad(es) con serie
+          </Badge>
+        ) : null}
+      </div>
+
+      <div className="space-y-2">
+        <Label>Observación de línea</Label>
+        <Textarea
+          rows={2}
+          value={draft.lineObservation}
+          disabled={!canEdit}
+          onChange={event =>
+            setDraft(current => ({
+              ...current,
+              lineObservation: event.target.value,
+            }))
+          }
+          placeholder="Observaciones de esta línea de factura"
+        />
+      </div>
+
+      {draft.isFixedAsset ? (
+        assetUnitCount === 0 ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            La cantidad de la línea debe ser entera y mayor que cero para
+            capturar unidades de activo fijo.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {assetDetails.map((detail, index) => (
+              <div
+                key={`${item.id}-asset-${index}`}
+                className="rounded-lg border border-border/70 p-3"
+              >
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm font-semibold">
+                    Unidad {index + 1}
+                  </span>
+                  {!canEdit ? (
+                    <span className="text-xs text-muted-foreground">
+                      {getAssetDetailSummary(detail)}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="space-y-1.5">
+                    <Label>Número de serie</Label>
+                    <Input
+                      value={detail.serialNumber}
+                      disabled={!canEdit}
+                      onChange={event =>
+                        updateAssetDetail(
+                          index,
+                          "serialNumber",
+                          event.target.value
+                        )
+                      }
+                      placeholder="Serie"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Condición</Label>
+                    <Select
+                      value={detail.condition}
+                      disabled={!canEdit}
+                      onValueChange={value =>
+                        updateAssetDetail(index, "condition", value)
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ASSET_CONDITION_VALUES.map(condition => (
+                          <SelectItem key={condition} value={condition}>
+                            {ASSET_CONDITION_LABELS[condition]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {ASSET_DETAIL_OPTIONAL_FIELDS.map(field => (
+                    <div key={field.key} className="space-y-1.5">
+                      <Label>{field.label}</Label>
+                      <Input
+                        value={String(detail[field.key] ?? "")}
+                        disabled={!canEdit}
+                        onChange={event =>
+                          updateAssetDetail(index, field.key, event.target.value)
+                        }
+                        placeholder={field.placeholder}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      ) : null}
+
+      {canEdit ? (
+        <Button
+          type="button"
+          variant="outline"
+          onClick={handleSave}
+          disabled={updateAssetDetailsMutation.isPending}
+        >
+          <Save className="mr-2 h-4 w-4" />
+          Guardar datos de línea
+        </Button>
+      ) : null}
+    </div>
+  );
 }
 
 export default function Facturas() {
@@ -266,6 +710,8 @@ export default function Facturas() {
     isFiscalDocument: true,
     cai: "",
     invoiceNumber: "",
+    documentRangeStart: "",
+    documentRangeEnd: "",
     documentDate: "",
     documentDueDate: "",
     postingDate: "",
@@ -355,6 +801,8 @@ export default function Facturas() {
       isFiscalDocument: detail.invoice.isFiscalDocument ?? true,
       cai: detail.invoice.cai ?? "",
       invoiceNumber: detail.invoice.invoiceNumber ?? "",
+      documentRangeStart: detail.invoice.documentRangeStart ?? "",
+      documentRangeEnd: detail.invoice.documentRangeEnd ?? "",
       documentDate: dateInputValue(detail.invoice.documentDate),
       documentDueDate: dateInputValue(detail.invoice.documentDueDate),
       postingDate: dateInputValue(detail.invoice.postingDate),
@@ -395,11 +843,14 @@ export default function Facturas() {
         [
           invoice.invoiceDocumentNumber,
           invoice.invoiceNumber,
+          invoice.documentRangeStart,
+          invoice.documentRangeEnd,
           invoice.cai,
           row.purchaseOrder?.orderNumber,
           row.receipt?.receiptNumber,
           row.supplier?.name,
           row.supplier?.supplierCode,
+          row.supplier?.rtn,
           row.project ? `${row.project.code} ${row.project.name}` : "",
         ]
           .filter(Boolean)
@@ -430,6 +881,10 @@ export default function Facturas() {
             row.supplier
               ? `${row.supplier.supplierCode} — ${row.supplier.name}`
               : "Proveedor pendiente",
+        },
+        {
+          header: "RTN proveedor",
+          value: (row: any) => row.supplier?.rtn || "—",
         },
         {
           header: "Origen OC",
@@ -563,6 +1018,32 @@ export default function Facturas() {
       );
       return;
     }
+    if (invoiceDraft.isFiscalDocument && !invoiceDraft.documentRangeStart.trim()) {
+      toast.error("Ingresa el rango autorizado inicial");
+      return;
+    }
+    if (
+      invoiceDraft.isFiscalDocument &&
+      !isValidInvoiceNumber(invoiceDraft.documentRangeStart)
+    ) {
+      toast.error(
+        `El rango autorizado inicial debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`
+      );
+      return;
+    }
+    if (invoiceDraft.isFiscalDocument && !invoiceDraft.documentRangeEnd.trim()) {
+      toast.error("Ingresa el rango autorizado final");
+      return;
+    }
+    if (
+      invoiceDraft.isFiscalDocument &&
+      !isValidInvoiceNumber(invoiceDraft.documentRangeEnd)
+    ) {
+      toast.error(
+        `El rango autorizado final debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`
+      );
+      return;
+    }
     if (invoiceDraft.isFiscalDocument && !invoiceDraft.documentDueDate) {
       toast.error("Selecciona la fecha de vencimiento (crédito)");
       return;
@@ -579,6 +1060,16 @@ export default function Facturas() {
         ? invoiceDraft.isFiscalDocument
           ? formatInvoiceNumberInput(invoiceDraft.invoiceNumber)
           : invoiceDraft.invoiceNumber.trim()
+        : undefined,
+      documentRangeStart: invoiceDraft.documentRangeStart.trim()
+        ? invoiceDraft.isFiscalDocument
+          ? formatInvoiceNumberInput(invoiceDraft.documentRangeStart)
+          : invoiceDraft.documentRangeStart.trim()
+        : undefined,
+      documentRangeEnd: invoiceDraft.documentRangeEnd.trim()
+        ? invoiceDraft.isFiscalDocument
+          ? formatInvoiceNumberInput(invoiceDraft.documentRangeEnd)
+          : invoiceDraft.documentRangeEnd.trim()
         : undefined,
       documentDate: invoiceDraft.documentDate,
       documentDueDate: invoiceDraft.documentDueDate,
@@ -749,6 +1240,251 @@ export default function Facturas() {
     });
   };
 
+  const handlePrintRetentionCertificate = () => {
+    if (!detail || retentionDrafts.length === 0 || retentionTotal <= 0) {
+      toast.error("Esta factura no tiene retenciones para imprimir");
+      return;
+    }
+
+    const invoice = detail.invoice;
+    const supplier = (detail.supplier ?? {}) as Record<string, any>;
+    const supplierContact = (detail.supplierContact ?? {}) as Record<
+      string,
+      any
+    >;
+    const supplierName = supplier?.name ?? "Proveedor";
+    const supplierRtn =
+      supplier?.rtn ??
+      supplier?.taxId ??
+      supplier?.rtnNumber ??
+      supplier?.supplierRtn ??
+      "";
+    const supplierAddress =
+      supplierContact?.address ??
+      supplier?.address ??
+      supplier?.direccion ??
+      supplier?.location ??
+      "";
+    const documentNumber =
+      invoice.invoiceNumber || invoice.invoiceDocumentNumber || "";
+    const documentDate = formatRetentionPrintDate(
+      invoice.documentDate ?? invoice.receiptDate ?? invoice.postingDate
+    );
+    const printableRetentions = retentionDrafts.slice(0, 8);
+
+    if (retentionDrafts.length > printableRetentions.length) {
+      toast.warning(
+        "El formato preimpreso solo tiene espacio para las primeras 8 retenciones"
+      );
+    }
+
+    const rowsHtml = printableRetentions
+      .map((retention, index) => {
+        const top = 75.5 + index * 7.7;
+        const rate = toNumber(retention.percentage).toLocaleString("es-HN", {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 4,
+        });
+        return `
+          <div class="cell row-date" style="top:${top}mm">${escapePrintHtml(documentDate)}</div>
+          <div class="cell row-desc" style="top:${top}mm">${escapePrintHtml(retention.description || retention.retentionCode || "Retencion")}</div>
+          <div class="cell row-type" style="top:${top}mm">Factura</div>
+          <div class="cell row-doc" style="top:${top}mm">${escapePrintHtml(documentNumber)}</div>
+          <div class="cell row-base" style="top:${top}mm">${formatRetentionPrintNumber(retention.baseAmount)}</div>
+          <div class="cell row-rate" style="top:${top}mm">${escapePrintHtml(rate)}%</div>
+          <div class="cell row-amount" style="top:${top}mm">${formatRetentionPrintNumber(getRetentionAmount(retention))}</div>
+        `;
+      })
+      .join("");
+
+    const totalRetained = printableRetentions.reduce(
+      (sum, retention) => sum + getRetentionAmount(retention),
+      0
+    );
+    const amountWords = amountToSpanishLempiras(totalRetained);
+    const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Comprobante de retención ${escapePrintHtml(invoice.invoiceDocumentNumber)}</title>
+    <style>
+      @page {
+        size: letter;
+        margin: 0;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: Arial, Helvetica, sans-serif;
+        color: #111827;
+        background: #f3f4f6;
+      }
+      .screen-toolbar {
+        padding: 10px 14px;
+        font-size: 12px;
+        color: #374151;
+      }
+      .page {
+        position: relative;
+        width: 216mm;
+        height: 279mm;
+        margin: 0 auto;
+        background: white;
+      }
+      .field,
+      .cell {
+        position: absolute;
+        overflow: hidden;
+        font-size: 10pt;
+        line-height: 1.1;
+        white-space: nowrap;
+      }
+      .multiline {
+        white-space: normal;
+        line-height: 1.12;
+      }
+      .right {
+        text-align: right;
+      }
+      .center {
+        text-align: center;
+      }
+      .supplier-name {
+        left: 19mm;
+        top: 41.7mm;
+        width: 126mm;
+        font-weight: 600;
+      }
+      .supplier-rtn {
+        left: 158mm;
+        top: 41.7mm;
+        width: 47mm;
+      }
+      .print-date {
+        left: 148mm;
+        top: 29.7mm;
+        width: 48mm;
+      }
+      .invoice-cai {
+        left: 56mm;
+        top: 49.8mm;
+        width: 143mm;
+      }
+      .supplier-address {
+        left: 25mm;
+        top: 57.5mm;
+        width: 174mm;
+      }
+      .row-date {
+        left: 9mm;
+        width: 19mm;
+        text-align: center;
+        font-size: 8.4pt;
+      }
+      .row-desc {
+        left: 31mm;
+        width: 32mm;
+        white-space: normal;
+        font-size: 8.2pt;
+      }
+      .row-type {
+        left: 65mm;
+        width: 24mm;
+        text-align: center;
+        font-size: 8.3pt;
+      }
+      .row-doc {
+        left: 91mm;
+        width: 39mm;
+        text-align: center;
+        font-size: 8.2pt;
+      }
+      .row-base {
+        left: 132mm;
+        width: 24mm;
+        text-align: right;
+        font-size: 8.4pt;
+      }
+      .row-rate {
+        left: 159mm;
+        width: 17mm;
+        text-align: center;
+        font-size: 8.4pt;
+      }
+      .row-amount {
+        left: 178mm;
+        width: 28mm;
+        text-align: right;
+        font-size: 8.4pt;
+        font-weight: 600;
+      }
+      .total-retained {
+        left: 178mm;
+        top: 125.8mm;
+        width: 28mm;
+        font-size: 9.4pt;
+        font-weight: 700;
+      }
+      .amount-words {
+        left: 36mm;
+        top: 138.8mm;
+        width: 92mm;
+        font-size: 8.8pt;
+        line-height: 1.18;
+        font-weight: 600;
+      }
+      @media screen {
+        .page {
+          box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+        }
+      }
+      @media print {
+        body {
+          background: white;
+        }
+        .screen-toolbar {
+          display: none;
+        }
+        .page {
+          margin: 0;
+          box-shadow: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="screen-toolbar">Vista de impresión para formato preimpreso carta. Si el navegador pregunta, usa tamaño Carta y escala 100%.</div>
+    <div class="page">
+      <div class="field print-date">${escapePrintHtml(documentDate)}</div>
+      <div class="field supplier-name">${escapePrintHtml(supplierName)}</div>
+      <div class="field supplier-rtn">${escapePrintHtml(supplierRtn)}</div>
+      <div class="field invoice-cai">${escapePrintHtml(invoice.cai ?? "")}</div>
+      <div class="field supplier-address multiline">${escapePrintHtml(supplierAddress)}</div>
+      ${rowsHtml}
+      <div class="field total-retained right">${formatRetentionPrintNumber(totalRetained)}</div>
+      <div class="field amount-words multiline">${escapePrintHtml(amountWords)}</div>
+    </div>
+    <script>
+      window.addEventListener("load", () => {
+        window.focus();
+        setTimeout(() => window.print(), 250);
+      });
+    </script>
+  </body>
+</html>`;
+
+    const printWindow = window.open("", "_blank", "width=920,height=720");
+    if (!printWindow) {
+      toast.error("No se pudo abrir la ventana de impresión");
+      return;
+    }
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+  };
+
   const handleReviewInvoice = () => {
     if (!selectedId) return;
     if (attachmentState.count === 0) {
@@ -894,9 +1630,18 @@ export default function Facturas() {
                         </div>
                       </td>
                       <td className="p-3">
-                        {row.supplier
-                          ? `${row.supplier.supplierCode} — ${row.supplier.name}`
-                          : "Proveedor pendiente"}
+                        {row.supplier ? (
+                          <div className="space-y-1">
+                            <div className="font-medium">
+                              {row.supplier.supplierCode} — {row.supplier.name}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              RTN: {formatSupplierRtnLabel(row.supplier)}
+                            </div>
+                          </div>
+                        ) : (
+                          "Proveedor pendiente"
+                        )}
                       </td>
                       <td className="p-3">
                         <div>{row.purchaseOrder?.orderNumber || "OC"}</div>
@@ -1057,6 +1802,11 @@ export default function Facturas() {
                         ? `${detail.supplier.supplierCode} — ${detail.supplier.name}`
                         : "Proveedor pendiente"}
                     </p>
+                    {detail.supplier ? (
+                      <p className="mt-1 break-words text-sm text-muted-foreground">
+                        RTN: {formatSupplierRtnLabel(detail.supplier)}
+                      </p>
+                    ) : null}
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Badge
                         variant="outline"
@@ -1130,6 +1880,16 @@ export default function Facturas() {
                             invoiceNumber: checked === true
                               ? formatInvoiceNumberInput(current.invoiceNumber)
                               : current.invoiceNumber,
+                            documentRangeStart: checked === true
+                              ? formatInvoiceNumberInput(
+                                  current.documentRangeStart
+                                )
+                              : current.documentRangeStart,
+                            documentRangeEnd: checked === true
+                              ? formatInvoiceNumberInput(
+                                  current.documentRangeEnd
+                                )
+                              : current.documentRangeEnd,
                           }))
                         }
                       />
@@ -1185,6 +1945,62 @@ export default function Facturas() {
                             invoiceDraft.isFiscalDocument
                               ? INVOICE_NUMBER_FORMAT_EXAMPLE
                               : "Ej. INV-EXT-001"
+                          }
+                          inputMode={
+                            invoiceDraft.isFiscalDocument ? "numeric" : "text"
+                          }
+                          maxLength={
+                            invoiceDraft.isFiscalDocument
+                              ? INVOICE_NUMBER_FORMAT_EXAMPLE.length
+                              : undefined
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Rango autorizado inicial</Label>
+                        <Input
+                          value={invoiceDraft.documentRangeStart}
+                          disabled={!canEditSelectedInvoice}
+                          onChange={event =>
+                            setInvoiceDraft(current => ({
+                              ...current,
+                              documentRangeStart: current.isFiscalDocument
+                                ? formatInvoiceNumberInput(event.target.value)
+                                : event.target.value,
+                            }))
+                          }
+                          placeholder={
+                            invoiceDraft.isFiscalDocument
+                              ? INVOICE_NUMBER_FORMAT_EXAMPLE
+                              : "Rango autorizado inicial"
+                          }
+                          inputMode={
+                            invoiceDraft.isFiscalDocument ? "numeric" : "text"
+                          }
+                          maxLength={
+                            invoiceDraft.isFiscalDocument
+                              ? INVOICE_NUMBER_FORMAT_EXAMPLE.length
+                              : undefined
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Rango autorizado final</Label>
+                        <Input
+                          value={invoiceDraft.documentRangeEnd}
+                          disabled={!canEditSelectedInvoice}
+                          onChange={event =>
+                            setInvoiceDraft(current => ({
+                              ...current,
+                              documentRangeEnd: current.isFiscalDocument
+                                ? formatInvoiceNumberInput(event.target.value)
+                                : event.target.value,
+                            }))
+                          }
+                          placeholder={
+                            invoiceDraft.isFiscalDocument
+                              ? INVOICE_NUMBER_FORMAT_EXAMPLE
+                              : "Rango autorizado final"
                           }
                           inputMode={
                             invoiceDraft.isFiscalDocument ? "numeric" : "text"
@@ -1336,115 +2152,164 @@ export default function Facturas() {
                             canEditRetentions &&
                             lineRetentions.length < 2 &&
                             availableRetentionOptions.length > 0;
+                          const itemAssetDetails = parseFixedAssetDetails(
+                            item.assetDetails
+                          );
+                          const showAssetDetails =
+                            canEditSelectedInvoice ||
+                            item.isFixedAsset ||
+                            Boolean(item.lineObservation?.trim());
 
                           return (
-                            <tr
-                              key={item.id}
-                              className="border-b border-border last:border-0"
-                            >
-                              <td className="p-3 font-medium">
-                                {item.itemName}
-                              </td>
-                              <td className="p-3 font-mono text-xs">
-                                {item.currentSapItemCode ||
-                                  item.originalSapItemCode ||
-                                  "—"}
-                              </td>
-                              <td className="p-3 text-right">
-                                {item.quantity} {item.unit || ""}
-                              </td>
-                              <td className="p-3 text-right">
-                                {formatPurchaseOrderCurrency(item.unitPrice)}
-                              </td>
-                              <td className="p-3 text-right">
-                                {formatPurchaseOrderCurrency(item.subtotal)}
-                              </td>
-                              <td className="p-3 text-right">
-                                {formatPurchaseOrderCurrency(item.taxAmount)}
-                              </td>
-                              <td className="p-3 text-right font-semibold">
-                                {formatPurchaseOrderCurrency(item.total)}
-                              </td>
-                              <td className="min-w-[300px] p-3">
-                                {item.allowsTaxWithholding !== false ? (
-                                  <div className="space-y-2">
-                                    {lineRetentions.length > 0 ? (
-                                      <div className="flex flex-wrap gap-1.5">
-                                        {lineRetentions.map(retention => (
-                                          <Badge
-                                            key={`${retention.invoiceItemId}-${retention.retentionCatalogId}`}
-                                            variant="outline"
-                                            className="border-emerald-300 text-emerald-700"
-                                          >
-                                            {retention.retentionCode} -{" "}
-                                            {retention.description}
-                                          </Badge>
-                                        ))}
-                                      </div>
-                                    ) : canEditRetentions ? null : (
-                                      <Badge
-                                        variant="outline"
-                                        className="border-amber-300 text-amber-700"
-                                      >
-                                        Sin retención
-                                      </Badge>
-                                    )}
-
-                                    {canEditRetentions ? (
-                                      canAddLineRetention ? (
-                                        <Select
-                                          key={`${item.id}-${lineRetentions
-                                            .map(
-                                              retention =>
-                                                retention.retentionCatalogId
-                                            )
-                                            .join("-")}`}
-                                          onValueChange={value =>
-                                            handleAddLineRetention(item, value)
-                                          }
+                            <Fragment key={item.id}>
+                              <tr className="border-b border-border">
+                                <td className="p-3 font-medium">
+                                  <div>{item.itemName}</div>
+                                  {item.isFixedAsset ||
+                                  item.isLeasing ||
+                                  itemAssetDetails.length > 0 ? (
+                                    <div className="mt-2 flex flex-wrap gap-1.5">
+                                      {item.isFixedAsset ? (
+                                        <Badge
+                                          variant="outline"
+                                          className="border-blue-300 text-blue-700"
                                         >
-                                          <SelectTrigger className="h-9">
-                                            <SelectValue placeholder="Agregar retención" />
-                                          </SelectTrigger>
-                                          <SelectContent>
-                                            {availableRetentionOptions.map(
-                                              option => (
-                                                <SelectItem
-                                                  key={option.id}
-                                                  value={String(option.id)}
-                                                >
-                                                  {option.taxCode} —{" "}
-                                                  {option.description} (
-                                                  {Number(
-                                                    option.ratePercent
-                                                  ).toLocaleString("es-HN", {
-                                                    maximumFractionDigits: 4,
-                                                  })}
-                                                  %)
-                                                </SelectItem>
+                                          Activo fijo
+                                        </Badge>
+                                      ) : null}
+                                      {item.isLeasing ? (
+                                        <Badge
+                                          variant="outline"
+                                          className="border-violet-300 text-violet-700"
+                                        >
+                                          Leasing
+                                        </Badge>
+                                      ) : null}
+                                      {itemAssetDetails.length > 0 ? (
+                                        <Badge variant="outline">
+                                          {itemAssetDetails.length} unidad(es)
+                                        </Badge>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
+                                  {item.lineObservation ? (
+                                    <div className="mt-1 text-xs text-muted-foreground">
+                                      {item.lineObservation}
+                                    </div>
+                                  ) : null}
+                                </td>
+                                <td className="p-3 font-mono text-xs">
+                                  {item.currentSapItemCode ||
+                                    item.originalSapItemCode ||
+                                    "—"}
+                                </td>
+                                <td className="p-3 text-right">
+                                  {item.quantity} {item.unit || ""}
+                                </td>
+                                <td className="p-3 text-right">
+                                  {formatPurchaseOrderCurrency(item.unitPrice)}
+                                </td>
+                                <td className="p-3 text-right">
+                                  {formatPurchaseOrderCurrency(item.subtotal)}
+                                </td>
+                                <td className="p-3 text-right">
+                                  {formatPurchaseOrderCurrency(item.taxAmount)}
+                                </td>
+                                <td className="p-3 text-right font-semibold">
+                                  {formatPurchaseOrderCurrency(item.total)}
+                                </td>
+                                <td className="min-w-[300px] p-3">
+                                  {item.allowsTaxWithholding !== false ? (
+                                    <div className="space-y-2">
+                                      {lineRetentions.length > 0 ? (
+                                        <div className="flex flex-wrap gap-1.5">
+                                          {lineRetentions.map(retention => (
+                                            <Badge
+                                              key={`${retention.invoiceItemId}-${retention.retentionCatalogId}`}
+                                              variant="outline"
+                                              className="border-emerald-300 text-emerald-700"
+                                            >
+                                              {retention.retentionCode} -{" "}
+                                              {retention.description}
+                                            </Badge>
+                                          ))}
+                                        </div>
+                                      ) : canEditRetentions ? null : (
+                                        <Badge
+                                          variant="outline"
+                                          className="border-amber-300 text-amber-700"
+                                        >
+                                          Sin retención
+                                        </Badge>
+                                      )}
+
+                                      {canEditRetentions ? (
+                                        canAddLineRetention ? (
+                                          <Select
+                                            key={`${item.id}-${lineRetentions
+                                              .map(
+                                                retention =>
+                                                  retention.retentionCatalogId
                                               )
-                                            )}
-                                          </SelectContent>
-                                        </Select>
-                                      ) : (
-                                        <p className="text-xs text-muted-foreground">
-                                          {lineRetentions.length >= 2
-                                            ? "Máximo 2 retenciones"
-                                            : "Sin retenciones disponibles"}
-                                        </p>
-                                      )
-                                    ) : null}
-                                  </div>
-                                ) : (
-                                  <Badge
-                                    variant="outline"
-                                    className="border-slate-300 text-slate-600"
-                                  >
-                                    No aplica
-                                  </Badge>
-                                )}
-                              </td>
-                            </tr>
+                                              .join("-")}`}
+                                            onValueChange={value =>
+                                              handleAddLineRetention(item, value)
+                                            }
+                                          >
+                                            <SelectTrigger className="h-9">
+                                              <SelectValue placeholder="Agregar retención" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              {availableRetentionOptions.map(
+                                                option => (
+                                                  <SelectItem
+                                                    key={option.id}
+                                                    value={String(option.id)}
+                                                  >
+                                                    {option.taxCode} —{" "}
+                                                    {option.description} (
+                                                    {Number(
+                                                      option.ratePercent
+                                                    ).toLocaleString("es-HN", {
+                                                      maximumFractionDigits: 4,
+                                                    })}
+                                                    %)
+                                                  </SelectItem>
+                                                )
+                                              )}
+                                            </SelectContent>
+                                          </Select>
+                                        ) : (
+                                          <p className="text-xs text-muted-foreground">
+                                            {lineRetentions.length >= 2
+                                              ? "Máximo 2 retenciones"
+                                              : "Sin retenciones disponibles"}
+                                          </p>
+                                        )
+                                      ) : null}
+                                    </div>
+                                  ) : (
+                                    <Badge
+                                      variant="outline"
+                                      className="border-slate-300 text-slate-600"
+                                    >
+                                      No aplica
+                                    </Badge>
+                                  )}
+                                </td>
+                              </tr>
+                              {showAssetDetails ? (
+                                <tr className="border-b border-border bg-muted/10 last:border-0">
+                                  <td colSpan={8} className="p-3 pt-0">
+                                    <InvoiceAssetDetailsEditor
+                                      invoiceId={detail.invoice.id}
+                                      item={item}
+                                      canEdit={canEditSelectedInvoice}
+                                    />
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </Fragment>
                           );
                         })}
                       </tbody>
@@ -1679,7 +2544,20 @@ export default function Facturas() {
                 </section>
 
                 <section className="rounded-lg border border-border/70 p-4">
-                  <h3 className="font-semibold">Detalle de retenciones</h3>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-semibold">Detalle de retenciones</h3>
+                    {retentionDrafts.length > 0 ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handlePrintRetentionCertificate}
+                      >
+                        <Printer className="mr-2 h-4 w-4" />
+                        Imprimir
+                      </Button>
+                    ) : null}
+                  </div>
                   {retentionDrafts.length === 0 ? (
                     <p className="mt-3 text-sm text-muted-foreground">
                       Sin retenciones aplicadas.

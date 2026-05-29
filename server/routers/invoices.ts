@@ -10,6 +10,10 @@ import {
   isValidCai,
   isValidInvoiceNumber,
 } from "@shared/invoices";
+import {
+  ASSET_CONDITION_VALUES,
+  normalizeFixedAssetDetails,
+} from "@shared/fixed-assets";
 
 function canAccessInvoices(user: { role: string; buildreqRole?: string | null }) {
   return (
@@ -144,6 +148,30 @@ function assertInvoiceReadyForReview(
         message: `El número documento debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
       });
     }
+    if (!invoice.documentRangeStart?.trim()) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Ingrese el rango autorizado inicial antes de enviar a revisión",
+      });
+    }
+    if (!isValidInvoiceNumber(invoice.documentRangeStart)) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `El rango autorizado inicial debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+      });
+    }
+    if (!invoice.documentRangeEnd?.trim()) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Ingrese el rango autorizado final antes de enviar a revisión",
+      });
+    }
+    if (!isValidInvoiceNumber(invoice.documentRangeEnd)) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `El rango autorizado final debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+      });
+    }
     if (!invoice.documentDueDate) {
       throw new TRPCError({
         code: "BAD_REQUEST",
@@ -177,6 +205,26 @@ const invoiceRetentionSchema = z
       });
     }
   });
+
+const fixedAssetDetailSchema = z.object({
+  serialNumber: z.string().trim().max(120),
+  condition: z.enum(ASSET_CONDITION_VALUES),
+  color: z.string().trim().max(120).nullish(),
+  model: z.string().trim().max(120).nullish(),
+  brand: z.string().trim().max(120).nullish(),
+  chassisSeries: z.string().trim().max(120).nullish(),
+  motorSeries: z.string().trim().max(120).nullish(),
+  plateOrCode: z.string().trim().max(120).nullish(),
+});
+
+const invoiceItemAssetSchema = z.object({
+  id: z.number(),
+  invoiceItemId: z.number().int().positive(),
+  isFixedAsset: z.boolean(),
+  isLeasing: z.boolean().optional(),
+  lineObservation: z.string().trim().max(1000).optional(),
+  assetDetails: z.array(fixedAssetDetailSchema).optional(),
+});
 
 export const invoicesRouter = router({
   list: protectedProcedure
@@ -265,6 +313,8 @@ export const invoicesRouter = router({
           isFiscalDocument: z.boolean().optional(),
           cai: z.string().trim().max(100).optional(),
           invoiceNumber: z.string().trim().max(100).optional(),
+          documentRangeStart: z.string().trim().max(100).optional(),
+          documentRangeEnd: z.string().trim().max(100).optional(),
           documentDate: z.string().optional(),
           documentDueDate: z.string().optional(),
           postingDate: z.string(),
@@ -300,6 +350,32 @@ export const invoicesRouter = router({
               code: z.ZodIssueCode.custom,
               path: ["invoiceNumber"],
               message: `El número documento debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+            });
+          }
+          if (!value.documentRangeStart?.trim()) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["documentRangeStart"],
+              message: "Ingrese el rango autorizado inicial",
+            });
+          } else if (!isValidInvoiceNumber(value.documentRangeStart)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["documentRangeStart"],
+              message: `El rango autorizado inicial debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+            });
+          }
+          if (!value.documentRangeEnd?.trim()) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["documentRangeEnd"],
+              message: "Ingrese el rango autorizado final",
+            });
+          } else if (!isValidInvoiceNumber(value.documentRangeEnd)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["documentRangeEnd"],
+              message: `El rango autorizado final debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
             });
           }
           if (!value.documentDueDate) {
@@ -342,6 +418,16 @@ export const invoicesRouter = router({
           ? isFiscalDocument
             ? formatInvoiceNumberInput(input.invoiceNumber)
             : input.invoiceNumber.trim()
+          : null,
+        documentRangeStart: input.documentRangeStart
+          ? isFiscalDocument
+            ? formatInvoiceNumberInput(input.documentRangeStart)
+            : input.documentRangeStart.trim()
+          : null,
+        documentRangeEnd: input.documentRangeEnd
+          ? isFiscalDocument
+            ? formatInvoiceNumberInput(input.documentRangeEnd)
+            : input.documentRangeEnd.trim()
           : null,
         documentDate: parseDateInput(input.documentDate),
         documentDueDate: parseDateInput(input.documentDueDate),
@@ -485,5 +571,75 @@ export const invoicesRouter = router({
               : "No se pudieron guardar las retenciones",
         });
       }
+    }),
+
+  updateItemAssetDetails: protectedProcedure
+    .input(invoiceItemAssetSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!canEditInvoices(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para editar facturas",
+        });
+      }
+
+      const detail = await db.getInvoiceById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Factura no encontrada",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.invoice.projectId);
+      assertInvoiceDraft(detail);
+
+      const invoiceItem = detail.items.find(
+        (item: any) => item.id === input.invoiceItemId
+      );
+      if (!invoiceItem) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "La línea de factura seleccionada no existe",
+        });
+      }
+
+      const quantity = Number(invoiceItem.quantity);
+      let assetDetails: ReturnType<typeof normalizeFixedAssetDetails> = [];
+      if (input.isFixedAsset) {
+        if (
+          !Number.isFinite(quantity) ||
+          quantity <= 0 ||
+          !Number.isInteger(quantity)
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "Activo fijo requiere una cantidad de factura entera mayor que cero",
+          });
+        }
+
+        assetDetails = normalizeFixedAssetDetails(
+          input.assetDetails,
+          quantity
+        );
+        const missingRequiredIndex = assetDetails.findIndex(
+          detail => !detail.serialNumber.trim() || !detail.condition
+        );
+        if (missingRequiredIndex >= 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Complete número de serie y condición de la unidad ${
+              missingRequiredIndex + 1
+            }`,
+          });
+        }
+      }
+
+      return db.updateInvoiceItemAssetDetails(input.invoiceItemId, {
+        isFixedAsset: input.isFixedAsset,
+        isLeasing: input.isFixedAsset ? input.isLeasing === true : false,
+        assetDetails,
+        lineObservation: input.lineObservation?.trim() || null,
+      });
     }),
 });

@@ -35,6 +35,7 @@ import {
   invoices,
   invoiceItems,
   invoiceRetentions,
+  salesTaxes,
   taxRetentions,
   warehouseExits,
   warehouseExitItems,
@@ -75,6 +76,7 @@ import type {
   InsertInvoice,
   InsertInvoiceItem,
   InsertInvoiceRetention,
+  InsertSalesTax,
   InsertTaxRetention,
   InsertWarehouseExit,
   InsertWarehouseExitItem,
@@ -109,12 +111,18 @@ import {
 } from "./_core/documents";
 import {
   calculatePurchaseOrderLineAmounts,
+  DEFAULT_SALES_TAXES,
   formatPurchaseOrderCurrency,
   getPurchaseOrderContractSummary,
   getPurchaseOrderFiscalSummaryRows,
-  getPurchaseOrderTaxMeta,
+  getPurchaseOrderTaxSelectionError,
+  normalizePurchaseOrderTaxCode,
+  parsePurchaseOrderAdditionalTaxCodes,
   summarizePurchaseOrderLines,
+  type PurchaseOrderTaxBreakdownEntry,
+  type SalesTaxCatalogItem,
 } from "@shared/purchase-orders";
+import type { FixedAssetDetail } from "@shared/fixed-assets";
 import {
   getDemoImportWorkload,
   type ParsedDemoImportPayload,
@@ -3304,6 +3312,8 @@ function buildPurchaseOrderDocument(params: {
     unit?: string | null;
     unitPrice?: string | number | null;
     taxCode?: string | null;
+    additionalTaxCodes?: string[] | string | null;
+    taxBreakdown?: PurchaseOrderTaxBreakdownEntry[] | string | null;
   }>;
 }) {
   const summary = summarizePurchaseOrderLines(
@@ -3311,6 +3321,8 @@ function buildPurchaseOrderDocument(params: {
       quantity: item.quantity,
       unitPrice: item.unitPrice,
       taxCode: item.taxCode,
+      additionalTaxCodes: item.additionalTaxCodes,
+      taxBreakdown: item.taxBreakdown,
     }))
   );
 
@@ -3335,6 +3347,8 @@ function buildPurchaseOrderDocument(params: {
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         taxCode: item.taxCode,
+        additionalTaxCodes: item.additionalTaxCodes,
+        taxBreakdown: item.taxBreakdown,
       });
 
       return {
@@ -3933,6 +3947,17 @@ export async function createPurchaseOrder(
     .from(users)
     .where(eq(users.id, data.createdById))
     .limit(1);
+  const normalizedItems = await Promise.all(
+    items.map(async item => ({
+      ...item,
+      ...(await preparePurchaseOrderTaxDataForLine({
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        taxCode: item.taxCode,
+        additionalTaxCodes: item.additionalTaxCodes as any,
+      })),
+    }))
+  );
   const printedAt = new Date();
   const projectLabel = project
     ? `${project.code ?? ""} ${project.name ?? ""}`.trim()
@@ -3957,7 +3982,7 @@ export async function createPurchaseOrder(
     quoteLabel: sourcePurchaseRequest?.quoteAttachmentId
       ? String(sourcePurchaseRequest.quoteAttachmentId)
       : "-",
-    items: items.map(item => ({
+    items: normalizedItems.map(item => ({
       itemName: item.itemName,
       currentSapItemCode: item.currentSapItemCode,
       originalSapItemCode: item.originalSapItemCode,
@@ -3965,6 +3990,8 @@ export async function createPurchaseOrder(
       unit: item.unit,
       unitPrice: item.unitPrice,
       taxCode: item.taxCode,
+      additionalTaxCodes: item.additionalTaxCodes,
+      taxBreakdown: item.taxBreakdown,
     })),
   });
 
@@ -3983,9 +4010,9 @@ export async function createPurchaseOrder(
     })
     .returning({ id: purchaseOrders.id });
 
-  if (items.length > 0) {
+  if (normalizedItems.length > 0) {
     await db.insert(purchaseOrderItems).values(
-      items.map(item => ({
+      normalizedItems.map(item => ({
         ...item,
         purchaseOrderId: created.id,
       }))
@@ -4161,6 +4188,8 @@ export async function getPurchaseOrderById(id: number) {
       unit: item.unit,
       unitPrice: item.unitPrice,
       taxCode: item.taxCode,
+      additionalTaxCodes: item.additionalTaxCodes as any,
+      taxBreakdown: item.taxBreakdown as any,
     })),
   });
 
@@ -4169,6 +4198,8 @@ export async function getPurchaseOrderById(id: number) {
       quantity: item.quantity,
       unitPrice: item.unitPrice,
       taxCode: item.taxCode,
+      additionalTaxCodes: item.additionalTaxCodes as any,
+      taxBreakdown: item.taxBreakdown as any,
     }))
   );
 
@@ -4223,6 +4254,16 @@ export async function updatePurchaseOrder(
     Object.assign(
       nextData,
       buildSupplierContactSnapshot(preferredSupplierContact)
+    );
+  }
+
+  if (data.supplierContactId !== undefined) {
+    const selectedSupplierContact = data.supplierContactId
+      ? await getSupplierContactById(data.supplierContactId)
+      : null;
+    Object.assign(
+      nextData,
+      buildSupplierContactSnapshot(selectedSupplierContact)
     );
   }
 
@@ -4961,6 +5002,8 @@ function calculateInvoiceTotals(
     quantity: string | number;
     unitPrice: string | number | null | undefined;
     taxCode?: string | null;
+    additionalTaxCodes?: string[] | string | null;
+    taxBreakdown?: PurchaseOrderTaxBreakdownEntry[] | string | null;
   }>
 ) {
   return items.reduce(
@@ -4969,6 +5012,8 @@ function calculateInvoiceTotals(
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         taxCode: item.taxCode,
+        additionalTaxCodes: item.additionalTaxCodes,
+        taxBreakdown: item.taxBreakdown,
       });
 
       summary.subtotal += amounts.subtotal;
@@ -5026,6 +5071,8 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
         quantity: receiptItem.quantityReceived,
         unitPrice: receiptItem.unitPrice ?? sourceItem.unitPrice ?? "0.00",
         taxCode: sourceItem.taxCode,
+        additionalTaxCodes: sourceItem.additionalTaxCodes,
+        taxBreakdown: sourceItem.taxBreakdown,
       });
 
       return {
@@ -5065,6 +5112,8 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
       quantity: receiptItem.quantityReceived,
       unitPrice: receiptItem.unitPrice ?? sourceItem.unitPrice ?? "0.00",
       taxCode: sourceItem.taxCode,
+      additionalTaxCodes: sourceItem.additionalTaxCodes,
+      taxBreakdown: sourceItem.taxBreakdown,
     }))
   );
   const invoiceDocumentNumber = await generateInvoiceDocumentNumber(
@@ -5083,6 +5132,8 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
       isFiscalDocument: params.receiptData.isFiscalDocument ?? false,
       cai: params.receiptData.cai ?? null,
       invoiceNumber: params.receiptData.invoiceNumber ?? null,
+      documentRangeStart: params.receiptData.documentRangeStart ?? null,
+      documentRangeEnd: params.receiptData.documentRangeEnd ?? null,
       documentDate: params.receiptData.documentDate ?? null,
       documentDueDate: params.receiptData.documentDueDate ?? null,
       postingDate: params.receiptData.postingDate,
@@ -5119,10 +5170,22 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
             receiptItem.unitPrice ?? sourceItem.unitPrice ?? "0.00"
           ),
           taxCode: amounts.taxCode,
+          additionalTaxCodes: amounts.additionalTaxCodes,
+          isFixedAsset: receiptItem.isFixedAsset ?? false,
+          isLeasing:
+            receiptItem.isFixedAsset === true
+              ? receiptItem.isLeasing ?? false
+              : false,
+          assetDetails:
+            receiptItem.isFixedAsset === true
+              ? receiptItem.assetDetails ?? []
+              : [],
+          lineObservation: receiptItem.notes ?? null,
           allowsTaxWithholding: catalogItem?.allowsTaxWithholding ?? true,
           subtotal: toDecimalString(amounts.subtotal),
           taxAmount: toDecimalString(amounts.taxAmount),
           total: toDecimalString(amounts.total),
+          taxBreakdown: amounts.taxBreakdown,
         };
       })
     );
@@ -5141,6 +5204,9 @@ export async function registerReceipt(
       closeReason?: string | null;
       closeNote?: string | null;
       closedById?: number | null;
+      isFixedAsset?: boolean;
+      isLeasing?: boolean;
+      assetDetails?: FixedAssetDetail[];
     }
   >
 ) {
@@ -5166,14 +5232,41 @@ export async function registerReceipt(
         : "completa";
   const { emissionDeadline, ...receiptData } = data;
 
-  const [created] = await db
-    .insert(receipts)
-    .values({
-      ...receiptData,
-      receiptNumber,
-      status,
-    })
-    .returning({ id: receipts.id });
+  const [existingDraft] = await db
+    .select({ id: receipts.id, receiptNumber: receipts.receiptNumber })
+    .from(receipts)
+    .where(
+      and(
+        eq(receipts.sourceType, data.sourceType),
+        eq(receipts.sourceId, data.sourceId),
+        eq(receipts.projectId, data.projectId),
+        eq(receipts.status, "borrador")
+      )
+    )
+    .limit(1);
+
+  const [created] = existingDraft
+    ? await db
+        .update(receipts)
+        .set({
+          ...receiptData,
+          status,
+          updatedAt: new Date(),
+        })
+        .where(eq(receipts.id, existingDraft.id))
+        .returning({ id: receipts.id })
+    : await db
+        .insert(receipts)
+        .values({
+          ...receiptData,
+          receiptNumber,
+          status,
+        })
+        .returning({ id: receipts.id });
+
+  if (existingDraft) {
+    await db.delete(receiptItems).where(eq(receiptItems.receiptId, created.id));
+  }
 
   let insertedReceiptItems: Array<
     Omit<InsertReceiptItem, "receiptId"> & {
@@ -5207,6 +5300,9 @@ export async function registerReceipt(
         quantityReceived: receiptItems.quantityReceived,
         unit: receiptItems.unit,
         unitPrice: receiptItems.unitPrice,
+        isFixedAsset: receiptItems.isFixedAsset,
+        isLeasing: receiptItems.isLeasing,
+        assetDetails: receiptItems.assetDetails,
         notes: receiptItems.notes,
         createdAt: receiptItems.createdAt,
       });
@@ -5549,10 +5645,75 @@ export async function registerReceipt(
 
   return {
     id: created.id,
-    receiptNumber,
+    receiptNumber: existingDraft?.receiptNumber ?? receiptNumber,
     status,
     invoiceId: createdInvoice?.id,
     invoiceDocumentNumber: createdInvoice?.invoiceDocumentNumber,
+  };
+}
+
+export async function saveReceiptDraft(
+  data: Omit<InsertReceipt, "receiptNumber" | "status">,
+  items: Array<Omit<InsertReceiptItem, "receiptId">>
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [existingDraft] = await db
+    .select({ id: receipts.id, receiptNumber: receipts.receiptNumber })
+    .from(receipts)
+    .where(
+      and(
+        eq(receipts.sourceType, data.sourceType),
+        eq(receipts.sourceId, data.sourceId),
+        eq(receipts.projectId, data.projectId),
+        eq(receipts.status, "borrador")
+      )
+    )
+    .limit(1);
+
+  const receiptNumber =
+    existingDraft?.receiptNumber ?? (await generateReceiptNumber(data.projectId));
+  const receiptData = {
+    ...data,
+    receiptNumber,
+    status: "borrador" as const,
+    updatedAt: new Date(),
+  };
+
+  const [draft] = existingDraft
+    ? await db
+        .update(receipts)
+        .set(receiptData)
+        .where(eq(receipts.id, existingDraft.id))
+        .returning({
+          id: receipts.id,
+          receiptNumber: receipts.receiptNumber,
+          status: receipts.status,
+        })
+    : await db
+        .insert(receipts)
+        .values(receiptData)
+        .returning({
+          id: receipts.id,
+          receiptNumber: receipts.receiptNumber,
+          status: receipts.status,
+        });
+
+  await db.delete(receiptItems).where(eq(receiptItems.receiptId, draft.id));
+
+  if (items.length > 0) {
+    await db.insert(receiptItems).values(
+      items.map(item => ({
+        ...item,
+        receiptId: draft.id,
+      }))
+    );
+  }
+
+  return {
+    ...draft,
+    updated: Boolean(existingDraft),
   };
 }
 
@@ -5628,6 +5789,305 @@ export async function getReceiptById(id: number) {
     .from(receiptItems)
     .where(eq(receiptItems.receiptId, id));
   return { ...rows[0], items };
+}
+
+// ============================================================
+// SALES TAXES
+// ============================================================
+export type SalesTaxListFilters = {
+  search?: string;
+  isActive?: boolean;
+  page?: number;
+  pageSize?: number;
+};
+
+function normalizeSalesTaxCode(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function defaultSalesTaxRows() {
+  return DEFAULT_SALES_TAXES.map((tax, index) => ({
+    id: index + 1,
+    taxCode: tax.taxCode,
+    description: tax.description,
+    shortLabel: tax.shortLabel ?? tax.description,
+    ratePercent: toRateString(tax.ratePercent),
+    taxType: tax.taxType,
+    fiscalCategory: tax.fiscalCategory,
+    isActive: tax.isActive !== false,
+    displayOrder: tax.displayOrder ?? (index + 1) * 10,
+    appliesToTaxCodes: parsePurchaseOrderAdditionalTaxCodes(
+      tax.appliesToTaxCodes
+    ),
+    note: null,
+    erpCode: null,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+  }));
+}
+
+function salesTaxRowsToCatalog(rows: Array<any>): SalesTaxCatalogItem[] {
+  return rows.map(row => ({
+    taxCode: row.taxCode,
+    description: row.description,
+    shortLabel: row.shortLabel,
+    ratePercent: row.ratePercent,
+    taxType: row.taxType,
+    fiscalCategory: row.fiscalCategory,
+    isActive: row.isActive,
+    displayOrder: row.displayOrder,
+    appliesToTaxCodes: parsePurchaseOrderAdditionalTaxCodes(
+      row.appliesToTaxCodes
+    ),
+  }));
+}
+
+function buildSalesTaxWhere(filters?: SalesTaxListFilters) {
+  const conditions = [];
+
+  if (filters?.search?.trim()) {
+    const search = `%${filters.search.trim()}%`;
+    conditions.push(
+      or(
+        ilike(salesTaxes.taxCode, search),
+        ilike(salesTaxes.description, search),
+        ilike(salesTaxes.shortLabel, search),
+        ilike(salesTaxes.erpCode, search),
+        ilike(salesTaxes.note, search)
+      )!
+    );
+  }
+
+  if (filters?.isActive !== undefined) {
+    conditions.push(eq(salesTaxes.isActive, filters.isActive));
+  }
+
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
+export async function listSalesTaxes(filters?: SalesTaxListFilters) {
+  const db = await getDb();
+  const requestedPage = Math.max(filters?.page ?? 1, 1);
+  const pageSize = Math.min(Math.max(filters?.pageSize ?? 25, 10), 200);
+
+  if (!db) {
+    const items = defaultSalesTaxRows().filter(
+      row => filters?.isActive === undefined || row.isActive === filters.isActive
+    );
+    return {
+      items,
+      total: items.length,
+      page: 1,
+      pageSize,
+      totalPages: 1,
+    };
+  }
+
+  const where = buildSalesTaxWhere(filters);
+  const [totalResult] = await db
+    .select({ count: count() })
+    .from(salesTaxes)
+    .where(where);
+  const total = totalResult?.count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(requestedPage, totalPages);
+  const offset = (page - 1) * pageSize;
+
+  const items = await db
+    .select()
+    .from(salesTaxes)
+    .where(where)
+    .orderBy(asc(salesTaxes.displayOrder), asc(salesTaxes.taxCode))
+    .limit(pageSize)
+    .offset(offset);
+
+  return {
+    items,
+    total,
+    page,
+    pageSize,
+    totalPages,
+  };
+}
+
+export async function listActiveSalesTaxes() {
+  const db = await getDb();
+  if (!db) return defaultSalesTaxRows();
+
+  return db
+    .select()
+    .from(salesTaxes)
+    .where(eq(salesTaxes.isActive, true))
+    .orderBy(asc(salesTaxes.displayOrder), asc(salesTaxes.taxCode));
+}
+
+async function getActiveSalesTaxCatalog() {
+  return salesTaxRowsToCatalog(await listActiveSalesTaxes());
+}
+
+export async function createSalesTax(
+  data: Pick<
+    InsertSalesTax,
+    | "taxCode"
+    | "description"
+    | "shortLabel"
+    | "ratePercent"
+    | "taxType"
+    | "fiscalCategory"
+    | "isActive"
+    | "displayOrder"
+    | "appliesToTaxCodes"
+    | "note"
+    | "erpCode"
+  >
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [created] = await db
+    .insert(salesTaxes)
+    .values({
+      ...data,
+      taxCode: normalizeSalesTaxCode(data.taxCode),
+      ratePercent: toRateString(data.ratePercent),
+      appliesToTaxCodes: parsePurchaseOrderAdditionalTaxCodes(
+        data.appliesToTaxCodes as any
+      ),
+    })
+    .returning();
+
+  return created;
+}
+
+export async function updateSalesTax(
+  id: number,
+  data: Partial<
+    Pick<
+      InsertSalesTax,
+      | "taxCode"
+      | "description"
+      | "shortLabel"
+      | "ratePercent"
+      | "taxType"
+      | "fiscalCategory"
+      | "isActive"
+      | "displayOrder"
+      | "appliesToTaxCodes"
+      | "note"
+      | "erpCode"
+    >
+  >
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [updated] = await db
+    .update(salesTaxes)
+    .set({
+      ...data,
+      ...(data.taxCode !== undefined
+        ? { taxCode: normalizeSalesTaxCode(data.taxCode) }
+        : {}),
+      ...(data.ratePercent !== undefined
+        ? { ratePercent: toRateString(data.ratePercent) }
+        : {}),
+      ...(data.appliesToTaxCodes !== undefined
+        ? {
+            appliesToTaxCodes: parsePurchaseOrderAdditionalTaxCodes(
+              data.appliesToTaxCodes as any
+            ),
+          }
+        : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(salesTaxes.id, id))
+    .returning();
+
+  return updated;
+}
+
+export async function removeSalesTax(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [tax] = await db
+    .select()
+    .from(salesTaxes)
+    .where(eq(salesTaxes.id, id))
+    .limit(1);
+  if (!tax) throw new Error("Impuesto no encontrado");
+
+  const codeJson = JSON.stringify([tax.taxCode]);
+  const [usage] = await db
+    .select({
+      purchaseOrderCount: sql<number>`(
+        SELECT count(*)::int
+        FROM "purchaseOrderItems"
+        WHERE "taxCode" = ${tax.taxCode}
+          OR "additionalTaxCodes" @> ${codeJson}::jsonb
+      )`,
+      invoiceCount: sql<number>`(
+        SELECT count(*)::int
+        FROM "invoiceItems"
+        WHERE "taxCode" = ${tax.taxCode}
+          OR "additionalTaxCodes" @> ${codeJson}::jsonb
+      )`,
+    })
+    .from(salesTaxes)
+    .where(eq(salesTaxes.id, id))
+    .limit(1);
+
+  if (
+    Number(usage?.purchaseOrderCount ?? 0) > 0 ||
+    Number(usage?.invoiceCount ?? 0) > 0
+  ) {
+    const [updated] = await db
+      .update(salesTaxes)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(salesTaxes.id, id))
+      .returning();
+    return { action: "deactivated" as const, tax: updated };
+  }
+
+  await db.delete(salesTaxes).where(eq(salesTaxes.id, id));
+  return { action: "deleted" as const, tax };
+}
+
+export async function preparePurchaseOrderTaxDataForLine(params: {
+  quantity: string | number | null | undefined;
+  unitPrice?: string | number | null | undefined;
+  taxCode?: string | null | undefined;
+  additionalTaxCodes?: string[] | string | null | undefined;
+}) {
+  const taxes = await getActiveSalesTaxCatalog();
+  const taxCode = normalizePurchaseOrderTaxCode(params.taxCode, taxes);
+  const additionalTaxCodes = parsePurchaseOrderAdditionalTaxCodes(
+    params.additionalTaxCodes
+  );
+  const error = getPurchaseOrderTaxSelectionError({
+    taxCode,
+    additionalTaxCodes,
+    taxes,
+  });
+  if (error) throw new Error(error);
+
+  const amounts = calculatePurchaseOrderLineAmounts({
+    quantity: params.quantity,
+    unitPrice: params.unitPrice,
+    taxCode,
+    additionalTaxCodes,
+    taxes,
+  });
+
+  return {
+    taxCode: amounts.taxCode,
+    additionalTaxCodes: amounts.additionalTaxCodes,
+    taxBreakdown: amounts.taxBreakdown,
+  };
 }
 
 // ============================================================
@@ -5799,6 +6259,8 @@ export async function listInvoices(filters?: {
       or(
         ilike(invoices.invoiceDocumentNumber, searchPattern),
         ilike(invoices.invoiceNumber, searchPattern),
+        ilike(invoices.documentRangeStart, searchPattern),
+        ilike(invoices.documentRangeEnd, searchPattern),
         ilike(invoices.cai, searchPattern),
         ilike(purchaseOrders.orderNumber, searchPattern),
         ilike(receipts.receiptNumber, searchPattern),
@@ -5839,12 +6301,17 @@ export async function getInvoiceById(id: number) {
       purchaseOrder: purchaseOrders,
       project: projects,
       supplier: suppliers,
+      supplierContact: supplierContacts,
     })
     .from(invoices)
     .leftJoin(receipts, eq(invoices.receiptId, receipts.id))
     .leftJoin(purchaseOrders, eq(invoices.purchaseOrderId, purchaseOrders.id))
     .leftJoin(projects, eq(invoices.projectId, projects.id))
     .leftJoin(suppliers, eq(invoices.supplierId, suppliers.id))
+    .leftJoin(
+      supplierContacts,
+      eq(purchaseOrders.supplierContactId, supplierContacts.id)
+    )
     .where(eq(invoices.id, id))
     .limit(1);
   if (!rows[0]) return undefined;
@@ -5873,6 +6340,8 @@ export async function updateInvoice(
       | "cai"
       | "isFiscalDocument"
       | "invoiceNumber"
+      | "documentRangeStart"
+      | "documentRangeEnd"
       | "documentDate"
       | "documentDueDate"
       | "postingDate"
@@ -5889,6 +6358,25 @@ export async function updateInvoice(
     .update(invoices)
     .set({ ...data, updatedAt: new Date() })
     .where(eq(invoices.id, id))
+    .returning();
+
+  return updated;
+}
+
+export async function updateInvoiceItemAssetDetails(
+  invoiceItemId: number,
+  data: Pick<
+    InsertInvoiceItem,
+    "isFixedAsset" | "isLeasing" | "assetDetails" | "lineObservation"
+  >
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [updated] = await db
+    .update(invoiceItems)
+    .set(data)
+    .where(eq(invoiceItems.id, invoiceItemId))
     .returning();
 
   return updated;
@@ -9810,6 +10298,9 @@ export type ArticleListFilters = {
   tipoArticulo?: ArticleType;
   isActive?: boolean;
   allowsTaxWithholding?: boolean;
+  fixedAssetStatus?: "pendiente" | "resuelto";
+  projectId?: number;
+  temporaryOnly?: boolean;
   page?: number;
   pageSize?: number;
 };
@@ -9822,8 +10313,10 @@ function buildArticleWhere(filters?: ArticleListFilters) {
     conditions.push(
       or(
         ilike(sapCatalog.itemCode, `%${search}%`),
+        ilike(sapCatalog.temporaryItemCode, `%${search}%`),
         ilike(sapCatalog.description, `%${search}%`),
-        ilike(sapCatalog.itemGroup, `%${search}%`)
+        ilike(sapCatalog.itemGroup, `%${search}%`),
+        ilike(sapCatalog.fixedAssetSerialNumber, `%${search}%`)
       )!
     );
   }
@@ -9840,6 +10333,18 @@ function buildArticleWhere(filters?: ArticleListFilters) {
     conditions.push(
       eq(sapCatalog.allowsTaxWithholding, filters.allowsTaxWithholding)
     );
+  }
+
+  if (filters?.fixedAssetStatus) {
+    conditions.push(eq(sapCatalog.fixedAssetStatus, filters.fixedAssetStatus));
+  }
+
+  if (filters?.projectId) {
+    conditions.push(eq(sapCatalog.projectId, filters.projectId));
+  }
+
+  if (filters?.temporaryOnly) {
+    conditions.push(isNotNull(sapCatalog.temporaryItemCode));
   }
 
   return conditions.length > 0 ? and(...conditions) : undefined;
@@ -9913,6 +10418,350 @@ export async function updateArticle(
   return article;
 }
 
+function normalizeTemporaryProjectCode(projectCode: string) {
+  const normalized = projectCode.trim().replace(/\s+/g, "");
+  if (!normalized) {
+    throw new Error("El proyecto no tiene código para generar activo fijo");
+  }
+  return normalized;
+}
+
+export function buildTemporaryFixedAssetItemCode(params: {
+  projectCode: string;
+  existingCodes: Array<string | null | undefined>;
+}) {
+  const projectCode = normalizeTemporaryProjectCode(params.projectCode);
+  const prefix = `OC-${projectCode}-`;
+  const sequencePattern = new RegExp(
+    `^${escapeRegExp(prefix)}(\\d{4})$`,
+    "i"
+  );
+  const maxSequence = params.existingCodes.reduce((max, value) => {
+    const match = String(value ?? "").match(sequencePattern);
+    if (!match) return max;
+
+    const parsed = Number(match[1]);
+    return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+  }, 0);
+
+  return `${prefix}${String(maxSequence + 1).padStart(4, "0")}`;
+}
+
+async function generateTemporaryFixedAssetCode(params: {
+  projectId: number;
+  tx?: Awaited<ReturnType<typeof getDb>>;
+}) {
+  const database = params.tx ?? (await getDb());
+  if (!database) throw new Error("DB not available");
+
+  const project = await getProjectById(params.projectId);
+  if (!project) {
+    throw new Error("Proyecto no encontrado");
+  }
+
+  const projectCode = normalizeTemporaryProjectCode(project.code);
+  const prefix = `OC-${projectCode}-`;
+  const rows = await database
+    .select({
+      itemCode: sapCatalog.itemCode,
+      temporaryItemCode: sapCatalog.temporaryItemCode,
+    })
+    .from(sapCatalog)
+    .where(
+      or(
+        ilike(sapCatalog.itemCode, `${prefix}%`),
+        ilike(sapCatalog.temporaryItemCode, `${prefix}%`)
+      )
+    );
+  const existingNumbers = rows.flatMap(row => [
+    row.itemCode,
+    row.temporaryItemCode,
+  ]);
+
+  return buildTemporaryFixedAssetItemCode({
+    projectCode,
+    existingCodes: existingNumbers,
+  });
+}
+
+export async function savePurchaseOrderFixedAssetDraftLine(params: {
+  purchaseOrderItemId: number;
+  isLeasing?: boolean;
+  lineObservation?: string | null;
+  assetDetail: FixedAssetDetail;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const [itemDetail] = await tx
+      .select({
+        item: purchaseOrderItems,
+        purchaseOrder: purchaseOrders,
+        project: projects,
+      })
+      .from(purchaseOrderItems)
+      .innerJoin(
+        purchaseOrders,
+        eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id)
+      )
+      .leftJoin(projects, eq(purchaseOrders.projectId, projects.id))
+      .where(eq(purchaseOrderItems.id, params.purchaseOrderItemId))
+      .limit(1);
+
+    if (!itemDetail) {
+      throw new Error("Línea de OC no encontrada");
+    }
+
+    const pendingQuantity = Math.max(
+      parseDecimal(itemDetail.item.quantity) -
+        parseDecimal(itemDetail.item.receivedQuantity),
+      0
+    );
+    if (pendingQuantity !== 1) {
+      throw new Error(
+        "El activo fijo debe guardarse desde una línea con cantidad pendiente 1"
+      );
+    }
+    if (!params.assetDetail.serialNumber.trim()) {
+      throw new Error("Ingrese el número de serie del activo");
+    }
+    if (!params.assetDetail.condition) {
+      throw new Error("Seleccione la condición del activo");
+    }
+    if (itemDetail.item.fixedAssetStatus === "resuelto") {
+      throw new Error("El activo fijo ya fue resuelto por Contabilidad");
+    }
+
+    const normalizedDetail: FixedAssetDetail = {
+      serialNumber: params.assetDetail.serialNumber.trim(),
+      condition: params.assetDetail.condition,
+      color: params.assetDetail.color?.trim() || "",
+      model: params.assetDetail.model?.trim() || "",
+      brand: params.assetDetail.brand?.trim() || "",
+      chassisSeries: params.assetDetail.chassisSeries?.trim() || "",
+      motorSeries: params.assetDetail.motorSeries?.trim() || "",
+      plateOrCode: params.assetDetail.plateOrCode?.trim() || "",
+    };
+
+    const existingArticle = itemDetail.item.fixedAssetArticleId
+      ? (
+          await tx
+            .select()
+            .from(sapCatalog)
+            .where(eq(sapCatalog.id, itemDetail.item.fixedAssetArticleId))
+            .limit(1)
+        )[0]
+      : undefined;
+    const temporaryCode =
+      existingArticle?.temporaryItemCode ??
+      existingArticle?.itemCode ??
+      (await generateTemporaryFixedAssetCode({
+        projectId: itemDetail.purchaseOrder.projectId,
+        tx: tx as any,
+      }));
+
+    let article = existingArticle;
+    const articleValues = {
+      itemCode: temporaryCode,
+      temporaryItemCode: temporaryCode,
+      description: itemDetail.item.itemName,
+      itemGroup: "Activo fijo temporal",
+      tipoArticulo: 3 as const,
+      projectId: itemDetail.purchaseOrder.projectId,
+      fixedAssetStatus: "pendiente",
+      fixedAssetSourcePurchaseOrderId: itemDetail.purchaseOrder.id,
+      fixedAssetSourcePurchaseOrderItemId: itemDetail.item.id,
+      fixedAssetSerialNumber: normalizedDetail.serialNumber,
+      fixedAssetCondition: normalizedDetail.condition,
+      fixedAssetColor: normalizedDetail.color || null,
+      fixedAssetModel: normalizedDetail.model || null,
+      fixedAssetBrand: normalizedDetail.brand || null,
+      fixedAssetChassisSeries: normalizedDetail.chassisSeries || null,
+      fixedAssetMotorSeries: normalizedDetail.motorSeries || null,
+      fixedAssetPlateOrCode: normalizedDetail.plateOrCode || null,
+      fixedAssetIsLeasing: params.isLeasing === true,
+      fixedAssetObservation: params.lineObservation?.trim() || null,
+      allowsTaxWithholding: true,
+      isActive: true,
+      updatedAt: new Date(),
+    };
+
+    if (article) {
+      [article] = await tx
+        .update(sapCatalog)
+        .set(articleValues)
+        .where(eq(sapCatalog.id, article.id))
+        .returning();
+    } else {
+      [article] = await tx
+        .insert(sapCatalog)
+        .values(articleValues)
+        .returning();
+    }
+
+    if (!article) {
+      throw new Error("No se pudo crear el artículo temporal");
+    }
+
+    const [updatedItem] = await tx
+      .update(purchaseOrderItems)
+      .set({
+        isFixedAsset: true,
+        isLeasing: params.isLeasing === true,
+        assetDetails: [normalizedDetail],
+        lineObservation: params.lineObservation?.trim() || null,
+        fixedAssetArticleId: article.id,
+        fixedAssetStatus: "pendiente",
+        currentSapItemCode: article.itemCode,
+        updatedAt: new Date(),
+      })
+      .where(eq(purchaseOrderItems.id, itemDetail.item.id))
+      .returning();
+
+    return { article, item: updatedItem };
+  });
+}
+
+export async function resolveFixedAssetArticleCode(params: {
+  id: number;
+  itemCode: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const nextItemCode = params.itemCode.trim();
+  if (!nextItemCode) {
+    throw new Error("Ingrese el código real del activo fijo");
+  }
+
+  return db.transaction(async tx => {
+    const [article] = await tx
+      .select()
+      .from(sapCatalog)
+      .where(eq(sapCatalog.id, params.id))
+      .limit(1);
+    if (!article) {
+      throw new Error("Artículo no encontrado");
+    }
+    if (article.tipoArticulo !== 3 || !article.temporaryItemCode) {
+      throw new Error("El artículo no es un activo fijo temporal");
+    }
+    if (article.fixedAssetStatus !== "pendiente") {
+      throw new Error("Este activo fijo ya fue resuelto");
+    }
+
+    const [duplicate] = await tx
+      .select({ id: sapCatalog.id })
+      .from(sapCatalog)
+      .where(
+        and(
+          eq(sapCatalog.itemCode, nextItemCode),
+          sql`${sapCatalog.id} <> ${article.id}`
+        )
+      )
+      .limit(1);
+    if (duplicate) {
+      throw new Error("Ya existe un artículo con ese código");
+    }
+
+    const [updatedArticle] = await tx
+      .update(sapCatalog)
+      .set({
+        itemCode: nextItemCode,
+        fixedAssetStatus: "resuelto",
+        updatedAt: new Date(),
+      })
+      .where(eq(sapCatalog.id, article.id))
+      .returning();
+
+    await tx
+      .update(purchaseOrderItems)
+      .set({
+        currentSapItemCode: nextItemCode,
+        fixedAssetStatus: "resuelto",
+        updatedAt: new Date(),
+      })
+      .where(eq(purchaseOrderItems.fixedAssetArticleId, article.id));
+
+    return updatedArticle;
+  });
+}
+
+export async function updateFixedAssetArticleDetails(params: {
+  id: number;
+  isLeasing?: boolean;
+  observation?: string | null;
+  assetDetail: FixedAssetDetail;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  if (!params.assetDetail.serialNumber.trim()) {
+    throw new Error("Ingrese el número de serie del activo");
+  }
+  if (!params.assetDetail.condition) {
+    throw new Error("Seleccione la condición del activo");
+  }
+
+  const normalizedDetail: FixedAssetDetail = {
+    serialNumber: params.assetDetail.serialNumber.trim(),
+    condition: params.assetDetail.condition,
+    color: params.assetDetail.color?.trim() || "",
+    model: params.assetDetail.model?.trim() || "",
+    brand: params.assetDetail.brand?.trim() || "",
+    chassisSeries: params.assetDetail.chassisSeries?.trim() || "",
+    motorSeries: params.assetDetail.motorSeries?.trim() || "",
+    plateOrCode: params.assetDetail.plateOrCode?.trim() || "",
+  };
+  const observation = params.observation?.trim() || null;
+  const isLeasing = params.isLeasing === true;
+
+  return db.transaction(async tx => {
+    const [article] = await tx
+      .select()
+      .from(sapCatalog)
+      .where(eq(sapCatalog.id, params.id))
+      .limit(1);
+    if (!article) {
+      throw new Error("Artículo no encontrado");
+    }
+    if (article.tipoArticulo !== 3 || !article.temporaryItemCode) {
+      throw new Error("El artículo no es un activo fijo temporal");
+    }
+
+    const [updatedArticle] = await tx
+      .update(sapCatalog)
+      .set({
+        fixedAssetSerialNumber: normalizedDetail.serialNumber,
+        fixedAssetCondition: normalizedDetail.condition,
+        fixedAssetColor: normalizedDetail.color || null,
+        fixedAssetModel: normalizedDetail.model || null,
+        fixedAssetBrand: normalizedDetail.brand || null,
+        fixedAssetChassisSeries: normalizedDetail.chassisSeries || null,
+        fixedAssetMotorSeries: normalizedDetail.motorSeries || null,
+        fixedAssetPlateOrCode: normalizedDetail.plateOrCode || null,
+        fixedAssetIsLeasing: isLeasing,
+        fixedAssetObservation: observation,
+        updatedAt: new Date(),
+      })
+      .where(eq(sapCatalog.id, article.id))
+      .returning();
+
+    await tx
+      .update(purchaseOrderItems)
+      .set({
+        isFixedAsset: true,
+        isLeasing,
+        assetDetails: [normalizedDetail],
+        lineObservation: observation,
+        updatedAt: new Date(),
+      })
+      .where(eq(purchaseOrderItems.fixedAssetArticleId, article.id));
+
+    return updatedArticle;
+  });
+}
+
 export async function searchSapCatalog(search: string) {
   const db = await getDb();
   if (!db) return [];
@@ -9976,8 +10825,10 @@ export async function searchSuppliers(search: string) {
       and(
         eq(suppliers.isActive, true),
         or(
-          ilike(suppliers.supplierCode, `%${search}%`),
-          ilike(suppliers.name, `%${search}%`)
+        ilike(suppliers.supplierCode, `%${search}%`),
+        ilike(suppliers.name, `%${search}%`),
+        ilike(suppliers.rtn, `%${search}%`),
+        ilike(suppliers.address, `%${search}%`)
         )
       )
     )
@@ -10001,7 +10852,9 @@ function buildSupplierWhere(filters?: SupplierListFilters) {
       or(
         ilike(suppliers.supplierCode, `%${search}%`),
         ilike(suppliers.name, `%${search}%`),
-        ilike(suppliers.email, `%${search}%`)
+        ilike(suppliers.email, `%${search}%`),
+        ilike(suppliers.rtn, `%${search}%`),
+        ilike(suppliers.address, `%${search}%`)
       )!
     );
   }
@@ -10059,6 +10912,8 @@ export async function listSupplierCatalog(filters?: SupplierListFilters) {
 export async function updateSupplier(
   id: number,
   data: {
+    rtn?: string | null;
+    address?: string | null;
     allowsTaxWithholding?: boolean;
     subjectToAccountPayments?: boolean;
   }

@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -19,6 +20,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import {
+  ASSET_CONDITION_LABELS,
+  ASSET_CONDITION_VALUES,
+  type AssetCondition,
+} from "@shared/fixed-assets";
 import { PackageSearch, Pencil, Save, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -32,6 +38,18 @@ type ArticleRecord = {
   itemGroup?: string | null;
   tipoArticulo: number;
   projectId?: number | null;
+  temporaryItemCode?: string | null;
+  fixedAssetStatus?: string | null;
+  fixedAssetSerialNumber?: string | null;
+  fixedAssetCondition?: string | null;
+  fixedAssetColor?: string | null;
+  fixedAssetModel?: string | null;
+  fixedAssetBrand?: string | null;
+  fixedAssetChassisSeries?: string | null;
+  fixedAssetMotorSeries?: string | null;
+  fixedAssetPlateOrCode?: string | null;
+  fixedAssetIsLeasing?: boolean | null;
+  fixedAssetObservation?: string | null;
   allowsTaxWithholding: boolean;
   isActive: boolean;
 };
@@ -41,6 +59,17 @@ type ProjectOption = {
   code?: string | null;
   name?: string | null;
   status?: string | null;
+};
+
+type FixedAssetDetailDraft = {
+  serialNumber: string;
+  condition: AssetCondition;
+  color: string;
+  model: string;
+  brand: string;
+  chassisSeries: string;
+  motorSeries: string;
+  plateOrCode: string;
 };
 
 const PAGE_SIZE = 25;
@@ -81,6 +110,29 @@ function getArticleProjectLabel(
   return project ? getProjectLabel(project) : `Proyecto ${article.projectId}`;
 }
 
+function getFixedAssetStatusLabel(status: string | null | undefined) {
+  if (status === "pendiente") return "Pendiente código real";
+  if (status === "resuelto") return "Código resuelto";
+  return null;
+}
+
+function buildFixedAssetDraft(article?: ArticleRecord | null): FixedAssetDetailDraft {
+  return {
+    serialNumber: article?.fixedAssetSerialNumber ?? "",
+    condition: ASSET_CONDITION_VALUES.includes(
+      article?.fixedAssetCondition as AssetCondition
+    )
+      ? (article?.fixedAssetCondition as AssetCondition)
+      : "nuevo",
+    color: article?.fixedAssetColor ?? "",
+    model: article?.fixedAssetModel ?? "",
+    brand: article?.fixedAssetBrand ?? "",
+    chassisSeries: article?.fixedAssetChassisSeries ?? "",
+    motorSeries: article?.fixedAssetMotorSeries ?? "",
+    plateOrCode: article?.fixedAssetPlateOrCode ?? "",
+  };
+}
+
 export default function Articulos() {
   const { user } = useAuth();
   const utils = trpc.useUtils();
@@ -89,6 +141,7 @@ export default function Articulos() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [activeFilter, setActiveFilter] = useState("active");
   const [withholdingFilter, setWithholdingFilter] = useState("all");
+  const [fixedAssetStatusFilter, setFixedAssetStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [selectedArticle, setSelectedArticle] = useState<ArticleRecord | null>(
     null
@@ -98,10 +151,35 @@ export default function Articulos() {
   const [editProjectId, setEditProjectId] = useState("none");
   const [editAllowsTaxWithholding, setEditAllowsTaxWithholding] =
     useState(true);
+  const [realItemCode, setRealItemCode] = useState("");
+  const [fixedAssetDetailDraft, setFixedAssetDetailDraft] =
+    useState<FixedAssetDetailDraft>(() => buildFixedAssetDraft());
+  const [fixedAssetObservationDraft, setFixedAssetObservationDraft] =
+    useState("");
+  const [fixedAssetIsLeasingDraft, setFixedAssetIsLeasingDraft] =
+    useState(false);
 
   const buildreqRole = (user as any)?.buildreqRole || "";
+  const isContable = buildreqRole === "contable";
   const canManage =
     user?.role === "admin" || buildreqRole === "jefe_bodega_central";
+  const canResolveFixedAssets =
+    user?.role === "admin" ||
+    buildreqRole === "jefe_bodega_central" ||
+    buildreqRole === "contable";
+  const selectedArticleIsPendingFixedAsset = Boolean(
+    selectedArticle?.fixedAssetStatus === "pendiente" &&
+      selectedArticle?.temporaryItemCode
+  );
+  const isResolvingSelectedArticle = Boolean(
+    selectedArticleIsPendingFixedAsset && canResolveFixedAssets
+  );
+  const canEditSelectedArticleCatalog = Boolean(
+    canManage && !isResolvingSelectedArticle
+  );
+  const canEditSelectedFixedAssetDetails = Boolean(
+    selectedArticle?.temporaryItemCode && canResolveFixedAssets
+  );
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -112,23 +190,57 @@ export default function Articulos() {
   }, [search]);
 
   useEffect(() => {
+    if (!isContable) return;
+    setTypeFilter("3");
+    setWithholdingFilter("all");
+    setFixedAssetStatusFilter(current =>
+      current === "all" ? "pendiente" : current
+    );
+  }, [isContable]);
+
+  useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, typeFilter, activeFilter, withholdingFilter]);
+  }, [
+    debouncedSearch,
+    typeFilter,
+    activeFilter,
+    withholdingFilter,
+    fixedAssetStatusFilter,
+  ]);
 
   const listInput = useMemo(
     () => ({
       search: debouncedSearch || undefined,
-      tipoArticulo: parseArticleType(typeFilter),
+      tipoArticulo:
+        isContable || fixedAssetStatusFilter !== "all"
+          ? 3
+          : parseArticleType(typeFilter),
       isActive:
         activeFilter === "all" ? undefined : activeFilter === "active",
       allowsTaxWithholding:
         withholdingFilter === "all"
           ? undefined
           : withholdingFilter === "withholding",
+      fixedAssetStatus:
+        fixedAssetStatusFilter === "all"
+          ? isContable
+            ? "pendiente"
+            : undefined
+          : (fixedAssetStatusFilter as "pendiente" | "resuelto"),
+      temporaryOnly:
+        isContable || fixedAssetStatusFilter !== "all" ? true : undefined,
       page,
       pageSize: PAGE_SIZE,
     }),
-    [activeFilter, debouncedSearch, page, typeFilter, withholdingFilter]
+    [
+      activeFilter,
+      debouncedSearch,
+      fixedAssetStatusFilter,
+      isContable,
+      page,
+      typeFilter,
+      withholdingFilter,
+    ]
   );
 
   const { data, isLoading, isFetching, error, refetch } =
@@ -152,6 +264,33 @@ export default function Articulos() {
     },
     onError: (e) => toast.error(e.message),
   });
+  const resolveFixedAssetMutation = trpc.articles.resolveFixedAssetCode.useMutation({
+    onSuccess: () => {
+      toast.success("Código real actualizado");
+      utils.articles.list.invalidate();
+      utils.purchaseOrders.list.invalidate();
+      setSelectedArticle(null);
+      setRealItemCode("");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const updateFixedAssetDetailsMutation =
+    trpc.articles.updateFixedAssetDetails.useMutation({
+      onSuccess: article => {
+        toast.success("Datos del activo fijo actualizados");
+        setSelectedArticle(article as ArticleRecord);
+        setFixedAssetDetailDraft(buildFixedAssetDraft(article as ArticleRecord));
+        setFixedAssetObservationDraft(
+          String((article as ArticleRecord).fixedAssetObservation ?? "")
+        );
+        setFixedAssetIsLeasingDraft(
+          (article as ArticleRecord).fixedAssetIsLeasing === true
+        );
+        utils.articles.list.invalidate();
+        utils.purchaseOrders.list.invalidate();
+      },
+      onError: e => toast.error(e.message),
+    });
 
   const items = data?.items ?? [];
   const projectOptions = useMemo(
@@ -174,10 +313,72 @@ export default function Articulos() {
     setEditProjectId(article.projectId ? String(article.projectId) : "none");
     setEditActive(article.isActive);
     setEditAllowsTaxWithholding(article.allowsTaxWithholding);
+    setRealItemCode(article.fixedAssetStatus === "pendiente" ? "" : article.itemCode);
+    setFixedAssetDetailDraft(buildFixedAssetDraft(article));
+    setFixedAssetObservationDraft(article.fixedAssetObservation ?? "");
+    setFixedAssetIsLeasingDraft(article.fixedAssetIsLeasing === true);
+  };
+
+  const updateFixedAssetDraftField = (
+    field: keyof FixedAssetDetailDraft,
+    value: string
+  ) => {
+    setFixedAssetDetailDraft(current => ({
+      ...current,
+      [field]: value,
+    }));
+  };
+
+  const submitFixedAssetDetails = () => {
+    if (!selectedArticle?.temporaryItemCode) return;
+    if (!canEditSelectedFixedAssetDetails) {
+      toast.error("No tiene permisos para editar datos del activo fijo");
+      return;
+    }
+    if (!fixedAssetDetailDraft.serialNumber.trim()) {
+      toast.error("Ingrese el número de serie del activo");
+      return;
+    }
+
+    updateFixedAssetDetailsMutation.mutate({
+      id: selectedArticle.id,
+      isLeasing: fixedAssetIsLeasingDraft,
+      observation: fixedAssetObservationDraft.trim() || null,
+      assetDetail: {
+        serialNumber: fixedAssetDetailDraft.serialNumber.trim(),
+        condition: fixedAssetDetailDraft.condition,
+        color: fixedAssetDetailDraft.color.trim() || undefined,
+        model: fixedAssetDetailDraft.model.trim() || undefined,
+        brand: fixedAssetDetailDraft.brand.trim() || undefined,
+        chassisSeries: fixedAssetDetailDraft.chassisSeries.trim() || undefined,
+        motorSeries: fixedAssetDetailDraft.motorSeries.trim() || undefined,
+        plateOrCode: fixedAssetDetailDraft.plateOrCode.trim() || undefined,
+      },
+    });
   };
 
   const submitUpdate = () => {
     if (!selectedArticle) return;
+    if (
+      selectedArticle.fixedAssetStatus === "pendiente" &&
+      selectedArticle.temporaryItemCode &&
+      canResolveFixedAssets
+    ) {
+      if (!realItemCode.trim()) {
+        toast.error("Ingrese el código real del activo fijo");
+        return;
+      }
+      resolveFixedAssetMutation.mutate({
+        id: selectedArticle.id,
+        itemCode: realItemCode.trim(),
+      });
+      return;
+    }
+    if (!canManage) {
+      toast.error("No tiene permisos para modificar artículos");
+      return;
+    }
+
     const selectedProjectId =
       editProjectId !== "none" ? Number(editProjectId) : null;
 
@@ -205,7 +406,7 @@ export default function Articulos() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(240px,1fr)_220px_180px_220px]">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(240px,1fr)_180px_160px_190px_210px]">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -216,7 +417,11 @@ export default function Articulos() {
           />
         </div>
 
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
+        <Select
+          value={isContable ? "3" : typeFilter}
+          onValueChange={setTypeFilter}
+          disabled={isContable}
+        >
           <SelectTrigger>
             <SelectValue placeholder="Tipo de artículo" />
           </SelectTrigger>
@@ -247,6 +452,20 @@ export default function Articulos() {
             <SelectItem value="all">Todos</SelectItem>
             <SelectItem value="withholding">Permiten retención</SelectItem>
             <SelectItem value="no-withholding">No permiten retención</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={fixedAssetStatusFilter}
+          onValueChange={setFixedAssetStatusFilter}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Activos fijos" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos los estados</SelectItem>
+            <SelectItem value="pendiente">Pendiente código real</SelectItem>
+            <SelectItem value="resuelto">Código resuelto</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -304,7 +523,7 @@ export default function Articulos() {
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Retención
                       </th>
-                      {canManage ? (
+                      {canManage || canResolveFixedAssets ? (
                         <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Acciones
                         </th>
@@ -312,16 +531,54 @@ export default function Articulos() {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((article: ArticleRecord) => (
+                    {items.map((article: ArticleRecord) => {
+                      const fixedAssetStatusLabel = getFixedAssetStatusLabel(
+                        article.fixedAssetStatus
+                      );
+                      const canOpenArticle =
+                        canManage ||
+                        (canResolveFixedAssets &&
+                          Boolean(article.temporaryItemCode));
+                      return (
                       <tr
                         key={article.id}
                         className="border-b border-border transition-colors last:border-0 hover:bg-muted/30"
                       >
                         <td className="p-3 font-mono text-xs">
-                          {article.itemCode}
+                          <div>{article.itemCode}</div>
+                          {article.temporaryItemCode &&
+                          article.temporaryItemCode !== article.itemCode ? (
+                            <div className="mt-1 text-[11px] text-muted-foreground">
+                              Temp: {article.temporaryItemCode}
+                            </div>
+                          ) : null}
                         </td>
-                        <td className="max-w-[520px] p-3 font-medium">
-                          {article.description}
+                        <td className="max-w-[520px] p-3">
+                          <div className="font-medium">{article.description}</div>
+                          {article.temporaryItemCode || article.fixedAssetSerialNumber ? (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {fixedAssetStatusLabel ? (
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    article.fixedAssetStatus === "pendiente"
+                                      ? "border-amber-300 text-amber-700"
+                                      : "border-emerald-300 text-emerald-700"
+                                  }
+                                >
+                                  {fixedAssetStatusLabel}
+                                </Badge>
+                              ) : null}
+                              {article.fixedAssetIsLeasing ? (
+                                <Badge variant="outline">Leasing</Badge>
+                              ) : null}
+                              {article.fixedAssetSerialNumber ? (
+                                <Badge variant="outline">
+                                  Serie {article.fixedAssetSerialNumber}
+                                </Badge>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </td>
                         <td className="p-3 text-xs text-muted-foreground">
                           {article.itemGroup || "-"}
@@ -360,21 +617,30 @@ export default function Articulos() {
                               : "No permite"}
                           </Badge>
                         </td>
-                        {canManage ? (
+                        {canManage || canResolveFixedAssets ? (
                           <td className="p-3 text-right">
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => openEditDialog(article)}
-                            >
-                              <Pencil className="mr-2 h-3.5 w-3.5" />
-                              Editar
-                            </Button>
+                            {canOpenArticle ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => openEditDialog(article)}
+                              >
+                                <Pencil className="mr-2 h-3.5 w-3.5" />
+                                {article.fixedAssetStatus === "pendiente"
+                                  ? "Resolver"
+                                  : "Editar"}
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">
+                                —
+                              </span>
+                            )}
                           </td>
                         ) : null}
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -415,34 +681,72 @@ export default function Articulos() {
           if (!open) setSelectedArticle(null);
         }}
       >
-        <DialogContent className="sm:max-w-xl">
+        <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-4xl lg:max-w-5xl">
           <DialogHeader>
-            <DialogTitle>Editar artículo</DialogTitle>
+            <DialogTitle>
+              {isResolvingSelectedArticle
+                ? "Resolver código de activo fijo"
+                : "Editar artículo"}
+            </DialogTitle>
           </DialogHeader>
 
           {selectedArticle ? (
-            <div className="space-y-4 pt-2">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-5 pt-2">
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1fr_1.35fr]">
                 <div className="space-y-1">
-                  <Label className="text-xs">Código</Label>
-                  <Input value={selectedArticle.itemCode} readOnly />
+                  <Label className="text-xs">
+                    {isResolvingSelectedArticle ? "Código real" : "Código"}
+                  </Label>
+                  <Input
+                    value={
+                      isResolvingSelectedArticle
+                        ? realItemCode
+                        : selectedArticle.itemCode
+                    }
+                    onChange={(event) => setRealItemCode(event.target.value)}
+                    readOnly={!isResolvingSelectedArticle}
+                    placeholder="Ingrese el código real"
+                  />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Grupo</Label>
                   <Input value={selectedArticle.itemGroup || ""} readOnly />
                 </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Descripción</Label>
+                  <Input value={selectedArticle.description} readOnly />
+                </div>
               </div>
 
-              <div className="space-y-1">
-                <Label className="text-xs">Descripción</Label>
-                <Input value={selectedArticle.description} readOnly />
-              </div>
+              {selectedArticle.temporaryItemCode ? (
+                <div className="grid gap-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm sm:grid-cols-2">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
+                      Código temporal
+                    </p>
+                    <p className="font-mono text-amber-900">
+                      {selectedArticle.temporaryItemCode}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">
+                      Estado
+                    </p>
+                    <p className="font-medium text-amber-900">
+                      {getFixedAssetStatusLabel(
+                        selectedArticle.fixedAssetStatus
+                      ) || "Activo fijo temporal"}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[180px_220px_220px]">
                 <div className="space-y-1">
                   <Label className="text-xs">Tipo</Label>
                   <Select
                     value={String(editType)}
+                    disabled={!canEditSelectedArticleCatalog}
                     onValueChange={(value) => {
                       const nextType = parseArticleType(value) ?? 1;
                       setEditType(nextType);
@@ -464,15 +768,32 @@ export default function Articulos() {
 
                 <div className="flex items-center justify-between rounded-md border p-3">
                   <Label className="text-sm">Activo</Label>
-                  <Switch checked={editActive} onCheckedChange={setEditActive} />
+                  <Switch
+                    checked={editActive}
+                    disabled={!canEditSelectedArticleCatalog}
+                    onCheckedChange={setEditActive}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-md border p-3">
+                  <Label className="text-sm">Permite retención</Label>
+                  <Switch
+                    checked={editAllowsTaxWithholding}
+                    disabled={!canEditSelectedArticleCatalog}
+                    onCheckedChange={setEditAllowsTaxWithholding}
+                  />
                 </div>
               </div>
 
               {editType === 3 ? (
                 <div className="space-y-1">
                   <Label className="text-xs">Proyecto del activo fijo</Label>
-                  <Select value={editProjectId} onValueChange={setEditProjectId}>
-                    <SelectTrigger>
+                  <Select
+                    value={editProjectId}
+                    disabled={!canEditSelectedArticleCatalog}
+                    onValueChange={setEditProjectId}
+                  >
+                    <SelectTrigger className="w-full">
                       <SelectValue placeholder="Seleccione proyecto" />
                     </SelectTrigger>
                     <SelectContent>
@@ -488,28 +809,185 @@ export default function Articulos() {
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Se usará para mostrar este activo fijo en las solicitudes de
-                    ese proyecto.
+                    Se usará en las solicitudes de ese proyecto.
                   </p>
                 </div>
               ) : null}
 
-              <div className="flex items-center justify-between rounded-md border p-3">
-                <Label className="text-sm">Permite retención</Label>
-                <Switch
-                  checked={editAllowsTaxWithholding}
-                  onCheckedChange={setEditAllowsTaxWithholding}
-                />
-              </div>
+              {selectedArticle.temporaryItemCode ? (
+                <div className="space-y-4 rounded-md border p-4 text-sm">
+                  <div className="flex flex-col gap-3 border-b pb-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold">
+                        Datos del activo fijo
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        Estos datos se copiarán a la recepción y a la factura.
+                      </p>
+                    </div>
+                    <div className="flex min-w-40 items-center justify-between rounded-md border px-3 py-2">
+                      <Label className="text-sm">Leasing</Label>
+                      <Switch
+                        checked={fixedAssetIsLeasingDraft}
+                        disabled={!canEditSelectedFixedAssetDetails}
+                        onCheckedChange={setFixedAssetIsLeasingDraft}
+                      />
+                    </div>
+                  </div>
 
-              <Button
-                onClick={submitUpdate}
-                disabled={updateMutation.isPending}
-                className="w-full sm:w-auto"
-              >
-                <Save className="mr-2 h-4 w-4" />
-                {updateMutation.isPending ? "Guardando..." : "Guardar cambios"}
-              </Button>
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Serie</Label>
+                      <Input
+                        value={fixedAssetDetailDraft.serialNumber}
+                        disabled={!canEditSelectedFixedAssetDetails}
+                        onChange={event =>
+                          updateFixedAssetDraftField(
+                            "serialNumber",
+                            event.target.value
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Condición</Label>
+                      <Select
+                        value={fixedAssetDetailDraft.condition}
+                        disabled={!canEditSelectedFixedAssetDetails}
+                        onValueChange={value =>
+                          updateFixedAssetDraftField("condition", value)
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ASSET_CONDITION_VALUES.map(condition => (
+                            <SelectItem key={condition} value={condition}>
+                              {ASSET_CONDITION_LABELS[condition]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Color</Label>
+                      <Input
+                        value={fixedAssetDetailDraft.color}
+                        disabled={!canEditSelectedFixedAssetDetails}
+                        onChange={event =>
+                          updateFixedAssetDraftField("color", event.target.value)
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Modelo</Label>
+                      <Input
+                        value={fixedAssetDetailDraft.model}
+                        disabled={!canEditSelectedFixedAssetDetails}
+                        onChange={event =>
+                          updateFixedAssetDraftField("model", event.target.value)
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Marca</Label>
+                      <Input
+                        value={fixedAssetDetailDraft.brand}
+                        disabled={!canEditSelectedFixedAssetDetails}
+                        onChange={event =>
+                          updateFixedAssetDraftField("brand", event.target.value)
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Placa/código</Label>
+                      <Input
+                        value={fixedAssetDetailDraft.plateOrCode}
+                        disabled={!canEditSelectedFixedAssetDetails}
+                        onChange={event =>
+                          updateFixedAssetDraftField(
+                            "plateOrCode",
+                            event.target.value
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Serie chasis</Label>
+                      <Input
+                        value={fixedAssetDetailDraft.chassisSeries}
+                        disabled={!canEditSelectedFixedAssetDetails}
+                        onChange={event =>
+                          updateFixedAssetDraftField(
+                            "chassisSeries",
+                            event.target.value
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Serie motor</Label>
+                      <Input
+                        value={fixedAssetDetailDraft.motorSeries}
+                        disabled={!canEditSelectedFixedAssetDetails}
+                        onChange={event =>
+                          updateFixedAssetDraftField(
+                            "motorSeries",
+                            event.target.value
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1 md:col-span-2 xl:col-span-4">
+                      <Label className="text-xs">Observación</Label>
+                      <Textarea
+                        rows={2}
+                        value={fixedAssetObservationDraft}
+                        disabled={!canEditSelectedFixedAssetDetails}
+                        onChange={event =>
+                          setFixedAssetObservationDraft(event.target.value)
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  {canEditSelectedFixedAssetDetails ? (
+                    <div className="flex justify-end border-t pt-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={submitFixedAssetDetails}
+                        disabled={updateFixedAssetDetailsMutation.isPending}
+                      >
+                        <Save className="mr-2 h-4 w-4" />
+                        {updateFixedAssetDetailsMutation.isPending
+                          ? "Guardando datos..."
+                          : "Guardar datos del activo"}
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div className="flex justify-end border-t pt-4">
+                <Button
+                  onClick={submitUpdate}
+                  disabled={
+                    updateMutation.isPending ||
+                    resolveFixedAssetMutation.isPending ||
+                    updateFixedAssetDetailsMutation.isPending
+                  }
+                  className="w-full sm:w-auto"
+                >
+                  <Save className="mr-2 h-4 w-4" />
+                  {updateMutation.isPending || resolveFixedAssetMutation.isPending
+                    ? "Guardando..."
+                    : isResolvingSelectedArticle
+                      ? "Guardar código real"
+                      : "Guardar cambios"}
+                </Button>
+              </div>
             </div>
           ) : null}
         </DialogContent>

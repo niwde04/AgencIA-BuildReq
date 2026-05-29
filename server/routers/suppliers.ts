@@ -286,15 +286,29 @@ export const suppliersRouter = router({
     .input(
       z.object({
         id: z.number().int().positive(),
+        rtn: z.string().trim().max(50).optional(),
+        address: z.string().trim().max(1000).optional(),
         allowsTaxWithholding: z.boolean().optional(),
         subjectToAccountPayments: z.boolean().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       assertCanManageSupplierCatalog(ctx.user);
+      const data: Parameters<typeof db.updateSupplier>[1] = {};
+      if (input.rtn !== undefined) {
+        data.rtn = input.rtn.trim() || null;
+      }
+      if (input.address !== undefined) {
+        data.address = input.address.trim() || null;
+      }
+      if (input.allowsTaxWithholding !== undefined) {
+        data.allowsTaxWithholding = input.allowsTaxWithholding;
+      }
+      if (input.subjectToAccountPayments !== undefined) {
+        data.subjectToAccountPayments = input.subjectToAccountPayments;
+      }
       return db.updateSupplier(input.id, {
-        allowsTaxWithholding: input.allowsTaxWithholding,
-        subjectToAccountPayments: input.subjectToAccountPayments,
+        ...data,
       });
     }),
 

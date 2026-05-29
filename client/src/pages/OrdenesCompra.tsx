@@ -76,16 +76,19 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import {
   calculatePurchaseOrderLineAmounts,
+  DEFAULT_SALES_TAXES,
   formatPurchaseOrderCurrency,
   getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderContractSummary,
+  normalizePurchaseOrderAdditionalTaxCodes,
   normalizePurchaseOrderTaxCode,
+  parsePurchaseOrderAdditionalTaxCodes,
   PURCHASE_ORDER_CONTRACT_FREQUENCIES,
   PURCHASE_ORDER_CONTRACT_FREQUENCY_LABELS,
-  PURCHASE_ORDER_TAX_OPTIONS,
   summarizePurchaseOrderLines,
   type PurchaseOrderContractFrequency,
   type PurchaseOrderTaxCode,
+  type SalesTaxCatalogItem,
 } from "@shared/purchase-orders";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -136,6 +139,11 @@ const PURCHASE_REQUEST_ORIGIN_STATUSES = new Set([
 function formatSupplierOptionLabel(supplier?: any | null) {
   if (!supplier) return "Seleccione proveedor";
   return [supplier.supplierCode, supplier.name].filter(Boolean).join(" — ");
+}
+
+function formatSupplierRtnLabel(supplier?: any | null) {
+  const rtn = String(supplier?.rtn ?? "").trim();
+  return rtn || "RTN no configurado";
 }
 
 function formatSupplierContactPrintLabel(contact?: any | null) {
@@ -199,7 +207,7 @@ function SupplierCommandList({
               return (
                 <CommandItem
                   key={supplier.id}
-                  value={`${supplier.id} ${supplier.supplierCode} ${supplier.name}`}
+                  value={`${supplier.id} ${supplier.supplierCode} ${supplier.name} ${supplier.rtn ?? ""}`}
                   onSelect={() => onSelect(supplierId)}
                 >
                   <Check
@@ -217,6 +225,69 @@ function SupplierCommandList({
         </CommandList>
       </Command>
     </div>
+  );
+}
+
+function formatSupplierContactOptionLabel(contact?: any | null) {
+  if (!contact) return "Seleccione contacto";
+  return [contact.name, contact.branchName].filter(Boolean).join(" — ");
+}
+
+function SupplierContactCommandList({
+  contacts,
+  selectedContactId,
+  onSelect,
+}: {
+  contacts: any[];
+  selectedContactId: string;
+  onSelect: (contactId: string) => void;
+}) {
+  return (
+    <Command>
+      <CommandInput placeholder="Buscar contacto por nombre, correo o telefono..." />
+      <CommandList>
+        <CommandEmpty>No hay contactos disponibles.</CommandEmpty>
+        <CommandGroup>
+          {contacts.map(contact => {
+            const contactId = String(contact.id);
+            const selected = selectedContactId === contactId;
+            const contactMeta = formatSupplierContactMeta(contact);
+
+            return (
+              <CommandItem
+                key={contact.id}
+                value={[
+                  contact.name,
+                  contact.branchName,
+                  contact.phone,
+                  contact.email,
+                  contact.address,
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                onSelect={() => onSelect(contactId)}
+              >
+                <Check
+                  className={`h-4 w-4 ${
+                    selected ? "opacity-100" : "opacity-0"
+                  }`}
+                />
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">
+                    {formatSupplierContactOptionLabel(contact)}
+                  </span>
+                  {contactMeta ? (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {contactMeta}
+                    </span>
+                  ) : null}
+                </span>
+              </CommandItem>
+            );
+          })}
+        </CommandGroup>
+      </CommandList>
+    </Command>
   );
 }
 
@@ -333,11 +404,125 @@ function formatQuantityPayload(value: number | string | null | undefined) {
   return Number.isFinite(parsed) ? parsed.toFixed(2) : "0.00";
 }
 
+function areTaxCodeArraysEqual(
+  left: string[] | string | null | undefined,
+  right: string[] | string | null | undefined
+) {
+  const leftCodes = parsePurchaseOrderAdditionalTaxCodes(left).sort();
+  const rightCodes = parsePurchaseOrderAdditionalTaxCodes(right).sort();
+  return (
+    leftCodes.length === rightCodes.length &&
+    leftCodes.every((code, index) => code === rightCodes[index])
+  );
+}
+
 type PurchaseOrderItemDraft = {
   quantity: string;
   unitPrice: string;
   taxCode: PurchaseOrderTaxCode;
+  additionalTaxCodes: string[];
 };
+
+type PurchaseOrderTaxSelectOption = {
+  value: string;
+  label: string;
+  taxCode: PurchaseOrderTaxCode;
+  additionalTaxCodes: string[];
+};
+
+function normalizeTaxOptionCode(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function getTaxOptionOrder(value: number | null | undefined, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getPurchaseOrderTaxSelectOptions(taxes: SalesTaxCatalogItem[]) {
+  return taxes
+    .filter(tax => tax.isActive !== false)
+    .map((tax, index) => ({
+      ...tax,
+      taxCode: normalizeTaxOptionCode(tax.taxCode),
+      label: tax.description || tax.shortLabel || tax.taxCode,
+      displayOrder: getTaxOptionOrder(tax.displayOrder, index + 1),
+    }))
+    .filter(tax => tax.taxCode)
+    .sort((left, right) => left.displayOrder - right.displayOrder)
+    .map(tax => ({
+      value: tax.taxCode,
+      label: tax.label,
+      taxCode: tax.taxCode,
+      additionalTaxCodes: [],
+    }));
+}
+
+function getSelectedTaxOption(
+  draft: PurchaseOrderItemDraft,
+  options: PurchaseOrderTaxSelectOption[]
+) {
+  const normalizedTaxCode = normalizeTaxOptionCode(draft.taxCode);
+  const additionalTaxCodes = parsePurchaseOrderAdditionalTaxCodes(
+    draft.additionalTaxCodes
+  );
+
+  if (additionalTaxCodes.length === 1) {
+    const additionalOption = options.find(
+      option => option.taxCode === additionalTaxCodes[0]
+    );
+    if (additionalOption) return additionalOption;
+  }
+
+  return (
+    options.find(option => option.taxCode === normalizedTaxCode) ??
+    options[0]
+  );
+}
+
+function PurchaseOrderTaxControls({
+  draft,
+  taxes,
+  disabled,
+  onChange,
+}: {
+  draft: PurchaseOrderItemDraft;
+  taxes: SalesTaxCatalogItem[];
+  disabled?: boolean;
+  onChange: (draft: PurchaseOrderItemDraft) => void;
+}) {
+  const taxOptions = getPurchaseOrderTaxSelectOptions(taxes);
+  const selectedOption = getSelectedTaxOption(draft, taxOptions);
+
+  return (
+    <div className="min-w-0">
+      <Select
+        value={selectedOption?.value ?? ""}
+        onValueChange={value => {
+          const option = taxOptions.find(entry => entry.value === value);
+          if (!option) return;
+          onChange({
+            ...draft,
+            taxCode: option.taxCode,
+            additionalTaxCodes: option.additionalTaxCodes,
+          });
+        }}
+        disabled={disabled}
+      >
+        <SelectTrigger className="h-10 w-full min-w-0 text-sm sm:text-base">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {taxOptions.map(option => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
 
 type ContractDraft = {
   appliesContract: boolean;
@@ -362,12 +547,17 @@ type PendingOrderAttachment = PreparedDocumentAttachment & {
 };
 
 function getDefaultOriginItemDraft(item: any): PurchaseOrderItemDraft {
+  const taxCode = normalizePurchaseOrderTaxCode(item.taxCode);
   return {
     quantity: formatQuantityPayload(
       getPurchaseRequestItemPendingConversionQuantity(item)
     ),
     unitPrice: formatQuantityPayload(item.unitPrice ?? "0.00"),
-    taxCode: normalizePurchaseOrderTaxCode(item.taxCode),
+    taxCode,
+    additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
+      item.additionalTaxCodes,
+      taxCode
+    ),
   };
 }
 
@@ -418,6 +608,7 @@ export default function OrdenesCompra() {
   const [replacementSearch, setReplacementSearch] = useState("");
   const [selectedSupplierId, setSelectedSupplierId] = useState("");
   const [supplierPopoverOpen, setSupplierPopoverOpen] = useState(false);
+  const [contactPopoverOpen, setContactPopoverOpen] = useState(false);
   const [savingItemId, setSavingItemId] = useState<number | null>(null);
   const [deletingItemId, setDeletingItemId] = useState<number | null>(null);
   const [itemDrafts, setItemDrafts] = useState<
@@ -460,6 +651,12 @@ export default function OrdenesCompra() {
     }
   );
   const { data: suppliersList } = trpc.requestItems.listSuppliers.useQuery();
+  const { data: salesTaxes } = trpc.taxes.activeOptions.useQuery(undefined, {
+    enabled: Boolean(user),
+  });
+  const activeSalesTaxes = (salesTaxes?.length
+    ? salesTaxes
+    : DEFAULT_SALES_TAXES) as SalesTaxCatalogItem[];
   const {
     data: detail,
     error: detailError,
@@ -488,7 +685,7 @@ export default function OrdenesCompra() {
 
   const updateMutation = trpc.purchaseOrders.update.useMutation({
     onSuccess: () => {
-      toast.success("Proveedor actualizado en la OC");
+      toast.success("OC actualizada");
       void utils.purchaseOrders.list.invalidate();
       if (selectedId) {
         void utils.purchaseOrders.getById.invalidate({ id: selectedId });
@@ -785,6 +982,7 @@ export default function OrdenesCompra() {
           PURCHASE_TYPE_LABELS[purchaseOrder.purchaseType],
           row.supplier?.name,
           row.supplier?.supplierCode,
+          row.supplier?.rtn,
           projectLabel,
         ]
           .filter(Boolean)
@@ -886,6 +1084,7 @@ export default function OrdenesCompra() {
           quantity: formatQuantityPayload(draft.quantity),
           unitPrice: formatQuantityPayload(draft.unitPrice),
           taxCode: draft.taxCode,
+          additionalTaxCodes: draft.additionalTaxCodes,
         };
       }),
     [originItemDrafts, selectedOriginItems]
@@ -915,10 +1114,12 @@ export default function OrdenesCompra() {
             quantity: draft.quantity,
             unitPrice: draft.unitPrice,
             taxCode: draft.taxCode,
+            additionalTaxCodes: draft.additionalTaxCodes,
           };
-        })
+        }),
+        activeSalesTaxes
       ),
-    [originItemDrafts, selectedOriginItems]
+    [activeSalesTaxes, originItemDrafts, selectedOriginItems]
   );
   const originDraftValidationMessage = useMemo(() => {
     for (const item of selectedOriginItems) {
@@ -976,6 +1177,41 @@ export default function OrdenesCompra() {
     selectedOriginItems,
   ]);
   const selectedSupplierIdNumber = Number(selectedSupplierId || 0);
+  const { data: supplierContactRows } = trpc.suppliers.listContacts.useQuery(
+    {
+      supplierId: selectedSupplierIdNumber,
+      projectId: detail?.purchaseOrder.projectId ?? 0,
+      includeInactive: false,
+    },
+    {
+      enabled:
+        Boolean(detail?.purchaseOrder.projectId) &&
+        selectedSupplierIdNumber > 0,
+    }
+  );
+  const supplierContacts = useMemo(
+    () => (supplierContactRows ?? []).map((row: any) => row.contact),
+    [supplierContactRows]
+  );
+  const selectedSupplierContact = useMemo(() => {
+    const selectedContactId = String(
+      detail?.preferredSupplierContact?.id ??
+        detail?.purchaseOrder.supplierContactId ??
+        ""
+    );
+
+    return (
+      supplierContacts.find(
+        (contact: any) => String(contact.id) === selectedContactId
+      ) ??
+      detail?.preferredSupplierContact ??
+      null
+    );
+  }, [
+    detail?.preferredSupplierContact,
+    detail?.purchaseOrder.supplierContactId,
+    supplierContacts,
+  ]);
   const selectedSupplierCreatePayload = useMemo(
     () =>
       selectedSupplierIdNumber > 0
@@ -1124,12 +1360,20 @@ export default function OrdenesCompra() {
           {
             quantity: String(item.quantity ?? "0.00"),
             unitPrice: String(item.unitPrice ?? "0.00"),
-            taxCode: normalizePurchaseOrderTaxCode(item.taxCode),
+            taxCode: normalizePurchaseOrderTaxCode(
+              item.taxCode,
+              activeSalesTaxes
+            ),
+            additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
+              item.additionalTaxCodes,
+              item.taxCode,
+              activeSalesTaxes
+            ),
           },
         ])
       )
     );
-  }, [detail?.items, detail?.purchaseOrder.id]);
+  }, [activeSalesTaxes, detail?.items, detail?.purchaseOrder.id]);
 
   useEffect(() => {
     if (
@@ -1156,7 +1400,12 @@ export default function OrdenesCompra() {
       const currentDraft = itemDrafts[item.id] ?? {
         quantity: String(item.quantity ?? "0.00"),
         unitPrice: String(item.unitPrice ?? "0.00"),
-        taxCode: normalizePurchaseOrderTaxCode(item.taxCode),
+        taxCode: normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes),
+        additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
+          item.additionalTaxCodes,
+          item.taxCode,
+          activeSalesTaxes
+        ),
       };
 
       if (Number(item.unitPrice ?? 0) > 0) continue;
@@ -1183,15 +1432,21 @@ export default function OrdenesCompra() {
         quantity: update.draft.quantity,
         unitPrice: update.draft.unitPrice,
         taxCode: update.draft.taxCode,
+        additionalTaxCodes: update.draft.additionalTaxCodes,
       });
     }
-  }, [canEditOrderStructure, detail?.items, latestSupplierPrices]);
+  }, [activeSalesTaxes, canEditOrderStructure, detail?.items, latestSupplierPrices]);
 
   const getItemDraft = (item: any): PurchaseOrderItemDraft =>
     itemDrafts[item.id] ?? {
       quantity: String(item.quantity ?? "0.00"),
       unitPrice: String(item.unitPrice ?? "0.00"),
-      taxCode: normalizePurchaseOrderTaxCode(item.taxCode),
+      taxCode: normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes),
+      additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
+        item.additionalTaxCodes,
+        item.taxCode,
+        activeSalesTaxes
+      ),
     };
 
   const pricingSummary = useMemo(
@@ -1203,10 +1458,12 @@ export default function OrdenesCompra() {
             quantity: draft.quantity,
             unitPrice: draft.unitPrice,
             taxCode: draft.taxCode,
+            additionalTaxCodes: draft.additionalTaxCodes,
           };
-        })
+        }),
+        activeSalesTaxes
       ),
-    [items, itemDrafts]
+    [activeSalesTaxes, items, itemDrafts]
   );
 
   const hasPendingPricingChanges = useMemo(
@@ -1217,10 +1474,15 @@ export default function OrdenesCompra() {
         return (
           Number(draft.quantity || 0) !== Number(item.quantity ?? 0) ||
           Number(draft.unitPrice || 0) !== Number(item.unitPrice ?? 0) ||
-          draft.taxCode !== normalizePurchaseOrderTaxCode(item.taxCode)
+          draft.taxCode !==
+            normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes) ||
+          !areTaxCodeArraysEqual(
+            draft.additionalTaxCodes,
+            item.additionalTaxCodes
+          )
         );
       }),
-    [canEditOrderStructure, items, itemDrafts]
+    [activeSalesTaxes, canEditOrderStructure, items, itemDrafts]
   );
   const hasPendingContractPriceChanges = useMemo(
     () =>
@@ -1304,6 +1566,36 @@ export default function OrdenesCompra() {
     });
   };
 
+  const handleSupplierContactChange = (value: string) => {
+    if (!detail) return;
+    if (!canEditOrderStructure) {
+      toast.error("La OC ya fue emitida y no se puede actualizar");
+      return;
+    }
+
+    const contact = supplierContacts.find(
+      (entry: any) => String(entry.id) === value
+    );
+    if (!contact) {
+      toast.error("Seleccione un contacto valido");
+      return;
+    }
+
+    const currentContactId = String(
+      detail.purchaseOrder.supplierContactId ??
+        detail.preferredSupplierContact?.id ??
+        ""
+    );
+    if (currentContactId === value) {
+      return;
+    }
+
+    updateMutation.mutate({
+      id: detail.purchaseOrder.id,
+      supplierContactId: Number(value),
+    });
+  };
+
   const handleSaveItemLine = (item: any, draftOverride?: PurchaseOrderItemDraft) => {
     if (!canEditOrderStructure) {
       toast.error("La OC ya fue emitida y no se puede actualizar");
@@ -1314,7 +1606,8 @@ export default function OrdenesCompra() {
     if (
       Number(draft.quantity || 0) === Number(item.quantity ?? 0) &&
       Number(draft.unitPrice || 0) === Number(item.unitPrice ?? 0) &&
-      draft.taxCode === normalizePurchaseOrderTaxCode(item.taxCode)
+      draft.taxCode === normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes) &&
+      areTaxCodeArraysEqual(draft.additionalTaxCodes, item.additionalTaxCodes)
     ) {
       return;
     }
@@ -1334,6 +1627,7 @@ export default function OrdenesCompra() {
         quantity: draft.quantity,
         unitPrice: draft.unitPrice,
         taxCode: draft.taxCode,
+        additionalTaxCodes: draft.additionalTaxCodes,
       },
       {
         onSettled: () => {
@@ -1550,6 +1844,7 @@ export default function OrdenesCompra() {
 
     const purchaseOrder = detail.purchaseOrder;
     const supplierName = detail.supplier?.name ?? "Proveedor pendiente";
+    const supplierRtn = detail.supplier?.rtn || "-";
     const projectLabel = detail.project
       ? `${detail.project.code} ${detail.project.name}`
       : `Proyecto ${purchaseOrder.projectId}`;
@@ -1575,6 +1870,8 @@ export default function OrdenesCompra() {
           quantity: draft.quantity,
           unitPrice: draft.unitPrice,
           taxCode: draft.taxCode,
+          additionalTaxCodes: draft.additionalTaxCodes,
+          taxes: activeSalesTaxes,
         });
         return `
           <tr>
@@ -1782,6 +2079,10 @@ export default function OrdenesCompra() {
                   <div class="value">${escapeHtml(supplierName)}</div>
                 </div>
                 <div class="field">
+                  <div class="label">RTN Proveedor:</div>
+                  <div class="value">${escapeHtml(supplierRtn)}</div>
+                </div>
+                <div class="field">
                   <div class="label">Asesor Vta:</div>
                   <div class="value">${escapeHtml(salesAdvisorLabel)}</div>
                 </div>
@@ -1900,6 +2201,10 @@ export default function OrdenesCompra() {
         {
           header: "Proveedor",
           value: (row: any) => row.supplier?.name || "Proveedor pendiente",
+        },
+        {
+          header: "RTN proveedor",
+          value: (row: any) => row.supplier?.rtn || "—",
         },
         {
           header: "Estatus",
@@ -2044,7 +2349,18 @@ export default function OrdenesCompra() {
                         {PURCHASE_TYPE_LABELS[row.purchaseOrder.purchaseType] || "—"}
                       </td>
                       <td className="p-3 text-xs">
-                        {row.supplier?.name || "Proveedor pendiente"}
+                        {row.supplier ? (
+                          <div className="space-y-1">
+                            <div className="font-medium text-foreground">
+                              {row.supplier.name}
+                            </div>
+                            <div className="text-muted-foreground">
+                              RTN: {formatSupplierRtnLabel(row.supplier)}
+                            </div>
+                          </div>
+                        ) : (
+                          "Proveedor pendiente"
+                        )}
                       </td>
                       <td className="p-3">
                         <Badge
@@ -2510,11 +2826,19 @@ export default function OrdenesCompra() {
                       />
                     </PopoverContent>
                   </Popover>
-                  <p className="text-sm leading-relaxed text-muted-foreground">
-                    {selectedSupplier
-                      ? selectedSupplier.email || "Proveedor sin correo configurado"
-                      : "Seleccione proveedor antes de crear la OC."}
-                  </p>
+                  {selectedSupplier ? (
+                    <div className="space-y-1 text-sm leading-relaxed text-muted-foreground">
+                      <p>
+                        {selectedSupplier.email ||
+                          "Proveedor sin correo configurado"}
+                      </p>
+                      <p>RTN: {formatSupplierRtnLabel(selectedSupplier)}</p>
+                    </div>
+                  ) : (
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      Seleccione proveedor antes de crear la OC.
+                    </p>
+                  )}
                 </div>
 
                 <div className="min-w-0 space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
@@ -2797,6 +3121,8 @@ export default function OrdenesCompra() {
                           quantity: draft.quantity,
                           unitPrice: draft.unitPrice,
                           taxCode: draft.taxCode,
+                          additionalTaxCodes: draft.additionalTaxCodes,
+                          taxes: activeSalesTaxes,
                         });
 
                         return (
@@ -2868,32 +3194,16 @@ export default function OrdenesCompra() {
                               />
                             </td>
                             <td className="p-3 align-middle sm:p-4">
-                              <Select
-                                value={draft.taxCode}
-                                onValueChange={(value: PurchaseOrderTaxCode) =>
+                              <PurchaseOrderTaxControls
+                                draft={draft}
+                                taxes={activeSalesTaxes}
+                                onChange={nextDraft =>
                                   setOriginItemDrafts(current => ({
                                     ...current,
-                                    [item.id]: {
-                                      ...draft,
-                                      taxCode: value,
-                                    },
+                                    [item.id]: nextDraft,
                                   }))
                                 }
-                              >
-                                <SelectTrigger className="h-10">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {PURCHASE_ORDER_TAX_OPTIONS.map(option => (
-                                    <SelectItem
-                                      key={option.value}
-                                      value={option.value}
-                                    >
-                                      {option.label}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                              />
                             </td>
                             <td className="p-3 text-right align-middle font-semibold sm:p-4">
                               {formatPurchaseOrderCurrency(lineAmounts.subtotal)}
@@ -3121,30 +3431,80 @@ export default function OrdenesCompra() {
                     </PopoverContent>
                   </Popover>
                   <div className="flex flex-wrap items-center gap-3">
-                    <p className="text-sm leading-relaxed text-muted-foreground">
-                      {updateMutation.isPending
-                        ? "Guardando proveedor..."
-                        : selectedSupplier
-                        ? selectedSupplier.email ||
-                          "Proveedor sin correo configurado"
-                        : detail.supplier?.name || "Proveedor pendiente"}
-                    </p>
+                    <div className="space-y-1 text-sm leading-relaxed text-muted-foreground">
+                      <p>
+                        {updateMutation.isPending
+                          ? "Guardando proveedor..."
+                          : selectedSupplier
+                          ? selectedSupplier.email ||
+                            "Proveedor sin correo configurado"
+                          : detail.supplier?.name || "Proveedor pendiente"}
+                      </p>
+                      {selectedSupplier || detail.supplier ? (
+                        <p>
+                          RTN:{" "}
+                          {formatSupplierRtnLabel(
+                            selectedSupplier ?? detail.supplier
+                          )}
+                        </p>
+                      ) : null}
+                    </div>
                   </div>
                   <div className="rounded-xl border border-border/70 bg-background/80 px-3 py-2">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                       Contacto preferible
                     </p>
-                    <p className="mt-1 text-sm font-semibold leading-snug text-foreground">
-                      {detail.preferredSupplierContact?.name ||
-                        "Sin contacto preferible configurado"}
-                    </p>
-                    {formatSupplierContactMeta(
-                      detail.preferredSupplierContact
-                    ) ? (
+                    <Popover
+                      open={contactPopoverOpen}
+                      onOpenChange={setContactPopoverOpen}
+                    >
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={contactPopoverOpen}
+                          className="mt-2 h-10 w-full justify-between overflow-hidden px-3 text-left text-sm font-normal"
+                          disabled={
+                            !canEditOrderStructure ||
+                            updateMutation.isPending ||
+                            supplierContacts.length === 0
+                          }
+                        >
+                          <span className="truncate">
+                            {supplierContacts.length === 0 &&
+                            !selectedSupplierContact
+                              ? "Sin contactos registrados"
+                              : formatSupplierContactOptionLabel(
+                                  selectedSupplierContact
+                                )}
+                          </span>
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        className="w-[var(--radix-popover-trigger-width)] p-0"
+                      >
+                        <SupplierContactCommandList
+                          contacts={supplierContacts}
+                          selectedContactId={String(
+                            selectedSupplierContact?.id ?? ""
+                          )}
+                          onSelect={contactId => {
+                            handleSupplierContactChange(contactId);
+                            setContactPopoverOpen(false);
+                          }}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    {updateMutation.isPending ? (
                       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                        {formatSupplierContactMeta(
-                          detail.preferredSupplierContact
-                        )}
+                        Guardando contacto...
+                      </p>
+                    ) : formatSupplierContactMeta(selectedSupplierContact) ? (
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        {formatSupplierContactMeta(selectedSupplierContact)}
                       </p>
                     ) : null}
                   </div>
@@ -3251,6 +3611,8 @@ export default function OrdenesCompra() {
                         quantity: draft.quantity,
                         unitPrice: draft.unitPrice,
                         taxCode: draft.taxCode,
+                        additionalTaxCodes: draft.additionalTaxCodes,
+                        taxes: activeSalesTaxes,
                       });
 
                       return (
@@ -3364,35 +3726,20 @@ export default function OrdenesCompra() {
                             </div>
                           </td>
                           <td className="p-3 align-middle sm:p-4">
-                            <Select
-                              value={draft.taxCode}
-                              onValueChange={value => {
-                                const nextDraft = {
-                                  ...getItemDraft(item),
-                                  taxCode: value as PurchaseOrderTaxCode,
-                                };
+                            <PurchaseOrderTaxControls
+                              draft={draft}
+                              taxes={activeSalesTaxes}
+                              disabled={
+                                !canEditOrderStructure || isSavingThisLine
+                              }
+                              onChange={nextDraft => {
                                 setItemDrafts(current => ({
                                   ...current,
                                   [item.id]: nextDraft,
                                 }));
                                 handleSaveItemLine(item, nextDraft);
                               }}
-                              disabled={!canEditOrderStructure || isSavingThisLine}
-                            >
-                              <SelectTrigger className="h-10 w-full min-w-0 text-sm sm:text-base">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {PURCHASE_ORDER_TAX_OPTIONS.map(taxOption => (
-                                  <SelectItem
-                                    key={taxOption.value}
-                                    value={taxOption.value}
-                                  >
-                                    {taxOption.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            />
                           </td>
                           <td className="p-3 text-right align-middle sm:p-4">
                             <div className="whitespace-nowrap text-base font-semibold sm:text-lg">

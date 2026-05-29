@@ -101,7 +101,7 @@ const allMenuItems: MenuItem[] = [
     icon: Tags,
     label: "Artículos",
     path: "/articulos",
-    roles: ["jefe_bodega_central", "administracion_central", "admin"],
+    roles: ["jefe_bodega_central", "administracion_central", "contable", "admin"],
   },
   {
     icon: Building2,
@@ -198,6 +198,19 @@ const allMenuItems: MenuItem[] = [
     icon: FileText,
     label: "Facturas",
     path: "/facturas",
+    roles: [
+      "jefe_bodega_central",
+      "administracion_central",
+      "administrador_proyecto",
+      "bodeguero_proyecto",
+      "contable",
+      "admin",
+    ],
+  },
+  {
+    icon: Percent,
+    label: "Impuestos",
+    path: "/impuestos",
     roles: [
       "jefe_bodega_central",
       "administracion_central",
@@ -354,7 +367,11 @@ function DashboardLayoutContent({
   const menuItems = useMemo(() => {
     return allMenuItems.filter((item) => {
       if (userRole === "contable") {
-        return item.path === "/facturas" || item.path === "/retenciones";
+        return (
+          item.path === "/facturas" ||
+          item.path === "/impuestos" ||
+          item.path === "/retenciones"
+        );
       }
       if (!item.roles) return true;
       if (item.roles.includes("admin") && isAdmin) return true;
@@ -369,6 +386,7 @@ function DashboardLayoutContent({
   const shouldRedirectContable =
     userRole === "contable" &&
     location !== "/facturas" &&
+    location !== "/impuestos" &&
     location !== "/retenciones";
 
   useEffect(() => {

@@ -9,11 +9,13 @@ import {
   decimal,
   boolean,
   integer,
+  jsonb,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import { PURCHASE_ORDER_TAX_VALUES } from "../shared/purchase-orders";
+import type { PurchaseOrderTaxBreakdownEntry } from "../shared/purchase-orders";
+import type { FixedAssetDetail } from "../shared/fixed-assets";
 
 // ============================================================
 // ENUMS
@@ -155,14 +157,19 @@ export const purchaseOrderStatusEnum = pgEnum("purchase_order_status", [
   "recibida",
   "anulada",
 ]);
-export const purchaseOrderTaxCodeEnum = pgEnum(
-  "purchase_order_tax_code",
-  PURCHASE_ORDER_TAX_VALUES
-);
 export const documentDeliveryStatusEnum = pgEnum("document_delivery_status", [
   "pendiente",
   "enviado",
   "fallido",
+]);
+export const salesTaxTypeEnum = pgEnum("sales_tax_type", [
+  "base",
+  "additional",
+]);
+export const salesTaxFiscalCategoryEnum = pgEnum("sales_tax_fiscal_category", [
+  "exento",
+  "exonerado",
+  "gravado",
 ]);
 export const transferDestinationTypeEnum = pgEnum("transfer_destination_type", [
   "proyecto",
@@ -185,6 +192,7 @@ export const transferStatusEnum = pgEnum("transfer_status", [
   "anulado",
 ]);
 export const receiptStatusEnum = pgEnum("receipt_status", [
+  "borrador",
   "pendiente",
   "parcial",
   "completa",
@@ -723,7 +731,24 @@ export const purchaseOrderItems = pgTable(
     unitPrice: decimal("unitPrice", { precision: 12, scale: 2 })
       .default("0.00")
       .notNull(),
-    taxCode: purchaseOrderTaxCodeEnum("taxCode").default("exe").notNull(),
+    taxCode: varchar("taxCode", { length: 50 }).default("exe").notNull(),
+    additionalTaxCodes: jsonb("additionalTaxCodes")
+      .$type<string[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    taxBreakdown: jsonb("taxBreakdown")
+      .$type<PurchaseOrderTaxBreakdownEntry[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    isFixedAsset: boolean("isFixedAsset").default(false).notNull(),
+    isLeasing: boolean("isLeasing").default(false).notNull(),
+    assetDetails: jsonb("assetDetails")
+      .$type<FixedAssetDetail[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    lineObservation: text("lineObservation"),
+    fixedAssetArticleId: integer("fixedAssetArticleId"),
+    fixedAssetStatus: varchar("fixedAssetStatus", { length: 20 }),
     receiptClosed: boolean("receiptClosed").default(false).notNull(),
     receiptClosedAt: timestamp("receiptClosedAt"),
     receiptClosedById: integer("receiptClosedById"),
@@ -872,6 +897,8 @@ export const receipts = pgTable(
     isFiscalDocument: boolean("isFiscalDocument").default(false).notNull(),
     cai: varchar("cai", { length: 100 }),
     invoiceNumber: varchar("invoiceNumber", { length: 100 }),
+    documentRangeStart: varchar("documentRangeStart", { length: 100 }),
+    documentRangeEnd: varchar("documentRangeEnd", { length: 100 }),
     documentDate: timestamp("documentDate"),
     documentDueDate: timestamp("documentDueDate"),
     postingDate: timestamp("postingDate").defaultNow().notNull(),
@@ -908,6 +935,12 @@ export const receiptItems = pgTable(
     unitPrice: decimal("unitPrice", { precision: 12, scale: 2 })
       .default("0.00")
       .notNull(),
+    isFixedAsset: boolean("isFixedAsset").default(false).notNull(),
+    isLeasing: boolean("isLeasing").default(false).notNull(),
+    assetDetails: jsonb("assetDetails")
+      .$type<FixedAssetDetail[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
     notes: text("notes"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
@@ -939,6 +972,8 @@ export const invoices = pgTable(
     isFiscalDocument: boolean("isFiscalDocument").default(false).notNull(),
     cai: varchar("cai", { length: 100 }),
     invoiceNumber: varchar("invoiceNumber", { length: 100 }),
+    documentRangeStart: varchar("documentRangeStart", { length: 100 }),
+    documentRangeEnd: varchar("documentRangeEnd", { length: 100 }),
     documentDate: timestamp("documentDate"),
     documentDueDate: timestamp("documentDueDate"),
     postingDate: timestamp("postingDate").notNull(),
@@ -998,7 +1033,18 @@ export const invoiceItems = pgTable(
     unitPrice: decimal("unitPrice", { precision: 12, scale: 2 })
       .default("0.00")
       .notNull(),
-    taxCode: purchaseOrderTaxCodeEnum("taxCode").default("exe").notNull(),
+    taxCode: varchar("taxCode", { length: 50 }).default("exe").notNull(),
+    additionalTaxCodes: jsonb("additionalTaxCodes")
+      .$type<string[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    isFixedAsset: boolean("isFixedAsset").default(false).notNull(),
+    isLeasing: boolean("isLeasing").default(false).notNull(),
+    assetDetails: jsonb("assetDetails")
+      .$type<FixedAssetDetail[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    lineObservation: text("lineObservation"),
     allowsTaxWithholding: boolean("allowsTaxWithholding")
       .default(true)
       .notNull(),
@@ -1010,6 +1056,10 @@ export const invoiceItems = pgTable(
       .notNull(),
     total: decimal("total", { precision: 12, scale: 2 })
       .default("0.00")
+      .notNull(),
+    taxBreakdown: jsonb("taxBreakdown")
+      .$type<PurchaseOrderTaxBreakdownEntry[]>()
+      .default(sql`'[]'::jsonb`)
       .notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
@@ -1026,6 +1076,39 @@ export const invoiceItems = pgTable(
 
 export type InvoiceItem = typeof invoiceItems.$inferSelect;
 export type InsertInvoiceItem = typeof invoiceItems.$inferInsert;
+
+export const salesTaxes = pgTable(
+  "salesTaxes",
+  {
+    id: serial("id").primaryKey(),
+    taxCode: varchar("taxCode", { length: 50 }).notNull(),
+    description: varchar("description", { length: 200 }).notNull(),
+    shortLabel: varchar("shortLabel", { length: 80 }).notNull(),
+    ratePercent: decimal("ratePercent", { precision: 8, scale: 4 }).notNull(),
+    taxType: salesTaxTypeEnum("taxType").default("base").notNull(),
+    fiscalCategory: salesTaxFiscalCategoryEnum("fiscalCategory")
+      .default("gravado")
+      .notNull(),
+    isActive: boolean("isActive").default(true).notNull(),
+    displayOrder: integer("displayOrder").default(100).notNull(),
+    appliesToTaxCodes: jsonb("appliesToTaxCodes")
+      .$type<string[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    note: text("note"),
+    erpCode: varchar("erpCode", { length: 50 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    taxCodeIdx: uniqueIndex("sales_tax_code_idx").on(table.taxCode),
+    activeIdx: index("sales_tax_active_idx").on(table.isActive),
+    typeIdx: index("sales_tax_type_idx").on(table.taxType),
+  })
+);
+
+export type SalesTax = typeof salesTaxes.$inferSelect;
+export type InsertSalesTax = typeof salesTaxes.$inferInsert;
 
 export const taxRetentions = pgTable(
   "taxRetentions",
@@ -1465,6 +1548,28 @@ export const sapCatalog = pgTable(
     projectId: integer("projectId").references(() => projects.id, {
       onDelete: "set null",
     }),
+    temporaryItemCode: varchar("temporaryItemCode", { length: 50 }),
+    fixedAssetStatus: varchar("fixedAssetStatus", { length: 20 }),
+    fixedAssetSourcePurchaseOrderId: integer(
+      "fixedAssetSourcePurchaseOrderId"
+    ),
+    fixedAssetSourcePurchaseOrderItemId: integer(
+      "fixedAssetSourcePurchaseOrderItemId"
+    ),
+    fixedAssetSerialNumber: varchar("fixedAssetSerialNumber", { length: 120 }),
+    fixedAssetCondition: itemConditionEnum("fixedAssetCondition"),
+    fixedAssetColor: varchar("fixedAssetColor", { length: 120 }),
+    fixedAssetModel: varchar("fixedAssetModel", { length: 120 }),
+    fixedAssetBrand: varchar("fixedAssetBrand", { length: 120 }),
+    fixedAssetChassisSeries: varchar("fixedAssetChassisSeries", {
+      length: 120,
+    }),
+    fixedAssetMotorSeries: varchar("fixedAssetMotorSeries", { length: 120 }),
+    fixedAssetPlateOrCode: varchar("fixedAssetPlateOrCode", { length: 120 }),
+    fixedAssetIsLeasing: boolean("fixedAssetIsLeasing")
+      .default(false)
+      .notNull(),
+    fixedAssetObservation: text("fixedAssetObservation"),
     allowsTaxWithholding: boolean("allowsTaxWithholding")
       .default(true)
       .notNull(),
@@ -1478,6 +1583,9 @@ export const sapCatalog = pgTable(
     descIdx: index("sap_cat_desc_idx").on(table.description),
     tipoArticuloIdx: index("sap_cat_tipo_articulo_idx").on(table.tipoArticulo),
     projectIdx: index("sap_cat_project_idx").on(table.projectId),
+    fixedAssetStatusIdx: index("sap_cat_fixed_asset_status_idx").on(
+      table.fixedAssetStatus
+    ),
     demoBatchIdx: index("sap_cat_demo_batch_idx").on(table.demoBatchKey),
     tipoArticuloCheck: check(
       "sapCatalog_tipoArticulo_check",
@@ -1499,6 +1607,8 @@ export const suppliers = pgTable(
     supplierCode: varchar("supplierCode", { length: 50 }).notNull().unique(),
     name: varchar("name", { length: 500 }).notNull(),
     email: varchar("email", { length: 320 }),
+    rtn: varchar("rtn", { length: 50 }),
+    address: text("address"),
     allowsTaxWithholding: boolean("allowsTaxWithholding")
       .default(true)
       .notNull(),
