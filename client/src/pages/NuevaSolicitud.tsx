@@ -19,13 +19,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   ArrowLeft,
@@ -157,6 +150,22 @@ const formatDateForInput = (value: string | Date | null | undefined) => {
   return `${year}-${month}-${day}`;
 };
 
+const projectCodeCollator = new Intl.Collator("es-HN", {
+  numeric: true,
+  sensitivity: "base",
+});
+
+function formatProjectLabel(project: any | null | undefined) {
+  if (!project) return "Seleccione un proyecto";
+  return `${project.code} - ${project.name}`;
+}
+
+function compareProjectsByCode(a: any, b: any) {
+  const codeCompare = projectCodeCollator.compare(a.code ?? "", b.code ?? "");
+  if (codeCompare !== 0) return codeCompare;
+  return projectCodeCollator.compare(a.name ?? "", b.name ?? "");
+}
+
 function buildSubprojectTargetSelection(subproject: any): RequestTargetSelection {
   return {
     targetType: "subproyecto",
@@ -208,13 +217,14 @@ export default function NuevaSolicitud() {
   const [neededBy, setNeededBy] = useState("");
   const [targetPopoverOpen, setTargetPopoverOpen] = useState<string | null>(null);
   const [unitPopoverOpen, setUnitPopoverOpen] = useState<string | null>(null);
+  const [projectPopoverOpen, setProjectPopoverOpen] = useState(false);
   const [targetSearch, setTargetSearch] = useState("");
   const [debouncedTargetSearch, setDebouncedTargetSearch] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<ItemRow[]>([createItemRow()]);
   const [loadedRequestSnapshot, setLoadedRequestSnapshot] = useState<string | null>(null);
   const availableProjects = useMemo(() => {
-    const projectList = projects ?? [];
+    const projectList = [...(projects ?? [])].sort(compareProjectsByCode);
     if (!isProjectScopedUser || !assignedProjectId) {
       return projectList;
     }
@@ -230,6 +240,7 @@ export default function NuevaSolicitud() {
       (projects || []).find((project: any) => String(project.id) === effectiveProjectId) ?? null,
     [effectiveProjectId, projects]
   );
+  const selectedProjectLabel = formatProjectLabel(selectedProject);
   const effectiveProjectIdNumber = effectiveProjectId
     ? Number(effectiveProjectId)
     : 0;
@@ -758,22 +769,70 @@ export default function NuevaSolicitud() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Proyecto *</Label>
-                <Select
-                  value={effectiveProjectId}
-                  onValueChange={setProjectId}
-                  disabled={isProjectScopedUser && availableProjects.length === 1}
+                <Popover
+                  open={projectPopoverOpen}
+                  onOpenChange={setProjectPopoverOpen}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Seleccione un proyecto" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableProjects.map((p: any) => (
-                      <SelectItem key={p.id} value={String(p.id)}>
-                        {p.code} \u2014 {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={projectPopoverOpen}
+                      disabled={isProjectScopedUser && availableProjects.length === 1}
+                      className="w-full justify-between font-normal md:w-[360px]"
+                    >
+                      <span
+                        className={`truncate ${
+                          effectiveProjectId ? "" : "text-muted-foreground"
+                        }`}
+                      >
+                        {selectedProjectLabel}
+                      </span>
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className="w-[min(600px,calc(100vw-2rem))] p-0"
+                    align="start"
+                  >
+                    <Command>
+                      <CommandInput placeholder="Buscar proyecto por código o nombre..." />
+                      <CommandList className="max-h-[360px]">
+                        <CommandEmpty>No se encontraron proyectos.</CommandEmpty>
+                        <CommandGroup>
+                          {availableProjects.map((project: any) => (
+                            <CommandItem
+                              key={project.id}
+                              value={[
+                                project.code,
+                                project.name,
+                                project.sapProjectCode,
+                              ]
+                                .filter(Boolean)
+                                .join(" ")}
+                              onSelect={() => {
+                                setProjectId(String(project.id));
+                                setProjectPopoverOpen(false);
+                              }}
+                            >
+                              <Check
+                                className={`h-4 w-4 ${
+                                  effectiveProjectId === String(project.id)
+                                    ? "opacity-100"
+                                    : "opacity-0"
+                                }`}
+                              />
+                              <span className="truncate">
+                                {formatProjectLabel(project)}
+                              </span>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
                 {isProjectScopedUser && availableProjects.length === 1 ? (
                   <p className="text-xs text-muted-foreground">
                     Proyecto asignado automáticamente según su rol.

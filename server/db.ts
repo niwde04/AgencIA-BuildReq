@@ -759,24 +759,42 @@ export async function updateUserPasswordChangeRequirement(
 // ============================================================
 // PROJECTS
 // ============================================================
-function mapProjectWithWarehouse(
-  row: {
-    project: typeof projects.$inferSelect;
-    warehouse: typeof warehouses.$inferSelect | null;
-  },
-  subprojectsCount = 0
-) {
+function mapWarehouseSummary(row: Warehouse) {
   return {
-    ...row.project,
-    warehouse: row.warehouse
-      ? {
-          id: row.warehouse.id,
-          code: row.warehouse.code,
-          name: row.warehouse.name,
-          displayName: row.warehouse.displayName,
-          isActive: row.warehouse.isActive,
-        }
-      : null,
+    id: row.id,
+    code: row.code,
+    localCode: row.localCode,
+    name: row.name,
+    displayName: row.displayName,
+    description: row.description,
+    isDefault: row.isDefault,
+    isActive: row.isActive,
+  };
+}
+
+function mapProjectWithWarehouses(
+  project: typeof projects.$inferSelect,
+  projectWarehouses: Warehouse[] = [],
+  subprojectsCount = 0,
+  inventorySummary?: {
+    inventoryRows?: number;
+    totalStock?: string | number | null;
+  }
+) {
+  const warehouseSummaries = projectWarehouses.map(mapWarehouseSummary);
+  const defaultWarehouse =
+    warehouseSummaries.find(warehouse => warehouse.isDefault) ??
+    warehouseSummaries[0] ??
+    null;
+
+  return {
+    ...project,
+    warehouses: warehouseSummaries,
+    defaultWarehouse,
+    warehouse: defaultWarehouse,
+    warehouseCount: warehouseSummaries.length,
+    inventoryRows: Number(inventorySummary?.inventoryRows ?? 0),
+    totalStock: toDecimalString(inventorySummary?.totalStock ?? 0),
     subprojectsCount,
   };
 }
@@ -788,16 +806,26 @@ export async function listProjects(statusFilter?: string) {
     ? eq(projects.status, statusFilter as any)
     : undefined;
 
-  const [rows, subprojectCounts] = await Promise.all([
-    db
-      .select({
-        project: projects,
-        warehouse: warehouses,
-      })
-      .from(projects)
-      .leftJoin(warehouses, eq(warehouses.projectId, projects.id))
-      .where(where)
-      .orderBy(desc(projects.createdAt)),
+  const projectRows = await db
+    .select()
+    .from(projects)
+    .where(where)
+    .orderBy(desc(projects.createdAt));
+
+  const projectIds = projectRows.map(project => project.id);
+  const [warehouseRows, subprojectCounts, inventoryRows] = await Promise.all([
+    projectIds.length > 0
+      ? db
+          .select()
+          .from(warehouses)
+          .where(inArray(warehouses.projectId, projectIds))
+          .orderBy(
+            asc(warehouses.projectId),
+            desc(warehouses.isDefault),
+            asc(warehouses.localCode),
+            asc(warehouses.id)
+          )
+      : Promise.resolve([] as Warehouse[]),
     db
       .select({
         projectId: projectSubprojects.projectId,
@@ -805,52 +833,93 @@ export async function listProjects(statusFilter?: string) {
       })
       .from(projectSubprojects)
       .groupBy(projectSubprojects.projectId),
+    db
+      .select({
+        projectId: inventoryItems.projectId,
+        inventoryRows: count(),
+        totalStock: sql<string>`coalesce(sum(${inventoryItems.currentStock}), 0)`,
+      })
+      .from(inventoryItems)
+      .where(projectIds.length > 0 ? inArray(inventoryItems.projectId, projectIds) : sql`1 = 0`)
+      .groupBy(inventoryItems.projectId),
   ]);
 
   const countByProject = new Map(
     subprojectCounts.map(entry => [entry.projectId, entry.total])
   );
+  const warehousesByProject = new Map<number, Warehouse[]>();
+  for (const warehouse of warehouseRows) {
+    if (!warehouse.projectId) continue;
+    const rows = warehousesByProject.get(warehouse.projectId) ?? [];
+    rows.push(warehouse);
+    warehousesByProject.set(warehouse.projectId, rows);
+  }
+  const inventoryByProject = new Map(
+    inventoryRows
+      .filter(entry => typeof entry.projectId === "number")
+      .map(entry => [
+        entry.projectId as number,
+        {
+          inventoryRows: Number(entry.inventoryRows ?? 0),
+          totalStock: entry.totalStock,
+        },
+      ])
+  );
 
-  return rows.map(row =>
-    mapProjectWithWarehouse(row, countByProject.get(row.project.id) ?? 0)
+  return projectRows.map(project =>
+    mapProjectWithWarehouses(
+      project,
+      warehousesByProject.get(project.id) ?? [],
+      countByProject.get(project.id) ?? 0,
+      inventoryByProject.get(project.id)
+    )
   );
 }
 
 export async function getProjectById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db
-    .select({
-      project: projects,
-      warehouse: warehouses,
-    })
+  const [project] = await db
+    .select()
     .from(projects)
-    .leftJoin(warehouses, eq(warehouses.projectId, projects.id))
     .where(eq(projects.id, id))
     .limit(1);
-  if (!result[0]) return undefined;
+  if (!project) return undefined;
 
-  const [subprojects] = await db
-    .select({ total: count() })
-    .from(projectSubprojects)
-    .where(eq(projectSubprojects.projectId, id));
+  const [projectWarehouses, subprojects, inventorySummary] = await Promise.all([
+    db
+      .select()
+      .from(warehouses)
+      .where(eq(warehouses.projectId, id))
+      .orderBy(desc(warehouses.isDefault), asc(warehouses.localCode), asc(warehouses.id)),
+    db
+      .select({ total: count() })
+      .from(projectSubprojects)
+      .where(eq(projectSubprojects.projectId, id)),
+    db
+      .select({
+        inventoryRows: count(),
+        totalStock: sql<string>`coalesce(sum(${inventoryItems.currentStock}), 0)`,
+      })
+      .from(inventoryItems)
+      .where(eq(inventoryItems.projectId, id)),
+  ]);
 
-  return mapProjectWithWarehouse(result[0], subprojects?.total ?? 0);
+  return mapProjectWithWarehouses(project, projectWarehouses, subprojects?.[0]?.total ?? 0, {
+    inventoryRows: Number(inventorySummary?.[0]?.inventoryRows ?? 0),
+    totalStock: inventorySummary?.[0]?.totalStock ?? "0.00",
+  });
 }
 
 export async function getProjectByCode(code: string) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db
-    .select({
-      project: projects,
-      warehouse: warehouses,
-    })
+    .select()
     .from(projects)
-    .leftJoin(warehouses, eq(warehouses.projectId, projects.id))
     .where(eq(projects.code, code))
     .limit(1);
-  return result[0] ? mapProjectWithWarehouse(result[0]) : undefined;
+  return result[0] ? getProjectById(result[0].id) : undefined;
 }
 
 export async function createProject(data: InsertProject) {
@@ -1369,6 +1438,7 @@ async function getStockByItem(params: {
   sapItemCode?: string | null;
   itemName: string;
   projectId?: number | null;
+  warehouseId?: number | null;
 }) {
   const db = await getDb();
   if (!db) return "0.00";
@@ -1384,6 +1454,9 @@ async function getStockByItem(params: {
   if (params.projectId) {
     conditions.push(eq(inventoryItems.projectId, params.projectId));
   }
+  if (params.warehouseId) {
+    conditions.push(eq(inventoryItems.warehouseId, params.warehouseId));
+  }
 
   const rows = await db
     .select({ currentStock: inventoryItems.currentStock })
@@ -1397,6 +1470,111 @@ async function getStockByItem(params: {
   return toDecimalString(total);
 }
 
+async function getProjectStockBreakdownByWarehouse(params: {
+  sapItemCode?: string | null;
+  itemName: string;
+  projectId: number;
+}) {
+  const projectWarehouses = await listProjectWarehouses(params.projectId, {
+    isActive: true,
+  });
+  const stockRows = await listInventoryRowsForStock({
+    sapItemCode: params.sapItemCode,
+    itemName: params.itemName,
+    projectId: params.projectId,
+  });
+  const projectWarehouseById = new Map(
+    projectWarehouses.map(warehouse => [warehouse.id, warehouse])
+  );
+  const quantitiesByWarehouse = new Map<number, number>(
+    projectWarehouses.map(warehouse => [warehouse.id, 0])
+  );
+  const extraWarehouseIds = new Set<number>();
+  let legacyQuantity = 0;
+
+  for (const row of stockRows) {
+    const quantity = parseDecimal(row.currentStock);
+    if (typeof row.warehouseId === "number") {
+      if (quantitiesByWarehouse.has(row.warehouseId)) {
+        quantitiesByWarehouse.set(
+          row.warehouseId,
+          (quantitiesByWarehouse.get(row.warehouseId) ?? 0) + quantity
+        );
+      } else {
+        extraWarehouseIds.add(row.warehouseId);
+        quantitiesByWarehouse.set(
+          row.warehouseId,
+          (quantitiesByWarehouse.get(row.warehouseId) ?? 0) + quantity
+        );
+      }
+    } else {
+      legacyQuantity += quantity;
+    }
+  }
+
+  const db = await getDb();
+  const extraWarehouseRows =
+    db && extraWarehouseIds.size > 0
+      ? await db
+          .select()
+          .from(warehouses)
+          .where(inArray(warehouses.id, Array.from(extraWarehouseIds)))
+      : [];
+  const extraWarehouseById = new Map(extraWarehouseRows.map(row => [row.id, row]));
+  const total = Array.from(quantitiesByWarehouse.values()).reduce(
+    (sum, quantity) => sum + quantity,
+    legacyQuantity
+  );
+
+  const mapWarehouseStock = (warehouse: Warehouse) => ({
+    warehouseId: warehouse.id,
+    warehouseCode: warehouse.code,
+    localCode: warehouse.localCode,
+    warehouseName: warehouse.name,
+    displayName: warehouse.displayName,
+    isDefault: warehouse.isDefault,
+    isActive: warehouse.isActive,
+    quantity: toDecimalString(quantitiesByWarehouse.get(warehouse.id) ?? 0),
+  });
+
+  const projectBreakdown = projectWarehouses.map(mapWarehouseStock);
+  const extraBreakdown = Array.from(extraWarehouseIds).map(warehouseId => {
+    const warehouse = extraWarehouseById.get(warehouseId);
+    return warehouse
+      ? mapWarehouseStock(warehouse)
+      : {
+          warehouseId,
+          warehouseCode: null,
+          localCode: null,
+          warehouseName: null,
+          displayName: `Almacén #${warehouseId}`,
+          isDefault: false,
+          isActive: false,
+          quantity: toDecimalString(quantitiesByWarehouse.get(warehouseId) ?? 0),
+        };
+  });
+  const legacyBreakdown =
+    legacyQuantity > 0
+      ? [
+          {
+            warehouseId: null,
+            warehouseCode: null,
+            localCode: null,
+            warehouseName: null,
+            displayName: "Sin almacén asignado",
+            isDefault: false,
+            isActive: false,
+            quantity: toDecimalString(legacyQuantity),
+          },
+        ]
+      : [];
+
+  return {
+    quantity: toDecimalString(total),
+    warehouses: [...projectBreakdown, ...extraBreakdown, ...legacyBreakdown],
+  };
+}
+
 export async function listProjectStockForItems(params: {
   projectId: number;
   items: Array<{
@@ -1405,7 +1583,18 @@ export async function listProjectStockForItems(params: {
     itemName: string;
   }>;
 }) {
+  const db = await getDb();
   const stockByKey = new Map<string, string>();
+  const breakdownByKey = new Map<
+    string,
+    Array<{
+      warehouseId: number | null;
+      warehouseCode: string | null;
+      warehouseName: string | null;
+      displayName: string | null;
+      quantity: string;
+    }>
+  >();
 
   for (const item of params.items) {
     const sapItemCode = item.sapItemCode?.trim() || null;
@@ -1415,12 +1604,54 @@ export async function listProjectStockForItems(params: {
       : `name:${itemName.toLowerCase()}`;
     if (stockByKey.has(key)) continue;
 
-    stockByKey.set(
+    const stockRows = await listInventoryRowsForStock({
+      sapItemCode,
+      itemName,
+      projectId: params.projectId,
+    });
+    const warehouseIds = Array.from(
+      new Set(
+        stockRows
+          .map(row => row.warehouseId)
+          .filter((value): value is number => typeof value === "number")
+      )
+    );
+    const warehouseRows =
+      db && warehouseIds.length > 0
+        ? await db.select().from(warehouses).where(inArray(warehouses.id, warehouseIds))
+        : [];
+    const warehouseById = new Map(warehouseRows.map(row => [row.id, row]));
+    const quantityByWarehouse = new Map<number | null, number>();
+    for (const row of stockRows) {
+      const warehouseKey = row.warehouseId ?? null;
+      quantityByWarehouse.set(
+        warehouseKey,
+        (quantityByWarehouse.get(warehouseKey) ?? 0) +
+          parseDecimal(row.currentStock)
+      );
+    }
+
+    const total = Array.from(quantityByWarehouse.values()).reduce(
+      (sum, value) => sum + value,
+      0
+    );
+    stockByKey.set(key, toDecimalString(total));
+    breakdownByKey.set(
       key,
-      await getStockByItem({
-        sapItemCode,
-        itemName,
-        projectId: params.projectId,
+      Array.from(quantityByWarehouse.entries()).map(([warehouseId, quantity]) => {
+        const warehouse =
+          typeof warehouseId === "number" ? warehouseById.get(warehouseId) : null;
+        return {
+          warehouseId,
+          warehouseCode: warehouse?.code ?? null,
+          warehouseName: warehouse?.name ?? null,
+          displayName:
+            warehouse?.displayName ??
+            stockRows.find(row => row.warehouseId === warehouseId)
+              ?.warehouseLocation ??
+            null,
+          quantity: toDecimalString(quantity),
+        };
       })
     );
   }
@@ -1435,6 +1666,7 @@ export async function listProjectStockForItems(params: {
     return {
       itemId: item.id,
       quantity: stockByKey.get(key) ?? "0.00",
+      warehouses: breakdownByKey.get(key) ?? [],
     };
   });
 }
@@ -1491,10 +1723,10 @@ export async function getMaterialRequestById(id: number) {
           })
         : null;
       const projectStock = sapItemCode
-        ? await getStockByItem({
+        ? await getProjectStockBreakdownByWarehouse({
             sapItemCode,
             itemName: item.itemName,
-            projectId: rows[0]?.request.projectId ?? null,
+            projectId: rows[0].request.projectId,
           })
         : null;
 
@@ -1510,7 +1742,8 @@ export async function getMaterialRequestById(id: number) {
           ? (item.committedQuantity ?? committedQuantity)
           : null,
         sapStock,
-        projectStock,
+        projectStock: projectStock?.quantity ?? null,
+        projectStockWarehouses: projectStock?.warehouses ?? [],
         physicalDispatchedQuantity: item.dispatchedQuantity ?? "0.00",
         dispatchedQuantity:
           item.dispatchedQuantity ?? item.deliveredQuantity ?? "0.00",
@@ -2485,6 +2718,7 @@ export async function recordWarehouseExit(params: {
   requestId: number;
   requestItemId: number;
   quantity: string;
+  warehouseId?: number | null;
   note?: string;
   processedById: number;
 }) {
@@ -2494,6 +2728,7 @@ export async function recordWarehouseExit(params: {
       {
         requestItemId: params.requestItemId,
         quantity: params.quantity,
+        warehouseId: params.warehouseId,
       },
     ],
     note: params.note,
@@ -2513,6 +2748,7 @@ export async function recordWarehouseExitBatch(params: {
   items: Array<{
     requestItemId: number;
     quantity: string;
+    warehouseId?: number | null;
   }>;
   note?: string;
   processedById: number;
@@ -2585,16 +2821,29 @@ export async function recordWarehouseExitBatch(params: {
     {
       sapItemCode: string | null;
       itemName: string;
+      warehouseId: number;
       quantity: number;
     }
   >();
   for (const entry of params.items) {
     const item = itemById.get(entry.requestItemId)!;
+    if (!entry.warehouseId) {
+      throw new Error(`Seleccione almacén origen para ${item.itemName}`);
+    }
+    const warehouse = await getWarehouseById(entry.warehouseId);
+    if (
+      !warehouse ||
+      warehouse.projectId !== request.projectId ||
+      !warehouse.isActive
+    ) {
+      throw new Error(`Seleccione un almacén activo del proyecto para ${item.itemName}`);
+    }
     const sapItemCode = item.sapItemCode?.trim() || null;
-    const stockKey = sapItemCode || item.itemName.trim().toLowerCase();
+    const stockKey = `${sapItemCode || item.itemName.trim().toLowerCase()}::${entry.warehouseId}`;
     const current = requestedByStockKey.get(stockKey) ?? {
       sapItemCode,
       itemName: item.itemName,
+      warehouseId: entry.warehouseId,
       quantity: 0,
     };
     current.quantity += parseDecimal(entry.quantity);
@@ -2607,6 +2856,7 @@ export async function recordWarehouseExitBatch(params: {
         sapItemCode: requested.sapItemCode,
         itemName: requested.itemName,
         projectId: request.projectId,
+        warehouseId: requested.warehouseId,
       })
     );
 
@@ -2660,6 +2910,7 @@ export async function recordWarehouseExitBatch(params: {
       const item = itemById.get(entry.requestItemId)!;
       return {
         materialRequestItemId: entry.requestItemId,
+        warehouseId: entry.warehouseId,
         sapItemCode: item.sapItemCode ?? "",
         itemName: item.sapItemDescription || item.itemName,
         quantity: entry.quantity,
@@ -4584,6 +4835,7 @@ export async function getTransferRequestById(id: number) {
           sapItemCode: item.sapItemCode,
           itemName: item.itemName,
           projectId: rows[0].transferRequest.projectId,
+          warehouseId: item.sourceWarehouseId,
         })
       );
       const requestedQuantity = parseDecimal(item.quantity);
@@ -4656,6 +4908,9 @@ export async function createTransferFromRequest(
         `La cantidad a trasladar de ${item.itemName} no puede exceder lo solicitado`
       );
     }
+    if (transferQuantity > 0 && !item.sourceWarehouseId) {
+      throw new Error(`Seleccione almacén origen para ${item.itemName}`);
+    }
 
     return {
       item,
@@ -4676,6 +4931,7 @@ export async function createTransferFromRequest(
       sapItemCode: entry.item.sapItemCode,
       itemName: entry.item.itemName,
       projectId: detail.transferRequest.projectId,
+      warehouseId: entry.item.sourceWarehouseId,
       quantity: toDecimalString(entry.transferQuantity),
     });
   }
@@ -4955,7 +5211,12 @@ export async function getTransferById(id: number) {
     ? await db
         .select()
         .from(warehouses)
-        .where(eq(warehouses.projectId, rows[0].transferRequest.projectId))
+        .where(
+          and(
+            eq(warehouses.projectId, rows[0].transferRequest.projectId),
+            eq(warehouses.isDefault, true)
+          )
+        )
         .limit(1)
     : [];
   const destinationWarehouseRows =
@@ -4965,9 +5226,12 @@ export async function getTransferById(id: number) {
           .select()
           .from(warehouses)
           .where(
-            eq(
-              warehouses.projectId,
-              rows[0].transferRequest.destinationProjectId
+            and(
+              eq(
+                warehouses.projectId,
+                rows[0].transferRequest.destinationProjectId
+              ),
+              eq(warehouses.isDefault, true)
             )
           )
           .limit(1)
@@ -5295,6 +5559,7 @@ export async function registerReceipt(
       .returning({
         insertedReceiptItemId: receiptItems.id,
         sourceItemId: receiptItems.sourceItemId,
+        warehouseId: receiptItems.warehouseId,
         itemName: receiptItems.itemName,
         quantityExpected: receiptItems.quantityExpected,
         quantityReceived: receiptItems.quantityReceived,
@@ -5401,6 +5666,7 @@ export async function registerReceipt(
         itemName: existingItem.itemName,
         unit: existingItem.unit,
         projectId: purchaseOrderDetail.purchaseOrder.projectId,
+        warehouseId: item.warehouseId,
         quantity: item.quantityReceived,
       });
     }
@@ -5601,6 +5867,7 @@ export async function registerReceipt(
           itemName: existingItem.itemName,
           unit: existingItem.unit,
           projectId: destinationProjectId,
+          warehouseId: item.warehouseId,
           quantity: item.quantityReceived,
         });
 
@@ -5610,6 +5877,7 @@ export async function registerReceipt(
             itemName: existingItem.itemName,
             unit: existingItem.unit,
             projectId: originProjectId,
+            warehouseId: existingItem.sourceWarehouseId,
             quantity: toDecimalString(closeQuantity),
           });
         }
@@ -5770,7 +6038,13 @@ export async function getReceiptById(id: number) {
     })
     .from(receipts)
     .leftJoin(projects, eq(receipts.projectId, projects.id))
-    .leftJoin(warehouses, eq(warehouses.projectId, receipts.projectId))
+    .leftJoin(
+      warehouses,
+      and(
+        eq(warehouses.projectId, receipts.projectId),
+        eq(warehouses.isDefault, true)
+      )
+    )
     .leftJoin(
       purchaseOrders,
       and(
@@ -5784,10 +6058,19 @@ export async function getReceiptById(id: number) {
     .where(eq(receipts.id, id))
     .limit(1);
   if (!rows[0]) return undefined;
-  const items = await db
-    .select()
+  const itemRows = await db
+    .select({
+      item: receiptItems,
+      warehouse: warehouses,
+    })
     .from(receiptItems)
-    .where(eq(receiptItems.receiptId, id));
+    .leftJoin(warehouses, eq(receiptItems.warehouseId, warehouses.id))
+    .where(eq(receiptItems.receiptId, id))
+    .orderBy(asc(receiptItems.id));
+  const items = itemRows.map(({ item, warehouse }) => ({
+    ...item,
+    warehouse: warehouse ? mapWarehouseSummary(warehouse) : null,
+  }));
   return { ...rows[0], items };
 }
 
@@ -6774,10 +7057,12 @@ export async function listWarehouseExits(filters?: {
       projects.updatedAt,
       warehouses.id,
       warehouses.code,
+      warehouses.localCode,
       warehouses.name,
       warehouses.displayName,
       warehouses.projectId,
       warehouses.description,
+      warehouses.isDefault,
       warehouses.isActive,
       warehouses.createdAt,
       warehouses.updatedAt,
@@ -6840,11 +7125,19 @@ export async function getWarehouseExitById(id: number) {
 
   if (!rows[0]) return undefined;
 
-  const items = await db
-    .select()
+  const itemRows = await db
+    .select({
+      item: warehouseExitItems,
+      warehouse: warehouses,
+    })
     .from(warehouseExitItems)
+    .leftJoin(warehouses, eq(warehouseExitItems.warehouseId, warehouses.id))
     .where(eq(warehouseExitItems.warehouseExitId, id))
     .orderBy(asc(warehouseExitItems.id));
+  const items = itemRows.map(({ item, warehouse }) => ({
+    ...item,
+    warehouse: warehouse ? mapWarehouseSummary(warehouse) : null,
+  }));
 
   const returnedQuantityByExitItemId = new Map<number, number>();
   const warehouseExitItemIds = items.map(item => item.id);
@@ -6886,7 +7179,7 @@ export async function getWarehouseExitById(id: number) {
         sapItemCode: item.sapItemCode,
         itemName: item.itemName,
         projectId: rows[0].warehouseExit.projectId,
-        warehouseId: rows[0].warehouseExit.warehouseId,
+        warehouseId: item.warehouseId ?? rows[0].warehouseExit.warehouseId,
       });
       const availableQuantity = stockRows.reduce(
         (sum, row) => sum + parseDecimal(row.currentStock),
@@ -6983,45 +7276,65 @@ export async function createWarehouseExit(
     throw new Error("El proyecto seleccionado no existe");
   }
 
-  const warehouse = await ensureProjectWarehouse(project.id);
+  const fallbackWarehouse = await ensureProjectWarehouse(project.id);
   const exitNumber = await generateWarehouseExitNumber(data.projectId);
+  const normalizedItems = await Promise.all(
+    items.map(async item => {
+      const sapItemCode = item.sapItemCode?.trim();
+      if (!sapItemCode) {
+        throw new Error("Todos los ítems deben tener código SAP");
+      }
+      const quantity = parseDecimal(item.quantity);
+      if (quantity <= 0) {
+        throw new Error("Todas las cantidades deben ser mayores que cero");
+      }
+
+      const assignment = await resolveProjectAssignment(
+        project.id,
+        item.warehouseId ?? fallbackWarehouse.id
+      );
+      if (!assignment) {
+        throw new Error("Debe seleccionar almacén para todos los ítems");
+      }
+
+      return {
+        warehouseId: assignment.warehouseId,
+        materialRequestItemId: item.materialRequestItemId ?? null,
+        sapItemCode,
+        itemName: item.itemName.trim(),
+        quantity: toDecimalString(quantity),
+        unit: item.unit?.trim() || null,
+        notes: item.notes?.trim() || null,
+      };
+    })
+  );
+  const itemWarehouseIds = Array.from(
+    new Set(normalizedItems.map(item => item.warehouseId))
+  );
+  const headerWarehouseId =
+    itemWarehouseIds.length === 1 ? itemWarehouseIds[0] : null;
   const [created] = await db
     .insert(warehouseExits)
     .values({
       ...data,
       exitNumber,
-      warehouseId: warehouse.id,
+      warehouseId: headerWarehouseId,
       status: data.status ?? "borrador",
       exitDate: data.exitDate ?? new Date(),
     })
     .returning({ id: warehouseExits.id });
 
-  const normalizedItems = items.map(item => {
-    const sapItemCode = item.sapItemCode?.trim();
-    if (!sapItemCode) {
-      throw new Error("Todos los ítems deben tener código SAP");
-    }
-    const quantity = parseDecimal(item.quantity);
-    if (quantity <= 0) {
-      throw new Error("Todas las cantidades deben ser mayores que cero");
-    }
-    return {
+  await db.insert(warehouseExitItems).values(
+    normalizedItems.map(item => ({
+      ...item,
       warehouseExitId: created.id,
-      materialRequestItemId: item.materialRequestItemId ?? null,
-      sapItemCode,
-      itemName: item.itemName.trim(),
-      quantity: toDecimalString(quantity),
-      unit: item.unit?.trim() || null,
-      notes: item.notes?.trim() || null,
-    };
-  });
-
-  await db.insert(warehouseExitItems).values(normalizedItems);
+    }))
+  );
 
   return {
     id: created.id,
     exitNumber,
-    warehouseId: warehouse.id,
+    warehouseId: headerWarehouseId,
   };
 }
 
@@ -7143,7 +7456,7 @@ export async function emitWarehouseExit(id: number, emittedById: number) {
       sapItemCode: item.sapItemCode,
       itemName: item.itemName,
       projectId: detail.warehouseExit.projectId,
-      warehouseId: detail.warehouseExit.warehouseId,
+      warehouseId: item.warehouseId ?? detail.warehouseExit.warehouseId,
       quantity: item.quantity,
     });
 
@@ -7293,10 +7606,12 @@ export async function listOpeningBalances(filters?: { projectId?: number }) {
       projects.updatedAt,
       warehouses.id,
       warehouses.code,
+      warehouses.localCode,
       warehouses.name,
       warehouses.displayName,
       warehouses.projectId,
       warehouses.description,
+      warehouses.isDefault,
       warehouses.isActive,
       warehouses.createdAt,
       warehouses.updatedAt,
@@ -7379,7 +7694,7 @@ export async function getOpeningBalanceById(id: number) {
 }
 
 export async function createOpeningBalance(
-  data: Omit<InsertOpeningBalance, "balanceNumber" | "warehouseId">,
+  data: Omit<InsertOpeningBalance, "balanceNumber">,
   items: Omit<InsertOpeningBalanceItem, "openingBalanceId">[]
 ) {
   const db = await getDb();
@@ -7393,7 +7708,11 @@ export async function createOpeningBalance(
     throw new Error("El proyecto seleccionado no existe");
   }
 
-  const warehouse = await ensureProjectWarehouse(project.id);
+  const assignment = await resolveProjectAssignment(project.id, data.warehouseId);
+  if (!assignment) {
+    throw new Error("Debe seleccionar un almacén del proyecto");
+  }
+  const warehouse = assignment.warehouse;
   const existingBalance = await db
     .select()
     .from(openingBalances)
@@ -7690,6 +8009,7 @@ export async function createWarehouseExitProjectReturn(params: {
     normalizedItems.map(({ sourceItem, quantity, condition, notes }) => ({
       reverseLogisticId: reverseLogistic.id,
       sourceWarehouseExitItemId: sourceItem.id,
+      warehouseId: sourceItem.warehouseId,
       itemName: sourceItem.itemName,
       sapItemCode: sourceItem.sapItemCode,
       quantity,
@@ -7706,6 +8026,7 @@ export async function createWarehouseExitProjectReturn(params: {
       itemName: sourceItem.itemName,
       unit: sourceItem.unit,
       projectId: detail.warehouseExit.projectId,
+      warehouseId: sourceItem.warehouseId ?? detail.warehouseExit.warehouseId,
       quantity,
     });
 
@@ -7770,6 +8091,7 @@ export async function createReverseLogistic(
         itemName: item.itemName,
         unit: item.unit,
         projectId: data.sourceProjectId,
+        warehouseId: item.warehouseId,
         quantity: item.quantity,
       });
     }
@@ -7813,6 +8135,7 @@ export async function getReverseLogisticById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
 
+  const itemWarehouses = alias(warehouses, "reverse_logistics_item_warehouses");
   const rows = await db
     .select({
       return: reverseLogistics,
@@ -7825,7 +8148,10 @@ export async function getReverseLogisticById(id: number) {
     .leftJoin(projects, eq(reverseLogistics.sourceProjectId, projects.id))
     .leftJoin(
       warehouses,
-      eq(warehouses.projectId, reverseLogistics.sourceProjectId)
+      and(
+        eq(warehouses.projectId, reverseLogistics.sourceProjectId),
+        eq(warehouses.isDefault, true)
+      )
     )
     .leftJoin(
       warehouseExits,
@@ -7837,10 +8163,18 @@ export async function getReverseLogisticById(id: number) {
 
   if (!rows[0]) return undefined;
 
-  const items = await db
-    .select()
+  const itemRows = await db
+    .select({
+      item: reverseLogisticsItems,
+      warehouse: itemWarehouses,
+    })
     .from(reverseLogisticsItems)
+    .leftJoin(
+      itemWarehouses,
+      eq(reverseLogisticsItems.warehouseId, itemWarehouses.id)
+    )
     .where(eq(reverseLogisticsItems.reverseLogisticId, id));
+  const items = itemRows.map(({ item, warehouse }) => ({ ...item, warehouse }));
 
   return { ...rows[0], items };
 }
@@ -7865,6 +8199,7 @@ export async function updateReverseLogisticStatus(
         itemName: item.itemName,
         unit: item.unit,
         projectId: detail.return.sourceProjectId,
+        warehouseId: item.warehouseId,
         quantity: item.quantity,
       });
     }
@@ -7930,6 +8265,7 @@ export async function generateSupplierReturnCreditNote(
     {
       sapItemCode?: string | null;
       itemName: string;
+      warehouseId?: number | null;
       quantity: number;
     }
   >();
@@ -7942,13 +8278,20 @@ export async function generateSupplierReturnCreditNote(
       );
     }
 
+    if (!item.warehouseId) {
+      throw new Error(
+        `La devolución de ${item.itemName} no tiene almacén origen`
+      );
+    }
+
     const key = item.sapItemCode?.trim()
-      ? `sap:${item.sapItemCode.trim()}`
-      : `name:${item.itemName.trim().toLowerCase()}`;
+      ? `sap:${item.sapItemCode.trim()}::wh:${item.warehouseId}`
+      : `name:${item.itemName.trim().toLowerCase()}::wh:${item.warehouseId}`;
     const current = quantityByItem.get(key);
     quantityByItem.set(key, {
       sapItemCode: item.sapItemCode,
       itemName: item.itemName,
+      warehouseId: item.warehouseId,
       quantity: (current?.quantity ?? 0) + quantity,
     });
   }
@@ -7958,6 +8301,7 @@ export async function generateSupplierReturnCreditNote(
       sapItemCode: groupedItem.sapItemCode,
       itemName: groupedItem.itemName,
       projectId: detail.return.sourceProjectId,
+      warehouseId: groupedItem.warehouseId,
     });
     const available = rows.reduce(
       (total, row) => total + parseDecimal(row.currentStock),
@@ -7978,6 +8322,7 @@ export async function generateSupplierReturnCreditNote(
       sapItemCode: item.sapItemCode,
       itemName: item.itemName,
       projectId: detail.return.sourceProjectId,
+      warehouseId: item.warehouseId,
       quantity: item.quantity,
     });
   }
@@ -8203,7 +8548,11 @@ type ProjectWarehouseSource = {
 };
 
 function normalizeWarehouseCode(code: string) {
-  return code.trim().toUpperCase();
+  return code
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function normalizeWarehouseName(name: string) {
@@ -8220,6 +8569,17 @@ function buildWarehouseDisplayName(code: string, name: string) {
 
 function buildProjectWarehouseCode(projectId: number) {
   return `PRJ-${projectId}`;
+}
+
+function normalizeProjectWarehouseLocalCode(value?: string | null) {
+  const normalized = normalizeWarehouseCode(value ?? "");
+  return (normalized || "GENERAL").slice(0, 20);
+}
+
+function buildProjectScopedWarehouseCode(projectId: number, localCode: string) {
+  const normalizedLocalCode = normalizeProjectWarehouseLocalCode(localCode);
+  const prefix = `P${projectId}-`;
+  return `${prefix}${normalizedLocalCode}`.slice(0, 20);
 }
 
 function buildProjectWarehouseName(projectName: string) {
@@ -8258,15 +8618,55 @@ function parseWarehouseLocation(value?: string | null) {
   };
 }
 
-async function getProjectWarehouseByProjectId(projectId: number) {
+async function getWarehouseById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const rows = await db
     .select()
     .from(warehouses)
-    .where(eq(warehouses.projectId, projectId))
+    .where(eq(warehouses.id, id))
     .limit(1);
   return rows[0];
+}
+
+async function getDefaultProjectWarehouseByProjectId(projectId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select()
+    .from(warehouses)
+    .where(and(eq(warehouses.projectId, projectId), eq(warehouses.isDefault, true)))
+    .orderBy(desc(warehouses.isActive), asc(warehouses.id))
+    .limit(1);
+  return rows[0];
+}
+
+async function getProjectWarehouseByProjectId(projectId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const defaultWarehouse = await getDefaultProjectWarehouseByProjectId(projectId);
+  if (defaultWarehouse) return defaultWarehouse;
+  const rows = await db
+    .select()
+    .from(warehouses)
+    .where(eq(warehouses.projectId, projectId))
+    .orderBy(desc(warehouses.isActive), asc(warehouses.id))
+    .limit(1);
+  return rows[0];
+}
+
+export async function listProjectWarehouses(projectId: number, filters?: { isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [] as Warehouse[];
+  const conditions = [eq(warehouses.projectId, projectId)];
+  if (filters?.isActive !== undefined) {
+    conditions.push(eq(warehouses.isActive, filters.isActive));
+  }
+  return db
+    .select()
+    .from(warehouses)
+    .where(and(...conditions))
+    .orderBy(desc(warehouses.isDefault), asc(warehouses.localCode), asc(warehouses.id));
 }
 
 async function listInventoryRowsForStock(params: {
@@ -8388,7 +8788,7 @@ async function addInventoryStock(params: {
   const projectAssignment =
     params.projectId === null || params.projectId === undefined
       ? null
-      : await resolveProjectAssignment(params.projectId);
+      : await resolveProjectAssignment(params.projectId, params.warehouseId);
   const warehouseAssignment = projectAssignment
     ? {
         warehouseId: projectAssignment.warehouseId,
@@ -8475,6 +8875,7 @@ async function syncInventoryItemsToProjectWarehouse(
     .where(
       and(
         eq(inventoryItems.projectId, projectId),
+        sql`${inventoryItems.warehouseId} IS NULL`,
         or(
           sql`${inventoryItems.warehouseId} IS DISTINCT FROM ${warehouse.id}`,
           sql`${inventoryItems.warehouseLocation} IS DISTINCT FROM ${warehouse.displayName}`
@@ -8504,10 +8905,12 @@ async function ensureProjectWarehouse(projectId: number) {
 
   const warehousePayload = {
     code: buildProjectWarehouseCode(project.id),
+    localCode: "GENERAL",
     name: buildProjectWarehouseName(project.name),
     displayName: buildProjectWarehouseDisplayName(project.code, project.name),
     description: buildProjectWarehouseDescription(project),
     projectId: project.id,
+    isDefault: true,
     isActive: project.status === "activo",
     updatedAt: new Date(),
   } satisfies InsertWarehouse;
@@ -8727,14 +9130,21 @@ async function resolveWarehouseAssignment(
   };
 }
 
-export async function listWarehouses(filters?: { isActive?: boolean }) {
+export async function listWarehouses(filters?: {
+  isActive?: boolean;
+  projectId?: number;
+}) {
   const db = await getDb();
   if (!db) return [];
 
-  const where =
-    filters?.isActive === undefined
-      ? undefined
-      : eq(warehouses.isActive, filters.isActive);
+  const conditions = [];
+  if (filters?.isActive !== undefined) {
+    conditions.push(eq(warehouses.isActive, filters.isActive));
+  }
+  if (filters?.projectId) {
+    conditions.push(eq(warehouses.projectId, filters.projectId));
+  }
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
 
   const rows = await db
     .select({
@@ -8750,10 +9160,12 @@ export async function listWarehouses(filters?: { isActive?: boolean }) {
     .groupBy(
       warehouses.id,
       warehouses.code,
+      warehouses.localCode,
       warehouses.name,
       warehouses.displayName,
       warehouses.projectId,
       warehouses.description,
+      warehouses.isDefault,
       warehouses.isActive,
       warehouses.createdAt,
       warehouses.updatedAt,
@@ -8762,7 +9174,11 @@ export async function listWarehouses(filters?: { isActive?: boolean }) {
       projects.name,
       projects.status
     )
-    .orderBy(asc(warehouses.code));
+    .orderBy(
+      asc(projects.code),
+      desc(warehouses.isDefault),
+      asc(warehouses.code)
+    );
 
   return rows.map(({ warehouse, project, inventoryRows, uniqueItems }) => ({
     ...warehouse,
@@ -8782,18 +9198,67 @@ export async function listWarehouses(filters?: { isActive?: boolean }) {
 
 export async function createWarehouse(data: {
   projectId: number;
+  localCode?: string | null;
+  name?: string | null;
   description?: string;
+  isDefault?: boolean;
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  const existingWarehouse = await getProjectWarehouseByProjectId(
-    data.projectId
-  );
-  if (existingWarehouse) {
-    throw new Error("Ese proyecto ya tiene un almacén asignado");
+  const project = await getProjectById(data.projectId);
+  if (!project) {
+    throw new Error("El proyecto seleccionado no existe");
   }
 
-  const warehouse = await ensureProjectWarehouse(data.projectId);
+  const localCode = normalizeProjectWarehouseLocalCode(data.localCode);
+  const existingRows = await db
+    .select({ id: warehouses.id })
+    .from(warehouses)
+    .where(
+      and(
+        eq(warehouses.projectId, data.projectId),
+        eq(warehouses.localCode, localCode)
+      )
+    )
+    .limit(1);
+
+  if (existingRows[0]) {
+    throw new Error("Ese proyecto ya tiene un almacén con ese código local");
+  }
+
+  const shouldBeDefault =
+    data.isDefault === true ||
+    (await getProjectWarehouseByProjectId(data.projectId)) === undefined;
+  if (shouldBeDefault) {
+    await db
+      .update(warehouses)
+      .set({ isDefault: false, updatedAt: new Date() })
+      .where(eq(warehouses.projectId, data.projectId));
+  }
+
+  const name =
+    data.name?.trim() ||
+    (localCode === "GENERAL"
+      ? buildProjectWarehouseName(project.name)
+      : `Almacén ${localCode}`);
+  const warehousePayload = {
+    code:
+      localCode === "GENERAL"
+        ? buildProjectWarehouseCode(project.id)
+        : buildProjectScopedWarehouseCode(project.id, localCode),
+    localCode,
+    name,
+    displayName:
+      localCode === "GENERAL"
+        ? buildProjectWarehouseDisplayName(project.code, project.name)
+        : `${normalizeWarehouseName(project.code).toUpperCase()} - ${normalizeWarehouseName(project.name).toUpperCase()} - ${normalizeWarehouseName(name).toUpperCase()}`,
+    projectId: project.id,
+    description: data.description?.trim() || null,
+    isDefault: shouldBeDefault,
+    isActive: true,
+  } satisfies InsertWarehouse;
+
+  const [warehouse] = await db.insert(warehouses).values(warehousePayload).returning();
   const syncResult = await syncInventoryItemsToProjectWarehouse(
     data.projectId,
     warehouse
@@ -8803,6 +9268,159 @@ export async function createWarehouse(data: {
     warehouse,
     linkedRows: syncResult.linkedRows,
   };
+}
+
+export async function getWarehouseDetailById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select({
+      warehouse: warehouses,
+      project: projects,
+      inventoryRows: count(inventoryItems.id),
+      totalStock: sql<string>`coalesce(sum(${inventoryItems.currentStock}), 0)`,
+      uniqueItems: sql<number>`count(distinct ${inventoryItems.sapItemCode})`,
+    })
+    .from(warehouses)
+    .leftJoin(projects, eq(warehouses.projectId, projects.id))
+    .leftJoin(inventoryItems, eq(inventoryItems.warehouseId, warehouses.id))
+    .where(eq(warehouses.id, id))
+    .groupBy(
+      warehouses.id,
+      warehouses.code,
+      warehouses.localCode,
+      warehouses.name,
+      warehouses.displayName,
+      warehouses.projectId,
+      warehouses.description,
+      warehouses.isDefault,
+      warehouses.isActive,
+      warehouses.createdAt,
+      warehouses.updatedAt,
+      projects.id,
+      projects.code,
+      projects.name,
+      projects.description,
+      projects.location,
+      projects.status,
+      projects.sapProjectCode,
+      projects.demoBatchKey,
+      projects.createdAt,
+      projects.updatedAt
+    )
+    .limit(1);
+
+  if (!rows[0]) return undefined;
+  return {
+    ...rows[0].warehouse,
+    project: rows[0].project,
+    inventoryRows: Number(rows[0].inventoryRows ?? 0),
+    uniqueItems: Number(rows[0].uniqueItems ?? 0),
+    totalStock: toDecimalString(rows[0].totalStock),
+  };
+}
+
+export async function updateWarehouse(
+  id: number,
+  data: {
+    localCode?: string | null;
+    name?: string | null;
+    description?: string | null;
+    isActive?: boolean;
+  }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const warehouse = await getWarehouseById(id);
+  if (!warehouse) throw new Error("Almacén no encontrado");
+  if (!warehouse.projectId) {
+    throw new Error("Los almacenes centrales no se editan desde proyectos");
+  }
+
+  const project = await getProjectById(warehouse.projectId);
+  if (!project) throw new Error("El proyecto del almacén no existe");
+
+  const nextLocalCode =
+    data.localCode !== undefined
+      ? normalizeProjectWarehouseLocalCode(data.localCode)
+      : warehouse.localCode ?? "GENERAL";
+  const nextName =
+    data.name !== undefined && data.name !== null && data.name.trim()
+      ? data.name.trim()
+      : warehouse.name;
+  const nextIsActive = data.isActive ?? warehouse.isActive;
+
+  if (!nextIsActive && warehouse.isDefault) {
+    throw new Error(
+      "No se puede desactivar el almacén principal sin marcar otro como principal"
+    );
+  }
+
+  if (nextLocalCode !== warehouse.localCode) {
+    const duplicateRows = await db
+      .select({ id: warehouses.id })
+      .from(warehouses)
+      .where(
+        and(
+          eq(warehouses.projectId, warehouse.projectId),
+          eq(warehouses.localCode, nextLocalCode),
+          sql`${warehouses.id} <> ${warehouse.id}`
+        )
+      )
+      .limit(1);
+    if (duplicateRows[0]) {
+      throw new Error("Ese proyecto ya tiene un almacén con ese código local");
+    }
+  }
+
+  await db
+    .update(warehouses)
+    .set({
+      localCode: nextLocalCode,
+      name: nextName,
+      code:
+        nextLocalCode === "GENERAL" && warehouse.isDefault
+          ? buildProjectWarehouseCode(project.id)
+          : buildProjectScopedWarehouseCode(project.id, nextLocalCode),
+      displayName:
+        nextLocalCode === "GENERAL" && warehouse.isDefault
+          ? buildProjectWarehouseDisplayName(project.code, project.name)
+          : `${normalizeWarehouseName(project.code).toUpperCase()} - ${normalizeWarehouseName(project.name).toUpperCase()} - ${normalizeWarehouseName(nextName).toUpperCase()}`,
+      description:
+        data.description !== undefined
+          ? data.description?.trim() || null
+          : warehouse.description,
+      isActive: nextIsActive,
+      updatedAt: new Date(),
+    })
+    .where(eq(warehouses.id, id));
+
+  return { success: true };
+}
+
+export async function setProjectDefaultWarehouse(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const warehouse = await getWarehouseById(id);
+  if (!warehouse) throw new Error("Almacén no encontrado");
+  if (!warehouse.projectId) {
+    throw new Error("Solo los almacenes de proyecto pueden ser principales");
+  }
+  if (!warehouse.isActive) {
+    throw new Error("No se puede marcar como principal un almacén inactivo");
+  }
+
+  await db
+    .update(warehouses)
+    .set({ isDefault: false, updatedAt: new Date() })
+    .where(eq(warehouses.projectId, warehouse.projectId));
+  await db
+    .update(warehouses)
+    .set({ isDefault: true, updatedAt: new Date() })
+    .where(eq(warehouses.id, id));
+
+  return { success: true };
 }
 
 export async function syncProjectWarehouses() {
@@ -9477,6 +10095,9 @@ export async function getInventoryKardex(params: {
     receipts.projectId,
     scopeProjectIds
   );
+  if (params.warehouseId) {
+    purchaseReceiptConditions.push(eq(receiptItems.warehouseId, params.warehouseId));
+  }
 
   const transferReceiptConditions = [
     eq(receipts.sourceType, "transfer"),
@@ -9487,6 +10108,9 @@ export async function getInventoryKardex(params: {
     receipts.projectId,
     scopeProjectIds
   );
+  if (params.warehouseId) {
+    transferReceiptConditions.push(eq(receiptItems.warehouseId, params.warehouseId));
+  }
 
   const warehouseExitConditions = [
     eq(warehouseExitItems.sapItemCode, sapItemCode),
@@ -9560,6 +10184,7 @@ export async function getInventoryKardex(params: {
         sourceItem: purchaseOrderItems,
         purchaseOrder: purchaseOrders,
         project: projects,
+        warehouse: warehouses,
       })
       .from(receiptItems)
       .innerJoin(receipts, eq(receiptItems.receiptId, receipts.id))
@@ -9569,6 +10194,7 @@ export async function getInventoryKardex(params: {
       )
       .leftJoin(purchaseOrders, eq(receipts.sourceId, purchaseOrders.id))
       .leftJoin(projects, eq(receipts.projectId, projects.id))
+      .leftJoin(warehouses, eq(receiptItems.warehouseId, warehouses.id))
       .where(and(...purchaseReceiptConditions))
       .orderBy(desc(receipts.receiptDate), desc(receiptItems.id))
       .limit(75),
@@ -9579,6 +10205,7 @@ export async function getInventoryKardex(params: {
         sourceItem: transferRequestItems,
         transfer: transfers,
         project: projects,
+        warehouse: warehouses,
       })
       .from(receiptItems)
       .innerJoin(receipts, eq(receiptItems.receiptId, receipts.id))
@@ -9588,6 +10215,7 @@ export async function getInventoryKardex(params: {
       )
       .leftJoin(transfers, eq(receipts.sourceId, transfers.id))
       .leftJoin(projects, eq(receipts.projectId, projects.id))
+      .leftJoin(warehouses, eq(receiptItems.warehouseId, warehouses.id))
       .where(and(...transferReceiptConditions))
       .orderBy(desc(receipts.receiptDate), desc(receiptItems.id))
       .limit(75),
@@ -9672,7 +10300,7 @@ export async function getInventoryKardex(params: {
       notes: item.notes,
     })),
     ...purchaseReceiptRows.map(
-      ({ receipt, receiptItem, sourceItem, purchaseOrder, project }) => ({
+      ({ receipt, receiptItem, sourceItem, purchaseOrder, project, warehouse }) => ({
         id: `receipt-po-${receiptItem.id}`,
         type: "recepcion_oc" as const,
         direction: "entrada" as const,
@@ -9680,7 +10308,7 @@ export async function getInventoryKardex(params: {
         sourceNumber: purchaseOrder?.orderNumber ?? null,
         date: receipt.receiptDate,
         project,
-        warehouse: null,
+        warehouse: warehouse ? mapWarehouseSummary(warehouse) : null,
         itemName: sourceItem.itemName,
         quantity: toDecimalString(receiptItem.quantityReceived),
         unit: sourceItem.unit ?? receiptItem.unit,
@@ -9688,7 +10316,7 @@ export async function getInventoryKardex(params: {
       })
     ),
     ...transferReceiptRows.map(
-      ({ receipt, receiptItem, sourceItem, transfer, project }) => ({
+      ({ receipt, receiptItem, sourceItem, transfer, project, warehouse }) => ({
         id: `receipt-transfer-${receiptItem.id}`,
         type: "recepcion_traslado" as const,
         direction: "entrada" as const,
@@ -9696,7 +10324,7 @@ export async function getInventoryKardex(params: {
         sourceNumber: transfer?.transferNumber ?? null,
         date: receipt.receiptDate,
         project,
-        warehouse: null,
+        warehouse: warehouse ? mapWarehouseSummary(warehouse) : null,
         itemName: sourceItem.itemName,
         quantity: toDecimalString(receiptItem.quantityReceived),
         unit: sourceItem.unit ?? receiptItem.unit,
@@ -9750,7 +10378,10 @@ export async function getInventoryKardex(params: {
   };
 }
 
-async function resolveProjectAssignment(projectId?: number | null) {
+async function resolveProjectAssignment(
+  projectId?: number | null,
+  warehouseId?: number | null
+) {
   if (!projectId) return null;
 
   const project = await getProjectById(projectId);
@@ -9758,19 +10389,35 @@ async function resolveProjectAssignment(projectId?: number | null) {
     throw new Error("El proyecto seleccionado no existe");
   }
 
-  const warehouse = await ensureProjectWarehouse(project.id);
+  const warehouse = warehouseId
+    ? await getWarehouseById(warehouseId)
+    : await ensureProjectWarehouse(project.id);
+
+  if (!warehouse) {
+    throw new Error("El almacén seleccionado no existe");
+  }
+  if (warehouse.projectId !== project.id) {
+    throw new Error("El almacén seleccionado no pertenece al proyecto");
+  }
+  if (!warehouse.isActive) {
+    throw new Error("El almacén seleccionado está inactivo");
+  }
 
   return {
     projectId: project.id,
     warehouseId: warehouse.id,
     warehouseLocation: warehouse.displayName,
+    warehouse,
   };
 }
 
 export async function createInventoryItem(data: InsertInventoryItem) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  const projectAssignment = await resolveProjectAssignment(data.projectId);
+  const projectAssignment = await resolveProjectAssignment(
+    data.projectId,
+    data.warehouseId
+  );
   const warehouseAssignment = projectAssignment
     ? {
         warehouseId: projectAssignment.warehouseId,
@@ -9801,7 +10448,7 @@ export async function updateInventoryItem(
   const projectAssignment =
     data.projectId === undefined
       ? undefined
-      : await resolveProjectAssignment(data.projectId);
+      : await resolveProjectAssignment(data.projectId, data.warehouseId);
 
   const nextData: Partial<InsertInventoryItem> = { ...data };
   if (data.projectId !== undefined) {

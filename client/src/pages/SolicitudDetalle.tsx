@@ -225,6 +225,66 @@ const parseQuantityValue = (value: unknown) => {
 
 const formatQuantityValue = (value: unknown) => parseQuantityValue(value).toFixed(2);
 
+const formatProjectStockWarehouseLabel = (warehouse: any) => {
+  const localCode = warehouse.localCode || warehouse.warehouseCode;
+  const name = warehouse.warehouseName || warehouse.displayName;
+  if (localCode && name) return `${localCode} - ${name}`;
+  return name || warehouse.displayName || "Almacén";
+};
+
+function ProjectStockBreakdown({
+  item,
+  hasSapTranslation,
+}: {
+  item: any;
+  hasSapTranslation: boolean;
+}) {
+  if (!hasSapTranslation) return <span>—</span>;
+
+  const warehouses = Array.isArray(item.projectStockWarehouses)
+    ? item.projectStockWarehouses
+    : [];
+  const total = item.projectStock || "0.00";
+
+  if (warehouses.length === 0) {
+    return <span className="font-mono">{formatQuantityValue(total)}</span>;
+  }
+
+  return (
+    <div className="min-w-[240px] space-y-1 text-left">
+      {warehouses.map((warehouse: any, index: number) => {
+        const quantity = parseQuantityValue(warehouse.quantity);
+        return (
+          <div
+            key={`${warehouse.warehouseId ?? "legacy"}-${index}`}
+            className="flex items-start justify-between gap-3"
+          >
+            <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+              {formatProjectStockWarehouseLabel(warehouse)}
+              {warehouse.isDefault ? " (principal)" : ""}
+            </span>
+            <span
+              className={`shrink-0 font-mono text-[11px] ${
+                quantity > 0 ? "font-semibold text-foreground" : "text-muted-foreground"
+              }`}
+            >
+              {formatQuantityValue(quantity)}
+            </span>
+          </div>
+        );
+      })}
+      <div className="flex items-center justify-between gap-3 border-t border-border/70 pt-1">
+        <span className="text-[11px] font-semibold text-foreground">
+          Total proyecto
+        </span>
+        <span className="shrink-0 font-mono text-[11px] font-semibold text-foreground">
+          {formatQuantityValue(total)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 const formatEventDateTime = (value: string | Date | null | undefined) => {
   if (!value) return null;
   const date = new Date(value);
@@ -1344,7 +1404,7 @@ export default function SolicitudDetalle() {
                   <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground w-20">
                     Unidad
                   </th>
-                  <th className="text-right p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                  <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground min-w-[260px]">
                     Exist. Proyecto
                   </th>
                   <th className="text-right p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
@@ -1475,8 +1535,11 @@ export default function SolicitudDetalle() {
                         {formatQuantityValue(unresolvedQuantity)}
                       </td>
                       <td className="p-3 text-xs">{item.unit || "—"}</td>
-                      <td className="p-3 text-right text-xs">
-                        {hasSapTranslation ? item.projectStock || "0.00" : "—"}
+                      <td className="p-3 align-top text-xs">
+                        <ProjectStockBreakdown
+                          item={item}
+                          hasSapTranslation={hasSapTranslation}
+                        />
                       </td>
                       <td className="p-3 text-right text-xs">
                         {hasSapTranslation ? item.committedQuantity || "0.00" : "—"}

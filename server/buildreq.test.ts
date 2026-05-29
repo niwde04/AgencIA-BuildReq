@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appRouter } from "./routers";
 import * as db from "./db";
 import * as storage from "./storage";
@@ -135,6 +135,17 @@ const VALID_DOCUMENT_RANGE_END = "000-001-01-99999999";
 const VALID_PDF_BASE64 = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF").toString(
   "base64"
 );
+const DEFAULT_PROJECT_WAREHOUSE_ID = 101;
+const DEFAULT_PROJECT_WAREHOUSE = {
+  id: DEFAULT_PROJECT_WAREHOUSE_ID,
+  projectId: 1,
+  code: "WH-P001",
+  localCode: "GENERAL",
+  name: "Almacén principal",
+  displayName: "P001 - GENERAL - Almacén principal",
+  isActive: true,
+  isDefault: true,
+} as any;
 
 // ============================================================
 // Tests: Purchase order tax helpers
@@ -2596,7 +2607,13 @@ describe("BuildReq - Role-based Access Control", () => {
     await expect(
       caller.requestItems.recordWarehouseExitBatch({
         requestId: 9,
-        items: [{ requestItemId: 41, dispatchedQuantity: "5.00" }],
+        items: [
+          {
+            requestItemId: 41,
+            dispatchedQuantity: "5.00",
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          },
+        ],
         note: "Salida del proyecto",
       })
     ).resolves.toEqual({
@@ -2609,7 +2626,13 @@ describe("BuildReq - Role-based Access Control", () => {
 
     expect(recordWarehouseExitBatchSpy).toHaveBeenCalledWith({
       requestId: 9,
-      items: [{ requestItemId: 41, quantity: "5.00" }],
+      items: [
+        {
+          requestItemId: 41,
+          quantity: "5.00",
+          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+        },
+      ],
       note: "Salida del proyecto",
       processedById: 6,
     });
@@ -3147,6 +3170,7 @@ describe("BuildReq - Role-based Access Control", () => {
         requestId: 9,
         requestItemId: 41,
         dispatchedQuantity: "25.00",
+        warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
         note: "Salida aprobada por administración central",
       })
     ).resolves.toEqual({ success: true });
@@ -3155,6 +3179,7 @@ describe("BuildReq - Role-based Access Control", () => {
       requestId: 9,
       requestItemId: 41,
       quantity: "25.00",
+      warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
       note: "Salida aprobada por administración central",
       processedById: 4,
     });
@@ -3199,8 +3224,16 @@ describe("BuildReq - Role-based Access Control", () => {
       caller.requestItems.recordWarehouseExitBatch({
         requestId: 9,
         items: [
-          { requestItemId: 41, dispatchedQuantity: "25.00" },
-          { requestItemId: 42, dispatchedQuantity: "10.00" },
+          {
+            requestItemId: 41,
+            dispatchedQuantity: "25.00",
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          },
+          {
+            requestItemId: 42,
+            dispatchedQuantity: "10.00",
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          },
         ],
         note: "Salida aprobada por administración central",
       })
@@ -3215,8 +3248,16 @@ describe("BuildReq - Role-based Access Control", () => {
     expect(recordWarehouseExitBatchSpy).toHaveBeenCalledWith({
       requestId: 9,
       items: [
-        { requestItemId: 41, quantity: "25.00" },
-        { requestItemId: 42, quantity: "10.00" },
+        {
+          requestItemId: 41,
+          quantity: "25.00",
+          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+        },
+        {
+          requestItemId: 42,
+          quantity: "10.00",
+          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+        },
       ],
       note: "Salida aprobada por administración central",
       processedById: 4,
@@ -3487,7 +3528,15 @@ describe("BuildReq - Role-based Access Control", () => {
       .mockResolvedValue({ success: true } as any);
     const listProjectStockForItemsSpy = vi
       .spyOn(db, "listProjectStockForItems")
-      .mockResolvedValue([{ itemId: 51, quantity: "100.00" }] as any);
+      .mockResolvedValue([
+        {
+          itemId: 51,
+          quantity: "100.00",
+          warehouses: [
+            { warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID, quantity: "100.00" },
+          ],
+        },
+      ] as any);
     const createTransferRequestSpy = vi
       .spyOn(db, "createTransferRequest")
       .mockResolvedValue({ id: 88, requestNumber: "ST-2026-0088" } as any);
@@ -3509,6 +3558,7 @@ describe("BuildReq - Role-based Access Control", () => {
         requestItemId: 51,
         sourceProjectId: 3,
         destinationProjectId: 7,
+        sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
         notes: "Traslado aprobado por administración central",
       })
     ).resolves.toEqual(
@@ -3578,8 +3628,20 @@ describe("BuildReq - Role-based Access Control", () => {
     const listProjectStockForItemsSpy = vi
       .spyOn(db, "listProjectStockForItems")
       .mockResolvedValue([
-        { itemId: 51, quantity: "100.00" },
-        { itemId: 52, quantity: "2.00" },
+        {
+          itemId: 51,
+          quantity: "100.00",
+          warehouses: [
+            { warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID, quantity: "100.00" },
+          ],
+        },
+        {
+          itemId: 52,
+          quantity: "2.00",
+          warehouses: [
+            { warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID, quantity: "2.00" },
+          ],
+        },
       ] as any);
     const createTransferRequestSpy = vi
       .spyOn(db, "createTransferRequest")
@@ -3603,8 +3665,16 @@ describe("BuildReq - Role-based Access Control", () => {
         sourceProjectId: 3,
         notes: "Traslado consolidado",
         items: [
-          { requestId: 12, requestItemId: 51 },
-          { requestId: 12, requestItemId: 52 },
+          {
+            requestId: 12,
+            requestItemId: 51,
+            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          },
+          {
+            requestId: 12,
+            requestItemId: 52,
+            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          },
         ],
       })
     ).resolves.toEqual({
@@ -3667,14 +3737,28 @@ describe("BuildReq - Role-based Access Control", () => {
       .mockResolvedValue(undefined as any);
     const listProjectStockForItemsSpy = vi
       .spyOn(db, "listProjectStockForItems")
-      .mockResolvedValue([{ itemId: 51, quantity: "0.00" }] as any);
+      .mockResolvedValue([
+        {
+          itemId: 51,
+          quantity: "0.00",
+          warehouses: [
+            { warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID, quantity: "0.00" },
+          ],
+        },
+      ] as any);
     const updateRequestItemSpy = vi.spyOn(db, "updateRequestItem");
     const createTransferRequestSpy = vi.spyOn(db, "createTransferRequest");
 
     await expect(
       caller.supplyFlows.createProjectTransferBatch({
         sourceProjectId: 3,
-        items: [{ requestId: 12, requestItemId: 51 }],
+        items: [
+          {
+            requestId: 12,
+            requestItemId: 51,
+            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          },
+        ],
       })
     ).rejects.toThrow(
       "El proyecto origen no tiene existencia suficiente para Diesel"
@@ -3703,7 +3787,13 @@ describe("BuildReq - Role-based Access Control", () => {
       caller.supplyFlows.createProjectTransferBatch({
         sourceProjectId: 3,
         notes: "Traslado visible para seguimiento",
-        items: [{ requestId: 12, requestItemId: 51 }],
+        items: [
+          {
+            requestId: 12,
+            requestItemId: 51,
+            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          },
+        ],
       })
     ).rejects.toThrow(
       "Solo el Jefe de Bodega Central o Administración Central pueden gestionar traslados"
@@ -3721,7 +3811,13 @@ describe("BuildReq - Role-based Access Control", () => {
     await expect(
       caller.supplyFlows.createProjectTransferBatch({
         sourceProjectId: 3,
-        items: [{ requestId: 12, requestItemId: 51 }],
+        items: [
+          {
+            requestId: 12,
+            requestItemId: 51,
+            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          },
+        ],
       })
     ).rejects.toThrow(
       "Solo el Jefe de Bodega Central o Administración Central pueden gestionar traslados"
@@ -3749,6 +3845,16 @@ describe("BuildReq - Role-based Access Control", () => {
 // Tests: Reverse Logistics validations
 // ============================================================
 describe("BuildReq - Reverse Logistics Validations", () => {
+  beforeEach(() => {
+    vi.spyOn(db, "listProjectWarehouses").mockResolvedValue([
+      DEFAULT_PROJECT_WAREHOUSE,
+    ] as any);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("Requires justification with minimum 10 characters", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
@@ -3865,6 +3971,7 @@ describe("BuildReq - Reverse Logistics Validations", () => {
             itemName: "Pala",
             sapItemCode: "01010200099",
             quantity: "100.00",
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             unit: "und",
             condition: "usado_buen_estado",
           },
@@ -3886,6 +3993,7 @@ describe("BuildReq - Reverse Logistics Validations", () => {
           itemName: "Pala",
           sapItemCode: "01010200099",
           quantity: "100.00",
+          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
         }),
       ]
     );
@@ -3910,7 +4018,13 @@ describe("BuildReq - Reverse Logistics Validations", () => {
       project: null,
       purchaseOrder: null,
       supplier: null,
-      items: [],
+      items: [
+        {
+          sourceItemId: 15,
+          itemName: "Varilla de acero",
+          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+        },
+      ],
     } as any);
     const getPurchaseOrderByIdSpy = vi
       .spyOn(db, "getPurchaseOrderById")
@@ -3956,6 +4070,7 @@ describe("BuildReq - Reverse Logistics Validations", () => {
             itemName: "Varilla de acero",
             sapItemCode: "01010200055",
             quantity: "50.00",
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             unit: "und",
             condition: "defectuoso",
           },
@@ -3980,6 +4095,7 @@ describe("BuildReq - Reverse Logistics Validations", () => {
           itemName: "Varilla de acero",
           sapItemCode: "01010200055",
           quantity: "50.00",
+          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
         }),
       ]
     );
@@ -6373,6 +6489,16 @@ describe("BuildReq - Purchase Orders", () => {
 // Tests: Receipts
 // ============================================================
 describe("BuildReq - Receipts", () => {
+  beforeEach(() => {
+    vi.spyOn(db, "listProjectWarehouses").mockResolvedValue([
+      DEFAULT_PROJECT_WAREHOUSE,
+    ] as any);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("saves or updates a purchase order receipt draft", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
@@ -6513,6 +6639,7 @@ describe("BuildReq - Receipts", () => {
         items: [
           {
             sourceItemId: 15,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             itemName: "CEMENTO GRANEL",
             quantityExpected: "100.00",
             quantityReceived: "100.00",
@@ -6536,6 +6663,7 @@ describe("BuildReq - Receipts", () => {
       expect.arrayContaining([
         expect.objectContaining({
           sourceItemId: 15,
+          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
           quantityReceived: "100.00",
         }),
       ])
@@ -6591,6 +6719,7 @@ describe("BuildReq - Receipts", () => {
         items: [
           {
             sourceItemId: 15,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             itemName: "CEMENTO GRANEL",
             quantityExpected: "10.00",
             quantityReceived: "12.00",
@@ -6613,6 +6742,7 @@ describe("BuildReq - Receipts", () => {
       expect.arrayContaining([
         expect.objectContaining({
           sourceItemId: 15,
+          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
           quantityExpected: "10.00",
           quantityReceived: "12.00",
         }),
@@ -6686,6 +6816,7 @@ describe("BuildReq - Receipts", () => {
         items: [
           {
             sourceItemId: 15,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             itemName: "COMPUTADORA ESCRITORIO",
             quantityExpected: "1.00",
             quantityReceived: "1",
@@ -6715,6 +6846,7 @@ describe("BuildReq - Receipts", () => {
       expect.arrayContaining([
         expect.objectContaining({
           sourceItemId: 15,
+          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
           notes: "Equipo recibido con caja sellada",
           isFixedAsset: true,
           isLeasing: true,
@@ -6908,6 +7040,7 @@ describe("BuildReq - Receipts", () => {
         items: [
           {
             sourceItemId: 15,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             itemName: "CEMENTO GRANEL",
             quantityExpected: "100.00",
             quantityReceived: "100.00",
@@ -6969,6 +7102,7 @@ describe("BuildReq - Receipts", () => {
         items: [
           {
             sourceItemId: 31,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             itemName: "VARILLA #4",
             quantityExpected: "10.00",
             quantityReceived: "10.00",
@@ -6991,6 +7125,7 @@ describe("BuildReq - Receipts", () => {
       expect.arrayContaining([
         expect.objectContaining({
           sourceItemId: 31,
+          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
           quantityReceived: "10.00",
         }),
       ])
@@ -7101,6 +7236,7 @@ describe("BuildReq - Receipts", () => {
         items: [
           {
             sourceItemId: 15,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             itemName: "CEMENTO GRANEL",
             quantityExpected: "100.00",
             quantityReceived: "100.00",
@@ -7150,6 +7286,7 @@ describe("BuildReq - Receipts", () => {
         items: [
           {
             sourceItemId: 15,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             itemName: "CEMENTO GRANEL",
             quantityExpected: "100.00",
             quantityReceived: "100.00",
@@ -7184,6 +7321,7 @@ describe("BuildReq - Receipts", () => {
         items: [
           {
             sourceItemId: 15,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             itemName: "CEMENTO GRANEL",
             quantityExpected: "100.00",
             quantityReceived: "100.00",
@@ -7272,6 +7410,7 @@ describe("BuildReq - Receipts", () => {
         items: [
           {
             sourceItemId: 15,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             itemName: "CEMENTO GRANEL",
             quantityExpected: "100.00",
             quantityReceived: "100.00",
@@ -7348,6 +7487,7 @@ describe("BuildReq - Receipts", () => {
         items: [
           {
             sourceItemId: 31,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             itemName: "VARILLA #4",
             quantityExpected: "15.00",
             quantityReceived: "10.00",
@@ -7421,6 +7561,7 @@ describe("BuildReq - Receipts", () => {
         items: [
           {
             sourceItemId: 31,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             itemName: "VARILLA #4",
             quantityExpected: "50.00",
             quantityReceived: "20.00",
@@ -7441,6 +7582,7 @@ describe("BuildReq - Receipts", () => {
     expect(receiptItems[0]).toEqual(
       expect.objectContaining({
         sourceItemId: 31,
+        warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
         quantityReceived: "20.00",
         closeRemaining: true,
         closeReason: "No se va a recibir",
@@ -7639,6 +7781,7 @@ describe("BuildReq - Receipts", () => {
         items: [
           {
             sourceItemId: 31,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             itemName: "VARILLA #4",
             quantityExpected: "15.00",
             quantityReceived: "16.00",
@@ -7661,6 +7804,7 @@ describe("BuildReq - Receipts", () => {
       expect.arrayContaining([
         expect.objectContaining({
           sourceItemId: 31,
+          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
           quantityExpected: "15.00",
           quantityReceived: "16.00",
         }),
@@ -7845,6 +7989,7 @@ describe("BuildReq - Receipts", () => {
         items: [
           {
             sourceItemId: 15,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             itemName: "SERVICIO MENSUAL",
             quantityExpected: "12.00",
             quantityReceived: "12.00",
@@ -7867,6 +8012,7 @@ describe("BuildReq - Receipts", () => {
       expect.arrayContaining([
         expect.objectContaining({
           sourceItemId: 15,
+          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
           quantityExpected: "12.00",
           quantityReceived: "12.00",
           unitPrice: "1100.00",

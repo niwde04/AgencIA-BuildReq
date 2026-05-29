@@ -189,6 +189,9 @@ export default function Flujos() {
   const [dispatchQuantityByItemId, setDispatchQuantityByItemId] = useState<Record<number, string>>(
     {}
   );
+  const [dispatchWarehouseByItemId, setDispatchWarehouseByItemId] = useState<Record<number, string>>(
+    {}
+  );
   const [directPurchasePaymentMethodByFlowType, setDirectPurchasePaymentMethodByFlowType] =
     useState<Partial<Record<QueueFlowType, DirectPurchasePaymentMethod>>>({});
   const [directPurchaseNotesByFlowType, setDirectPurchaseNotesByFlowType] = useState<
@@ -202,6 +205,9 @@ export default function Flujos() {
   >({});
   const [transferCheckedByItemId, setTransferCheckedByItemId] = useState<
     Record<number, boolean>
+  >({});
+  const [transferWarehouseByItemId, setTransferWarehouseByItemId] = useState<
+    Record<number, string>
   >({});
   const [transferSourceProjectIdByFlowType, setTransferSourceProjectIdByFlowType] = useState<
     Partial<Record<QueueFlowType, string>>
@@ -372,6 +378,16 @@ export default function Flujos() {
       ),
     [transferOriginStock]
   );
+  const transferOriginStockRowsByItemId = useMemo(
+    () =>
+      new Map(
+        (transferOriginStock || []).map((entry: any) => [
+          Number(entry.itemId),
+          entry,
+        ])
+      ),
+    [transferOriginStock]
+  );
 
   const visibleHistoryRows = useMemo(
     () =>
@@ -406,6 +422,11 @@ export default function Flujos() {
       for (const itemId of itemIds) delete next[itemId];
       return next;
     });
+    setDispatchWarehouseByItemId((current) => {
+      const next = { ...current };
+      for (const itemId of itemIds) delete next[itemId];
+      return next;
+    });
     setDirectPurchaseCheckedByItemId((current) => {
       const next = { ...current };
       for (const itemId of itemIds) delete next[itemId];
@@ -417,6 +438,11 @@ export default function Flujos() {
       return next;
     });
     setTransferCheckedByItemId((current) => {
+      const next = { ...current };
+      for (const itemId of itemIds) delete next[itemId];
+      return next;
+    });
+    setTransferWarehouseByItemId((current) => {
       const next = { ...current };
       for (const itemId of itemIds) delete next[itemId];
       return next;
@@ -545,6 +571,7 @@ export default function Flujos() {
     const dispatchRows: Array<{
       row: PendingQueueRow;
       dispatchedQuantity: string;
+      warehouseId: number;
     }> = [];
 
     if (rows.length === 0) {
@@ -553,6 +580,11 @@ export default function Flujos() {
     }
     for (const row of rows) {
       const item = row.item;
+      const defaultWarehouseId =
+        row.project?.defaultWarehouse?.id ?? row.project?.warehouse?.id ?? null;
+      const warehouseId = Number(
+        dispatchWarehouseByItemId[item.id] ?? defaultWarehouseId ?? 0
+      );
       const pendingQuantity = getPendingDispatchQuantity(item);
       const availableQuantity = getAvailableDispatchQuantity(item);
       const dispatchedQuantity =
@@ -565,6 +597,10 @@ export default function Flujos() {
         return;
       }
       if (dispatchedNumber <= 0) continue;
+      if (!warehouseId) {
+        toast.error(`${item.itemName}: seleccione almacén origen`);
+        return;
+      }
       if (dispatchedNumber - pendingQuantity > 0.000001) {
         toast.error(
           `${item.itemName}: la cantidad despachada no puede exceder la cantidad pendiente`
@@ -578,7 +614,7 @@ export default function Flujos() {
         return;
       }
 
-      dispatchRows.push({ row, dispatchedQuantity });
+      dispatchRows.push({ row, dispatchedQuantity, warehouseId });
     }
 
     if (dispatchRows.length === 0) {
@@ -605,9 +641,10 @@ export default function Flujos() {
       for (const [requestId, requestRows] of Array.from(rowsByRequestId.entries())) {
         const result = await warehouseExitBatchMutation.mutateAsync({
           requestId,
-          items: requestRows.map(({ row, dispatchedQuantity }) => ({
+        items: requestRows.map(({ row, dispatchedQuantity, warehouseId }) => ({
             requestItemId: row.item.id,
             dispatchedQuantity,
+            warehouseId,
           })),
           note: dispatchNotesByFlowType[flowType] || undefined,
         });
@@ -719,13 +756,24 @@ export default function Flujos() {
     >();
     for (const row of selectedRows) {
       const sapItemCode = row.item.sapItemCode?.trim();
-      const key = sapItemCode
-        ? `sap:${sapItemCode}`
-        : `name:${String(row.item.itemName || "").trim().toLowerCase()}`;
-      const availableQuantity = parseQuantityValue(
-        transferOriginStockByItemId.get(row.item.id) ?? 0
+      const sourceWarehouseId = Number(
+        transferWarehouseByItemId[row.item.id] ?? 0
       );
+      if (!sourceWarehouseId) {
+        toast.error(`Seleccione almacén origen para ${row.item.itemName}`);
+        return;
+      }
+      const stockRow = transferOriginStockRowsByItemId.get(row.item.id) as any;
+      const warehouseStock = (stockRow?.warehouses ?? []).find(
+        (entry: any) => Number(entry.warehouseId) === sourceWarehouseId
+      );
+      const availableQuantity = parseQuantityValue(warehouseStock?.quantity ?? 0);
       const requestedQuantity = parseQuantityValue(row.item.quantity);
+      const key = `${
+        sapItemCode
+          ? `sap:${sapItemCode}`
+          : `name:${String(row.item.itemName || "").trim().toLowerCase()}`
+      }::${sourceWarehouseId}`;
       const current = requestedTransferStockByKey.get(key) ?? {
         itemName: row.item.itemName,
         availableQuantity,
@@ -759,6 +807,7 @@ export default function Flujos() {
         items: selectedRows.map((row) => ({
           requestId: row.request.id,
           requestItemId: row.item.id,
+          sourceWarehouseId: Number(transferWarehouseByItemId[row.item.id]),
         })),
       });
 
@@ -1109,6 +1158,11 @@ export default function Flujos() {
                             Cant.
                           </th>
                           {canProcessThisFlow && flowType === "traslado_proyecto" && (
+                            <th className="w-56 p-2 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              Almacén origen
+                            </th>
+                          )}
+                          {canProcessThisFlow && flowType === "traslado_proyecto" && (
                             <th className="w-36 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                               Exist. origen
                             </th>
@@ -1116,6 +1170,11 @@ export default function Flujos() {
                           {flowType === "despacho_bodega" && (
                             <th className="w-32 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                               Disponible
+                            </th>
+                          )}
+                          {canProcessThisFlow && flowType === "despacho_bodega" && (
+                            <th className="w-56 p-2 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              Almacén origen
                             </th>
                           )}
                           {canProcessThisFlow && flowType === "compra_directa" && (
@@ -1150,6 +1209,16 @@ export default function Flujos() {
                           const pendingDispatchQuantity = getPendingDispatchQuantity(item);
                           const availableDispatchQuantity = getAvailableDispatchQuantity(item);
                           const hasAvailableStock = availableDispatchQuantity > 0;
+                          const projectWarehouses = (row.project?.warehouses ?? []).filter(
+                            (warehouse: any) => warehouse.isActive
+                          );
+                          const defaultDispatchWarehouseId =
+                            dispatchWarehouseByItemId[item.id] ||
+                            (projectWarehouses.find((warehouse: any) => warehouse.isDefault)?.id
+                              ? String(projectWarehouses.find((warehouse: any) => warehouse.isDefault)?.id)
+                              : projectWarehouses[0]?.id
+                                ? String(projectWarehouses[0].id)
+                                : "");
                           const dispatchInputValue =
                             dispatchQuantityByItemId[item.id] ??
                             getSuggestedDispatchQuantity(item).toFixed(2);
@@ -1160,11 +1229,30 @@ export default function Flujos() {
                           );
                           const projectedStockQuantity =
                             availableDispatchQuantity - selectedDispatchQuantity;
+                          const transferStockRow =
+                            flowType === "traslado_proyecto"
+                              ? (transferOriginStockRowsByItemId.get(item.id) as any)
+                              : null;
+                          const transferWarehouseOptions =
+                            transferStockRow?.warehouses ?? [];
+                          const defaultTransferWarehouseId =
+                            transferWarehouseOptions[0]?.warehouseId
+                              ? String(transferWarehouseOptions[0].warehouseId)
+                              : "";
+                          const selectedTransferWarehouseId =
+                            transferWarehouseByItemId[item.id] ||
+                            defaultTransferWarehouseId;
+                          const selectedTransferWarehouseStock =
+                            transferWarehouseOptions.find(
+                              (entry: any) =>
+                                String(entry.warehouseId) ===
+                                selectedTransferWarehouseId
+                            );
                           const transferOriginQuantity =
                             flowType === "traslado_proyecto" &&
                             selectedTransferSourceProjectId > 0
                               ? parseQuantityValue(
-                                  transferOriginStockByItemId.get(item.id) ?? 0
+                                  selectedTransferWarehouseStock?.quantity ?? 0
                                 )
                               : null;
                           const transferHasEnoughStock =
@@ -1176,6 +1264,7 @@ export default function Flujos() {
                             isReturningQueued ||
                             !selectedTransferSourceProjectId ||
                             transferOriginStockLoading ||
+                            !selectedTransferWarehouseId ||
                             !transferHasEnoughStock;
 
                           return (
@@ -1201,12 +1290,22 @@ export default function Flujos() {
                                   ) : flowType === "traslado_proyecto" ? (
                                     <Checkbox
                                       checked={transferCheckedByItemId[item.id] === true}
-                                      onCheckedChange={(checked) =>
+                                      onCheckedChange={(checked) => {
                                         setTransferCheckedByItemId((current) => ({
                                           ...current,
                                           [item.id]: checked === true,
-                                        }))
-                                      }
+                                        }));
+                                        if (
+                                          checked === true &&
+                                          !transferWarehouseByItemId[item.id] &&
+                                          defaultTransferWarehouseId
+                                        ) {
+                                          setTransferWarehouseByItemId((current) => ({
+                                            ...current,
+                                            [item.id]: defaultTransferWarehouseId,
+                                          }));
+                                        }
+                                      }}
                                       disabled={transferSelectionDisabled}
                                     />
                                   ) : (
@@ -1296,6 +1395,38 @@ export default function Flujos() {
                                 {formatQuantityValue(item.quantity)}
                               </td>
                               {canProcessThisFlow && flowType === "traslado_proyecto" && (
+                                <td className="p-2">
+                                  <Select
+                                    value={selectedTransferWarehouseId || undefined}
+                                    onValueChange={(value) =>
+                                      setTransferWarehouseByItemId((current) => ({
+                                        ...current,
+                                        [item.id]: value,
+                                      }))
+                                    }
+                                    disabled={
+                                      !selectedTransferSourceProjectId ||
+                                      transferOriginStockLoading ||
+                                      transferWarehouseOptions.length === 0
+                                    }
+                                  >
+                                    <SelectTrigger className="h-9">
+                                      <SelectValue placeholder="Seleccione almacén" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {transferWarehouseOptions.map((warehouse: any) => (
+                                        <SelectItem
+                                          key={warehouse.warehouseId}
+                                          value={String(warehouse.warehouseId)}
+                                        >
+                                          {warehouse.displayName}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </td>
+                              )}
+                              {canProcessThisFlow && flowType === "traslado_proyecto" && (
                                 <td className="p-2 text-right font-mono">
                                   {!selectedTransferSourceProjectId ? (
                                     <span className="font-sans text-xs text-muted-foreground">
@@ -1342,6 +1473,33 @@ export default function Flujos() {
                                   >
                                     {formatQuantityValue(availableDispatchQuantity)}
                                   </span>
+                                </td>
+                              )}
+                              {canProcessThisFlow && flowType === "despacho_bodega" && (
+                                <td className="p-2">
+                                  <Select
+                                    value={defaultDispatchWarehouseId || undefined}
+                                    onValueChange={(value) =>
+                                      setDispatchWarehouseByItemId((current) => ({
+                                        ...current,
+                                        [item.id]: value,
+                                      }))
+                                    }
+                                  >
+                                    <SelectTrigger className="h-9">
+                                      <SelectValue placeholder="Seleccione almacén" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {projectWarehouses.map((warehouse: any) => (
+                                        <SelectItem
+                                          key={warehouse.id}
+                                          value={String(warehouse.id)}
+                                        >
+                                          {warehouse.displayName}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
                                 </td>
                               )}
                               {canProcessThisFlow && flowType === "compra_directa" && (

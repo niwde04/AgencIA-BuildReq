@@ -803,6 +803,12 @@ export const transferRequestItems = pgTable(
     id: serial("id").primaryKey(),
     transferRequestId: integer("transferRequestId").notNull(),
     materialRequestItemId: integer("materialRequestItemId"),
+    sourceWarehouseId: integer("sourceWarehouseId").references(
+      () => warehouses.id,
+      {
+        onDelete: "set null",
+      }
+    ),
     itemName: varchar("itemName", { length: 500 }).notNull(),
     sapItemCode: varchar("sapItemCode", { length: 50 }),
     quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull(),
@@ -826,6 +832,9 @@ export const transferRequestItems = pgTable(
   table => ({
     transferRequestIdx: index("tri_transfer_request_idx").on(
       table.transferRequestId
+    ),
+    sourceWarehouseIdx: index("tri_source_warehouse_idx").on(
+      table.sourceWarehouseId
     ),
   })
 );
@@ -922,6 +931,9 @@ export const receiptItems = pgTable(
     id: serial("id").primaryKey(),
     receiptId: integer("receiptId").notNull(),
     sourceItemId: integer("sourceItemId").notNull(),
+    warehouseId: integer("warehouseId").references(() => warehouses.id, {
+      onDelete: "set null",
+    }),
     itemName: varchar("itemName", { length: 500 }).notNull(),
     quantityExpected: decimal("quantityExpected", {
       precision: 12,
@@ -946,6 +958,7 @@ export const receiptItems = pgTable(
   },
   table => ({
     receiptIdx: index("reci_receipt_idx").on(table.receiptId),
+    warehouseIdx: index("reci_warehouse_idx").on(table.warehouseId),
   })
 );
 
@@ -1218,6 +1231,9 @@ export const warehouseExitItems = pgTable(
   {
     id: serial("id").primaryKey(),
     warehouseExitId: integer("warehouseExitId").notNull(),
+    warehouseId: integer("warehouseId").references(() => warehouses.id, {
+      onDelete: "set null",
+    }),
     materialRequestItemId: integer("materialRequestItemId"),
     sapItemCode: varchar("sapItemCode", { length: 50 }).notNull(),
     itemName: varchar("itemName", { length: 500 }).notNull(),
@@ -1229,6 +1245,7 @@ export const warehouseExitItems = pgTable(
   },
   table => ({
     warehouseExitIdx: index("wei_warehouse_exit_idx").on(table.warehouseExitId),
+    warehouseIdx: index("wei_warehouse_idx").on(table.warehouseId),
     requestItemIdx: index("wei_request_item_idx").on(
       table.materialRequestItemId
     ),
@@ -1338,6 +1355,9 @@ export const reverseLogisticsItems = pgTable(
     id: serial("id").primaryKey(),
     reverseLogisticId: integer("reverseLogisticId").notNull(),
     sourceWarehouseExitItemId: integer("sourceWarehouseExitItemId"),
+    warehouseId: integer("warehouseId").references(() => warehouses.id, {
+      onDelete: "set null",
+    }),
     itemName: varchar("itemName", { length: 500 }).notNull(),
     sapItemCode: varchar("sapItemCode", { length: 50 }),
     quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull(),
@@ -1353,6 +1373,7 @@ export const reverseLogisticsItems = pgTable(
     sourceWarehouseExitItemIdx: index("rli_source_warehouse_exit_item_idx").on(
       table.sourceWarehouseExitItemId
     ),
+    warehouseIdx: index("rli_warehouse_idx").on(table.warehouseId),
   })
 );
 
@@ -1419,14 +1440,15 @@ export const warehouses = pgTable(
   {
     id: serial("id").primaryKey(),
     code: varchar("code", { length: 20 }).notNull().unique(),
+    localCode: varchar("localCode", { length: 20 }),
     name: varchar("name", { length: 255 }).notNull(),
     displayName: varchar("displayName", { length: 300 }).notNull().unique(),
     projectId: integer("projectId")
       .references(() => projects.id, {
         onDelete: "set null",
-      })
-      .unique(),
+      }),
     description: text("description"),
+    isDefault: boolean("isDefault").default(false).notNull(),
     isActive: boolean("isActive").default(true).notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
@@ -1435,6 +1457,13 @@ export const warehouses = pgTable(
     codeIdx: index("wh_code_idx").on(table.code),
     displayNameIdx: index("wh_display_name_idx").on(table.displayName),
     projectIdx: index("wh_project_idx").on(table.projectId),
+    projectLocalCodeUnique: uniqueIndex("wh_project_local_code_unique").on(
+      table.projectId,
+      table.localCode
+    ),
+    projectDefaultUnique: uniqueIndex("wh_project_default_unique")
+      .on(table.projectId)
+      .where(sql`${table.projectId} IS NOT NULL AND ${table.isDefault} = true`),
   })
 );
 

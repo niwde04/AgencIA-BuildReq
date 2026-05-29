@@ -85,6 +85,7 @@ const fixedAssetDetailSchema = z.object({
 const receiptItemSchema = z
   .object({
     sourceItemId: z.number(),
+    warehouseId: z.number().int().positive().optional(),
     itemName: z.string().min(1),
     quantityExpected: z.string().min(1),
     quantityReceived: z.string().min(1),
@@ -169,6 +170,28 @@ function canCloseTransferReceiptLine(
     destinationProjectId !== null &&
     user.assignedProjectId === destinationProjectId
   );
+}
+
+async function assertReceiptWarehouses(
+  projectId: number,
+  items: Array<{ warehouseId?: number; quantityReceived: string; itemName: string }>
+) {
+  const activeWarehouses = await db.listProjectWarehouses(projectId, {
+    isActive: true,
+  });
+  const activeWarehouseIds = new Set(
+    activeWarehouses.map(warehouse => warehouse.id)
+  );
+
+  for (const item of items) {
+    if (Number(item.quantityReceived ?? 0) <= 0) continue;
+    if (!item.warehouseId || !activeWarehouseIds.has(item.warehouseId)) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `Seleccione un almacén activo del proyecto para ${item.itemName}`,
+      });
+    }
+  }
 }
 
 export const receiptsRouter = router({
@@ -340,6 +363,7 @@ export const receiptsRouter = router({
               : 0;
           return {
             sourceItemId: item.sourceItemId,
+            warehouseId: item.warehouseId,
             itemName: item.itemName,
             quantityExpected: item.quantityExpected,
             quantityReceived: item.quantityReceived,
@@ -556,6 +580,12 @@ export const receiptsRouter = router({
           }
 
           const requestedQuantity = Number(item.quantityReceived ?? 0);
+          if (requestedQuantity > 0 && !item.warehouseId) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Seleccione almacén destino para ${sourceItem.itemName}`,
+            });
+          }
           if (item.isFixedAsset === true && sourceItem.isFixedAsset !== true) {
             throw new TRPCError({
               code: "BAD_REQUEST",
@@ -660,6 +690,12 @@ export const receiptsRouter = router({
           const closeQuantity = item.closeRemaining
             ? Math.max(pendingQuantity - requestedQuantity, 0)
             : 0;
+          if (requestedQuantity > 0 && !item.warehouseId) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Seleccione almacén destino para ${sourceItem.itemName}`,
+            });
+          }
 
           if (!Number.isFinite(requestedQuantity) || requestedQuantity < 0) {
             throw new TRPCError({
@@ -718,6 +754,8 @@ export const receiptsRouter = router({
       const isFiscalDocument =
         input.sourceType === "purchase_order" &&
         input.isFiscalDocument !== false;
+
+      await assertReceiptWarehouses(input.projectId, input.items);
 
       return db.registerReceipt(
         {
@@ -781,6 +819,7 @@ export const receiptsRouter = router({
 
           return {
             sourceItemId: item.sourceItemId,
+            warehouseId: item.warehouseId,
             itemName: item.itemName,
             quantityExpected: item.quantityExpected,
             quantityReceived: item.quantityReceived,

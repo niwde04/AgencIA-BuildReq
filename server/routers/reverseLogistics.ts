@@ -5,6 +5,7 @@ import { TRPCError } from "@trpc/server";
 
 const returnItemSchema = z.object({
   sourceWarehouseExitItemId: z.number().optional(),
+  warehouseId: z.number().int().positive().optional(),
   itemName: z.string().min(1, "El nombre del ítem es obligatorio").max(500),
   sapItemCode: z.string().optional(),
   quantity: z.string().min(1, "La cantidad es obligatoria"),
@@ -84,6 +85,9 @@ export const reverseLogisticsRouter = router({
       }
 
       let supplierNameFromReceipt: string | undefined;
+      let sourceReceiptDetail:
+        | Awaited<ReturnType<typeof db.getReceiptById>>
+        | undefined;
 
       if (input.returnType === "devolucion_proveedor") {
         if (!input.sourceReceiptId) {
@@ -94,8 +98,8 @@ export const reverseLogisticsRouter = router({
           });
         }
 
-        const sourceReceipt = await db.getReceiptById(input.sourceReceiptId);
-        if (!sourceReceipt) {
+        sourceReceiptDetail = await db.getReceiptById(input.sourceReceiptId);
+        if (!sourceReceiptDetail) {
           throw new TRPCError({
             code: "NOT_FOUND",
             message: "Recepción seleccionada no encontrada",
@@ -103,8 +107,8 @@ export const reverseLogisticsRouter = router({
         }
 
         if (
-          sourceReceipt.receipt.sourceType !== "purchase_order" ||
-          sourceReceipt.receipt.status !== "completa"
+          sourceReceiptDetail.receipt.sourceType !== "purchase_order" ||
+          sourceReceiptDetail.receipt.status !== "completa"
         ) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -113,7 +117,7 @@ export const reverseLogisticsRouter = router({
           });
         }
 
-        if (sourceReceipt.receipt.projectId !== input.sourceProjectId) {
+        if (sourceReceiptDetail.receipt.projectId !== input.sourceProjectId) {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message:
@@ -122,7 +126,7 @@ export const reverseLogisticsRouter = router({
         }
 
         const purchaseOrderDetail = await db.getPurchaseOrderById(
-          sourceReceipt.receipt.sourceId
+          sourceReceiptDetail.receipt.sourceId
         );
         if (!purchaseOrderDetail?.supplier) {
           throw new TRPCError({
@@ -153,6 +157,67 @@ export const reverseLogisticsRouter = router({
       }
 
       const { items, ...returnData } = input;
+      if (
+        input.returnType === "devolucion_proveedor" ||
+        input.returnType === "devolucion_bodega_central" ||
+        input.returnType === "devolucion_bodega_proyecto" ||
+        input.returnType === "devolucion_entre_proyectos"
+      ) {
+        const missingWarehouseItem = items.find(item => !item.warehouseId);
+        if (
+          missingWarehouseItem &&
+          !(
+            input.returnType === "devolucion_bodega_proyecto" &&
+            input.sourceWarehouseExitId
+          )
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Seleccione almacén para ${missingWarehouseItem.itemName}`,
+          });
+        }
+      }
+      if (
+        input.returnType === "devolucion_bodega_central" ||
+        input.returnType === "devolucion_entre_proyectos" ||
+        (input.returnType === "devolucion_bodega_proyecto" &&
+          !input.sourceWarehouseExitId)
+      ) {
+        const activeWarehouses = await db.listProjectWarehouses(
+          input.sourceProjectId,
+          { isActive: true }
+        );
+        const activeWarehouseIds = new Set(
+          activeWarehouses.map((warehouse) => warehouse.id)
+        );
+        const invalidWarehouseItem = items.find(
+          (item) => !item.warehouseId || !activeWarehouseIds.has(item.warehouseId)
+        );
+        if (invalidWarehouseItem) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `El almacén seleccionado para ${invalidWarehouseItem.itemName} no pertenece al proyecto origen o no está activo`,
+          });
+        }
+      }
+      if (input.returnType === "devolucion_proveedor" && sourceReceiptDetail) {
+        const receiptWarehouseIds = new Set(
+          sourceReceiptDetail.items
+            .map((item: any) => item.warehouseId)
+            .filter((warehouseId: unknown): warehouseId is number =>
+              typeof warehouseId === "number"
+            )
+        );
+        const invalidWarehouseItem = items.find(
+          (item) => !item.warehouseId || !receiptWarehouseIds.has(item.warehouseId)
+        );
+        if (invalidWarehouseItem) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `El almacén de ${invalidWarehouseItem.itemName} debe venir de la recepción seleccionada`,
+          });
+        }
+      }
       const normalizedReturnData =
         input.returnType === "devolucion_proveedor"
           ? {

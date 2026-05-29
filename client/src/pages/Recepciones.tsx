@@ -438,6 +438,7 @@ export default function Recepciones() {
   const [receiptDate, setReceiptDate] = useState(todayDateValue());
   const [emissionDeadline, setEmissionDeadline] = useState("");
   const [receivedMap, setReceivedMap] = useState<Record<number, string>>({});
+  const [warehouseByItemId, setWarehouseByItemId] = useState<Record<number, string>>({});
   const [priceMap, setPriceMap] = useState<Record<number, string>>({});
   const [assetDrafts, setAssetDrafts] = useState<
     Record<number, ReceiptAssetDraft>
@@ -566,6 +567,7 @@ export default function Recepciones() {
     setReceiptDate(todayDateValue());
     setEmissionDeadline("");
     setReceivedMap({});
+    setWarehouseByItemId({});
     setPriceMap({});
     setAssetDrafts({});
     setTransferClosureDrafts({});
@@ -588,6 +590,28 @@ export default function Recepciones() {
     isContractPurchaseOrder
       ? Math.max(Number(item.quantity ?? item.quantityExpected ?? 0), 0)
       : getPendingQuantity(item);
+  const sourceProjectId =
+    sourceType === "purchase_order"
+      ? purchaseOrderDetail?.purchaseOrder.projectId
+      : transferDetail?.transferRequest?.destinationType === "proyecto"
+        ? transferDetail.transferRequest.destinationProjectId
+        : undefined;
+  const { data: receiptWarehouses } = trpc.warehouses.list.useQuery(
+    {
+      projectId: sourceProjectId || 0,
+      isActive: true,
+    },
+    {
+      enabled: dialogOpen && Boolean(sourceProjectId),
+    }
+  );
+  const defaultReceiptWarehouse = useMemo(
+    () =>
+      (receiptWarehouses ?? []).find((warehouse: any) => warehouse.isDefault) ??
+      (receiptWarehouses ?? [])[0] ??
+      null,
+    [receiptWarehouses]
+  );
 
   useEffect(() => {
     if (
@@ -616,6 +640,7 @@ export default function Recepciones() {
   useEffect(() => {
     if (!sourceItems.length) {
       setReceivedMap({});
+      setWarehouseByItemId({});
       setPriceMap({});
       setAssetDrafts({});
       return;
@@ -623,6 +648,7 @@ export default function Recepciones() {
 
     const nextMap: Record<number, string> = {};
     const nextPriceMap: Record<number, string> = {};
+    const nextWarehouseMap: Record<number, string> = {};
     const draftItemsBySourceId = new Map(
       editingDraftReceiptDetail?.receipt.status === "borrador" &&
       String(editingDraftReceiptDetail.receipt.sourceId) === sourceId
@@ -644,8 +670,12 @@ export default function Recepciones() {
       nextPriceMap[item.id] = String(
         draftItem?.unitPrice ?? (item as any).unitPrice ?? "0.00"
       );
+      nextWarehouseMap[item.id] = String(
+        draftItem?.warehouseId ?? defaultReceiptWarehouse?.id ?? ""
+      );
     }
     setReceivedMap(nextMap);
+    setWarehouseByItemId(nextWarehouseMap);
     setPriceMap(nextPriceMap);
     setAssetDrafts(current => {
       const nextDrafts: Record<number, ReceiptAssetDraft> = {};
@@ -674,7 +704,13 @@ export default function Recepciones() {
       }
       return nextDrafts;
     });
-  }, [editingDraftReceiptDetail, sourceId, sourceItems, sourceType]);
+  }, [
+    defaultReceiptWarehouse?.id,
+    editingDraftReceiptDetail,
+    sourceId,
+    sourceItems,
+    sourceType,
+  ]);
 
   const uploadPendingReceiptAttachmentMutation =
     trpc.attachments.upload.useMutation();
@@ -808,13 +844,6 @@ export default function Recepciones() {
       ),
     [transfers]
   );
-
-  const sourceProjectId =
-    sourceType === "purchase_order"
-      ? purchaseOrderDetail?.purchaseOrder.projectId
-      : transferDetail?.transferRequest?.destinationType === "proyecto"
-        ? transferDetail.transferRequest.destinationProjectId
-        : undefined;
 
   const canCloseTransferLines =
     sourceType === "transfer" &&
@@ -1090,6 +1119,9 @@ export default function Recepciones() {
 
           return {
             sourceItemId: sourceItem.id,
+            warehouseId: warehouseByItemId[sourceItem.id]
+              ? Number(warehouseByItemId[sourceItem.id])
+              : undefined,
             itemName: sourceItem.itemName,
             quantityExpected: String(getReceivableQuantity(sourceItem)),
             quantityReceived: isFixedAsset
@@ -1251,6 +1283,9 @@ export default function Recepciones() {
 
       return {
         sourceItemId: item.id,
+        warehouseId: warehouseByItemId[item.id]
+          ? Number(warehouseByItemId[item.id])
+          : undefined,
         itemName: item.itemName,
         quantityExpected: String(getReceivableQuantity(item)),
         quantityReceived: receivedMap[item.id] || "0",
@@ -1279,6 +1314,13 @@ export default function Recepciones() {
     const hasPositiveReceipt = receiptItems.some(
       item => Number(item.quantityReceived || 0) > 0
     );
+    const missingWarehouse = receiptItems.find(
+      item => Number(item.quantityReceived || 0) > 0 && !item.warehouseId
+    );
+    if (missingWarehouse) {
+      toast.error(`Seleccione almacén para ${missingWarehouse.itemName}`);
+      return;
+    }
     const hasTransferClosure = receiptItems.some(item => item.closeRemaining);
 
     if (!hasPositiveReceipt && !hasTransferClosure) {
@@ -2494,7 +2536,7 @@ export default function Recepciones() {
               </section>
 
               <div className="overflow-x-auto rounded-2xl border border-border/70">
-                <table className="w-full min-w-[980px] text-sm">
+                <table className="w-full min-w-[1120px] text-sm">
                   <thead>
                     <tr className="border-b border-border/70 bg-muted/20">
                       <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
@@ -2515,6 +2557,9 @@ export default function Recepciones() {
                       <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                         Recibir ahora
                       </th>
+                      <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                        Almacén
+                      </th>
                       <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                         Acción
                       </th>
@@ -2525,7 +2570,7 @@ export default function Recepciones() {
                       <tr>
                         <td
                           className="p-4 text-sm text-muted-foreground"
-                          colSpan={7}
+                          colSpan={8}
                         >
                           Selecciona una orden de compra o traslado para cargar
                           sus ítems.
@@ -2535,7 +2580,7 @@ export default function Recepciones() {
                       <tr>
                         <td
                           className="p-4 text-sm text-muted-foreground"
-                          colSpan={7}
+                          colSpan={8}
                         >
                           Cargando detalle del documento...
                         </td>
@@ -2544,7 +2589,7 @@ export default function Recepciones() {
                       <tr>
                         <td
                           className="p-4 text-sm text-muted-foreground"
-                          colSpan={7}
+                          colSpan={8}
                         >
                           Este documento no tiene ítems pendientes por recibir.
                         </td>
@@ -2652,6 +2697,35 @@ export default function Recepciones() {
                                   </p>
                                 ) : null}
                               </td>
+                              <td className="p-4">
+                                <Select
+                                  value={warehouseByItemId[item.id] || undefined}
+                                  onValueChange={value =>
+                                    setWarehouseByItemId(current => ({
+                                      ...current,
+                                      [item.id]: value,
+                                    }))
+                                  }
+                                  disabled={
+                                    !receiptWarehouses?.length ||
+                                    registerMutation.isPending
+                                  }
+                                >
+                                  <SelectTrigger className="min-w-48">
+                                    <SelectValue placeholder="Seleccione almacén" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {(receiptWarehouses ?? []).map((warehouse: any) => (
+                                      <SelectItem
+                                        key={warehouse.id}
+                                        value={String(warehouse.id)}
+                                      >
+                                        {warehouse.displayName}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </td>
                               <td className="p-4 text-right">
                                 {sourceType === "purchase_order" &&
                                 !isContractPurchaseOrder &&
@@ -2739,7 +2813,7 @@ export default function Recepciones() {
                               key={`${item.id}-asset`}
                               className="border-b border-border/70 bg-muted/10 last:border-0"
                             >
-                              <td colSpan={7} className="p-4 pt-0">
+                              <td colSpan={8} className="p-4 pt-0">
                                 <div className="space-y-4 rounded-xl border border-border/70 bg-background p-3">
                                   <div className="flex flex-wrap items-center gap-4">
                                     <label className="flex items-center gap-2 text-sm font-medium">

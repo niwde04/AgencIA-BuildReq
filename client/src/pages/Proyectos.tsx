@@ -9,6 +9,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -21,6 +28,7 @@ import {
   Pencil,
   Plus,
   Save,
+  Search,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -36,9 +44,26 @@ type ProjectRecord = {
   endDate?: Date | string | null;
   sapProjectCode?: string | null;
   subprojectsCount?: number;
+  warehouseCount?: number;
+  totalStock?: string | null;
   warehouse?: {
     displayName: string;
   } | null;
+  warehouses?: WarehouseRecord[];
+  defaultWarehouse?: WarehouseRecord | null;
+};
+
+type WarehouseRecord = {
+  id: number;
+  code: string;
+  localCode?: string | null;
+  name: string;
+  displayName: string;
+  description?: string | null;
+  isDefault: boolean;
+  isActive: boolean;
+  inventoryRows?: number;
+  uniqueItems?: number;
 };
 
 type SubprojectRecord = {
@@ -72,6 +97,13 @@ type SubprojectFormState = {
   isActive: boolean;
 };
 
+type WarehouseFormState = {
+  localCode: string;
+  name: string;
+  description: string;
+  isDefault: boolean;
+};
+
 const EMPTY_PROJECT_FORM: ProjectFormState = {
   code: "",
   name: "",
@@ -90,6 +122,13 @@ const EMPTY_SUBPROJECT_FORM: SubprojectFormState = {
   startDate: "",
   endDate: "",
   isActive: true,
+};
+
+const EMPTY_WAREHOUSE_FORM: WarehouseFormState = {
+  localCode: "",
+  name: "",
+  description: "",
+  isDefault: false,
 };
 
 function formatDateInput(value?: Date | string | null) {
@@ -164,10 +203,19 @@ export default function Proyectos() {
     useState<ProjectFormState>(EMPTY_PROJECT_FORM);
   const [subprojectForm, setSubprojectForm] =
     useState<SubprojectFormState>(EMPTY_SUBPROJECT_FORM);
+  const [warehouseForm, setWarehouseForm] =
+    useState<WarehouseFormState>(EMPTY_WAREHOUSE_FORM);
   const [editingSubproject, setEditingSubproject] =
     useState<SubprojectRecord | null>(null);
+  const [projectSearch, setProjectSearch] = useState("");
+  const [projectStatusFilter, setProjectStatusFilter] = useState("all");
 
   const isAdmin = user?.role === "admin";
+  const userRole = (user as any)?.buildreqRole || "";
+  const canManageWarehouses =
+    user?.role === "admin" ||
+    userRole === "jefe_bodega_central" ||
+    userRole === "administracion_central";
   const selectedProjectId = selectedProject?.id ?? 0;
 
   const {
@@ -180,11 +228,44 @@ export default function Proyectos() {
       { projectId: selectedProjectId },
       { enabled: detailDialogOpen && selectedProjectId > 0 }
     );
+  const selectedProjectWarehouses = useMemo(
+    () => selectedProject?.warehouses ?? [],
+    [selectedProject]
+  );
 
   const activeProjectsCount = useMemo(
     () => (projects ?? []).filter((project: any) => project.status === "activo").length,
     [projects]
   );
+  const filteredProjects = useMemo(() => {
+    const normalizedSearch = projectSearch.trim().toLowerCase();
+
+    return (projects ?? []).filter((project: ProjectRecord) => {
+      const matchesStatus =
+        projectStatusFilter === "all" || project.status === projectStatusFilter;
+      if (!matchesStatus) return false;
+      if (!normalizedSearch) return true;
+
+      const searchableText = [
+        project.code,
+        project.name,
+        project.sapProjectCode,
+        project.warehouse?.displayName,
+        project.defaultWarehouse?.displayName,
+        ...(project.warehouses ?? []).flatMap((warehouse) => [
+          warehouse.code,
+          warehouse.localCode,
+          warehouse.name,
+          warehouse.displayName,
+        ]),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return searchableText.includes(normalizedSearch);
+    });
+  }, [projectSearch, projectStatusFilter, projects]);
   const hasSubprojectDraft = useMemo(
     () =>
       Boolean(
@@ -234,6 +315,43 @@ export default function Proyectos() {
             }
           : current
       );
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const refreshProjectWarehouses = async () => {
+    await Promise.all([
+      utils.projects.list.invalidate(),
+      utils.warehouses.list.invalidate(),
+    ]);
+    if (!selectedProjectId) return;
+    const refreshed = await utils.projects.getById.fetch({
+      id: selectedProjectId,
+    });
+    if (refreshed) setSelectedProject(refreshed as ProjectRecord);
+  };
+
+  const createWarehouseMutation = trpc.warehouses.create.useMutation({
+    onSuccess: async () => {
+      toast.success("Almacén creado");
+      setWarehouseForm(EMPTY_WAREHOUSE_FORM);
+      await refreshProjectWarehouses();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const updateWarehouseMutation = trpc.warehouses.update.useMutation({
+    onSuccess: async () => {
+      toast.success("Almacén actualizado");
+      await refreshProjectWarehouses();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const setDefaultWarehouseMutation = trpc.warehouses.setDefault.useMutation({
+    onSuccess: async () => {
+      toast.success("Almacén principal actualizado");
+      await refreshProjectWarehouses();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -501,6 +619,41 @@ export default function Proyectos() {
         )}
       </div>
 
+      {!projectsError && (
+        <div className="grid gap-3 md:grid-cols-[minmax(280px,1fr)_220px] md:items-end">
+          <div className="relative min-w-0">
+            <Label className="mb-1 block text-xs font-medium text-muted-foreground">
+              Buscar proyecto
+            </Label>
+            <Search className="absolute left-3 top-[calc(50%+10px)] h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={projectSearch}
+              onChange={(event) => setProjectSearch(event.target.value)}
+              placeholder="Buscar por código o nombre..."
+              className="h-9 pl-9"
+            />
+          </div>
+          <div className="min-w-0">
+            <Label className="mb-1 block text-xs font-medium text-muted-foreground">
+              Estado
+            </Label>
+            <Select
+              value={projectStatusFilter}
+              onValueChange={setProjectStatusFilter}
+            >
+              <SelectTrigger className="h-9 w-full">
+                <SelectValue placeholder="Estado" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="activo">Activos</SelectItem>
+                <SelectItem value="inactivo">Inactivos</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      )}
+
       {projectsError ? (
         <Card>
           <CardContent className="p-8 text-center">
@@ -530,9 +683,21 @@ export default function Proyectos() {
             <p className="text-muted-foreground">No hay proyectos registrados</p>
           </CardContent>
         </Card>
+      ) : filteredProjects.length === 0 ? (
+        <Card>
+          <CardContent className="p-8 text-center">
+            <Search className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
+            <p className="font-medium text-foreground">
+              No se encontraron proyectos
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Ajusta el texto de búsqueda o cambia el estado seleccionado.
+            </p>
+          </CardContent>
+        </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {(projects || []).map((project: ProjectRecord) => {
+          {filteredProjects.map((project: ProjectRecord) => {
             const isProjectActive = project.status === "activo";
             const dateRange = formatDateRange(project.startDate, project.endDate);
 
@@ -612,7 +777,8 @@ export default function Proyectos() {
 
       {projects && (
         <p className="text-xs text-muted-foreground text-center">
-          {activeProjectsCount} proyectos activos
+          {filteredProjects.length} de {projects.length} proyectos mostrados ·{" "}
+          {activeProjectsCount} activos
         </p>
       )}
 
@@ -623,10 +789,11 @@ export default function Proyectos() {
           if (!open) {
             setSelectedProject(null);
             resetSubprojectForm();
+            setWarehouseForm(EMPTY_WAREHOUSE_FORM);
           }
         }}
       >
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] sm:max-w-6xl xl:max-w-7xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {selectedProject
@@ -771,6 +938,192 @@ export default function Proyectos() {
                   <DetailRow label="Código SAP" value={selectedProject.sapProjectCode} />
                 </div>
               )}
+
+              <div className="border-t pt-4 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-semibold">Almacenes</h2>
+                    <p className="text-xs text-muted-foreground">
+                      Inventario operativo separado dentro del proyecto.
+                    </p>
+                  </div>
+                  <Badge variant="outline">
+                    {selectedProject.warehouseCount ?? selectedProjectWarehouses.length}
+                  </Badge>
+                </div>
+
+                <div className="rounded-md border">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/30">
+                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Código
+                          </th>
+                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Almacén
+                          </th>
+                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Estado
+                          </th>
+                          {canManageWarehouses && (
+                            <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Acciones
+                            </th>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedProjectWarehouses.length === 0 ? (
+                          <tr>
+                            <td
+                              className="p-4 text-sm text-muted-foreground"
+                              colSpan={canManageWarehouses ? 4 : 3}
+                            >
+                              Este proyecto todavía no tiene almacenes.
+                            </td>
+                          </tr>
+                        ) : (
+                          selectedProjectWarehouses.map((warehouse) => (
+                            <tr key={warehouse.id} className="border-b last:border-0">
+                              <td className="p-3 font-mono text-xs">
+                                {warehouse.localCode || warehouse.code}
+                              </td>
+                              <td className="p-3">
+                                <div className="font-medium">{warehouse.name}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  {warehouse.displayName}
+                                </div>
+                              </td>
+                              <td className="p-3">
+                                <div className="flex flex-wrap gap-1">
+                                  {warehouse.isDefault && (
+                                    <Badge variant="outline">Principal</Badge>
+                                  )}
+                                  <Badge variant="secondary">
+                                    {warehouse.isActive ? "Activo" : "Inactivo"}
+                                  </Badge>
+                                </div>
+                              </td>
+                              {canManageWarehouses && (
+                                <td className="p-3">
+                                  <div className="flex justify-end gap-2">
+                                    {!warehouse.isDefault && warehouse.isActive && (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() =>
+                                          setDefaultWarehouseMutation.mutate({
+                                            id: warehouse.id,
+                                          })
+                                        }
+                                      >
+                                        Principal
+                                      </Button>
+                                    )}
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={warehouse.isDefault}
+                                      onClick={() =>
+                                        updateWarehouseMutation.mutate({
+                                          id: warehouse.id,
+                                          isActive: !warehouse.isActive,
+                                        })
+                                      }
+                                    >
+                                      {warehouse.isActive ? "Desactivar" : "Activar"}
+                                    </Button>
+                                  </div>
+                                </td>
+                              )}
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {canManageWarehouses && (
+                  <div className="rounded-md border p-3 space-y-3">
+                    <h3 className="text-sm font-semibold">Nuevo almacén</h3>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Código local *</Label>
+                        <Input
+                          value={warehouseForm.localCode}
+                          onChange={(e) =>
+                            setWarehouseForm((form) => ({
+                              ...form,
+                              localCode: e.target.value,
+                            }))
+                          }
+                          placeholder="EJ. MAT, HERR, GENERAL"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Nombre *</Label>
+                        <Input
+                          value={warehouseForm.name}
+                          onChange={(e) =>
+                            setWarehouseForm((form) => ({
+                              ...form,
+                              name: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+                    <Textarea
+                      value={warehouseForm.description}
+                      onChange={(e) =>
+                        setWarehouseForm((form) => ({
+                          ...form,
+                          description: e.target.value,
+                        }))
+                      }
+                      rows={2}
+                      placeholder="Descripción u observaciones del almacén"
+                    />
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <label className="flex items-center gap-2 text-sm">
+                        <Switch
+                          checked={warehouseForm.isDefault}
+                          onCheckedChange={(checked) =>
+                            setWarehouseForm((form) => ({
+                              ...form,
+                              isDefault: checked,
+                            }))
+                          }
+                        />
+                        Marcar como principal
+                      </label>
+                      <Button
+                        onClick={() => {
+                          if (!selectedProject) return;
+                          if (!warehouseForm.localCode.trim() || !warehouseForm.name.trim()) {
+                            toast.error("Ingrese código y nombre del almacén");
+                            return;
+                          }
+                          createWarehouseMutation.mutate({
+                            projectId: selectedProject.id,
+                            localCode: warehouseForm.localCode,
+                            name: warehouseForm.name,
+                            description:
+                              warehouseForm.description.trim() || undefined,
+                            isDefault: warehouseForm.isDefault,
+                          });
+                        }}
+                        disabled={createWarehouseMutation.isPending}
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        Crear almacén
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               <div className="border-t pt-4 space-y-4">
                 <div className="flex items-center justify-between gap-3">

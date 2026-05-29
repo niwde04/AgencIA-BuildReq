@@ -67,6 +67,7 @@ export const openingBalancesRouter = router({
     .input(
       z.object({
         projectId: z.number().int().positive(),
+        warehouseId: z.number().int().positive(),
         openingDate: z.string().optional(),
         notes: z.string().trim().max(2000).optional(),
         items: z.array(openingBalanceItemSchema).min(1),
@@ -83,6 +84,7 @@ export const openingBalancesRouter = router({
       return db.createOpeningBalance(
         {
           projectId: input.projectId,
+          warehouseId: input.warehouseId,
           createdById: ctx.user.id,
           openingDate: input.openingDate ? new Date(input.openingDate) : new Date(),
           notes: input.notes,

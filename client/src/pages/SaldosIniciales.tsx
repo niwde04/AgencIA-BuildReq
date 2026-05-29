@@ -13,14 +13,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Eye, Package, Plus, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Check, ChevronsUpDown, Eye, Package, Plus, Search, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 type OpeningBalanceItemRow = {
@@ -39,12 +45,217 @@ const EMPTY_ROW: OpeningBalanceItemRow = {
   notes: "",
 };
 
+const UNITS = [
+  { value: "und", label: "Unidades (und)" },
+  { value: "m", label: "Metros (m)" },
+  { value: "m2", label: "Metros cuadrados (m2)" },
+  { value: "m3", label: "Metros cubicos (m3)" },
+  { value: "ml", label: "Metros lineales (ml)" },
+  { value: "kg", label: "Kilogramos (kg)" },
+  { value: "ton", label: "Toneladas (ton)" },
+  { value: "lb", label: "Libras (lb)" },
+  { value: "gal", label: "Galones (gal)" },
+  { value: "lt", label: "Litros (lt)" },
+  { value: "saco", label: "Sacos" },
+  { value: "bolsa", label: "Bolsas" },
+  { value: "rollo", label: "Rollos" },
+  { value: "lamina", label: "Laminas" },
+  { value: "varilla", label: "Varillas" },
+  { value: "tubo", label: "Tubos" },
+  { value: "pieza", label: "Piezas" },
+  { value: "par", label: "Pares" },
+  { value: "caja", label: "Cajas" },
+  { value: "cubeta", label: "Cubetas" },
+  { value: "quintal", label: "Quintales (qq)" },
+  { value: "pie2", label: "Pies cuadrados (ft2)" },
+  { value: "plg", label: "Pulgadas (plg)" },
+  { value: "viaje", label: "Viajes" },
+  { value: "global", label: "Global" },
+];
+
+function formatProjectLabel(project: any | null | undefined) {
+  if (!project) return "Seleccione proyecto";
+  return `${project.code} - ${project.name}`;
+}
+
+function formatWarehouseLabel(warehouse: any | null | undefined) {
+  if (!warehouse) return "Seleccione almacén";
+  const localCode = warehouse.localCode || warehouse.code;
+  if (localCode && warehouse.name) return `${localCode} - ${warehouse.name}`;
+  return warehouse.displayName || warehouse.name || warehouse.code || "Seleccione almacén";
+}
+
+function SapItemSearchInput({
+  value,
+  disabled,
+  resolving,
+  onChange,
+  onSelect,
+  onResolve,
+}: {
+  value: string;
+  disabled?: boolean;
+  resolving: boolean;
+  onChange: (value: string) => void;
+  onSelect: (sapItemCode: string, itemName: string) => void;
+  onResolve: () => void;
+}) {
+  const [search, setSearch] = useState(value);
+  const [open, setOpen] = useState(false);
+  const trimmedSearch = search.trim();
+  const { data: results, isFetching } = trpc.requestItems.searchSapCatalog.useQuery(
+    { search: trimmedSearch },
+    { enabled: trimmedSearch.length >= 2 }
+  );
+
+  useEffect(() => {
+    setSearch(value);
+  }, [value]);
+
+  const hasSearch = trimmedSearch.length >= 2;
+  const hasResults = Boolean(results?.length);
+
+  return (
+    <Popover open={open && hasSearch} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setSearch(nextValue);
+              onChange(nextValue);
+              setOpen(nextValue.trim().length >= 2);
+            }}
+            onFocus={() => setOpen(trimmedSearch.length >= 2)}
+            onBlur={() => {
+              window.setTimeout(() => setOpen(false), 120);
+              if (trimmedSearch && !hasResults && !isFetching) onResolve();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                onResolve();
+                setOpen(false);
+              }
+            }}
+            placeholder={resolving ? "Buscando..." : "Buscar código o descripción"}
+            className="pl-9"
+            disabled={disabled || resolving}
+          />
+        </div>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="max-h-[280px] w-[var(--radix-popover-trigger-width)] overflow-y-auto p-0"
+        onOpenAutoFocus={(event) => event.preventDefault()}
+      >
+        {isFetching ? (
+          <div className="p-3 text-sm text-muted-foreground">Buscando...</div>
+        ) : hasResults ? (
+          <div className="py-1">
+            {results?.map((item: any) => (
+              <button
+                key={item.id}
+                type="button"
+                className="flex w-full items-start gap-3 border-b border-border px-3 py-2 text-left transition-colors last:border-0 hover:bg-muted/60"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onSelect(item.itemCode, item.description);
+                  setSearch(item.itemCode);
+                  setOpen(false);
+                }}
+              >
+                <span className="shrink-0 font-mono text-xs font-semibold text-primary">
+                  {item.itemCode}
+                </span>
+                <span className="min-w-0 text-xs leading-snug text-foreground">
+                  {item.description}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="p-3 text-sm text-muted-foreground">
+            Sin resultados por código o descripción.
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function UnitCombobox({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedUnit = UNITS.find((unit) => unit.value === value);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="h-10 w-full justify-between px-3 font-normal"
+        >
+          <span className={`truncate ${value ? "" : "text-muted-foreground"}`}>
+            {selectedUnit?.label || value || "Seleccione unidad"}
+          </span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[260px] p-0">
+        <Command>
+          <CommandInput placeholder="Buscar unidad..." />
+          <CommandList>
+            <CommandEmpty>No se encontraron unidades.</CommandEmpty>
+            <CommandGroup>
+              {UNITS.map((unit) => {
+                const selected = value === unit.value;
+
+                return (
+                  <CommandItem
+                    key={unit.value}
+                    value={`${unit.value} ${unit.label}`}
+                    onSelect={() => {
+                      onChange(unit.value);
+                      setOpen(false);
+                    }}
+                  >
+                    <Check
+                      className={`h-4 w-4 ${
+                        selected ? "opacity-100" : "opacity-0"
+                      }`}
+                    />
+                    <span>{unit.label}</span>
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export default function SaldosIniciales() {
   const utils = trpc.useUtils();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [resolvingSapIndex, setResolvingSapIndex] = useState<number | null>(null);
+  const [projectComboboxOpen, setProjectComboboxOpen] = useState(false);
+  const [warehouseComboboxOpen, setWarehouseComboboxOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
+  const [warehouseId, setWarehouseId] = useState("");
   const [openingDate, setOpeningDate] = useState(
     new Date().toISOString().slice(0, 10)
   );
@@ -64,32 +275,38 @@ export default function SaldosIniciales() {
     { enabled: Boolean(selectedId) }
   );
 
-  const projectsWithOpeningBalanceIds = useMemo(
+  const warehousesWithOpeningBalanceIds = useMemo(
     () =>
       new Set(
-        (balances ?? []).map((entry: any) => entry.openingBalance.projectId)
+        (balances ?? []).map((entry: any) => entry.openingBalance.warehouseId)
       ),
     [balances]
   );
 
   const availableProjects = useMemo(() => {
     return (projects ?? []).filter(
-      (project: any) => project.warehouse && project.status === "activo"
+      (project: any) =>
+        project.status === "activo" &&
+        (project.warehouses ?? []).some((warehouse: any) => warehouse.isActive)
     );
   }, [projects]);
 
   const selectableProjectsCount = useMemo(
     () =>
       availableProjects.filter(
-        (project: any) => !projectsWithOpeningBalanceIds.has(project.id)
+        (project: any) =>
+          (project.warehouses ?? []).some(
+            (warehouse: any) =>
+              warehouse.isActive && !warehousesWithOpeningBalanceIds.has(warehouse.id)
+          )
       ).length,
-    [availableProjects, projectsWithOpeningBalanceIds]
+    [availableProjects, warehousesWithOpeningBalanceIds]
   );
 
   const registeredOpeningBalanceCount = useMemo(
     () =>
       (balances ?? [])
-        .map((entry: any) => entry.openingBalance.projectId)
+        .map((entry: any) => entry.openingBalance.warehouseId)
         .filter(Boolean).length,
     [balances]
   );
@@ -99,6 +316,35 @@ export default function SaldosIniciales() {
       (projects ?? []).find((project: any) => String(project.id) === projectId) ?? null,
     [projectId, projects]
   );
+  const selectedProjectWarehouses = useMemo(
+    () =>
+      ((selectedProject?.warehouses ?? []) as any[]).filter(
+        warehouse => warehouse.isActive
+      ),
+    [selectedProject]
+  );
+  const selectedWarehouse = useMemo(
+    () =>
+      selectedProjectWarehouses.find(
+        (warehouse: any) => String(warehouse.id) === warehouseId
+      ) ?? null,
+    [selectedProjectWarehouses, warehouseId]
+  );
+  useEffect(() => {
+    if (!selectedProjectWarehouses.length) {
+      setWarehouseId("");
+      return;
+    }
+    const currentStillAvailable = selectedProjectWarehouses.some(
+      warehouse => String(warehouse.id) === warehouseId
+    );
+    if (!currentStillAvailable) {
+      const defaultWarehouse =
+        selectedProjectWarehouses.find(warehouse => warehouse.isDefault) ??
+        selectedProjectWarehouses[0];
+      setWarehouseId(String(defaultWarehouse.id));
+    }
+  }, [selectedProjectWarehouses, warehouseId]);
 
   const createMutation = trpc.openingBalances.create.useMutation({
     onSuccess: (result) => {
@@ -135,6 +381,9 @@ export default function SaldosIniciales() {
 
   const resetForm = () => {
     setProjectId("");
+    setWarehouseId("");
+    setProjectComboboxOpen(false);
+    setWarehouseComboboxOpen(false);
     setOpeningDate(new Date().toISOString().slice(0, 10));
     setNotes("");
     setItems([{ ...EMPTY_ROW }]);
@@ -292,7 +541,7 @@ export default function SaldosIniciales() {
               Registrar saldo inicial
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-h-[92vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-2xl p-5 sm:w-[calc(100vw-3rem)] sm:max-w-5xl sm:p-8">
+          <DialogContent className="max-h-[92vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-2xl p-5 sm:w-[calc(100vw-3rem)] sm:max-w-6xl sm:p-8 xl:max-w-7xl">
             <DialogHeader className="border-b border-border/70 pb-5">
               <DialogTitle className="text-2xl font-bold tracking-tight sm:text-3xl">
                 Registrar saldo inicial
@@ -303,31 +552,87 @@ export default function SaldosIniciales() {
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label className="text-sm font-semibold">Proyecto *</Label>
-                  <Select value={projectId} onValueChange={setProjectId}>
-                    <SelectTrigger className="h-12 text-base">
-                      <SelectValue placeholder="Seleccione proyecto" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[360px]">
-                      {availableProjects.map((project: any) => {
-                        const hasOpeningBalance = projectsWithOpeningBalanceIds.has(
-                          project.id
-                        );
-                        return (
-                          <SelectItem
-                            key={project.id}
-                            value={String(project.id)}
-                            disabled={hasOpeningBalance}
-                          >
-                            {project.code} - {project.name}
-                            {hasOpeningBalance ? " (saldo registrado)" : ""}
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
+                  <Popover
+                    open={projectComboboxOpen}
+                    onOpenChange={setProjectComboboxOpen}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={projectComboboxOpen}
+                        className="h-12 w-full justify-between px-3 text-base font-normal"
+                      >
+                        <span
+                          className={`truncate ${projectId ? "" : "text-muted-foreground"}`}
+                        >
+                          {formatProjectLabel(selectedProject)}
+                        </span>
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="start"
+                      className="w-[min(680px,calc(100vw-3rem))] p-0"
+                    >
+                      <Command>
+                        <CommandInput placeholder="Buscar proyecto por código o nombre..." />
+                        <CommandList className="max-h-[360px]">
+                          <CommandEmpty>No se encontraron proyectos.</CommandEmpty>
+                          <CommandGroup>
+                            {availableProjects.map((project: any) => {
+                              const hasAvailableWarehouse = (project.warehouses ?? []).some(
+                                (warehouse: any) =>
+                                  warehouse.isActive &&
+                                  !warehousesWithOpeningBalanceIds.has(warehouse.id)
+                              );
+                              return (
+                                <CommandItem
+                                  key={project.id}
+                                  value={[
+                                    project.code,
+                                    project.name,
+                                    project.sapProjectCode,
+                                    hasAvailableWarehouse ? "" : "sin almacenes libres",
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" ")}
+                                  disabled={!hasAvailableWarehouse}
+                                  onSelect={() => {
+                                    setProjectId(String(project.id));
+                                    setWarehouseId("");
+                                    setProjectComboboxOpen(false);
+                                  }}
+                                >
+                                  <Check
+                                    className={`h-4 w-4 ${
+                                      projectId === String(project.id)
+                                        ? "opacity-100"
+                                        : "opacity-0"
+                                    }`}
+                                  />
+                                  <span className="min-w-0">
+                                    <span className="block truncate">
+                                      {formatProjectLabel(project)}
+                                    </span>
+                                    {!hasAvailableWarehouse ? (
+                                      <span className="block truncate text-xs text-muted-foreground">
+                                        Sin almacenes libres
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                </CommandItem>
+                              );
+                            })}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                   <p className="text-xs text-muted-foreground">
                     Mostrando {availableProjects.length.toLocaleString("es-HN")}{" "}
-                    proyectos activos con bodega
+                    proyectos activos con almacenes
                     {registeredOpeningBalanceCount > 0
                       ? `; ${registeredOpeningBalanceCount.toLocaleString("es-HN")} ya tienen saldo inicial`
                       : ""}
@@ -347,13 +652,85 @@ export default function SaldosIniciales() {
               </div>
 
               <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
-                <p className="text-sm font-semibold text-foreground">
-                  Bodega que recibirá el saldo
-                </p>
-                <p className="mt-1 text-sm text-foreground">
-                  {selectedProject?.warehouse?.displayName ??
-                    "Seleccione un proyecto para identificar la bodega"}
-                </p>
+                <Label className="text-sm font-semibold">
+                  Almacén que recibirá el saldo *
+                </Label>
+                <Popover
+                  open={warehouseComboboxOpen}
+                  onOpenChange={setWarehouseComboboxOpen}
+                >
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={warehouseComboboxOpen}
+                      disabled={!selectedProject}
+                      className="mt-2 h-12 w-full justify-between px-3 text-base font-normal"
+                    >
+                      <span
+                        className={`truncate ${warehouseId ? "" : "text-muted-foreground"}`}
+                      >
+                        {formatWarehouseLabel(selectedWarehouse)}
+                      </span>
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="start"
+                    className="w-[min(760px,calc(100vw-3rem))] p-0"
+                  >
+                    <Command>
+                      <CommandInput placeholder="Buscar almacén..." />
+                      <CommandList className="max-h-[320px]">
+                        <CommandEmpty>No se encontraron almacenes.</CommandEmpty>
+                        <CommandGroup>
+                          {selectedProjectWarehouses.map((warehouse: any) => {
+                            const hasOpeningBalance =
+                              warehousesWithOpeningBalanceIds.has(warehouse.id);
+                            return (
+                              <CommandItem
+                                key={warehouse.id}
+                                value={[
+                                  warehouse.code,
+                                  warehouse.localCode,
+                                  warehouse.name,
+                                  warehouse.displayName,
+                                  warehouse.isDefault ? "principal" : "",
+                                  hasOpeningBalance ? "saldo registrado" : "",
+                                ]
+                                  .filter(Boolean)
+                                  .join(" ")}
+                                disabled={hasOpeningBalance}
+                                onSelect={() => {
+                                  setWarehouseId(String(warehouse.id));
+                                  setWarehouseComboboxOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={`h-4 w-4 ${
+                                    warehouseId === String(warehouse.id)
+                                      ? "opacity-100"
+                                      : "opacity-0"
+                                  }`}
+                                />
+                                <span className="min-w-0">
+                                  <span className="block truncate">
+                                    {formatWarehouseLabel(warehouse)}
+                                  </span>
+                                  <span className="block truncate text-xs text-muted-foreground">
+                                    {warehouse.isDefault ? "Principal" : "Almacén"}
+                                    {hasOpeningBalance ? " · saldo registrado" : ""}
+                                  </span>
+                                </span>
+                              </CommandItem>
+                            );
+                          })}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
                 <p className="mt-2 text-xs text-muted-foreground">
                   Esta carga inicial sumará a cualquier existencia que ya tenga
                   la bodega del proyecto.
@@ -387,15 +764,24 @@ export default function SaldosIniciales() {
                     >
                       <div className="space-y-1">
                         <Label className="text-xs">Código SAP *</Label>
-                        <Input
+                        <SapItemSearchInput
                           value={item.sapItemCode}
-                          onChange={(event) =>
-                            updateItem(index, "sapItemCode", event.target.value)
-                          }
-                          onBlur={() => {
-                            void resolveSapItem(index);
+                          resolving={resolvingSapIndex === index}
+                          disabled={resolvingSapIndex === index}
+                          onChange={(value) => updateItem(index, "sapItemCode", value)}
+                          onSelect={(sapItemCode, itemName) => {
+                            setItems((current) => {
+                              const next = [...current];
+                              if (!next[index]) return current;
+                              next[index] = {
+                                ...next[index],
+                                sapItemCode,
+                                itemName,
+                              };
+                              return next;
+                            });
                           }}
-                          placeholder="01010200001"
+                          onResolve={() => void resolveSapItem(index)}
                         />
                         {resolvingSapIndex === index ? (
                           <p className="text-[11px] text-muted-foreground">
@@ -431,12 +817,9 @@ export default function SaldosIniciales() {
 
                       <div className="space-y-1">
                         <Label className="text-xs">Unidad</Label>
-                        <Input
+                        <UnitCombobox
                           value={item.unit}
-                          onChange={(event) =>
-                            updateItem(index, "unit", event.target.value)
-                          }
-                          placeholder="und"
+                          onChange={(value) => updateItem(index, "unit", value)}
                         />
                       </div>
 
@@ -491,6 +874,10 @@ export default function SaldosIniciales() {
                       toast.error("Seleccione un proyecto");
                       return;
                     }
+                    if (!warehouseId) {
+                      toast.error("Seleccione un almacén");
+                      return;
+                    }
 
                     const validItems = items.filter(
                       (item) =>
@@ -506,6 +893,7 @@ export default function SaldosIniciales() {
 
                     createMutation.mutate({
                       projectId: Number(projectId),
+                      warehouseId: Number(warehouseId),
                       openingDate,
                       notes: notes || undefined,
                       items: validItems.map((item) => ({
@@ -726,17 +1114,30 @@ export default function SaldosIniciales() {
                   {appendItems.map((item, index) => (
                     <div
                       key={index}
-                      className="grid gap-3 rounded-xl border border-border/70 bg-muted/20 p-3 md:grid-cols-[150px_1fr_130px_100px_1fr_auto]"
+                      className="grid gap-3 rounded-xl border border-border/70 bg-muted/20 p-3 md:grid-cols-[1.3fr_1.8fr_0.8fr_0.7fr_1.4fr_auto]"
                     >
                       <div className="space-y-1">
                         <Label className="text-xs">Código SAP *</Label>
-                        <Input
+                        <SapItemSearchInput
                           value={item.sapItemCode}
-                          onChange={(event) =>
-                            updateAppendItem(index, "sapItemCode", event.target.value)
+                          resolving={resolvingAppendSapIndex === index}
+                          disabled={resolvingAppendSapIndex === index}
+                          onChange={(value) =>
+                            updateAppendItem(index, "sapItemCode", value)
                           }
-                          onBlur={() => void resolveAppendSapItem(index)}
-                          placeholder="05050200059"
+                          onSelect={(sapItemCode, itemName) => {
+                            setAppendItems((current) => {
+                              const next = [...current];
+                              if (!next[index]) return current;
+                              next[index] = {
+                                ...next[index],
+                                sapItemCode,
+                                itemName,
+                              };
+                              return next;
+                            });
+                          }}
+                          onResolve={() => void resolveAppendSapItem(index)}
                         />
                       </div>
                       <div className="space-y-1">
@@ -764,12 +1165,9 @@ export default function SaldosIniciales() {
                       </div>
                       <div className="space-y-1">
                         <Label className="text-xs">Unidad</Label>
-                        <Input
+                        <UnitCombobox
                           value={item.unit}
-                          onChange={(event) =>
-                            updateAppendItem(index, "unit", event.target.value)
-                          }
-                          placeholder="und"
+                          onChange={(value) => updateAppendItem(index, "unit", value)}
                         />
                       </div>
                       <div className="space-y-1">
@@ -782,15 +1180,7 @@ export default function SaldosIniciales() {
                           placeholder="Observación opcional"
                         />
                       </div>
-                      <div className="flex items-end gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => void resolveAppendSapItem(index)}
-                          disabled={resolvingAppendSapIndex === index}
-                        >
-                          {resolvingAppendSapIndex === index ? "Buscando..." : "SAP"}
-                        </Button>
+                      <div className="flex items-end">
                         <Button
                           type="button"
                           variant="outline"

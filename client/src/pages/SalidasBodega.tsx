@@ -160,6 +160,9 @@ export default function SalidasBodega() {
   const [deliveryQuantityByItemId, setDeliveryQuantityByItemId] = useState<
     Record<number, string>
   >({});
+  const [deliveryWarehouseByItemId, setDeliveryWarehouseByItemId] = useState<
+    Record<number, string>
+  >({});
 
   const { data: exits, isLoading } = trpc.warehouseExits.list.useQuery();
   const canCreateReturns =
@@ -172,6 +175,23 @@ export default function SalidasBodega() {
       { id: Number(deliveryRequestId || 0) },
       { enabled: deliveryDialogOpen && Boolean(deliveryRequestId) }
     );
+  const { data: deliveryWarehouses } = trpc.warehouses.list.useQuery(
+    {
+      projectId: deliveryRequestDetail?.request.projectId ?? 0,
+      isActive: true,
+    },
+    {
+      enabled:
+        deliveryDialogOpen && Boolean(deliveryRequestDetail?.request.projectId),
+    }
+  );
+  const defaultDeliveryWarehouse = useMemo(
+    () =>
+      (deliveryWarehouses ?? []).find((warehouse: any) => warehouse.isDefault) ??
+      (deliveryWarehouses ?? [])[0] ??
+      null,
+    [deliveryWarehouses]
+  );
   const { data: detail } = trpc.warehouseExits.getById.useQuery(
     { id: selectedId ?? 0 },
     { enabled: Boolean(selectedId) }
@@ -199,6 +219,7 @@ export default function SalidasBodega() {
       setDeliveryRequestId("");
       setDeliveryNotes("");
       setDeliveryQuantityByItemId({});
+      setDeliveryWarehouseByItemId({});
       setSelectedId(result.id);
       void Promise.all([
         utils.warehouseExits.list.invalidate(),
@@ -259,18 +280,22 @@ export default function SalidasBodega() {
   useEffect(() => {
     if (!deliveryRequestDetail) {
       setDeliveryQuantityByItemId({});
+      setDeliveryWarehouseByItemId({});
       return;
     }
 
     const nextQuantities: Record<number, string> = {};
+    const nextWarehouses: Record<number, string> = {};
     for (const item of deliveryRequestDetail.items || []) {
       const suggestedQuantity = getSuggestedDeliveryQuantity(item);
       if (suggestedQuantity > 0) {
         nextQuantities[item.id] = suggestedQuantity.toFixed(2);
+        nextWarehouses[item.id] = String(defaultDeliveryWarehouse?.id ?? "");
       }
     }
     setDeliveryQuantityByItemId(nextQuantities);
-  }, [deliveryRequestDetail?.request.id]);
+    setDeliveryWarehouseByItemId(nextWarehouses);
+  }, [defaultDeliveryWarehouse?.id, deliveryRequestDetail?.request.id]);
 
   const eligibleMaterialRequests = useMemo(
     () =>
@@ -289,6 +314,42 @@ export default function SalidasBodega() {
         (item: any) => getDeliveryPendingQuantity(item) > 0
       ),
     [deliveryRequestDetail?.items]
+  );
+  const deliveryStockItems = useMemo(
+    () =>
+      deliveryItems.map((item: any) => ({
+        id: item.id,
+        sapItemCode: item.sapItemCode || null,
+        itemName: item.itemName || "",
+      })),
+    [deliveryItems]
+  );
+  const { data: deliveryStockRows } = trpc.inventory.projectStockForItems.useQuery(
+    {
+      projectId: deliveryRequestDetail?.request.projectId ?? 0,
+      items: deliveryStockItems,
+    },
+    {
+      enabled:
+        deliveryDialogOpen &&
+        Boolean(deliveryRequestDetail?.request.projectId) &&
+        deliveryStockItems.length > 0,
+    }
+  );
+  const deliveryWarehouseStockByItemId = useMemo<Map<number, Map<number, number>>>(
+    () =>
+      new Map<number, Map<number, number>>(
+        (deliveryStockRows ?? []).map((row: any) => [
+          Number(row.itemId),
+          new Map<number, number>(
+            (row.warehouses ?? []).map((warehouse: any) => [
+              Number(warehouse.warehouseId),
+              Number(warehouse.quantity ?? 0),
+            ])
+          ),
+        ])
+      ),
+    [deliveryStockRows]
   );
 
   const filteredExits = useMemo(() => {
@@ -327,10 +388,12 @@ export default function SalidasBodega() {
     const selectedItems = deliveryItems
       .map((item: any) => {
         const quantity = Number(deliveryQuantityByItemId[item.id] ?? 0);
-        const availableQuantity = parseQuantity(item.projectStock);
+        const warehouseId = Number(deliveryWarehouseByItemId[item.id] ?? 0);
+        const availableQuantity =
+          deliveryWarehouseStockByItemId.get(item.id)?.get(warehouseId) ?? 0;
         const pendingQuantity = getDeliveryPendingQuantity(item);
 
-        return { item, quantity, pendingQuantity, availableQuantity };
+        return { item, quantity, pendingQuantity, availableQuantity, warehouseId };
       })
       .filter(({ quantity }) => quantity > 0);
 
@@ -340,9 +403,10 @@ export default function SalidasBodega() {
     }
 
     const invalidItem = selectedItems.find(
-      ({ quantity, pendingQuantity, availableQuantity }) =>
+      ({ quantity, pendingQuantity, availableQuantity, warehouseId }) =>
         !Number.isFinite(quantity) ||
         quantity <= 0 ||
+        !warehouseId ||
         quantity - pendingQuantity > 0.000001 ||
         quantity - availableQuantity > 0.000001
     );
@@ -356,9 +420,10 @@ export default function SalidasBodega() {
     createDeliveryMutation.mutate({
       requestId: deliveryRequestDetail.request.id,
       note: deliveryNotes.trim() || undefined,
-      items: selectedItems.map(({ item, quantity }) => ({
+      items: selectedItems.map(({ item, quantity, warehouseId }) => ({
         requestItemId: item.id,
         dispatchedQuantity: quantity.toFixed(2),
+        warehouseId,
       })),
     });
   };
@@ -415,6 +480,7 @@ export default function SalidasBodega() {
       originalRequestId: detail.warehouseExit.materialRequestId ?? undefined,
       items: selectedItems.map(({ item, quantity }) => ({
         sourceWarehouseExitItemId: item.id,
+        warehouseId: item.warehouseId,
         itemName: item.itemName,
         sapItemCode: item.sapItemCode,
         quantity: quantity.toFixed(2),
@@ -1182,7 +1248,7 @@ export default function SalidasBodega() {
           }
         }}
       >
-        <DialogContent className="max-h-[92vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-2xl p-5 sm:w-[calc(100vw-3rem)] sm:max-w-6xl sm:p-8">
+        <DialogContent className="max-h-[92vh] !w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] overflow-y-auto rounded-2xl p-5 sm:!w-[calc(100vw-2rem)] sm:!max-w-[calc(100vw-2rem)] sm:p-8 xl:!max-w-[1500px]">
           <DialogHeader className="border-b border-border/70 pb-5">
             <DialogTitle className="text-2xl font-bold tracking-tight sm:text-3xl">
               Nueva salida de requisición
@@ -1240,6 +1306,9 @@ export default function SalidasBodega() {
                           <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             Disponible
                           </th>
+                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Almacén
+                          </th>
                           <th className="w-36 p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             Despachar
                           </th>
@@ -1252,10 +1321,19 @@ export default function SalidasBodega() {
                         {deliveryItems.map((item: any) => {
                           const requestedQuantity = parseQuantity(item.quantity);
                           const alreadyDispatched = getPhysicalDispatchedQuantity(item);
-                          const availableQuantity = parseQuantity(item.projectStock);
+                          const selectedWarehouseId = Number(
+                            deliveryWarehouseByItemId[item.id] ?? 0
+                          );
+                          const availableQuantity =
+                            deliveryWarehouseStockByItemId
+                              .get(item.id)
+                              ?.get(selectedWarehouseId) ?? 0;
                           const pendingQuantity = getDeliveryPendingQuantity(item);
                           const quantity = Number(deliveryQuantityByItemId[item.id] ?? 0);
                           const balanceQuantity = Math.max(pendingQuantity - quantity, 0);
+                          const projectStockQuantity = parseQuantity(
+                            (item as any).projectStock
+                          );
                           const canDeliver =
                             pendingQuantity > 0 &&
                             availableQuantity > 0 &&
@@ -1284,6 +1362,41 @@ export default function SalidasBodega() {
                               </td>
                               <td className="p-3 text-right font-medium">
                                 {formatQuantity(availableQuantity)} {item.unit || ""}
+                              </td>
+                              <td className="p-3">
+                                <Select
+                                  value={
+                                    deliveryWarehouseByItemId[item.id] ||
+                                    undefined
+                                  }
+                                  onValueChange={(value) =>
+                                    setDeliveryWarehouseByItemId((current) => ({
+                                      ...current,
+                                      [item.id]: value,
+                                    }))
+                                  }
+                                  disabled={!deliveryWarehouses?.length}
+                                >
+                                  <SelectTrigger className="min-w-48">
+                                    <SelectValue placeholder="Seleccione almacén" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {(deliveryWarehouses ?? []).map(
+                                      (warehouse: any) => (
+                                        <SelectItem
+                                          key={warehouse.id}
+                                          value={String(warehouse.id)}
+                                        >
+                                          {warehouse.displayName}
+                                        </SelectItem>
+                                      )
+                                    )}
+                                  </SelectContent>
+                                </Select>
+                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                  Total proyecto: {formatQuantity(projectStockQuantity)}{" "}
+                                  {item.unit || ""}
+                                </p>
                               </td>
                               <td className="p-3">
                                 <Input

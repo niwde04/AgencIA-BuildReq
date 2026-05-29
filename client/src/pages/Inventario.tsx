@@ -13,12 +13,25 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Pagination,
   PaginationContent,
@@ -32,8 +45,10 @@ import {
   ArrowUpDown,
   ArrowRightLeft,
   BookOpen,
+  Check,
   ChevronDown,
   ChevronUp,
+  ChevronsUpDown,
   ClipboardList,
   Plus,
   Search,
@@ -106,9 +121,27 @@ function formatQuantity(value: string | number | null | undefined) {
   });
 }
 
+function parseQuantity(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return 0;
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
 function formatProject(project: any | null | undefined) {
   if (!project) return "Inventario Central";
   return `${project.code} - ${project.name}`;
+}
+
+function formatWarehouseOptionLabel(warehouse: any | null | undefined) {
+  if (!warehouse) return "—";
+  const localCode = warehouse.localCode || warehouse.code;
+  if (localCode && warehouse.name) return `${localCode} - ${warehouse.name}`;
+  return warehouse.displayName || warehouse.name || warehouse.code || "—";
+}
+
+function formatWarehouseProjectLabel(warehouse: any | null | undefined) {
+  if (!warehouse?.project) return warehouse?.displayName ?? "";
+  return `${warehouse.project.code} - ${warehouse.project.name}`;
 }
 
 function formatStatus(status: string | null | undefined) {
@@ -137,6 +170,8 @@ export default function Inventario() {
   const [sortDir, setSortDir] = useState<SortDirection>("asc");
   const [warehouseFilter, setWarehouseFilter] = useState("all");
   const [projectFilter, setProjectFilter] = useState("all");
+  const [projectFilterOpen, setProjectFilterOpen] = useState(false);
+  const [warehouseFilterOpen, setWarehouseFilterOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [assignmentDialogOpen, setAssignmentDialogOpen] = useState(false);
   const [bulkAssignmentDialogOpen, setBulkAssignmentDialogOpen] = useState(false);
@@ -145,6 +180,7 @@ export default function Inventario() {
   const [selectedItem, setSelectedItem] = useState<any | null>(null);
   const [trackingItem, setTrackingItem] = useState<any | null>(null);
   const [kardexItem, setKardexItem] = useState<any | null>(null);
+  const [expandedInventoryKeys, setExpandedInventoryKeys] = useState<string[]>([]);
   const [assignmentProjectId, setAssignmentProjectId] = useState("none");
   const [bulkAssignmentProjectId, setBulkAssignmentProjectId] = useState("none");
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
@@ -186,9 +222,60 @@ export default function Inventario() {
     trpc.warehouses.list.useQuery(undefined, {
       enabled: canAccessWarehouses,
     });
+  const warehouseOptions = useMemo(() => {
+    const allWarehouses = warehouses ?? [];
+    if (projectFilter === "all") return allWarehouses;
+    const selectedProjectId = Number(projectFilter);
+    return allWarehouses.filter(
+      (warehouse: any) => warehouse.project?.id === selectedProjectId
+    );
+  }, [projectFilter, warehouses]);
+  const selectedFilterProject = useMemo(
+    () =>
+      projectFilter === "all"
+        ? null
+        : (projects ?? []).find(
+            (project: any) => String(project.id) === projectFilter
+          ) ?? null,
+    [projectFilter, projects]
+  );
+  const selectedFilterWarehouse = useMemo(
+    () =>
+      warehouseFilter === "all"
+        ? null
+        : warehouseOptions.find(
+            (warehouse: any) => String(warehouse.id) === warehouseFilter
+          ) ?? null,
+    [warehouseFilter, warehouseOptions]
+  );
+  const selectedProjectFilterLabel = selectedFilterProject
+    ? `${selectedFilterProject.code} - ${selectedFilterProject.name}`
+    : `Todos los proyectos (${(projects ?? []).length.toLocaleString("es-HN")})`;
+  const allWarehouseFilterLabel = selectedFilterProject
+    ? `Todos los almacenes de ${selectedFilterProject.code}`
+    : `Todos los almacenes (${warehouseOptions.length.toLocaleString("es-HN")})`;
+  const selectedWarehouseFilterLabel = selectedFilterWarehouse
+    ? formatWarehouseOptionLabel(selectedFilterWarehouse)
+    : allWarehouseFilterLabel;
   const centralWarehouses = useMemo(
     () => (warehouses ?? []).filter((warehouse: any) => !warehouse.project),
     [warehouses]
+  );
+  const createProjectWarehouses = useMemo(
+    () =>
+      projectId
+        ? (warehouses ?? []).filter(
+            (warehouse: any) => String(warehouse.project?.id) === projectId
+          )
+        : [],
+    [projectId, warehouses]
+  );
+  const defaultCreateWarehouse = useMemo(
+    () =>
+      createProjectWarehouses.find((warehouse: any) => warehouse.isDefault) ??
+      createProjectWarehouses[0] ??
+      null,
+    [createProjectWarehouses]
   );
   const missingProjectWarehouses = useMemo(
     () => (projects ?? []).filter((project: any) => !project.warehouse),
@@ -231,8 +318,18 @@ export default function Inventario() {
 
   useEffect(() => {
     if (!projectId) return;
-    setWarehouseId("");
-  }, [projectId]);
+    setWarehouseId(defaultCreateWarehouse ? String(defaultCreateWarehouse.id) : "");
+  }, [defaultCreateWarehouse, projectId]);
+
+  useEffect(() => {
+    if (warehouseFilter === "all") return;
+    const selectedWarehouseBelongsToProject = warehouseOptions.some(
+      (warehouse: any) => String(warehouse.id) === warehouseFilter
+    );
+    if (!selectedWarehouseBelongsToProject) {
+      setWarehouseFilter("all");
+    }
+  }, [warehouseFilter, warehouseOptions]);
 
   const queryInput = {
     search: debouncedSearch || undefined,
@@ -395,6 +492,50 @@ export default function Inventario() {
   };
 
   const items = data?.items || [];
+  const groupedItems = useMemo(() => {
+    const groups = new Map<string, any>();
+
+    for (const item of items as any[]) {
+      const projectKey = item.project?.id ? `project:${item.project.id}` : "central";
+      const itemKey = item.sapItemCode?.trim() || item.name?.trim().toLowerCase();
+      const groupKey = `${projectKey}:${itemKey}`;
+      const existing =
+        groups.get(groupKey) ??
+        {
+          ...item,
+          id: groupKey,
+          sourceIds: [],
+          warehouseBreakdown: [],
+          currentStockTotal: 0,
+          warehouse: null,
+          warehouseId: undefined,
+        };
+
+      existing.sourceIds.push(item.id);
+      existing.currentStockTotal += parseQuantity(item.currentStock);
+      existing.warehouseBreakdown.push({
+        id: item.id,
+        warehouseId: item.warehouse?.id ?? item.warehouseId,
+        warehouseLocation: item.warehouseLocation || item.warehouse?.displayName || "—",
+        currentStock: item.currentStock,
+        minimumStock: item.minimumStock,
+      });
+      groups.set(groupKey, existing);
+    }
+
+    return Array.from(groups.values()).map((item) => ({
+      ...item,
+      currentStock: item.currentStockTotal.toFixed(2),
+      warehouseSummaryLabel:
+        item.warehouseBreakdown.length === 1
+          ? item.warehouseBreakdown[0].warehouseLocation
+          : `${item.warehouseBreakdown.length} almacenes`,
+      warehouseLocation:
+        item.warehouseBreakdown.length === 1
+          ? item.warehouseBreakdown[0].warehouseLocation
+          : undefined,
+    }));
+  }, [items]);
   const total = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
   const pageItems = useMemo(
@@ -453,6 +594,23 @@ export default function Inventario() {
       current.filter((id) => allPageItemIds.includes(id))
     );
   }, [data?.page, projectFilter, warehouseFilter, debouncedSearch, sortBy, sortDir]);
+
+  useEffect(() => {
+    const visibleKeys = new Set(groupedItems.map((item: any) => item.id));
+    setExpandedInventoryKeys((current) =>
+      current.every((key) => visibleKeys.has(key))
+        ? current
+        : current.filter((key) => visibleKeys.has(key))
+    );
+  }, [groupedItems]);
+
+  const toggleInventoryBreakdown = (key: string) => {
+    setExpandedInventoryKeys((current) =>
+      current.includes(key)
+        ? current.filter((entry) => entry !== key)
+        : [...current, key]
+    );
+  };
 
   const toggleAllCurrentPage = (checked: boolean) => {
     if (checked) {
@@ -588,17 +746,40 @@ export default function Inventario() {
                   </div>
                 </div>
                 {projectId ? (
-                  <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
-                    <p className="text-sm font-semibold text-foreground">
-                      Bodega operativa del proyecto
-                    </p>
-                    <p className="mt-1 text-sm text-foreground">
-                      {getProjectWarehouseLabel(selectedCreateProject)}
-                    </p>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      El sistema usará automáticamente la bodega del proyecto
-                      seleccionado para este registro de inventario.
-                    </p>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Almacén del proyecto</Label>
+                      <Select
+                        value={warehouseId || undefined}
+                        onValueChange={setWarehouseId}
+                      >
+                        <SelectTrigger>
+                          <SelectValue
+                            placeholder={
+                              warehousesLoading
+                                ? "Cargando almacenes..."
+                                : "Seleccione almacén del proyecto"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {createProjectWarehouses.map((warehouse: any) => (
+                            <SelectItem
+                              key={warehouse.id}
+                              value={String(warehouse.id)}
+                            >
+                              {warehouse.displayName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Proyecto seleccionado</Label>
+                      <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+                        {getProjectWarehouseLabel(selectedCreateProject)}
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -1188,43 +1369,163 @@ export default function Inventario() {
           <Label className="mb-1 block text-xs font-medium text-muted-foreground">
             Proyecto ({(projects ?? []).length.toLocaleString("es-HN")})
           </Label>
-          <Select value={projectFilter} onValueChange={setProjectFilter}>
-            <SelectTrigger className="h-9 w-full min-w-0">
-              <SelectValue placeholder="Filtrar por proyecto" />
-            </SelectTrigger>
-            <SelectContent className="max-h-[360px]">
-              <SelectItem value="all">
-                Todos los proyectos ({(projects ?? []).length.toLocaleString("es-HN")})
-              </SelectItem>
-              {(projects ?? []).map((project) => (
-                <SelectItem key={project.id} value={String(project.id)}>
-                  {project.code} - {project.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <Popover
+            open={projectFilterOpen}
+            onOpenChange={setProjectFilterOpen}
+          >
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                role="combobox"
+                aria-expanded={projectFilterOpen}
+                className="h-9 w-full justify-between px-3 font-normal"
+              >
+                <span className="truncate">{selectedProjectFilterLabel}</span>
+                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              className="w-[var(--radix-popover-trigger-width)] p-0"
+            >
+              <Command>
+                <CommandInput placeholder="Buscar proyecto..." />
+                <CommandList>
+                  <CommandEmpty>No se encontraron proyectos.</CommandEmpty>
+                  <CommandGroup>
+                    <CommandItem
+                      value="todos los proyectos all"
+                      onSelect={() => {
+                        setProjectFilter("all");
+                        setProjectFilterOpen(false);
+                      }}
+                    >
+                      <Check
+                        className={`h-4 w-4 ${
+                          projectFilter === "all" ? "opacity-100" : "opacity-0"
+                        }`}
+                      />
+                      <span className="truncate">
+                        Todos los proyectos ({(projects ?? []).length.toLocaleString("es-HN")})
+                      </span>
+                    </CommandItem>
+                    {(projects ?? []).map((project: any) => (
+                      <CommandItem
+                        key={project.id}
+                        value={`${project.code} ${project.name} ${project.sapProjectCode ?? ""}`}
+                        onSelect={() => {
+                          setProjectFilter(String(project.id));
+                          setProjectFilterOpen(false);
+                        }}
+                      >
+                        <Check
+                          className={`h-4 w-4 ${
+                            projectFilter === String(project.id)
+                              ? "opacity-100"
+                              : "opacity-0"
+                          }`}
+                        />
+                        <span className="truncate">
+                          {project.code} - {project.name}
+                        </span>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
         </div>
 
         {canAccessWarehouses ? (
           <div className="min-w-0">
             <Label className="mb-1 block text-xs font-medium text-muted-foreground">
-              Bodega / almacén ({(warehouses ?? []).length.toLocaleString("es-HN")})
+              Bodega / almacén ({warehouseOptions.length.toLocaleString("es-HN")})
             </Label>
-            <Select value={warehouseFilter} onValueChange={setWarehouseFilter}>
-              <SelectTrigger className="h-9 w-full min-w-0">
-                <SelectValue placeholder="Filtrar por almacén" />
-              </SelectTrigger>
-              <SelectContent className="max-h-[360px]">
-                <SelectItem value="all">
-                  Todos los almacenes ({(warehouses ?? []).length.toLocaleString("es-HN")})
-                </SelectItem>
-                {(warehouses ?? []).map((warehouse) => (
-                  <SelectItem key={warehouse.id} value={String(warehouse.id)}>
-                    {warehouse.displayName}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Popover
+              open={warehouseFilterOpen}
+              onOpenChange={setWarehouseFilterOpen}
+            >
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={warehouseFilterOpen}
+                  className="h-9 w-full justify-between px-3 font-normal"
+                >
+                  <span className="truncate">{selectedWarehouseFilterLabel}</span>
+                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                className="w-[var(--radix-popover-trigger-width)] p-0"
+              >
+                <Command>
+                  <CommandInput placeholder="Buscar almacén..." />
+                  <CommandList>
+                    <CommandEmpty>No se encontraron almacenes.</CommandEmpty>
+                    <CommandGroup>
+                        <CommandItem
+                          value={`todos los almacenes all ${selectedFilterProject?.code ?? ""} ${selectedFilterProject?.name ?? ""}`}
+                          onSelect={() => {
+                            setWarehouseFilter("all");
+                            setWarehouseFilterOpen(false);
+                          }}
+                        >
+                        <Check
+                          className={`h-4 w-4 ${
+                            warehouseFilter === "all"
+                              ? "opacity-100"
+                              : "opacity-0"
+                          }`}
+                          />
+                          <span className="truncate">
+                            {allWarehouseFilterLabel}
+                          </span>
+                        </CommandItem>
+                      {warehouseOptions.map((warehouse: any) => (
+                        <CommandItem
+                          key={warehouse.id}
+                          value={[
+                            warehouse.code,
+                            warehouse.localCode,
+                            warehouse.name,
+                            warehouse.displayName,
+                            warehouse.project?.code,
+                            warehouse.project?.name,
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                          onSelect={() => {
+                            setWarehouseFilter(String(warehouse.id));
+                            setWarehouseFilterOpen(false);
+                          }}
+                        >
+                          <Check
+                            className={`h-4 w-4 ${
+                              warehouseFilter === String(warehouse.id)
+                                ? "opacity-100"
+                              : "opacity-0"
+                            }`}
+                          />
+                          <span className="min-w-0">
+                            <span className="block truncate">
+                              {formatWarehouseOptionLabel(warehouse)}
+                            </span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {formatWarehouseProjectLabel(warehouse)}
+                            </span>
+                          </span>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
           </div>
         ) : null}
       </div>
@@ -1284,7 +1585,7 @@ export default function Inventario() {
                 Reintentar
               </Button>
             </div>
-          ) : items.length === 0 ? (
+          ) : groupedItems.length === 0 ? (
             <div className="p-8 text-center">
               <Warehouse className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
               <p className="text-muted-foreground">
@@ -1355,112 +1656,180 @@ export default function Inventario() {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((item: any) => {
+                    {groupedItems.map((item: any) => {
                       const lowStock =
                         item.currentStock &&
                         item.minimumStock &&
                         parseFloat(item.currentStock) <=
                           parseFloat(item.minimumStock);
+                      const isExpanded = expandedInventoryKeys.includes(item.id);
+                      const hasBreakdown = item.warehouseBreakdown.length > 1;
 
                       return (
-                        <tr
-                          key={item.id}
-                          className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors"
-                        >
-                          {canManage && allowInventoryReassignment ? (
-                            <td className="p-3">
-                              <Checkbox
-                                checked={selectedItemIds.includes(item.id)}
-                                onCheckedChange={(checked) => {
-                                  setSelectedItemIds((current) =>
-                                    checked
-                                      ? Array.from(new Set([...current, item.id]))
-                                      : current.filter((entry) => entry !== item.id)
-                                  );
-                                }}
-                                aria-label={`Seleccionar ${item.sapItemCode}`}
-                              />
+                        <Fragment key={item.id}>
+                          <tr className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
+                            {canManage && allowInventoryReassignment ? (
+                              <td className="p-3">
+                                <Checkbox
+                                  checked={item.sourceIds.every((id: number) =>
+                                    selectedItemIds.includes(id)
+                                  )}
+                                  onCheckedChange={(checked) => {
+                                    setSelectedItemIds((current) => {
+                                      const next = new Set(current);
+                                      item.sourceIds.forEach((id: number) =>
+                                        checked ? next.add(id) : next.delete(id)
+                                      );
+                                      return Array.from(next);
+                                    });
+                                  }}
+                                  aria-label={`Seleccionar ${item.sapItemCode}`}
+                                />
+                              </td>
+                            ) : null}
+                            <td className="p-3 font-mono text-xs">
+                              {item.sapItemCode}
                             </td>
-                          ) : null}
-                          <td className="p-3 font-mono text-xs">
-                            {item.sapItemCode}
-                          </td>
-                          <td className="p-3 font-medium">{item.name}</td>
-                          <td className="p-3 text-xs">
-                            {item.category || "—"}
-                          </td>
-                          <td className="p-3 text-xs">{item.unit || "—"}</td>
-                          <td className="p-3 text-right">
-                            <span
-                              className={
-                                lowStock ? "text-destructive font-semibold" : ""
-                              }
-                            >
-                              {item.currentStock || "0"}
-                            </span>
-                          </td>
-                          <td className="p-3 text-right font-semibold">
-                            {formatQuantity(item.totalRequiredQuantity)}
-                          </td>
-                          <td className="p-3 text-right font-semibold">
-                            {formatQuantity(item.pendingReceiptQuantity)}
-                          </td>
-                          <td className="p-3 text-right text-muted-foreground">
-                            {item.minimumStock || "—"}
-                          </td>
-                          <td className="p-3 text-xs">
-                            {item.project
-                              ? `${item.project.code} - ${item.project.name}`
-                              : "Inventario Central"}
-                          </td>
-                          <td className="p-3 text-xs">
-                            {item.warehouseLocation || "—"}
-                          </td>
-                          <td className="p-3">
-                            <div className="flex justify-end gap-2">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="h-8 px-2"
-                                title="Seguimiento"
-                                onClick={() => setTrackingItem(item)}
-                              >
-                                <ClipboardList className="h-3.5 w-3.5" />
-                                <span className="ml-2 hidden xl:inline">
-                                  Seguimiento
-                                </span>
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="h-8 px-2"
-                                title="Kardex"
-                                onClick={() => setKardexItem(item)}
-                              >
-                                <BookOpen className="h-3.5 w-3.5" />
-                                <span className="ml-2 hidden xl:inline">
-                                  Kardex
-                                </span>
-                              </Button>
-                            </div>
-                          </td>
-                          {canManage && allowInventoryReassignment ? (
-                            <td className="p-3">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="h-8"
-                                onClick={() => openAssignmentDialog(item)}
-                              >
-                                <ArrowRightLeft className="h-3.5 w-3.5 mr-2" />
-                                Pasar a proyecto
-                              </Button>
+                            <td className="p-3 font-medium">{item.name}</td>
+                            <td className="p-3 text-xs">
+                              {item.category || "—"}
                             </td>
+                            <td className="p-3 text-xs">{item.unit || "—"}</td>
+                            <td className="p-3 text-right">
+                              <span
+                                className={
+                                  lowStock ? "text-destructive font-semibold" : ""
+                                }
+                              >
+                                {formatQuantity(item.currentStock)}
+                              </span>
+                            </td>
+                            <td className="p-3 text-right font-semibold">
+                              {formatQuantity(item.totalRequiredQuantity)}
+                            </td>
+                            <td className="p-3 text-right font-semibold">
+                              {formatQuantity(item.pendingReceiptQuantity)}
+                            </td>
+                            <td className="p-3 text-right text-muted-foreground">
+                              {item.minimumStock || "—"}
+                            </td>
+                            <td className="p-3 text-xs">
+                              {item.project
+                                ? `${item.project.code} - ${item.project.name}`
+                                : "Inventario Central"}
+                            </td>
+                            <td className="p-3 text-xs">
+                              {hasBreakdown ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 px-2"
+                                  onClick={() => toggleInventoryBreakdown(item.id)}
+                                >
+                                  {isExpanded ? (
+                                    <ChevronUp className="mr-1 h-3.5 w-3.5" />
+                                  ) : (
+                                    <ChevronDown className="mr-1 h-3.5 w-3.5" />
+                                  )}
+                                  {item.warehouseSummaryLabel}
+                                </Button>
+                              ) : (
+                                item.warehouseSummaryLabel || "—"
+                              )}
+                            </td>
+                            <td className="p-3">
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 px-2"
+                                  title="Seguimiento"
+                                  onClick={() => setTrackingItem(item)}
+                                >
+                                  <ClipboardList className="h-3.5 w-3.5" />
+                                  <span className="ml-2 hidden xl:inline">
+                                    Seguimiento
+                                  </span>
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 px-2"
+                                  title="Kardex"
+                                  onClick={() => setKardexItem(item)}
+                                >
+                                  <BookOpen className="h-3.5 w-3.5" />
+                                  <span className="ml-2 hidden xl:inline">
+                                    Kardex
+                                  </span>
+                                </Button>
+                              </div>
+                            </td>
+                            {canManage && allowInventoryReassignment ? (
+                              <td className="p-3">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8"
+                                  onClick={() => openAssignmentDialog(item)}
+                                >
+                                  <ArrowRightLeft className="h-3.5 w-3.5 mr-2" />
+                                  Pasar a proyecto
+                                </Button>
+                              </td>
+                            ) : null}
+                          </tr>
+                          {hasBreakdown && isExpanded ? (
+                            <tr className="border-b bg-muted/20">
+                              <td
+                                className="px-3 py-2"
+                                colSpan={
+                                  columns.length +
+                                  3 +
+                                  (canManage && allowInventoryReassignment ? 2 : 0)
+                                }
+                              >
+                                <div className="ml-auto max-w-2xl overflow-x-auto rounded-md border bg-background">
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="border-b bg-muted/30">
+                                        <th className="p-2 text-left font-semibold uppercase tracking-wider text-muted-foreground">
+                                          Almacén
+                                        </th>
+                                        <th className="p-2 text-right font-semibold uppercase tracking-wider text-muted-foreground">
+                                          Stock
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {item.warehouseBreakdown.map(
+                                        (warehouseRow: any) => (
+                                          <tr
+                                            key={warehouseRow.id}
+                                            className="border-b last:border-0"
+                                          >
+                                            <td className="p-2">
+                                              {warehouseRow.warehouseLocation}
+                                            </td>
+                                            <td className="p-2 text-right font-mono">
+                                              {formatQuantity(
+                                                warehouseRow.currentStock
+                                              )}
+                                            </td>
+                                          </tr>
+                                        )
+                                      )}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </td>
+                            </tr>
                           ) : null}
-                        </tr>
+                        </Fragment>
                       );
                     })}
                   </tbody>

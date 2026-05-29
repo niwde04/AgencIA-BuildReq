@@ -59,6 +59,7 @@ const UNITS = [
 ];
 
 type ReturnItem = {
+  warehouseId?: number;
   sapItemCode: string;
   itemName: string;
   quantity: string;
@@ -68,6 +69,7 @@ type ReturnItem = {
 };
 
 const blankReturnItem = (): ReturnItem => ({
+  warehouseId: undefined,
   sapItemCode: "",
   itemName: "",
   quantity: "",
@@ -93,6 +95,25 @@ function formatCompletedReceiptLabel(row?: any | null) {
   return [receiptNumber, orderNumber, supplierName, projectLabel]
     .filter(Boolean)
     .join(" — ");
+}
+
+const projectCodeCollator = new Intl.Collator("es-HN", {
+  numeric: true,
+  sensitivity: "base",
+});
+
+function compareProjectsByCode(left: any, right: any) {
+  const codeCompare = projectCodeCollator.compare(
+    left.code ?? "",
+    right.code ?? ""
+  );
+  if (codeCompare !== 0) return codeCompare;
+  return projectCodeCollator.compare(left.name ?? "", right.name ?? "");
+}
+
+function formatProjectLabel(project?: any | null) {
+  if (!project) return "Seleccione proyecto";
+  return `${project.code} - ${project.name}`;
 }
 
 function SapItemSearchInput({
@@ -284,10 +305,18 @@ export default function NuevaDevolucion() {
   const [destinationProjectId, setDestinationProjectId] = useState("");
   const [supplierName, setSupplierName] = useState("");
   const [sourceReceiptId, setSourceReceiptId] = useState("");
+  const [sourceProjectPopoverOpen, setSourceProjectPopoverOpen] = useState(false);
+  const [destinationProjectPopoverOpen, setDestinationProjectPopoverOpen] =
+    useState(false);
   const [receiptPopoverOpen, setReceiptPopoverOpen] = useState(false);
   const [resolvingSapIndex, setResolvingSapIndex] = useState<number | null>(null);
   const [unitPopoverOpen, setUnitPopoverOpen] = useState<number | null>(null);
   const [items, setItems] = useState<ReturnItem[]>([blankReturnItem()]);
+  const sourceProjectNumericId = sourceProjectId ? Number(sourceProjectId) : 0;
+  const { data: sourceProjectWarehouses } = trpc.warehouses.list.useQuery(
+    { projectId: sourceProjectNumericId, isActive: true },
+    { enabled: sourceProjectNumericId > 0 }
+  );
   const { data: completedPurchaseReceipts } = trpc.receipts.list.useQuery(
     { sourceType: "purchase_order", status: "completa" },
     { enabled: returnType === "devolucion_proveedor" }
@@ -295,6 +324,10 @@ export default function NuevaDevolucion() {
   const completedSupplierReceipts = useMemo(
     () => (completedPurchaseReceipts || []).filter((row: any) => row.supplier),
     [completedPurchaseReceipts]
+  );
+  const projectOptions = useMemo(
+    () => [...(projects || [])].sort(compareProjectsByCode),
+    [projects]
   );
 
   const selectedSourceProject = useMemo(
@@ -314,6 +347,16 @@ export default function NuevaDevolucion() {
         (row: any) => String(row.receipt.id) === sourceReceiptId
       ),
     [completedSupplierReceipts, sourceReceiptId]
+  );
+  const sourceWarehouseOptions = useMemo(
+    () => sourceProjectWarehouses || [],
+    [sourceProjectWarehouses]
+  );
+  const defaultSourceWarehouse = useMemo(
+    () =>
+      sourceWarehouseOptions.find((warehouse: any) => warehouse.isDefault) ||
+      sourceWarehouseOptions[0],
+    [sourceWarehouseOptions]
   );
   const selectedReceiptNumericId = sourceReceiptId ? Number(sourceReceiptId) : 0;
   const { data: selectedReceiptDetail } = trpc.receipts.getById.useQuery(
@@ -355,6 +398,28 @@ export default function NuevaDevolucion() {
 
   useEffect(() => {
     if (
+      returnType === "devolucion_proveedor" ||
+      sourceWarehouseOptions.length === 0
+    ) {
+      return;
+    }
+
+    const defaultWarehouseId = defaultSourceWarehouse?.id;
+    const activeWarehouseIds = new Set(
+      sourceWarehouseOptions.map((warehouse: any) => warehouse.id)
+    );
+
+    setItems((current) =>
+      current.map((item) =>
+        item.warehouseId && activeWarehouseIds.has(item.warehouseId)
+          ? item
+          : { ...item, warehouseId: defaultWarehouseId }
+      )
+    );
+  }, [returnType, sourceWarehouseOptions, defaultSourceWarehouse?.id]);
+
+  useEffect(() => {
+    if (
       returnType !== "devolucion_proveedor" ||
       !sourceReceiptId ||
       !selectedReceiptDetail ||
@@ -374,6 +439,7 @@ export default function NuevaDevolucion() {
       .map((item: any) => {
         const purchaseOrderItem = purchaseOrderItemById.get(item.sourceItemId);
         return {
+          warehouseId: item.warehouseId ?? undefined,
           sapItemCode:
             purchaseOrderItem?.currentSapItemCode ||
             purchaseOrderItem?.originalSapItemCode ||
@@ -402,6 +468,32 @@ export default function NuevaDevolucion() {
     );
   };
 
+  const formatWarehouseLabel = (warehouse: any) =>
+    warehouse?.displayName ||
+    [warehouse?.localCode || warehouse?.code, warehouse?.name]
+      .filter(Boolean)
+      .join(" - ") ||
+    "Almacén";
+
+  const getWarehouseOptionsForItem = (item: ReturnItem) => {
+    if (
+      item.warehouseId &&
+      !sourceWarehouseOptions.some(
+        (warehouse: any) => warehouse.id === item.warehouseId
+      )
+    ) {
+      return [
+        {
+          id: item.warehouseId,
+          displayName: "Almacén registrado en la recepción",
+        },
+        ...sourceWarehouseOptions,
+      ];
+    }
+
+    return sourceWarehouseOptions;
+  };
+
   const createMutation = trpc.reverseLogistics.create.useMutation({
     onSuccess: (data) => {
       toast.success(`Devolución ${data.returnNumber} creada exitosamente`);
@@ -427,7 +519,7 @@ export default function NuevaDevolucion() {
   const updateItem = (
     index: number,
     field: keyof ReturnItem,
-    value: string
+    value: ReturnItem[keyof ReturnItem]
   ) => {
     const updated = [...items];
     updated[index] = { ...updated[index], [field]: value };
@@ -514,6 +606,18 @@ export default function NuevaDevolucion() {
       return;
     }
 
+    const requiresWarehouse = [
+      "devolucion_bodega_central",
+      "devolucion_bodega_proyecto",
+      "devolucion_entre_proyectos",
+      "devolucion_proveedor",
+    ].includes(returnType);
+    const itemWithoutWarehouse = validItems.find((item) => !item.warehouseId);
+    if (requiresWarehouse && itemWithoutWarehouse) {
+      toast.error(`Seleccione almacén para ${itemWithoutWarehouse.itemName}`);
+      return;
+    }
+
     createMutation.mutate({
       returnType: returnType as any,
       reasonCategory: reasonCategory as any,
@@ -525,6 +629,7 @@ export default function NuevaDevolucion() {
       sourceReceiptId: sourceReceiptId ? parseInt(sourceReceiptId) : undefined,
       supplierName: supplierName || undefined,
       items: validItems.map((item) => ({
+        warehouseId: item.warehouseId,
         sapItemCode: item.sapItemCode || undefined,
         itemName: item.itemName,
         quantity: item.quantity,
@@ -610,48 +715,140 @@ export default function NuevaDevolucion() {
                     ? "Proyecto que recibe la devolución *"
                     : "Proyecto origen *"}
                 </Label>
-                <Select
-                  value={sourceProjectId}
-                  onValueChange={setSourceProjectId}
-                  disabled={returnType === "devolucion_proveedor"}
+                <Popover
+                  open={sourceProjectPopoverOpen}
+                  onOpenChange={setSourceProjectPopoverOpen}
                 >
-                  <SelectTrigger className="w-full">
-                    <SelectValue
-                      placeholder={
-                        returnType === "devolucion_proveedor"
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={sourceProjectPopoverOpen}
+                      disabled={returnType === "devolucion_proveedor"}
+                      className="h-10 w-full justify-between overflow-hidden px-3 font-normal"
+                    >
+                      <span
+                        className={`truncate ${
+                          sourceProjectId ? "" : "text-muted-foreground"
+                        }`}
+                      >
+                        {returnType === "devolucion_proveedor" && !sourceProjectId
                           ? "Seleccione una recepción"
-                          : "Seleccione proyecto"
-                      }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(projects || []).map((p: any) => (
-                      <SelectItem key={p.id} value={String(p.id)}>
-                        {p.code} — {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                          : formatProjectLabel(selectedSourceProject)}
+                      </span>
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="start"
+                    className="w-[var(--radix-popover-trigger-width)] p-0"
+                  >
+                    <Command>
+                      <CommandInput placeholder="Buscar proyecto por código o nombre..." />
+                      <CommandList>
+                        <CommandEmpty>No se encontraron proyectos.</CommandEmpty>
+                        <CommandGroup>
+                          {projectOptions.map((project: any) => (
+                            <CommandItem
+                              key={project.id}
+                              value={[
+                                project.code,
+                                project.name,
+                                project.sapProjectCode,
+                              ]
+                                .filter(Boolean)
+                                .join(" ")}
+                              onSelect={() => {
+                                setSourceProjectId(String(project.id));
+                                setSourceProjectPopoverOpen(false);
+                              }}
+                            >
+                              <Check
+                                className={`h-4 w-4 ${
+                                  sourceProjectId === String(project.id)
+                                    ? "opacity-100"
+                                    : "opacity-0"
+                                }`}
+                              />
+                              <span className="truncate">
+                                {formatProjectLabel(project)}
+                              </span>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </div>
 
               {returnType === "devolucion_entre_proyectos" && (
                 <div className="space-y-2">
                   <Label>Proyecto destino *</Label>
-                  <Select
-                    value={destinationProjectId}
-                    onValueChange={setDestinationProjectId}
+                  <Popover
+                    open={destinationProjectPopoverOpen}
+                    onOpenChange={setDestinationProjectPopoverOpen}
                   >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Seleccione proyecto" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(projects || []).map((p: any) => (
-                        <SelectItem key={p.id} value={String(p.id)}>
-                          {p.code} — {p.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={destinationProjectPopoverOpen}
+                        className="h-10 w-full justify-between overflow-hidden px-3 font-normal"
+                      >
+                        <span
+                          className={`truncate ${
+                            destinationProjectId ? "" : "text-muted-foreground"
+                          }`}
+                        >
+                          {formatProjectLabel(selectedDestinationProject)}
+                        </span>
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="start"
+                      className="w-[var(--radix-popover-trigger-width)] p-0"
+                    >
+                      <Command>
+                        <CommandInput placeholder="Buscar proyecto por código o nombre..." />
+                        <CommandList>
+                          <CommandEmpty>No se encontraron proyectos.</CommandEmpty>
+                          <CommandGroup>
+                            {projectOptions.map((project: any) => (
+                              <CommandItem
+                                key={project.id}
+                                value={[
+                                  project.code,
+                                  project.name,
+                                  project.sapProjectCode,
+                                ]
+                                  .filter(Boolean)
+                                  .join(" ")}
+                                onSelect={() => {
+                                  setDestinationProjectId(String(project.id));
+                                  setDestinationProjectPopoverOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={`h-4 w-4 ${
+                                    destinationProjectId === String(project.id)
+                                      ? "opacity-100"
+                                      : "opacity-0"
+                                  }`}
+                                />
+                                <span className="truncate">
+                                  {formatProjectLabel(project)}
+                                </span>
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
               )}
 
@@ -853,7 +1050,7 @@ export default function NuevaDevolucion() {
                         onResolve={() => void resolveSapItem(index)}
                       />
                     </div>
-                    <div className="space-y-1 md:col-span-4">
+                    <div className="space-y-1 md:col-span-3">
                       <Label className="text-xs font-medium text-muted-foreground">
                         Nombre del ítem
                       </Label>
@@ -864,6 +1061,41 @@ export default function NuevaDevolucion() {
                           updateItem(index, "itemName", e.target.value)
                         }
                       />
+                    </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <Label className="text-xs font-medium text-muted-foreground">
+                        Almacén
+                      </Label>
+                      <Select
+                        value={item.warehouseId ? String(item.warehouseId) : ""}
+                        onValueChange={(value) =>
+                          updateItem(index, "warehouseId", Number(value))
+                        }
+                        disabled={
+                          returnType === "devolucion_proveedor" ||
+                          sourceWarehouseOptions.length === 0
+                        }
+                      >
+                        <SelectTrigger className="w-full min-w-0">
+                          <SelectValue
+                            placeholder={
+                              sourceProjectId
+                                ? "Seleccione almacén"
+                                : "Seleccione proyecto"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {getWarehouseOptionsForItem(item).map((warehouse: any) => (
+                            <SelectItem
+                              key={warehouse.id}
+                              value={String(warehouse.id)}
+                            >
+                              {formatWarehouseLabel(warehouse)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="space-y-1 md:col-span-1">
                       <Label className="text-xs font-medium text-muted-foreground">

@@ -245,28 +245,37 @@ function getStockKey(item: { sapItemCode?: string | null; itemName: string }) {
 
 async function assertTransferSourceStock(
   sourceProjectId: number,
-  preparedItems: Array<{ item: any }>
+  preparedItems: Array<{ item: any; sourceWarehouseId?: number | null }>
 ) {
-  const stockRows = await db.listProjectStockForItems({
-    projectId: sourceProjectId,
-    items: preparedItems.map(({ item }) => ({
-      id: item.id,
-      sapItemCode: item.sapItemCode,
-      itemName: item.itemName,
-    })),
-  });
-  const stockByItemId = new Map(
-    stockRows.map((row: any) => [Number(row.itemId), row.quantity])
-  );
   const stockByKey = new Map<
     string,
     { itemName: string; availableQuantity: number; requestedQuantity: number }
   >();
 
-  for (const { item } of preparedItems) {
-    const availableQuantity = parseQuantity(stockByItemId.get(item.id));
+  for (const { item, sourceWarehouseId } of preparedItems) {
+    if (!sourceWarehouseId) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `Seleccione almacén origen para ${item.itemName}`,
+      });
+    }
+    const stockRows = await db.listProjectStockForItems({
+      projectId: sourceProjectId,
+      items: [
+        {
+          id: item.id,
+          sapItemCode: item.sapItemCode,
+          itemName: item.itemName,
+        },
+      ],
+    });
+    const stockRow = stockRows[0] as any;
+    const warehouseStock = (stockRow?.warehouses ?? []).find(
+      (entry: any) => Number(entry.warehouseId) === sourceWarehouseId
+    );
+    const availableQuantity = parseQuantity(warehouseStock?.quantity);
     const requestedQuantity = parseQuantity(item.quantity);
-    const key = getStockKey(item);
+    const key = `${getStockKey(item)}::${sourceWarehouseId}`;
     const current = stockByKey.get(key) ?? {
       itemName: item.itemName,
       availableQuantity,
@@ -860,6 +869,7 @@ export const supplyFlowsRouter = router({
         requestId: z.number(),
         requestItemId: z.number(),
         sourceWarehouse: z.string().min(1),
+        sourceWarehouseId: z.number().int().positive().optional(),
         notes: z.string().optional(),
       })
     )
@@ -887,6 +897,7 @@ export const supplyFlowsRouter = router({
         requestId: input.requestId,
         requestItemId: input.requestItemId,
         quantity: item.quantity,
+        warehouseId: input.sourceWarehouseId,
         note: input.notes ?? `Salida registrada desde ${input.sourceWarehouse}`,
         processedById: ctx.user.id,
       });
@@ -902,6 +913,7 @@ export const supplyFlowsRouter = router({
         requestItemId: z.number(),
         sourceProjectId: z.number(),
         destinationProjectId: z.number(),
+        sourceWarehouseId: z.number().int().positive().optional(),
         notes: z.string().optional(),
       })
     )
@@ -911,6 +923,12 @@ export const supplyFlowsRouter = router({
           code: "FORBIDDEN",
           message:
             "Solo el Jefe de Bodega Central o Administración Central pueden gestionar traslados",
+        });
+      }
+      if (!input.sourceWarehouseId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Seleccione almacén origen para el traslado",
         });
       }
 
@@ -933,7 +951,9 @@ export const supplyFlowsRouter = router({
         });
       }
 
-      await assertTransferSourceStock(input.sourceProjectId, [{ item }]);
+      await assertTransferSourceStock(input.sourceProjectId, [
+        { item, sourceWarehouseId: input.sourceWarehouseId },
+      ]);
 
       await db.updateRequestItem(input.requestItemId, {
         assignedFlow: "traslado_proyecto",
@@ -955,6 +975,7 @@ export const supplyFlowsRouter = router({
         [
           {
             materialRequestItemId: item.id,
+            sourceWarehouseId: input.sourceWarehouseId,
             itemName: item.sapItemDescription || item.itemName,
             sapItemCode: item.sapItemCode,
             quantity: item.quantity,
@@ -996,6 +1017,7 @@ export const supplyFlowsRouter = router({
             z.object({
               requestId: z.number(),
               requestItemId: z.number(),
+              sourceWarehouseId: z.number().int().positive().optional(),
             })
           )
           .min(1),
@@ -1007,6 +1029,12 @@ export const supplyFlowsRouter = router({
           code: "FORBIDDEN",
           message:
             "Solo el Jefe de Bodega Central o Administración Central pueden gestionar traslados",
+        });
+      }
+      if (input.items.some((item) => !item.sourceWarehouseId)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Seleccione almacén origen para todos los ítems del traslado",
         });
       }
 
@@ -1021,6 +1049,7 @@ export const supplyFlowsRouter = router({
       const preparedItems: Array<{
         detail: any;
         item: any;
+        sourceWarehouseId: number;
       }> = [];
 
       for (const entry of uniqueItems) {
@@ -1050,7 +1079,14 @@ export const supplyFlowsRouter = router({
           });
         }
 
-        preparedItems.push({ detail, item });
+        preparedItems.push({
+          detail,
+          item: {
+            ...item,
+            sourceWarehouseId: entry.sourceWarehouseId!,
+          },
+          sourceWarehouseId: entry.sourceWarehouseId!,
+        });
       }
 
       const destinationProjectIds = Array.from(
@@ -1106,6 +1142,7 @@ export const supplyFlowsRouter = router({
         },
         preparedItems.map(({ item }) => ({
           materialRequestItemId: item.id,
+          sourceWarehouseId: item.sourceWarehouseId,
           itemName: item.sapItemDescription || item.itemName,
           sapItemCode: item.sapItemCode,
           quantity: item.quantity,

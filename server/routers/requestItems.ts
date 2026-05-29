@@ -582,6 +582,7 @@ export const requestItemsRouter = router({
         requestId: z.number(),
         requestItemId: z.number(),
         dispatchedQuantity: z.string(),
+        warehouseId: z.number().int().positive().optional(),
         note: z.string().optional(),
       })
     )
@@ -591,6 +592,12 @@ export const requestItemsRouter = router({
           code: "FORBIDDEN",
           message:
             "Solo el Jefe de Bodega Central, Administración Central o Bodeguero de Proyecto pueden registrar salida de bodega",
+        });
+      }
+      if (!input.warehouseId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Seleccione almacén origen para la salida",
         });
       }
 
@@ -611,6 +618,7 @@ export const requestItemsRouter = router({
         requestId: input.requestId,
         requestItemId: input.requestItemId,
         quantity: input.dispatchedQuantity,
+        warehouseId: input.warehouseId,
         note: input.note,
         processedById: ctx.user.id,
       });
@@ -625,6 +633,7 @@ export const requestItemsRouter = router({
             z.object({
               requestItemId: z.number(),
               dispatchedQuantity: z.string(),
+              warehouseId: z.number().int().positive().optional(),
             })
           )
           .min(1),
@@ -637,6 +646,12 @@ export const requestItemsRouter = router({
           code: "FORBIDDEN",
           message:
             "Solo el Jefe de Bodega Central, Administración Central o Bodeguero de Proyecto pueden registrar salida de bodega",
+        });
+      }
+      if (input.items.some((item) => !item.warehouseId)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Seleccione almacén origen para todos los ítems de la salida",
         });
       }
 
@@ -661,6 +676,7 @@ export const requestItemsRouter = router({
         items: input.items.map((item) => ({
           requestItemId: item.requestItemId,
           quantity: item.dispatchedQuantity,
+          warehouseId: item.warehouseId!,
         })),
         note: input.note,
         processedById: ctx.user.id,
