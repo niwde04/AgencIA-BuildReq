@@ -38,12 +38,36 @@ import ActualizarContrasena from "./pages/ActualizarContrasena";
 
 const UPPERCASE_TEXT_INPUT_TYPES = new Set([
   "",
-  "email",
   "search",
   "tel",
   "text",
   "url",
 ]);
+
+const CASE_SENSITIVE_INPUT_TYPES = new Set(["email", "password"]);
+
+const CASE_SENSITIVE_FIELD_HINTS = [
+  "email",
+  "correo",
+  "password",
+  "contrasena",
+  "contraseña",
+  "username",
+  "usuario",
+];
+
+const CASE_SENSITIVE_AUTOCOMPLETE_HINTS = [
+  "email",
+  "username",
+  "current-password",
+  "new-password",
+  "one-time-code",
+];
+
+function hasCaseSensitiveHint(value: string | null | undefined, hints: string[]) {
+  const normalizedValue = value?.toLocaleLowerCase("es-HN") ?? "";
+  return hints.some((hint) => normalizedValue.includes(hint));
+}
 
 function shouldUppercaseInput(
   element: EventTarget | null
@@ -67,7 +91,21 @@ function shouldUppercaseInput(
     return true;
   }
 
-  return UPPERCASE_TEXT_INPUT_TYPES.has(element.type.toLowerCase());
+  const inputType = element.type.toLowerCase();
+
+  if (
+    CASE_SENSITIVE_INPUT_TYPES.has(inputType) ||
+    hasCaseSensitiveHint(element.id, CASE_SENSITIVE_FIELD_HINTS) ||
+    hasCaseSensitiveHint(element.name, CASE_SENSITIVE_FIELD_HINTS) ||
+    hasCaseSensitiveHint(
+      element.getAttribute("autocomplete"),
+      CASE_SENSITIVE_AUTOCOMPLETE_HINTS
+    )
+  ) {
+    return false;
+  }
+
+  return UPPERCASE_TEXT_INPUT_TYPES.has(inputType);
 }
 
 function uppercaseInputValue(
