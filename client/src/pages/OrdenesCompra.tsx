@@ -1012,10 +1012,6 @@ export default function OrdenesCompra() {
       ) {
         return false;
       }
-      if (isProjectAdmin && purchaseRequest.purchaseType !== "compra_directa") {
-        return false;
-      }
-
       if (!normalizedSearch) {
         return true;
       }
@@ -1054,13 +1050,8 @@ export default function OrdenesCompra() {
     ) {
       return [];
     }
-    if (
-      isProjectAdmin &&
-      selectedOriginDetail.purchaseRequest.purchaseType !== "compra_directa"
-    ) {
-      return [];
-    }
     const assignedProjectId = (user as any)?.assignedProjectId;
+    const canUseAllProjects = isProjectAdmin && !assignedProjectId;
 
     return selectedOriginAllItems.filter((item: any) => {
       if (getPurchaseRequestItemPendingConversionQuantity(item) <= 0) {
@@ -1068,6 +1059,7 @@ export default function OrdenesCompra() {
       }
 
       if (!isProjectAdmin) return true;
+      if (canUseAllProjects) return true;
       const itemProjectId =
         item.sourceProject?.id ?? selectedOriginDetail.purchaseRequest.projectId;
       return assignedProjectId === itemProjectId;

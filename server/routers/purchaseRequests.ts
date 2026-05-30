@@ -37,6 +37,7 @@ function assertProjectScopedAccess(
   if (user.role === "admin") return;
   if (
     user.buildreqRole === "administrador_proyecto" &&
+    user.assignedProjectId &&
     user.assignedProjectId !== projectId
   ) {
     throw new TRPCError({
@@ -199,13 +200,14 @@ export const purchaseRequestsRouter = router({
       }
 
       const projectId =
-        ctx.user.buildreqRole === "administrador_proyecto"
-          ? (ctx.user.assignedProjectId ?? -1)
+        ctx.user.buildreqRole === "administrador_proyecto" &&
+        ctx.user.assignedProjectId
+          ? ctx.user.assignedProjectId
           : input?.projectId;
 
       return db.listPurchaseRequests({
         ...input,
-        projectId,
+        ...(projectId !== undefined ? { projectId } : {}),
       });
     }),
 

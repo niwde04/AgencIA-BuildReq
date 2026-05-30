@@ -2,6 +2,33 @@ import { z } from "zod";
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { nanoid } from "nanoid";
+import { TRPCError } from "@trpc/server";
+
+const buildreqRoleSchema = z.enum([
+  "ingeniero_residente",
+  "jefe_bodega_central",
+  "administracion_central",
+  "administrador_proyecto",
+  "bodeguero_proyecto",
+  "contable",
+]);
+const projectRequiredRoles = new Set([
+  "ingeniero_residente",
+  "bodeguero_proyecto",
+]);
+
+function normalizeAssignedProjectId(
+  buildreqRole: z.infer<typeof buildreqRoleSchema>,
+  assignedProjectId?: number | null
+) {
+  if (buildreqRole === "administrador_proyecto") {
+    return assignedProjectId ?? null;
+  }
+  if (projectRequiredRoles.has(buildreqRole)) {
+    return assignedProjectId ?? null;
+  }
+  return null;
+}
 
 export const invitationsRouter = router({
   /** List all invitations (admin only) */
@@ -15,19 +42,23 @@ export const invitationsRouter = router({
       z.object({
         email: z.string().email(),
         name: z.string().min(1),
-        buildreqRole: z.enum([
-          "ingeniero_residente",
-          "jefe_bodega_central",
-          "administracion_central",
-          "administrador_proyecto",
-          "bodeguero_proyecto",
-          "contable",
-        ]),
-        assignedProjectId: z.number().optional(),
+        buildreqRole: buildreqRoleSchema,
+        assignedProjectId: z.number().nullable().optional(),
         origin: z.string(), // Frontend passes window.location.origin
       })
     )
     .mutation(async ({ input, ctx }) => {
+      const assignedProjectId = normalizeAssignedProjectId(
+        input.buildreqRole,
+        input.assignedProjectId
+      );
+      if (projectRequiredRoles.has(input.buildreqRole) && !assignedProjectId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Debe asignar un proyecto a este rol.",
+        });
+      }
+
       const token = nanoid(32);
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 7); // 7 days to accept
@@ -37,7 +68,7 @@ export const invitationsRouter = router({
         name: input.name,
         token,
         buildreqRole: input.buildreqRole,
-        assignedProjectId: input.assignedProjectId ?? null,
+        assignedProjectId,
         status: "pendiente",
         invitedById: ctx.user.id,
         expiresAt,
@@ -56,11 +87,13 @@ export const invitationsRouter = router({
 
       // Get project name if assigned
       let projectInfo = "";
-      if (input.assignedProjectId) {
-        const project = await db.getProjectById(input.assignedProjectId);
+      if (assignedProjectId) {
+        const project = await db.getProjectById(assignedProjectId);
         if (project) {
           projectInfo = `\nProyecto asignado: ${project.code} - ${project.name}`;
         }
+      } else if (input.buildreqRole === "administrador_proyecto") {
+        projectInfo = "\nProyecto asignado: Todos los proyectos";
       }
 
       // Return email data for the frontend to trigger via Gmail MCP or show link
@@ -111,6 +144,8 @@ export const invitationsRouter = router({
       const roleLabel = roleLabels[inv.buildreqRole] || inv.buildreqRole;
       const projectInfo = found.project
         ? `\nProyecto asignado: ${found.project.code} - ${found.project.name}`
+        : inv.buildreqRole === "administrador_proyecto"
+          ? "\nProyecto asignado: Todos los proyectos"
         : "";
 
       return {

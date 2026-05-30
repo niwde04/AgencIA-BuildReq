@@ -170,29 +170,14 @@ function assertProjectScopedAccess(
 ) {
   if (user.role === "admin") return;
   if (
-    (user.buildreqRole === "administrador_proyecto" ||
+    ((user.buildreqRole === "administrador_proyecto" &&
+      user.assignedProjectId) ||
       user.buildreqRole === "bodeguero_proyecto") &&
     user.assignedProjectId !== projectId
   ) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene acceso a órdenes de compra de otro proyecto",
-    });
-  }
-}
-
-function assertProjectAdminCanConvertPurchaseType(
-  user: { buildreqRole?: string | null },
-  purchaseType?: string | null
-) {
-  if (
-    user.buildreqRole === "administrador_proyecto" &&
-    purchaseType !== "compra_directa"
-  ) {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message:
-        "El Administrador del Proyecto solo puede convertir a OC solicitudes de compra directa",
     });
   }
 }
@@ -342,14 +327,15 @@ export const purchaseOrdersRouter = router({
       }
 
       const projectId =
-        ctx.user.buildreqRole === "administrador_proyecto" ||
+        (ctx.user.buildreqRole === "administrador_proyecto" &&
+          ctx.user.assignedProjectId) ||
         ctx.user.buildreqRole === "bodeguero_proyecto"
           ? (ctx.user.assignedProjectId ?? -1)
           : input?.projectId;
 
       return db.listPurchaseOrders({
         ...input,
-        projectId,
+        ...(projectId !== undefined ? { projectId } : {}),
       });
     }),
 
@@ -393,7 +379,8 @@ export const purchaseOrdersRouter = router({
         supplierId: input.supplierId,
         sapCodes: input.sapCodes,
         projectId:
-          ctx.user.buildreqRole === "administrador_proyecto" ||
+          (ctx.user.buildreqRole === "administrador_proyecto" &&
+            ctx.user.assignedProjectId) ||
           ctx.user.buildreqRole === "bodeguero_proyecto"
             ? (ctx.user.assignedProjectId ?? -1)
             : undefined,
@@ -432,10 +419,6 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseRequest.projectId);
-      assertProjectAdminCanConvertPurchaseType(
-        ctx.user,
-        detail.purchaseRequest.purchaseType
-      );
 
       if (detail.purchaseRequest.status === "convertida") {
         throw new TRPCError({
@@ -723,10 +706,6 @@ export const purchaseOrdersRouter = router({
       const purchaseRequests = details as Array<NonNullable<typeof details[number]>>;
       for (const detail of purchaseRequests) {
         assertProjectScopedAccess(ctx.user, detail.purchaseRequest.projectId);
-        assertProjectAdminCanConvertPurchaseType(
-          ctx.user,
-          detail.purchaseRequest.purchaseType
-        );
       }
 
       const blockedRequest = purchaseRequests.find(

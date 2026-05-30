@@ -8,10 +8,12 @@ const subprojectStatusInput = z.boolean().default(true);
 
 function isProjectScopedUser(user: {
   buildreqRole?: string | null;
+  assignedProjectId?: number | null;
 }) {
   return (
     user.buildreqRole === "ingeniero_residente" ||
-    user.buildreqRole === "administrador_proyecto" ||
+    (user.buildreqRole === "administrador_proyecto" &&
+      Boolean(user.assignedProjectId)) ||
     user.buildreqRole === "bodeguero_proyecto"
   );
 }

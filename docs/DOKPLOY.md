@@ -21,6 +21,7 @@ Estas variables deben existir en Dokploy antes del primer deploy:
 
 - `APP_PORT`
 - `RUN_DB_PUSH`
+- `SUPABASE_DOCKER_NETWORK`
 - `VITE_APP_ID`
 - `OWNER_OPEN_ID`
 - `BUILT_IN_FORGE_API_URL`
@@ -37,6 +38,10 @@ Estas variables deben existir en Dokploy antes del primer deploy:
 - Deja `APP_PORT=4000`
 - Usa `RUN_DB_PUSH=false` por defecto
 - Actívalo en `true` solo si quieres que el contenedor ejecute `pnpm db:push` al arrancar
+- Si Supabase corre en Docker/Dokploy, usa el hostname interno del contenedor de DB en `DATABASE_URL`, por ejemplo:
+  `postgresql://postgres:<password>@covi-supabase-kge7a7-supabase-db:5432/postgres`
+- En ese caso define `SUPABASE_DOCKER_NETWORK` con el nombre de la red Docker de Supabase. Para el servidor actual:
+  `SUPABASE_DOCKER_NETWORK=covi-supabase-kge7a7`
 
 ## Healthcheck
 

@@ -12,11 +12,35 @@ const buildreqRoleSchema = z.enum([
   "bodeguero_proyecto",
   "contable",
 ]);
-const projectScopedRoles = new Set([
+const projectRequiredRoles = new Set([
   "ingeniero_residente",
-  "administrador_proyecto",
   "bodeguero_proyecto",
 ]);
+
+function normalizeAssignedProjectId(
+  buildreqRole: z.infer<typeof buildreqRoleSchema>,
+  assignedProjectId?: number | null
+) {
+  if (buildreqRole === "administrador_proyecto") {
+    return assignedProjectId ?? null;
+  }
+  if (projectRequiredRoles.has(buildreqRole)) {
+    return assignedProjectId ?? null;
+  }
+  return null;
+}
+
+function assertRequiredProject(
+  buildreqRole: z.infer<typeof buildreqRoleSchema>,
+  assignedProjectId: number | null
+) {
+  if (projectRequiredRoles.has(buildreqRole) && !assignedProjectId) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Debe asignar un proyecto a este rol.",
+    });
+  }
+}
 
 export const userManagementRouter = router({
   list: adminProcedure.query(async () => {
@@ -36,16 +60,11 @@ export const userManagementRouter = router({
     .mutation(async ({ input }) => {
       const email = input.email.toLowerCase();
       const name = input.name.trim();
-      const assignedProjectId = projectScopedRoles.has(input.buildreqRole)
-        ? input.assignedProjectId
-        : null;
-
-      if (projectScopedRoles.has(input.buildreqRole) && !assignedProjectId) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Debe asignar un proyecto a este rol.",
-        });
-      }
+      const assignedProjectId = normalizeAssignedProjectId(
+        input.buildreqRole,
+        input.assignedProjectId
+      );
+      assertRequiredProject(input.buildreqRole, assignedProjectId);
 
       const existingUser = await db.getUserByEmail(email);
       if (existingUser) {
@@ -115,10 +134,16 @@ export const userManagementRouter = router({
       })
     )
     .mutation(async ({ input }) => {
+      const assignedProjectId = normalizeAssignedProjectId(
+        input.buildreqRole,
+        input.assignedProjectId
+      );
+      assertRequiredProject(input.buildreqRole, assignedProjectId);
+
       return db.updateUserRole(
         input.userId,
         input.buildreqRole,
-        input.assignedProjectId
+        assignedProjectId
       );
     }),
 

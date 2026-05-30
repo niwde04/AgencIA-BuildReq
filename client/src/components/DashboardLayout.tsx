@@ -132,12 +132,6 @@ const allMenuItems: MenuItem[] = [
     roles: ["jefe_bodega_central", "administracion_central", "admin"],
   },
   {
-    icon: Package,
-    label: "Saldos Iniciales",
-    path: "/saldos-iniciales",
-    roles: ["jefe_bodega_central", "administracion_central", "admin"],
-  },
-  {
     icon: FileText,
     label: "Solicitudes de Compra",
     path: "/solicitudes-compra",

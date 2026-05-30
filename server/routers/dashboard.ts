@@ -53,6 +53,10 @@ export const dashboardRouter = router({
       userRole === "administrador_proyecto" || userRole === "bodeguero_proyecto"
         ? user.assignedProjectId ?? -1
         : undefined;
+    const purchaseProjectId =
+      userRole === "administrador_proyecto"
+        ? (user.assignedProjectId ?? undefined)
+        : scopedProjectId;
     const canAccessProcurement =
       isAdmin ||
       userRole === "jefe_bodega_central" ||
@@ -112,13 +116,13 @@ export const dashboardRouter = router({
       canAccessProcurement
         ? db.listPurchaseRequests({
             status: "pendiente",
-            ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+            ...(purchaseProjectId ? { projectId: purchaseProjectId } : {}),
           })
         : Promise.resolve([]),
       canAccessPurchaseOrders
         ? db.listPurchaseOrders({
             status: "emitida",
-            ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+            ...(purchaseProjectId ? { projectId: purchaseProjectId } : {}),
           })
         : Promise.resolve([]),
       canAccessProcurement

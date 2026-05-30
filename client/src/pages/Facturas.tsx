@@ -34,7 +34,14 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { formatPurchaseOrderCurrency } from "@shared/purchase-orders";
 import {
@@ -72,6 +79,28 @@ const STATUS_COLORS: Record<string, string> = {
 };
 const EMISSION_DEADLINE_ISSUE_COLOR =
   "border-rose-300 bg-rose-50 text-rose-700";
+const SAVED_BUTTON_CLASS =
+  "border-emerald-200 bg-emerald-50 text-emerald-700 shadow-none hover:bg-emerald-100 hover:text-emerald-800 disabled:bg-emerald-50 disabled:text-emerald-700 disabled:opacity-100";
+
+type InvoiceDraft = {
+  isFiscalDocument: boolean;
+  cai: string;
+  invoiceNumber: string;
+  documentRangeStart: string;
+  documentRangeEnd: string;
+  documentDate: string;
+  documentDueDate: string;
+  postingDate: string;
+  receiptDate: string;
+  emissionDeadline: string;
+  notes: string;
+};
+
+type InvoiceActionFeedback = {
+  invoiceSavedId: number | null;
+  retentionsSavedId: number | null;
+  reviewSentId: number | null;
+};
 
 type RetentionDraft = {
   invoiceItemId?: number | null;
@@ -170,6 +199,10 @@ function formatDateTimeLabel(value: string | Date | null | undefined) {
 function toNumber(value: string | number | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatCsvAmount(value: string | number | null | undefined) {
+  return toNumber(value).toFixed(2);
 }
 
 function getRetentionAmount(draft: RetentionDraft) {
@@ -706,7 +739,7 @@ export default function Facturas() {
   const [accountingComment, setAccountingComment] = useState("");
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectionComment, setRejectionComment] = useState("");
-  const [invoiceDraft, setInvoiceDraft] = useState({
+  const [invoiceDraft, setInvoiceDraft] = useState<InvoiceDraft>({
     isFiscalDocument: true,
     cai: "",
     invoiceNumber: "",
@@ -720,10 +753,43 @@ export default function Facturas() {
     notes: "",
   });
   const [retentionDrafts, setRetentionDrafts] = useState<RetentionDraft[]>([]);
+  const [actionFeedback, setActionFeedback] = useState<InvoiceActionFeedback>({
+    invoiceSavedId: null,
+    retentionsSavedId: null,
+    reviewSentId: null,
+  });
   const [attachmentState, setAttachmentState] = useState({
     count: 0,
     isLoading: false,
   });
+  const clearInvoiceSavedFeedback = useCallback(() => {
+    setActionFeedback(current =>
+      current.invoiceSavedId === null
+        ? current
+        : { ...current, invoiceSavedId: null }
+    );
+  }, []);
+  const clearRetentionsSavedFeedback = useCallback(() => {
+    setActionFeedback(current =>
+      current.retentionsSavedId === null
+        ? current
+        : { ...current, retentionsSavedId: null }
+    );
+  }, []);
+  const updateInvoiceDraft = useCallback(
+    (updater: SetStateAction<InvoiceDraft>) => {
+      clearInvoiceSavedFeedback();
+      setInvoiceDraft(updater);
+    },
+    [clearInvoiceSavedFeedback]
+  );
+  const updateRetentionDrafts = useCallback(
+    (updater: SetStateAction<RetentionDraft[]>) => {
+      clearRetentionsSavedFeedback();
+      setRetentionDrafts(updater);
+    },
+    [clearRetentionsSavedFeedback]
+  );
   const listFilters = useMemo(
     () => ({
       status:
@@ -751,26 +817,38 @@ export default function Facturas() {
       enabled: selectedId !== null,
     });
   const updateMutation = trpc.invoices.update.useMutation({
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       toast.success("Factura actualizada");
+      setActionFeedback(current => ({
+        ...current,
+        invoiceSavedId: variables.id,
+      }));
       void utils.invoices.list.invalidate();
-      if (selectedId) void utils.invoices.getById.invalidate({ id: selectedId });
+      void utils.invoices.getById.invalidate({ id: variables.id });
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
   });
   const replaceRetentionsMutation = trpc.invoices.replaceRetentions.useMutation({
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       toast.success("Retenciones actualizadas");
+      setActionFeedback(current => ({
+        ...current,
+        retentionsSavedId: variables.id,
+      }));
       void utils.invoices.list.invalidate();
-      if (selectedId) void utils.invoices.getById.invalidate({ id: selectedId });
+      void utils.invoices.getById.invalidate({ id: variables.id });
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
   });
   const reviewMutation = trpc.invoices.review.useMutation({
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       toast.success("Factura enviada a revisión");
+      setActionFeedback(current => ({
+        ...current,
+        reviewSentId: variables.id,
+      }));
       void utils.invoices.list.invalidate();
-      if (selectedId) void utils.invoices.getById.invalidate({ id: selectedId });
+      void utils.invoices.getById.invalidate({ id: variables.id });
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
   });
@@ -795,6 +873,14 @@ export default function Facturas() {
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
   });
+  useEffect(() => {
+    if (selectedId !== null) return;
+    setActionFeedback({
+      invoiceSavedId: null,
+      retentionsSavedId: null,
+      reviewSentId: null,
+    });
+  }, [selectedId]);
   useEffect(() => {
     if (!detail?.invoice) return;
     setInvoiceDraft({
@@ -830,6 +916,11 @@ export default function Facturas() {
     setAccountingComment("");
     setRejectionComment("");
     setRejectDialogOpen(false);
+    setActionFeedback({
+      invoiceSavedId: null,
+      retentionsSavedId: null,
+      reviewSentId: null,
+    });
   }, [detail?.invoice?.id]);
 
   const filteredInvoices = useMemo(() => {
@@ -904,17 +995,15 @@ export default function Facturas() {
         },
         {
           header: "Total",
-          value: (row: any) => formatPurchaseOrderCurrency(row.invoice.total),
+          value: (row: any) => formatCsvAmount(row.invoice.total),
         },
         {
           header: "Retenciones",
-          value: (row: any) =>
-            formatPurchaseOrderCurrency(row.invoice.retentionTotal),
+          value: (row: any) => formatCsvAmount(row.invoice.retentionTotal),
         },
         {
           header: "Neto",
-          value: (row: any) =>
-            formatPurchaseOrderCurrency(row.invoice.netPayable),
+          value: (row: any) => formatCsvAmount(row.invoice.netPayable),
         },
         {
           header: "Estado",
@@ -979,6 +1068,12 @@ export default function Facturas() {
   const canManageInvoiceAttachments = canReviewInvoices && isDraft;
   const canReviewSelectedInvoice = canReviewInvoices && isDraft;
   const canAccountSelectedInvoice = canAccountInvoices && isReviewed;
+  const invoiceSaveConfirmed =
+    selectedId !== null && actionFeedback.invoiceSavedId === selectedId;
+  const retentionsSaveConfirmed =
+    selectedId !== null && actionFeedback.retentionsSavedId === selectedId;
+  const reviewSendConfirmed =
+    selectedId !== null && actionFeedback.reviewSentId === selectedId;
   const handleInvoiceAttachmentsState = useCallback(
     (state: { attachments: any[]; isLoading: boolean }) => {
       setAttachmentState(current => {
@@ -1048,6 +1143,7 @@ export default function Facturas() {
       toast.error("Selecciona la fecha de vencimiento (crédito)");
       return;
     }
+    setActionFeedback(current => ({ ...current, invoiceSavedId: null }));
     updateMutation.mutate({
       id: selectedId,
       isFiscalDocument: invoiceDraft.isFiscalDocument,
@@ -1119,7 +1215,7 @@ export default function Facturas() {
     );
     if (!selectedOption) return;
 
-    setRetentionDrafts(current => {
+    updateRetentionDrafts(current => {
       const currentLineRetentions = current.filter(
         retention => retention.invoiceItemId === item.id
       );
@@ -1230,6 +1326,7 @@ export default function Facturas() {
       toast.error("Las retenciones no pueden exceder el total de la factura");
       return;
     }
+    setActionFeedback(current => ({ ...current, retentionsSavedId: null }));
     replaceRetentionsMutation.mutate({
       id: selectedId,
       retentions: retentionDrafts.map(retention => ({
@@ -1491,6 +1588,7 @@ export default function Facturas() {
       toast.error("Adjunte al menos un archivo antes de enviar a revisión");
       return;
     }
+    setActionFeedback(current => ({ ...current, reviewSentId: null }));
     reviewMutation.mutate({ id: selectedId });
   };
 
@@ -1720,16 +1818,27 @@ export default function Facturas() {
                   {canReviewSelectedInvoice ? (
                     <Button
                       onClick={handleReviewInvoice}
+                      variant={reviewSendConfirmed ? "outline" : "default"}
+                      className={
+                        reviewSendConfirmed ? SAVED_BUTTON_CLASS : undefined
+                      }
                       disabled={
                         reviewMutation.isPending ||
+                        reviewSendConfirmed ||
                         attachmentState.isLoading ||
                         attachmentState.count === 0
                       }
                     >
-                      <Send className="mr-2 h-4 w-4" />
+                      {reviewSendConfirmed ? (
+                        <CheckCircle2 className="mr-2 h-4 w-4" />
+                      ) : (
+                        <Send className="mr-2 h-4 w-4" />
+                      )}
                       {reviewMutation.isPending
                         ? "Enviando..."
-                        : "Enviar a revisión"}
+                        : reviewSendConfirmed
+                          ? "Enviada a revisión"
+                          : "Enviar a revisión"}
                     </Button>
                   ) : null}
                   {canAccountSelectedInvoice ? (
@@ -1871,7 +1980,7 @@ export default function Facturas() {
                         checked={invoiceDraft.isFiscalDocument}
                         disabled={!canEditSelectedInvoice}
                         onCheckedChange={checked =>
-                          setInvoiceDraft(current => ({
+                          updateInvoiceDraft(current => ({
                             ...current,
                             isFiscalDocument: checked === true,
                             cai: checked === true
@@ -1908,7 +2017,7 @@ export default function Facturas() {
                           value={invoiceDraft.cai}
                           disabled={!canEditSelectedInvoice}
                           onChange={event =>
-                            setInvoiceDraft(current => ({
+                            updateInvoiceDraft(current => ({
                               ...current,
                               cai: current.isFiscalDocument
                                 ? formatCaiInput(event.target.value)
@@ -1934,7 +2043,7 @@ export default function Facturas() {
                           value={invoiceDraft.invoiceNumber}
                           disabled={!canEditSelectedInvoice}
                           onChange={event =>
-                            setInvoiceDraft(current => ({
+                            updateInvoiceDraft(current => ({
                               ...current,
                               invoiceNumber: current.isFiscalDocument
                                 ? formatInvoiceNumberInput(event.target.value)
@@ -1962,7 +2071,7 @@ export default function Facturas() {
                           value={invoiceDraft.documentRangeStart}
                           disabled={!canEditSelectedInvoice}
                           onChange={event =>
-                            setInvoiceDraft(current => ({
+                            updateInvoiceDraft(current => ({
                               ...current,
                               documentRangeStart: current.isFiscalDocument
                                 ? formatInvoiceNumberInput(event.target.value)
@@ -1990,7 +2099,7 @@ export default function Facturas() {
                           value={invoiceDraft.documentRangeEnd}
                           disabled={!canEditSelectedInvoice}
                           onChange={event =>
-                            setInvoiceDraft(current => ({
+                            updateInvoiceDraft(current => ({
                               ...current,
                               documentRangeEnd: current.isFiscalDocument
                                 ? formatInvoiceNumberInput(event.target.value)
@@ -2019,7 +2128,7 @@ export default function Facturas() {
                           value={invoiceDraft.documentDate}
                           disabled={!canEditSelectedInvoice}
                           onChange={event =>
-                            setInvoiceDraft(current => ({
+                            updateInvoiceDraft(current => ({
                               ...current,
                               documentDate: event.target.value,
                             }))
@@ -2033,7 +2142,7 @@ export default function Facturas() {
                           value={invoiceDraft.documentDueDate}
                           disabled={!canEditSelectedInvoice}
                           onChange={event =>
-                            setInvoiceDraft(current => ({
+                            updateInvoiceDraft(current => ({
                               ...current,
                               documentDueDate: event.target.value,
                             }))
@@ -2047,7 +2156,7 @@ export default function Facturas() {
                           value={invoiceDraft.postingDate}
                           disabled={!canEditSelectedInvoice}
                           onChange={event =>
-                            setInvoiceDraft(current => ({
+                            updateInvoiceDraft(current => ({
                               ...current,
                               postingDate: event.target.value,
                             }))
@@ -2061,7 +2170,7 @@ export default function Facturas() {
                           value={invoiceDraft.receiptDate}
                           disabled={!canEditSelectedInvoice}
                           onChange={event =>
-                            setInvoiceDraft(current => ({
+                            updateInvoiceDraft(current => ({
                               ...current,
                               receiptDate: event.target.value,
                             }))
@@ -2075,7 +2184,7 @@ export default function Facturas() {
                           value={invoiceDraft.emissionDeadline}
                           disabled={!canEditSelectedInvoice}
                           onChange={event =>
-                            setInvoiceDraft(current => ({
+                            updateInvoiceDraft(current => ({
                               ...current,
                               emissionDeadline: event.target.value,
                             }))
@@ -2089,7 +2198,7 @@ export default function Facturas() {
                         value={invoiceDraft.notes}
                         disabled={!canEditSelectedInvoice}
                         onChange={event =>
-                          setInvoiceDraft(current => ({
+                          updateInvoiceDraft(current => ({
                             ...current,
                             notes: event.target.value,
                           }))
@@ -2100,10 +2209,24 @@ export default function Facturas() {
                     {canEditSelectedInvoice ? (
                       <Button
                         onClick={handleSaveInvoice}
-                        disabled={updateMutation.isPending}
+                        variant={invoiceSaveConfirmed ? "outline" : "default"}
+                        className={
+                          invoiceSaveConfirmed ? SAVED_BUTTON_CLASS : undefined
+                        }
+                        disabled={
+                          updateMutation.isPending || invoiceSaveConfirmed
+                        }
                       >
-                        <Save className="mr-2 h-4 w-4" />
-                        Guardar factura
+                        {invoiceSaveConfirmed ? (
+                          <CheckCircle2 className="mr-2 h-4 w-4" />
+                        ) : (
+                          <Save className="mr-2 h-4 w-4" />
+                        )}
+                        {updateMutation.isPending
+                          ? "Guardando..."
+                          : invoiceSaveConfirmed
+                            ? "Factura guardada"
+                            : "Guardar factura"}
                       </Button>
                     ) : null}
                   </div>
@@ -2426,7 +2549,7 @@ export default function Facturas() {
                                       variant="outline"
                                       size="icon"
                                       onClick={() =>
-                                        setRetentionDrafts(current =>
+                                        updateRetentionDrafts(current =>
                                           current.filter(
                                             (_, entryIndex) =>
                                               entryIndex !== index
@@ -2448,14 +2571,31 @@ export default function Facturas() {
                     {canEditSelectedInvoice ? (
                       <Button
                         onClick={handleSaveRetentions}
+                        variant={
+                          retentionsSaveConfirmed ? "outline" : "default"
+                        }
+                        className={
+                          retentionsSaveConfirmed
+                            ? SAVED_BUTTON_CLASS
+                            : undefined
+                        }
                         disabled={
                           replaceRetentionsMutation.isPending ||
+                          retentionsSaveConfirmed ||
                           (retentionDrafts.length > 0 &&
                             !canRetainSelectedInvoice)
                         }
                       >
-                        <Save className="mr-2 h-4 w-4" />
-                        Guardar retenciones
+                        {retentionsSaveConfirmed ? (
+                          <CheckCircle2 className="mr-2 h-4 w-4" />
+                        ) : (
+                          <Save className="mr-2 h-4 w-4" />
+                        )}
+                        {replaceRetentionsMutation.isPending
+                          ? "Guardando..."
+                          : retentionsSaveConfirmed
+                            ? "Retenciones guardadas"
+                            : "Guardar retenciones"}
                       </Button>
                     ) : null}
                   </div>

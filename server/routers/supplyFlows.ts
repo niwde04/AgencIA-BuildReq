@@ -72,27 +72,12 @@ function assertProjectScopedConversionAccess(
   if (user.role === "admin") return;
   if (
     user.buildreqRole === "administrador_proyecto" &&
+    user.assignedProjectId &&
     user.assignedProjectId !== projectId
   ) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene permisos para crear OC de otro proyecto",
-    });
-  }
-}
-
-function assertProjectAdminCanConvertPurchaseType(
-  user: { buildreqRole?: string | null },
-  purchaseType?: string | null
-) {
-  if (
-    user.buildreqRole === "administrador_proyecto" &&
-    purchaseType !== "compra_directa"
-  ) {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message:
-        "El Administrador del Proyecto solo puede convertir a OC solicitudes de compra directa",
     });
   }
 }
@@ -1514,11 +1499,6 @@ export const supplyFlowsRouter = router({
           ctx.user,
           detail.purchaseRequest.projectId
         );
-        assertProjectAdminCanConvertPurchaseType(
-          ctx.user,
-          detail.purchaseRequest.purchaseType
-        );
-
         const directPurchaseRequestItemIds = detail.items
           .map((item: any) => item.materialRequestItemId)
           .filter(

@@ -1786,7 +1786,60 @@ describe("BuildReq - Role-based Access Control", () => {
     listInvoicesSpy.mockRestore();
   });
 
-  it("Project Administrator without assigned project does not fall back to global lists", async () => {
+  it("Project Administrator without assigned project sees global purchase sidebar counts", async () => {
+    const { ctx } = createProjectAdminContext({ assignedProjectId: null });
+    const caller = appRouter.createCaller(ctx);
+    const listMaterialRequestsSpy = vi
+      .spyOn(db, "listMaterialRequests")
+      .mockResolvedValue([] as any);
+    const listPendingFlowQueueItemsSpy = vi
+      .spyOn(db, "listPendingFlowQueueItems")
+      .mockResolvedValue([] as any);
+    const listPurchaseRequestsSpy = vi
+      .spyOn(db, "listPurchaseRequests")
+      .mockResolvedValue([{}, {}] as any);
+    const listPurchaseOrdersSpy = vi
+      .spyOn(db, "listPurchaseOrders")
+      .mockResolvedValue([{}] as any);
+    const listTransferRequestsSpy = vi
+      .spyOn(db, "listTransferRequests")
+      .mockResolvedValue([] as any);
+    const listInvoicesSpy = vi
+      .spyOn(db, "listInvoices")
+      .mockResolvedValue([] as any);
+
+    await expect(caller.dashboard.sidebarCounts()).resolves.toEqual(
+      expect.objectContaining({
+        purchaseRequestsPending: 2,
+        purchaseOrdersEmitted: 1,
+        transferRequestsPending: 0,
+      })
+    );
+
+    expect(listMaterialRequestsSpy).toHaveBeenCalledWith({
+      status: "pendiente_aprobar",
+      projectId: -1,
+    });
+    expect(listPurchaseRequestsSpy).toHaveBeenCalledWith({
+      status: "pendiente",
+    });
+    expect(listPurchaseOrdersSpy).toHaveBeenCalledWith({
+      status: "emitida",
+    });
+    expect(listTransferRequestsSpy).toHaveBeenCalledWith({
+      status: "pendiente",
+      projectId: -1,
+    });
+
+    listMaterialRequestsSpy.mockRestore();
+    listPendingFlowQueueItemsSpy.mockRestore();
+    listPurchaseRequestsSpy.mockRestore();
+    listPurchaseOrdersSpy.mockRestore();
+    listTransferRequestsSpy.mockRestore();
+    listInvoicesSpy.mockRestore();
+  });
+
+  it("Project Administrator without assigned project has global purchase and project lists only", async () => {
     const { ctx } = createProjectAdminContext({ assignedProjectId: null });
     const caller = appRouter.createCaller(ctx);
     const listMaterialRequestsSpy = vi
@@ -1810,6 +1863,9 @@ describe("BuildReq - Role-based Access Control", () => {
     const listInventoryItemsSpy = vi
       .spyOn(db, "listInventoryItems")
       .mockResolvedValue([] as any);
+    const listProjectsSpy = vi
+      .spyOn(db, "listProjects")
+      .mockResolvedValue([] as any);
 
     await expect(caller.materialRequests.list()).resolves.toEqual([]);
     await expect(caller.purchaseRequests.list()).resolves.toEqual([]);
@@ -1821,12 +1877,13 @@ describe("BuildReq - Role-based Access Control", () => {
     await expect(caller.projects.list()).resolves.toEqual([]);
 
     expect(listMaterialRequestsSpy).toHaveBeenCalledWith({ projectId: -1 });
-    expect(listPurchaseRequestsSpy).toHaveBeenCalledWith({ projectId: -1 });
-    expect(listPurchaseOrdersSpy).toHaveBeenCalledWith({ projectId: -1 });
+    expect(listPurchaseRequestsSpy).toHaveBeenCalledWith({});
+    expect(listPurchaseOrdersSpy).toHaveBeenCalledWith({});
     expect(listTransferRequestsSpy).toHaveBeenCalledWith({ projectId: -1 });
     expect(listTransfersSpy).toHaveBeenCalledWith({ sourceProjectId: -1 });
     expect(listReceiptsSpy).toHaveBeenCalledWith({ projectId: -1 });
     expect(listInventoryItemsSpy).toHaveBeenCalledWith({ projectId: -1 });
+    expect(listProjectsSpy).toHaveBeenCalledWith(undefined);
 
     listMaterialRequestsSpy.mockRestore();
     listPurchaseRequestsSpy.mockRestore();
@@ -1835,6 +1892,7 @@ describe("BuildReq - Role-based Access Control", () => {
     listTransfersSpy.mockRestore();
     listReceiptsSpy.mockRestore();
     listInventoryItemsSpy.mockRestore();
+    listProjectsSpy.mockRestore();
   });
 
   it("Project Administrator can only view transfer requests and transfers for their project", async () => {
@@ -5138,7 +5196,7 @@ describe("BuildReq - Invitation System", () => {
 // Tests: User Management
 // ============================================================
 describe("BuildReq - User Management", () => {
-  it("Admin can assign a project-scoped role before selecting a project", async () => {
+  it("Admin can assign Project Administrator to all projects", async () => {
     const { ctx } = createUserContext({
       role: "admin",
       assignedProjectId: null,
@@ -5151,17 +5209,34 @@ describe("BuildReq - User Management", () => {
     await expect(
       caller.userManagement.updateRole({
         userId: 2,
-        buildreqRole: "ingeniero_residente",
+        buildreqRole: "administrador_proyecto",
         assignedProjectId: null,
       })
     ).resolves.toEqual({ success: true });
 
     expect(updateUserRoleSpy).toHaveBeenCalledWith(
       2,
-      "ingeniero_residente",
+      "administrador_proyecto",
       null
     );
 
+    updateUserRoleSpy.mockRestore();
+  });
+
+  it("Admin cannot assign required project roles without a project", async () => {
+    const { ctx } = createUserContext({ role: "admin" });
+    const caller = appRouter.createCaller(ctx);
+    const updateUserRoleSpy = vi.spyOn(db, "updateUserRole");
+
+    await expect(
+      caller.userManagement.updateRole({
+        userId: 2,
+        buildreqRole: "ingeniero_residente",
+        assignedProjectId: null,
+      })
+    ).rejects.toThrow("Debe asignar un proyecto a este rol.");
+
+    expect(updateUserRoleSpy).not.toHaveBeenCalled();
     updateUserRoleSpy.mockRestore();
   });
 
@@ -10555,7 +10630,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
     syncPurchaseRequestConversionStatusSpy.mockRestore();
   });
 
-  it("Project admin cannot create an OC from a local or foreign purchase request", async () => {
+  it("Project admin can create an OC from an own-project local purchase request", async () => {
     const { ctx } = createProjectAdminContext({ assignedProjectId: 3 });
     const caller = appRouter.createCaller(ctx);
     const getPurchaseRequestByIdSpy = vi
@@ -10567,30 +10642,56 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
           requestNumber: "SC-2026-0019",
           status: "pendiente",
           purchaseType: "local",
+          neededBy: new Date("2026-05-12"),
+          sapDocumentNumber: null,
+          notes: null,
         },
         items: [
           {
             id: 1001,
+            materialRequestItemId: null,
+            originalSapItemCode: "01010100001",
+            currentSapItemCode: "01010100001",
             itemName: "PRODUCTO LOCAL",
             quantity: "1.00",
             unit: "und",
           },
         ],
       } as any);
-    const createPurchaseOrderSpy = vi.spyOn(db, "createPurchaseOrder");
+    const createPurchaseOrderSpy = vi
+      .spyOn(db, "createPurchaseOrder")
+      .mockResolvedValue({ id: 1004, orderNumber: "OC-2026-0053" });
+    const adjustPurchaseRequestItemConvertedQuantitySpy = vi
+      .spyOn(db, "adjustPurchaseRequestItemConvertedQuantity")
+      .mockResolvedValue({ purchaseRequestId: 62 } as any);
+    const syncPurchaseRequestConversionStatusSpy = vi
+      .spyOn(db, "syncPurchaseRequestConversionStatus")
+      .mockResolvedValue("convertida" as any);
 
     await expect(
       caller.purchaseOrders.createFromPurchaseRequest({
         purchaseRequestId: 62,
         selectedItemIds: [1001],
       })
-    ).rejects.toThrow(
-      "El Administrador del Proyecto solo puede convertir a OC solicitudes de compra directa"
+    ).resolves.toEqual({
+      success: true,
+      purchaseOrderId: 1004,
+      purchaseOrderNumber: "OC-2026-0053",
+    });
+    expect(createPurchaseOrderSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purchaseRequestId: 62,
+        projectId: 3,
+        purchaseType: "local",
+        createdById: 5,
+      }),
+      [expect.objectContaining({ purchaseRequestItemId: 1001 })]
     );
-    expect(createPurchaseOrderSpy).not.toHaveBeenCalled();
 
     getPurchaseRequestByIdSpy.mockRestore();
     createPurchaseOrderSpy.mockRestore();
+    adjustPurchaseRequestItemConvertedQuantitySpy.mockRestore();
+    syncPurchaseRequestConversionStatusSpy.mockRestore();
   });
 
   it("Project admin cannot create an OC for another project", async () => {
@@ -10626,6 +10727,69 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
 
     getPurchaseRequestByIdSpy.mockRestore();
     createPurchaseOrderSpy.mockRestore();
+  });
+
+  it("Project admin with all-project access can create an OC for another project", async () => {
+    const { ctx } = createProjectAdminContext({ assignedProjectId: null });
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 63,
+          projectId: 4,
+          requestNumber: "SC-2026-0020",
+          status: "pendiente",
+          purchaseType: "local",
+          neededBy: new Date("2026-05-14"),
+          sapDocumentNumber: null,
+          notes: null,
+        },
+        items: [
+          {
+            id: 1002,
+            materialRequestItemId: null,
+            originalSapItemCode: "01010100002",
+            currentSapItemCode: "01010100002",
+            itemName: "PRODUCTO GLOBAL",
+            quantity: "2.00",
+            unit: "und",
+          },
+        ],
+      } as any);
+    const createPurchaseOrderSpy = vi
+      .spyOn(db, "createPurchaseOrder")
+      .mockResolvedValue({ id: 1005, orderNumber: "OC-2026-0054" });
+    const adjustPurchaseRequestItemConvertedQuantitySpy = vi
+      .spyOn(db, "adjustPurchaseRequestItemConvertedQuantity")
+      .mockResolvedValue({ purchaseRequestId: 63 } as any);
+    const syncPurchaseRequestConversionStatusSpy = vi
+      .spyOn(db, "syncPurchaseRequestConversionStatus")
+      .mockResolvedValue("convertida" as any);
+
+    await expect(
+      caller.purchaseOrders.createFromPurchaseRequest({
+        purchaseRequestId: 63,
+        selectedItemIds: [1002],
+      })
+    ).resolves.toEqual({
+      success: true,
+      purchaseOrderId: 1005,
+      purchaseOrderNumber: "OC-2026-0054",
+    });
+    expect(createPurchaseOrderSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purchaseRequestId: 63,
+        projectId: 4,
+        createdById: 5,
+      }),
+      [expect.objectContaining({ purchaseRequestItemId: 1002 })]
+    );
+
+    getPurchaseRequestByIdSpy.mockRestore();
+    createPurchaseOrderSpy.mockRestore();
+    adjustPurchaseRequestItemConvertedQuantitySpy.mockRestore();
+    syncPurchaseRequestConversionStatusSpy.mockRestore();
   });
 
   it("Project admin cannot create an OC with source items from another project", async () => {

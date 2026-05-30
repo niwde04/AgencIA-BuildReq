@@ -308,15 +308,9 @@ export default function PurchaseRequests() {
     });
   }, [purchaseTypeFilter, requests, searchTerm, statusFilter]);
 
-  const canProjectAdminConvertPurchaseRequest = (purchaseRequest: {
-    purchaseType?: string | null;
-    status?: string | null;
-  }) => !isProjectAdmin || purchaseRequest.purchaseType === "compra_directa";
-
   const canConvertPurchaseRequestRow = (row: any) =>
     canConvert &&
-    UNIFIED_CONVERTIBLE_STATUSES.has(row.purchaseRequest.status) &&
-    canProjectAdminConvertPurchaseRequest(row.purchaseRequest);
+    UNIFIED_CONVERTIBLE_STATUSES.has(row.purchaseRequest.status);
 
   const updateMutation = trpc.purchaseRequests.update.useMutation({
     onSuccess: () => {
@@ -597,18 +591,14 @@ export default function PurchaseRequests() {
 
   const convertibleItemIds = useMemo(() => {
     if (!canConvert) return [];
-    if (
-      isProjectAdmin &&
-      detail?.purchaseRequest.purchaseType !== "compra_directa"
-    ) {
-      return [];
-    }
     const assignedProjectId = (user as any)?.assignedProjectId;
+    const canUseAllProjects = isProjectAdmin && !assignedProjectId;
 
     return selectedItems
       .filter((item: any) => {
         if (getPendingConversionQuantity(item) <= 0) return false;
         if (!isProjectAdmin) return true;
+        if (canUseAllProjects) return true;
         const itemProjectId =
           item.sourceProject?.id ?? detail?.purchaseRequest.projectId;
         return assignedProjectId === itemProjectId;
@@ -617,7 +607,6 @@ export default function PurchaseRequests() {
   }, [
     canConvert,
     detail?.purchaseRequest.projectId,
-    detail?.purchaseRequest.purchaseType,
     isProjectAdmin,
     selectedItems,
     user,
@@ -677,12 +666,7 @@ export default function PurchaseRequests() {
   const isMixedProjectRequest = Boolean(detail?.projectSummary?.isMixed);
   const isConvertedPurchaseRequest =
     detail?.purchaseRequest.status === "convertida";
-  const isProjectAdminReadOnlyRequest =
-    isProjectAdmin &&
-    Boolean(detail) &&
-    detail?.purchaseRequest.purchaseType !== "compra_directa";
-  const canEditSelectedPurchaseRequest =
-    !isConvertedPurchaseRequest && !isProjectAdminReadOnlyRequest;
+  const canEditSelectedPurchaseRequest = !isConvertedPurchaseRequest;
   const canEditPurchaseRequestDestination =
     canEditSelectedPurchaseRequest &&
     (user?.role === "admin" ||
@@ -1484,9 +1468,7 @@ export default function PurchaseRequests() {
                 <p className="text-sm text-muted-foreground">
                   {isConvertedPurchaseRequest
                     ? "Esta solicitud ya fue convertida a orden de compra y se muestra en modo solo lectura."
-                    : isProjectAdminReadOnlyRequest
-                      ? "Esta solicitud es informativa para el Administrador del Proyecto. Solo las compras directas pueden convertirse a OC desde este rol."
-                      : "Revisa la solicitud, adjunta cotización y convierte los ítems seleccionados a orden de compra cuando ya esté lista."}
+                    : "Revisa la solicitud, adjunta cotización y convierte los ítems seleccionados a orden de compra cuando ya esté lista."}
                 </p>
               </div>
               {detail && (
@@ -1646,13 +1628,6 @@ export default function PurchaseRequests() {
                   });
                 }}
               />
-
-              {isProjectAdminReadOnlyRequest && (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                  Solo consulta: las solicitudes de Compra Local o Compra
-                  Extranjera continúan con Administración Central.
-                </div>
-              )}
 
               <div className="min-w-0 rounded-2xl border border-border/70 bg-card">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-4">

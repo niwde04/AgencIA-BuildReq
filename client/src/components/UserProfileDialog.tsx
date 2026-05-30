@@ -83,10 +83,13 @@ export function UserProfileDialog({
     ? roleLabels[user.buildreqRole] ?? user.buildreqRole
     : "Sin rol asignado";
   const projectLabel = useMemo(() => {
+    if (user?.buildreqRole === "administrador_proyecto" && !user.assignedProjectId) {
+      return "Todos los proyectos";
+    }
     if (!user?.assignedProjectId) return "N/A";
     if (!assignedProject) return `Proyecto #${user.assignedProjectId}`;
     return `${assignedProject.code} - ${assignedProject.name}`;
-  }, [assignedProject, user?.assignedProjectId]);
+  }, [assignedProject, user?.assignedProjectId, user?.buildreqRole]);
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
