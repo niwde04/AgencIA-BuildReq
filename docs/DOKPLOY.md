@@ -19,7 +19,6 @@ Estas variables deben existir en Dokploy antes del primer deploy:
 
 ## Variables opcionales
 
-- `APP_PORT`
 - `RUN_DB_PUSH`
 - `SUPABASE_DOCKER_NETWORK`
 - `VITE_APP_ID`
@@ -35,7 +34,8 @@ Estas variables deben existir en Dokploy antes del primer deploy:
 
 ## Recomendación
 
-- Deja `APP_PORT=4000`
+- Configura el puerto interno de la aplicación en Dokploy como `4000`
+- No publiques `4000:4000` manualmente en Docker Compose; Dokploy debe enrutar al puerto interno para evitar conflictos con contenedores anteriores
 - Usa `RUN_DB_PUSH=false` por defecto
 - Actívalo en `true` solo si quieres que el contenedor ejecute `pnpm db:push` al arrancar
 - Si Supabase corre en Docker/Dokploy, usa el hostname interno del contenedor de DB en `DATABASE_URL`, por ejemplo:

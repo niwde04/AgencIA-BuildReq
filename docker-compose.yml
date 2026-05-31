@@ -11,8 +11,8 @@ services:
         VITE_ANALYTICS_ENDPOINT: ${VITE_ANALYTICS_ENDPOINT:-}
         VITE_ANALYTICS_WEBSITE_ID: ${VITE_ANALYTICS_WEBSITE_ID:-}
     restart: unless-stopped
-    ports:
-      - "${APP_PORT:-4000}:4000"
+    expose:
+      - "4000"
     environment:
       NODE_ENV: production
       PORT: 4000
