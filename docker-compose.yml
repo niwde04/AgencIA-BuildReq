@@ -35,11 +35,3 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_REGION: ${AWS_REGION:-}
       S3_BUCKET_NAME: ${S3_BUCKET_NAME:-}
-    networks:
-      - default
-      - supabase-network
-
-networks:
-  supabase-network:
-    name: ${SUPABASE_DOCKER_NETWORK:-covi-supabase-kge7a7}
-    external: true

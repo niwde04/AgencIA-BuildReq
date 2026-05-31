@@ -1,0 +1,10 @@
+services:
+  buildreq:
+    networks:
+      - default
+      - supabase-network
+
+networks:
+  supabase-network:
+    name: ${SUPABASE_DOCKER_NETWORK}
+    external: true
