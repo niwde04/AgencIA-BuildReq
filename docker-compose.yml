@@ -1,6 +1,5 @@
 services:
   buildreq:
-    container_name: buildreq
     build:
       context: .
       dockerfile: Dockerfile
