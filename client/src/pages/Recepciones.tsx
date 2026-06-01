@@ -706,11 +706,16 @@ export default function Recepciones() {
     useState(false);
 
   const { data: receipts, isLoading } = trpc.receipts.list.useQuery();
-  const { data: receiptDetail, isLoading: receiptDetailLoading } =
-    trpc.receipts.getById.useQuery(
-      { id: viewReceiptId ?? 0 },
-      { enabled: viewReceiptId !== null }
-    );
+  const {
+    data: receiptDetail,
+    isLoading: receiptDetailLoading,
+    isError: receiptDetailIsError,
+    error: receiptDetailError,
+    refetch: refetchReceiptDetail,
+  } = trpc.receipts.getById.useQuery(
+    { id: viewReceiptId ?? 0 },
+    { enabled: viewReceiptId !== null }
+  );
   const { data: editingDraftReceiptDetail } = trpc.receipts.getById.useQuery(
     { id: editingDraftReceiptId ?? 0 },
     { enabled: editingDraftReceiptId !== null }
@@ -4301,10 +4306,36 @@ export default function Recepciones() {
             </div>
           </DialogHeader>
 
-          {receiptDetailLoading ||
-          (viewReceiptId !== null && !receiptDetail) ? (
+          {receiptDetailLoading ? (
             <div className="py-8 text-center text-muted-foreground">
               Cargando recepción...
+            </div>
+          ) : receiptDetailIsError ? (
+            <div className="flex flex-col items-center justify-center gap-4 py-10 text-center">
+              <AlertTriangle className="h-8 w-8 text-destructive" />
+              <div className="space-y-1">
+                <p className="font-semibold text-foreground">
+                  No se pudo cargar la recepción.
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {receiptDetailError?.message ||
+                    "Intenta de nuevo o revisa el servidor."}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => void refetchReceiptDetail()}
+              >
+                <RotateCcw className="h-4 w-4" />
+                Reintentar
+              </Button>
+            </div>
+          ) : !receiptDetail ? (
+            <div className="py-8 text-center text-muted-foreground">
+              No se encontró la recepción.
             </div>
           ) : receiptDetail ? (
             <div className="space-y-5">
