@@ -166,6 +166,117 @@ export const userManagementRouter = router({
       );
     }),
 
+  updateUserAdmin: adminProcedure
+    .input(
+      z.object({
+        userId: z.number(),
+        name: z.string().trim().min(1).max(255),
+        email: z.string().trim().email(),
+        buildreqRole: buildreqRoleSchema,
+        assignedProjectId: z.number().int().positive().nullable().optional(),
+        assignedProjectIds: z.array(z.number().int().positive()).optional(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const user = await db.getUserById(input.userId);
+      if (!user) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Usuario no encontrado.",
+        });
+      }
+
+      const name = input.name.trim();
+      const email = input.email.trim().toLowerCase();
+      const assignedProjectIds = normalizeAssignedProjectIds(
+        input.buildreqRole,
+        resolveAssignedProjectIdsInput(input)
+      );
+      assertRequiredProject(input.buildreqRole, assignedProjectIds);
+
+      try {
+        const supabase = getSupabaseAdminClient();
+        const { error } = await supabase.auth.admin.updateUserById(
+          user.openId,
+          {
+            email,
+            email_confirm: true,
+            user_metadata: {
+              name,
+              full_name: name,
+            },
+          } as any
+        );
+
+        if (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error.message,
+          });
+        }
+
+        return db.updateUserAdmin(input.userId, {
+          name,
+          email,
+          buildreqRole: input.buildreqRole,
+          assignedProjectIds,
+        });
+      } catch (error) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudo actualizar el usuario.",
+        });
+      }
+    }),
+
+  resetPasswordAdmin: adminProcedure
+    .input(
+      z.object({
+        userId: z.number(),
+        password: z.string().min(8),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const user = await db.getUserById(input.userId);
+      if (!user) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Usuario no encontrado.",
+        });
+      }
+
+      try {
+        const supabase = getSupabaseAdminClient();
+        const { error } = await supabase.auth.admin.updateUserById(
+          user.openId,
+          { password: input.password }
+        );
+
+        if (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error.message,
+          });
+        }
+
+        await db.updateUserPasswordChangeRequirement(input.userId, true);
+        return { success: true } as const;
+      } catch (error) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudo cambiar la contraseña.",
+        });
+      }
+    }),
+
   updateProfileName: protectedProcedure
     .input(
       z.object({

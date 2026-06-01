@@ -875,6 +875,19 @@ export async function getUserByOpenId(openId: string) {
   return user;
 }
 
+export async function getUserById(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (result.length === 0) return undefined;
+  const [user] = await hydrateUsersWithAssignedProjects(result);
+  return user;
+}
+
 export async function listUsers() {
   const db = await getDb();
   if (!db) return [];
@@ -946,6 +959,36 @@ export async function updateUserRole(
   for (const row of targetUsers) {
     await replaceUserProjectAssignmentsForUser(row.id, normalizedProjectIds);
   }
+  return { success: true };
+}
+
+export async function updateUserAdmin(
+  userId: number,
+  data: {
+    name: string;
+    email: string;
+    buildreqRole: BuildReqRole;
+    assignedProjectIds?: number[] | null;
+  }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const normalizedProjectIds = normalizeProjectIds(data.assignedProjectIds);
+  const legacyAssignedProjectId = normalizedProjectIds[0] ?? null;
+
+  await db
+    .update(users)
+    .set({
+      name: data.name,
+      email: data.email,
+      buildreqRole: data.buildreqRole,
+      assignedProjectId: legacyAssignedProjectId,
+    })
+    .where(eq(users.id, userId));
+
+  await replaceUserProjectAssignmentsForUser(userId, normalizedProjectIds);
+
   return { success: true };
 }
 

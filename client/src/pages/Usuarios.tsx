@@ -45,6 +45,7 @@ import {
   XCircle,
   Send,
   KeyRound,
+  Pencil,
   Eye,
   EyeOff,
   ChevronDown,
@@ -247,6 +248,15 @@ export default function Usuarios() {
   const [directRole, setDirectRole] = useState<string>("");
   const [directProjectIds, setDirectProjectIds] = useState<number[]>([]);
   const [showDirectPassword, setShowDirectPassword] = useState(false);
+  const [editingUser, setEditingUser] = useState<any | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editRole, setEditRole] = useState<string>("");
+  const [editProjectIds, setEditProjectIds] = useState<number[]>([]);
+  const [passwordUser, setPasswordUser] = useState<any | null>(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetPasswordConfirmation, setResetPasswordConfirmation] = useState("");
+  const [showResetPassword, setShowResetPassword] = useState(false);
 
   const updateRoleMutation = trpc.userManagement.updateRole.useMutation({
     onSuccess: () => {
@@ -260,6 +270,33 @@ export default function Usuarios() {
     },
     onError: (e) => toast.error(e.message),
   });
+
+  const updateUserAdminMutation = trpc.userManagement.updateUserAdmin.useMutation({
+    onSuccess: () => {
+      toast.success("Usuario actualizado");
+      void Promise.all([
+        utils.userManagement.list.invalidate(),
+        utils.auth.me.invalidate(),
+        utils.dashboard.sidebarCounts.invalidate(),
+        utils.dashboard.stats.invalidate(),
+      ]);
+      closeEditUserDialog();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const resetPasswordAdminMutation =
+    trpc.userManagement.resetPasswordAdmin.useMutation({
+      onSuccess: () => {
+        toast.success("Contraseña actualizada");
+        void Promise.all([
+          utils.userManagement.list.invalidate(),
+          utils.auth.me.invalidate(),
+        ]);
+        closePasswordDialog();
+      },
+      onError: (e) => toast.error(e.message),
+    });
 
   const createDirectUserMutation = trpc.userManagement.createDirect.useMutation({
     onSuccess: () => {
@@ -318,6 +355,74 @@ export default function Usuarios() {
     setDirectRole("");
     setDirectProjectIds([]);
     setShowDirectPassword(false);
+  }
+
+  function openEditUserDialog(user: any) {
+    const role = user.buildreqRole || "";
+    setEditingUser(user);
+    setEditName(user.name || "");
+    setEditEmail(user.email || "");
+    setEditRole(role);
+    setEditProjectIds(isProjectAssignableRole(role) ? getAssignedProjectIds(user) : []);
+  }
+
+  function closeEditUserDialog() {
+    setEditingUser(null);
+    setEditName("");
+    setEditEmail("");
+    setEditRole("");
+    setEditProjectIds([]);
+  }
+
+  function openPasswordDialog(user: any) {
+    setPasswordUser(user);
+    setResetPassword("");
+    setResetPasswordConfirmation("");
+    setShowResetPassword(false);
+  }
+
+  function closePasswordDialog() {
+    setPasswordUser(null);
+    setResetPassword("");
+    setResetPasswordConfirmation("");
+    setShowResetPassword(false);
+  }
+
+  function handleUpdateUserAdmin() {
+    if (!editingUser) return;
+    if (!editName.trim() || !editEmail.trim() || !editRole) {
+      toast.error("Nombre, email y rol son obligatorios");
+      return;
+    }
+    if (PROJECT_REQUIRED_ROLES.has(editRole) && editProjectIds.length === 0) {
+      toast.error("Debe asignar al menos un proyecto a este rol");
+      return;
+    }
+
+    updateUserAdminMutation.mutate({
+      userId: editingUser.id,
+      name: editName,
+      email: editEmail,
+      buildreqRole: editRole as any,
+      assignedProjectIds: getAssignedProjectIdsPayload(editRole, editProjectIds),
+    });
+  }
+
+  function handleResetPasswordAdmin() {
+    if (!passwordUser) return;
+    if (resetPassword.length < 8) {
+      toast.error("La contraseña debe tener al menos 8 caracteres");
+      return;
+    }
+    if (resetPassword !== resetPasswordConfirmation) {
+      toast.error("Las contraseñas no coinciden");
+      return;
+    }
+
+    resetPasswordAdminMutation.mutate({
+      userId: passwordUser.id,
+      password: resetPassword,
+    });
   }
 
   function handleCreateDirectUser() {
@@ -433,6 +538,7 @@ export default function Usuarios() {
                         <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Rol BuildReq</th>
                         <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Proyecto Asignado</th>
                         <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Último acceso</th>
+                        <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">Acciones</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -518,6 +624,30 @@ export default function Usuarios() {
                           </td>
                           <td className="p-3 text-xs text-muted-foreground">
                             {u.lastSignedIn ? new Date(u.lastSignedIn).toLocaleDateString("es") : "—"}
+                          </td>
+                          <td className="p-3">
+                            <div className="flex gap-1">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 gap-1 text-xs"
+                                onClick={() => openEditUserDialog(u)}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                                Editar
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 gap-1 text-xs"
+                                onClick={() => openPasswordDialog(u)}
+                              >
+                                <KeyRound className="h-3.5 w-3.5" />
+                                Contraseña
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -630,6 +760,186 @@ export default function Usuarios() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* EDIT USER DIALOG */}
+      <Dialog
+        open={Boolean(editingUser)}
+        onOpenChange={(open) => {
+          if (!open) closeEditUserDialog();
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-5 w-5" />
+              Editar Usuario
+            </DialogTitle>
+            <DialogDescription>
+              Actualiza los datos de acceso y permisos del usuario.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="edit-name">Nombre completo</Label>
+              <Input
+                id="edit-name"
+                value={editName}
+                onChange={(event) => setEditName(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-email">Correo electrónico</Label>
+              <Input
+                id="edit-email"
+                type="email"
+                value={editEmail}
+                onChange={(event) => setEditEmail(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Rol en BuildReq</Label>
+              <Select
+                value={editRole}
+                onValueChange={(value) => {
+                  setEditRole(value);
+                  if (!isProjectAssignableRole(value)) {
+                    setEditProjectIds([]);
+                  }
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccionar rol" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ingeniero_residente">Requiriente</SelectItem>
+                  <SelectItem value="jefe_bodega_central">Bodega Central</SelectItem>
+                  <SelectItem value="administracion_central">Administración Central</SelectItem>
+                  <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
+                  <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
+                  <SelectItem value="superintendente">Superintendente</SelectItem>
+                  <SelectItem value="contable">Contable</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {isProjectAssignableRole(editRole) ? (
+              <div className="space-y-2">
+                <Label>Proyectos asignados</Label>
+                <ProjectMultiSelect
+                  role={editRole}
+                  projects={projects || []}
+                  selectedProjectIds={editProjectIds}
+                  onChange={setEditProjectIds}
+                />
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={closeEditUserDialog}
+              disabled={updateUserAdminMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleUpdateUserAdmin}
+              disabled={updateUserAdminMutation.isPending}
+              className="gap-2"
+            >
+              <Pencil className="h-4 w-4" />
+              {updateUserAdminMutation.isPending ? "Guardando..." : "Guardar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* RESET PASSWORD DIALOG */}
+      <Dialog
+        open={Boolean(passwordUser)}
+        onOpenChange={(open) => {
+          if (!open) closePasswordDialog();
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5" />
+              Cambiar contraseña
+            </DialogTitle>
+            <DialogDescription>
+              La contraseña se actualiza en Supabase y quedará pendiente de cambio.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="rounded-md border border-border bg-muted/30 p-3 text-sm">
+              <p className="font-medium">{passwordUser?.name || "Usuario"}</p>
+              <p className="text-xs text-muted-foreground">
+                {passwordUser?.email || "Sin correo"}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reset-password">Nueva contraseña</Label>
+              <div className="relative">
+                <Input
+                  id="reset-password"
+                  type={showResetPassword ? "text" : "password"}
+                  value={resetPassword}
+                  onChange={(event) => setResetPassword(event.target.value)}
+                  autoComplete="new-password"
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowResetPassword((value) => !value)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label={
+                    showResetPassword ? "Ocultar contraseña" : "Mostrar contraseña"
+                  }
+                >
+                  {showResetPassword ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reset-password-confirmation">
+                Confirmar contraseña
+              </Label>
+              <Input
+                id="reset-password-confirmation"
+                type={showResetPassword ? "text" : "password"}
+                value={resetPasswordConfirmation}
+                onChange={(event) =>
+                  setResetPasswordConfirmation(event.target.value)
+                }
+                autoComplete="new-password"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={closePasswordDialog}
+              disabled={resetPasswordAdminMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleResetPasswordAdmin}
+              disabled={resetPasswordAdminMutation.isPending}
+              className="gap-2"
+            >
+              <KeyRound className="h-4 w-4" />
+              {resetPasswordAdminMutation.isPending
+                ? "Actualizando..."
+                : "Cambiar contraseña"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* DIRECT USER DIALOG */}
       <Dialog open={showDirectUserDialog} onOpenChange={setShowDirectUserDialog}>
