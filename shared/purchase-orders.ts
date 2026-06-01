@@ -367,7 +367,7 @@ export function toPurchaseOrderNumber(
 }
 
 export function roundPurchaseOrderMoney(value: number) {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
+  return Math.round((value + Number.EPSILON) * 10000) / 10000;
 }
 
 export function calculatePurchaseOrderLineAmounts(params: {

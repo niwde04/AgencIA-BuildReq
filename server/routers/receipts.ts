@@ -8,12 +8,15 @@ import {
   formatCaiInput,
   formatInvoiceNumberInput,
   isValidCai,
+  isFiscalInvoiceRangeOrdered,
+  isInvoiceNumberWithinFiscalRange,
   isValidInvoiceNumber,
 } from "@shared/invoices";
 import {
   ASSET_CONDITION_VALUES,
   normalizeFixedAssetDetails,
 } from "@shared/fixed-assets";
+import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
   "emitida",
@@ -53,7 +56,12 @@ function canReceivePurchaseOrder(purchaseOrder: any, contractSummary?: any) {
 }
 
 function assertProjectScopedAccess(
-  user: { role: string; buildreqRole?: string | null; assignedProjectId?: number | null },
+  user: {
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
+  },
   projectId: number
 ) {
   if (user.role === "admin") return;
@@ -63,7 +71,7 @@ function assertProjectScopedAccess(
   ) {
     return;
   }
-  if (user.assignedProjectId !== projectId) {
+  if (!canAccessProject(user, projectId)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene acceso a recepciones de otro proyecto",
@@ -82,15 +90,183 @@ const fixedAssetDetailSchema = z.object({
   plateOrCode: z.string().trim().max(120).nullish(),
 });
 
+type ReceiptLineTargetFields = {
+  targetType: "subproyecto" | "activo_fijo" | null;
+  subProjectId: number | null;
+  fixedAssetSapItemCode: string | null;
+  fixedAssetName: string | null;
+};
+
+type ReceiptLineTargetInput = {
+  itemName: string;
+  targetType?: "subproyecto" | "activo_fijo" | null;
+  subProjectId?: number | null;
+  fixedAssetSapItemCode?: string | null;
+  fixedAssetName?: string | null;
+};
+
+const emptyReceiptLineTarget = (): ReceiptLineTargetFields => ({
+  targetType: null,
+  subProjectId: null,
+  fixedAssetSapItemCode: null,
+  fixedAssetName: null,
+});
+
+function extractReceiptLineTarget(value: any): ReceiptLineTargetFields {
+  if (value?.target?.type === "subproyecto" && value.target.subProjectId) {
+    return {
+      targetType: "subproyecto",
+      subProjectId: Number(value.target.subProjectId),
+      fixedAssetSapItemCode: null,
+      fixedAssetName: null,
+    };
+  }
+
+  if (
+    value?.target?.type === "activo_fijo" &&
+    value.target.fixedAssetSapItemCode
+  ) {
+    return {
+      targetType: "activo_fijo",
+      subProjectId: null,
+      fixedAssetSapItemCode: String(value.target.fixedAssetSapItemCode).trim(),
+      fixedAssetName: value.target.fixedAssetName?.trim() || null,
+    };
+  }
+
+  if (value?.targetType === "subproyecto" && value.subProjectId) {
+    return {
+      targetType: "subproyecto",
+      subProjectId: Number(value.subProjectId),
+      fixedAssetSapItemCode: null,
+      fixedAssetName: null,
+    };
+  }
+
+  if (value?.targetType === "activo_fijo" && value.fixedAssetSapItemCode) {
+    return {
+      targetType: "activo_fijo",
+      subProjectId: null,
+      fixedAssetSapItemCode: String(value.fixedAssetSapItemCode).trim(),
+      fixedAssetName: value.fixedAssetName?.trim() || null,
+    };
+  }
+
+  return emptyReceiptLineTarget();
+}
+
+function isSameReceiptLineTarget(
+  left: ReceiptLineTargetFields,
+  right: ReceiptLineTargetFields
+) {
+  if (left.targetType !== right.targetType) return false;
+  if (!left.targetType) return true;
+  if (left.targetType === "subproyecto") {
+    return left.subProjectId === right.subProjectId;
+  }
+  return left.fixedAssetSapItemCode === right.fixedAssetSapItemCode;
+}
+
+async function resolveReceiptLineTarget(params: {
+  item: ReceiptLineTargetInput;
+  sourceItem?: any;
+  projectId: number;
+}): Promise<ReceiptLineTargetFields> {
+  const sourceTarget = extractReceiptLineTarget(params.sourceItem);
+  const hasExplicitTarget =
+    params.item.targetType !== undefined ||
+    params.item.subProjectId !== undefined ||
+    params.item.fixedAssetSapItemCode !== undefined;
+  const requestedTarget = hasExplicitTarget
+    ? extractReceiptLineTarget(params.item)
+    : sourceTarget;
+
+  if (!requestedTarget.targetType) {
+    return emptyReceiptLineTarget();
+  }
+
+  if (isSameReceiptLineTarget(requestedTarget, sourceTarget)) {
+    return {
+      ...requestedTarget,
+      fixedAssetName:
+        requestedTarget.fixedAssetName ?? sourceTarget.fixedAssetName,
+    };
+  }
+
+  if (requestedTarget.targetType === "subproyecto") {
+    if (!requestedTarget.subProjectId) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `Seleccione un subproyecto válido para ${params.item.itemName}`,
+      });
+    }
+
+    const subproject = await db.getProjectSubprojectById(
+      requestedTarget.subProjectId
+    );
+    if (
+      !subproject ||
+      subproject.projectId !== params.projectId ||
+      subproject.isActive === false
+    ) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `El subproyecto de ${params.item.itemName} no pertenece al proyecto o está inactivo`,
+      });
+    }
+
+    return {
+      targetType: "subproyecto",
+      subProjectId: subproject.id,
+      fixedAssetSapItemCode: null,
+      fixedAssetName: null,
+    };
+  }
+
+  const fixedAssetSapItemCode =
+    requestedTarget.fixedAssetSapItemCode?.trim();
+  if (!fixedAssetSapItemCode) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `Seleccione un activo fijo válido para ${params.item.itemName}`,
+    });
+  }
+
+  const fixedAsset = await db.getActiveFixedAssetByCode(
+    fixedAssetSapItemCode,
+    params.projectId
+  );
+  if (!fixedAsset) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `El activo fijo de ${params.item.itemName} no existe, está inactivo o no pertenece al proyecto`,
+    });
+  }
+
+  return {
+    targetType: "activo_fijo",
+    subProjectId: null,
+    fixedAssetSapItemCode: fixedAsset.itemCode,
+    fixedAssetName: fixedAsset.description,
+  };
+}
+
 const receiptItemSchema = z
   .object({
-    sourceItemId: z.number(),
+    sourceItemId: z.number().nullable().optional(),
+    sapItemCode: z.string().trim().max(50).nullable().optional(),
     warehouseId: z.number().int().positive().optional(),
     itemName: z.string().min(1),
     quantityExpected: z.string().min(1),
     quantityReceived: z.string().min(1),
     unit: z.string().optional(),
     unitPrice: z.string().trim().optional(),
+    taxCode: z.string().trim().min(1).optional(),
+    additionalTaxCodes: z.array(z.string().trim().min(1)).optional(),
+    targetType: z.enum(["subproyecto", "activo_fijo"]).nullable().optional(),
+    subProjectId: z.number().int().positive().nullable().optional(),
+    fixedAssetSapItemCode: z.string().trim().max(50).nullable().optional(),
+    fixedAssetName: z.string().trim().max(500).nullable().optional(),
     notes: z.string().trim().max(1000).optional(),
     isFixedAsset: z.boolean().optional(),
     isLeasing: z.boolean().optional(),
@@ -137,6 +313,17 @@ const receiptItemSchema = z
     });
   });
 
+const receiptOtherChargeSchema = z.object({
+  concept: z.string().trim().min(1).max(255),
+  amount: z
+    .string()
+    .trim()
+    .min(1)
+    .refine(value => Number.isFinite(Number(value)) && Number(value) > 0, {
+      message: "El monto debe ser mayor que cero",
+    }),
+});
+
 function parseDateInput(value: string) {
   return new Date(`${value}T12:00:00`);
 }
@@ -153,8 +340,10 @@ function getTransferPendingQuantity(item: any) {
 
 function canCloseTransferReceiptLine(
   user: {
+    role: string;
     buildreqRole?: string | null;
     assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
   },
   detail: any
 ) {
@@ -168,7 +357,7 @@ function canCloseTransferReceiptLine(
   return (
     user.buildreqRole === "administrador_proyecto" &&
     destinationProjectId !== null &&
-    user.assignedProjectId === destinationProjectId
+    canAccessProject(user, destinationProjectId)
   );
 }
 
@@ -192,6 +381,40 @@ async function assertReceiptWarehouses(
       });
     }
   }
+}
+
+function preparePurchaseOrderReceiptItemFinancialData(params: {
+  item: z.infer<typeof receiptItemSchema>;
+  sourceItem: any;
+  taxes: Awaited<ReturnType<typeof db.getActiveSalesTaxCatalog>>;
+}) {
+  try {
+    return db.prepareReceiptItemFinancialDataForLine({
+      quantity: params.item.quantityReceived,
+      unitPrice: params.item.unitPrice ?? params.sourceItem?.unitPrice ?? "0.00",
+      taxCode: params.item.taxCode ?? params.sourceItem?.taxCode ?? "exe",
+      additionalTaxCodes:
+        params.item.additionalTaxCodes ??
+        params.sourceItem?.additionalTaxCodes ??
+        [],
+      taxes: params.taxes,
+    });
+  } catch (error) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        error instanceof Error ? error.message : "Seleccione un impuesto válido",
+    });
+  }
+}
+
+function normalizeReceiptOtherCharges(
+  otherCharges: Array<z.infer<typeof receiptOtherChargeSchema>> | undefined
+) {
+  return (otherCharges ?? []).map(charge => ({
+    concept: charge.concept.trim(),
+    amount: charge.amount.trim(),
+  }));
 }
 
 export const receiptsRouter = router({
@@ -221,16 +444,7 @@ export const receiptsRouter = router({
         });
       }
 
-      const projectId =
-        ctx.user.buildreqRole === "administrador_proyecto" ||
-        ctx.user.buildreqRole === "bodeguero_proyecto"
-          ? ctx.user.assignedProjectId ?? -1
-          : input?.projectId;
-
-      return db.listReceipts({
-        ...input,
-        projectId,
-      });
+      return db.listReceipts(applyProjectScope(input ?? {}, ctx.user));
     }),
 
   getById: protectedProcedure
@@ -271,6 +485,7 @@ export const receiptsRouter = router({
         receiptDate: z.string().optional(),
         notes: z.string().optional(),
         items: z.array(receiptItemSchema).min(1),
+        otherCharges: z.array(receiptOtherChargeSchema).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -301,6 +516,22 @@ export const receiptsRouter = router({
         (detail.items ?? []).map((item: any) => [item.id, item])
       );
       for (const item of input.items) {
+        if (!item.sourceItemId) {
+          if (!item.sapItemCode?.trim()) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Seleccione un SKU para cada producto agregado",
+            });
+          }
+          const catalogItem = await db.lookupSapItemByCode(item.sapItemCode);
+          if (!catalogItem) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `El SKU ${item.sapItemCode} no existe en el catálogo SAP`,
+            });
+          }
+          continue;
+        }
         if (!itemsById.has(item.sourceItemId)) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -311,8 +542,8 @@ export const receiptsRouter = router({
 
       const isFiscalDocument = input.isFiscalDocument !== false;
       const now = new Date();
-      return db.saveReceiptDraft(
-        {
+      const activeSalesTaxes = await db.getActiveSalesTaxCatalog();
+      const draftData = {
           sourceType: input.sourceType,
           sourceId: input.sourceId,
           projectId: input.projectId,
@@ -351,8 +582,21 @@ export const receiptsRouter = router({
             ? parseDateInput(input.receiptDate)
             : now,
           notes: input.notes?.trim() || null,
-        },
-        input.items.map(item => {
+        };
+      const draftItems = await Promise.all(input.items.map(async item => {
+          const sourceItem = item.sourceItemId
+            ? itemsById.get(item.sourceItemId)
+            : undefined;
+          const targetFields = await resolveReceiptLineTarget({
+            item,
+            sourceItem,
+            projectId: input.projectId,
+          });
+          const financialData = preparePurchaseOrderReceiptItemFinancialData({
+            item,
+            sourceItem,
+            taxes: activeSalesTaxes,
+          });
           const isFixedAsset = item.isFixedAsset === true;
           const quantityReceived = Number(item.quantityReceived);
           const assetCount =
@@ -362,13 +606,20 @@ export const receiptsRouter = router({
               ? Math.max(1, Math.trunc(quantityReceived))
               : 0;
           return {
-            sourceItemId: item.sourceItemId,
+            sourceItemId: item.sourceItemId ?? null,
+            sapItemCode:
+              sourceItem?.currentSapItemCode ??
+              sourceItem?.originalSapItemCode ??
+              item.sapItemCode?.trim() ??
+              null,
             warehouseId: item.warehouseId,
             itemName: item.itemName,
             quantityExpected: item.quantityExpected,
             quantityReceived: item.quantityReceived,
             unit: item.unit,
             unitPrice: item.unitPrice ?? "0.00",
+            ...financialData,
+            ...targetFields,
             notes: item.notes?.trim() || null,
             isFixedAsset,
             isLeasing: isFixedAsset ? item.isLeasing === true : false,
@@ -376,8 +627,11 @@ export const receiptsRouter = router({
               ? normalizeFixedAssetDetails(item.assetDetails, assetCount)
               : [],
           };
-        })
-      );
+        }));
+      const otherCharges = normalizeReceiptOtherCharges(input.otherCharges);
+      return otherCharges.length > 0
+        ? db.saveReceiptDraft(draftData, draftItems, otherCharges)
+        : db.saveReceiptDraft(draftData, draftItems);
     }),
 
   register: protectedProcedure
@@ -399,6 +653,7 @@ export const receiptsRouter = router({
           emissionDeadline: z.string().optional(),
           notes: z.string().optional(),
           items: z.array(receiptItemSchema).min(1),
+          otherCharges: z.array(receiptOtherChargeSchema).optional(),
         })
         .superRefine((value, ctx) => {
           const requiresFiscalFormat =
@@ -455,6 +710,47 @@ export const receiptsRouter = router({
                 code: z.ZodIssueCode.custom,
                 path: ["documentRangeEnd"],
                 message: `El rango autorizado final debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+              });
+            }
+            if (
+              value.documentRangeStart?.trim() &&
+              value.documentRangeEnd?.trim() &&
+              isValidInvoiceNumber(value.documentRangeStart) &&
+              isValidInvoiceNumber(value.documentRangeEnd) &&
+              !isFiscalInvoiceRangeOrdered({
+                documentRangeStart: value.documentRangeStart,
+                documentRangeEnd: value.documentRangeEnd,
+              })
+            ) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["documentRangeEnd"],
+                message:
+                  "El rango autorizado final debe ser mayor o igual al inicial",
+              });
+            }
+            if (
+              value.invoiceNumber?.trim() &&
+              value.documentRangeStart?.trim() &&
+              value.documentRangeEnd?.trim() &&
+              isValidInvoiceNumber(value.invoiceNumber) &&
+              isValidInvoiceNumber(value.documentRangeStart) &&
+              isValidInvoiceNumber(value.documentRangeEnd) &&
+              isFiscalInvoiceRangeOrdered({
+                documentRangeStart: value.documentRangeStart,
+                documentRangeEnd: value.documentRangeEnd,
+              }) &&
+              !isInvoiceNumberWithinFiscalRange({
+                invoiceNumber: value.invoiceNumber,
+                documentRangeStart: value.documentRangeStart,
+                documentRangeEnd: value.documentRangeEnd,
+              })
+            ) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["invoiceNumber"],
+                message:
+                  "El número documento debe estar dentro del rango autorizado",
               });
             }
             if (!value.documentDate) {
@@ -564,15 +860,26 @@ export const receiptsRouter = router({
         let hasPositiveReceipt = false;
 
         for (const item of input.items) {
-          const sourceItem = itemsById.get(item.sourceItemId);
+          const sourceItem = item.sourceItemId
+            ? itemsById.get(item.sourceItemId)
+            : undefined;
           if (!sourceItem) {
-            throw new TRPCError({
-              code: "BAD_REQUEST",
-              message: "La recepción incluye un ítem que ya no existe en la orden",
-            });
+            if (!item.sapItemCode?.trim()) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "Seleccione un SKU para cada producto agregado",
+              });
+            }
+            const catalogItem = await db.lookupSapItemByCode(item.sapItemCode);
+            if (!catalogItem) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: `El SKU ${item.sapItemCode} no existe en el catálogo SAP`,
+              });
+            }
           }
 
-          if (sourceItem.receiptClosed) {
+          if (sourceItem?.receiptClosed) {
             throw new TRPCError({
               code: "BAD_REQUEST",
               message: `La línea ${sourceItem.itemName} fue cerrada y ya no admite recepciones`,
@@ -583,20 +890,26 @@ export const receiptsRouter = router({
           if (requestedQuantity > 0 && !item.warehouseId) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `Seleccione almacén destino para ${sourceItem.itemName}`,
+              message: `Seleccione almacén destino para ${
+                sourceItem?.itemName ?? item.itemName
+              }`,
             });
           }
-          if (item.isFixedAsset === true && sourceItem.isFixedAsset !== true) {
+          if (item.isFixedAsset === true && sourceItem?.isFixedAsset !== true) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `Guarde como borrador el activo fijo de ${sourceItem.itemName} antes de registrar la recepción`,
+              message: `Guarde como borrador el activo fijo de ${
+                sourceItem?.itemName ?? item.itemName
+              } antes de registrar la recepción`,
             });
           }
 
           if (!Number.isFinite(requestedQuantity) || requestedQuantity < 0) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `La cantidad a recibir de ${sourceItem.itemName} debe ser cero o mayor`,
+              message: `La cantidad a recibir de ${
+                sourceItem?.itemName ?? item.itemName
+              } debe ser cero o mayor`,
             });
           }
 
@@ -604,7 +917,14 @@ export const receiptsRouter = router({
             hasPositiveReceipt = true;
           }
 
-          if (sourceItem.isFixedAsset === true) {
+          if (!sourceItem && requestedQuantity <= 0) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Ingrese una cantidad mayor que cero para ${item.itemName}`,
+            });
+          }
+
+          if (sourceItem?.isFixedAsset === true) {
             if (requestedQuantity !== 1) {
               throw new TRPCError({
                 code: "BAD_REQUEST",
@@ -630,7 +950,9 @@ export const receiptsRouter = router({
           if (!Number.isFinite(unitPrice) || unitPrice < 0) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `El precio confirmado de ${sourceItem.itemName} debe ser cero o mayor`,
+              message: `El precio confirmado de ${
+                sourceItem?.itemName ?? item.itemName
+              } debe ser cero o mayor`,
             });
           }
         }
@@ -677,7 +999,9 @@ export const receiptsRouter = router({
         let hasTransferClosure = false;
 
         for (const item of input.items) {
-          const sourceItem = itemsById.get(item.sourceItemId);
+          const sourceItem = item.sourceItemId
+            ? itemsById.get(item.sourceItemId)
+            : undefined;
           if (!sourceItem) {
             throw new TRPCError({
               code: "BAD_REQUEST",
@@ -757,13 +1081,25 @@ export const receiptsRouter = router({
 
       await assertReceiptWarehouses(input.projectId, input.items);
 
-      return db.registerReceipt(
-        {
+      const activeSalesTaxes =
+        input.sourceType === "purchase_order"
+          ? await db.getActiveSalesTaxCatalog()
+          : [];
+      const otherCharges = normalizeReceiptOtherCharges(input.otherCharges);
+      if (input.sourceType !== "purchase_order" && otherCharges.length > 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Los otros cargos solo aplican a recepciones de orden de compra",
+        });
+      }
+
+      const receiptData = {
           sourceType: input.sourceType,
           sourceId: input.sourceId,
           projectId: input.projectId,
           receivedById: ctx.user.id,
-          status: "pendiente",
+          status: "pendiente" as const,
           isFiscalDocument,
           cai: input.cai?.trim()
             ? isFiscalDocument
@@ -795,11 +1131,27 @@ export const receiptsRouter = router({
             ? parseDateInput(input.emissionDeadline)
             : null,
           notes: input.notes,
-        },
-        input.items.map((item) => {
-          const sourceItem = purchaseOrderItemsByIdForPayload.get(
-            item.sourceItemId
-          );
+        };
+      const receiptItems = await Promise.all(input.items.map(async (item) => {
+          const sourceItem = item.sourceItemId
+            ? purchaseOrderItemsByIdForPayload.get(item.sourceItemId)
+            : undefined;
+          const targetFields =
+            input.sourceType === "purchase_order"
+              ? await resolveReceiptLineTarget({
+                  item,
+                  sourceItem,
+                  projectId: input.projectId,
+                })
+              : emptyReceiptLineTarget();
+          const financialData =
+            input.sourceType === "purchase_order"
+              ? preparePurchaseOrderReceiptItemFinancialData({
+                  item,
+                  sourceItem,
+                  taxes: activeSalesTaxes,
+                })
+              : {};
           const isFixedAsset = item.isFixedAsset === true;
           const quantityReceived = Number(item.quantityReceived);
           const sourceIsFixedAsset = sourceItem?.isFixedAsset === true;
@@ -818,7 +1170,12 @@ export const receiptsRouter = router({
               : undefined;
 
           return {
-            sourceItemId: item.sourceItemId,
+            sourceItemId: item.sourceItemId ?? null,
+            sapItemCode:
+              sourceItem?.currentSapItemCode ??
+              sourceItem?.originalSapItemCode ??
+              item.sapItemCode?.trim() ??
+              null,
             warehouseId: item.warehouseId,
             itemName: item.itemName,
             quantityExpected: item.quantityExpected,
@@ -828,6 +1185,8 @@ export const receiptsRouter = router({
               input.sourceType === "purchase_order"
                 ? item.unitPrice ?? "0.00"
                 : "0.00",
+            ...financialData,
+            ...targetFields,
             notes:
               sourceIsFixedAsset && sourceItem.lineObservation
                 ? sourceItem.lineObservation
@@ -851,7 +1210,10 @@ export const receiptsRouter = router({
                 ? ctx.user.id
                 : undefined,
           };
-        })
-      );
+        }));
+
+      return otherCharges.length > 0
+        ? db.registerReceipt(receiptData, receiptItems, otherCharges)
+        : db.registerReceipt(receiptData, receiptItems);
     }),
 });

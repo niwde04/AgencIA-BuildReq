@@ -114,7 +114,9 @@ export default function Solicitudes() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
   const userRole = (user as any)?.buildreqRole || "";
-  const canCreateRequest = userRole !== "bodeguero_proyecto";
+  const isSuperintendent = userRole === "superintendente";
+  const canCreateRequest =
+    userRole !== "bodeguero_proyecto" && !isSuperintendent;
 
   const { data: requests, isLoading } = trpc.materialRequests.list.useQuery(
     statusFilter !== "all" ? { status: statusFilter } : undefined
@@ -229,9 +231,15 @@ export default function Solicitudes() {
                     const dueStatus = getDueDateStatus(neededByDate);
                     const targetLabels = getRequestTargetLabels(r.itemTargets ?? []);
                     const targetPath =
-                      r.request.status === "borrador"
+                      r.request.status === "borrador" && !isSuperintendent
                         ? `/solicitudes/${r.request.id}/editar`
                         : `/solicitudes/${r.request.id}`;
+                    const actionIcon =
+                      r.request.status === "borrador" && !isSuperintendent ? (
+                        <Pencil className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      );
 
                     return (
                       <tr
@@ -294,11 +302,7 @@ export default function Solicitudes() {
                               setLocation(targetPath);
                             }}
                           >
-                            {r.request.status === "borrador" ? (
-                              <Pencil className="h-4 w-4" />
-                            ) : (
-                              <Eye className="h-4 w-4" />
-                            )}
+                            {actionIcon}
                           </Button>
                         </td>
                       </tr>

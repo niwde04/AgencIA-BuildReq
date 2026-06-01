@@ -5,6 +5,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { storageDelete, storageGet, storagePut } from "../storage";
 import { validateDocumentAttachmentFile } from "./attachments";
+import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 function canReadSuppliers(user: {
   role?: string | null;
@@ -80,6 +81,7 @@ function assertProjectContactAccess(
     role?: string | null;
     buildreqRole?: string | null;
     assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
   },
   projectId?: number | null
 ) {
@@ -87,7 +89,10 @@ function assertProjectContactAccess(
     return;
   }
 
-  if (!projectId || !user.assignedProjectId || user.assignedProjectId !== projectId) {
+  if (
+    !projectId ||
+    !canAccessProject({ ...user, role: user.role ?? "user" }, projectId)
+  ) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "Solo puede gestionar contactos del proyecto asignado",
@@ -546,7 +551,7 @@ export const suppliersRouter = router({
     .query(async ({ ctx, input }) => {
       assertCanManageSupplierContacts(ctx.user);
       assertProjectContactAccess(ctx.user, input.projectId);
-      return db.listSupplierContacts(input);
+      return db.listSupplierContacts(applyProjectScope(input, ctx.user));
     }),
 
   createContact: protectedProcedure

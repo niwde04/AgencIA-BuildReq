@@ -2,6 +2,11 @@ import { z } from "zod";
 import { protectedProcedure, adminProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { TRPCError } from "@trpc/server";
+import {
+  canAccessProject,
+  getAssignedProjectIds,
+  hasAllProjectAccess,
+} from "../projectAccess";
 
 const optionalDateInput = z.string().optional().nullable();
 const subprojectStatusInput = z.boolean().default(true);
@@ -9,22 +14,28 @@ const subprojectStatusInput = z.boolean().default(true);
 function isProjectScopedUser(user: {
   buildreqRole?: string | null;
   assignedProjectId?: number | null;
+  assignedProjectIds?: number[] | null;
 }) {
   return (
     user.buildreqRole === "ingeniero_residente" ||
-    (user.buildreqRole === "administrador_proyecto" &&
-      Boolean(user.assignedProjectId)) ||
-    user.buildreqRole === "bodeguero_proyecto"
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto" ||
+    user.buildreqRole === "superintendente"
   );
 }
 
 function assertProjectScopedAccess(
-  user: { role: string; buildreqRole?: string | null; assignedProjectId?: number | null },
+  user: {
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
+  },
   projectId: number
 ) {
   if (user.role === "admin") return;
   if (!isProjectScopedUser(user)) return;
-  if (!user.assignedProjectId || user.assignedProjectId !== projectId) {
+  if (!canAccessProject(user, projectId)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene acceso a proyectos fuera de su asignación",
@@ -121,14 +132,18 @@ export const projectsRouter = router({
         return db.listProjects(input.status);
       }
 
-      if (isProjectScopedUser(ctx.user)) {
-        if (!ctx.user.assignedProjectId) return [];
+      if (isProjectScopedUser(ctx.user) && !hasAllProjectAccess(ctx.user)) {
+        const assignedProjectIds = getAssignedProjectIds(ctx.user);
+        if (assignedProjectIds.length === 0) return [];
 
-        const project = await db.getProjectById(ctx.user.assignedProjectId);
-        if (!project) return [];
-        if (input?.status && project.status !== input.status) return [];
-
-        return [project];
+        const projectRows = await Promise.all(
+          assignedProjectIds.map(projectId => db.getProjectById(projectId))
+        );
+        return projectRows.filter(
+          (project): project is NonNullable<typeof project> =>
+            Boolean(project) &&
+            (!input?.status || project!.status === input.status)
+        );
       }
 
       return db.listProjects(input?.status);

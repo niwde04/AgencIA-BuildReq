@@ -40,6 +40,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { toast } from "sonner";
@@ -51,6 +52,8 @@ import {
   formatCaiInput,
   formatInvoiceNumberInput,
   hasEmissionDeadlineIssue,
+  isFiscalInvoiceRangeOrdered,
+  isInvoiceNumberWithinFiscalRange,
   isValidCai,
   isValidInvoiceNumber,
 } from "@shared/invoices";
@@ -93,7 +96,15 @@ type InvoiceDraft = {
   postingDate: string;
   receiptDate: string;
   emissionDeadline: string;
+  retentionReceiptNumber: string;
   notes: string;
+};
+
+type FiscalRangeAutofill = Pick<
+  InvoiceDraft,
+  "cai" | "documentRangeStart" | "documentRangeEnd" | "emissionDeadline"
+> & {
+  invoiceNumber: string;
 };
 
 type InvoiceActionFeedback = {
@@ -206,7 +217,13 @@ function formatCsvAmount(value: string | number | null | undefined) {
 }
 
 function getRetentionAmount(draft: RetentionDraft) {
-  return (toNumber(draft.baseAmount) * toNumber(draft.percentage)) / 100;
+  return (
+    Math.round(
+      ((toNumber(draft.baseAmount) * toNumber(draft.percentage)) / 100 +
+        Number.EPSILON) *
+        10000
+    ) / 10000
+  );
 }
 
 function getInvoiceHasEmissionDeadlineIssue(invoice: any) {
@@ -304,6 +321,8 @@ function getFriendlyMutationError(message: string) {
     if (!Array.isArray(parsed)) return message;
     const issue = parsed[0];
     const path = Array.isArray(issue?.path) ? issue.path.join(".") : "";
+    const issueMessage =
+      typeof issue?.message === "string" ? issue.message : "";
 
     if (path.includes("description")) {
       return "Ingresa la descripción de cada retención";
@@ -321,19 +340,28 @@ function getFriendlyMutationError(message: string) {
       return "Ingresa un monto mayor que cero";
     }
     if (path.includes("cai")) {
-      return `El CAI debe tener el formato ${CAI_FORMAT_EXAMPLE}`;
+      return issueMessage || `El CAI debe tener el formato ${CAI_FORMAT_EXAMPLE}`;
     }
     if (path.includes("invoiceNumber")) {
-      return `El número documento debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`;
+      return (
+        issueMessage ||
+        `El número documento debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`
+      );
     }
     if (path.includes("documentRangeStart")) {
-      return `El rango autorizado inicial debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`;
+      return (
+        issueMessage ||
+        `El rango autorizado inicial debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`
+      );
     }
     if (path.includes("documentRangeEnd")) {
-      return `El rango autorizado final debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`;
+      return (
+        issueMessage ||
+        `El rango autorizado final debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`
+      );
     }
 
-    return typeof issue?.message === "string" ? issue.message : message;
+    return issueMessage || message;
   } catch {
     return message;
   }
@@ -750,8 +778,11 @@ export default function Facturas() {
     postingDate: "",
     receiptDate: "",
     emissionDeadline: "",
+    retentionReceiptNumber: "",
     notes: "",
   });
+  const fiscalRangeAutofillRef = useRef<FiscalRangeAutofill | null>(null);
+  const lastFiscalRangeLookupKeyRef = useRef("");
   const [retentionDrafts, setRetentionDrafts] = useState<RetentionDraft[]>([]);
   const [actionFeedback, setActionFeedback] = useState<InvoiceActionFeedback>({
     invoiceSavedId: null,
@@ -816,6 +847,11 @@ export default function Facturas() {
     trpc.retentions.activeOptions.useQuery(undefined, {
       enabled: selectedId !== null,
     });
+  const canLookupFiscalRange =
+    selectedId !== null &&
+    canEditInvoices &&
+    (detail?.invoice.status === "borrador" ||
+      detail?.invoice.status === "rechazada");
   const updateMutation = trpc.invoices.update.useMutation({
     onSuccess: (_data, variables) => {
       toast.success("Factura actualizada");
@@ -828,6 +864,77 @@ export default function Facturas() {
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
   });
+  const fiscalRangeLookupMutation =
+    trpc.invoices.lookupFiscalDocumentRange.useMutation({
+      onSuccess: (range, variables) => {
+        const lookupInvoiceNumber = formatInvoiceNumberInput(
+          variables.invoiceNumber
+        );
+        const previousAutofill = fiscalRangeAutofillRef.current;
+
+        updateInvoiceDraft(current => {
+          if (
+            !current.isFiscalDocument ||
+            formatInvoiceNumberInput(current.invoiceNumber) !==
+              lookupInvoiceNumber
+          ) {
+            return current;
+          }
+
+          if (!range) {
+            if (!previousAutofill) return current;
+            const next = { ...current };
+            let changed = false;
+            (
+              [
+                "cai",
+                "documentRangeStart",
+                "documentRangeEnd",
+                "emissionDeadline",
+              ] as const
+            ).forEach(field => {
+              if (next[field] === previousAutofill[field]) {
+                next[field] = "";
+                changed = true;
+              }
+            });
+            fiscalRangeAutofillRef.current = null;
+            return changed ? next : current;
+          }
+
+          const nextAutofill: FiscalRangeAutofill = {
+            invoiceNumber: lookupInvoiceNumber,
+            cai: range.cai ?? "",
+            documentRangeStart: range.documentRangeStart ?? "",
+            documentRangeEnd: range.documentRangeEnd ?? "",
+            emissionDeadline: dateInputValue(range.emissionDeadline),
+          };
+          const next = { ...current };
+          let changed = false;
+          (
+            [
+              "cai",
+              "documentRangeStart",
+              "documentRangeEnd",
+              "emissionDeadline",
+            ] as const
+          ).forEach(field => {
+            const canApply =
+              !next[field].trim() ||
+              Boolean(previousAutofill && next[field] === previousAutofill[field]);
+            if (canApply && next[field] !== nextAutofill[field]) {
+              next[field] = nextAutofill[field];
+              changed = true;
+            }
+          });
+          fiscalRangeAutofillRef.current = nextAutofill;
+          return changed ? next : current;
+        });
+      },
+      onError: () => {
+        fiscalRangeAutofillRef.current = null;
+      },
+    });
   const replaceRetentionsMutation = trpc.invoices.replaceRetentions.useMutation({
     onSuccess: (_data, variables) => {
       toast.success("Retenciones actualizadas");
@@ -883,6 +990,8 @@ export default function Facturas() {
   }, [selectedId]);
   useEffect(() => {
     if (!detail?.invoice) return;
+    fiscalRangeAutofillRef.current = null;
+    lastFiscalRangeLookupKeyRef.current = "";
     setInvoiceDraft({
       isFiscalDocument: detail.invoice.isFiscalDocument ?? true,
       cai: detail.invoice.cai ?? "",
@@ -894,6 +1003,7 @@ export default function Facturas() {
       postingDate: dateInputValue(detail.invoice.postingDate),
       receiptDate: dateInputValue(detail.invoice.receiptDate),
       emissionDeadline: dateInputValue(detail.invoice.emissionDeadline),
+      retentionReceiptNumber: detail.invoice.retentionReceiptNumber ?? "",
       notes: detail.invoice.notes ?? "",
     });
     setRetentionDrafts(
@@ -922,6 +1032,59 @@ export default function Facturas() {
       reviewSentId: null,
     });
   }, [detail?.invoice?.id]);
+
+  useEffect(() => {
+    if (
+      !selectedId ||
+      !canLookupFiscalRange ||
+      !invoiceDraft.isFiscalDocument ||
+      !isValidInvoiceNumber(invoiceDraft.invoiceNumber)
+    ) {
+      const previousAutofill = fiscalRangeAutofillRef.current;
+      if (previousAutofill) {
+        updateInvoiceDraft(current => {
+          const next = { ...current };
+          let changed = false;
+          (
+            [
+              "cai",
+              "documentRangeStart",
+              "documentRangeEnd",
+              "emissionDeadline",
+            ] as const
+          ).forEach(field => {
+            if (next[field] === previousAutofill[field]) {
+              next[field] = "";
+              changed = true;
+            }
+          });
+          return changed ? next : current;
+        });
+        fiscalRangeAutofillRef.current = null;
+      }
+      lastFiscalRangeLookupKeyRef.current = "";
+      return;
+    }
+
+    const lookupInvoiceNumber = formatInvoiceNumberInput(
+      invoiceDraft.invoiceNumber
+    );
+    const lookupKey = `${selectedId}:${lookupInvoiceNumber}`;
+    if (lastFiscalRangeLookupKeyRef.current === lookupKey) return;
+
+    lastFiscalRangeLookupKeyRef.current = lookupKey;
+    fiscalRangeLookupMutation.mutate({
+      id: selectedId,
+      invoiceNumber: lookupInvoiceNumber,
+    });
+  }, [
+    canLookupFiscalRange,
+    fiscalRangeLookupMutation,
+    invoiceDraft.invoiceNumber,
+    invoiceDraft.isFiscalDocument,
+    selectedId,
+    updateInvoiceDraft,
+  ]);
 
   const filteredInvoices = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
@@ -1043,6 +1206,10 @@ export default function Facturas() {
     (sum, retention) => sum + getRetentionAmount(retention),
     0
   );
+  const invoiceOtherChargesTotal = (detail?.otherCharges ?? []).reduce(
+    (sum: number, charge: any) => sum + toNumber(charge.amount),
+    0
+  );
   const invoiceTotal = toNumber(detail?.invoice.total);
   const withholdingBase = (detail?.items ?? [])
     .filter((item: any) => item.allowsTaxWithholding !== false)
@@ -1139,8 +1306,40 @@ export default function Facturas() {
       );
       return;
     }
+    if (
+      invoiceDraft.isFiscalDocument &&
+      !isFiscalInvoiceRangeOrdered({
+        documentRangeStart: invoiceDraft.documentRangeStart,
+        documentRangeEnd: invoiceDraft.documentRangeEnd,
+      })
+    ) {
+      toast.error("El rango autorizado final debe ser mayor o igual al inicial");
+      return;
+    }
+    if (
+      invoiceDraft.isFiscalDocument &&
+      !isInvoiceNumberWithinFiscalRange({
+        invoiceNumber: invoiceDraft.invoiceNumber,
+        documentRangeStart: invoiceDraft.documentRangeStart,
+        documentRangeEnd: invoiceDraft.documentRangeEnd,
+      })
+    ) {
+      toast.error("El número documento debe estar dentro del rango autorizado");
+      return;
+    }
     if (invoiceDraft.isFiscalDocument && !invoiceDraft.documentDueDate) {
       toast.error("Selecciona la fecha de vencimiento (crédito)");
+      return;
+    }
+    if (invoiceDraft.isFiscalDocument && !invoiceDraft.emissionDeadline) {
+      toast.error("Selecciona la fecha límite de emisión");
+      return;
+    }
+    if (
+      retentionDrafts.length > 0 &&
+      !invoiceDraft.retentionReceiptNumber.trim()
+    ) {
+      toast.error("Ingrese el número de comprobante de retención");
       return;
     }
     setActionFeedback(current => ({ ...current, invoiceSavedId: null }));
@@ -1172,6 +1371,8 @@ export default function Facturas() {
       postingDate: invoiceDraft.postingDate,
       receiptDate: invoiceDraft.receiptDate,
       emissionDeadline: invoiceDraft.emissionDeadline,
+      retentionReceiptNumber:
+        invoiceDraft.retentionReceiptNumber.trim() || undefined,
       notes: invoiceDraft.notes,
     });
   };
@@ -1237,7 +1438,7 @@ export default function Facturas() {
           retentionErpCode: selectedOption.erpCode ?? null,
           description: selectedOption.description,
           percentage: String(selectedOption.ratePercent),
-          baseAmount: String(toNumber(item.subtotal).toFixed(2)),
+          baseAmount: String(item.subtotal ?? "0.0000"),
         },
       ]);
     });
@@ -1247,6 +1448,13 @@ export default function Facturas() {
     if (!selectedId) return;
     if (retentionDrafts.length > 0 && !canRetainSelectedInvoice) {
       toast.error(retentionDisabledReason || "La factura no permite retenciones");
+      return;
+    }
+    if (
+      retentionDrafts.length > 0 &&
+      !invoiceDraft.retentionReceiptNumber.trim()
+    ) {
+      toast.error("Ingrese el número de comprobante de retención");
       return;
     }
     const lineRetentionCounts = new Map<number, number>();
@@ -1329,6 +1537,8 @@ export default function Facturas() {
     setActionFeedback(current => ({ ...current, retentionsSavedId: null }));
     replaceRetentionsMutation.mutate({
       id: selectedId,
+      retentionReceiptNumber:
+        invoiceDraft.retentionReceiptNumber.trim() || undefined,
       retentions: retentionDrafts.map(retention => ({
         invoiceItemId: retention.invoiceItemId ?? undefined,
         retentionCatalogId: Number(retention.retentionCatalogId),
@@ -1340,6 +1550,14 @@ export default function Facturas() {
   const handlePrintRetentionCertificate = () => {
     if (!detail || retentionDrafts.length === 0 || retentionTotal <= 0) {
       toast.error("Esta factura no tiene retenciones para imprimir");
+      return;
+    }
+    const retentionReceiptNumber =
+      invoiceDraft.retentionReceiptNumber.trim() ||
+      detail.invoice.retentionReceiptNumber ||
+      "";
+    if (!retentionReceiptNumber.trim()) {
+      toast.error("Ingrese el número de comprobante de retención");
       return;
     }
 
@@ -1403,7 +1621,7 @@ export default function Facturas() {
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Comprobante de retención ${escapePrintHtml(invoice.invoiceDocumentNumber)}</title>
+    <title>Comprobante de retención ${escapePrintHtml(retentionReceiptNumber || invoice.invoiceDocumentNumber)}</title>
     <style>
       @page {
         size: letter;
@@ -1586,6 +1804,13 @@ export default function Facturas() {
     if (!selectedId) return;
     if (attachmentState.count === 0) {
       toast.error("Adjunte al menos un archivo antes de enviar a revisión");
+      return;
+    }
+    if (
+      retentionDrafts.length > 0 &&
+      !invoiceDraft.retentionReceiptNumber.trim()
+    ) {
+      toast.error("Ingrese el número de comprobante de retención");
       return;
     }
     setActionFeedback(current => ({ ...current, reviewSentId: null }));
@@ -2008,6 +2233,34 @@ export default function Facturas() {
                     </div>
                     <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                       <div className="space-y-2">
+                        <Label>Número documento</Label>
+                        <Input
+                          value={invoiceDraft.invoiceNumber}
+                          disabled={!canEditSelectedInvoice}
+                          onChange={event =>
+                            updateInvoiceDraft(current => ({
+                              ...current,
+                              invoiceNumber: current.isFiscalDocument
+                                ? formatInvoiceNumberInput(event.target.value)
+                                : event.target.value,
+                            }))
+                          }
+                          placeholder={
+                            invoiceDraft.isFiscalDocument
+                              ? INVOICE_NUMBER_FORMAT_EXAMPLE
+                              : "Ej. INV-EXT-001"
+                          }
+                          inputMode={
+                            invoiceDraft.isFiscalDocument ? "numeric" : "text"
+                          }
+                          maxLength={
+                            invoiceDraft.isFiscalDocument
+                              ? INVOICE_NUMBER_FORMAT_EXAMPLE.length
+                              : undefined
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
                         <Label>
                           {invoiceDraft.isFiscalDocument
                             ? "CAI"
@@ -2035,34 +2288,6 @@ export default function Facturas() {
                               : undefined
                           }
                           autoCapitalize="characters"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Número documento</Label>
-                        <Input
-                          value={invoiceDraft.invoiceNumber}
-                          disabled={!canEditSelectedInvoice}
-                          onChange={event =>
-                            updateInvoiceDraft(current => ({
-                              ...current,
-                              invoiceNumber: current.isFiscalDocument
-                                ? formatInvoiceNumberInput(event.target.value)
-                                : event.target.value,
-                            }))
-                          }
-                          placeholder={
-                            invoiceDraft.isFiscalDocument
-                              ? INVOICE_NUMBER_FORMAT_EXAMPLE
-                              : "Ej. INV-EXT-001"
-                          }
-                          inputMode={
-                            invoiceDraft.isFiscalDocument ? "numeric" : "text"
-                          }
-                          maxLength={
-                            invoiceDraft.isFiscalDocument
-                              ? INVOICE_NUMBER_FORMAT_EXAMPLE.length
-                              : undefined
-                          }
                         />
                       </div>
                       <div className="space-y-2">
@@ -2189,6 +2414,24 @@ export default function Facturas() {
                               emissionDeadline: event.target.value,
                             }))
                           }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>
+                          Número comprobante de retención
+                          {retentionDrafts.length > 0 ? " *" : ""}
+                        </Label>
+                        <Input
+                          value={invoiceDraft.retentionReceiptNumber}
+                          disabled={!canEditSelectedInvoice}
+                          onChange={event =>
+                            updateInvoiceDraft(current => ({
+                              ...current,
+                              retentionReceiptNumber: event.target.value,
+                            }))
+                          }
+                          placeholder="Comprobante de retención"
+                          maxLength={100}
                         />
                       </div>
                     </div>
@@ -2438,6 +2681,26 @@ export default function Facturas() {
                       </tbody>
                     </table>
                   </div>
+                  {detail.otherCharges?.length ? (
+                    <div className="border-t border-border/70 px-4 py-3">
+                      <h4 className="text-sm font-semibold">Otros cargos</h4>
+                      <div className="mt-2 divide-y divide-border/70 rounded-lg border border-border/70">
+                        {detail.otherCharges.map((charge: any) => (
+                          <div
+                            key={charge.id}
+                            className="grid grid-cols-[1fr_auto] gap-3 px-3 py-2 text-sm"
+                          >
+                            <span className="font-medium">
+                              {charge.concept}
+                            </span>
+                            <span className="font-semibold tabular-nums">
+                              {formatPurchaseOrderCurrency(charge.amount)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap justify-end gap-5 border-t border-border/70 px-4 py-3 text-sm font-semibold">
                     <span>
                       Subtotal:{" "}
@@ -2446,6 +2709,12 @@ export default function Facturas() {
                     <span>
                       ISV: {formatPurchaseOrderCurrency(detail.invoice.taxAmount)}
                     </span>
+                    {invoiceOtherChargesTotal > 0 ? (
+                      <span>
+                        Otros cargos:{" "}
+                        {formatPurchaseOrderCurrency(invoiceOtherChargesTotal)}
+                      </span>
+                    ) : null}
                     <span>
                       Total factura:{" "}
                       {formatPurchaseOrderCurrency(detail.invoice.total)}
@@ -2660,6 +2929,18 @@ export default function Facturas() {
                         {formatPurchaseOrderCurrency(detail.invoice.taxAmount)}
                       </span>
                     </div>
+                    {invoiceOtherChargesTotal > 0 ? (
+                      <div className="flex justify-between gap-3 text-sm">
+                        <span className="text-muted-foreground">
+                          Otros cargos
+                        </span>
+                        <span className="font-medium">
+                          {formatPurchaseOrderCurrency(
+                            invoiceOtherChargesTotal
+                          )}
+                        </span>
+                      </div>
+                    ) : null}
                     <div className="flex justify-between gap-3 border-b border-border pb-2 text-sm">
                       <span className="text-muted-foreground">Total factura</span>
                       <span className="font-semibold">
@@ -2704,6 +2985,15 @@ export default function Facturas() {
                     </p>
                   ) : (
                     <div className="mt-3 space-y-2">
+                      <div className="flex items-start justify-between gap-3 text-sm">
+                        <span className="text-muted-foreground">
+                          Comprobante
+                        </span>
+                        <span className="text-right font-medium">
+                          {invoiceDraft.retentionReceiptNumber ||
+                            "Pendiente"}
+                        </span>
+                      </div>
                       {retentionDrafts.map((retention, index) => (
                         <div
                           key={`${retention.retentionCatalogId}-${index}`}

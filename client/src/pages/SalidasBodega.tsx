@@ -3,6 +3,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -16,10 +24,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import {
+  Check,
+  ChevronsUpDown,
   Eye,
   PackageMinus,
   Plus,
@@ -59,6 +74,158 @@ const RETURN_CONDITION_LABELS: Record<string, string> = {
   defectuoso: "Defectuoso",
   danado: "Dañado",
 };
+
+type DeliveryTargetSelection =
+  | {
+      targetType: "subproyecto";
+      subProjectId: number;
+      projectId: number;
+      label: string;
+    }
+  | {
+      targetType: "activo_fijo";
+      projectId: number;
+      fixedAssetSapItemCode: string;
+      fixedAssetName: string;
+      label: string;
+    };
+
+function buildSubprojectDeliveryTargetSelection(
+  subproject: any
+): DeliveryTargetSelection {
+  return {
+    targetType: "subproyecto",
+    subProjectId: subproject.id,
+    projectId: subproject.projectId,
+    label: `Subproyecto: ${subproject.code} - ${subproject.name}`,
+  };
+}
+
+function buildFixedAssetDeliveryTargetSelection(
+  asset: any
+): DeliveryTargetSelection {
+  return {
+    targetType: "activo_fijo",
+    projectId: asset.projectId,
+    fixedAssetSapItemCode: asset.itemCode,
+    fixedAssetName: asset.description,
+    label: `Activo fijo: ${asset.itemCode} - ${asset.description}`,
+  };
+}
+
+function mapWarehouseExitLineTargetToSelection(
+  item: any,
+  projectId?: number | null
+): DeliveryTargetSelection | null {
+  const target = item?.target;
+  if (target?.type === "subproyecto" && target.subProjectId) {
+    return {
+      targetType: "subproyecto",
+      subProjectId: target.subProjectId,
+      projectId: target.projectId ?? projectId ?? item?.projectId ?? 0,
+      label: target.label ?? `Subproyecto #${target.subProjectId}`,
+    };
+  }
+
+  if (target?.type === "activo_fijo" && target.fixedAssetSapItemCode) {
+    return {
+      targetType: "activo_fijo",
+      projectId: target.projectId ?? projectId ?? item?.projectId ?? 0,
+      fixedAssetSapItemCode: target.fixedAssetSapItemCode,
+      fixedAssetName: target.fixedAssetName ?? "",
+      label: target.label ?? `Activo fijo: ${target.fixedAssetSapItemCode}`,
+    };
+  }
+
+  if (item?.targetType === "subproyecto" && item.subProjectId) {
+    const subproject = item.subproject;
+    const subprojectLabel = subproject
+      ? `${subproject.code} - ${subproject.name}`
+      : `Subproyecto #${item.subProjectId}`;
+    return {
+      targetType: "subproyecto",
+      subProjectId: item.subProjectId,
+      projectId: projectId ?? item.projectId ?? subproject?.projectId ?? 0,
+      label: `Subproyecto: ${subprojectLabel}`,
+    };
+  }
+
+  if (item?.targetType === "activo_fijo" && item.fixedAssetSapItemCode) {
+    return {
+      targetType: "activo_fijo",
+      projectId: projectId ?? item.projectId ?? 0,
+      fixedAssetSapItemCode: item.fixedAssetSapItemCode,
+      fixedAssetName: item.fixedAssetName ?? "",
+      label: item.fixedAssetName
+        ? `Activo fijo: ${item.fixedAssetSapItemCode} - ${item.fixedAssetName}`
+        : `Activo fijo: ${item.fixedAssetSapItemCode}`,
+    };
+  }
+
+  return null;
+}
+
+function getDeliveryTargetPayload(selection: DeliveryTargetSelection | null) {
+  if (!selection) {
+    return {
+      targetType: null,
+      subProjectId: null,
+      fixedAssetSapItemCode: null,
+      fixedAssetName: null,
+    };
+  }
+
+  if (selection.targetType === "subproyecto") {
+    return {
+      targetType: "subproyecto" as const,
+      subProjectId: selection.subProjectId,
+      fixedAssetSapItemCode: null,
+      fixedAssetName: null,
+    };
+  }
+
+  return {
+    targetType: "activo_fijo" as const,
+    subProjectId: null,
+    fixedAssetSapItemCode: selection.fixedAssetSapItemCode,
+    fixedAssetName: selection.fixedAssetName,
+  };
+}
+
+function formatWarehouseExitTargetLabel(item: any, projectId?: number | null) {
+  return mapWarehouseExitLineTargetToSelection(item, projectId)?.label ?? null;
+}
+
+function formatWarehouseExitWarehouseLabel(detail: any) {
+  const directWarehouse =
+    detail?.warehouse?.displayName || detail?.warehouse?.name || null;
+  if (directWarehouse) return directWarehouse;
+
+  const itemWarehouseLabels = Array.from(
+    new Set(
+      (detail?.items || [])
+        .map(
+          (item: any) => item.warehouse?.displayName || item.warehouse?.name || null
+        )
+        .filter(Boolean)
+    )
+  );
+
+  if (itemWarehouseLabels.length === 1) return itemWarehouseLabels[0] as string;
+  if (itemWarehouseLabels.length > 1) return "Varios almacenes";
+  return "Bodega del proyecto";
+}
+
+function formatWarehouseExitRequestLabel(detail: any) {
+  const requestNumber =
+    detail?.materialRequest?.requestNumber ||
+    (detail?.warehouseExit?.materialRequestId
+      ? `REQ-${detail.warehouseExit.materialRequestId}`
+      : null);
+  const requesterName = detail?.requestedBy?.name || null;
+  if (requestNumber && requesterName) return `${requestNumber} - ${requesterName}`;
+  return requestNumber || requesterName || "-";
+}
 
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "-";
@@ -157,12 +324,20 @@ export default function SalidasBodega() {
   const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false);
   const [deliveryRequestId, setDeliveryRequestId] = useState("");
   const [deliveryNotes, setDeliveryNotes] = useState("");
+  const [deliveryReceivedByName, setDeliveryReceivedByName] = useState("");
   const [deliveryQuantityByItemId, setDeliveryQuantityByItemId] = useState<
     Record<number, string>
   >({});
   const [deliveryWarehouseByItemId, setDeliveryWarehouseByItemId] = useState<
     Record<number, string>
   >({});
+  const [deliveryTargetByItemId, setDeliveryTargetByItemId] = useState<
+    Record<number, DeliveryTargetSelection | null>
+  >({});
+  const [deliveryTargetPopoverOpen, setDeliveryTargetPopoverOpen] = useState<
+    number | null
+  >(null);
+  const [deliveryTargetSearch, setDeliveryTargetSearch] = useState("");
 
   const { data: exits, isLoading } = trpc.warehouseExits.list.useQuery();
   const canCreateReturns =
@@ -185,6 +360,18 @@ export default function SalidasBodega() {
         deliveryDialogOpen && Boolean(deliveryRequestDetail?.request.projectId),
     }
   );
+  const { data: deliveryTargetOptions, isLoading: deliveryTargetOptionsLoading } =
+    trpc.materialRequests.targetOptions.useQuery(
+      {
+        projectId: deliveryRequestDetail?.request.projectId ?? 0,
+        search: deliveryTargetSearch.trim() || undefined,
+      },
+      {
+        enabled:
+          deliveryDialogOpen &&
+          Boolean(deliveryRequestDetail?.request.projectId),
+      }
+    );
   const defaultDeliveryWarehouse = useMemo(
     () =>
       (deliveryWarehouses ?? []).find((warehouse: any) => warehouse.isDefault) ??
@@ -218,8 +405,12 @@ export default function SalidasBodega() {
       setDeliveryDialogOpen(false);
       setDeliveryRequestId("");
       setDeliveryNotes("");
+      setDeliveryReceivedByName("");
       setDeliveryQuantityByItemId({});
       setDeliveryWarehouseByItemId({});
+      setDeliveryTargetByItemId({});
+      setDeliveryTargetPopoverOpen(null);
+      setDeliveryTargetSearch("");
       setSelectedId(result.id);
       void Promise.all([
         utils.warehouseExits.list.invalidate(),
@@ -281,20 +472,27 @@ export default function SalidasBodega() {
     if (!deliveryRequestDetail) {
       setDeliveryQuantityByItemId({});
       setDeliveryWarehouseByItemId({});
+      setDeliveryTargetByItemId({});
       return;
     }
 
     const nextQuantities: Record<number, string> = {};
     const nextWarehouses: Record<number, string> = {};
+    const nextTargets: Record<number, DeliveryTargetSelection | null> = {};
     for (const item of deliveryRequestDetail.items || []) {
       const suggestedQuantity = getSuggestedDeliveryQuantity(item);
       if (suggestedQuantity > 0) {
         nextQuantities[item.id] = suggestedQuantity.toFixed(2);
         nextWarehouses[item.id] = String(defaultDeliveryWarehouse?.id ?? "");
+        nextTargets[item.id] = mapWarehouseExitLineTargetToSelection(
+          item,
+          deliveryRequestDetail.request.projectId
+        );
       }
     }
     setDeliveryQuantityByItemId(nextQuantities);
     setDeliveryWarehouseByItemId(nextWarehouses);
+    setDeliveryTargetByItemId(nextTargets);
   }, [defaultDeliveryWarehouse?.id, deliveryRequestDetail?.request.id]);
 
   const eligibleMaterialRequests = useMemo(
@@ -379,6 +577,173 @@ export default function SalidasBodega() {
     });
   }, [exits, searchTerm, statusFilter]);
 
+  const renderDeliveryTargetSelector = (item: any) => {
+    const selectedTarget = deliveryTargetByItemId[item.id] ?? null;
+    const open = deliveryTargetPopoverOpen === item.id;
+
+    return (
+      <div className="min-w-[260px]">
+        <div className="flex min-w-0 gap-2">
+          <Popover
+            open={open}
+            onOpenChange={(nextOpen) => {
+              setDeliveryTargetPopoverOpen(nextOpen ? item.id : null);
+              if (!nextOpen) setDeliveryTargetSearch("");
+            }}
+          >
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={
+                  !deliveryRequestDetail?.request.projectId ||
+                  createDeliveryMutation.isPending
+                }
+                className="min-w-0 flex-1 justify-between font-normal"
+              >
+                <span
+                  className={
+                    selectedTarget ? "truncate" : "truncate text-muted-foreground"
+                  }
+                >
+                  {selectedTarget?.label ?? "Subproyecto o activo fijo"}
+                </span>
+                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              className="w-[min(540px,calc(100vw-2rem))] p-0"
+              align="start"
+            >
+              <Command shouldFilter={false}>
+                <CommandInput
+                  placeholder="Buscar subproyecto o activo fijo..."
+                  value={deliveryTargetSearch}
+                  onValueChange={setDeliveryTargetSearch}
+                />
+                <CommandList>
+                  {deliveryTargetOptionsLoading ? (
+                    <div className="p-3 text-sm text-muted-foreground">
+                      Buscando opciones...
+                    </div>
+                  ) : (
+                    <>
+                      <CommandEmpty>No se encontraron opciones.</CommandEmpty>
+                      {(deliveryTargetOptions?.subprojects ?? []).length > 0 ? (
+                        <CommandGroup heading="Subproyectos">
+                          {(deliveryTargetOptions?.subprojects ?? []).map(
+                            (subproject: any) => {
+                              const selected =
+                                selectedTarget?.targetType === "subproyecto" &&
+                                selectedTarget.subProjectId === subproject.id;
+
+                              return (
+                                <CommandItem
+                                  key={`subproject-${subproject.id}`}
+                                  value={`subproject-${subproject.id}-${subproject.code}-${subproject.name}`}
+                                  onSelect={() => {
+                                    setDeliveryTargetByItemId((current) => ({
+                                      ...current,
+                                      [item.id]:
+                                        buildSubprojectDeliveryTargetSelection(
+                                          subproject
+                                        ),
+                                    }));
+                                    setDeliveryTargetPopoverOpen(null);
+                                    setDeliveryTargetSearch("");
+                                  }}
+                                >
+                                  <Check
+                                    className={`mr-2 h-4 w-4 ${
+                                      selected ? "opacity-100" : "opacity-0"
+                                    }`}
+                                  />
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-medium">
+                                      {subproject.code} - {subproject.name}
+                                    </p>
+                                    {subproject.description ? (
+                                      <p className="truncate text-xs text-muted-foreground">
+                                        {subproject.description}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                </CommandItem>
+                              );
+                            }
+                          )}
+                        </CommandGroup>
+                      ) : null}
+
+                      {(deliveryTargetOptions?.fixedAssets ?? []).length > 0 ? (
+                        <CommandGroup heading="Activos fijos">
+                          {(deliveryTargetOptions?.fixedAssets ?? []).map(
+                            (asset: any) => {
+                              const selected =
+                                selectedTarget?.targetType === "activo_fijo" &&
+                                selectedTarget.fixedAssetSapItemCode ===
+                                  asset.itemCode;
+
+                              return (
+                                <CommandItem
+                                  key={`asset-${asset.itemCode}`}
+                                  value={`asset-${asset.itemCode}-${asset.description}`}
+                                  onSelect={() => {
+                                    setDeliveryTargetByItemId((current) => ({
+                                      ...current,
+                                      [item.id]:
+                                        buildFixedAssetDeliveryTargetSelection(
+                                          asset
+                                        ),
+                                    }));
+                                    setDeliveryTargetPopoverOpen(null);
+                                    setDeliveryTargetSearch("");
+                                  }}
+                                >
+                                  <Check
+                                    className={`mr-2 h-4 w-4 ${
+                                      selected ? "opacity-100" : "opacity-0"
+                                    }`}
+                                  />
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-medium">
+                                      {asset.itemCode} - {asset.description}
+                                    </p>
+                                  </div>
+                                </CommandItem>
+                              );
+                            }
+                          )}
+                        </CommandGroup>
+                      ) : null}
+                    </>
+                  )}
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
+          {selectedTarget ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() =>
+                setDeliveryTargetByItemId((current) => ({
+                  ...current,
+                  [item.id]: null,
+                }))
+              }
+              disabled={createDeliveryMutation.isPending}
+              aria-label="Limpiar destino"
+            >
+              <XCircle className="h-4 w-4" />
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
   const submitDelivery = () => {
     if (!deliveryRequestDetail) {
       toast.error("Seleccione una requisición");
@@ -389,11 +754,19 @@ export default function SalidasBodega() {
       .map((item: any) => {
         const quantity = Number(deliveryQuantityByItemId[item.id] ?? 0);
         const warehouseId = Number(deliveryWarehouseByItemId[item.id] ?? 0);
+        const targetSelection = deliveryTargetByItemId[item.id] ?? null;
         const availableQuantity =
           deliveryWarehouseStockByItemId.get(item.id)?.get(warehouseId) ?? 0;
         const pendingQuantity = getDeliveryPendingQuantity(item);
 
-        return { item, quantity, pendingQuantity, availableQuantity, warehouseId };
+        return {
+          item,
+          quantity,
+          pendingQuantity,
+          availableQuantity,
+          warehouseId,
+          targetSelection,
+        };
       })
       .filter(({ quantity }) => quantity > 0);
 
@@ -420,10 +793,12 @@ export default function SalidasBodega() {
     createDeliveryMutation.mutate({
       requestId: deliveryRequestDetail.request.id,
       note: deliveryNotes.trim() || undefined,
-      items: selectedItems.map(({ item, quantity, warehouseId }) => ({
+      receivedByName: deliveryReceivedByName.trim() || undefined,
+      items: selectedItems.map(({ item, quantity, warehouseId, targetSelection }) => ({
         requestItemId: item.id,
         dispatchedQuantity: quantity.toFixed(2),
         warehouseId,
+        ...getDeliveryTargetPayload(targetSelection),
       })),
     });
   };
@@ -497,27 +872,36 @@ export default function SalidasBodega() {
     const projectLabel = detail.project
       ? `${detail.project.code} ${detail.project.name}`
       : `Proyecto ${warehouseExit.projectId}`;
-    const warehouseLabel =
-      detail.warehouse?.displayName || detail.project?.name || projectLabel;
-    const requestedByLabel = detail.createdBy?.name || "-";
+    const warehouseLabel = formatWarehouseExitWarehouseLabel(detail);
+    const requestedByLabel = formatWarehouseExitRequestLabel(detail);
+    const createdByLabel = detail.createdBy?.name || "-";
+    const receivedByLabel = warehouseExit.receivedByName?.trim() || "-";
     const referenceLabel =
       warehouseExit.notes?.trim() ||
+      detail.materialRequest?.requestNumber ||
       (warehouseExit.materialRequestId
         ? `Requisición ${warehouseExit.materialRequestId}`
         : warehouseExit.exitNumber);
     const itemRows = (detail.items || [])
       .map(
-        (item: any) => `
+        (item: any) => {
+          const targetLabel =
+            formatWarehouseExitTargetLabel(item, warehouseExit.projectId) || "-";
+          return `
           <tr>
             <td>${escapeHtml(item.sapItemCode || "-")}</td>
             <td>${escapeHtml(item.itemName || "-")}</td>
             <td class="center"></td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantity))}</td>
             <td class="center">${escapeHtml(item.unit || "-")}</td>
-            <td>${escapeHtml(item.notes || referenceLabel)}</td>
+            <td>${escapeHtml(targetLabel)}</td>
+            <td>
+              <div>${escapeHtml(item.notes || referenceLabel)}</div>
+            </td>
             <td class="numeric">1</td>
           </tr>
-        `
+        `;
+        }
       )
       .join("");
     const totalLines = (detail.items || []).length;
@@ -674,6 +1058,10 @@ export default function SalidasBodega() {
                   <div class="value">${escapeHtml(requestedByLabel)}</div>
                 </div>
                 <div class="field">
+                  <div class="label">Recibido por:</div>
+                  <div class="value">${escapeHtml(receivedByLabel)}</div>
+                </div>
+                <div class="field">
                   <div class="label">Tipo Egreso:</div>
                   <div class="value">EGRESO DE BODEGA</div>
                 </div>
@@ -689,7 +1077,7 @@ export default function SalidasBodega() {
                 </div>
                 <div class="field">
                   <div class="label">Destino:</div>
-                  <div class="value">${escapeHtml(projectLabel)}</div>
+                  <div class="value">Ver detalle por línea</div>
                 </div>
                 <div class="field">
                   <div class="label">Referencia:</div>
@@ -710,22 +1098,23 @@ export default function SalidasBodega() {
                   <th style="width: 10%;" class="center">Costo</th>
                   <th style="width: 10%;" class="numeric">Cantidad</th>
                   <th style="width: 10%;" class="center">U Medida</th>
-                  <th style="width: 22%;">Referencia</th>
+                  <th style="width: 20%;">Destino</th>
+                  <th style="width: 18%;">Referencia</th>
                   <th style="width: 8%;" class="numeric">Total</th>
                 </tr>
               </thead>
               <tbody>
-                ${itemRows || `<tr><td colspan="7">Sin ítems</td></tr>`}
+                ${itemRows || `<tr><td colspan="8">Sin ítems</td></tr>`}
                 <tr class="total-row">
-                  <td colspan="6">Total general</td>
+                  <td colspan="7">Total general</td>
                   <td class="numeric">${escapeHtml(formatPrintNumber(totalLines))}</td>
                 </tr>
               </tbody>
             </table>
 
             <section class="signatures">
-              <div class="signature-line">Elaborado por:</div>
-              <div class="signature-line">Entregado a:</div>
+              <div class="signature-line">Elaborado por:<br>${escapeHtml(createdByLabel)}</div>
+              <div class="signature-line">Entregado a:<br>${escapeHtml(receivedByLabel)}</div>
               <div class="signature-line">Autorizado por:</div>
             </section>
           </main>
@@ -906,7 +1295,7 @@ export default function SalidasBodega() {
 
           {detail ? (
             <div className="space-y-5 pt-2">
-              <div className="grid gap-3 md:grid-cols-4">
+              <div className="grid gap-3 md:grid-cols-5">
                 <div className="rounded-xl border bg-muted/20 p-4">
                   <Label className="text-xs uppercase tracking-wider text-muted-foreground">
                     Proyecto
@@ -941,6 +1330,14 @@ export default function SalidasBodega() {
                     {detail.createdBy?.name || "-"}
                   </p>
                 </div>
+                <div className="rounded-xl border bg-muted/20 p-4">
+                  <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                    Recibido por
+                  </Label>
+                  <p className="mt-2 font-semibold">
+                    {detail.warehouseExit.receivedByName || "-"}
+                  </p>
+                </div>
               </div>
 
               {detail.warehouseExit.notes ? (
@@ -958,6 +1355,9 @@ export default function SalidasBodega() {
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Ítem
+                      </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Destino
                       </th>
                       <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Cantidad
@@ -984,6 +1384,12 @@ export default function SalidasBodega() {
                       <tr key={item.id} className="border-b last:border-0">
                         <td className="p-3 font-mono text-xs">{item.sapItemCode}</td>
                         <td className="p-3 font-medium">{item.itemName}</td>
+                        <td className="p-3 text-xs text-muted-foreground">
+                          {formatWarehouseExitTargetLabel(
+                            item,
+                            detail.warehouseExit.projectId
+                          ) || "-"}
+                        </td>
                         <td className="p-3 text-right">
                           {formatQuantity(item.quantity)}{" "}
                           <span className="text-xs text-muted-foreground">
@@ -1244,7 +1650,12 @@ export default function SalidasBodega() {
           if (!open) {
             setDeliveryRequestId("");
             setDeliveryNotes("");
+            setDeliveryReceivedByName("");
             setDeliveryQuantityByItemId({});
+            setDeliveryWarehouseByItemId({});
+            setDeliveryTargetByItemId({});
+            setDeliveryTargetPopoverOpen(null);
+            setDeliveryTargetSearch("");
           }
         }}
       >
@@ -1296,6 +1707,9 @@ export default function SalidasBodega() {
                           </th>
                           <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             Ítem
+                          </th>
+                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Destino
                           </th>
                           <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             Solicitado
@@ -1353,6 +1767,9 @@ export default function SalidasBodega() {
                                     Pendiente de código SAP
                                   </p>
                                 ) : null}
+                              </td>
+                              <td className="p-3">
+                                {renderDeliveryTargetSelector(item)}
                               </td>
                               <td className="p-3 text-right">
                                 {formatQuantity(requestedQuantity)} {item.unit || ""}
@@ -1437,6 +1854,18 @@ export default function SalidasBodega() {
                     Esta requisición no tiene renglones recibidos disponibles para salida.
                   </div>
                 )}
+
+                <div className="space-y-2">
+                  <Label>Recibido por</Label>
+                  <Input
+                    value={deliveryReceivedByName}
+                    onChange={(event) =>
+                      setDeliveryReceivedByName(event.target.value)
+                    }
+                    placeholder="Nombre de quien recibe"
+                    maxLength={255}
+                  />
+                </div>
 
                 <div className="space-y-2">
                   <Label>Notas</Label>

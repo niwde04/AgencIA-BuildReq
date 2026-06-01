@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
+import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 function canAccessWarehouses(user: {
   role: string;
@@ -18,13 +19,19 @@ function canReadProjectWarehouses(user: {
   role: string;
   buildreqRole?: string | null;
   assignedProjectId?: number | null;
+  assignedProjectIds?: number[] | null;
 }, projectId?: number) {
   if (canAccessWarehouses(user)) return true;
+  if (!projectId) {
+    return (
+      user.buildreqRole === "administrador_proyecto" ||
+      user.buildreqRole === "bodeguero_proyecto"
+    );
+  }
   if (
     (user.buildreqRole === "administrador_proyecto" ||
       user.buildreqRole === "bodeguero_proyecto") &&
-    projectId &&
-    user.assignedProjectId === projectId
+    canAccessProject(user, projectId)
   ) {
     return true;
   }
@@ -49,16 +56,10 @@ export const warehousesRouter = router({
       });
     }
 
-    const projectId =
-      ctx.user.buildreqRole === "administrador_proyecto" ||
-      ctx.user.buildreqRole === "bodeguero_proyecto"
-        ? ctx.user.assignedProjectId ?? -1
-        : input?.projectId;
-
-    return db.listWarehouses({
+    return db.listWarehouses(applyProjectScope({
       isActive: input?.isActive ?? true,
-      projectId,
-    });
+      projectId: input?.projectId,
+    }, ctx.user));
   }),
 
   getById: protectedProcedure

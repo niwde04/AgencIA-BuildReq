@@ -17,6 +17,10 @@ import {
   getPurchaseOrderTaxSelectionError,
   summarizePurchaseOrderLines,
 } from "../shared/purchase-orders";
+import {
+  isInvoiceNumberWithinFiscalRange,
+  normalizeFiscalRtn,
+} from "../shared/invoices";
 
 // ============================================================
 // Test helpers
@@ -43,6 +47,12 @@ function createUserContext(overrides: Partial<AuthenticatedUser> = {}): {
     lastSignedIn: new Date(),
     ...overrides,
   };
+  if (!("assignedProjectIds" in overrides)) {
+    user.assignedProjectIds = user.assignedProjectId ? [user.assignedProjectId] : [];
+  }
+  if (!("assignedProjects" in overrides)) {
+    user.assignedProjects = [];
+  }
 
   const ctx: TrpcContext = {
     user,
@@ -127,6 +137,18 @@ function createContableContext(overrides: Partial<AuthenticatedUser> = {}) {
   });
 }
 
+function createSuperintendentContext(overrides: Partial<AuthenticatedUser> = {}) {
+  return createUserContext({
+    id: 8,
+    openId: "test-superintendente-001",
+    role: "user",
+    buildreqRole: "superintendente",
+    assignedProjectId: 1,
+    name: "Superintendente Test",
+    ...overrides,
+  });
+}
+
 const VALID_CAI = "338827-15203E-A419E0-63BE03-0909A6-53";
 const VALID_INVOICE_NUMBER = "000-001-01-00010571";
 const VALID_INVOICE_NUMBER_ALT = "000-001-01-00010572";
@@ -146,6 +168,33 @@ const DEFAULT_PROJECT_WAREHOUSE = {
   isActive: true,
   isDefault: true,
 } as any;
+
+describe("BuildReq - Invoice fiscal helpers", () => {
+  it("normalizes RTN and compares fiscal ranges inclusively", () => {
+    expect(normalizeFiscalRtn("0801-1990-12345")).toBe("0801199012345");
+    expect(
+      isInvoiceNumberWithinFiscalRange({
+        invoiceNumber: VALID_DOCUMENT_RANGE_START,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+      })
+    ).toBe(true);
+    expect(
+      isInvoiceNumberWithinFiscalRange({
+        invoiceNumber: VALID_DOCUMENT_RANGE_END,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+      })
+    ).toBe(true);
+    expect(
+      isInvoiceNumberWithinFiscalRange({
+        invoiceNumber: "000-001-01-00000000",
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+      })
+    ).toBe(false);
+  });
+});
 
 // ============================================================
 // Tests: Purchase order tax helpers
@@ -179,6 +228,21 @@ describe("BuildReq - Purchase order tax helpers", () => {
       total: 1040,
       taxCode: "isv_4",
       additionalTaxCodes: [],
+    });
+  });
+
+  it("keeps four decimals internally for purchase order money", () => {
+    expect(
+      calculatePurchaseOrderLineAmounts({
+        quantity: "3.00",
+        unitPrice: "10.1234",
+        taxCode: "isv_15",
+      })
+    ).toMatchObject({
+      subtotal: 30.3702,
+      taxAmount: 4.5555,
+      total: 34.9257,
+      taxCode: "isv_15",
     });
   });
 
@@ -1664,7 +1728,7 @@ describe("BuildReq - Role-based Access Control", () => {
     );
     expect(getDashboardStatsSpy).toHaveBeenCalledWith({
       requestedById: 2,
-      projectId: 1,
+      projectIds: [1],
     });
 
     getDashboardStatsSpy.mockRestore();
@@ -1691,6 +1755,7 @@ describe("BuildReq - Role-based Access Control", () => {
     expect(listMaterialRequestsSpy).toHaveBeenCalledWith({
       status: "pendiente_aprobar",
       requestedById: 2,
+      projectIds: [1],
     });
     expect(listPendingFlowQueueItemsSpy).toHaveBeenCalledWith({
       requestedById: 2,
@@ -1818,7 +1883,6 @@ describe("BuildReq - Role-based Access Control", () => {
 
     expect(listMaterialRequestsSpy).toHaveBeenCalledWith({
       status: "pendiente_aprobar",
-      projectId: -1,
     });
     expect(listPurchaseRequestsSpy).toHaveBeenCalledWith({
       status: "pendiente",
@@ -1828,7 +1892,6 @@ describe("BuildReq - Role-based Access Control", () => {
     });
     expect(listTransferRequestsSpy).toHaveBeenCalledWith({
       status: "pendiente",
-      projectId: -1,
     });
 
     listMaterialRequestsSpy.mockRestore();
@@ -1876,13 +1939,13 @@ describe("BuildReq - Role-based Access Control", () => {
     await expect(caller.inventory.list()).resolves.toEqual([]);
     await expect(caller.projects.list()).resolves.toEqual([]);
 
-    expect(listMaterialRequestsSpy).toHaveBeenCalledWith({ projectId: -1 });
+    expect(listMaterialRequestsSpy).toHaveBeenCalledWith({});
     expect(listPurchaseRequestsSpy).toHaveBeenCalledWith({});
     expect(listPurchaseOrdersSpy).toHaveBeenCalledWith({});
-    expect(listTransferRequestsSpy).toHaveBeenCalledWith({ projectId: -1 });
-    expect(listTransfersSpy).toHaveBeenCalledWith({ sourceProjectId: -1 });
-    expect(listReceiptsSpy).toHaveBeenCalledWith({ projectId: -1 });
-    expect(listInventoryItemsSpy).toHaveBeenCalledWith({ projectId: -1 });
+    expect(listTransferRequestsSpy).toHaveBeenCalledWith({});
+    expect(listTransfersSpy).toHaveBeenCalledWith({});
+    expect(listReceiptsSpy).toHaveBeenCalledWith({});
+    expect(listInventoryItemsSpy).toHaveBeenCalledWith({});
     expect(listProjectsSpy).toHaveBeenCalledWith(undefined);
 
     listMaterialRequestsSpy.mockRestore();
@@ -1916,20 +1979,202 @@ describe("BuildReq - Role-based Access Control", () => {
     ).resolves.toEqual([]);
 
     expect(listTransferRequestsSpy).toHaveBeenCalledWith({
-      projectId: 6,
+      projectId: 99,
+      projectIds: [],
       status: "pendiente",
     });
     expect(listTransfersSpy).toHaveBeenNthCalledWith(1, {
-      sourceProjectId: 6,
+      sourceProjectId: 99,
+      projectIds: [6],
       status: "confirmado",
     });
     expect(listTransfersSpy).toHaveBeenNthCalledWith(2, {
       receivableOnly: true,
-      destinationProjectId: 6,
+      destinationProjectId: 99,
+      projectIds: [6],
     });
 
     listTransferRequestsSpy.mockRestore();
     listTransfersSpy.mockRestore();
+  });
+
+  it("Project Administrator with multiple assigned projects lists all assigned project data", async () => {
+    const { ctx } = createProjectAdminContext({
+      assignedProjectId: 1,
+      assignedProjectIds: [1, 2],
+    });
+    const caller = appRouter.createCaller(ctx);
+    const listMaterialRequestsSpy = vi
+      .spyOn(db, "listMaterialRequests")
+      .mockResolvedValue([] as any);
+    const listPurchaseOrdersSpy = vi
+      .spyOn(db, "listPurchaseOrders")
+      .mockResolvedValue([] as any);
+    const listInvoicesSpy = vi.spyOn(db, "listInvoices").mockResolvedValue([]);
+    const getProjectByIdSpy = vi
+      .spyOn(db, "getProjectById")
+      .mockImplementation(async (projectId: number) => ({
+        id: projectId,
+        code: `00${projectId}`,
+        name: `Proyecto ${projectId}`,
+        status: "activo",
+      }) as any);
+
+    await expect(caller.materialRequests.list()).resolves.toEqual([]);
+    await expect(caller.purchaseOrders.list()).resolves.toEqual([]);
+    await expect(caller.invoices.list()).resolves.toEqual([]);
+    await expect(caller.projects.list()).resolves.toEqual([
+      expect.objectContaining({ id: 1 }),
+      expect.objectContaining({ id: 2 }),
+    ]);
+
+    expect(listMaterialRequestsSpy).toHaveBeenCalledWith({ projectIds: [1, 2] });
+    expect(listPurchaseOrdersSpy).toHaveBeenCalledWith({ projectIds: [1, 2] });
+    expect(listInvoicesSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ projectIds: [1, 2] })
+    );
+    expect(getProjectByIdSpy).toHaveBeenCalledWith(1);
+    expect(getProjectByIdSpy).toHaveBeenCalledWith(2);
+
+    listMaterialRequestsSpy.mockRestore();
+    listPurchaseOrdersSpy.mockRestore();
+    listInvoicesSpy.mockRestore();
+    getProjectByIdSpy.mockRestore();
+  });
+
+  it("Superintendente sees dashboard and requisitions scoped to assigned projects", async () => {
+    const { ctx } = createSuperintendentContext({
+      assignedProjectId: 1,
+      assignedProjectIds: [1, 2],
+    });
+    const caller = appRouter.createCaller(ctx);
+    const getDashboardStatsSpy = vi
+      .spyOn(db, "getDashboardStats")
+      .mockResolvedValue({
+        totalRequests: 2,
+        totalActiveProjects: 2,
+        totalReturns: 0,
+        pendingReturns: 0,
+        requestsByStatus: [],
+        requestsByProject: [],
+        requestsByFlow: [],
+        recentRequests: [],
+      } as any);
+    const listMaterialRequestsSpy = vi
+      .spyOn(db, "listMaterialRequests")
+      .mockResolvedValue([] as any);
+
+    await expect(caller.dashboard.stats()).resolves.toEqual(
+      expect.objectContaining({
+        totalRequests: 2,
+        totalActiveProjects: 2,
+      })
+    );
+    await expect(caller.materialRequests.list()).resolves.toEqual([]);
+
+    expect(getDashboardStatsSpy).toHaveBeenCalledWith({
+      projectIds: [1, 2],
+    });
+    expect(listMaterialRequestsSpy).toHaveBeenCalledWith({
+      projectIds: [1, 2],
+    });
+
+    getDashboardStatsSpy.mockRestore();
+    listMaterialRequestsSpy.mockRestore();
+  });
+
+  it("Superintendente cannot view requisitions outside assigned projects", async () => {
+    const { ctx } = createSuperintendentContext({
+      assignedProjectId: 1,
+      assignedProjectIds: [1],
+    });
+    const caller = appRouter.createCaller(ctx);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 22,
+          requestedById: 99,
+          projectId: 3,
+          status: "pendiente_aprobar",
+        },
+        items: [],
+      } as any);
+    const syncMaterialRequestFulfillmentStatusSpy = vi
+      .spyOn(db, "syncMaterialRequestFulfillmentStatus")
+      .mockResolvedValue({ changed: false } as any);
+
+    await expect(caller.materialRequests.getById({ id: 22 })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+
+    getMaterialRequestByIdSpy.mockRestore();
+    syncMaterialRequestFulfillmentStatusSpy.mockRestore();
+  });
+
+  it("Superintendente cannot mutate requisitions", async () => {
+    const { ctx } = createSuperintendentContext();
+    const caller = appRouter.createCaller(ctx);
+    const createMaterialRequestSpy = vi.spyOn(db, "createMaterialRequest");
+    const updateMaterialRequestStatusSpy = vi.spyOn(
+      db,
+      "updateMaterialRequestStatus"
+    );
+    const assignFlowSpy = vi.spyOn(db, "assignFlow");
+
+    await expect(
+      caller.materialRequests.create({
+        projectId: 1,
+        requestType: "bienes",
+        purchaseUrgency: "no_urgente",
+        items: [{ itemName: "Cemento", quantity: "1", unit: "und" }],
+      })
+    ).rejects.toThrow("El Superintendente solo puede consultar requisiciones");
+    await expect(
+      caller.materialRequests.update({
+        id: 22,
+        projectId: 1,
+        requestType: "bienes",
+        purchaseUrgency: "no_urgente",
+        items: [{ itemName: "Cemento", quantity: "1", unit: "und" }],
+      })
+    ).rejects.toThrow("El Superintendente solo puede consultar requisiciones");
+    await expect(
+      caller.materialRequests.updateStatus({
+        id: 22,
+        status: "anulada",
+      })
+    ).rejects.toThrow("El Superintendente solo puede consultar requisiciones");
+    await expect(
+      caller.materialRequests.assignFlow({
+        requestId: 22,
+        flowType: "compra_directa",
+      })
+    ).rejects.toThrow("El Superintendente solo puede consultar requisiciones");
+    await expect(
+      caller.materialRequests.reviewItems({
+        requestId: 22,
+        itemIds: [1],
+        decision: "aprobada",
+      })
+    ).rejects.toThrow("El Superintendente solo puede consultar requisiciones");
+    await expect(
+      caller.materialRequests.approve({ id: 22 })
+    ).rejects.toThrow("El Superintendente solo puede consultar requisiciones");
+    await expect(
+      caller.materialRequests.reject({ id: 22, reason: "No aplica" })
+    ).rejects.toThrow("El Superintendente solo puede consultar requisiciones");
+    await expect(
+      caller.materialRequests.sendToSap({ requestId: 22 })
+    ).rejects.toThrow("El Superintendente solo puede consultar requisiciones");
+
+    expect(createMaterialRequestSpy).not.toHaveBeenCalled();
+    expect(updateMaterialRequestStatusSpy).not.toHaveBeenCalled();
+    expect(assignFlowSpy).not.toHaveBeenCalled();
+
+    createMaterialRequestSpy.mockRestore();
+    updateMaterialRequestStatusSpy.mockRestore();
+    assignFlowSpy.mockRestore();
   });
 
   it("Project Administrator cannot create transfer requests", async () => {
@@ -2224,10 +2469,10 @@ describe("BuildReq - Role-based Access Control", () => {
       "traslado_proyecto",
     ]);
 
-    expect(listMaterialRequestsSpy).toHaveBeenCalledWith({ projectId: 1 });
+    expect(listMaterialRequestsSpy).toHaveBeenCalledWith({ projectIds: [1] });
     expect(listPendingFlowQueueItemsSpy).toHaveBeenCalledWith({
       flowType: "despacho_bodega",
-      projectId: 1,
+      projectIds: [1],
     });
 
     listMaterialRequestsSpy.mockRestore();
@@ -2247,8 +2492,8 @@ describe("BuildReq - Role-based Access Control", () => {
     await expect(caller.purchaseOrders.list()).resolves.toEqual([]);
     await expect(caller.receipts.list()).resolves.toEqual([]);
 
-    expect(listPurchaseOrdersSpy).toHaveBeenCalledWith({ projectId: 1 });
-    expect(listReceiptsSpy).toHaveBeenCalledWith({ projectId: 1 });
+    expect(listPurchaseOrdersSpy).toHaveBeenCalledWith({ projectIds: [1] });
+    expect(listReceiptsSpy).toHaveBeenCalledWith({ projectIds: [1] });
 
     listPurchaseOrdersSpy.mockRestore();
     listReceiptsSpy.mockRestore();
@@ -2266,7 +2511,8 @@ describe("BuildReq - Role-based Access Control", () => {
     ).resolves.toEqual([]);
 
     expect(listWarehouseExitsSpy).toHaveBeenCalledWith({
-      projectId: 1,
+      projectId: 99,
+      projectIds: [],
       status: "borrador",
     });
 
@@ -2286,7 +2532,7 @@ describe("BuildReq - Role-based Access Control", () => {
 
     expect(listTransfersSpy).toHaveBeenCalledWith({
       receivableOnly: true,
-      destinationProjectId: 1,
+      projectIds: [1],
     });
 
     listTransfersSpy.mockRestore();
@@ -2670,9 +2916,12 @@ describe("BuildReq - Role-based Access Control", () => {
             requestItemId: 41,
             dispatchedQuantity: "5.00",
             warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+            targetType: "subproyecto",
+            subProjectId: 301,
           },
         ],
         note: "Salida del proyecto",
+        receivedByName: "Juan Perez",
       })
     ).resolves.toEqual({
       success: true,
@@ -2685,13 +2934,16 @@ describe("BuildReq - Role-based Access Control", () => {
     expect(recordWarehouseExitBatchSpy).toHaveBeenCalledWith({
       requestId: 9,
       items: [
-        {
+        expect.objectContaining({
           requestItemId: 41,
           quantity: "5.00",
           warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
-        },
+          targetType: "subproyecto",
+          subProjectId: 301,
+        }),
       ],
       note: "Salida del proyecto",
+      receivedByName: "Juan Perez",
       processedById: 6,
     });
 
@@ -5163,6 +5415,64 @@ describe("BuildReq - Invitation System", () => {
     createInvitationSpy.mockRestore();
   });
 
+  it("Admin can create invitation for Superintendente with assigned projects", async () => {
+    const { ctx } = createUserContext({ role: "admin" });
+    const caller = appRouter.createCaller(ctx);
+    const createInvitationSpy = vi
+      .spyOn(db, "createInvitation")
+      .mockResolvedValue({ id: 78 } as any);
+    const getProjectByIdSpy = vi
+      .spyOn(db, "getProjectById")
+      .mockImplementation(async (projectId: number) => ({
+        id: projectId,
+        code: `00${projectId}`,
+        name: `Proyecto ${projectId}`,
+      }) as any);
+
+    await expect(
+      caller.invitations.create({
+        email: "super@empresa.com",
+        name: "Super Intendente",
+        buildreqRole: "superintendente",
+        assignedProjectIds: [1, 2],
+        origin: "https://buildreq.example.com",
+      })
+    ).resolves.toMatchObject({
+      id: 78,
+      emailData: {
+        to: "super@empresa.com",
+      },
+    });
+    expect(createInvitationSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        buildreqRole: "superintendente",
+        assignedProjectId: 1,
+        assignedProjectIds: [1, 2],
+      })
+    );
+
+    createInvitationSpy.mockRestore();
+    getProjectByIdSpy.mockRestore();
+  });
+
+  it("Admin cannot create Superintendente invitation without projects", async () => {
+    const { ctx } = createUserContext({ role: "admin" });
+    const caller = appRouter.createCaller(ctx);
+    const createInvitationSpy = vi.spyOn(db, "createInvitation");
+
+    await expect(
+      caller.invitations.create({
+        email: "super@empresa.com",
+        name: "Super Intendente",
+        buildreqRole: "superintendente",
+        origin: "https://buildreq.example.com",
+      })
+    ).rejects.toThrow("Debe asignar al menos un proyecto a este rol.");
+    expect(createInvitationSpy).not.toHaveBeenCalled();
+
+    createInvitationSpy.mockRestore();
+  });
+
   it("Validates email format in invitation", async () => {
     const { ctx } = createUserContext({ role: "admin" });
     const caller = appRouter.createCaller(ctx);
@@ -5217,7 +5527,8 @@ describe("BuildReq - User Management", () => {
     expect(updateUserRoleSpy).toHaveBeenCalledWith(
       2,
       "administrador_proyecto",
-      null
+      null,
+      []
     );
 
     updateUserRoleSpy.mockRestore();
@@ -5234,7 +5545,7 @@ describe("BuildReq - User Management", () => {
         buildreqRole: "ingeniero_residente",
         assignedProjectId: null,
       })
-    ).rejects.toThrow("Debe asignar un proyecto a este rol.");
+    ).rejects.toThrow("Debe asignar al menos un proyecto a este rol.");
 
     expect(updateUserRoleSpy).not.toHaveBeenCalled();
     updateUserRoleSpy.mockRestore();
@@ -5255,7 +5566,48 @@ describe("BuildReq - User Management", () => {
       })
     ).resolves.toEqual({ success: true });
 
-    expect(updateUserRoleSpy).toHaveBeenCalledWith(8, "contable", null);
+    expect(updateUserRoleSpy).toHaveBeenCalledWith(8, "contable", null, []);
+
+    updateUserRoleSpy.mockRestore();
+  });
+
+  it("Admin can assign Superintendente with multiple projects", async () => {
+    const { ctx } = createUserContext({ role: "admin" });
+    const caller = appRouter.createCaller(ctx);
+    const updateUserRoleSpy = vi
+      .spyOn(db, "updateUserRole")
+      .mockResolvedValue({ success: true });
+
+    await expect(
+      caller.userManagement.updateRole({
+        userId: 9,
+        buildreqRole: "superintendente",
+        assignedProjectIds: [1, 2],
+      })
+    ).resolves.toEqual({ success: true });
+
+    expect(updateUserRoleSpy).toHaveBeenCalledWith(
+      9,
+      "superintendente",
+      1,
+      [1, 2]
+    );
+
+    updateUserRoleSpy.mockRestore();
+  });
+
+  it("Admin cannot assign Superintendente without projects", async () => {
+    const { ctx } = createUserContext({ role: "admin" });
+    const caller = appRouter.createCaller(ctx);
+    const updateUserRoleSpy = vi.spyOn(db, "updateUserRole");
+
+    await expect(
+      caller.userManagement.updateRole({
+        userId: 9,
+        buildreqRole: "superintendente",
+      })
+    ).rejects.toThrow("Debe asignar al menos un proyecto a este rol.");
+    expect(updateUserRoleSpy).not.toHaveBeenCalled();
 
     updateUserRoleSpy.mockRestore();
   });
@@ -5760,7 +6112,7 @@ describe("BuildReq - Purchase Orders", () => {
         taxBreakdown: [
           expect.objectContaining({
             taxCode: "isv_15",
-            amount: 2353.13,
+            amount: 2353.125,
           }),
         ],
       })
@@ -6592,6 +6944,9 @@ describe("BuildReq - Receipts", () => {
             itemName: "COMPUTADORA ESCRITORIO",
             quantity: "1.00",
             receivedQuantity: "0.00",
+            targetType: "activo_fijo",
+            fixedAssetSapItemCode: "AF-001",
+            fixedAssetName: "Equipo administración",
           },
         ],
       } as any);
@@ -6652,6 +7007,9 @@ describe("BuildReq - Receipts", () => {
       expect.arrayContaining([
         expect.objectContaining({
           sourceItemId: 15,
+          targetType: "activo_fijo",
+          fixedAssetSapItemCode: "AF-001",
+          fixedAssetName: "Equipo administración",
           isFixedAsset: true,
           isLeasing: true,
           assetDetails: [
@@ -6689,6 +7047,15 @@ describe("BuildReq - Receipts", () => {
           },
         ],
       } as any);
+    const getProjectSubprojectByIdSpy = vi
+      .spyOn(db, "getProjectSubprojectById")
+      .mockResolvedValue({
+        id: 77,
+        projectId: 1,
+        code: "SP-001",
+        name: "Subproyecto Oeste",
+        isActive: true,
+      } as any);
     const registerReceiptSpy = vi
       .spyOn(db, "registerReceipt")
       .mockResolvedValue({
@@ -6719,6 +7086,8 @@ describe("BuildReq - Receipts", () => {
             quantityExpected: "100.00",
             quantityReceived: "100.00",
             unit: "und",
+            targetType: "subproyecto",
+            subProjectId: 77,
           },
         ],
       })
@@ -6740,9 +7109,173 @@ describe("BuildReq - Receipts", () => {
           sourceItemId: 15,
           warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
           quantityReceived: "100.00",
+          targetType: "subproyecto",
+          subProjectId: 77,
+          fixedAssetSapItemCode: null,
         }),
       ])
     );
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    getProjectSubprojectByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("uses receipt line taxes and totals when registering purchase order receipts", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "emitida",
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "CEMENTO GRANEL",
+            quantity: "10.00",
+            receivedQuantity: "0.00",
+            unitPrice: "100.00",
+            taxCode: "exe",
+            additionalTaxCodes: [],
+            taxBreakdown: [],
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({
+        id: 6,
+        receiptNumber: "RC-2026-0001",
+        status: "parcial",
+      } as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+            itemName: "CEMENTO GRANEL",
+            quantityExpected: "10.00",
+            quantityReceived: "3.00",
+            unit: "und",
+            unitPrice: "10.1234",
+            taxCode: "isv_15",
+          },
+        ],
+        otherCharges: [
+          {
+            concept: "Flete",
+            amount: "125.1234",
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      id: 6,
+      receiptNumber: "RC-2026-0001",
+      status: "parcial",
+    });
+
+    const receiptItems = registerReceiptSpy.mock.calls[0]?.[1] as any[];
+    expect(receiptItems[0]).toEqual(
+      expect.objectContaining({
+        taxCode: "isv_15",
+        additionalTaxCodes: [],
+        subtotal: "30.3702",
+        taxAmount: "4.5555",
+        total: "34.9257",
+      })
+    );
+    expect(receiptItems[0].taxBreakdown).toEqual([
+      expect.objectContaining({
+        taxCode: "isv_15",
+        amount: 4.5555,
+        baseAmount: 30.3702,
+      }),
+    ]);
+    expect(registerReceiptSpy.mock.calls[0]?.[2]).toEqual([
+      {
+        concept: "Flete",
+        amount: "125.1234",
+      },
+    ]);
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("rejects invalid receipt line tax codes", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "emitida",
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "CEMENTO GRANEL",
+            quantity: "10.00",
+            receivedQuantity: "0.00",
+            unitPrice: "100.00",
+            taxCode: "exe",
+            additionalTaxCodes: [],
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi.spyOn(db, "registerReceipt");
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+            itemName: "CEMENTO GRANEL",
+            quantityExpected: "10.00",
+            quantityReceived: "2.00",
+            unit: "und",
+            unitPrice: "100.00",
+            taxCode: "no_existe",
+          },
+        ],
+      })
+    ).rejects.toThrow("Seleccione un impuesto válido");
+    expect(registerReceiptSpy).not.toHaveBeenCalled();
 
     getPurchaseOrderByIdSpy.mockRestore();
     registerReceiptSpy.mockRestore();
@@ -8497,6 +9030,7 @@ describe("BuildReq - Invoices", () => {
       postingDate: new Date("2026-05-02T12:00:00"),
       receiptDate: new Date("2026-05-02T12:00:00"),
       emissionDeadline: new Date("2026-05-31T12:00:00"),
+      retentionReceiptNumber: "CR-2026-0001",
       total: "1000.00",
       retentionTotal: "0.00",
       netPayable: "1000.00",
@@ -8504,7 +9038,12 @@ describe("BuildReq - Invoices", () => {
     receipt: { id: 6, receiptNumber: "RC-2026-0001" },
     purchaseOrder: { id: 4, orderNumber: "OC-2026-0005" },
     project: { id: 1, code: "020", name: "Proyecto Test" },
-    supplier: { id: 5, supplierCode: "PL-00005", name: "Proveedor Demo" },
+    supplier: {
+      id: 5,
+      supplierCode: "PL-00005",
+      name: "Proveedor Demo",
+      rtn: "08011990123456",
+    },
     items: [],
     retentions: [],
   } as any;
@@ -8519,7 +9058,8 @@ describe("BuildReq - Invoices", () => {
     ).resolves.toEqual([]);
     expect(listInvoicesSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        projectId: 1,
+        projectId: 2,
+        projectIds: [],
         search: VALID_INVOICE_NUMBER,
       })
     );
@@ -8569,7 +9109,7 @@ describe("BuildReq - Invoices", () => {
     listInvoicesSpy.mockRestore();
   });
 
-  it("Project administrators do not list reviewed invoices", async () => {
+  it("Project administrators can list invoices in every status for assigned projects", async () => {
     const { ctx } = createProjectAdminContext();
     const caller = appRouter.createCaller(ctx);
     const listInvoicesSpy = vi.spyOn(db, "listInvoices").mockResolvedValue([]);
@@ -8577,17 +9117,42 @@ describe("BuildReq - Invoices", () => {
     await expect(caller.invoices.list({ status: "revisada" })).resolves.toEqual(
       []
     );
-    expect(listInvoicesSpy).not.toHaveBeenCalled();
+    expect(listInvoicesSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectIds: [1],
+        status: "revisada",
+      })
+    );
 
     await expect(caller.invoices.list({})).resolves.toEqual([]);
     expect(listInvoicesSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        projectId: 1,
-        excludeStatus: "revisada",
+        projectIds: [1],
+        excludeStatus: undefined,
       })
     );
 
     listInvoicesSpy.mockRestore();
+  });
+
+  it("Project administrators can consult reviewed invoice details for assigned projects", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        status: "revisada",
+      },
+    } as any);
+
+    await expect(caller.invoices.getById({ id: 10 })).resolves.toEqual(
+      expect.objectContaining({
+        invoice: expect.objectContaining({ status: "revisada" }),
+      })
+    );
+
+    getInvoiceByIdSpy.mockRestore();
   });
 
   it("blocks Contable from consulting draft invoices", async () => {
@@ -8663,6 +9228,67 @@ describe("BuildReq - Invoices", () => {
     });
 
     getInvoiceByIdSpy.mockRestore();
+  });
+
+  it("looks up a fiscal range for a draft invoice by supplier RTN and document number", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const emissionDeadline = new Date("2026-05-31T12:00:00");
+    const getInvoiceByIdSpy = vi
+      .spyOn(db, "getInvoiceById")
+      .mockResolvedValue(invoiceDetail);
+    const lookupSupplierFiscalDocumentRangeSpy = vi
+      .spyOn(db, "lookupSupplierFiscalDocumentRange")
+      .mockResolvedValue({
+        cai: VALID_CAI,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        emissionDeadline,
+      } as any);
+
+    await expect(
+      caller.invoices.lookupFiscalDocumentRange({
+        id: 10,
+        invoiceNumber: "000 001 01 00010572",
+      })
+    ).resolves.toEqual({
+      cai: VALID_CAI,
+      documentRangeStart: VALID_DOCUMENT_RANGE_START,
+      documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+      emissionDeadline,
+    });
+
+    expect(lookupSupplierFiscalDocumentRangeSpy).toHaveBeenCalledWith({
+      invoiceId: 10,
+      invoiceNumber: VALID_INVOICE_NUMBER_ALT,
+    });
+
+    getInvoiceByIdSpy.mockRestore();
+    lookupSupplierFiscalDocumentRangeSpy.mockRestore();
+  });
+
+  it("returns no fiscal range for invalid document numbers", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi
+      .spyOn(db, "getInvoiceById")
+      .mockResolvedValue(invoiceDetail);
+    const lookupSupplierFiscalDocumentRangeSpy = vi.spyOn(
+      db,
+      "lookupSupplierFiscalDocumentRange"
+    );
+
+    await expect(
+      caller.invoices.lookupFiscalDocumentRange({
+        id: 10,
+        invoiceNumber: "3654756",
+      })
+    ).resolves.toBeNull();
+
+    expect(lookupSupplierFiscalDocumentRangeSpy).not.toHaveBeenCalled();
+
+    getInvoiceByIdSpy.mockRestore();
+    lookupSupplierFiscalDocumentRangeSpy.mockRestore();
   });
 
   it("Project administrator can review a draft invoice with attachments", async () => {
@@ -8952,6 +9578,81 @@ describe("BuildReq - Invoices", () => {
     updateInvoiceSpy.mockRestore();
   });
 
+  it("requires emission deadline when updating fiscal invoice metadata", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const updateInvoiceSpy = vi.spyOn(db, "updateInvoice");
+
+    await expect(
+      caller.invoices.update({
+        id: 10,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        documentDate: "2026-05-01",
+        documentDueDate: "2026-06-01",
+        postingDate: "2026-05-02",
+        receiptDate: "2026-05-02",
+      })
+    ).rejects.toThrow("Seleccione la fecha límite de emisión");
+
+    expect(updateInvoiceSpy).not.toHaveBeenCalled();
+    updateInvoiceSpy.mockRestore();
+  });
+
+  it("requires ordered fiscal ranges when updating invoice metadata", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const updateInvoiceSpy = vi.spyOn(db, "updateInvoice");
+
+    await expect(
+      caller.invoices.update({
+        id: 10,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: "000-001-01-00010572",
+        documentRangeEnd: "000-001-01-00010571",
+        documentDate: "2026-05-01",
+        documentDueDate: "2026-06-01",
+        postingDate: "2026-05-02",
+        receiptDate: "2026-05-02",
+        emissionDeadline: "2026-05-31",
+      })
+    ).rejects.toThrow(
+      "El rango autorizado final debe ser mayor o igual al inicial"
+    );
+
+    expect(updateInvoiceSpy).not.toHaveBeenCalled();
+    updateInvoiceSpy.mockRestore();
+  });
+
+  it("requires fiscal document number inside authorized range", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const updateInvoiceSpy = vi.spyOn(db, "updateInvoice");
+
+    await expect(
+      caller.invoices.update({
+        id: 10,
+        cai: VALID_CAI,
+        invoiceNumber: "000-001-01-00010571",
+        documentRangeStart: "000-001-01-00010572",
+        documentRangeEnd: "000-001-01-00010580",
+        documentDate: "2026-05-01",
+        documentDueDate: "2026-06-01",
+        postingDate: "2026-05-02",
+        receiptDate: "2026-05-02",
+        emissionDeadline: "2026-05-31",
+      })
+    ).rejects.toThrow(
+      "El número documento debe estar dentro del rango autorizado"
+    );
+
+    expect(updateInvoiceSpy).not.toHaveBeenCalled();
+    updateInvoiceSpy.mockRestore();
+  });
+
   it("allows updating foreign document invoice metadata without fiscal format", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -9152,8 +9853,41 @@ describe("BuildReq - Invoices", () => {
         retentionCatalogId: 2,
         baseAmount: "500.00",
       }),
-    ]);
+    ], undefined);
 
+    getInvoiceByIdSpy.mockRestore();
+    replaceInvoiceRetentionsSpy.mockRestore();
+  });
+
+  it("requires retention receipt number before saving retentions", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        retentionReceiptNumber: null,
+      },
+    } as any);
+    const replaceInvoiceRetentionsSpy = vi.spyOn(db, "replaceInvoiceRetentions");
+
+    await expect(
+      caller.invoices.replaceRetentions({
+        id: 10,
+        retentions: [
+          {
+            retentionCatalogId: 1,
+            baseAmount: "1000.00",
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message:
+        "Ingrese el número de comprobante de retención para guardar retenciones",
+    });
+
+    expect(replaceInvoiceRetentionsSpy).not.toHaveBeenCalled();
     getInvoiceByIdSpy.mockRestore();
     replaceInvoiceRetentionsSpy.mockRestore();
   });
@@ -9205,7 +9939,7 @@ describe("BuildReq - Invoices", () => {
         retentionCatalogId: 2,
         baseAmount: "1000.00",
       }),
-    ]);
+    ], undefined);
 
     getInvoiceByIdSpy.mockRestore();
     replaceInvoiceRetentionsSpy.mockRestore();
@@ -9539,6 +10273,65 @@ describe("BuildReq - Document attachments", () => {
     expect(storagePutSpy).not.toHaveBeenCalled();
 
     getInvoiceByIdSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
+    storageGetSpy.mockRestore();
+    storagePutSpy.mockRestore();
+  });
+
+  it("lets Superintendente view assigned requisition attachments but not upload them", async () => {
+    const { ctx } = createSuperintendentContext({
+      assignedProjectId: 1,
+      assignedProjectIds: [1],
+    });
+    const caller = appRouter.createCaller(ctx);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 55,
+          requestedById: 99,
+          projectId: 1,
+        },
+      } as any);
+    const getAttachmentsByEntitySpy = vi
+      .spyOn(db, "getAttachmentsByEntity")
+      .mockResolvedValue([
+        {
+          id: 99,
+          fileName: "soporte.pdf",
+          fileKey: "buildreq/material_request/55/soporte.pdf",
+        },
+      ] as any);
+    const storageGetSpy = vi.spyOn(storage, "storageGet").mockResolvedValue({
+      key: "buildreq/material_request/55/soporte.pdf",
+      url: "https://storage.local/soporte.pdf",
+    });
+    const storagePutSpy = vi.spyOn(storage, "storagePut");
+
+    await expect(
+      caller.attachments.getByEntity({
+        entityType: "material_request",
+        entityId: 55,
+      })
+    ).resolves.toEqual([expect.objectContaining({ id: 99 })]);
+
+    await expect(
+      caller.attachments.upload({
+        entityType: "material_request",
+        entityId: 55,
+        fileName: "soporte.pdf",
+        fileData: pdfBuffer.toString("base64"),
+        mimeType: "application/pdf",
+        fileSize: pdfBuffer.byteLength,
+        category: "otro",
+      })
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para administrar adjuntos de esta requisicion",
+    });
+    expect(storagePutSpy).not.toHaveBeenCalled();
+
+    getMaterialRequestByIdSpy.mockRestore();
     getAttachmentsByEntitySpy.mockRestore();
     storageGetSpy.mockRestore();
     storagePutSpy.mockRestore();
@@ -9897,7 +10690,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
     expect(getLatestSupplierPurchasePricesSpy).toHaveBeenCalledWith({
       supplierId: 7,
       sapCodes: ["05050200058"],
-      projectId: 1,
+      projectIds: [1],
     });
 
     getLatestSupplierPurchasePricesSpy.mockRestore();

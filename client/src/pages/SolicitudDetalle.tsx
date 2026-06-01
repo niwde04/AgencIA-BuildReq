@@ -680,6 +680,7 @@ export default function SolicitudDetalle() {
 
   const userRole = (user as any)?.buildreqRole || "";
   const isAdmin = user?.role === "admin";
+  const isSuperintendent = userRole === "superintendente";
   const canManageProcessing =
     userRole === "jefe_bodega_central" ||
     userRole === "administracion_central" ||
@@ -1067,11 +1068,21 @@ export default function SolicitudDetalle() {
     request.createdAt
   );
   const dueStatus = getDueDateStatus(neededByDate);
+  const rawAssignedProjectIds = (user as any)?.assignedProjectIds;
+  const assignedProjectIds =
+    Array.isArray(rawAssignedProjectIds) && rawAssignedProjectIds.length > 0
+      ? rawAssignedProjectIds.map(Number)
+      : (user as any)?.assignedProjectId
+        ? [(user as any).assignedProjectId]
+        : [];
+  const canUseAllProjects =
+    userRole === "administrador_proyecto" && assignedProjectIds.length === 0;
   const canEditCurrentRequest =
+    !isSuperintendent &&
     (isAdmin ||
       request.requestedById === user?.id ||
       (userRole === "administrador_proyecto" &&
-        (user as any)?.assignedProjectId === request.projectId)) &&
+        (canUseAllProjects || assignedProjectIds.includes(request.projectId)))) &&
     (request.status === "borrador" ||
       ((request.status === "en_espera" ||
         request.status === "pendiente_aprobar") &&

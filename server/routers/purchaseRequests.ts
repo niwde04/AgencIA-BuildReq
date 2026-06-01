@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
+import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 function canAccessPurchaseRequests(user: {
   role: string;
@@ -31,14 +32,14 @@ function assertProjectScopedAccess(
     role: string;
     buildreqRole?: string | null;
     assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
   },
   projectId: number
 ) {
   if (user.role === "admin") return;
   if (
     user.buildreqRole === "administrador_proyecto" &&
-    user.assignedProjectId &&
-    user.assignedProjectId !== projectId
+    !canAccessProject(user, projectId)
   ) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -199,16 +200,7 @@ export const purchaseRequestsRouter = router({
         });
       }
 
-      const projectId =
-        ctx.user.buildreqRole === "administrador_proyecto" &&
-        ctx.user.assignedProjectId
-          ? ctx.user.assignedProjectId
-          : input?.projectId;
-
-      return db.listPurchaseRequests({
-        ...input,
-        ...(projectId !== undefined ? { projectId } : {}),
-      });
+      return db.listPurchaseRequests(applyProjectScope(input ?? {}, ctx.user));
     }),
 
   getById: protectedProcedure

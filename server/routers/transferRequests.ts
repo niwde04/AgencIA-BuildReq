@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
+import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 function canAccessTransfers(user: { role: string; buildreqRole?: string | null }) {
   return (
@@ -24,14 +25,19 @@ function canCreateTransferRequests(user: {
 }
 
 function assertProjectScopedAccess(
-  user: { role: string; buildreqRole?: string | null; assignedProjectId?: number | null },
+  user: {
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
+  },
   transferRequest: { projectId: number; destinationProjectId?: number | null }
 ) {
   if (user.role === "admin") return;
   if (user.buildreqRole !== "administrador_proyecto") return;
   if (
-    user.assignedProjectId !== transferRequest.projectId &&
-    user.assignedProjectId !== transferRequest.destinationProjectId
+    !canAccessProject(user, transferRequest.projectId) &&
+    !canAccessProject(user, transferRequest.destinationProjectId)
   ) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -119,15 +125,7 @@ export const transferRequestsRouter = router({
         });
       }
 
-      const projectId =
-        ctx.user.buildreqRole === "administrador_proyecto"
-          ? ctx.user.assignedProjectId ?? -1
-          : input?.projectId;
-
-      return db.listTransferRequests({
-        ...input,
-        projectId,
-      });
+      return db.listTransferRequests(applyProjectScope(input ?? {}, ctx.user));
     }),
 
   getById: protectedProcedure

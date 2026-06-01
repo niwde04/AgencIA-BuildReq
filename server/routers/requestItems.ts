@@ -2,6 +2,7 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { TRPCError } from "@trpc/server";
+import { canAccessProject } from "../projectAccess";
 
 function canAssignFlows(user: { role: string; buildreqRole?: string | null }) {
   return (
@@ -96,6 +97,7 @@ function canAccessRequest(
     role: string;
     buildreqRole?: string | null;
     assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
   },
   request: { requestedById: number; projectId: number }
 ) {
@@ -104,10 +106,13 @@ function canAccessRequest(
     return request.requestedById === user.id;
   }
   if (user.buildreqRole === "administrador_proyecto") {
-    return Boolean(user.assignedProjectId) && user.assignedProjectId === request.projectId;
+    return canAccessProject(user, request.projectId);
   }
   if (user.buildreqRole === "bodeguero_proyecto") {
-    return Boolean(user.assignedProjectId) && user.assignedProjectId === request.projectId;
+    return canAccessProject(user, request.projectId);
+  }
+  if (user.buildreqRole === "superintendente") {
+    return canAccessProject(user, request.projectId);
   }
   return true;
 }
@@ -203,6 +208,7 @@ async function assertQueuedFlowCanBeCleared(
     role: string;
     buildreqRole?: string | null;
     assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
   },
   itemId: number,
   flowType: (typeof QUEUE_FLOW_TYPES)[number]
@@ -558,7 +564,10 @@ export const requestItemsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (ctx.user.buildreqRole === "ingeniero_residente") {
+      if (
+        ctx.user.buildreqRole === "ingeniero_residente" ||
+        ctx.user.buildreqRole === "superintendente"
+      ) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para actualizar entregas",
@@ -584,6 +593,7 @@ export const requestItemsRouter = router({
         dispatchedQuantity: z.string(),
         warehouseId: z.number().int().positive().optional(),
         note: z.string().optional(),
+        receivedByName: z.string().trim().max(255).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -620,6 +630,7 @@ export const requestItemsRouter = router({
         quantity: input.dispatchedQuantity,
         warehouseId: input.warehouseId,
         note: input.note,
+        receivedByName: input.receivedByName,
         processedById: ctx.user.id,
       });
     }),
@@ -634,10 +645,28 @@ export const requestItemsRouter = router({
               requestItemId: z.number(),
               dispatchedQuantity: z.string(),
               warehouseId: z.number().int().positive().optional(),
+              targetType: z
+                .enum(["subproyecto", "activo_fijo"])
+                .nullable()
+                .optional(),
+              subProjectId: z.number().int().positive().nullable().optional(),
+              fixedAssetSapItemCode: z
+                .string()
+                .trim()
+                .max(50)
+                .nullable()
+                .optional(),
+              fixedAssetName: z
+                .string()
+                .trim()
+                .max(500)
+                .nullable()
+                .optional(),
             })
           )
           .min(1),
         note: z.string().optional(),
+        receivedByName: z.string().trim().max(255).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -677,8 +706,13 @@ export const requestItemsRouter = router({
           requestItemId: item.requestItemId,
           quantity: item.dispatchedQuantity,
           warehouseId: item.warehouseId!,
+          targetType: item.targetType,
+          subProjectId: item.subProjectId,
+          fixedAssetSapItemCode: item.fixedAssetSapItemCode,
+          fixedAssetName: item.fixedAssetName,
         })),
         note: input.note,
+        receivedByName: input.receivedByName,
         processedById: ctx.user.id,
       });
     }),

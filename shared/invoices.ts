@@ -74,6 +74,52 @@ export function isValidInvoiceNumber(value: string | null | undefined) {
   );
 }
 
+export function normalizeFiscalRtn(value: string | null | undefined) {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
+export function getFiscalInvoiceNumberKey(
+  value: string | null | undefined
+) {
+  const compact = String(value ?? "").replace(/\D/g, "");
+  return compact.length === INVOICE_NUMBER_LENGTH ? compact : null;
+}
+
+export function compareFiscalInvoiceNumbers(
+  left: string | null | undefined,
+  right: string | null | undefined
+) {
+  const leftKey = getFiscalInvoiceNumberKey(left);
+  const rightKey = getFiscalInvoiceNumberKey(right);
+  if (!leftKey || !rightKey) return null;
+
+  return leftKey.localeCompare(rightKey);
+}
+
+export function isFiscalInvoiceRangeOrdered(value: {
+  documentRangeStart?: string | null;
+  documentRangeEnd?: string | null;
+}) {
+  const comparison = compareFiscalInvoiceNumbers(
+    value.documentRangeStart,
+    value.documentRangeEnd
+  );
+  return comparison !== null && comparison <= 0;
+}
+
+export function isInvoiceNumberWithinFiscalRange(value: {
+  invoiceNumber?: string | null;
+  documentRangeStart?: string | null;
+  documentRangeEnd?: string | null;
+}) {
+  const invoiceNumberKey = getFiscalInvoiceNumberKey(value.invoiceNumber);
+  const rangeStartKey = getFiscalInvoiceNumberKey(value.documentRangeStart);
+  const rangeEndKey = getFiscalInvoiceNumberKey(value.documentRangeEnd);
+  if (!invoiceNumberKey || !rangeStartKey || !rangeEndKey) return false;
+
+  return rangeStartKey <= invoiceNumberKey && invoiceNumberKey <= rangeEndKey;
+}
+
 export function getDocumentTypeCodeFromNumber(
   value: string | null | undefined
 ) {

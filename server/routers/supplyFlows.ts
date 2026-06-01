@@ -2,6 +2,7 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { TRPCError } from "@trpc/server";
+import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 function canManageSupply(user: { role: string; buildreqRole?: string | null }) {
   return (
@@ -66,14 +67,14 @@ function assertProjectScopedConversionAccess(
     role: string;
     buildreqRole?: string | null;
     assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
   },
   projectId: number
 ) {
   if (user.role === "admin") return;
   if (
     user.buildreqRole === "administrador_proyecto" &&
-    user.assignedProjectId &&
-    user.assignedProjectId !== projectId
+    !canAccessProject(user, projectId)
   ) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -111,6 +112,7 @@ function canViewSupplyFlowRequest(
     role: string;
     buildreqRole?: string | null;
     assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
   },
   request: { requestedById: number; projectId: number }
 ) {
@@ -120,12 +122,10 @@ function canViewSupplyFlowRequest(
   }
   if (
     user.buildreqRole === "administrador_proyecto" ||
-    user.buildreqRole === "bodeguero_proyecto"
+    user.buildreqRole === "bodeguero_proyecto" ||
+    user.buildreqRole === "superintendente"
   ) {
-    return (
-      Boolean(user.assignedProjectId) &&
-      user.assignedProjectId === request.projectId
-    );
+    return canAccessProject(user, request.projectId);
   }
   return true;
 }
@@ -136,6 +136,7 @@ function scopeSupplyFlowFilters(
     role: string;
     buildreqRole?: string | null;
     assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
   },
   filters?: {
     flowType?: string;
@@ -147,6 +148,7 @@ function scopeSupplyFlowFilters(
     status?: string;
     requestedById?: number;
     projectId?: number;
+    projectIds?: number[];
   } = { ...(filters ?? {}) };
 
   if (user.role === "admin") {
@@ -159,11 +161,10 @@ function scopeSupplyFlowFilters(
 
   if (
     user.buildreqRole === "administrador_proyecto" ||
-    user.buildreqRole === "bodeguero_proyecto"
+    user.buildreqRole === "bodeguero_proyecto" ||
+    user.buildreqRole === "superintendente"
   ) {
-    return user.assignedProjectId
-      ? { ...scopedFilters, projectId: user.assignedProjectId }
-      : { ...scopedFilters, projectId: -1 };
+    return applyProjectScope(scopedFilters, user);
   }
 
   return scopedFilters;

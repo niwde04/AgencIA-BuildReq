@@ -4,6 +4,7 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { storageDelete, storageGet, storagePut } from "../storage";
+import { canAccessProject } from "../projectAccess";
 
 const PDF_MAX_BYTES = 10 * 1000 * 1000;
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
@@ -49,6 +50,7 @@ type BuildReqUser = {
   role: string;
   buildreqRole?: string | null;
   assignedProjectId?: number | null;
+  assignedProjectIds?: number[] | null;
 };
 
 const DOCUMENT_ATTACHMENT_ENTITY_TYPES = new Set<AttachmentEntityType>(
@@ -214,7 +216,7 @@ function assertProjectScopedAccess(
   ) {
     return;
   }
-  if (user.assignedProjectId !== projectId) {
+  if (!canAccessProject(user, projectId)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message,
@@ -420,7 +422,7 @@ async function assertPurchaseRequestAttachmentAccess(
   if (
     user.role !== "admin" &&
     user.buildreqRole === "administrador_proyecto" &&
-    user.assignedProjectId !== detail.purchaseRequest.projectId
+    !canAccessProject(user, detail.purchaseRequest.projectId)
   ) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -445,9 +447,10 @@ function canAccessMaterialRequest(user: BuildReqUser, request: any) {
   }
   if (
     user.buildreqRole === "administrador_proyecto" ||
-    user.buildreqRole === "bodeguero_proyecto"
+    user.buildreqRole === "bodeguero_proyecto" ||
+    user.buildreqRole === "superintendente"
   ) {
-    return user.assignedProjectId === request.projectId;
+    return canAccessProject(user, request.projectId);
   }
   return (
     user.buildreqRole === "jefe_bodega_central" ||
@@ -458,7 +461,7 @@ function canAccessMaterialRequest(user: BuildReqUser, request: any) {
 function canManageMaterialRequestAttachment(user: BuildReqUser, request: any) {
   if (
     user.buildreqRole === "administrador_proyecto" &&
-    user.assignedProjectId === request.projectId
+    canAccessProject(user, request.projectId)
   ) {
     return true;
   }

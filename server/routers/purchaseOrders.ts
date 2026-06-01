@@ -6,6 +6,7 @@ import {
   PURCHASE_ORDER_CONTRACT_FREQUENCIES,
 } from "@shared/purchase-orders";
 import { ASSET_CONDITION_VALUES } from "@shared/fixed-assets";
+import { applyProjectScope, canAccessProject, getProjectScopeIds } from "../projectAccess";
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
   "emitida",
@@ -165,15 +166,15 @@ function assertProjectScopedAccess(
     role: string;
     buildreqRole?: string | null;
     assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
   },
   projectId: number
 ) {
   if (user.role === "admin") return;
   if (
-    ((user.buildreqRole === "administrador_proyecto" &&
-      user.assignedProjectId) ||
+    (user.buildreqRole === "administrador_proyecto" ||
       user.buildreqRole === "bodeguero_proyecto") &&
-    user.assignedProjectId !== projectId
+    !canAccessProject(user, projectId)
   ) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -326,17 +327,7 @@ export const purchaseOrdersRouter = router({
         });
       }
 
-      const projectId =
-        (ctx.user.buildreqRole === "administrador_proyecto" &&
-          ctx.user.assignedProjectId) ||
-        ctx.user.buildreqRole === "bodeguero_proyecto"
-          ? (ctx.user.assignedProjectId ?? -1)
-          : input?.projectId;
-
-      return db.listPurchaseOrders({
-        ...input,
-        ...(projectId !== undefined ? { projectId } : {}),
-      });
+      return db.listPurchaseOrders(applyProjectScope(input ?? {}, ctx.user));
     }),
 
   getById: protectedProcedure
@@ -378,12 +369,7 @@ export const purchaseOrdersRouter = router({
       return db.getLatestSupplierPurchasePrices({
         supplierId: input.supplierId,
         sapCodes: input.sapCodes,
-        projectId:
-          (ctx.user.buildreqRole === "administrador_proyecto" &&
-            ctx.user.assignedProjectId) ||
-          ctx.user.buildreqRole === "bodeguero_proyecto"
-            ? (ctx.user.assignedProjectId ?? -1)
-            : undefined,
+        projectIds: getProjectScopeIds(ctx.user),
       });
     }),
 

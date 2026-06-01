@@ -2,6 +2,7 @@ import { z } from "zod";
 import { protectedProcedure, adminProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { TRPCError } from "@trpc/server";
+import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 function assertCanReadInventory(ctx: { user: { buildreqRole?: string | null } }) {
   if (ctx.user.buildreqRole === "ingeniero_residente") {
@@ -41,6 +42,12 @@ export const inventoryRouter = router({
           message: "No tiene acceso a existencias de proyecto origen",
         });
       }
+      if (!canAccessProject(ctx.user, input.projectId)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a existencias de otro proyecto",
+        });
+      }
 
       return db.listProjectStockForItems(input);
     }),
@@ -74,13 +81,7 @@ export const inventoryRouter = router({
     )
     .query(async ({ ctx, input }) => {
       assertCanReadInventory(ctx);
-      return db.listInventoryItems({
-        ...(input ?? {}),
-        ...(ctx.user.buildreqRole === "administrador_proyecto" ||
-        ctx.user.buildreqRole === "bodeguero_proyecto"
-          ? { projectId: ctx.user.assignedProjectId ?? -1 }
-          : {}),
-      });
+      return db.listInventoryItems(applyProjectScope(input ?? {}, ctx.user));
     }),
 
   tracking: protectedProcedure
@@ -94,13 +95,7 @@ export const inventoryRouter = router({
     )
     .query(async ({ ctx, input }) => {
       assertCanReadInventory(ctx);
-      return db.getInventoryTracking({
-        ...input,
-        ...(ctx.user.buildreqRole === "administrador_proyecto" ||
-        ctx.user.buildreqRole === "bodeguero_proyecto"
-          ? { projectId: ctx.user.assignedProjectId ?? -1 }
-          : {}),
-      });
+      return db.getInventoryTracking(applyProjectScope(input, ctx.user));
     }),
 
   kardex: protectedProcedure
@@ -114,13 +109,7 @@ export const inventoryRouter = router({
     )
     .query(async ({ ctx, input }) => {
       assertCanReadInventory(ctx);
-      return db.getInventoryKardex({
-        ...input,
-        ...(ctx.user.buildreqRole === "administrador_proyecto" ||
-        ctx.user.buildreqRole === "bodeguero_proyecto"
-          ? { projectId: ctx.user.assignedProjectId ?? -1 }
-          : {}),
-      });
+      return db.getInventoryKardex(applyProjectScope(input, ctx.user));
     }),
 
   create: protectedProcedure

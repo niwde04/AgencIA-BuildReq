@@ -1,6 +1,7 @@
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import type { Express, Request, Response } from "express";
 import * as db from "../db";
+import type { BuildReqRole } from "../db";
 import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
 
@@ -46,18 +47,18 @@ export function registerOAuthRoutes(app: Express) {
           if (dbUser) {
             // Apply the invitation role and project
             await db.applyInvitationToUser(dbUser.id, {
-              buildreqRole: pendingInvitation.buildreqRole as
-                | "ingeniero_residente"
-                | "jefe_bodega_central"
-                | "administracion_central"
-                | "administrador_proyecto"
-                | "bodeguero_proyecto",
+              buildreqRole: pendingInvitation.buildreqRole as BuildReqRole,
               assignedProjectId: pendingInvitation.assignedProjectId,
+              assignedProjectIds: pendingInvitation.assignedProjectIds,
             });
             // Mark invitation as accepted
             await db.acceptInvitation(pendingInvitation.id, dbUser.id);
+            const invitationProjectLog =
+              (pendingInvitation.assignedProjectIds ?? []).join(",") ||
+              pendingInvitation.assignedProjectId ||
+              "all";
             console.log(
-              `[OAuth] Applied invitation for ${userEmail}: role=${pendingInvitation.buildreqRole}, projectId=${pendingInvitation.assignedProjectId}`
+              `[OAuth] Applied invitation for ${userEmail}: role=${pendingInvitation.buildreqRole}, projectIds=${invitationProjectLog}`
             );
           }
         }

@@ -2,6 +2,11 @@ import { trpc } from "@/lib/trpc";
 import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import {
+  FiscalSummaryCard,
+  PurchaseOrderTaxControls,
+  type PurchaseOrderItemTaxDraft,
+} from "@/components/PurchaseOrderFiscalControls";
+import {
   formatAttachmentSize,
   prepareDocumentAttachment,
   type PreparedDocumentAttachment,
@@ -20,6 +25,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   Dialog,
   DialogContent,
@@ -40,6 +53,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Check,
+  ChevronsUpDown,
   Download,
   Eye,
   AlertTriangle,
@@ -54,6 +74,7 @@ import {
   ShieldX,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import {
   Fragment,
@@ -68,9 +89,15 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import {
   calculatePurchaseOrderLineAmounts,
+  DEFAULT_SALES_TAXES,
+  formatPurchaseOrderCurrency,
   getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderContractSummary,
+  normalizePurchaseOrderAdditionalTaxCodes,
+  normalizePurchaseOrderTaxCode,
   summarizePurchaseOrderLines,
+  type PurchaseOrderTaxCode,
+  type SalesTaxCatalogItem,
 } from "@shared/purchase-orders";
 import {
   CAI_FORMAT_EXAMPLE,
@@ -80,6 +107,8 @@ import {
   getDocumentTypeLabelFromNumber,
   formatInvoiceNumberInput,
   hasEmissionDeadlineIssue,
+  isFiscalInvoiceRangeOrdered,
+  isInvoiceNumberWithinFiscalRange,
   isValidCai,
   isValidInvoiceNumber,
 } from "@shared/invoices";
@@ -159,6 +188,129 @@ const TRANSFER_CLOSE_REASONS = [
   { value: "error_traslado", label: "Error en traslado" },
   { value: "otro", label: "Otro" },
 ];
+
+type ReceiptTargetSelection =
+  | {
+      targetType: "subproyecto";
+      subProjectId: number;
+      projectId: number;
+      label: string;
+    }
+  | {
+      targetType: "activo_fijo";
+      projectId: number;
+      fixedAssetSapItemCode: string;
+      fixedAssetName: string;
+      label: string;
+    };
+
+function buildSubprojectReceiptTargetSelection(
+  subproject: any
+): ReceiptTargetSelection {
+  return {
+    targetType: "subproyecto",
+    subProjectId: subproject.id,
+    projectId: subproject.projectId,
+    label: `Subproyecto: ${subproject.code} - ${subproject.name}`,
+  };
+}
+
+function buildFixedAssetReceiptTargetSelection(asset: any): ReceiptTargetSelection {
+  return {
+    targetType: "activo_fijo",
+    projectId: asset.projectId,
+    fixedAssetSapItemCode: asset.itemCode,
+    fixedAssetName: asset.description,
+    label: `Activo fijo: ${asset.itemCode} - ${asset.description}`,
+  };
+}
+
+function mapReceiptLineTargetToSelection(
+  item: any,
+  projectId?: number | null
+): ReceiptTargetSelection | null {
+  const target = item?.target;
+  if (target?.type === "subproyecto" && target.subProjectId) {
+    return {
+      targetType: "subproyecto",
+      subProjectId: target.subProjectId,
+      projectId: target.projectId ?? projectId ?? item?.projectId ?? 0,
+      label: target.label ?? `Subproyecto #${target.subProjectId}`,
+    };
+  }
+
+  if (target?.type === "activo_fijo" && target.fixedAssetSapItemCode) {
+    return {
+      targetType: "activo_fijo",
+      projectId: target.projectId ?? projectId ?? item?.projectId ?? 0,
+      fixedAssetSapItemCode: target.fixedAssetSapItemCode,
+      fixedAssetName: target.fixedAssetName ?? "",
+      label: target.label ?? `Activo fijo: ${target.fixedAssetSapItemCode}`,
+    };
+  }
+
+  if (item?.targetType === "subproyecto" && item.subProjectId) {
+    return {
+      targetType: "subproyecto",
+      subProjectId: item.subProjectId,
+      projectId: projectId ?? item.projectId ?? 0,
+      label: `Subproyecto #${item.subProjectId}`,
+    };
+  }
+
+  if (item?.targetType === "activo_fijo" && item.fixedAssetSapItemCode) {
+    return {
+      targetType: "activo_fijo",
+      projectId: projectId ?? item.projectId ?? 0,
+      fixedAssetSapItemCode: item.fixedAssetSapItemCode,
+      fixedAssetName: item.fixedAssetName ?? "",
+      label: item.fixedAssetName
+        ? `Activo fijo: ${item.fixedAssetSapItemCode} - ${item.fixedAssetName}`
+        : `Activo fijo: ${item.fixedAssetSapItemCode}`,
+    };
+  }
+
+  return null;
+}
+
+function getReceiptTargetPayload(selection: ReceiptTargetSelection | null) {
+  if (!selection) {
+    return {
+      targetType: null,
+      subProjectId: null,
+      fixedAssetSapItemCode: null,
+      fixedAssetName: null,
+    };
+  }
+
+  if (selection.targetType === "subproyecto") {
+    return {
+      targetType: "subproyecto" as const,
+      subProjectId: selection.subProjectId,
+      fixedAssetSapItemCode: null,
+      fixedAssetName: null,
+    };
+  }
+
+  return {
+    targetType: "activo_fijo" as const,
+    subProjectId: null,
+    fixedAssetSapItemCode: selection.fixedAssetSapItemCode,
+    fixedAssetName: selection.fixedAssetName,
+  };
+}
+
+function formatReceiptLineTargetLabel(
+  item: any,
+  sourceItem?: any,
+  projectId?: number | null
+) {
+  return (
+    mapReceiptLineTargetToSelection(item, projectId)?.label ??
+    mapReceiptLineTargetToSelection(sourceItem, projectId)?.label ??
+    null
+  );
+}
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
   "emitida",
@@ -310,6 +462,35 @@ function getSourceItemCode(item: any) {
   );
 }
 
+function receiptItemHasStoredFinancials(item: any) {
+  return (
+    Number(item?.subtotal ?? 0) > 0 ||
+    Number(item?.taxAmount ?? 0) > 0 ||
+    Number(item?.total ?? 0) > 0
+  );
+}
+
+function getReceiptLineTaxSummaryInput(item: any, sourceItem?: any) {
+  const useStoredFinancials = receiptItemHasStoredFinancials(item);
+  return {
+    quantity: item.quantityReceived,
+    unitPrice: item.unitPrice ?? sourceItem?.unitPrice ?? "0.00",
+    taxCode: useStoredFinancials ? item.taxCode : sourceItem?.taxCode,
+    additionalTaxCodes: useStoredFinancials
+      ? item.additionalTaxCodes
+      : sourceItem?.additionalTaxCodes,
+    taxBreakdown: useStoredFinancials
+      ? item.taxBreakdown
+      : sourceItem?.taxBreakdown,
+  };
+}
+
+function calculateReceiptLineAmounts(item: any, sourceItem?: any) {
+  return calculatePurchaseOrderLineAmounts(
+    getReceiptLineTaxSummaryInput(item, sourceItem)
+  );
+}
+
 function formatProjectReference(project: any, fallback: string) {
   return project ? `${project.code} — ${project.name}` : fallback;
 }
@@ -358,6 +539,44 @@ function getTransferOriginLabel(transferDetail: any, fallback: string) {
 type PendingReceiptAttachment = PreparedDocumentAttachment & {
   id: string;
 };
+
+type ReceiptOtherChargeDraft = {
+  id: string;
+  concept: string;
+  amount: string;
+};
+
+type ManualReceiptItem = {
+  id: number;
+  isManualReceiptItem: true;
+  sapItemCode: string;
+  itemName: string;
+  unit?: string | null;
+  unitPrice: string;
+  taxCode: PurchaseOrderTaxCode;
+  additionalTaxCodes: string[];
+  quantityExpected: string;
+  receivedQuantity: string;
+};
+
+const createReceiptOtherChargeDraft = (
+  charge?: Partial<ReceiptOtherChargeDraft>
+): ReceiptOtherChargeDraft => ({
+  id:
+    charge?.id ??
+    `other-charge-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  concept: charge?.concept ?? "",
+  amount: charge?.amount ?? "",
+});
+
+function getOtherChargesTotal(
+  charges: Array<{ amount: string | number | null | undefined }>
+) {
+  return charges.reduce((sum, charge) => {
+    const amount = Number(charge.amount ?? 0);
+    return sum + (Number.isFinite(amount) ? amount : 0);
+  }, 0);
+}
 
 type ReceiptAssetDraft = {
   isFixedAsset: boolean;
@@ -440,6 +659,27 @@ export default function Recepciones() {
   const [receivedMap, setReceivedMap] = useState<Record<number, string>>({});
   const [warehouseByItemId, setWarehouseByItemId] = useState<Record<number, string>>({});
   const [priceMap, setPriceMap] = useState<Record<number, string>>({});
+  const [taxCodeByItemId, setTaxCodeByItemId] = useState<
+    Record<number, PurchaseOrderTaxCode>
+  >({});
+  const [additionalTaxCodesByItemId, setAdditionalTaxCodesByItemId] = useState<
+    Record<number, string[]>
+  >({});
+  const [targetByItemId, setTargetByItemId] = useState<
+    Record<number, ReceiptTargetSelection | null>
+  >({});
+  const [targetPopoverOpen, setTargetPopoverOpen] = useState<number | null>(
+    null
+  );
+  const [targetSearch, setTargetSearch] = useState("");
+  const [otherChargeDrafts, setOtherChargeDrafts] = useState<
+    ReceiptOtherChargeDraft[]
+  >([]);
+  const [manualReceiptItems, setManualReceiptItems] = useState<
+    ManualReceiptItem[]
+  >([]);
+  const [manualItemSearch, setManualItemSearch] = useState("");
+  const [manualItemPopoverOpen, setManualItemPopoverOpen] = useState(false);
   const [assetDrafts, setAssetDrafts] = useState<
     Record<number, ReceiptAssetDraft>
   >({});
@@ -479,6 +719,14 @@ export default function Recepciones() {
   const { data: transfers } = trpc.transfers.list.useQuery({
     receivableOnly: true,
   });
+  const { data: salesTaxes } = trpc.taxes.activeOptions.useQuery(undefined, {
+    enabled: Boolean(user),
+  });
+  const activeSalesTaxes = useMemo(
+    () =>
+      (salesTaxes?.length ? salesTaxes : DEFAULT_SALES_TAXES) as SalesTaxCatalogItem[],
+    [salesTaxes]
+  );
   const { data: purchaseOrderDetail, isLoading: purchaseOrderDetailLoading } =
     trpc.purchaseOrders.getById.useQuery(
       { id: Number(sourceId) },
@@ -569,6 +817,15 @@ export default function Recepciones() {
     setReceivedMap({});
     setWarehouseByItemId({});
     setPriceMap({});
+    setTaxCodeByItemId({});
+    setAdditionalTaxCodesByItemId({});
+    setTargetByItemId({});
+    setTargetPopoverOpen(null);
+    setTargetSearch("");
+    setOtherChargeDrafts([]);
+    setManualReceiptItems([]);
+    setManualItemSearch("");
+    setManualItemPopoverOpen(false);
     setAssetDrafts({});
     setTransferClosureDrafts({});
     setCloseTransferLineItem(null);
@@ -605,6 +862,30 @@ export default function Recepciones() {
       enabled: dialogOpen && Boolean(sourceProjectId),
     }
   );
+  const { data: targetOptions, isLoading: targetOptionsLoading } =
+    trpc.materialRequests.targetOptions.useQuery(
+      {
+        projectId: Number(sourceProjectId || 0),
+        search: targetSearch.trim() || undefined,
+      },
+      {
+        enabled:
+          dialogOpen &&
+          sourceType === "purchase_order" &&
+          Boolean(sourceProjectId),
+      }
+    );
+  const { data: manualSapResults } =
+    trpc.requestItems.searchSapCatalog.useQuery(
+      { search: manualItemSearch.trim() },
+      {
+        enabled:
+          dialogOpen &&
+          sourceType === "purchase_order" &&
+          Boolean(sourceId) &&
+          manualItemSearch.trim().length >= 2,
+      }
+    );
   const defaultReceiptWarehouse = useMemo(
     () =>
       (receiptWarehouses ?? []).find((warehouse: any) => warehouse.isDefault) ??
@@ -635,13 +916,81 @@ export default function Recepciones() {
     setPostingDate(toDateInputValue(receipt.postingDate) || todayDateValue());
     setReceiptDate(toDateInputValue(receipt.receiptDate) || todayDateValue());
     setEmissionDeadline("");
-  }, [editingDraftReceiptDetail]);
+    setOtherChargeDrafts(
+      (editingDraftReceiptDetail.otherCharges ?? []).map((charge: any) =>
+        createReceiptOtherChargeDraft({
+          id: `draft-charge-${charge.id}`,
+          concept: String(charge.concept ?? ""),
+          amount: String(charge.amount ?? ""),
+        })
+      )
+    );
+    const manualDraftItems =
+      receipt.sourceType === "purchase_order"
+        ? (editingDraftReceiptDetail.items ?? []).filter(
+            (item: any) => !item.sourceItemId && item.sapItemCode
+          )
+        : [];
+    const nextManualItems: ManualReceiptItem[] = manualDraftItems.map(
+      (item: any) => ({
+        id: -Number(item.id),
+        isManualReceiptItem: true,
+        sapItemCode: String(item.sapItemCode),
+        itemName: String(item.itemName ?? item.sapItemCode),
+        unit: item.unit ?? null,
+        unitPrice: String(item.unitPrice ?? "0.0000"),
+        taxCode: normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes),
+        additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
+          item.additionalTaxCodes,
+          normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes),
+          activeSalesTaxes
+        ),
+        quantityExpected: String(item.quantityExpected ?? item.quantityReceived ?? "0"),
+        receivedQuantity: String(item.quantityReceived ?? "0"),
+      })
+    );
+    setManualReceiptItems(nextManualItems);
+    if (nextManualItems.length > 0) {
+      setReceivedMap(current => ({
+        ...current,
+        ...Object.fromEntries(
+          nextManualItems.map(item => [item.id, item.receivedQuantity])
+        ),
+      }));
+      setPriceMap(current => ({
+        ...current,
+        ...Object.fromEntries(nextManualItems.map(item => [item.id, item.unitPrice])),
+      }));
+      setWarehouseByItemId(current => ({
+        ...current,
+        ...Object.fromEntries(
+          manualDraftItems.map((item: any) => [
+            -Number(item.id),
+            item.warehouseId ? String(item.warehouseId) : "",
+          ])
+        ),
+      }));
+      setTaxCodeByItemId(current => ({
+        ...current,
+        ...Object.fromEntries(nextManualItems.map(item => [item.id, item.taxCode])),
+      }));
+      setAdditionalTaxCodesByItemId(current => ({
+        ...current,
+        ...Object.fromEntries(
+          nextManualItems.map(item => [item.id, item.additionalTaxCodes])
+        ),
+      }));
+    }
+  }, [activeSalesTaxes, editingDraftReceiptDetail]);
 
   useEffect(() => {
     if (!sourceItems.length) {
       setReceivedMap({});
       setWarehouseByItemId({});
       setPriceMap({});
+      setTaxCodeByItemId({});
+      setAdditionalTaxCodesByItemId({});
+      setTargetByItemId({});
       setAssetDrafts({});
       return;
     }
@@ -649,6 +998,9 @@ export default function Recepciones() {
     const nextMap: Record<number, string> = {};
     const nextPriceMap: Record<number, string> = {};
     const nextWarehouseMap: Record<number, string> = {};
+    const nextTaxCodeMap: Record<number, PurchaseOrderTaxCode> = {};
+    const nextAdditionalTaxCodesMap: Record<number, string[]> = {};
+    const nextTargetMap: Record<number, ReceiptTargetSelection | null> = {};
     const draftItemsBySourceId = new Map(
       editingDraftReceiptDetail?.receipt.status === "borrador" &&
       String(editingDraftReceiptDetail.receipt.sourceId) === sourceId
@@ -673,10 +1025,27 @@ export default function Recepciones() {
       nextWarehouseMap[item.id] = String(
         draftItem?.warehouseId ?? defaultReceiptWarehouse?.id ?? ""
       );
+      const taxCode = normalizePurchaseOrderTaxCode(
+        draftItem?.taxCode ?? item.taxCode,
+        activeSalesTaxes
+      );
+      nextTaxCodeMap[item.id] = taxCode;
+      nextAdditionalTaxCodesMap[item.id] = normalizePurchaseOrderAdditionalTaxCodes(
+        draftItem?.additionalTaxCodes ?? item.additionalTaxCodes,
+        taxCode,
+        activeSalesTaxes
+      );
+      nextTargetMap[item.id] = mapReceiptLineTargetToSelection(
+        draftItem ?? item,
+        sourceProjectId
+      );
     }
     setReceivedMap(nextMap);
     setWarehouseByItemId(nextWarehouseMap);
     setPriceMap(nextPriceMap);
+    setTaxCodeByItemId(nextTaxCodeMap);
+    setAdditionalTaxCodesByItemId(nextAdditionalTaxCodesMap);
+    setTargetByItemId(nextTargetMap);
     setAssetDrafts(current => {
       const nextDrafts: Record<number, ReceiptAssetDraft> = {};
       for (const item of sourceItems as any[]) {
@@ -705,8 +1074,10 @@ export default function Recepciones() {
       return nextDrafts;
     });
   }, [
+    activeSalesTaxes,
     defaultReceiptWarehouse?.id,
     editingDraftReceiptDetail,
+    sourceProjectId,
     sourceId,
     sourceItems,
     sourceType,
@@ -714,6 +1085,8 @@ export default function Recepciones() {
 
   const uploadPendingReceiptAttachmentMutation =
     trpc.attachments.upload.useMutation();
+  const lookupManualSapItemMutation =
+    trpc.requestItems.lookupSapItem.useMutation();
 
   const registerMutation = trpc.receipts.register.useMutation({
     onSuccess: async result => {
@@ -848,9 +1221,21 @@ export default function Recepciones() {
   const canCloseTransferLines =
     sourceType === "transfer" &&
     ((user as any)?.buildreqRole === "administracion_central" ||
-      ((user as any)?.buildreqRole === "administrador_proyecto" &&
-        sourceProjectId !== undefined &&
-        (user as any)?.assignedProjectId === sourceProjectId));
+      (() => {
+        if ((user as any)?.buildreqRole !== "administrador_proyecto") return false;
+        if (sourceProjectId === undefined) return false;
+        const rawAssignedProjectIds = (user as any)?.assignedProjectIds;
+        const assignedProjectIds =
+          Array.isArray(rawAssignedProjectIds) && rawAssignedProjectIds.length > 0
+            ? rawAssignedProjectIds.map(Number)
+            : (user as any)?.assignedProjectId
+              ? [(user as any).assignedProjectId]
+              : [];
+        return (
+          assignedProjectIds.length === 0 ||
+          assignedProjectIds.includes(sourceProjectId)
+        );
+      })());
   const userRole = (user as any)?.buildreqRole;
   const canManageReceiptAttachments =
     user?.role === "admin" ||
@@ -905,17 +1290,372 @@ export default function Recepciones() {
         ? formatDateLabel(transferDetail.transferRequest.neededBy)
         : "—";
 
+  const getReceiptLineTaxDraft = (item: any): PurchaseOrderItemTaxDraft => {
+    const taxCode =
+      taxCodeByItemId[item.id] ??
+      normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes);
+    return {
+      quantity: receivedMap[item.id] ?? "0",
+      unitPrice: priceMap[item.id] ?? String(item.unitPrice ?? "0.00"),
+      taxCode,
+      additionalTaxCodes:
+        additionalTaxCodesByItemId[item.id] ??
+        normalizePurchaseOrderAdditionalTaxCodes(
+          item.additionalTaxCodes,
+          taxCode,
+          activeSalesTaxes
+      ),
+    };
+  };
+
+  const receiptEditableItems = useMemo(
+    () =>
+      sourceType === "purchase_order"
+        ? [...(sourceItems as any[]), ...manualReceiptItems]
+        : (sourceItems as any[]),
+    [manualReceiptItems, sourceItems, sourceType]
+  );
+
+  const getEditableReceiptExpectedQuantity = (item: any) =>
+    item.isManualReceiptItem
+      ? Number(receivedMap[item.id] ?? item.quantityExpected ?? 0) || 0
+      : getReceivableQuantity(item);
+
+  const addManualReceiptItem = async (catalogItem: any) => {
+    if (sourceType !== "purchase_order") return;
+    const sapItemCode = String(catalogItem.itemCode ?? "").trim();
+    if (!sapItemCode) return;
+
+    try {
+      const lookup = await lookupManualSapItemMutation.mutateAsync({
+        sapItemCode,
+      });
+      const nextId = -Date.now() - Math.floor(Math.random() * 1000);
+      const itemName =
+        lookup?.itemName || catalogItem.description || `SKU ${sapItemCode}`;
+      const manualItem: ManualReceiptItem = {
+        id: nextId,
+        isManualReceiptItem: true,
+        sapItemCode: lookup?.sapItemCode || sapItemCode,
+        itemName,
+        unit: lookup?.unit ?? null,
+        unitPrice: "0.0000",
+        taxCode: "exe",
+        additionalTaxCodes: [],
+        quantityExpected: "1",
+        receivedQuantity: "1",
+      };
+
+      setManualReceiptItems(current => [...current, manualItem]);
+      setReceivedMap(current => ({ ...current, [nextId]: "1" }));
+      setPriceMap(current => ({ ...current, [nextId]: manualItem.unitPrice }));
+      setTaxCodeByItemId(current => ({
+        ...current,
+        [nextId]: manualItem.taxCode,
+      }));
+      setAdditionalTaxCodesByItemId(current => ({
+        ...current,
+        [nextId]: manualItem.additionalTaxCodes,
+      }));
+      setWarehouseByItemId(current => ({
+        ...current,
+        [nextId]: String(defaultReceiptWarehouse?.id ?? ""),
+      }));
+      setTargetByItemId(current => ({ ...current, [nextId]: null }));
+      setAssetDrafts(current => ({
+        ...current,
+        [nextId]: emptyReceiptAssetDraft(),
+      }));
+      setManualItemSearch("");
+      setManualItemPopoverOpen(false);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "No se pudo agregar el producto"
+      );
+    }
+  };
+
+  const removeManualReceiptItem = (itemId: number) => {
+    setManualReceiptItems(current => current.filter(item => item.id !== itemId));
+    setReceivedMap(current => {
+      const { [itemId]: _removed, ...next } = current;
+      return next;
+    });
+    setWarehouseByItemId(current => {
+      const { [itemId]: _removed, ...next } = current;
+      return next;
+    });
+    setPriceMap(current => {
+      const { [itemId]: _removed, ...next } = current;
+      return next;
+    });
+    setTaxCodeByItemId(current => {
+      const { [itemId]: _removed, ...next } = current;
+      return next;
+    });
+    setAdditionalTaxCodesByItemId(current => {
+      const { [itemId]: _removed, ...next } = current;
+      return next;
+    });
+    setTargetByItemId(current => {
+      const { [itemId]: _removed, ...next } = current;
+      return next;
+    });
+    setAssetDrafts(current => {
+      const { [itemId]: _removed, ...next } = current;
+      return next;
+    });
+  };
+
+  const buildManualReceiptItemPayload = () =>
+    manualReceiptItems.map(item => {
+      const taxDraft = getReceiptLineTaxDraft(item);
+      const quantityReceived = receivedMap[item.id] || item.receivedQuantity || "0";
+      return {
+        sourceItemId: null,
+        sapItemCode: item.sapItemCode,
+        warehouseId: warehouseByItemId[item.id]
+          ? Number(warehouseByItemId[item.id])
+          : undefined,
+        itemName: item.itemName,
+        quantityExpected: quantityReceived,
+        quantityReceived,
+        unit: item.unit || undefined,
+        unitPrice: priceMap[item.id] || item.unitPrice,
+        taxCode: taxDraft.taxCode,
+        additionalTaxCodes: taxDraft.additionalTaxCodes,
+        ...getReceiptTargetPayload(targetByItemId[item.id] ?? null),
+        notes: getReceiptAssetDraft(item.id).notes.trim() || undefined,
+        isFixedAsset: false,
+        isLeasing: false,
+        assetDetails: [],
+      };
+    });
+
+  const renderReceiptTargetSelector = (item: any) => {
+    const selectedTarget = targetByItemId[item.id] ?? null;
+    const open = targetPopoverOpen === item.id;
+
+    return (
+      <div className="min-w-0 space-y-1.5">
+        <Label>Destino</Label>
+        <div className="flex min-w-0 gap-2">
+          <Popover
+            open={open}
+            onOpenChange={nextOpen => {
+              setTargetPopoverOpen(nextOpen ? item.id : null);
+              if (!nextOpen) {
+                setTargetSearch("");
+              }
+            }}
+          >
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!sourceProjectId || registerMutation.isPending}
+                className="min-w-0 flex-1 justify-between font-normal"
+              >
+                <span
+                  className={
+                    selectedTarget ? "truncate" : "truncate text-muted-foreground"
+                  }
+                >
+                  {selectedTarget?.label ?? "Subproyecto o activo fijo"}
+                </span>
+                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              className="w-[min(540px,calc(100vw-2rem))] p-0"
+              align="start"
+            >
+              <Command shouldFilter={false}>
+                <CommandInput
+                  placeholder="Buscar subproyecto o activo fijo..."
+                  value={targetSearch}
+                  onValueChange={setTargetSearch}
+                />
+                <CommandList>
+                  {targetOptionsLoading ? (
+                    <div className="p-3 text-sm text-muted-foreground">
+                      Buscando opciones...
+                    </div>
+                  ) : (
+                    <>
+                      <CommandEmpty>No se encontraron opciones.</CommandEmpty>
+                      {(targetOptions?.subprojects ?? []).length > 0 ? (
+                        <CommandGroup heading="Subproyectos">
+                          {(targetOptions?.subprojects ?? []).map(
+                            (subproject: any) => {
+                              const selected =
+                                selectedTarget?.targetType ===
+                                  "subproyecto" &&
+                                selectedTarget.subProjectId === subproject.id;
+
+                              return (
+                                <CommandItem
+                                  key={`subproject-${subproject.id}`}
+                                  value={`subproject-${subproject.id}-${subproject.code}-${subproject.name}`}
+                                  onSelect={() => {
+                                    setTargetByItemId(current => ({
+                                      ...current,
+                                      [item.id]:
+                                        buildSubprojectReceiptTargetSelection(
+                                          subproject
+                                        ),
+                                    }));
+                                    setTargetPopoverOpen(null);
+                                    setTargetSearch("");
+                                  }}
+                                >
+                                  <Check
+                                    className={`mr-2 h-4 w-4 ${
+                                      selected ? "opacity-100" : "opacity-0"
+                                    }`}
+                                  />
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-medium">
+                                      {subproject.code} - {subproject.name}
+                                    </p>
+                                    {subproject.description ? (
+                                      <p className="truncate text-xs text-muted-foreground">
+                                        {subproject.description}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                </CommandItem>
+                              );
+                            }
+                          )}
+                        </CommandGroup>
+                      ) : null}
+
+                      {(targetOptions?.fixedAssets ?? []).length > 0 ? (
+                        <CommandGroup heading="Activos fijos">
+                          {(targetOptions?.fixedAssets ?? []).map(
+                            (asset: any) => {
+                              const selected =
+                                selectedTarget?.targetType ===
+                                  "activo_fijo" &&
+                                selectedTarget.fixedAssetSapItemCode ===
+                                  asset.itemCode;
+
+                              return (
+                                <CommandItem
+                                  key={`asset-${asset.itemCode}`}
+                                  value={`asset-${asset.itemCode}-${asset.description}`}
+                                  onSelect={() => {
+                                    setTargetByItemId(current => ({
+                                      ...current,
+                                      [item.id]:
+                                        buildFixedAssetReceiptTargetSelection(
+                                          asset
+                                        ),
+                                    }));
+                                    setTargetPopoverOpen(null);
+                                    setTargetSearch("");
+                                  }}
+                                >
+                                  <Check
+                                    className={`mr-2 h-4 w-4 ${
+                                      selected ? "opacity-100" : "opacity-0"
+                                    }`}
+                                  />
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-medium">
+                                      {asset.itemCode} - {asset.description}
+                                    </p>
+                                    {asset.itemGroup ? (
+                                      <p className="truncate text-xs text-muted-foreground">
+                                        {asset.itemGroup}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                </CommandItem>
+                              );
+                            }
+                          )}
+                        </CommandGroup>
+                      ) : null}
+                    </>
+                  )}
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
+
+          {selectedTarget ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label="Limpiar destino de la línea"
+              disabled={registerMutation.isPending}
+              onClick={() =>
+                setTargetByItemId(current => ({
+                  ...current,
+                  [item.id]: null,
+                }))
+              }
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
+  const receiptPricingSummary = useMemo(
+    () =>
+      sourceType === "purchase_order"
+        ? summarizePurchaseOrderLines(
+            receiptEditableItems.map(item => getReceiptLineTaxDraft(item)),
+            activeSalesTaxes
+          )
+        : summarizePurchaseOrderLines([], activeSalesTaxes),
+    [
+      activeSalesTaxes,
+      additionalTaxCodesByItemId,
+      priceMap,
+      receiptEditableItems,
+      receivedMap,
+      sourceType,
+      taxCodeByItemId,
+    ]
+  );
+  const getReceiptOtherChargesPayload = () =>
+    otherChargeDrafts
+      .map(charge => ({
+        concept: charge.concept.trim(),
+        amount: charge.amount.trim(),
+      }))
+      .filter(charge => charge.concept || charge.amount);
+  const getCompleteReceiptOtherChargesPayload = () =>
+    getReceiptOtherChargesPayload().filter(charge => {
+      const amount = Number(charge.amount);
+      return charge.concept && Number.isFinite(amount) && amount > 0;
+    });
+  const receiptOtherChargesTotal = useMemo(
+    () => getOtherChargesTotal(otherChargeDrafts),
+    [otherChargeDrafts]
+  );
+  const receiptTableColumnCount = sourceType === "purchase_order" ? 10 : 8;
+
   const totals = useMemo(
     () =>
-      sourceItems.reduce(
+      receiptEditableItems.reduce(
         (acc, item: any) => {
-          acc.pending += getReceivableQuantity(item);
+          acc.pending += getEditableReceiptExpectedQuantity(item);
           acc.receiving += Number(receivedMap[item.id] ?? 0) || 0;
           return acc;
         },
         { pending: 0, receiving: 0 }
       ),
-    [receivedMap, sourceItems]
+    [receiptEditableItems, receivedMap]
   );
   const currentDocumentHasEmissionDeadlineIssue = hasEmissionDeadlineIssue({
     isFiscalDocument: sourceType === "purchase_order" && isFiscalDocument,
@@ -1103,46 +1843,55 @@ export default function Recepciones() {
         postingDate: postingDate || todayDateValue(),
         receiptDate,
         notes: notes.trim() || undefined,
-        items: (sourceItems as any[]).map(sourceItem => {
-          const sourceItemDraft = getReceiptAssetDraft(sourceItem.id);
-          const isCurrentSavedItem = sourceItem.id === item.id;
-          const isFixedAsset =
-            sourceItemDraft.isFixedAsset === true ||
-            sourceItem.isFixedAsset === true ||
-            isCurrentSavedItem;
-          const details = isCurrentSavedItem
-            ? [assetDetail]
-            : normalizeFixedAssetDetails(sourceItemDraft.assetDetails, 1);
-          const updatedPoItem = isCurrentSavedItem
-            ? (result as any).item
-            : sourceItem;
+        otherCharges: getCompleteReceiptOtherChargesPayload(),
+        items: [
+          ...(sourceItems as any[]).map(sourceItem => {
+            const sourceItemDraft = getReceiptAssetDraft(sourceItem.id);
+            const isCurrentSavedItem = sourceItem.id === item.id;
+            const isFixedAsset =
+              sourceItemDraft.isFixedAsset === true ||
+              sourceItem.isFixedAsset === true ||
+              isCurrentSavedItem;
+            const details = isCurrentSavedItem
+              ? [assetDetail]
+              : normalizeFixedAssetDetails(sourceItemDraft.assetDetails, 1);
+            const updatedPoItem = isCurrentSavedItem
+              ? (result as any).item
+              : sourceItem;
+            const taxDraft = getReceiptLineTaxDraft(sourceItem);
 
-          return {
-            sourceItemId: sourceItem.id,
-            warehouseId: warehouseByItemId[sourceItem.id]
-              ? Number(warehouseByItemId[sourceItem.id])
-              : undefined,
-            itemName: sourceItem.itemName,
-            quantityExpected: String(getReceivableQuantity(sourceItem)),
-            quantityReceived: isFixedAsset
-              ? "1"
-              : receivedMap[sourceItem.id] || "0",
-            unit: sourceItem.unit || undefined,
-            unitPrice:
-              priceMap[sourceItem.id] || String(sourceItem.unitPrice ?? "0.00"),
-            notes: isCurrentSavedItem
-              ? draft.notes.trim() || undefined
-              : sourceItemDraft.notes.trim() || undefined,
-            isFixedAsset,
-            isLeasing: isFixedAsset
-              ? isCurrentSavedItem
-                ? draft.isLeasing
-                : sourceItemDraft.isLeasing ||
-                  updatedPoItem?.isLeasing === true
-              : false,
-            assetDetails: isFixedAsset ? details : [],
-          };
-        }),
+            return {
+              sourceItemId: sourceItem.id,
+              sapItemCode: getSourceItemCode(sourceItem),
+              warehouseId: warehouseByItemId[sourceItem.id]
+                ? Number(warehouseByItemId[sourceItem.id])
+                : undefined,
+              itemName: sourceItem.itemName,
+              quantityExpected: String(getReceivableQuantity(sourceItem)),
+              quantityReceived: isFixedAsset
+                ? "1"
+                : receivedMap[sourceItem.id] || "0",
+              unit: sourceItem.unit || undefined,
+              unitPrice:
+                priceMap[sourceItem.id] || String(sourceItem.unitPrice ?? "0.00"),
+              taxCode: taxDraft.taxCode,
+              additionalTaxCodes: taxDraft.additionalTaxCodes,
+              ...getReceiptTargetPayload(targetByItemId[sourceItem.id] ?? null),
+              notes: isCurrentSavedItem
+                ? draft.notes.trim() || undefined
+                : sourceItemDraft.notes.trim() || undefined,
+              isFixedAsset,
+              isLeasing: isFixedAsset
+                ? isCurrentSavedItem
+                  ? draft.isLeasing
+                  : sourceItemDraft.isLeasing ||
+                    updatedPoItem?.isLeasing === true
+                : false,
+              assetDetails: isFixedAsset ? details : [],
+            };
+          }),
+          ...buildManualReceiptItemPayload(),
+        ],
       });
     })().catch(error => {
       toast.error(
@@ -1210,6 +1959,25 @@ export default function Recepciones() {
         );
         return;
       }
+      if (
+        !isFiscalInvoiceRangeOrdered({
+          documentRangeStart,
+          documentRangeEnd,
+        })
+      ) {
+        toast.error("El rango autorizado final debe ser mayor o igual al inicial");
+        return;
+      }
+      if (
+        !isInvoiceNumberWithinFiscalRange({
+          invoiceNumber,
+          documentRangeStart,
+          documentRangeEnd,
+        })
+      ) {
+        toast.error("El número documento debe estar dentro del rango autorizado");
+        return;
+      }
       if (!documentDate) {
         toast.error("Selecciona la fecha del documento");
         return;
@@ -1271,7 +2039,8 @@ export default function Recepciones() {
       }
     }
 
-    const receiptItems = sourceItems.map((item: any) => {
+    const receiptItems: any[] = [
+      ...sourceItems.map((item: any) => {
       const closureDraft = transferClosureDrafts[item.id];
       const closeQuantity =
         sourceType === "transfer" && closureDraft
@@ -1280,9 +2049,12 @@ export default function Recepciones() {
       const assetDraft = getReceiptAssetDraft(item.id);
       const isFixedAsset = assetDraft.isFixedAsset === true;
       const receivedQuantity = getPositiveIntegerQuantity(receivedMap[item.id]);
+      const taxDraft =
+        sourceType === "purchase_order" ? getReceiptLineTaxDraft(item) : null;
 
       return {
         sourceItemId: item.id,
+        sapItemCode: getSourceItemCode(item),
         warehouseId: warehouseByItemId[item.id]
           ? Number(warehouseByItemId[item.id])
           : undefined,
@@ -1294,6 +2066,13 @@ export default function Recepciones() {
           sourceType === "purchase_order"
             ? priceMap[item.id] || String(item.unitPrice ?? "0.00")
             : "0.00",
+        ...(taxDraft
+          ? {
+              taxCode: taxDraft.taxCode,
+              additionalTaxCodes: taxDraft.additionalTaxCodes,
+              ...getReceiptTargetPayload(targetByItemId[item.id] ?? null),
+            }
+          : {}),
         notes: assetDraft.notes.trim() || undefined,
         isFixedAsset,
         isLeasing: isFixedAsset ? assetDraft.isLeasing : false,
@@ -1309,7 +2088,9 @@ export default function Recepciones() {
             : undefined,
         closeNote: closeQuantity > 0 ? closureDraft?.note : undefined,
       };
-    });
+      }),
+      ...(sourceType === "purchase_order" ? buildManualReceiptItemPayload() : []),
+    ];
 
     const hasPositiveReceipt = receiptItems.some(
       item => Number(item.quantityReceived || 0) > 0
@@ -1336,6 +2117,20 @@ export default function Recepciones() {
     if (invalidClosure) {
       toast.error("Completa el motivo y la nota del cierre incompleto");
       return;
+    }
+
+    const otherChargesPayload =
+      sourceType === "purchase_order" ? getReceiptOtherChargesPayload() : [];
+    for (const charge of otherChargesPayload) {
+      if (!charge.concept) {
+        toast.error("Ingrese el concepto de cada otro cargo");
+        return;
+      }
+      const amount = Number(charge.amount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        toast.error("Ingrese un monto mayor que cero para cada otro cargo");
+        return;
+      }
     }
 
     const currentPostingDate = todayDateValue();
@@ -1376,6 +2171,7 @@ export default function Recepciones() {
       emissionDeadline: emissionDeadline || undefined,
       notes: notes || undefined,
       items: receiptItems,
+      otherCharges: otherChargesPayload,
     });
   };
 
@@ -1476,6 +2272,38 @@ export default function Recepciones() {
     receiptTransferDetail?.items,
   ]);
 
+  const receiptSourceItemsById = useMemo(() => {
+    const sourceItems =
+      receiptDetail?.receipt.sourceType === "purchase_order"
+        ? receiptPurchaseOrderDetail?.items
+        : receiptTransferDetail?.items;
+
+    return new Map((sourceItems ?? []).map((item: any) => [item.id, item]));
+  }, [
+    receiptDetail?.receipt.sourceType,
+    receiptPurchaseOrderDetail?.items,
+    receiptTransferDetail?.items,
+  ]);
+
+  const receiptDetailPricingSummary = useMemo(() => {
+    if (!receiptDetail || receiptDetail.receipt.sourceType !== "purchase_order") {
+      return null;
+    }
+
+    return summarizePurchaseOrderLines(
+      receiptDetail.items.map((item: any) =>
+        getReceiptLineTaxSummaryInput(
+          item,
+          receiptSourceItemsById.get(item.sourceItemId)
+        )
+      )
+    );
+  }, [receiptDetail, receiptSourceItemsById]);
+  const receiptDetailOtherChargesTotal = useMemo(
+    () => getOtherChargesTotal((receiptDetail as any)?.otherCharges ?? []),
+    [receiptDetail]
+  );
+
   const handlePrintReceipt = () => {
     if (!receiptDetail) return;
 
@@ -1555,21 +2383,16 @@ export default function Recepciones() {
         const unitPrice = isPurchaseOrderReceipt
           ? item.unitPrice ?? sourceItem?.unitPrice ?? "0.00"
           : "0.00";
-        const amounts = calculatePurchaseOrderLineAmounts({
-          quantity: item.quantityReceived,
-          unitPrice,
-          taxCode: sourceItem?.taxCode,
-          additionalTaxCodes: sourceItem?.additionalTaxCodes,
-          taxBreakdown: sourceItem?.taxBreakdown,
-        });
-        summaryLines.push({
-          quantity: item.quantityReceived,
-          unitPrice,
-          taxCode: sourceItem?.taxCode,
-          additionalTaxCodes: sourceItem?.additionalTaxCodes,
-          taxBreakdown: sourceItem?.taxBreakdown,
-        });
+        const summaryInput = getReceiptLineTaxSummaryInput(item, sourceItem);
+        const amounts = calculatePurchaseOrderLineAmounts(summaryInput);
+        summaryLines.push(summaryInput);
         const assetDetails = parseFixedAssetDetails(item.assetDetails);
+        const targetLabel = isPurchaseOrderReceipt
+          ? formatReceiptLineTargetLabel(item, sourceItem, receipt.projectId)
+          : null;
+        const targetHtml = targetLabel
+          ? `<div class="line-note"><strong>Destino:</strong> ${escapeHtml(targetLabel)}</div>`
+          : "";
         const notesHtml = item.notes?.trim()
           ? `<div class="line-note">${escapeHtml(item.notes)}</div>`
           : "";
@@ -1592,7 +2415,7 @@ export default function Recepciones() {
         return `
           <tr>
             <td>${escapeHtml(companyCode || "-")}</td>
-            <td>${escapeHtml(item.itemName)}${notesHtml}${assetHtml}</td>
+            <td>${escapeHtml(item.itemName)}${targetHtml}${notesHtml}${assetHtml}</td>
             <td class="center">${escapeHtml(partNumber || "-")}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantityReceived))}</td>
             <td class="center">${escapeHtml(item.unit || "-")}</td>
@@ -1603,7 +2426,27 @@ export default function Recepciones() {
       })
       .join("");
     const fiscalSummary = summarizePurchaseOrderLines(summaryLines);
-    const fiscalSummaryRows = getPurchaseOrderFiscalSummaryRows(fiscalSummary)
+    const otherChargesTotal = isPurchaseOrderReceipt
+      ? getOtherChargesTotal((receiptDetail as any).otherCharges ?? [])
+      : 0;
+    const fiscalSummaryBaseRows = getPurchaseOrderFiscalSummaryRows(fiscalSummary);
+    const fiscalSummaryRowsWithCharges =
+      otherChargesTotal > 0
+        ? [
+            ...fiscalSummaryBaseRows.filter(row => row.key !== "total"),
+            {
+              key: "other-charges",
+              label: "Otros cargos L.",
+              value: otherChargesTotal,
+              emphasized: false,
+            },
+            {
+              ...fiscalSummaryBaseRows.find(row => row.key === "total")!,
+              value: fiscalSummary.total + otherChargesTotal,
+            },
+          ]
+        : fiscalSummaryBaseRows;
+    const fiscalSummaryRows = fiscalSummaryRowsWithCharges
       .map(row => `
         <tr>
           <td>${escapeHtml(row.label)}</td>
@@ -2055,7 +2898,16 @@ export default function Recepciones() {
                       setSourceType(value as "purchase_order" | "transfer");
                       setSourceId("");
                       setReceivedMap({});
+                      setWarehouseByItemId({});
                       setPriceMap({});
+                      setTaxCodeByItemId({});
+                      setAdditionalTaxCodesByItemId({});
+                      setTargetByItemId({});
+                      setTargetPopoverOpen(null);
+                      setTargetSearch("");
+                      setManualReceiptItems([]);
+                      setManualItemSearch("");
+                      setManualItemPopoverOpen(false);
                       setIsFiscalDocument(true);
                       setCai("");
                       setInvoiceNumber("");
@@ -2088,7 +2940,16 @@ export default function Recepciones() {
                     onValueChange={value => {
                       setSourceId(value);
                       setReceivedMap({});
+                      setWarehouseByItemId({});
                       setPriceMap({});
+                      setTaxCodeByItemId({});
+                      setAdditionalTaxCodesByItemId({});
+                      setTargetByItemId({});
+                      setTargetPopoverOpen(null);
+                      setTargetSearch("");
+                      setManualReceiptItems([]);
+                      setManualItemSearch("");
+                      setManualItemPopoverOpen(false);
                       setIsFiscalDocument(true);
                       setCai("");
                       setInvoiceNumber("");
@@ -2262,33 +3123,6 @@ export default function Recepciones() {
                   {sourceType === "purchase_order" ? (
                     <>
                       <div className="space-y-2">
-                        <Label htmlFor="receipt-cai">
-                          {isFiscalDocument ? "CAI" : "CAI / referencia"}
-                        </Label>
-                        <Input
-                          id="receipt-cai"
-                          value={cai}
-                          onChange={event =>
-                            setCai(
-                              isFiscalDocument
-                                ? formatCaiInput(event.target.value)
-                                : event.target.value
-                            )
-                          }
-                          placeholder={
-                            isFiscalDocument
-                              ? CAI_FORMAT_EXAMPLE
-                              : "Referencia del documento"
-                          }
-                          maxLength={
-                            isFiscalDocument
-                              ? CAI_FORMAT_EXAMPLE.length
-                              : undefined
-                          }
-                          autoCapitalize="characters"
-                        />
-                      </div>
-                      <div className="space-y-2">
                         <Label htmlFor="receipt-invoice-number">
                           Número documento
                         </Label>
@@ -2313,6 +3147,33 @@ export default function Recepciones() {
                               ? INVOICE_NUMBER_FORMAT_EXAMPLE.length
                               : undefined
                           }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="receipt-cai">
+                          {isFiscalDocument ? "CAI" : "CAI / referencia"}
+                        </Label>
+                        <Input
+                          id="receipt-cai"
+                          value={cai}
+                          onChange={event =>
+                            setCai(
+                              isFiscalDocument
+                                ? formatCaiInput(event.target.value)
+                                : event.target.value
+                            )
+                          }
+                          placeholder={
+                            isFiscalDocument
+                              ? CAI_FORMAT_EXAMPLE
+                              : "Referencia del documento"
+                          }
+                          maxLength={
+                            isFiscalDocument
+                              ? CAI_FORMAT_EXAMPLE.length
+                              : undefined
+                          }
+                          autoCapitalize="characters"
                         />
                       </div>
                       <div className="space-y-2">
@@ -2535,8 +3396,76 @@ export default function Recepciones() {
                 )}
               </section>
 
+              {sourceType === "purchase_order" && sourceId ? (
+                <div className="flex justify-end">
+                  <Popover
+                    open={manualItemPopoverOpen}
+                    onOpenChange={open => {
+                      setManualItemPopoverOpen(open);
+                      if (!open) setManualItemSearch("");
+                    }}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="gap-2"
+                        disabled={registerMutation.isPending}
+                      >
+                        <Plus className="h-4 w-4" />
+                        Agregar producto
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[420px] p-0" align="end">
+                      <Command shouldFilter={false}>
+                        <CommandInput
+                          placeholder="Buscar SKU o descripción..."
+                          value={manualItemSearch}
+                          onValueChange={setManualItemSearch}
+                        />
+                        <CommandList>
+                          {manualItemSearch.trim().length < 2 ? (
+                            <div className="p-3 text-sm text-muted-foreground">
+                              Escriba al menos 2 caracteres.
+                            </div>
+                          ) : (
+                            <>
+                              <CommandEmpty>Sin resultados.</CommandEmpty>
+                              <CommandGroup heading="Catálogo SAP">
+                                {(manualSapResults ?? []).map((item: any) => (
+                                  <CommandItem
+                                    key={item.id}
+                                    value={`${item.itemCode}-${item.description}`}
+                                    onSelect={() => void addManualReceiptItem(item)}
+                                  >
+                                    <div className="min-w-0">
+                                      <p className="font-mono text-xs font-semibold">
+                                        {item.itemCode}
+                                      </p>
+                                      <p className="truncate text-sm">
+                                        {item.description}
+                                      </p>
+                                    </div>
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </>
+                          )}
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              ) : null}
+
               <div className="overflow-x-auto rounded-2xl border border-border/70">
-                <table className="w-full min-w-[1120px] text-sm">
+                <table
+                  className={`w-full text-sm ${
+                    sourceType === "purchase_order"
+                      ? "min-w-[1240px]"
+                      : "min-w-[1120px]"
+                  }`}
+                >
                   <thead>
                     <tr className="border-b border-border/70 bg-muted/20">
                       <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
@@ -2554,15 +3483,35 @@ export default function Recepciones() {
                       <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                         Precio confirmado
                       </th>
+                      {sourceType === "purchase_order" ? (
+                        <>
+                          <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                            Impuesto
+                          </th>
+                          <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                            Subtotal
+                          </th>
+                          <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                            ISV
+                          </th>
+                          <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                            Total
+                          </th>
+                        </>
+                      ) : null}
                       <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                         Recibir ahora
                       </th>
-                      <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                        Almacén
-                      </th>
-                      <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                        Acción
-                      </th>
+                      {sourceType === "transfer" ? (
+                        <>
+                          <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                            Almacén
+                          </th>
+                          <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                            Acción
+                          </th>
+                        </>
+                      ) : null}
                     </tr>
                   </thead>
                   <tbody>
@@ -2570,7 +3519,7 @@ export default function Recepciones() {
                       <tr>
                         <td
                           className="p-4 text-sm text-muted-foreground"
-                          colSpan={8}
+                          colSpan={receiptTableColumnCount}
                         >
                           Selecciona una orden de compra o traslado para cargar
                           sus ítems.
@@ -2580,23 +3529,27 @@ export default function Recepciones() {
                       <tr>
                         <td
                           className="p-4 text-sm text-muted-foreground"
-                          colSpan={8}
+                          colSpan={receiptTableColumnCount}
                         >
                           Cargando detalle del documento...
                         </td>
                       </tr>
-                    ) : sourceItems.length === 0 ? (
+                    ) : receiptEditableItems.length === 0 ? (
                       <tr>
                         <td
                           className="p-4 text-sm text-muted-foreground"
-                          colSpan={8}
+                          colSpan={receiptTableColumnCount}
                         >
                           Este documento no tiene ítems pendientes por recibir.
+                          Puede agregar un producto manualmente con el botón
+                          superior.
                         </td>
                       </tr>
                     ) : (
-                      sourceItems.map((item: any) => {
-                        const pendingQuantity = getReceivableQuantity(item);
+                      receiptEditableItems.map((item: any) => {
+                        const isManualItem = item.isManualReceiptItem === true;
+                        const pendingQuantity =
+                          getEditableReceiptExpectedQuantity(item);
                         const receivingQuantity =
                           Number(receivedMap[item.id] ?? 0) || 0;
                         const excessQuantity = Math.max(
@@ -2610,6 +3563,7 @@ export default function Recepciones() {
                         const assetDraft = getReceiptAssetDraft(item.id);
                         const isSavedFixedAsset =
                           sourceType === "purchase_order" &&
+                          !isManualItem &&
                           item.isFixedAsset === true;
                         const isLineFixedAsset =
                           assetDraft.isFixedAsset || isSavedFixedAsset;
@@ -2628,16 +3582,38 @@ export default function Recepciones() {
                           item.fixedAssetStatus === "pendiente";
                         const fixedAssetResolved =
                           item.fixedAssetStatus === "resuelto";
+                        const taxDraft =
+                          sourceType === "purchase_order"
+                            ? getReceiptLineTaxDraft(item)
+                            : null;
+                        const lineAmounts = taxDraft
+                          ? calculatePurchaseOrderLineAmounts({
+                              quantity: taxDraft.quantity,
+                              unitPrice: taxDraft.unitPrice,
+                              taxCode: taxDraft.taxCode,
+                              additionalTaxCodes: taxDraft.additionalTaxCodes,
+                              taxes: activeSalesTaxes,
+                            })
+                          : null;
                         return (
                           <Fragment key={item.id}>
                             <tr className="border-b border-border/70">
                               <td className="p-4">
                                 <div className="font-semibold">
                                   {item.itemName}
+                                  {isManualItem ? (
+                                    <Badge
+                                      variant="outline"
+                                      className="ml-2 align-middle"
+                                    >
+                                      Agregado
+                                    </Badge>
+                                  ) : null}
                                 </div>
                                 {sourceCode ? (
                                   <div className="mt-1 text-xs text-muted-foreground">
-                                    Original: {sourceCode}
+                                    {isManualItem ? "SKU" : "Original"}:{" "}
+                                    {sourceCode}
                                   </div>
                                 ) : null}
                               </td>
@@ -2649,7 +3625,9 @@ export default function Recepciones() {
                                 {item.unit || ""}
                               </td>
                               <td className="p-4 text-right text-muted-foreground">
-                                {formatQuantity(item.receivedQuantity)}{" "}
+                                {formatQuantity(
+                                  isManualItem ? "0.00" : item.receivedQuantity
+                                )}{" "}
                                 {item.unit || ""}
                               </td>
                               <td className="p-4 text-right">
@@ -2657,7 +3635,7 @@ export default function Recepciones() {
                                   <Input
                                     type="number"
                                     min="0"
-                                    step="0.01"
+                                    step="0.0001"
                                     className="ml-auto w-36 text-right"
                                     value={priceMap[item.id] ?? ""}
                                     onChange={event =>
@@ -2671,6 +3649,45 @@ export default function Recepciones() {
                                   <span className="text-muted-foreground">—</span>
                                 )}
                               </td>
+                              {sourceType === "purchase_order" &&
+                              taxDraft &&
+                              lineAmounts ? (
+                                <>
+                                  <td className="p-4">
+                                    <PurchaseOrderTaxControls
+                                      draft={taxDraft}
+                                      taxes={activeSalesTaxes}
+                                      disabled={registerMutation.isPending}
+                                      onChange={nextDraft => {
+                                        setTaxCodeByItemId(current => ({
+                                          ...current,
+                                          [item.id]: nextDraft.taxCode,
+                                        }));
+                                        setAdditionalTaxCodesByItemId(
+                                          current => ({
+                                            ...current,
+                                            [item.id]:
+                                              nextDraft.additionalTaxCodes,
+                                          })
+                                        );
+                                      }}
+                                    />
+                                  </td>
+                                  <td className="p-4 text-right font-semibold">
+                                    {formatPurchaseOrderCurrency(
+                                      lineAmounts.subtotal
+                                    )}
+                                  </td>
+                                  <td className="p-4 text-right font-semibold">
+                                    {formatPurchaseOrderCurrency(
+                                      lineAmounts.taxAmount
+                                    )}
+                                  </td>
+                                  <td className="p-4 text-right font-semibold">
+                                    {formatPurchaseOrderCurrency(lineAmounts.total)}
+                                  </td>
+                                </>
+                              ) : null}
                               <td className="p-4 text-right">
                                 <Input
                                   type="number"
@@ -2685,11 +3702,11 @@ export default function Recepciones() {
                                     )
                                   }
                                   disabled={
-                                    pendingQuantity <= 0 ||
+                                    (!isManualItem && pendingQuantity <= 0) ||
                                     fixedAssetQuantityLocked
                                   }
                                 />
-                                {excessQuantity > 0 ? (
+                                {!isManualItem && excessQuantity > 0 ? (
                                   <p className="mt-1 text-xs font-medium text-emerald-700">
                                     Exceso permitido:{" "}
                                     {formatQuantity(excessQuantity)}{" "}
@@ -2697,56 +3714,43 @@ export default function Recepciones() {
                                   </p>
                                 ) : null}
                               </td>
-                              <td className="p-4">
-                                <Select
-                                  value={warehouseByItemId[item.id] || undefined}
-                                  onValueChange={value =>
-                                    setWarehouseByItemId(current => ({
-                                      ...current,
-                                      [item.id]: value,
-                                    }))
-                                  }
-                                  disabled={
-                                    !receiptWarehouses?.length ||
-                                    registerMutation.isPending
-                                  }
-                                >
-                                  <SelectTrigger className="min-w-48">
-                                    <SelectValue placeholder="Seleccione almacén" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {(receiptWarehouses ?? []).map((warehouse: any) => (
-                                      <SelectItem
-                                        key={warehouse.id}
-                                        value={String(warehouse.id)}
-                                      >
-                                        {warehouse.displayName}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </td>
-                              <td className="p-4 text-right">
-                                {sourceType === "purchase_order" &&
-                                !isContractPurchaseOrder &&
-                                canManuallyCloseReceiptLine(item) ? (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="ml-auto gap-2"
-                                    onClick={() => setCloseReceiptLineItem(item)}
-                                    disabled={closeReceiptLineMutation.isPending}
-                                  >
-                                    {closeReceiptLineMutation.isPending &&
-                                    closeReceiptLineItem?.id === item.id ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                      <ShieldX className="h-4 w-4" />
-                                    )}
-                                    Cerrar línea
-                                  </Button>
-                                ) : sourceType === "transfer" ? (
-                                  <div className="flex flex-col items-end gap-1.5">
+                              {sourceType === "transfer" ? (
+                                <>
+                                  <td className="p-4">
+                                    <Select
+                                      value={
+                                        warehouseByItemId[item.id] || undefined
+                                      }
+                                      onValueChange={value =>
+                                        setWarehouseByItemId(current => ({
+                                          ...current,
+                                          [item.id]: value,
+                                        }))
+                                      }
+                                      disabled={
+                                        !receiptWarehouses?.length ||
+                                        registerMutation.isPending
+                                      }
+                                    >
+                                      <SelectTrigger className="min-w-48">
+                                        <SelectValue placeholder="Seleccione almacén" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {(receiptWarehouses ?? []).map(
+                                          (warehouse: any) => (
+                                            <SelectItem
+                                              key={warehouse.id}
+                                              value={String(warehouse.id)}
+                                            >
+                                              {warehouse.displayName}
+                                            </SelectItem>
+                                          )
+                                        )}
+                                      </SelectContent>
+                                    </Select>
+                                  </td>
+                                  <td className="p-4 text-right">
+                                    <div className="flex flex-col items-end gap-1.5">
                                     <Button
                                       variant={
                                         transferClosureDraft &&
@@ -2801,26 +3805,113 @@ export default function Recepciones() {
                                         Baja Recibir ahora para cerrar saldo.
                                       </span>
                                     ) : null}
-                                  </div>
-                                ) : (
-                                  <span className="text-xs text-muted-foreground">
-                                    —
-                                  </span>
-                                )}
-                              </td>
+                                    </div>
+                                  </td>
+                                </>
+                              ) : null}
                             </tr>
                             <tr
                               key={`${item.id}-asset`}
                               className="border-b border-border/70 bg-muted/10 last:border-0"
                             >
-                              <td colSpan={8} className="p-4 pt-0">
+                              <td
+                                colSpan={receiptTableColumnCount}
+                                className="p-4 pt-0"
+                              >
                                 <div className="space-y-4 rounded-xl border border-border/70 bg-background p-3">
+                                  {sourceType === "purchase_order" ? (
+                                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)_auto] xl:items-end">
+                                      <div className="min-w-0 space-y-1.5">
+                                        <Label>Almacén</Label>
+                                        <Select
+                                          value={
+                                            warehouseByItemId[item.id] ||
+                                            undefined
+                                          }
+                                          onValueChange={value =>
+                                            setWarehouseByItemId(current => ({
+                                              ...current,
+                                              [item.id]: value,
+                                            }))
+                                          }
+                                          disabled={
+                                            !receiptWarehouses?.length ||
+                                            registerMutation.isPending
+                                          }
+                                        >
+                                          <SelectTrigger className="w-full min-w-0">
+                                            <SelectValue placeholder="Seleccione almacén" />
+                                          </SelectTrigger>
+                                          <SelectContent className="max-w-[min(680px,calc(100vw-2rem))]">
+                                            {(receiptWarehouses ?? []).map(
+                                              (warehouse: any) => (
+                                                <SelectItem
+                                                  key={warehouse.id}
+                                                  value={String(warehouse.id)}
+                                                >
+                                                  {warehouse.displayName}
+                                                </SelectItem>
+                                              )
+                                            )}
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+
+                                      {renderReceiptTargetSelector(item)}
+
+                                      <div className="flex justify-start lg:justify-end">
+                                        {isManualItem ? (
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="gap-2"
+                                            onClick={() =>
+                                              removeManualReceiptItem(item.id)
+                                            }
+                                            disabled={registerMutation.isPending}
+                                          >
+                                            <Trash2 className="h-4 w-4" />
+                                            Quitar
+                                          </Button>
+                                        ) : !isContractPurchaseOrder &&
+                                        canManuallyCloseReceiptLine(item) ? (
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="gap-2"
+                                            onClick={() =>
+                                              setCloseReceiptLineItem(item)
+                                            }
+                                            disabled={
+                                              closeReceiptLineMutation.isPending
+                                            }
+                                          >
+                                            {closeReceiptLineMutation.isPending &&
+                                            closeReceiptLineItem?.id ===
+                                              item.id ? (
+                                              <Loader2 className="h-4 w-4 animate-spin" />
+                                            ) : (
+                                              <ShieldX className="h-4 w-4" />
+                                            )}
+                                            Cerrar línea
+                                          </Button>
+                                        ) : (
+                                          <span className="text-xs text-muted-foreground">
+                                            Sin acción pendiente
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ) : null}
+
                                   <div className="flex flex-wrap items-center gap-4">
                                     <label className="flex items-center gap-2 text-sm font-medium">
                                       <Checkbox
                                         checked={isLineFixedAsset}
                                         disabled={
                                           sourceType !== "purchase_order" ||
+                                          isManualItem ||
                                           Boolean(item.fixedAssetArticleId)
                                         }
                                         onCheckedChange={checked =>
@@ -3050,6 +4141,107 @@ export default function Recepciones() {
                 </table>
               </div>
 
+              {sourceType === "purchase_order" ? (
+                <section className="space-y-3 border-t border-border/70 px-1 py-4 sm:px-2">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h3 className="text-sm font-semibold">Otros cargos</h3>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() =>
+                        setOtherChargeDrafts(current => [
+                          ...current,
+                          createReceiptOtherChargeDraft(),
+                        ])
+                      }
+                      disabled={registerMutation.isPending}
+                    >
+                      <Plus className="h-4 w-4" />
+                      Agregar
+                    </Button>
+                  </div>
+                  {otherChargeDrafts.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-sm text-muted-foreground">
+                      Sin otros cargos.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {otherChargeDrafts.map(charge => (
+                        <div
+                          key={charge.id}
+                          className="grid gap-2 md:grid-cols-[1fr_180px_auto]"
+                        >
+                          <Input
+                            value={charge.concept}
+                            onChange={event =>
+                              setOtherChargeDrafts(current =>
+                                current.map(entry =>
+                                  entry.id === charge.id
+                                    ? {
+                                        ...entry,
+                                        concept: event.target.value,
+                                      }
+                                    : entry
+                                )
+                              )
+                            }
+                            placeholder="Concepto"
+                            maxLength={255}
+                            disabled={registerMutation.isPending}
+                          />
+                          <Input
+                            type="number"
+                            min="0"
+                            step="0.0001"
+                            value={charge.amount}
+                            onChange={event =>
+                              setOtherChargeDrafts(current =>
+                                current.map(entry =>
+                                  entry.id === charge.id
+                                    ? {
+                                        ...entry,
+                                        amount: event.target.value,
+                                      }
+                                    : entry
+                                )
+                              )
+                            }
+                            placeholder="0.00"
+                            className="text-right"
+                            disabled={registerMutation.isPending}
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={() =>
+                              setOtherChargeDrafts(current =>
+                                current.filter(entry => entry.id !== charge.id)
+                              )
+                            }
+                            disabled={registerMutation.isPending}
+                            aria-label="Quitar otro cargo"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              ) : null}
+
+              {sourceType === "purchase_order" ? (
+                <div className="flex justify-end border-t border-border bg-muted/10 px-3 py-4 sm:px-4">
+                  <FiscalSummaryCard
+                    summary={receiptPricingSummary}
+                    otherChargesTotal={receiptOtherChargesTotal}
+                  />
+                </div>
+              ) : null}
+
               <div className="flex flex-col items-end border-t border-border/70 pt-4">
                 <Button
                   size="lg"
@@ -3205,20 +4397,20 @@ export default function Recepciones() {
                 </div>
                 <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Número documento
+                  </Label>
+                  <p className="text-sm font-semibold leading-snug sm:text-base">
+                    {receiptDetail.receipt.invoiceNumber || "—"}
+                  </p>
+                </div>
+                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                     {receiptDetail.receipt.isFiscalDocument
                       ? "CAI"
                       : "CAI / referencia"}
                   </Label>
                   <p className="text-sm font-semibold leading-snug sm:text-base">
                     {receiptDetail.receipt.cai || "—"}
-                  </p>
-                </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Número documento
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {receiptDetail.receipt.invoiceNumber || "—"}
                   </p>
                 </div>
                 <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
@@ -3295,8 +4487,14 @@ export default function Recepciones() {
                 </p>
               </div>
 
-              <div className="rounded-2xl border border-border/70">
-                <table className="w-full text-sm">
+              <div className="overflow-x-auto rounded-2xl border border-border/70">
+                <table
+                  className={`w-full text-sm ${
+                    receiptDetail?.receipt.sourceType === "purchase_order"
+                      ? "min-w-[980px]"
+                      : ""
+                  }`}
+                >
                   <thead>
                     <tr className="border-b border-border/70 bg-muted/20">
                       <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
@@ -3314,6 +4512,20 @@ export default function Recepciones() {
                       <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                         Precio confirmado
                       </th>
+                      {receiptDetail.receipt.sourceType ===
+                      "purchase_order" ? (
+                        <>
+                          <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                            Subtotal
+                          </th>
+                          <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                            ISV
+                          </th>
+                          <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                            Total
+                          </th>
+                        </>
+                      ) : null}
                     </tr>
                   </thead>
                   <tbody>
@@ -3321,7 +4533,12 @@ export default function Recepciones() {
                       <tr>
                         <td
                           className="p-4 text-sm text-muted-foreground"
-                          colSpan={5}
+                          colSpan={
+                            receiptDetail?.receipt.sourceType ===
+                            "purchase_order"
+                              ? 8
+                              : 5
+                          }
                         >
                           Esta recepción no tiene ítems registrados.
                         </td>
@@ -3329,7 +4546,23 @@ export default function Recepciones() {
                     ) : (
                       receiptDetail.items.map((item: any) => {
                         const itemCode =
-                          receiptSourceItemCodes.get(item.sourceItemId) ?? null;
+                          receiptSourceItemCodes.get(item.sourceItemId) ??
+                          getSourceItemCode(item);
+                        const sourceItem = receiptSourceItemsById.get(
+                          item.sourceItemId
+                        );
+                        const lineAmounts = calculateReceiptLineAmounts(
+                          item,
+                          sourceItem
+                        );
+                        const targetLabel =
+                          receiptDetail.receipt.sourceType === "purchase_order"
+                            ? formatReceiptLineTargetLabel(
+                                item,
+                                sourceItem,
+                                receiptDetail.receipt.projectId
+                              )
+                            : null;
                         const assetDetails = parseFixedAssetDetails(
                           item.assetDetails
                         );
@@ -3346,6 +4579,11 @@ export default function Recepciones() {
                               {item.notes ? (
                                 <div className="mt-1 text-xs text-muted-foreground">
                                   {item.notes}
+                                </div>
+                              ) : null}
+                              {targetLabel ? (
+                                <div className="mt-1 text-xs text-muted-foreground">
+                                  Destino: {targetLabel}
                                 </div>
                               ) : null}
                               {item.isFixedAsset ? (
@@ -3396,6 +4634,26 @@ export default function Recepciones() {
                             <td className="p-4 text-right font-medium">
                               {formatPrintMoney(item.unitPrice)}
                             </td>
+                            {receiptDetail.receipt.sourceType ===
+                            "purchase_order" ? (
+                              <>
+                                <td className="p-4 text-right font-semibold">
+                                  {formatPurchaseOrderCurrency(
+                                    lineAmounts.subtotal
+                                  )}
+                                </td>
+                                <td className="p-4 text-right font-semibold">
+                                  {formatPurchaseOrderCurrency(
+                                    lineAmounts.taxAmount
+                                  )}
+                                </td>
+                                <td className="p-4 text-right font-semibold">
+                                  {formatPurchaseOrderCurrency(
+                                    lineAmounts.total
+                                  )}
+                                </td>
+                              </>
+                            ) : null}
                           </tr>
                         );
                       })
@@ -3403,6 +4661,37 @@ export default function Recepciones() {
                   </tbody>
                 </table>
               </div>
+
+              {receiptDetail.receipt.sourceType === "purchase_order" &&
+              (receiptDetail as any).otherCharges?.length ? (
+                <section className="rounded-2xl border border-border/70">
+                  <div className="border-b border-border/70 px-4 py-3">
+                    <h3 className="font-semibold">Otros cargos</h3>
+                  </div>
+                  <div className="divide-y divide-border/70">
+                    {(receiptDetail as any).otherCharges.map((charge: any) => (
+                      <div
+                        key={charge.id}
+                        className="grid grid-cols-[1fr_auto] gap-3 px-4 py-3 text-sm"
+                      >
+                        <span className="font-medium">{charge.concept}</span>
+                        <span className="font-semibold tabular-nums">
+                          {formatPurchaseOrderCurrency(charge.amount)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
+              {receiptDetailPricingSummary ? (
+                <div className="flex justify-end border-t border-border bg-muted/10 px-3 py-4 sm:px-4">
+                  <FiscalSummaryCard
+                    summary={receiptDetailPricingSummary}
+                    otherChargesTotal={receiptDetailOtherChargesTotal}
+                  />
+                </div>
+              ) : null}
 
               <DocumentAttachmentsPanel
                 entityType="receipt"

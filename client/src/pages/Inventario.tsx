@@ -209,11 +209,20 @@ export default function Inventario() {
   }, [debouncedSearch, warehouseFilter, projectFilter]);
 
   const userRole = (user as any)?.buildreqRole || "";
-  const assignedProjectId = (user as any)?.assignedProjectId || null;
+  const assignedProjectIds = useMemo(() => {
+    const ids = (user as any)?.assignedProjectIds;
+    if (Array.isArray(ids) && ids.length > 0) {
+      return ids.map(Number).filter((id) => Number.isInteger(id) && id > 0);
+    }
+    return (user as any)?.assignedProjectId ? [(user as any).assignedProjectId] : [];
+  }, [user]);
   const canManage =
     userRole === "jefe_bodega_central" || user?.role === "admin";
   const canAccessWarehouses =
-    canManage || userRole === "administracion_central";
+    canManage ||
+    userRole === "administracion_central" ||
+    userRole === "administrador_proyecto" ||
+    userRole === "bodeguero_proyecto";
   const allowInventoryReassignment = false;
 
   const { data: projects } = trpc.projects.list.useQuery();
@@ -309,12 +318,12 @@ export default function Inventario() {
     if (
       (userRole === "administrador_proyecto" ||
         userRole === "bodeguero_proyecto") &&
-      assignedProjectId &&
+      assignedProjectIds.length === 1 &&
       projectFilter === "all"
     ) {
-      setProjectFilter(String(assignedProjectId));
+      setProjectFilter(String(assignedProjectIds[0]));
     }
-  }, [assignedProjectId, projectFilter, userRole]);
+  }, [assignedProjectIds, projectFilter, userRole]);
 
   useEffect(() => {
     if (!projectId) return;

@@ -6,6 +6,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -41,6 +47,7 @@ import {
   KeyRound,
   Eye,
   EyeOff,
+  ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -50,6 +57,7 @@ const ROLE_LABELS: Record<string, string> = {
   administracion_central: "Administración Central",
   administrador_proyecto: "Administración Proyecto",
   bodeguero_proyecto: "Bodega Proyecto",
+  superintendente: "Superintendente",
   contable: "Contable",
 };
 
@@ -57,12 +65,13 @@ const PROJECT_ASSIGNABLE_ROLES = new Set([
   "ingeniero_residente",
   "administrador_proyecto",
   "bodeguero_proyecto",
+  "superintendente",
 ]);
 const PROJECT_REQUIRED_ROLES = new Set([
   "ingeniero_residente",
   "bodeguero_proyecto",
+  "superintendente",
 ]);
-const ALL_PROJECTS_VALUE = "all_projects";
 
 function canAssignAllProjects(role?: string | null) {
   return role === "administrador_proyecto";
@@ -72,19 +81,140 @@ function isProjectAssignableRole(role?: string | null) {
   return Boolean(role && PROJECT_ASSIGNABLE_ROLES.has(role));
 }
 
-function getProjectSelectValue(role?: string | null, projectId?: number | null) {
-  if (canAssignAllProjects(role) && !projectId) return ALL_PROJECTS_VALUE;
-  return projectId ? String(projectId) : "none";
+function normalizeProjectIds(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((projectId) => Number(projectId))
+        .filter((projectId) => Number.isInteger(projectId) && projectId > 0)
+    )
+  );
 }
 
-function getAssignedProjectIdPayload(role: string, projectValue: string) {
-  if (canAssignAllProjects(role) && (!projectValue || projectValue === ALL_PROJECTS_VALUE)) {
-    return null;
+function getAssignedProjectIds(entity: any) {
+  const assignedProjectIds = normalizeProjectIds(entity?.assignedProjectIds);
+  if (assignedProjectIds.length > 0) return assignedProjectIds;
+  return entity?.assignedProjectId ? [Number(entity.assignedProjectId)] : [];
+}
+
+function getAssignedProjectIdsPayload(role: string, projectIds: number[]) {
+  return isProjectAssignableRole(role) ? normalizeProjectIds(projectIds) : undefined;
+}
+
+function formatAssignedProjects(entity: any) {
+  const assignedProjects = Array.isArray(entity?.assignedProjects)
+    ? entity.assignedProjects
+    : [];
+  if (assignedProjects.length > 0) {
+    return assignedProjects.map((project: any) => `${project.code} - ${project.name}`).join(", ");
   }
-  if (isProjectAssignableRole(role) && projectValue && projectValue !== ALL_PROJECTS_VALUE) {
-    return parseInt(projectValue);
+  const ids = getAssignedProjectIds(entity);
+  if (ids.length > 0) return ids.map((projectId) => `Proyecto #${projectId}`).join(", ");
+  if (entity?.buildreqRole === "administrador_proyecto") return "Todos los proyectos";
+  return "N/A";
+}
+
+function ProjectMultiSelect({
+  role,
+  projects,
+  selectedProjectIds,
+  onChange,
+  placeholder = "Seleccionar proyectos",
+  compact = false,
+}: {
+  role?: string | null;
+  projects: any[];
+  selectedProjectIds: number[];
+  onChange: (projectIds: number[]) => void;
+  placeholder?: string;
+  compact?: boolean;
+}) {
+  const selectedSet = new Set(selectedProjectIds);
+  const canUseAll = canAssignAllProjects(role);
+  const required = Boolean(role && PROJECT_REQUIRED_ROLES.has(role));
+  const label =
+    canUseAll && selectedProjectIds.length === 0
+      ? "Todos los proyectos"
+      : selectedProjectIds.length === 0
+        ? placeholder
+        : selectedProjectIds.length === 1
+          ? formatAssignedProjects({
+              assignedProjectIds: selectedProjectIds,
+              assignedProjects: projects.filter((project) =>
+                selectedSet.has(project.id)
+              ),
+            })
+          : `${selectedProjectIds.length} proyectos`;
+
+  function toggleProject(projectId: number) {
+    if (selectedSet.has(projectId)) {
+      if (required && selectedProjectIds.length === 1) {
+        toast.error("Este rol requiere al menos un proyecto");
+        return;
+      }
+      onChange(selectedProjectIds.filter((id) => id !== projectId));
+      return;
+    }
+    onChange([...selectedProjectIds, projectId]);
   }
-  return undefined;
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          className={`justify-between ${compact ? "h-8 w-56 text-xs" : "w-full"}`}
+        >
+          <span className="truncate text-left">{label}</span>
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-72 p-2">
+        <div className="space-y-1">
+          {canUseAll ? (
+            <div
+              role="button"
+              tabIndex={0}
+              className="flex w-full cursor-pointer items-center gap-2 px-2 py-2 text-left text-sm hover:bg-muted"
+              onClick={() => onChange([])}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") onChange([]);
+              }}
+            >
+              <Checkbox checked={selectedProjectIds.length === 0} />
+              <span>Todos los proyectos</span>
+            </div>
+          ) : null}
+          {(projects || []).map((project: any) => (
+            <div
+              key={project.id}
+              role="button"
+              tabIndex={0}
+              className="flex w-full cursor-pointer items-center gap-2 px-2 py-2 text-left text-sm hover:bg-muted"
+              onClick={() => toggleProject(project.id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  toggleProject(project.id);
+                }
+              }}
+            >
+              <Checkbox checked={selectedSet.has(project.id)} />
+              <span className="min-w-0 flex-1 truncate">
+                {project.code} - {project.name}
+              </span>
+            </div>
+          ))}
+          {projects.length === 0 ? (
+            <p className="px-2 py-2 text-sm text-muted-foreground">
+              No hay proyectos activos.
+            </p>
+          ) : null}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 const STATUS_CONFIG: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive"; icon: any }> = {
@@ -110,12 +240,12 @@ export default function Usuarios() {
   const [invName, setInvName] = useState("");
   const [invEmail, setInvEmail] = useState("");
   const [invRole, setInvRole] = useState<string>("");
-  const [invProject, setInvProject] = useState<string>("");
+  const [invProjectIds, setInvProjectIds] = useState<number[]>([]);
   const [directName, setDirectName] = useState("");
   const [directEmail, setDirectEmail] = useState("");
   const [directPassword, setDirectPassword] = useState("");
   const [directRole, setDirectRole] = useState<string>("");
-  const [directProject, setDirectProject] = useState<string>("");
+  const [directProjectIds, setDirectProjectIds] = useState<number[]>([]);
   const [showDirectPassword, setShowDirectPassword] = useState(false);
 
   const updateRoleMutation = trpc.userManagement.updateRole.useMutation({
@@ -178,7 +308,7 @@ export default function Usuarios() {
     setInvName("");
     setInvEmail("");
     setInvRole("");
-    setInvProject("");
+    setInvProjectIds([]);
   }
 
   function resetDirectForm() {
@@ -186,7 +316,7 @@ export default function Usuarios() {
     setDirectEmail("");
     setDirectPassword("");
     setDirectRole("");
-    setDirectProject("");
+    setDirectProjectIds([]);
     setShowDirectPassword(false);
   }
 
@@ -201,9 +331,9 @@ export default function Usuarios() {
     }
     if (
       PROJECT_REQUIRED_ROLES.has(directRole) &&
-      (!directProject || directProject === ALL_PROJECTS_VALUE)
+      directProjectIds.length === 0
     ) {
-      toast.error("Debe asignar un proyecto a este rol");
+      toast.error("Debe asignar al menos un proyecto a este rol");
       return;
     }
     createDirectUserMutation.mutate({
@@ -211,7 +341,7 @@ export default function Usuarios() {
       email: directEmail,
       password: directPassword,
       buildreqRole: directRole as any,
-      assignedProjectId: getAssignedProjectIdPayload(directRole, directProject),
+      assignedProjectIds: getAssignedProjectIdsPayload(directRole, directProjectIds),
     });
   }
 
@@ -222,16 +352,16 @@ export default function Usuarios() {
     }
     if (
       PROJECT_REQUIRED_ROLES.has(invRole) &&
-      (!invProject || invProject === ALL_PROJECTS_VALUE)
+      invProjectIds.length === 0
     ) {
-      toast.error("Debe asignar un proyecto a este rol");
+      toast.error("Debe asignar al menos un proyecto a este rol");
       return;
     }
     createInvitationMutation.mutate({
       email: invEmail,
       name: invName,
       buildreqRole: invRole as any,
-      assignedProjectId: getAssignedProjectIdPayload(invRole, invProject),
+      assignedProjectIds: getAssignedProjectIdsPayload(invRole, invProjectIds),
       origin: appSiteUrl,
     });
   }
@@ -330,13 +460,21 @@ export default function Usuarios() {
                               value={u.buildreqRole || "sin_rol"}
                               onValueChange={(val) => {
                                 if (val === "sin_rol") return;
+                                const existingProjectIds = getAssignedProjectIds(u);
+                                const nextProjectIds = isProjectAssignableRole(val)
+                                  ? existingProjectIds.length > 0
+                                    ? existingProjectIds
+                                    : PROJECT_REQUIRED_ROLES.has(val)
+                                      ? (projects?.[0]?.id ? [projects[0].id] : [])
+                                      : []
+                                  : [];
                                 updateRoleMutation.mutate({
                                   userId: u.id,
                                   buildreqRole: val as any,
-                                  assignedProjectId:
-                                    isProjectAssignableRole(val)
-                                      ? u.assignedProjectId ?? undefined
-                                      : undefined,
+                                  assignedProjectIds: getAssignedProjectIdsPayload(
+                                    val,
+                                    nextProjectIds
+                                  ),
                                 });
                               }}
                             >
@@ -350,44 +488,30 @@ export default function Usuarios() {
                                 <SelectItem value="administracion_central">Administración Central</SelectItem>
                                 <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
                                 <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
+                                <SelectItem value="superintendente">Superintendente</SelectItem>
                                 <SelectItem value="contable">Contable</SelectItem>
                               </SelectContent>
                             </Select>
                           </td>
                           <td className="p-3">
                             {isProjectAssignableRole(u.buildreqRole) ? (
-                              <Select
-                                value={getProjectSelectValue(
-                                  u.buildreqRole,
-                                  u.assignedProjectId
-                                )}
-                                onValueChange={(val) => {
-                                  if (val === "none") return;
+                              <ProjectMultiSelect
+                                role={u.buildreqRole}
+                                projects={projects || []}
+                                selectedProjectIds={getAssignedProjectIds(u)}
+                                compact
+                                onChange={(projectIds) => {
                                   updateRoleMutation.mutate({
                                     userId: u.id,
-                                    buildreqRole: (u.buildreqRole || "ingeniero_residente") as any,
-                                    assignedProjectId:
-                                      val === ALL_PROJECTS_VALUE
-                                        ? null
-                                        : parseInt(val),
+                                    buildreqRole:
+                                      (u.buildreqRole || "ingeniero_residente") as any,
+                                    assignedProjectIds: getAssignedProjectIdsPayload(
+                                      u.buildreqRole,
+                                      projectIds
+                                    ),
                                   });
                                 }}
-                              >
-                                <SelectTrigger className="h-8 w-44 text-xs">
-                                  <SelectValue placeholder="Sin proyecto" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="none" disabled>Sin proyecto</SelectItem>
-                                  {canAssignAllProjects(u.buildreqRole) ? (
-                                    <SelectItem value={ALL_PROJECTS_VALUE}>
-                                      Todos los proyectos
-                                    </SelectItem>
-                                  ) : null}
-                                  {(projects || []).map((p: any) => (
-                                    <SelectItem key={p.id} value={String(p.id)}>{p.code} - {p.name}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                              />
                             ) : (
                               <span className="text-xs text-muted-foreground">N/A</span>
                             )}
@@ -435,6 +559,10 @@ export default function Usuarios() {
                       {(invitationsList || []).map((item: any) => {
                         const inv = item.invitation;
                         const proj = item.project;
+                        const assignedProjectLabel = formatAssignedProjects({
+                          ...inv,
+                          assignedProjects: item.assignedProjects ?? (proj ? [proj] : []),
+                        });
                         const statusCfg = STATUS_CONFIG[inv.status] || STATUS_CONFIG.pendiente;
                         const StatusIcon = statusCfg.icon;
                         return (
@@ -447,12 +575,10 @@ export default function Usuarios() {
                               </Badge>
                             </td>
                             <td className="p-3 text-xs">
-                              {proj ? (
-                                `${proj.code} - ${proj.name}`
-                              ) : inv.buildreqRole === "administrador_proyecto" ? (
-                                "Todos los proyectos"
-                              ) : (
+                              {assignedProjectLabel === "N/A" ? (
                                 <span className="text-muted-foreground">N/A</span>
+                              ) : (
+                                assignedProjectLabel
                               )}
                             </td>
                             <td className="p-3">
@@ -568,12 +694,8 @@ export default function Usuarios() {
                 value={directRole}
                 onValueChange={(value) => {
                   setDirectRole(value);
-                  if (
-                    !isProjectAssignableRole(value) ||
-                    (!canAssignAllProjects(value) &&
-                      directProject === ALL_PROJECTS_VALUE)
-                  ) {
-                    setDirectProject("");
+                  if (!isProjectAssignableRole(value)) {
+                    setDirectProjectIds([]);
                   }
                 }}
               >
@@ -586,36 +708,20 @@ export default function Usuarios() {
                   <SelectItem value="administracion_central">Administración Central</SelectItem>
                   <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
                   <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
+                  <SelectItem value="superintendente">Superintendente</SelectItem>
                   <SelectItem value="contable">Contable</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             {isProjectAssignableRole(directRole) && (
               <div className="space-y-2">
-                <Label>Proyecto asignado</Label>
-                <Select value={directProject} onValueChange={setDirectProject}>
-                  <SelectTrigger>
-                    <SelectValue
-                      placeholder={
-                        canAssignAllProjects(directRole)
-                          ? "Todos los proyectos"
-                          : "Seleccionar proyecto"
-                      }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {canAssignAllProjects(directRole) ? (
-                      <SelectItem value={ALL_PROJECTS_VALUE}>
-                        Todos los proyectos
-                      </SelectItem>
-                    ) : null}
-                    {(projects || []).map((p: any) => (
-                      <SelectItem key={p.id} value={String(p.id)}>
-                        {p.code} - {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label>Proyectos asignados</Label>
+                <ProjectMultiSelect
+                  role={directRole}
+                  projects={projects || []}
+                  selectedProjectIds={directProjectIds}
+                  onChange={setDirectProjectIds}
+                />
               </div>
             )}
           </div>
@@ -680,12 +786,8 @@ export default function Usuarios() {
                 value={invRole}
                 onValueChange={(value) => {
                   setInvRole(value);
-                  if (
-                    !isProjectAssignableRole(value) ||
-                    (!canAssignAllProjects(value) &&
-                      invProject === ALL_PROJECTS_VALUE)
-                  ) {
-                    setInvProject("");
+                  if (!isProjectAssignableRole(value)) {
+                    setInvProjectIds([]);
                   }
                 }}
               >
@@ -698,36 +800,20 @@ export default function Usuarios() {
                   <SelectItem value="administracion_central">Administración Central</SelectItem>
                   <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
                   <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
+                  <SelectItem value="superintendente">Superintendente</SelectItem>
                   <SelectItem value="contable">Contable</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             {isProjectAssignableRole(invRole) && (
               <div className="space-y-2">
-                <Label>Proyecto asignado</Label>
-                <Select value={invProject} onValueChange={setInvProject}>
-                  <SelectTrigger>
-                    <SelectValue
-                      placeholder={
-                        canAssignAllProjects(invRole)
-                          ? "Todos los proyectos"
-                          : "Seleccionar proyecto"
-                      }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {canAssignAllProjects(invRole) ? (
-                      <SelectItem value={ALL_PROJECTS_VALUE}>
-                        Todos los proyectos
-                      </SelectItem>
-                    ) : null}
-                    {(projects || []).map((p: any) => (
-                      <SelectItem key={p.id} value={String(p.id)}>
-                        {p.code} - {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label>Proyectos asignados</Label>
+                <ProjectMultiSelect
+                  role={invRole}
+                  projects={projects || []}
+                  selectedProjectIds={invProjectIds}
+                  onChange={setInvProjectIds}
+                />
               </div>
             )}
           </div>

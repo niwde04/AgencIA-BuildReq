@@ -10,36 +10,51 @@ const buildreqRoleSchema = z.enum([
   "administracion_central",
   "administrador_proyecto",
   "bodeguero_proyecto",
+  "superintendente",
   "contable",
 ]);
 const projectRequiredRoles = new Set([
   "ingeniero_residente",
   "bodeguero_proyecto",
+  "superintendente",
 ]);
 
-function normalizeAssignedProjectId(
+function normalizeAssignedProjectIds(
   buildreqRole: z.infer<typeof buildreqRoleSchema>,
-  assignedProjectId?: number | null
+  assignedProjectIds?: number[] | null
 ) {
+  const projectIds = Array.from(
+    new Set((assignedProjectIds ?? []).filter(projectId => projectId > 0))
+  );
   if (buildreqRole === "administrador_proyecto") {
-    return assignedProjectId ?? null;
+    return projectIds;
   }
   if (projectRequiredRoles.has(buildreqRole)) {
-    return assignedProjectId ?? null;
+    return projectIds;
   }
-  return null;
+  return [];
 }
 
 function assertRequiredProject(
   buildreqRole: z.infer<typeof buildreqRoleSchema>,
-  assignedProjectId: number | null
+  assignedProjectIds: number[]
 ) {
-  if (projectRequiredRoles.has(buildreqRole) && !assignedProjectId) {
+  if (projectRequiredRoles.has(buildreqRole) && assignedProjectIds.length === 0) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "Debe asignar un proyecto a este rol.",
+      message: "Debe asignar al menos un proyecto a este rol.",
     });
   }
+}
+
+function resolveAssignedProjectIdsInput(input: {
+  assignedProjectId?: number | null;
+  assignedProjectIds?: number[] | null;
+}) {
+  if (Array.isArray(input.assignedProjectIds)) {
+    return input.assignedProjectIds;
+  }
+  return input.assignedProjectId ? [input.assignedProjectId] : [];
 }
 
 export const userManagementRouter = router({
@@ -55,16 +70,17 @@ export const userManagementRouter = router({
         password: z.string().min(8),
         buildreqRole: buildreqRoleSchema,
         assignedProjectId: z.number().int().positive().nullable().optional(),
+        assignedProjectIds: z.array(z.number().int().positive()).optional(),
       })
     )
     .mutation(async ({ input }) => {
       const email = input.email.toLowerCase();
       const name = input.name.trim();
-      const assignedProjectId = normalizeAssignedProjectId(
+      const assignedProjectIds = normalizeAssignedProjectIds(
         input.buildreqRole,
-        input.assignedProjectId
+        resolveAssignedProjectIdsInput(input)
       );
-      assertRequiredProject(input.buildreqRole, assignedProjectId);
+      assertRequiredProject(input.buildreqRole, assignedProjectIds);
 
       const existingUser = await db.getUserByEmail(email);
       if (existingUser) {
@@ -107,7 +123,8 @@ export const userManagementRouter = router({
           loginMethod: "email",
           role: "user",
           buildreqRole: input.buildreqRole,
-          assignedProjectId,
+          assignedProjectId: assignedProjectIds[0] ?? null,
+          assignedProjectIds,
           mustChangePassword: true,
           lastSignedIn: new Date(),
         });
@@ -131,19 +148,21 @@ export const userManagementRouter = router({
         userId: z.number(),
         buildreqRole: buildreqRoleSchema,
         assignedProjectId: z.number().int().positive().nullable().optional(),
+        assignedProjectIds: z.array(z.number().int().positive()).optional(),
       })
     )
     .mutation(async ({ input }) => {
-      const assignedProjectId = normalizeAssignedProjectId(
+      const assignedProjectIds = normalizeAssignedProjectIds(
         input.buildreqRole,
-        input.assignedProjectId
+        resolveAssignedProjectIdsInput(input)
       );
-      assertRequiredProject(input.buildreqRole, assignedProjectId);
+      assertRequiredProject(input.buildreqRole, assignedProjectIds);
 
       return db.updateUserRole(
         input.userId,
         input.buildreqRole,
-        assignedProjectId
+        assignedProjectIds[0] ?? null,
+        assignedProjectIds
       );
     }),
 

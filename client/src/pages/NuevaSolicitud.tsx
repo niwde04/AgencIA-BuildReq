@@ -203,7 +203,13 @@ export default function NuevaSolicitud() {
   );
   const defaultNeededBy = useMemo(() => calculateDefaultNeededBy(), []);
   const userRole = (user as any)?.buildreqRole || "";
-  const assignedProjectId = (user as any)?.assignedProjectId || null;
+  const assignedProjectIds = useMemo(() => {
+    const ids = (user as any)?.assignedProjectIds;
+    if (Array.isArray(ids) && ids.length > 0) {
+      return ids.map(Number).filter((id) => Number.isInteger(id) && id > 0);
+    }
+    return (user as any)?.assignedProjectId ? [(user as any).assignedProjectId] : [];
+  }, [user]);
   const isProjectScopedUser =
     userRole === "ingeniero_residente" ||
     userRole === "administrador_proyecto" ||
@@ -225,12 +231,16 @@ export default function NuevaSolicitud() {
   const [loadedRequestSnapshot, setLoadedRequestSnapshot] = useState<string | null>(null);
   const availableProjects = useMemo(() => {
     const projectList = [...(projects ?? [])].sort(compareProjectsByCode);
-    if (!isProjectScopedUser || !assignedProjectId) {
+    const hasAllProjectAccess =
+      userRole === "administrador_proyecto" && assignedProjectIds.length === 0;
+    if (!isProjectScopedUser || hasAllProjectAccess) {
       return projectList;
     }
 
-    return projectList.filter((project: any) => project.id === assignedProjectId);
-  }, [assignedProjectId, isProjectScopedUser, projects]);
+    return projectList.filter((project: any) =>
+      assignedProjectIds.includes(project.id)
+    );
+  }, [assignedProjectIds, isProjectScopedUser, projects, userRole]);
   const effectiveProjectId =
     isProjectScopedUser && availableProjects.length === 1
       ? String(availableProjects[0].id)

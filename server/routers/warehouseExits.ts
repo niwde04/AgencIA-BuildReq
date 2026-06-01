@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
+import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 function canManageWarehouseExits(user: {
   role: string;
@@ -20,12 +21,13 @@ function assertProjectScopedAccess(
     role: string;
     buildreqRole?: string | null;
     assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
   },
   projectId: number
 ) {
   if (user.role === "admin") return;
   if (user.buildreqRole !== "bodeguero_proyecto") return;
-  if (user.assignedProjectId !== projectId) {
+  if (!canAccessProject(user, projectId)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene acceso a salidas de bodega de otro proyecto",
@@ -38,6 +40,7 @@ async function assertWarehouseExitAccessForMutation(
     role: string;
     buildreqRole?: string | null;
     assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
   },
   id: number
 ) {
@@ -71,15 +74,7 @@ export const warehouseExitsRouter = router({
         });
       }
 
-      const projectId =
-        ctx.user.buildreqRole === "bodeguero_proyecto"
-          ? ctx.user.assignedProjectId ?? -1
-          : input?.projectId;
-
-      return db.listWarehouseExits({
-        ...(input ?? {}),
-        projectId,
-      });
+      return db.listWarehouseExits(applyProjectScope(input ?? {}, ctx.user));
     }),
 
   getById: protectedProcedure

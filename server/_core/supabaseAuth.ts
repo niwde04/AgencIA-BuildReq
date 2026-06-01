@@ -128,6 +128,7 @@ export async function authenticateRequest(req: Request): Promise<User> {
       await db.applyInvitationToUser(user.id, {
         buildreqRole: pendingInvitation.buildreqRole,
         assignedProjectId: pendingInvitation.assignedProjectId,
+        assignedProjectIds: pendingInvitation.assignedProjectIds,
       });
       await db.acceptInvitation(pendingInvitation.id, user.id);
       user = await db.getUserByOpenId(openId);

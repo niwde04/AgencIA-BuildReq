@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
+import { canAccessProject, getProjectScopeIds } from "../projectAccess";
 
 function canAccessTransfers(user: { role: string; buildreqRole?: string | null }) {
   return (
@@ -14,7 +15,12 @@ function canAccessTransfers(user: { role: string; buildreqRole?: string | null }
 }
 
 function assertProjectScopedAccess(
-  user: { role: string; buildreqRole?: string | null; assignedProjectId?: number | null },
+  user: {
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
+  },
   transferRequest: { projectId: number; destinationProjectId?: number | null } | null
 ) {
   if (user.role === "admin") return;
@@ -26,8 +32,8 @@ function assertProjectScopedAccess(
   }
   if (
     !transferRequest ||
-    user.assignedProjectId !== transferRequest.projectId &&
-    user.assignedProjectId !== transferRequest.destinationProjectId
+    (!canAccessProject(user, transferRequest.projectId) &&
+      !canAccessProject(user, transferRequest.destinationProjectId))
   ) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -56,25 +62,11 @@ export const transfersRouter = router({
         });
       }
 
-      const isProjectAdmin = ctx.user.buildreqRole === "administrador_proyecto";
-      const isProjectBodeguero = ctx.user.buildreqRole === "bodeguero_proyecto";
-      const scopedProjectId =
-        isProjectAdmin || isProjectBodeguero
-          ? ctx.user.assignedProjectId ?? -1
-          : undefined;
-      const sourceProjectId =
-        isProjectAdmin && !input?.receivableOnly
-          ? scopedProjectId
-          : input?.sourceProjectId;
-      const destinationProjectId =
-        isProjectBodeguero || (isProjectAdmin && input?.receivableOnly)
-          ? scopedProjectId
-          : input?.destinationProjectId;
+      const scopedProjectIds = getProjectScopeIds(ctx.user);
 
       return db.listTransfers({
         ...(input ?? {}),
-        sourceProjectId,
-        destinationProjectId,
+        ...(scopedProjectIds !== undefined ? { projectIds: scopedProjectIds } : {}),
       });
     }),
 

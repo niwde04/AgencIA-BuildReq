@@ -10,24 +10,39 @@ const buildreqRoleSchema = z.enum([
   "administracion_central",
   "administrador_proyecto",
   "bodeguero_proyecto",
+  "superintendente",
   "contable",
 ]);
 const projectRequiredRoles = new Set([
   "ingeniero_residente",
   "bodeguero_proyecto",
+  "superintendente",
 ]);
 
-function normalizeAssignedProjectId(
+function normalizeAssignedProjectIds(
   buildreqRole: z.infer<typeof buildreqRoleSchema>,
-  assignedProjectId?: number | null
+  assignedProjectIds?: number[] | null
 ) {
+  const projectIds = Array.from(
+    new Set((assignedProjectIds ?? []).filter(projectId => projectId > 0))
+  );
   if (buildreqRole === "administrador_proyecto") {
-    return assignedProjectId ?? null;
+    return projectIds;
   }
   if (projectRequiredRoles.has(buildreqRole)) {
-    return assignedProjectId ?? null;
+    return projectIds;
   }
-  return null;
+  return [];
+}
+
+function resolveAssignedProjectIdsInput(input: {
+  assignedProjectId?: number | null;
+  assignedProjectIds?: number[] | null;
+}) {
+  if (Array.isArray(input.assignedProjectIds)) {
+    return input.assignedProjectIds;
+  }
+  return input.assignedProjectId ? [input.assignedProjectId] : [];
 }
 
 export const invitationsRouter = router({
@@ -44,18 +59,22 @@ export const invitationsRouter = router({
         name: z.string().min(1),
         buildreqRole: buildreqRoleSchema,
         assignedProjectId: z.number().nullable().optional(),
+        assignedProjectIds: z.array(z.number().int().positive()).optional(),
         origin: z.string(), // Frontend passes window.location.origin
       })
     )
     .mutation(async ({ input, ctx }) => {
-      const assignedProjectId = normalizeAssignedProjectId(
+      const assignedProjectIds = normalizeAssignedProjectIds(
         input.buildreqRole,
-        input.assignedProjectId
+        resolveAssignedProjectIdsInput(input)
       );
-      if (projectRequiredRoles.has(input.buildreqRole) && !assignedProjectId) {
+      if (
+        projectRequiredRoles.has(input.buildreqRole) &&
+        assignedProjectIds.length === 0
+      ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "Debe asignar un proyecto a este rol.",
+          message: "Debe asignar al menos un proyecto a este rol.",
         });
       }
 
@@ -68,7 +87,8 @@ export const invitationsRouter = router({
         name: input.name,
         token,
         buildreqRole: input.buildreqRole,
-        assignedProjectId,
+        assignedProjectId: assignedProjectIds[0] ?? null,
+        assignedProjectIds,
         status: "pendiente",
         invitedById: ctx.user.id,
         expiresAt,
@@ -81,19 +101,26 @@ export const invitationsRouter = router({
         administracion_central: "Administración Central",
         administrador_proyecto: "Administración Proyecto",
         bodeguero_proyecto: "Bodega Proyecto",
+        superintendente: "Superintendente",
         contable: "Contable",
       };
       const roleLabel = roleLabels[input.buildreqRole] || input.buildreqRole;
 
       // Get project name if assigned
       let projectInfo = "";
-      if (assignedProjectId) {
-        const project = await db.getProjectById(assignedProjectId);
-        if (project) {
-          projectInfo = `\nProyecto asignado: ${project.code} - ${project.name}`;
+      if (assignedProjectIds.length > 0) {
+        const projects = (
+          await Promise.all(
+            assignedProjectIds.map(projectId => db.getProjectById(projectId))
+          )
+        ).filter(Boolean);
+        if (projects.length > 0) {
+          projectInfo = `\nProyectos asignados: ${projects
+            .map(project => `${project!.code} - ${project!.name}`)
+            .join(", ")}`;
         }
       } else if (input.buildreqRole === "administrador_proyecto") {
-        projectInfo = "\nProyecto asignado: Todos los proyectos";
+        projectInfo = "\nProyectos asignados: Todos los proyectos";
       }
 
       // Return email data for the frontend to trigger via Gmail MCP or show link
@@ -139,6 +166,7 @@ export const invitationsRouter = router({
         administracion_central: "Administración Central",
         administrador_proyecto: "Administración Proyecto",
         bodeguero_proyecto: "Bodega Proyecto",
+        superintendente: "Superintendente",
         contable: "Contable",
       };
       const roleLabel = roleLabels[inv.buildreqRole] || inv.buildreqRole;

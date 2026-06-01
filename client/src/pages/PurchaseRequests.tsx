@@ -591,8 +591,14 @@ export default function PurchaseRequests() {
 
   const convertibleItemIds = useMemo(() => {
     if (!canConvert) return [];
-    const assignedProjectId = (user as any)?.assignedProjectId;
-    const canUseAllProjects = isProjectAdmin && !assignedProjectId;
+    const rawAssignedProjectIds = (user as any)?.assignedProjectIds;
+    const assignedProjectIds =
+      Array.isArray(rawAssignedProjectIds) && rawAssignedProjectIds.length > 0
+        ? rawAssignedProjectIds.map(Number)
+        : (user as any)?.assignedProjectId
+          ? [(user as any).assignedProjectId]
+          : [];
+    const canUseAllProjects = isProjectAdmin && assignedProjectIds.length === 0;
 
     return selectedItems
       .filter((item: any) => {
@@ -601,7 +607,7 @@ export default function PurchaseRequests() {
         if (canUseAllProjects) return true;
         const itemProjectId =
           item.sourceProject?.id ?? detail?.purchaseRequest.projectId;
-        return assignedProjectId === itemProjectId;
+        return assignedProjectIds.includes(itemProjectId);
       })
       .map((item: any) => item.id);
   }, [

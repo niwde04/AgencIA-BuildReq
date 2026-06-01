@@ -360,6 +360,9 @@ function DashboardLayoutContent({
 
   const menuItems = useMemo(() => {
     return allMenuItems.filter((item) => {
+      if (userRole === "superintendente") {
+        return item.path === "/" || item.path === "/solicitudes";
+      }
       if (userRole === "contable") {
         return (
           item.path === "/facturas" ||
@@ -382,6 +385,12 @@ function DashboardLayoutContent({
     location !== "/facturas" &&
     location !== "/impuestos" &&
     location !== "/retenciones";
+  const isSuperintendentAllowedPath =
+    location === "/" ||
+    location === "/solicitudes" ||
+    /^\/solicitudes\/\d+$/.test(location);
+  const shouldRedirectSuperintendent =
+    userRole === "superintendente" && !isSuperintendentAllowedPath;
 
   useEffect(() => {
     if (isCollapsed) setIsResizing(false);
@@ -392,6 +401,12 @@ function DashboardLayoutContent({
       setLocation("/facturas");
     }
   }, [setLocation, shouldRedirectContable]);
+
+  useEffect(() => {
+    if (shouldRedirectSuperintendent) {
+      setLocation(location.startsWith("/solicitudes") ? "/solicitudes" : "/");
+    }
+  }, [location, setLocation, shouldRedirectSuperintendent]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -425,10 +440,11 @@ function DashboardLayoutContent({
     administracion_central: "Administración Central",
     administrador_proyecto: "Administración Proyecto",
     bodeguero_proyecto: "Bodega Proyecto",
+    superintendente: "Superintendente",
     contable: "Contable",
   };
 
-  if (shouldRedirectContable) {
+  if (shouldRedirectContable || shouldRedirectSuperintendent) {
     return null;
   }
 
@@ -551,7 +567,7 @@ function DashboardLayoutContent({
             <div className="shrink-0 bg-sidebar">
               <SidebarSeparator className="my-2" />
 
-              {userRole !== "contable" ? (
+              {userRole !== "contable" && userRole !== "superintendente" ? (
                 <SidebarMenu className="px-2 pb-2">
                   <SidebarMenuItem>
                     <SidebarMenuButton

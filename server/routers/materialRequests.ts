@@ -10,6 +10,7 @@ import {
   PURCHASE_URGENCY_LABELS,
   STANDARD_PURCHASE_LEAD_DAYS,
 } from "@shared/material-requests";
+import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 const requestItemSchema = z.object({
   itemName: z.string().max(500).optional(),
@@ -198,7 +199,13 @@ function resolveMaterialRequestDefaults(input: {
 }
 
 function canAccessRequest(
-  user: { id: number; role: string; buildreqRole?: string | null; assignedProjectId?: number | null },
+  user: {
+    id: number;
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
+  },
   request: { requestedById: number; projectId: number }
 ) {
   if (user.role === "admin") return true;
@@ -206,33 +213,45 @@ function canAccessRequest(
     return request.requestedById === user.id;
   }
   if (user.buildreqRole === "administrador_proyecto") {
-    return Boolean(user.assignedProjectId) && user.assignedProjectId === request.projectId;
+    return canAccessProject(user, request.projectId);
   }
   if (user.buildreqRole === "bodeguero_proyecto") {
-    return Boolean(user.assignedProjectId) && user.assignedProjectId === request.projectId;
+    return canAccessProject(user, request.projectId);
+  }
+  if (user.buildreqRole === "superintendente") {
+    return canAccessProject(user, request.projectId);
   }
   return true;
 }
 
+function assertNotSuperintendentReadOnly(user: { buildreqRole?: string | null }) {
+  if (user.buildreqRole === "superintendente") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "El Superintendente solo puede consultar requisiciones",
+    });
+  }
+}
+
 function assertProjectScopedCreation(
-  user: { role: string; buildreqRole?: string | null; assignedProjectId?: number | null },
+  user: {
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
+  },
   projectId: number
 ) {
   if (user.role === "admin") return;
   if (
     user.buildreqRole !== "ingeniero_residente" &&
     user.buildreqRole !== "administrador_proyecto" &&
-    user.buildreqRole !== "bodeguero_proyecto"
+    user.buildreqRole !== "bodeguero_proyecto" &&
+    user.buildreqRole !== "superintendente"
   ) {
     return;
   }
-  if (!user.assignedProjectId) {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: "No tiene un proyecto asignado",
-    });
-  }
-  if (user.assignedProjectId !== projectId) {
+  if (!canAccessProject(user, projectId)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene acceso a requisiciones de otro proyecto",
@@ -335,7 +354,13 @@ async function resolveRequestItemTargets(
 }
 
 function canEditRequestDraft(
-  user: { id: number; role: string; buildreqRole?: string | null; assignedProjectId?: number | null },
+  user: {
+    id: number;
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
+  },
   detail: Awaited<ReturnType<typeof db.getMaterialRequestById>>
 ) {
   if (!detail) return false;
@@ -344,8 +369,7 @@ function canEditRequestDraft(
   const isAdmin = user.role === "admin";
   const isAssignedProjectAdmin =
     user.buildreqRole === "administrador_proyecto" &&
-    Boolean(user.assignedProjectId) &&
-    user.assignedProjectId === detail.request.projectId;
+    canAccessProject(user, detail.request.projectId);
 
   if (!isOwner && !isAdmin && !isAssignedProjectAdmin) {
     return false;
@@ -459,6 +483,7 @@ export const materialRequestsRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
+      assertNotSuperintendentReadOnly(ctx.user);
       assertProjectScopedCreation(ctx.user, input.projectId);
       return db.listMaterialRequestTargetOptions(input.projectId, input.search);
     }),
@@ -497,22 +522,26 @@ export const materialRequestsRouter = router({
       };
 
       if (user.buildreqRole === "ingeniero_residente") {
+        const filters = applyProjectScope(input ?? {}, user);
         return syncVisibleRows(await db.listMaterialRequests({
-          ...input,
+          ...filters,
           requestedById: user.id,
         }));
       }
       if (user.buildreqRole === "administrador_proyecto") {
-        return syncVisibleRows(await db.listMaterialRequests({
-          ...input,
-          projectId: user.assignedProjectId ?? -1,
-        }));
+        return syncVisibleRows(
+          await db.listMaterialRequests(applyProjectScope(input ?? {}, user))
+        );
       }
       if (user.buildreqRole === "bodeguero_proyecto") {
-        return syncVisibleRows(await db.listMaterialRequests({
-          ...input,
-          projectId: user.assignedProjectId ?? -1,
-        }));
+        return syncVisibleRows(
+          await db.listMaterialRequests(applyProjectScope(input ?? {}, user))
+        );
+      }
+      if (user.buildreqRole === "superintendente") {
+        return syncVisibleRows(
+          await db.listMaterialRequests(applyProjectScope(input ?? {}, user))
+        );
       }
       return syncVisibleRows(await db.listMaterialRequests(input ?? undefined));
     }),
@@ -538,6 +567,7 @@ export const materialRequestsRouter = router({
   create: protectedProcedure
     .input(createMaterialRequestInput)
     .mutation(async ({ ctx, input }) => {
+      assertNotSuperintendentReadOnly(ctx.user);
       const {
         items,
         saveMode: _saveMode,
@@ -603,6 +633,7 @@ export const materialRequestsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      assertNotSuperintendentReadOnly(ctx.user);
       const detail = await db.getMaterialRequestById(input.id);
       if (!detail) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Requisición no encontrada" });
@@ -689,6 +720,7 @@ export const materialRequestsRouter = router({
         })
     )
     .mutation(async ({ ctx, input }) => {
+      assertNotSuperintendentReadOnly(ctx.user);
       if (!canApproveRequestAuthorization(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -832,6 +864,7 @@ export const materialRequestsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      assertNotSuperintendentReadOnly(ctx.user);
       if (
         ctx.user.buildreqRole === "ingeniero_residente" ||
         ctx.user.buildreqRole === "bodeguero_proyecto"
@@ -878,6 +911,7 @@ export const materialRequestsRouter = router({
   approve: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
+      assertNotSuperintendentReadOnly(ctx.user);
       if (!canApproveRequestAuthorization(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -915,6 +949,7 @@ export const materialRequestsRouter = router({
   reject: protectedProcedure
     .input(z.object({ id: z.number(), reason: z.string().min(5) }))
     .mutation(async ({ ctx, input }) => {
+      assertNotSuperintendentReadOnly(ctx.user);
       if (!canApproveRequestAuthorization(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -956,6 +991,7 @@ export const materialRequestsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      assertNotSuperintendentReadOnly(ctx.user);
       if (
         ctx.user.buildreqRole === "ingeniero_residente" ||
         ctx.user.buildreqRole === "administrador_proyecto"
@@ -999,6 +1035,7 @@ export const materialRequestsRouter = router({
   sendToSap: protectedProcedure
     .input(z.object({ requestId: z.number() }))
     .mutation(async ({ ctx, input }) => {
+      assertNotSuperintendentReadOnly(ctx.user);
       if (
         ctx.user.buildreqRole === "ingeniero_residente" ||
         ctx.user.buildreqRole === "bodeguero_proyecto"

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
+import { getProjectScopeIds, hasAllProjectAccess } from "../projectAccess";
 
 export const dashboardRouter = router({
   stats: protectedProcedure.query(async ({ ctx }) => {
@@ -18,18 +19,13 @@ export const dashboardRouter = router({
         recentRequests: [],
       };
     }
-    const scopedProjectId =
-      userRole === "administrador_proyecto" || userRole === "bodeguero_proyecto"
-        ? user.assignedProjectId ?? -1
-        : userRole === "ingeniero_residente"
-          ? user.assignedProjectId ?? undefined
-          : undefined;
+    const scopedProjectIds = getProjectScopeIds(user);
 
     return db.getDashboardStats({
       ...(userRole === "ingeniero_residente"
         ? { requestedById: user.id }
         : {}),
-      ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+      ...(scopedProjectIds !== undefined ? { projectIds: scopedProjectIds } : {}),
     });
   }),
 
@@ -49,14 +45,13 @@ export const dashboardRouter = router({
       };
     }
     const isAdmin = user.role === "admin";
-    const scopedProjectId =
-      userRole === "administrador_proyecto" || userRole === "bodeguero_proyecto"
-        ? user.assignedProjectId ?? -1
-        : undefined;
-    const purchaseProjectId =
-      userRole === "administrador_proyecto"
-        ? (user.assignedProjectId ?? undefined)
-        : scopedProjectId;
+    const scopedProjectIds = getProjectScopeIds(user);
+    const scopedFilters =
+      scopedProjectIds !== undefined ? { projectIds: scopedProjectIds } : {};
+    const purchaseFilters =
+      userRole === "administrador_proyecto" && hasAllProjectAccess(user)
+        ? {}
+        : scopedFilters;
     const canAccessProcurement =
       isAdmin ||
       userRole === "jefe_bodega_central" ||
@@ -75,9 +70,7 @@ export const dashboardRouter = router({
     const flowQueueScope =
       userRole === "ingeniero_residente"
         ? { requestedById: user.id }
-        : scopedProjectId
-          ? { projectId: scopedProjectId }
-          : undefined;
+        : scopedFilters;
     const visibleFlowTypes =
       userRole === "bodeguero_proyecto"
         ? ["despacho_bodega", "compra_directa"]
@@ -110,43 +103,43 @@ export const dashboardRouter = router({
         ...(userRole === "ingeniero_residente"
           ? { requestedById: user.id }
           : {}),
-        ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+        ...scopedFilters,
       }),
       pendingFlowRowsPromise,
       canAccessProcurement
         ? db.listPurchaseRequests({
             status: "pendiente",
-            ...(purchaseProjectId ? { projectId: purchaseProjectId } : {}),
+            ...purchaseFilters,
           })
         : Promise.resolve([]),
       canAccessPurchaseOrders
         ? db.listPurchaseOrders({
             status: "emitida",
-            ...(purchaseProjectId ? { projectId: purchaseProjectId } : {}),
+            ...purchaseFilters,
           })
         : Promise.resolve([]),
       canAccessProcurement
         ? db.listTransferRequests({
             status: "pendiente",
-            ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+            ...scopedFilters,
           })
         : Promise.resolve([]),
       canAccessInvoices
         ? db.listInvoices({
             status: "borrador",
-            ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+            ...scopedFilters,
           })
         : Promise.resolve([]),
       canAccessInvoices
         ? db.listInvoices({
             status: "rechazada",
-            ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+            ...scopedFilters,
           })
         : Promise.resolve([]),
       canAccessReviewedInvoices
         ? db.listInvoices({
             status: "revisada",
-            ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+            ...scopedFilters,
           })
         : Promise.resolve([]),
     ]);

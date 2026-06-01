@@ -207,6 +207,8 @@ const CLEANUP_STATEMENTS = [
   `DELETE FROM "supplyFlowRecords"`,
   `DELETE FROM "requestItems"`,
   `DELETE FROM "materialRequests"`,
+  `DELETE FROM "userProjectAssignments" WHERE "projectId" IN (SELECT "id" FROM "projects" WHERE "demoBatchKey" IS NULL)`,
+  `DELETE FROM "invitationProjectAssignments" WHERE "projectId" IN (SELECT "id" FROM "projects" WHERE "demoBatchKey" IS NULL)`,
   `UPDATE "users" SET "assignedProjectId" = NULL WHERE "assignedProjectId" IN (SELECT "id" FROM "projects" WHERE "demoBatchKey" IS NULL)`,
   `UPDATE "invitations" SET "assignedProjectId" = NULL WHERE "assignedProjectId" IN (SELECT "id" FROM "projects" WHERE "demoBatchKey" IS NULL)`,
   `UPDATE "inventoryItems" SET "currentStock" = '0.00', "updatedAt" = now() WHERE "demoBatchKey" IS NOT NULL`,

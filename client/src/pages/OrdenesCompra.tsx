@@ -3,6 +3,10 @@ import { downloadBase64Document } from "@/lib/document-download";
 import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import {
+  FiscalSummaryCard,
+  PurchaseOrderTaxControls,
+} from "@/components/PurchaseOrderFiscalControls";
+import {
   formatAttachmentSize,
   prepareDocumentAttachment,
   type PreparedDocumentAttachment,
@@ -346,32 +350,6 @@ function formatPrintMoney(value: number | string | null | undefined) {
   });
 }
 
-function FiscalSummaryCard({
-  summary,
-}: {
-  summary: ReturnType<typeof summarizePurchaseOrderLines>;
-}) {
-  const rows = getPurchaseOrderFiscalSummaryRows(summary);
-
-  return (
-    <div className="w-full max-w-[360px] overflow-hidden rounded-xl border border-border bg-background text-sm">
-      {rows.map((row, index) => (
-        <div
-          key={row.key}
-          className={`grid grid-cols-[1fr_auto] items-center border-border ${
-            index > 0 ? "border-t" : ""
-          } ${row.emphasized ? "font-semibold" : ""}`}
-        >
-          <span className="px-3 py-2 text-muted-foreground">{row.label}</span>
-          <span className="px-3 py-2 text-right tabular-nums text-foreground">
-            {formatPrintMoney(row.value)}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function formatPrintDate(value: string | Date | null | undefined) {
   if (!value) return "-";
   const date = value instanceof Date ? value : new Date(value);
@@ -404,6 +382,11 @@ function formatQuantityPayload(value: number | string | null | undefined) {
   return Number.isFinite(parsed) ? parsed.toFixed(2) : "0.00";
 }
 
+function formatMoneyPayload(value: number | string | null | undefined) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed.toFixed(4) : "0.0000";
+}
+
 function areTaxCodeArraysEqual(
   left: string[] | string | null | undefined,
   right: string[] | string | null | undefined
@@ -422,107 +405,6 @@ type PurchaseOrderItemDraft = {
   taxCode: PurchaseOrderTaxCode;
   additionalTaxCodes: string[];
 };
-
-type PurchaseOrderTaxSelectOption = {
-  value: string;
-  label: string;
-  taxCode: PurchaseOrderTaxCode;
-  additionalTaxCodes: string[];
-};
-
-function normalizeTaxOptionCode(value: string | null | undefined) {
-  return String(value ?? "").trim().toLowerCase();
-}
-
-function getTaxOptionOrder(value: number | null | undefined, fallback: number) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function getPurchaseOrderTaxSelectOptions(taxes: SalesTaxCatalogItem[]) {
-  return taxes
-    .filter(tax => tax.isActive !== false)
-    .map((tax, index) => ({
-      ...tax,
-      taxCode: normalizeTaxOptionCode(tax.taxCode),
-      label: tax.description || tax.shortLabel || tax.taxCode,
-      displayOrder: getTaxOptionOrder(tax.displayOrder, index + 1),
-    }))
-    .filter(tax => tax.taxCode)
-    .sort((left, right) => left.displayOrder - right.displayOrder)
-    .map(tax => ({
-      value: tax.taxCode,
-      label: tax.label,
-      taxCode: tax.taxCode,
-      additionalTaxCodes: [],
-    }));
-}
-
-function getSelectedTaxOption(
-  draft: PurchaseOrderItemDraft,
-  options: PurchaseOrderTaxSelectOption[]
-) {
-  const normalizedTaxCode = normalizeTaxOptionCode(draft.taxCode);
-  const additionalTaxCodes = parsePurchaseOrderAdditionalTaxCodes(
-    draft.additionalTaxCodes
-  );
-
-  if (additionalTaxCodes.length === 1) {
-    const additionalOption = options.find(
-      option => option.taxCode === additionalTaxCodes[0]
-    );
-    if (additionalOption) return additionalOption;
-  }
-
-  return (
-    options.find(option => option.taxCode === normalizedTaxCode) ??
-    options[0]
-  );
-}
-
-function PurchaseOrderTaxControls({
-  draft,
-  taxes,
-  disabled,
-  onChange,
-}: {
-  draft: PurchaseOrderItemDraft;
-  taxes: SalesTaxCatalogItem[];
-  disabled?: boolean;
-  onChange: (draft: PurchaseOrderItemDraft) => void;
-}) {
-  const taxOptions = getPurchaseOrderTaxSelectOptions(taxes);
-  const selectedOption = getSelectedTaxOption(draft, taxOptions);
-
-  return (
-    <div className="min-w-0">
-      <Select
-        value={selectedOption?.value ?? ""}
-        onValueChange={value => {
-          const option = taxOptions.find(entry => entry.value === value);
-          if (!option) return;
-          onChange({
-            ...draft,
-            taxCode: option.taxCode,
-            additionalTaxCodes: option.additionalTaxCodes,
-          });
-        }}
-        disabled={disabled}
-      >
-        <SelectTrigger className="h-10 w-full min-w-0 text-sm sm:text-base">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {taxOptions.map(option => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
 
 type ContractDraft = {
   appliesContract: boolean;
@@ -552,7 +434,7 @@ function getDefaultOriginItemDraft(item: any): PurchaseOrderItemDraft {
     quantity: formatQuantityPayload(
       getPurchaseRequestItemPendingConversionQuantity(item)
     ),
-    unitPrice: formatQuantityPayload(item.unitPrice ?? "0.00"),
+    unitPrice: formatMoneyPayload(item.unitPrice ?? "0.00"),
     taxCode,
     additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
       item.additionalTaxCodes,
@@ -1050,8 +932,14 @@ export default function OrdenesCompra() {
     ) {
       return [];
     }
-    const assignedProjectId = (user as any)?.assignedProjectId;
-    const canUseAllProjects = isProjectAdmin && !assignedProjectId;
+    const rawAssignedProjectIds = (user as any)?.assignedProjectIds;
+    const assignedProjectIds =
+      Array.isArray(rawAssignedProjectIds) && rawAssignedProjectIds.length > 0
+        ? rawAssignedProjectIds.map(Number)
+        : (user as any)?.assignedProjectId
+          ? [(user as any).assignedProjectId]
+          : [];
+    const canUseAllProjects = isProjectAdmin && assignedProjectIds.length === 0;
 
     return selectedOriginAllItems.filter((item: any) => {
       if (getPurchaseRequestItemPendingConversionQuantity(item) <= 0) {
@@ -1062,7 +950,7 @@ export default function OrdenesCompra() {
       if (canUseAllProjects) return true;
       const itemProjectId =
         item.sourceProject?.id ?? selectedOriginDetail.purchaseRequest.projectId;
-      return assignedProjectId === itemProjectId;
+      return assignedProjectIds.includes(itemProjectId);
     });
   }, [isProjectAdmin, selectedOriginAllItems, selectedOriginDetail, user]);
   const getOriginItemDraft = (item: any): PurchaseOrderItemDraft =>
@@ -1074,7 +962,7 @@ export default function OrdenesCompra() {
         return {
           purchaseRequestItemId: item.id,
           quantity: formatQuantityPayload(draft.quantity),
-          unitPrice: formatQuantityPayload(draft.unitPrice),
+          unitPrice: formatMoneyPayload(draft.unitPrice),
           taxCode: draft.taxCode,
           additionalTaxCodes: draft.additionalTaxCodes,
         };
@@ -3171,7 +3059,7 @@ export default function OrdenesCompra() {
                               <Input
                                 type="number"
                                 min="0"
-                                step="0.01"
+                                step="0.0001"
                                 value={draft.unitPrice}
                                 onChange={event =>
                                   setOriginItemDrafts(current => ({
@@ -3689,7 +3577,7 @@ export default function OrdenesCompra() {
                               <Input
                                 type="number"
                                 min="0"
-                                step="0.01"
+                                step="0.0001"
                                 value={draft.unitPrice}
                                 onChange={event => {
                                   const nextDraft = {

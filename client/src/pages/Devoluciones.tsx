@@ -360,12 +360,12 @@ export default function Devoluciones() {
               <div class="value">${escapeHtml(formatDate(selectedReturn.processedAt))}</div>
             </div>
             <div class="box">
-              <div class="label">CAI</div>
-              <div class="value">${escapeHtml(sourceReceipt?.cai || "-")}</div>
-            </div>
-            <div class="box">
               <div class="label">Número documento</div>
               <div class="value">${escapeHtml(sourceDocumentNumber)}</div>
+            </div>
+            <div class="box">
+              <div class="label">CAI</div>
+              <div class="value">${escapeHtml(sourceReceipt?.cai || "-")}</div>
             </div>
             <div class="box">
               <div class="label">Fecha documento</div>
@@ -691,20 +691,20 @@ export default function Devoluciones() {
               <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
                 <div className="rounded-lg border border-border p-4">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    CAI
-                  </p>
-                  <p className="mt-2 text-sm font-medium">
-                    {sourceReceipt?.cai || "-"}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Número documento
                   </p>
                   <p className="mt-2 text-sm font-medium">
                     {sourceReceipt?.invoiceNumber ||
                       selectedReturn.sapDocumentNumber ||
                       "-"}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    CAI
+                  </p>
+                  <p className="mt-2 text-sm font-medium">
+                    {sourceReceipt?.cai || "-"}
                   </p>
                 </div>
                 <div className="rounded-lg border border-border p-4">

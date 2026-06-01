@@ -8,12 +8,15 @@ import {
   formatCaiInput,
   formatInvoiceNumberInput,
   isValidCai,
+  isFiscalInvoiceRangeOrdered,
+  isInvoiceNumberWithinFiscalRange,
   isValidInvoiceNumber,
 } from "@shared/invoices";
 import {
   ASSET_CONDITION_VALUES,
   normalizeFixedAssetDetails,
 } from "@shared/fixed-assets";
+import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 function canAccessInvoices(user: { role: string; buildreqRole?: string | null }) {
   return (
@@ -49,7 +52,8 @@ function canAccessReviewedInvoices(user: {
   return (
     user.role === "admin" ||
     user.buildreqRole === "contable" ||
-    user.buildreqRole === "administracion_central"
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto"
   );
 }
 
@@ -58,6 +62,7 @@ function assertProjectScopedAccess(
     role: string;
     buildreqRole?: string | null;
     assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
   },
   projectId: number
 ) {
@@ -68,7 +73,7 @@ function assertProjectScopedAccess(
   ) {
     return;
   }
-  if (user.assignedProjectId !== projectId) {
+  if (!canAccessProject(user, projectId)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene acceso a facturas de otro proyecto",
@@ -172,6 +177,29 @@ function assertInvoiceReadyForReview(
         message: `El rango autorizado final debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
       });
     }
+    if (
+      !isFiscalInvoiceRangeOrdered({
+        documentRangeStart: invoice.documentRangeStart,
+        documentRangeEnd: invoice.documentRangeEnd,
+      })
+    ) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "El rango autorizado final debe ser mayor o igual al inicial",
+      });
+    }
+    if (
+      !isInvoiceNumberWithinFiscalRange({
+        invoiceNumber: invoice.invoiceNumber,
+        documentRangeStart: invoice.documentRangeStart,
+        documentRangeEnd: invoice.documentRangeEnd,
+      })
+    ) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "El número documento debe estar dentro del rango autorizado",
+      });
+    }
     if (!invoice.documentDueDate) {
       throw new TRPCError({
         code: "BAD_REQUEST",
@@ -179,6 +207,22 @@ function assertInvoiceReadyForReview(
           "Seleccione la fecha de vencimiento del documento antes de enviar a revisión",
       });
     }
+    if (!invoice.emissionDeadline) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Seleccione la fecha límite de emisión antes de enviar a revisión",
+      });
+    }
+  }
+  if (
+    (detail.retentions?.length ?? 0) > 0 &&
+    !invoice.retentionReceiptNumber?.trim()
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "Ingrese el número de comprobante de retención antes de enviar a revisión",
+    });
   }
 }
 
@@ -248,11 +292,6 @@ export const invoicesRouter = router({
         });
       }
 
-      const projectId =
-        ctx.user.buildreqRole === "administrador_proyecto" ||
-        ctx.user.buildreqRole === "bodeguero_proyecto"
-          ? ctx.user.assignedProjectId ?? -1
-          : input?.projectId;
       const accountantStatuses = ["revisada", "registrada"];
       const status =
         ctx.user.buildreqRole === "contable" &&
@@ -274,13 +313,12 @@ export const invoicesRouter = router({
         return [];
       }
 
-      return db.listInvoices({
+      return db.listInvoices(applyProjectScope({
         ...input,
-        projectId,
         status,
         statuses,
         excludeStatus,
-      });
+      }, ctx.user));
     }),
 
   getById: protectedProcedure
@@ -305,6 +343,47 @@ export const invoicesRouter = router({
       return detail;
     }),
 
+  lookupFiscalDocumentRange: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        invoiceNumber: z.string().trim().max(100),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canEditInvoices(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para editar facturas",
+        });
+      }
+
+      const detail = await db.getInvoiceById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Factura no encontrada",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.invoice.projectId);
+      assertInvoiceDraft(detail);
+
+      if (!isValidInvoiceNumber(input.invoiceNumber)) return null;
+
+      const range = await db.lookupSupplierFiscalDocumentRange({
+        invoiceId: input.id,
+        invoiceNumber: formatInvoiceNumberInput(input.invoiceNumber),
+      });
+      if (!range) return null;
+
+      return {
+        cai: range.cai,
+        documentRangeStart: range.documentRangeStart,
+        documentRangeEnd: range.documentRangeEnd,
+        emissionDeadline: range.emissionDeadline,
+      };
+    }),
+
   update: protectedProcedure
     .input(
       z
@@ -320,6 +399,7 @@ export const invoicesRouter = router({
           postingDate: z.string(),
           receiptDate: z.string(),
           emissionDeadline: z.string().optional(),
+          retentionReceiptNumber: z.string().trim().max(100).optional(),
           notes: z.string().trim().max(2000).optional(),
         })
         .superRefine((value, ctx) => {
@@ -378,11 +458,59 @@ export const invoicesRouter = router({
               message: `El rango autorizado final debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
             });
           }
+          if (
+            value.documentRangeStart?.trim() &&
+            value.documentRangeEnd?.trim() &&
+            isValidInvoiceNumber(value.documentRangeStart) &&
+            isValidInvoiceNumber(value.documentRangeEnd) &&
+            !isFiscalInvoiceRangeOrdered({
+              documentRangeStart: value.documentRangeStart,
+              documentRangeEnd: value.documentRangeEnd,
+            })
+          ) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["documentRangeEnd"],
+              message:
+                "El rango autorizado final debe ser mayor o igual al inicial",
+            });
+          }
+          if (
+            value.invoiceNumber?.trim() &&
+            value.documentRangeStart?.trim() &&
+            value.documentRangeEnd?.trim() &&
+            isValidInvoiceNumber(value.invoiceNumber) &&
+            isValidInvoiceNumber(value.documentRangeStart) &&
+            isValidInvoiceNumber(value.documentRangeEnd) &&
+            isFiscalInvoiceRangeOrdered({
+              documentRangeStart: value.documentRangeStart,
+              documentRangeEnd: value.documentRangeEnd,
+            }) &&
+            !isInvoiceNumberWithinFiscalRange({
+              invoiceNumber: value.invoiceNumber,
+              documentRangeStart: value.documentRangeStart,
+              documentRangeEnd: value.documentRangeEnd,
+            })
+          ) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["invoiceNumber"],
+              message:
+                "El número documento debe estar dentro del rango autorizado",
+            });
+          }
           if (!value.documentDueDate) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               path: ["documentDueDate"],
               message: "Seleccione la fecha de vencimiento del documento",
+            });
+          }
+          if (!value.emissionDeadline) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["emissionDeadline"],
+              message: "Seleccione la fecha límite de emisión",
             });
           }
         })
@@ -406,6 +534,15 @@ export const invoicesRouter = router({
       assertInvoiceDraft(detail);
 
       const isFiscalDocument = input.isFiscalDocument !== false;
+      const retentionReceiptNumber =
+        input.retentionReceiptNumber?.trim() || null;
+      if ((detail.retentions?.length ?? 0) > 0 && !retentionReceiptNumber) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Ingrese el número de comprobante de retención para esta factura",
+        });
+      }
 
       return db.updateInvoice(input.id, {
         isFiscalDocument,
@@ -437,6 +574,7 @@ export const invoicesRouter = router({
           parseDateInput(input.emissionDeadline) ??
           parseDateInput(input.postingDate) ??
           new Date(),
+        retentionReceiptNumber,
         notes: input.notes?.trim() || null,
       });
     }),
@@ -540,6 +678,7 @@ export const invoicesRouter = router({
       z.object({
         id: z.number(),
         retentions: z.array(invoiceRetentionSchema),
+        retentionReceiptNumber: z.string().trim().max(100).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -559,9 +698,26 @@ export const invoicesRouter = router({
       }
       assertProjectScopedAccess(ctx.user, detail.invoice.projectId);
       assertInvoiceDraft(detail);
+      if (
+        input.retentions.length > 0 &&
+        !(
+          input.retentionReceiptNumber?.trim() ||
+          detail.invoice.retentionReceiptNumber?.trim()
+        )
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Ingrese el número de comprobante de retención para guardar retenciones",
+        });
+      }
 
       try {
-        return await db.replaceInvoiceRetentions(input.id, input.retentions);
+        return await db.replaceInvoiceRetentions(
+          input.id,
+          input.retentions,
+          input.retentionReceiptNumber
+        );
       } catch (error) {
         throw new TRPCError({
           code: "BAD_REQUEST",

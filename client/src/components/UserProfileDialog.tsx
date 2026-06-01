@@ -21,6 +21,8 @@ type ProfileUser = {
   role: string;
   buildreqRole?: string | null;
   assignedProjectId?: number | null;
+  assignedProjectIds?: number[] | null;
+  assignedProjects?: Array<{ id: number; code: string; name: string }>;
 };
 
 type UserProfileDialogProps = {
@@ -36,6 +38,7 @@ const roleLabels: Record<string, string> = {
   administracion_central: "Administración Central",
   administrador_proyecto: "Administración Proyecto",
   bodeguero_proyecto: "Bodega Proyecto",
+  superintendente: "Superintendente",
   contable: "Contable",
 };
 
@@ -56,14 +59,6 @@ export function UserProfileDialog({
     }
   }, [open, user?.name]);
 
-  const { data: assignedProject } = trpc.projects.getById.useQuery(
-    { id: user?.assignedProjectId ?? 0 },
-    {
-      enabled: open && Boolean(user?.assignedProjectId),
-      retry: false,
-    }
-  );
-
   const updateProfileMutation = trpc.userManagement.updateProfileName.useMutation({
     onSuccess: () => {
       toast.success("Perfil actualizado");
@@ -83,13 +78,35 @@ export function UserProfileDialog({
     ? roleLabels[user.buildreqRole] ?? user.buildreqRole
     : "Sin rol asignado";
   const projectLabel = useMemo(() => {
-    if (user?.buildreqRole === "administrador_proyecto" && !user.assignedProjectId) {
+    const assignedProjectIds =
+      Array.isArray(user?.assignedProjectIds) && user.assignedProjectIds.length > 0
+        ? user.assignedProjectIds
+        : user?.assignedProjectId
+          ? [user.assignedProjectId]
+          : [];
+    const assignedProjects = user?.assignedProjects ?? [];
+
+    if (
+      user?.buildreqRole === "administrador_proyecto" &&
+      assignedProjectIds.length === 0
+    ) {
       return "Todos los proyectos";
     }
-    if (!user?.assignedProjectId) return "N/A";
-    if (!assignedProject) return `Proyecto #${user.assignedProjectId}`;
-    return `${assignedProject.code} - ${assignedProject.name}`;
-  }, [assignedProject, user?.assignedProjectId, user?.buildreqRole]);
+    if (assignedProjects.length > 0) {
+      return assignedProjects
+        .map((project) => `${project.code} - ${project.name}`)
+        .join(", ");
+    }
+    if (assignedProjectIds.length > 0) {
+      return assignedProjectIds.map((projectId) => `Proyecto #${projectId}`).join(", ");
+    }
+    return "N/A";
+  }, [
+    user?.assignedProjectId,
+    user?.assignedProjectIds,
+    user?.assignedProjects,
+    user?.buildreqRole,
+  ]);
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -149,7 +166,7 @@ export function UserProfileDialog({
               </div>
             </div>
             <div className="space-y-1">
-              <Label>Proyecto asignado</Label>
+              <Label>Proyectos asignados</Label>
               <div className="border border-border bg-muted/30 px-3 py-2 text-muted-foreground">
                 {projectLabel}
               </div>

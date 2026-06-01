@@ -27,6 +27,7 @@ export const buildreqRoleEnum = pgEnum("buildreq_role", [
   "administracion_central",
   "administrador_proyecto",
   "bodeguero_proyecto",
+  "superintendente",
   "contable",
 ]);
 export const projectStatusEnum = pgEnum("project_status", [
@@ -333,6 +334,33 @@ export const projects = pgTable(
 
 export type Project = typeof projects.$inferSelect;
 export type InsertProject = typeof projects.$inferInsert;
+
+export const userProjectAssignments = pgTable(
+  "userProjectAssignments",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectId: integer("projectId")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => ({
+    userIdx: index("upa_user_idx").on(table.userId),
+    projectIdx: index("upa_project_idx").on(table.projectId),
+    userProjectUnique: uniqueIndex("upa_user_project_unique").on(
+      table.userId,
+      table.projectId
+    ),
+  })
+);
+
+export type UserProjectAssignment =
+  typeof userProjectAssignments.$inferSelect;
+export type InsertUserProjectAssignment =
+  typeof userProjectAssignments.$inferInsert;
 
 // ============================================================
 // PROJECT SUBPROJECTS - Informational child phases/work fronts
@@ -728,8 +756,8 @@ export const purchaseOrderItems = pgTable(
     quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull(),
     receivedQuantity: decimal("receivedQuantity", { precision: 12, scale: 2 }),
     unit: varchar("unit", { length: 50 }),
-    unitPrice: decimal("unitPrice", { precision: 12, scale: 2 })
-      .default("0.00")
+    unitPrice: decimal("unitPrice", { precision: 14, scale: 4 })
+      .default("0.0000")
       .notNull(),
     taxCode: varchar("taxCode", { length: 50 }).default("exe").notNull(),
     additionalTaxCodes: jsonb("additionalTaxCodes")
@@ -930,7 +958,8 @@ export const receiptItems = pgTable(
   {
     id: serial("id").primaryKey(),
     receiptId: integer("receiptId").notNull(),
-    sourceItemId: integer("sourceItemId").notNull(),
+    sourceItemId: integer("sourceItemId"),
+    sapItemCode: varchar("sapItemCode", { length: 50 }),
     warehouseId: integer("warehouseId").references(() => warehouses.id, {
       onDelete: "set null",
     }),
@@ -944,9 +973,36 @@ export const receiptItems = pgTable(
       scale: 2,
     }).notNull(),
     unit: varchar("unit", { length: 50 }),
-    unitPrice: decimal("unitPrice", { precision: 12, scale: 2 })
-      .default("0.00")
+    unitPrice: decimal("unitPrice", { precision: 14, scale: 4 })
+      .default("0.0000")
       .notNull(),
+    taxCode: varchar("taxCode", { length: 50 }).default("exe").notNull(),
+    additionalTaxCodes: jsonb("additionalTaxCodes")
+      .$type<string[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    taxBreakdown: jsonb("taxBreakdown")
+      .$type<PurchaseOrderTaxBreakdownEntry[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    subtotal: decimal("subtotal", { precision: 14, scale: 4 })
+      .default("0.0000")
+      .notNull(),
+    taxAmount: decimal("taxAmount", { precision: 14, scale: 4 })
+      .default("0.0000")
+      .notNull(),
+    total: decimal("total", { precision: 14, scale: 4 })
+      .default("0.0000")
+      .notNull(),
+    targetType: materialRequestTargetTypeEnum("targetType"),
+    subProjectId: integer("subProjectId").references(
+      () => projectSubprojects.id,
+      {
+        onDelete: "set null",
+      }
+    ),
+    fixedAssetSapItemCode: varchar("fixedAssetSapItemCode", { length: 50 }),
+    fixedAssetName: varchar("fixedAssetName", { length: 500 }),
     isFixedAsset: boolean("isFixedAsset").default(false).notNull(),
     isLeasing: boolean("isLeasing").default(false).notNull(),
     assetDetails: jsonb("assetDetails")
@@ -958,12 +1014,35 @@ export const receiptItems = pgTable(
   },
   table => ({
     receiptIdx: index("reci_receipt_idx").on(table.receiptId),
+    sapItemIdx: index("reci_sap_item_idx").on(table.sapItemCode),
     warehouseIdx: index("reci_warehouse_idx").on(table.warehouseId),
+    subProjectIdx: index("reci_subproject_idx").on(table.subProjectId),
+    fixedAssetIdx: index("reci_fixed_asset_idx").on(table.fixedAssetSapItemCode),
   })
 );
 
 export type ReceiptItem = typeof receiptItems.$inferSelect;
 export type InsertReceiptItem = typeof receiptItems.$inferInsert;
+
+export const receiptOtherCharges = pgTable(
+  "receiptOtherCharges",
+  {
+    id: serial("id").primaryKey(),
+    receiptId: integer("receiptId").notNull(),
+    concept: varchar("concept", { length: 255 }).notNull(),
+    amount: decimal("amount", { precision: 14, scale: 4 })
+      .default("0.0000")
+      .notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => ({
+    receiptIdx: index("recoc_receipt_idx").on(table.receiptId),
+  })
+);
+
+export type ReceiptOtherCharge = typeof receiptOtherCharges.$inferSelect;
+export type InsertReceiptOtherCharge =
+  typeof receiptOtherCharges.$inferInsert;
 
 // ============================================================
 // INVOICES
@@ -992,21 +1071,22 @@ export const invoices = pgTable(
     postingDate: timestamp("postingDate").notNull(),
     receiptDate: timestamp("receiptDate").notNull(),
     emissionDeadline: timestamp("emissionDeadline").notNull(),
+    retentionReceiptNumber: varchar("retentionReceiptNumber", { length: 100 }),
     notes: text("notes"),
-    subtotal: decimal("subtotal", { precision: 12, scale: 2 })
-      .default("0.00")
+    subtotal: decimal("subtotal", { precision: 14, scale: 4 })
+      .default("0.0000")
       .notNull(),
-    taxAmount: decimal("taxAmount", { precision: 12, scale: 2 })
-      .default("0.00")
+    taxAmount: decimal("taxAmount", { precision: 14, scale: 4 })
+      .default("0.0000")
       .notNull(),
-    total: decimal("total", { precision: 12, scale: 2 })
-      .default("0.00")
+    total: decimal("total", { precision: 14, scale: 4 })
+      .default("0.0000")
       .notNull(),
-    retentionTotal: decimal("retentionTotal", { precision: 12, scale: 2 })
-      .default("0.00")
+    retentionTotal: decimal("retentionTotal", { precision: 14, scale: 4 })
+      .default("0.0000")
       .notNull(),
-    netPayable: decimal("netPayable", { precision: 12, scale: 2 })
-      .default("0.00")
+    netPayable: decimal("netPayable", { precision: 14, scale: 4 })
+      .default("0.0000")
       .notNull(),
     reviewedById: integer("reviewedById"),
     reviewedAt: timestamp("reviewedAt"),
@@ -1037,14 +1117,14 @@ export const invoiceItems = pgTable(
     id: serial("id").primaryKey(),
     invoiceId: integer("invoiceId").notNull(),
     receiptItemId: integer("receiptItemId").notNull(),
-    purchaseOrderItemId: integer("purchaseOrderItemId").notNull(),
+    purchaseOrderItemId: integer("purchaseOrderItemId"),
     itemName: varchar("itemName", { length: 500 }).notNull(),
     currentSapItemCode: varchar("currentSapItemCode", { length: 50 }),
     originalSapItemCode: varchar("originalSapItemCode", { length: 50 }),
     quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull(),
     unit: varchar("unit", { length: 50 }),
-    unitPrice: decimal("unitPrice", { precision: 12, scale: 2 })
-      .default("0.00")
+    unitPrice: decimal("unitPrice", { precision: 14, scale: 4 })
+      .default("0.0000")
       .notNull(),
     taxCode: varchar("taxCode", { length: 50 }).default("exe").notNull(),
     additionalTaxCodes: jsonb("additionalTaxCodes")
@@ -1061,19 +1141,28 @@ export const invoiceItems = pgTable(
     allowsTaxWithholding: boolean("allowsTaxWithholding")
       .default(true)
       .notNull(),
-    subtotal: decimal("subtotal", { precision: 12, scale: 2 })
-      .default("0.00")
+    subtotal: decimal("subtotal", { precision: 14, scale: 4 })
+      .default("0.0000")
       .notNull(),
-    taxAmount: decimal("taxAmount", { precision: 12, scale: 2 })
-      .default("0.00")
+    taxAmount: decimal("taxAmount", { precision: 14, scale: 4 })
+      .default("0.0000")
       .notNull(),
-    total: decimal("total", { precision: 12, scale: 2 })
-      .default("0.00")
+    total: decimal("total", { precision: 14, scale: 4 })
+      .default("0.0000")
       .notNull(),
     taxBreakdown: jsonb("taxBreakdown")
       .$type<PurchaseOrderTaxBreakdownEntry[]>()
       .default(sql`'[]'::jsonb`)
       .notNull(),
+    targetType: materialRequestTargetTypeEnum("targetType"),
+    subProjectId: integer("subProjectId").references(
+      () => projectSubprojects.id,
+      {
+        onDelete: "set null",
+      }
+    ),
+    fixedAssetSapItemCode: varchar("fixedAssetSapItemCode", { length: 50 }),
+    fixedAssetName: varchar("fixedAssetName", { length: 500 }),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   table => ({
@@ -1084,11 +1173,37 @@ export const invoiceItems = pgTable(
     purchaseOrderItemIdx: index("invi_purchase_order_item_idx").on(
       table.purchaseOrderItemId
     ),
+    subProjectIdx: index("invi_subproject_idx").on(table.subProjectId),
+    fixedAssetIdx: index("invi_fixed_asset_idx").on(table.fixedAssetSapItemCode),
   })
 );
 
 export type InvoiceItem = typeof invoiceItems.$inferSelect;
 export type InsertInvoiceItem = typeof invoiceItems.$inferInsert;
+
+export const invoiceOtherCharges = pgTable(
+  "invoiceOtherCharges",
+  {
+    id: serial("id").primaryKey(),
+    invoiceId: integer("invoiceId").notNull(),
+    receiptOtherChargeId: integer("receiptOtherChargeId"),
+    concept: varchar("concept", { length: 255 }).notNull(),
+    amount: decimal("amount", { precision: 14, scale: 4 })
+      .default("0.0000")
+      .notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => ({
+    invoiceIdx: index("invoc_invoice_idx").on(table.invoiceId),
+    receiptOtherChargeIdx: index("invoc_receipt_other_charge_idx").on(
+      table.receiptOtherChargeId
+    ),
+  })
+);
+
+export type InvoiceOtherCharge = typeof invoiceOtherCharges.$inferSelect;
+export type InsertInvoiceOtherCharge =
+  typeof invoiceOtherCharges.$inferInsert;
 
 export const salesTaxes = pgTable(
   "salesTaxes",
@@ -1161,11 +1276,11 @@ export const invoiceRetentions = pgTable(
     retentionErpCode: varchar("retentionErpCode", { length: 50 }),
     retentionType: invoiceRetentionTypeEnum("retentionType").notNull(),
     description: varchar("description", { length: 200 }).notNull(),
-    baseAmount: decimal("baseAmount", { precision: 12, scale: 2 })
-      .default("0.00")
+    baseAmount: decimal("baseAmount", { precision: 14, scale: 4 })
+      .default("0.0000")
       .notNull(),
     percentage: decimal("percentage", { precision: 8, scale: 4 }),
-    amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+    amount: decimal("amount", { precision: 14, scale: 4 }).notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
@@ -1202,6 +1317,7 @@ export const warehouseExits = pgTable(
     emittedAt: timestamp("emittedAt"),
     cancelledAt: timestamp("cancelledAt"),
     cancellationReason: text("cancellationReason"),
+    receivedByName: varchar("receivedByName", { length: 255 }),
     notes: text("notes"),
     printedDocumentName: varchar("printedDocumentName", { length: 255 }),
     printedDocumentMimeType: varchar("printedDocumentMimeType", {
@@ -1239,6 +1355,15 @@ export const warehouseExitItems = pgTable(
     itemName: varchar("itemName", { length: 500 }).notNull(),
     quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull(),
     unit: varchar("unit", { length: 50 }),
+    targetType: materialRequestTargetTypeEnum("targetType"),
+    subProjectId: integer("subProjectId").references(
+      () => projectSubprojects.id,
+      {
+        onDelete: "set null",
+      }
+    ),
+    fixedAssetSapItemCode: varchar("fixedAssetSapItemCode", { length: 50 }),
+    fixedAssetName: varchar("fixedAssetName", { length: 500 }),
     notes: text("notes"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
@@ -1246,6 +1371,7 @@ export const warehouseExitItems = pgTable(
   table => ({
     warehouseExitIdx: index("wei_warehouse_exit_idx").on(table.warehouseExitId),
     warehouseIdx: index("wei_warehouse_idx").on(table.warehouseId),
+    subProjectIdx: index("wei_sub_project_idx").on(table.subProjectId),
     requestItemIdx: index("wei_request_item_idx").on(
       table.materialRequestItemId
     ),
@@ -1563,6 +1689,33 @@ export const invitations = pgTable(
 export type Invitation = typeof invitations.$inferSelect;
 export type InsertInvitation = typeof invitations.$inferInsert;
 
+export const invitationProjectAssignments = pgTable(
+  "invitationProjectAssignments",
+  {
+    id: serial("id").primaryKey(),
+    invitationId: integer("invitationId")
+      .notNull()
+      .references(() => invitations.id, { onDelete: "cascade" }),
+    projectId: integer("projectId")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => ({
+    invitationIdx: index("ipa_invitation_idx").on(table.invitationId),
+    projectIdx: index("ipa_project_idx").on(table.projectId),
+    invitationProjectUnique: uniqueIndex("ipa_invitation_project_unique").on(
+      table.invitationId,
+      table.projectId
+    ),
+  })
+);
+
+export type InvitationProjectAssignment =
+  typeof invitationProjectAssignments.$inferSelect;
+export type InsertInvitationProjectAssignment =
+  typeof invitationProjectAssignments.$inferInsert;
+
 // ============================================================
 // SAP CATALOG - Master catalog of SAP items for autocomplete
 // ============================================================
@@ -1657,6 +1810,59 @@ export const suppliers = pgTable(
 
 export type Supplier = typeof suppliers.$inferSelect;
 export type InsertSupplier = typeof suppliers.$inferInsert;
+
+export const supplierFiscalDocumentRanges = pgTable(
+  "supplierFiscalDocumentRanges",
+  {
+    id: serial("id").primaryKey(),
+    supplierId: integer("supplierId").references(() => suppliers.id, {
+      onDelete: "set null",
+    }),
+    supplierRtn: varchar("supplierRtn", { length: 50 }).notNull(),
+    supplierRtnNormalized: varchar("supplierRtnNormalized", {
+      length: 50,
+    }).notNull(),
+    cai: varchar("cai", { length: 100 }).notNull(),
+    documentRangeStart: varchar("documentRangeStart", {
+      length: 100,
+    }).notNull(),
+    documentRangeEnd: varchar("documentRangeEnd", { length: 100 }).notNull(),
+    documentRangeStartKey: varchar("documentRangeStartKey", {
+      length: 32,
+    }).notNull(),
+    documentRangeEndKey: varchar("documentRangeEndKey", {
+      length: 32,
+    }).notNull(),
+    emissionDeadline: timestamp("emissionDeadline").notNull(),
+    sourceInvoiceId: integer("sourceInvoiceId").references(() => invoices.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    supplierIdx: index("sup_fiscal_range_supplier_idx").on(table.supplierId),
+    lookupIdx: index("sup_fiscal_range_lookup_idx").on(
+      table.supplierRtnNormalized,
+      table.documentRangeStartKey,
+      table.documentRangeEndKey
+    ),
+    sourceInvoiceIdx: index("sup_fiscal_range_source_invoice_idx").on(
+      table.sourceInvoiceId
+    ),
+    uniqueRangeIdx: uniqueIndex("sup_fiscal_range_unique_idx").on(
+      table.supplierRtnNormalized,
+      table.cai,
+      table.documentRangeStartKey,
+      table.documentRangeEndKey
+    ),
+  })
+);
+
+export type SupplierFiscalDocumentRange =
+  typeof supplierFiscalDocumentRanges.$inferSelect;
+export type InsertSupplierFiscalDocumentRange =
+  typeof supplierFiscalDocumentRanges.$inferInsert;
 
 export const supplierContacts = pgTable(
   "supplierContacts",
