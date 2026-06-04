@@ -178,7 +178,7 @@ export default function Articulos() {
     canManage && !isResolvingSelectedArticle
   );
   const canEditSelectedFixedAssetDetails = Boolean(
-    selectedArticle?.temporaryItemCode && canResolveFixedAssets
+    selectedArticle?.tipoArticulo === 3 && canResolveFixedAssets
   );
 
   useEffect(() => {
@@ -330,7 +330,11 @@ export default function Articulos() {
   };
 
   const submitFixedAssetDetails = () => {
-    if (!selectedArticle?.temporaryItemCode) return;
+    if (!selectedArticle) return;
+    if (selectedArticle.tipoArticulo !== 3) {
+      toast.error("El artículo no es un activo fijo");
+      return;
+    }
     if (!canEditSelectedFixedAssetDetails) {
       toast.error("No tiene permisos para editar datos del activo fijo");
       return;
@@ -538,7 +542,7 @@ export default function Articulos() {
                       const canOpenArticle =
                         canManage ||
                         (canResolveFixedAssets &&
-                          Boolean(article.temporaryItemCode));
+                          article.tipoArticulo === 3);
                       return (
                       <tr
                         key={article.id}
@@ -814,7 +818,7 @@ export default function Articulos() {
                 </div>
               ) : null}
 
-              {selectedArticle.temporaryItemCode ? (
+              {editType === 3 ? (
                 <div className="space-y-4 rounded-md border p-4 text-sm">
                   <div className="flex flex-col gap-3 border-b pb-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>

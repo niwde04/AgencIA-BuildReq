@@ -12396,8 +12396,8 @@ export async function updateFixedAssetArticleDetails(params: {
     if (!article) {
       throw new Error("Artículo no encontrado");
     }
-    if (article.tipoArticulo !== 3 || !article.temporaryItemCode) {
-      throw new Error("El artículo no es un activo fijo temporal");
+    if (article.tipoArticulo !== 3) {
+      throw new Error("El artículo no es un activo fijo");
     }
 
     const [updatedArticle] = await tx
