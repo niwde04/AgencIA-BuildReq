@@ -230,7 +230,7 @@ const allMenuItems: MenuItem[] = [
     icon: Users,
     label: "Usuarios",
     path: "/usuarios",
-    roles: ["admin"],
+    roles: ["admin", "administracion_central"],
   },
   {
     icon: Database,

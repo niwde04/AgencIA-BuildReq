@@ -279,18 +279,23 @@ const receiptItemSchema = z
     if (value.isFixedAsset !== true) return;
 
     const quantityReceived = Number(value.quantityReceived);
-    if (
-      !Number.isFinite(quantityReceived) ||
-      quantityReceived <= 0 ||
-      !Number.isInteger(quantityReceived)
-    ) {
+    if (quantityReceived !== 1) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["quantityReceived"],
         message:
-          "Activo fijo requiere una cantidad recibida entera mayor que cero",
+          "Activo fijo requiere que la cantidad recibida sea exactamente 1",
       });
       return;
+    }
+
+    if (value.targetType !== "activo_fijo") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["targetType"],
+        message:
+          "Solo se puede activar Activo fijo para productos clasificados como Activo Fijo",
+      });
     }
 
     const assetDetails = value.assetDetails ?? [];
@@ -466,6 +471,46 @@ export const receiptsRouter = router({
       }
       assertProjectScopedAccess(ctx.user, detail.receipt.projectId);
       return detail;
+    }),
+
+  lookupFiscalDocumentRange: protectedProcedure
+    .input(
+      z.object({
+        purchaseOrderId: z.number(),
+        invoiceNumber: z.string().trim().max(100),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canAccessReceipts(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a recepciones",
+        });
+      }
+
+      const detail = await db.getPurchaseOrderById(input.purchaseOrderId);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Orden de compra no encontrada",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+
+      if (!isValidInvoiceNumber(input.invoiceNumber)) return null;
+
+      const range = await db.lookupSupplierFiscalDocumentRangeBySupplier({
+        supplierRtn: detail.supplier?.rtn,
+        invoiceNumber: formatInvoiceNumberInput(input.invoiceNumber),
+      });
+      if (!range) return null;
+
+      return {
+        cai: range.cai,
+        documentRangeStart: range.documentRangeStart,
+        documentRangeEnd: range.documentRangeEnd,
+        emissionDeadline: range.emissionDeadline,
+      };
     }),
 
   saveDraft: protectedProcedure

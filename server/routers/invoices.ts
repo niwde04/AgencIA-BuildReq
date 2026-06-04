@@ -762,15 +762,18 @@ export const invoicesRouter = router({
       const quantity = Number(invoiceItem.quantity);
       let assetDetails: ReturnType<typeof normalizeFixedAssetDetails> = [];
       if (input.isFixedAsset) {
-        if (
-          !Number.isFinite(quantity) ||
-          quantity <= 0 ||
-          !Number.isInteger(quantity)
-        ) {
+        if (quantity !== 1) {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message:
-              "Activo fijo requiere una cantidad de factura entera mayor que cero",
+              "Activo fijo requiere que la cantidad de la línea sea exactamente 1",
+          });
+        }
+        if (invoiceItem.targetType !== "activo_fijo") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "Solo se puede activar Activo fijo para productos clasificados como Activo Fijo",
           });
         }
 

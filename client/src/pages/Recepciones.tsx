@@ -204,6 +204,14 @@ type ReceiptTargetSelection =
       label: string;
     };
 
+type ReceiptFiscalRangeAutofill = {
+  invoiceNumber: string;
+  cai: string;
+  documentRangeStart: string;
+  documentRangeEnd: string;
+  emissionDeadline: string;
+};
+
 function buildSubprojectReceiptTargetSelection(
   subproject: any
 ): ReceiptTargetSelection {
@@ -636,6 +644,10 @@ export default function Recepciones() {
   const utils = trpc.useUtils();
   const { user } = useAuth();
   const receiptAttachmentInputRef = useRef<HTMLInputElement>(null);
+  const fiscalRangeAutofillRef = useRef<ReceiptFiscalRangeAutofill | null>(
+    null
+  );
+  const lastFiscalRangeLookupKeyRef = useRef("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [viewReceiptId, setViewReceiptId] = useState<number | null>(null);
   const [editingDraftReceiptId, setEditingDraftReceiptId] = useState<
@@ -805,6 +817,8 @@ export default function Recepciones() {
     );
 
   const resetForm = () => {
+    fiscalRangeAutofillRef.current = null;
+    lastFiscalRangeLookupKeyRef.current = "";
     setEditingDraftReceiptId(null);
     setSourceType("purchase_order");
     setSourceId("");
@@ -1092,6 +1106,123 @@ export default function Recepciones() {
     trpc.attachments.upload.useMutation();
   const lookupManualSapItemMutation =
     trpc.requestItems.lookupSapItem.useMutation();
+  const fiscalRangeLookupMutation =
+    trpc.receipts.lookupFiscalDocumentRange.useMutation({
+      onSuccess: (range, variables) => {
+        const purchaseOrderId = Number(sourceId || 0);
+        const lookupInvoiceNumber = formatInvoiceNumberInput(
+          variables.invoiceNumber
+        );
+        const previousAutofill = fiscalRangeAutofillRef.current;
+
+        if (
+          sourceType !== "purchase_order" ||
+          !isFiscalDocument ||
+          variables.purchaseOrderId !== purchaseOrderId ||
+          formatInvoiceNumberInput(invoiceNumber) !== lookupInvoiceNumber
+        ) {
+          return;
+        }
+
+        if (!range) {
+          if (!previousAutofill) return;
+          setCai(current => (current === previousAutofill.cai ? "" : current));
+          setDocumentRangeStart(current =>
+            current === previousAutofill.documentRangeStart ? "" : current
+          );
+          setDocumentRangeEnd(current =>
+            current === previousAutofill.documentRangeEnd ? "" : current
+          );
+          setEmissionDeadline(current =>
+            current === previousAutofill.emissionDeadline ? "" : current
+          );
+          fiscalRangeAutofillRef.current = null;
+          return;
+        }
+
+        const nextAutofill: ReceiptFiscalRangeAutofill = {
+          invoiceNumber: lookupInvoiceNumber,
+          cai: range.cai ?? "",
+          documentRangeStart: range.documentRangeStart ?? "",
+          documentRangeEnd: range.documentRangeEnd ?? "",
+          emissionDeadline: toDateInputValue(range.emissionDeadline),
+        };
+
+        const canApplyField = (
+          current: string,
+          field: keyof Omit<ReceiptFiscalRangeAutofill, "invoiceNumber">
+        ) =>
+          !current.trim() ||
+          Boolean(previousAutofill && current === previousAutofill[field]);
+
+        setCai(current =>
+          canApplyField(current, "cai") ? nextAutofill.cai : current
+        );
+        setDocumentRangeStart(current =>
+          canApplyField(current, "documentRangeStart")
+            ? nextAutofill.documentRangeStart
+            : current
+        );
+        setDocumentRangeEnd(current =>
+          canApplyField(current, "documentRangeEnd")
+            ? nextAutofill.documentRangeEnd
+            : current
+        );
+        setEmissionDeadline(current =>
+          canApplyField(current, "emissionDeadline")
+            ? nextAutofill.emissionDeadline
+            : current
+        );
+        fiscalRangeAutofillRef.current = nextAutofill;
+      },
+      onError: () => {
+        fiscalRangeAutofillRef.current = null;
+      },
+    });
+
+  useEffect(() => {
+    if (
+      !dialogOpen ||
+      sourceType !== "purchase_order" ||
+      !sourceId ||
+      !isFiscalDocument ||
+      !isValidInvoiceNumber(invoiceNumber)
+    ) {
+      const previousAutofill = fiscalRangeAutofillRef.current;
+      if (previousAutofill) {
+        setCai(current => (current === previousAutofill.cai ? "" : current));
+        setDocumentRangeStart(current =>
+          current === previousAutofill.documentRangeStart ? "" : current
+        );
+        setDocumentRangeEnd(current =>
+          current === previousAutofill.documentRangeEnd ? "" : current
+        );
+        setEmissionDeadline(current =>
+          current === previousAutofill.emissionDeadline ? "" : current
+        );
+        fiscalRangeAutofillRef.current = null;
+      }
+      lastFiscalRangeLookupKeyRef.current = "";
+      return;
+    }
+
+    const lookupInvoiceNumber = formatInvoiceNumberInput(invoiceNumber);
+    const lookupKey = `${sourceId}:${lookupInvoiceNumber}`;
+    if (lastFiscalRangeLookupKeyRef.current === lookupKey) return;
+
+    lastFiscalRangeLookupKeyRef.current = lookupKey;
+    fiscalRangeLookupMutation.mutate({
+      purchaseOrderId: Number(sourceId),
+      invoiceNumber: lookupInvoiceNumber,
+    });
+  }, [
+    dialogOpen,
+    fiscalRangeLookupMutation,
+    invoiceNumber,
+    isFiscalDocument,
+    sourceId,
+    sourceType,
+  ]);
 
   const registerMutation = trpc.receipts.register.useMutation({
     onSuccess: async result => {
@@ -2360,6 +2491,17 @@ export default function Recepciones() {
       : "Traslado";
     const referenceLabel = isPurchaseOrderReceipt ? "Compra" : "Traslado";
     const observations = receipt.notes?.trim() || "-";
+    const receiptOtherCharges = isPurchaseOrderReceipt
+      ? ((receiptDetail as any).otherCharges ?? [])
+          .map((charge: any) => ({
+            concept: String(charge.concept ?? "").trim(),
+            amount: Number(charge.amount ?? 0),
+          }))
+          .filter(
+            (charge: { concept: string; amount: number }) =>
+              charge.concept && Number.isFinite(charge.amount) && charge.amount > 0
+          )
+      : [];
 
     const summaryLines: Array<{
       quantity: string | number | null | undefined;
@@ -2430,10 +2572,23 @@ export default function Recepciones() {
         `;
       })
       .join("");
+    const otherChargeRows = receiptOtherCharges
+      .map(
+        (charge: { concept: string; amount: number }) => `
+          <tr class="charge-row">
+            <td>-</td>
+            <td><strong>Otros cargos:</strong> ${escapeHtml(charge.concept)}</td>
+            <td class="center">-</td>
+            <td class="numeric">-</td>
+            <td class="center">-</td>
+            <td class="numeric">-</td>
+            <td class="numeric">${escapeHtml(formatPrintMoney(charge.amount))}</td>
+          </tr>
+        `
+      )
+      .join("");
     const fiscalSummary = summarizePurchaseOrderLines(summaryLines);
-    const otherChargesTotal = isPurchaseOrderReceipt
-      ? getOtherChargesTotal((receiptDetail as any).otherCharges ?? [])
-      : 0;
+    const otherChargesTotal = getOtherChargesTotal(receiptOtherCharges);
     const fiscalSummaryBaseRows = getPurchaseOrderFiscalSummaryRows(fiscalSummary);
     const fiscalSummaryRowsWithCharges =
       otherChargesTotal > 0
@@ -2572,6 +2727,9 @@ export default function Recepciones() {
               line-height: 1.35;
               margin-top: 2px;
             }
+            .charge-row td {
+              font-weight: 800;
+            }
             .center { text-align: center; }
             .numeric {
               font-variant-numeric: tabular-nums;
@@ -2707,6 +2865,7 @@ export default function Recepciones() {
               </thead>
               <tbody>
                 ${itemRows || `<tr><td colspan="7">Sin ítems</td></tr>`}
+                ${otherChargeRows}
               </tbody>
             </table>
 
@@ -2900,6 +3059,8 @@ export default function Recepciones() {
                   <Select
                     value={sourceType}
                     onValueChange={value => {
+                      fiscalRangeAutofillRef.current = null;
+                      lastFiscalRangeLookupKeyRef.current = "";
                       setSourceType(value as "purchase_order" | "transfer");
                       setSourceId("");
                       setReceivedMap({});
@@ -2916,7 +3077,11 @@ export default function Recepciones() {
                       setIsFiscalDocument(true);
                       setCai("");
                       setInvoiceNumber("");
+                      setDocumentRangeStart("");
+                      setDocumentRangeEnd("");
                       setDocumentDate("");
+                      setDocumentDueDate("");
+                      setEmissionDeadline("");
                       setPostingDate(todayDateValue());
                       setReceiptDate(todayDateValue());
                       setTransferClosureDrafts({});
@@ -2943,6 +3108,8 @@ export default function Recepciones() {
                   <Select
                     value={sourceId}
                     onValueChange={value => {
+                      fiscalRangeAutofillRef.current = null;
+                      lastFiscalRangeLookupKeyRef.current = "";
                       setSourceId(value);
                       setReceivedMap({});
                       setWarehouseByItemId({});
@@ -2958,7 +3125,11 @@ export default function Recepciones() {
                       setIsFiscalDocument(true);
                       setCai("");
                       setInvoiceNumber("");
+                      setDocumentRangeStart("");
+                      setDocumentRangeEnd("");
                       setDocumentDate("");
+                      setDocumentDueDate("");
+                      setEmissionDeadline("");
                       setPostingDate(todayDateValue());
                       setReceiptDate(todayDateValue());
                       setTransferClosureDrafts({});
@@ -3917,7 +4088,8 @@ export default function Recepciones() {
                                         disabled={
                                           sourceType !== "purchase_order" ||
                                           isManualItem ||
-                                          Boolean(item.fixedAssetArticleId)
+                                          Boolean(item.fixedAssetArticleId) ||
+                                          (!isLineFixedAsset && (receivingQuantity !== 1 || item.targetType !== "activo_fijo"))
                                         }
                                         onCheckedChange={checked =>
                                           handleFixedAssetToggle(
@@ -3928,6 +4100,13 @@ export default function Recepciones() {
                                       />
                                       Activo fijo
                                     </label>
+                                    {!isLineFixedAsset && (receivingQuantity !== 1 || item.targetType !== "activo_fijo") ? (
+                                      <span className="text-xs text-muted-foreground bg-muted/50 px-2 py-0.5 rounded border border-border/50">
+                                        {item.targetType !== "activo_fijo"
+                                          ? "Solo disponible para productos de tipo Activo Fijo"
+                                          : "Solo disponible cuando la cantidad a recibir es exactamente 1"}
+                                      </span>
+                                    ) : null}
                                     {isLineFixedAsset ? (
                                       <label className="flex items-center gap-2 text-sm font-medium">
                                         <Checkbox

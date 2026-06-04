@@ -19,6 +19,26 @@ const projectRequiredRoles = new Set([
   "superintendente",
 ]);
 
+function canManageUserPasswords(user: { role: string; buildreqRole?: string | null }) {
+  return user.role === "admin" || user.buildreqRole === "administracion_central";
+}
+
+const userPasswordManagementProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  if (!canManageUserPasswords(ctx.user)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para gestionar contraseñas de usuarios.",
+    });
+  }
+
+  return next({
+    ctx: {
+      ...ctx,
+      user: ctx.user,
+    },
+  });
+});
+
 function normalizeAssignedProjectIds(
   buildreqRole: z.infer<typeof buildreqRoleSchema>,
   assignedProjectIds?: number[] | null
@@ -58,7 +78,7 @@ function resolveAssignedProjectIdsInput(input: {
 }
 
 export const userManagementRouter = router({
-  list: adminProcedure.query(async () => {
+  list: userPasswordManagementProcedure.query(async () => {
     return db.listUsers();
   }),
 
@@ -233,7 +253,7 @@ export const userManagementRouter = router({
       }
     }),
 
-  resetPasswordAdmin: adminProcedure
+  resetPasswordAdmin: userPasswordManagementProcedure
     .input(
       z.object({
         userId: z.number(),

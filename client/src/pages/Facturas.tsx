@@ -599,7 +599,10 @@ function InvoiceAssetDetailsEditor({
         <label className="flex items-center gap-2 text-sm font-medium">
           <Checkbox
             checked={draft.isFixedAsset}
-            disabled={!canEdit}
+            disabled={
+              !canEdit ||
+              (!draft.isFixedAsset && (assetUnitCount !== 1 || item.targetType !== "activo_fijo"))
+            }
             onCheckedChange={checked =>
               setDraft(current => ({
                 ...current,
@@ -617,6 +620,13 @@ function InvoiceAssetDetailsEditor({
           />
           Activo fijo
         </label>
+        {!draft.isFixedAsset && (assetUnitCount !== 1 || item.targetType !== "activo_fijo") ? (
+          <span className="text-xs text-muted-foreground bg-muted/50 px-2 py-0.5 rounded border border-border/50">
+            {item.targetType !== "activo_fijo"
+              ? "Solo disponible para productos de tipo Activo Fijo"
+              : "Solo disponible cuando la cantidad es exactamente 1"}
+          </span>
+        ) : null}
         {draft.isFixedAsset ? (
           <label className="flex items-center gap-2 text-sm font-medium">
             <Checkbox
@@ -1257,19 +1267,18 @@ export default function Facturas() {
     []
   );
 
-  const handleSaveInvoice = () => {
-    if (!selectedId) return;
+  const validateInvoiceDraft = () => {
     if (invoiceDraft.isFiscalDocument && !invoiceDraft.cai.trim()) {
       toast.error("Ingresa el CAI del documento");
-      return;
+      return false;
     }
     if (invoiceDraft.isFiscalDocument && !isValidCai(invoiceDraft.cai)) {
       toast.error(`El CAI debe tener el formato ${CAI_FORMAT_EXAMPLE}`);
-      return;
+      return false;
     }
     if (invoiceDraft.isFiscalDocument && !invoiceDraft.invoiceNumber.trim()) {
       toast.error("Ingresa el número documento");
-      return;
+      return false;
     }
     if (
       invoiceDraft.isFiscalDocument &&
@@ -1278,11 +1287,11 @@ export default function Facturas() {
       toast.error(
         `El número documento debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`
       );
-      return;
+      return false;
     }
     if (invoiceDraft.isFiscalDocument && !invoiceDraft.documentRangeStart.trim()) {
       toast.error("Ingresa el rango autorizado inicial");
-      return;
+      return false;
     }
     if (
       invoiceDraft.isFiscalDocument &&
@@ -1291,11 +1300,11 @@ export default function Facturas() {
       toast.error(
         `El rango autorizado inicial debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`
       );
-      return;
+      return false;
     }
     if (invoiceDraft.isFiscalDocument && !invoiceDraft.documentRangeEnd.trim()) {
       toast.error("Ingresa el rango autorizado final");
-      return;
+      return false;
     }
     if (
       invoiceDraft.isFiscalDocument &&
@@ -1304,7 +1313,7 @@ export default function Facturas() {
       toast.error(
         `El rango autorizado final debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`
       );
-      return;
+      return false;
     }
     if (
       invoiceDraft.isFiscalDocument &&
@@ -1314,7 +1323,7 @@ export default function Facturas() {
       })
     ) {
       toast.error("El rango autorizado final debe ser mayor o igual al inicial");
-      return;
+      return false;
     }
     if (
       invoiceDraft.isFiscalDocument &&
@@ -1325,26 +1334,29 @@ export default function Facturas() {
       })
     ) {
       toast.error("El número documento debe estar dentro del rango autorizado");
-      return;
+      return false;
     }
     if (invoiceDraft.isFiscalDocument && !invoiceDraft.documentDueDate) {
       toast.error("Selecciona la fecha de vencimiento (crédito)");
-      return;
+      return false;
     }
     if (invoiceDraft.isFiscalDocument && !invoiceDraft.emissionDeadline) {
       toast.error("Selecciona la fecha límite de emisión");
-      return;
+      return false;
     }
     if (
       retentionDrafts.length > 0 &&
       !invoiceDraft.retentionReceiptNumber.trim()
     ) {
       toast.error("Ingrese el número de comprobante de retención");
-      return;
+      return false;
     }
-    setActionFeedback(current => ({ ...current, invoiceSavedId: null }));
-    updateMutation.mutate({
-      id: selectedId,
+
+    return true;
+  };
+
+  const buildInvoiceUpdatePayload = (id: number) => ({
+      id,
       isFiscalDocument: invoiceDraft.isFiscalDocument,
       cai: invoiceDraft.cai.trim()
         ? invoiceDraft.isFiscalDocument
@@ -1374,7 +1386,14 @@ export default function Facturas() {
       retentionReceiptNumber:
         invoiceDraft.retentionReceiptNumber.trim() || undefined,
       notes: invoiceDraft.notes,
-    });
+  });
+
+  const handleSaveInvoice = () => {
+    if (!selectedId) return;
+    if (!validateInvoiceDraft()) return;
+
+    setActionFeedback(current => ({ ...current, invoiceSavedId: null }));
+    updateMutation.mutate(buildInvoiceUpdatePayload(selectedId));
   };
 
   const getLineRetentionDrafts = (itemId: number) =>
@@ -1806,15 +1825,18 @@ export default function Facturas() {
       toast.error("Adjunte al menos un archivo antes de enviar a revisión");
       return;
     }
-    if (
-      retentionDrafts.length > 0 &&
-      !invoiceDraft.retentionReceiptNumber.trim()
-    ) {
-      toast.error("Ingrese el número de comprobante de retención");
-      return;
-    }
+    if (!validateInvoiceDraft()) return;
+
+    const invoiceId = selectedId;
     setActionFeedback(current => ({ ...current, reviewSentId: null }));
-    reviewMutation.mutate({ id: selectedId });
+    updateMutation
+      .mutateAsync(buildInvoiceUpdatePayload(invoiceId))
+      .then(() => {
+        reviewMutation.mutate({ id: invoiceId });
+      })
+      .catch(() => {
+        // updateMutation already shows the friendly error toast.
+      });
   };
 
   const handleAccountInvoice = () => {
@@ -2023,7 +2045,7 @@ export default function Facturas() {
         }}
       >
         <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-lg p-0 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1580px]">
-          <DialogHeader className="min-w-0 border-b border-border/70 px-4 py-4 pr-12 sm:px-6">
+          <DialogHeader className="min-w-0 border-b border-border/70 px-4 py-4 pr-16 sm:px-6 sm:pr-20">
             <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex min-w-0 flex-wrap items-center gap-3">
                 <DialogTitle className="min-w-0 break-words text-2xl font-bold tracking-tight sm:text-3xl">
@@ -2039,7 +2061,7 @@ export default function Facturas() {
                 ) : null}
               </div>
               {detail ? (
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex max-w-full flex-wrap items-center justify-start gap-2 pr-1 sm:pr-3 lg:justify-end lg:pr-0">
                   {canReviewSelectedInvoice ? (
                     <Button
                       onClick={handleReviewInvoice}
@@ -2048,6 +2070,7 @@ export default function Facturas() {
                         reviewSendConfirmed ? SAVED_BUTTON_CLASS : undefined
                       }
                       disabled={
+                        updateMutation.isPending ||
                         reviewMutation.isPending ||
                         reviewSendConfirmed ||
                         attachmentState.isLoading ||
@@ -2059,11 +2082,13 @@ export default function Facturas() {
                       ) : (
                         <Send className="mr-2 h-4 w-4" />
                       )}
-                      {reviewMutation.isPending
-                        ? "Enviando..."
-                        : reviewSendConfirmed
-                          ? "Enviada a revisión"
-                          : "Enviar a revisión"}
+                      {updateMutation.isPending
+                        ? "Guardando..."
+                        : reviewMutation.isPending
+                          ? "Enviando..."
+                          : reviewSendConfirmed
+                            ? "Enviada a revisión"
+                            : "Enviar a revisión"}
                     </Button>
                   ) : null}
                   {canAccountSelectedInvoice ? (

@@ -21,7 +21,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { Pencil, Percent, Plus, Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 type TaxRetentionRecord = {
@@ -80,6 +80,11 @@ export default function Retenciones() {
   const [selectedRetention, setSelectedRetention] =
     useState<TaxRetentionRecord | null>(null);
   const [form, setForm] = useState<RetentionForm>(emptyForm);
+  const taxCodeInputRef = useRef<HTMLInputElement>(null);
+  const ratePercentInputRef = useRef<HTMLInputElement>(null);
+  const erpCodeInputRef = useRef<HTMLInputElement>(null);
+  const descriptionInputRef = useRef<HTMLInputElement>(null);
+  const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const buildreqRole = (user as any)?.buildreqRole || "";
   const canManageRetentions =
@@ -151,6 +156,22 @@ export default function Retenciones() {
   const rangeEnd = total === 0 ? 0 : Math.min((data?.page ?? page) * PAGE_SIZE, total);
   const saving = createMutation.isPending || updateMutation.isPending;
 
+  const readCurrentForm = (fallback: RetentionForm = form): RetentionForm => ({
+    taxCode: taxCodeInputRef.current?.value ?? fallback.taxCode,
+    description: descriptionInputRef.current?.value ?? fallback.description,
+    ratePercent: ratePercentInputRef.current?.value ?? fallback.ratePercent,
+    isActive: fallback.isActive,
+    note: noteTextareaRef.current?.value ?? fallback.note,
+    erpCode: erpCodeInputRef.current?.value ?? fallback.erpCode,
+  });
+
+  const updateForm = (patch: Partial<RetentionForm>) => {
+    setForm(current => ({
+      ...readCurrentForm(current),
+      ...patch,
+    }));
+  };
+
   const openCreateDialog = () => {
     setSelectedRetention(null);
     setForm(emptyForm);
@@ -176,13 +197,16 @@ export default function Retenciones() {
       return;
     }
 
+    const currentForm = readCurrentForm();
+    setForm(currentForm);
+
     const payload = {
-      taxCode: form.taxCode.trim().toUpperCase(),
-      description: form.description.trim(),
-      ratePercent: form.ratePercent.trim(),
-      isActive: form.isActive,
-      note: form.note.trim() || null,
-      erpCode: form.erpCode.trim().toUpperCase() || null,
+      taxCode: currentForm.taxCode.trim().toUpperCase(),
+      description: currentForm.description.trim(),
+      ratePercent: currentForm.ratePercent.trim(),
+      isActive: currentForm.isActive,
+      note: currentForm.note.trim() || null,
+      erpCode: currentForm.erpCode.trim().toUpperCase() || null,
     };
 
     if (!payload.taxCode) {
@@ -411,12 +435,13 @@ export default function Retenciones() {
               <div className="space-y-1">
                 <Label className="text-xs">Código</Label>
                 <Input
+                  ref={taxCodeInputRef}
                   value={form.taxCode}
+                  autoComplete="off"
                   onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
+                    updateForm({
                       taxCode: event.target.value.toUpperCase(),
-                    }))
+                    })
                   }
                   placeholder="RT125"
                   autoCapitalize="characters"
@@ -425,15 +450,16 @@ export default function Retenciones() {
               <div className="space-y-1">
                 <Label className="text-xs">Tasa %</Label>
                 <Input
+                  ref={ratePercentInputRef}
                   type="number"
                   min="0"
                   step="0.0001"
                   value={form.ratePercent}
+                  autoComplete="off"
                   onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
+                    updateForm({
                       ratePercent: event.target.value,
-                    }))
+                    })
                   }
                   placeholder="12.5"
                 />
@@ -441,12 +467,13 @@ export default function Retenciones() {
               <div className="space-y-1">
                 <Label className="text-xs">Código ERP</Label>
                 <Input
+                  ref={erpCodeInputRef}
                   value={form.erpCode}
+                  autoComplete="off"
                   onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
+                    updateForm({
                       erpCode: event.target.value.toUpperCase(),
-                    }))
+                    })
                   }
                   placeholder="R12"
                   autoCapitalize="characters"
@@ -457,12 +484,13 @@ export default function Retenciones() {
             <div className="space-y-1">
               <Label className="text-xs">Descripción</Label>
               <Input
+                ref={descriptionInputRef}
                 value={form.description}
+                autoComplete="off"
                 onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
+                  updateForm({
                     description: event.target.value,
-                  }))
+                  })
                 }
                 placeholder="Retención 12.5%"
               />
@@ -471,12 +499,13 @@ export default function Retenciones() {
             <div className="space-y-1">
               <Label className="text-xs">Nota</Label>
               <Textarea
+                ref={noteTextareaRef}
                 value={form.note}
+                autoComplete="off"
                 onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
+                  updateForm({
                     note: event.target.value,
-                  }))
+                  })
                 }
                 rows={3}
                 placeholder="Base a ley x y o z"
@@ -488,7 +517,7 @@ export default function Retenciones() {
               <Switch
                 checked={form.isActive}
                 onCheckedChange={(isActive) =>
-                  setForm((current) => ({ ...current, isActive }))
+                  updateForm({ isActive })
                 }
               />
             </div>

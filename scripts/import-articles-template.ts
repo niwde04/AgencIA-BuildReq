@@ -876,7 +876,7 @@ function buildCatalog(
 
       const assetFields = chooseAssetFields(group);
       const description =
-        chosenFullDescription.value || chosenShortDescription.value || itemCode;
+        chosenShortDescription.value || chosenFullDescription.value || itemCode;
 
       return {
         itemCode,
@@ -1068,7 +1068,7 @@ function buildInventory(
         warehouseLocalKey: warehouseLocalKey(chosenLocalCode.value),
         name: chosenShortDescription.value || first.itemCode,
         description: nonEmptyOrNull(
-          chosenFullDescription.value || chosenShortDescription.value
+          chosenShortDescription.value || chosenFullDescription.value
         ),
         unit: nonEmptyOrNull(chosenUnit.value),
         category: nonEmptyOrNull(chosenCategory.value),

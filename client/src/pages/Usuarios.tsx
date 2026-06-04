@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { getAppSiteUrl } from "@/lib/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -227,8 +228,13 @@ const STATUS_CONFIG: Record<string, { label: string; variant: "default" | "secon
 
 export default function Usuarios() {
   const utils = trpc.useUtils();
+  const { user } = useAuth();
+  const isSystemAdmin = user?.role === "admin";
+  const canResetUserPasswords =
+    isSystemAdmin || user?.buildreqRole === "administracion_central";
   const { data: users, isLoading: usersLoading } = trpc.userManagement.list.useQuery();
-  const { data: invitationsList, isLoading: invLoading } = trpc.invitations.list.useQuery();
+  const { data: invitationsList, isLoading: invLoading } =
+    trpc.invitations.list.useQuery(undefined, { enabled: isSystemAdmin });
   const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
   const appSiteUrl = getAppSiteUrl();
 
@@ -482,20 +488,22 @@ export default function Usuarios() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1>Gestión de Usuarios</h1>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={() => setShowInviteDialog(true)}
-            className="gap-2"
-          >
-            <Mail className="h-4 w-4" />
-            Invitar Usuario
-          </Button>
-          <Button onClick={() => setShowDirectUserDialog(true)} className="gap-2">
-            <UserPlus className="h-4 w-4" />
-            Crear Usuario
-          </Button>
-        </div>
+        {isSystemAdmin ? (
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowInviteDialog(true)}
+              className="gap-2"
+            >
+              <Mail className="h-4 w-4" />
+              Invitar Usuario
+            </Button>
+            <Button onClick={() => setShowDirectUserDialog(true)} className="gap-2">
+              <UserPlus className="h-4 w-4" />
+              Crear Usuario
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <Tabs defaultValue="users">
@@ -504,15 +512,17 @@ export default function Usuarios() {
             <UsersIcon className="h-4 w-4" />
             Usuarios Activos
           </TabsTrigger>
-          <TabsTrigger value="invitations" className="gap-2">
-            <Mail className="h-4 w-4" />
-            Invitaciones
-            {(invitationsList || []).filter((i: any) => i.invitation.status === "pendiente").length > 0 && (
-              <Badge variant="secondary" className="ml-1 h-5 w-5 p-0 flex items-center justify-center text-[10px]">
-                {(invitationsList || []).filter((i: any) => i.invitation.status === "pendiente").length}
-              </Badge>
-            )}
-          </TabsTrigger>
+          {isSystemAdmin ? (
+            <TabsTrigger value="invitations" className="gap-2">
+              <Mail className="h-4 w-4" />
+              Invitaciones
+              {(invitationsList || []).filter((i: any) => i.invitation.status === "pendiente").length > 0 && (
+                <Badge variant="secondary" className="ml-1 h-5 w-5 p-0 flex items-center justify-center text-[10px]">
+                  {(invitationsList || []).filter((i: any) => i.invitation.status === "pendiente").length}
+                </Badge>
+              )}
+            </TabsTrigger>
+          ) : null}
         </TabsList>
 
         {/* USERS TAB */}
@@ -525,7 +535,9 @@ export default function Usuarios() {
                 <div className="p-8 text-center">
                   <UsersIcon className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
                   <p className="text-muted-foreground">No hay usuarios registrados</p>
-                  <p className="text-xs text-muted-foreground mt-1">Invite usuarios con el botón superior</p>
+                  {isSystemAdmin ? (
+                    <p className="text-xs text-muted-foreground mt-1">Invite usuarios con el botón superior</p>
+                  ) : null}
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -562,45 +574,51 @@ export default function Usuarios() {
                             </Badge>
                           </td>
                           <td className="p-3">
-                            <Select
-                              value={u.buildreqRole || "sin_rol"}
-                              onValueChange={(val) => {
-                                if (val === "sin_rol") return;
-                                const existingProjectIds = getAssignedProjectIds(u);
-                                const nextProjectIds = isProjectAssignableRole(val)
-                                  ? existingProjectIds.length > 0
-                                    ? existingProjectIds
-                                    : PROJECT_REQUIRED_ROLES.has(val)
-                                      ? (projects?.[0]?.id ? [projects[0].id] : [])
-                                      : []
-                                  : [];
-                                updateRoleMutation.mutate({
-                                  userId: u.id,
-                                  buildreqRole: val as any,
-                                  assignedProjectIds: getAssignedProjectIdsPayload(
-                                    val,
-                                    nextProjectIds
-                                  ),
-                                });
-                              }}
-                            >
-                              <SelectTrigger className="h-8 w-48 text-xs">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="sin_rol" disabled>Sin rol asignado</SelectItem>
-                                <SelectItem value="ingeniero_residente">Requiriente</SelectItem>
-                                <SelectItem value="jefe_bodega_central">Bodega Central</SelectItem>
-                                <SelectItem value="administracion_central">Administración Central</SelectItem>
-                                <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
-                                <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
-                                <SelectItem value="superintendente">Superintendente</SelectItem>
-                                <SelectItem value="contable">Contable</SelectItem>
-                              </SelectContent>
-                            </Select>
+                            {isSystemAdmin ? (
+                              <Select
+                                value={u.buildreqRole || "sin_rol"}
+                                onValueChange={(val) => {
+                                  if (val === "sin_rol") return;
+                                  const existingProjectIds = getAssignedProjectIds(u);
+                                  const nextProjectIds = isProjectAssignableRole(val)
+                                    ? existingProjectIds.length > 0
+                                      ? existingProjectIds
+                                      : PROJECT_REQUIRED_ROLES.has(val)
+                                        ? (projects?.[0]?.id ? [projects[0].id] : [])
+                                        : []
+                                    : [];
+                                  updateRoleMutation.mutate({
+                                    userId: u.id,
+                                    buildreqRole: val as any,
+                                    assignedProjectIds: getAssignedProjectIdsPayload(
+                                      val,
+                                      nextProjectIds
+                                    ),
+                                  });
+                                }}
+                              >
+                                <SelectTrigger className="h-8 w-48 text-xs">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="sin_rol" disabled>Sin rol asignado</SelectItem>
+                                  <SelectItem value="ingeniero_residente">Requiriente</SelectItem>
+                                  <SelectItem value="jefe_bodega_central">Bodega Central</SelectItem>
+                                  <SelectItem value="administracion_central">Administración Central</SelectItem>
+                                  <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
+                                  <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
+                                  <SelectItem value="superintendente">Superintendente</SelectItem>
+                                  <SelectItem value="contable">Contable</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <Badge variant="outline" className="text-xs">
+                                {ROLE_LABELS[u.buildreqRole] || u.buildreqRole || "Sin rol asignado"}
+                              </Badge>
+                            )}
                           </td>
                           <td className="p-3">
-                            {isProjectAssignableRole(u.buildreqRole) ? (
+                            {isSystemAdmin && isProjectAssignableRole(u.buildreqRole) ? (
                               <ProjectMultiSelect
                                 role={u.buildreqRole}
                                 projects={projects || []}
@@ -619,7 +637,9 @@ export default function Usuarios() {
                                 }}
                               />
                             ) : (
-                              <span className="text-xs text-muted-foreground">N/A</span>
+                              <span className="text-xs text-muted-foreground">
+                                {formatAssignedProjects(u)}
+                              </span>
                             )}
                           </td>
                           <td className="p-3 text-xs text-muted-foreground">
@@ -627,26 +647,30 @@ export default function Usuarios() {
                           </td>
                           <td className="p-3">
                             <div className="flex gap-1">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-8 gap-1 text-xs"
-                                onClick={() => openEditUserDialog(u)}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                                Editar
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-8 gap-1 text-xs"
-                                onClick={() => openPasswordDialog(u)}
-                              >
-                                <KeyRound className="h-3.5 w-3.5" />
-                                Contraseña
-                              </Button>
+                              {isSystemAdmin ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 gap-1 text-xs"
+                                  onClick={() => openEditUserDialog(u)}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                  Editar
+                                </Button>
+                              ) : null}
+                              {canResetUserPasswords ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 gap-1 text-xs"
+                                  onClick={() => openPasswordDialog(u)}
+                                >
+                                  <KeyRound className="h-3.5 w-3.5" />
+                                  Contraseña
+                                </Button>
+                              ) : null}
                             </div>
                           </td>
                         </tr>
@@ -660,6 +684,7 @@ export default function Usuarios() {
         </TabsContent>
 
         {/* INVITATIONS TAB */}
+        {isSystemAdmin ? (
         <TabsContent value="invitations">
           <Card>
             <CardContent className="p-0">
@@ -759,6 +784,7 @@ export default function Usuarios() {
             </CardContent>
           </Card>
         </TabsContent>
+        ) : null}
       </Tabs>
 
       {/* EDIT USER DIALOG */}

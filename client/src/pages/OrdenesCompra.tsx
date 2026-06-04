@@ -479,6 +479,10 @@ export default function OrdenesCompra() {
     userRole === "administrador_proyecto";
   const isProjectAdmin = userRole === "administrador_proyecto";
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const reopeningDraftOrderIdRef = useRef<number | null>(null);
+  const [reopeningDraftOrderId, setReopeningDraftOrderId] = useState<
+    number | null
+  >(null);
   const [newOrderDialogOpen, setNewOrderDialogOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -683,6 +687,10 @@ export default function OrdenesCompra() {
       }
     },
     onError: error => toast.error(error.message),
+    onSettled: () => {
+      reopeningDraftOrderIdRef.current = null;
+      setReopeningDraftOrderId(null);
+    },
   });
 
   const sendMutation = trpc.purchaseOrders.sendToSupplier.useMutation({
@@ -848,6 +856,10 @@ export default function OrdenesCompra() {
     canManagePurchaseOrders &&
     ["emitida", "enviada"].includes(orderStatus) &&
     !hasOrderReceipts;
+  const isReopeningSelectedDraft =
+    detail?.purchaseOrder.id !== undefined &&
+    (reopeningDraftOrderId === detail.purchaseOrder.id ||
+      reopenDraftMutation.isPending);
   const filteredOrders = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
 
@@ -3901,13 +3913,27 @@ export default function OrdenesCompra() {
                 {canReopenDraft && !canEditOrderStructure ? (
                   <Button
                     size="lg"
-                    className="h-10 min-w-[220px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
-                    onClick={() =>
+                    className={`h-10 min-w-[220px] px-5 text-sm font-semibold transition-colors sm:h-11 sm:text-base ${
+                      isReopeningSelectedDraft
+                        ? "bg-amber-500 text-white hover:bg-amber-500 disabled:bg-amber-500 disabled:text-white disabled:opacity-100"
+                        : "bg-sky-700 text-white hover:bg-sky-800"
+                    }`}
+                    onClick={() => {
+                      const orderId = detail.purchaseOrder.id;
+                      if (
+                        reopeningDraftOrderIdRef.current !== null ||
+                        reopenDraftMutation.isPending
+                      ) {
+                        return;
+                      }
+                      reopeningDraftOrderIdRef.current = orderId;
+                      setReopeningDraftOrderId(orderId);
                       reopenDraftMutation.mutate({
-                        id: detail.purchaseOrder.id,
-                      })
-                    }
+                        id: orderId,
+                      });
+                    }}
                     disabled={
+                      isReopeningSelectedDraft ||
                       reopenDraftMutation.isPending ||
                       updateMutation.isPending ||
                       updateItemLineMutation.isPending ||
@@ -3918,8 +3944,12 @@ export default function OrdenesCompra() {
                       sendMutation.isPending
                     }
                   >
-                    <Pencil className="mr-2 h-4 w-4" />
-                    {reopenDraftMutation.isPending
+                    {isReopeningSelectedDraft ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Pencil className="mr-2 h-4 w-4" />
+                    )}
+                    {isReopeningSelectedDraft
                       ? "Reabriendo..."
                       : "Volver a edición"}
                   </Button>

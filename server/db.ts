@@ -141,6 +141,12 @@ import {
   type ParsedDemoImportPayload,
 } from "./_core/demoData";
 import {
+  buildSupplierExcelImportAnalysis,
+  parseSupplierExcelWorkbook,
+  summarizeSupplierExcelImportAnalysis,
+  type SupplierExcelFileInput,
+} from "./_core/supplierExcelImport";
+import {
   formatCaiInput,
   formatInvoiceNumberInput,
   getFiscalInvoiceNumberKey,
@@ -7365,6 +7371,42 @@ export async function lookupSupplierFiscalDocumentRange(params: {
   return range ?? null;
 }
 
+export async function lookupSupplierFiscalDocumentRangeBySupplier(params: {
+  supplierRtn: string | null | undefined;
+  invoiceNumber: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const invoiceNumberKey = getFiscalInvoiceNumberKey(params.invoiceNumber);
+  const supplierRtnNormalized = normalizeFiscalRtn(params.supplierRtn);
+  if (!invoiceNumberKey || !supplierRtnNormalized) return null;
+
+  const [range] = await db
+    .select()
+    .from(supplierFiscalDocumentRanges)
+    .where(
+      and(
+        eq(
+          supplierFiscalDocumentRanges.supplierRtnNormalized,
+          supplierRtnNormalized
+        ),
+        lte(
+          supplierFiscalDocumentRanges.documentRangeStartKey,
+          invoiceNumberKey
+        ),
+        gte(supplierFiscalDocumentRanges.documentRangeEndKey, invoiceNumberKey)
+      )
+    )
+    .orderBy(
+      desc(supplierFiscalDocumentRanges.updatedAt),
+      desc(supplierFiscalDocumentRanges.id)
+    )
+    .limit(1);
+
+  return range ?? null;
+}
+
 export async function updateInvoice(
   id: number,
   data: Partial<
@@ -12603,6 +12645,88 @@ export async function updateSupplier(
   }
 
   return supplier;
+}
+
+async function buildSupplierExcelImportAnalysisFromDb(
+  input: SupplierExcelFileInput
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const parsed = parseSupplierExcelWorkbook(input);
+  const existingSuppliers = await db
+    .select({
+      id: suppliers.id,
+      supplierCode: suppliers.supplierCode,
+      rtn: suppliers.rtn,
+      allowsTaxWithholding: suppliers.allowsTaxWithholding,
+      subjectToAccountPayments: suppliers.subjectToAccountPayments,
+    })
+    .from(suppliers);
+
+  return {
+    db,
+    analysis: buildSupplierExcelImportAnalysis(parsed, existingSuppliers),
+  };
+}
+
+export async function analyzeSupplierExcelImport(input: SupplierExcelFileInput) {
+  const { analysis } = await buildSupplierExcelImportAnalysisFromDb(input);
+  return summarizeSupplierExcelImportAnalysis(analysis);
+}
+
+export async function importSupplierExcel(input: SupplierExcelFileInput) {
+  const { db, analysis } = await buildSupplierExcelImportAnalysisFromDb(input);
+
+  if (analysis.errors.length > 0) {
+    throw new Error(analysis.errors[0]?.message ?? "El archivo contiene errores");
+  }
+
+  const now = new Date();
+
+  for (const supplierChunk of chunkItems(
+    analysis.rows,
+    DEMO_IMPORT_BATCH_SIZE
+  )) {
+    if (supplierChunk.length === 0) continue;
+
+    await db
+      .insert(suppliers)
+      .values(
+        supplierChunk.map(row => ({
+          supplierCode: row.supplierCode,
+          name: row.name,
+          email: row.email,
+          rtn: row.rtn,
+          address: row.address,
+          allowsTaxWithholding: row.allowsTaxWithholding,
+          subjectToAccountPayments: row.subjectToAccountPayments,
+          isActive: true,
+          demoBatchKey: null,
+          updatedAt: now,
+        }))
+      )
+      .onConflictDoUpdate({
+        target: suppliers.supplierCode,
+        set: {
+          name: sql`excluded."name"`,
+          email: sql`excluded."email"`,
+          rtn: sql`excluded."rtn"`,
+          address: sql`excluded."address"`,
+          allowsTaxWithholding: sql`excluded."allowsTaxWithholding"`,
+          subjectToAccountPayments: sql`excluded."subjectToAccountPayments"`,
+          isActive: sql`excluded."isActive"`,
+          demoBatchKey: sql`excluded."demoBatchKey"`,
+          updatedAt: sql`excluded."updatedAt"`,
+        },
+      });
+  }
+
+  return {
+    ...summarizeSupplierExcelImportAnalysis(analysis),
+    inserted: analysis.insertCount,
+    updated: analysis.updateCount,
+  };
 }
 
 export async function listSupplierContacts(params: {

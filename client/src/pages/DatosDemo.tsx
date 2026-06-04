@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ChangeEvent } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
   AlertDialog,
@@ -20,10 +20,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import {
+  AlertCircle,
+  CheckCircle2,
   Database,
   FileSpreadsheet,
   FolderKanban,
@@ -42,8 +45,60 @@ const PROJECTS_PLACEHOLDER = `Codigo de proyecto\tNombre de proyecto
 const ARTICLES_PLACEHOLDER = `Numero de articulo\tCodigo de almacen\tNombre de almacen\tDescripcion del articulo\tDescripcion del articulo (sin recortar)\tFecha capitalizacion (AF)\tEn stock
 10188\t010\tSAN JOSE\tCEMENTO EN SACO 42.5KG ARGOS\tCEMENTO EN SACO 42.5KG ARGOS\t\t0`;
 
-const SUPPLIERS_PLACEHOLDER = `Codigo SN\tNombre SN\tCodigo de grupo\tNombre de grupo
-PL-0666\tABCO HONDURAS SA DE CV\t186\tMANTENIMIENTO, REPARACIONES E INSTALACION`;
+type SupplierExcelIssue = {
+  rowNumber?: number;
+  field?: string;
+  message: string;
+};
+
+type SupplierExcelPreviewRow = {
+  rowNumber: number;
+  supplierCode: string;
+  generatedCode: boolean;
+  name: string;
+  rtn: string;
+  email?: string | null;
+  action: "insert" | "update";
+};
+
+type SupplierExcelAnalysis = {
+  sheetName?: string | null;
+  totalRows: number;
+  validRows: number;
+  insertCount: number;
+  updateCount: number;
+  generatedCodeCount: number;
+  errors: SupplierExcelIssue[];
+  warnings: SupplierExcelIssue[];
+  preview: SupplierExcelPreviewRow[];
+};
+
+type SelectedSupplierExcelFile = {
+  fileName: string;
+  fileBase64: string;
+  fileSize: number;
+};
+
+function readFileAsBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result ?? "");
+      resolve(value.includes(",") ? value.split(",")[1] ?? "" : value);
+    };
+    reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatFileSize(size: number) {
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(size / 1024))} KB`;
+}
+
+function formatIssue(issue: SupplierExcelIssue) {
+  return issue.rowNumber ? `Fila ${issue.rowNumber}: ${issue.message}` : issue.message;
+}
 
 function buildImportSummaryMessage(result: any) {
   const parts = [
@@ -73,7 +128,11 @@ export default function DatosDemo() {
   const utils = trpc.useUtils();
   const [projectsTsv, setProjectsTsv] = useState("");
   const [articlesTsv, setArticlesTsv] = useState("");
-  const [suppliersTsv, setSuppliersTsv] = useState("");
+  const [supplierExcelFile, setSupplierExcelFile] =
+    useState<SelectedSupplierExcelFile | null>(null);
+  const [supplierExcelAnalysis, setSupplierExcelAnalysis] =
+    useState<SupplierExcelAnalysis | null>(null);
+  const [supplierFileReading, setSupplierFileReading] = useState(false);
   const [handledJobId, setHandledJobId] = useState<string | null>(null);
   const [hydratedLatestJob, setHydratedLatestJob] = useState(false);
 
@@ -114,6 +173,32 @@ export default function DatosDemo() {
     onError: (error) => toast.error(error.message),
   });
 
+  const analyzeSupplierExcelMutation =
+    trpc.suppliers.analyzeExcelImport.useMutation({
+      onSuccess: (result) => {
+        setSupplierExcelAnalysis(result);
+        if (result.errors.length > 0) {
+          toast.error("El archivo tiene errores por corregir");
+          return;
+        }
+        toast.success(
+          `Archivo analizado: ${result.totalRows.toLocaleString("es-HN")} proveedores`
+        );
+      },
+      onError: (error) => toast.error(error.message),
+    });
+
+  const importSupplierExcelMutation = trpc.suppliers.importExcel.useMutation({
+    onSuccess: async (result) => {
+      setSupplierExcelAnalysis(result);
+      toast.success(
+        `Proveedores cargados: ${result.inserted.toLocaleString("es-HN")} nuevos, ${result.updated.toLocaleString("es-HN")} actualizados`
+      );
+      await utils.suppliers.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   useEffect(() => {
     if (!latestImportQuery.isFetched || hydratedLatestJob) return;
 
@@ -135,7 +220,6 @@ export default function DatosDemo() {
       setHandledJobId(latestImport.id);
       setProjectsTsv("");
       setArticlesTsv("");
-      setSuppliersTsv("");
       toast.success(buildImportSummaryMessage(latestImport.result));
       void Promise.all([
         utils.demoData.status.invalidate(),
@@ -166,13 +250,61 @@ export default function DatosDemo() {
   }
 
   const hasInput =
-    projectsTsv.trim().length > 0 ||
-    articlesTsv.trim().length > 0 ||
-    suppliersTsv.trim().length > 0;
+    projectsTsv.trim().length > 0 || articlesTsv.trim().length > 0;
 
   const hasDemoData = Boolean(status?.hasDemoData);
   const importInProgress =
     latestImport?.status === "queued" || latestImport?.status === "running";
+  const supplierExcelBusy =
+    supplierFileReading ||
+    analyzeSupplierExcelMutation.isPending ||
+    importSupplierExcelMutation.isPending;
+
+  const analyzeSupplierExcel = () => {
+    if (!supplierExcelFile) return;
+    analyzeSupplierExcelMutation.mutate({
+      fileName: supplierExcelFile.fileName,
+      fileBase64: supplierExcelFile.fileBase64,
+    });
+  };
+
+  const importSupplierExcel = () => {
+    if (!supplierExcelFile || !supplierExcelAnalysis) return;
+    if (supplierExcelAnalysis.errors.length > 0) return;
+    importSupplierExcelMutation.mutate({
+      fileName: supplierExcelFile.fileName,
+      fileBase64: supplierExcelFile.fileBase64,
+    });
+  };
+
+  const handleSupplierFileChange = async (
+    event: ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    setSupplierExcelAnalysis(null);
+    setSupplierExcelFile(null);
+
+    if (!file) return;
+    if (!/\.xlsx$/i.test(file.name)) {
+      toast.error("Seleccione un archivo .xlsx");
+      event.target.value = "";
+      return;
+    }
+
+    try {
+      setSupplierFileReading(true);
+      setSupplierExcelFile({
+        fileName: file.name,
+        fileBase64: await readFileAsBase64(file),
+        fileSize: file.size,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo leer el archivo");
+      event.target.value = "";
+    } finally {
+      setSupplierFileReading(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -186,9 +318,10 @@ export default function DatosDemo() {
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground max-w-3xl">
-            Pegue tablas copiadas desde Excel para cargar proyectos, articulos y
-            proveedores de prueba. El rol tecnico actual que actua como Super
-            Admin es <span className="font-mono">admin</span>.
+            Pegue tablas copiadas desde Excel para cargar proyectos y articulos
+            de prueba. Los proveedores se cargan como catalogo real desde un
+            archivo Excel. El rol tecnico actual que actua como Super Admin es{" "}
+            <span className="font-mono">admin</span>.
           </p>
         </div>
 
@@ -198,7 +331,6 @@ export default function DatosDemo() {
               importMutation.mutate({
                 projectsTsv: projectsTsv || undefined,
                 articlesTsv: articlesTsv || undefined,
-                suppliersTsv: suppliersTsv || undefined,
               })
             }
             disabled={!hasInput || importMutation.isPending || importInProgress}
@@ -387,9 +519,10 @@ export default function DatosDemo() {
             Como cargar desde Excel
           </CardTitle>
           <CardDescription>
-            Copie las celdas desde Excel y pegue cada bloque en su seccion.
-            Puede cargar solo una tabla o varias a la vez. Los articulos tambien
-            alimentan el catalogo SAP usado en autocompletado.
+            Copie las celdas desde Excel y pegue proyectos o articulos en su
+            seccion. Los articulos tambien alimentan el catalogo SAP usado en
+            autocompletado. Los proveedores se analizan desde archivo antes de
+            importarse al catalogo real.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 text-sm text-muted-foreground md:grid-cols-3">
@@ -407,8 +540,8 @@ export default function DatosDemo() {
           <div className="rounded-lg border bg-muted/30 p-4">
             <p className="font-medium text-foreground">Proveedores</p>
             <p>
-              Se usan el codigo SN y el nombre. Las columnas de grupo se
-              ignoran por ahora.
+              Se usa un archivo .xlsx con nombre, RTN, direccion, correo,
+              retencion y pagos a cuenta.
             </p>
           </div>
         </CardContent>
@@ -453,19 +586,166 @@ export default function DatosDemo() {
 
         <Card className="min-h-[360px]">
           <CardHeader>
-            <CardTitle>Excel de Proveedores</CardTitle>
+            <CardTitle>Archivo de Proveedores</CardTitle>
             <CardDescription>
-              Pegue aqui la tabla de proveedores.
+              Suba la plantilla .xlsx de proveedores.
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <Textarea
-              value={suppliersTsv}
-              onChange={(event) => setSuppliersTsv(event.target.value)}
-              placeholder={SUPPLIERS_PLACEHOLDER}
-              className="min-h-[240px] font-mono text-xs"
-              disabled={importInProgress}
-            />
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Input
+                type="file"
+                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                onChange={handleSupplierFileChange}
+                disabled={supplierExcelBusy}
+              />
+              {supplierExcelFile && (
+                <p className="text-xs text-muted-foreground">
+                  {supplierExcelFile.fileName} · {formatFileSize(supplierExcelFile.fileSize)}
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={analyzeSupplierExcel}
+                disabled={!supplierExcelFile || supplierExcelBusy}
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                {analyzeSupplierExcelMutation.isPending
+                  ? "Analizando..."
+                  : "Analizar archivo"}
+              </Button>
+              <Button
+                className="gap-2"
+                onClick={importSupplierExcel}
+                disabled={
+                  !supplierExcelFile ||
+                  !supplierExcelAnalysis ||
+                  supplierExcelAnalysis.errors.length > 0 ||
+                  supplierExcelBusy
+                }
+              >
+                <Upload className="h-4 w-4" />
+                {importSupplierExcelMutation.isPending
+                  ? "Importando..."
+                  : "Importar proveedores"}
+              </Button>
+            </div>
+
+            {supplierExcelAnalysis && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4 xl:grid-cols-2">
+                  <div className="rounded-lg border bg-muted/30 p-3">
+                    <p className="font-semibold">
+                      {supplierExcelAnalysis.totalRows.toLocaleString("es-HN")}
+                    </p>
+                    <p className="text-xs text-muted-foreground">filas</p>
+                  </div>
+                  <div className="rounded-lg border bg-muted/30 p-3">
+                    <p className="font-semibold">
+                      {supplierExcelAnalysis.insertCount.toLocaleString("es-HN")}
+                    </p>
+                    <p className="text-xs text-muted-foreground">nuevos</p>
+                  </div>
+                  <div className="rounded-lg border bg-muted/30 p-3">
+                    <p className="font-semibold">
+                      {supplierExcelAnalysis.updateCount.toLocaleString("es-HN")}
+                    </p>
+                    <p className="text-xs text-muted-foreground">actualizados</p>
+                  </div>
+                  <div className="rounded-lg border bg-muted/30 p-3">
+                    <p className="font-semibold">
+                      {supplierExcelAnalysis.generatedCodeCount.toLocaleString("es-HN")}
+                    </p>
+                    <p className="text-xs text-muted-foreground">codigos</p>
+                  </div>
+                </div>
+
+                {supplierExcelAnalysis.errors.length > 0 ? (
+                  <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                    <div className="mb-2 flex items-center gap-2 font-medium text-destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      Errores
+                    </div>
+                    <ul className="space-y-1 text-destructive">
+                      {supplierExcelAnalysis.errors.slice(0, 8).map((issue, index) => (
+                        <li key={`${issue.message}-${index}`}>
+                          {formatIssue(issue)}
+                        </li>
+                      ))}
+                    </ul>
+                    {supplierExcelAnalysis.errors.length > 8 && (
+                      <p className="mt-2 text-xs text-destructive">
+                        {supplierExcelAnalysis.errors.length - 8} errores adicionales.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm text-emerald-700">
+                    <div className="flex items-center gap-2 font-medium">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Archivo listo para importar
+                    </div>
+                  </div>
+                )}
+
+                {supplierExcelAnalysis.warnings.length > 0 && (
+                  <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+                    <div className="mb-2 flex items-center gap-2 font-medium">
+                      <AlertCircle className="h-4 w-4 text-primary" />
+                      Advertencias
+                    </div>
+                    <ul className="space-y-1 text-muted-foreground">
+                      {supplierExcelAnalysis.warnings.slice(0, 8).map((issue, index) => (
+                        <li key={`${issue.message}-${index}`}>
+                          {formatIssue(issue)}
+                        </li>
+                      ))}
+                    </ul>
+                    {supplierExcelAnalysis.warnings.length > 8 && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {supplierExcelAnalysis.warnings.length - 8} advertencias adicionales.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {supplierExcelAnalysis.preview.length > 0 && (
+                  <div className="overflow-hidden rounded-lg border">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/50 text-left">
+                        <tr>
+                          <th className="p-2 font-medium">Codigo</th>
+                          <th className="p-2 font-medium">Proveedor</th>
+                          <th className="p-2 font-medium">RTN</th>
+                          <th className="p-2 font-medium">Accion</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {supplierExcelAnalysis.preview.map(row => (
+                          <tr key={`${row.rowNumber}-${row.supplierCode}`} className="border-t">
+                            <td className="p-2 font-mono">
+                              {row.supplierCode}
+                              {row.generatedCode && (
+                                <span className="ml-1 text-muted-foreground">*</span>
+                              )}
+                            </td>
+                            <td className="max-w-[160px] truncate p-2">{row.name}</td>
+                            <td className="p-2">{row.rtn}</td>
+                            <td className="p-2">
+                              {row.action === "insert" ? "Nuevo" : "Actualizar"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

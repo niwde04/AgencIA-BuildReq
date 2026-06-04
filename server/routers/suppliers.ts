@@ -171,6 +171,18 @@ const supplierDocumentUpdateSchema = z.object({
   description: z.string().trim().max(1000).optional(),
 });
 
+const supplierExcelImportSchema = z.object({
+  fileName: z
+    .string()
+    .trim()
+    .min(1, "Seleccione un archivo")
+    .max(255)
+    .refine(value => /\.xlsx$/i.test(value), {
+      message: "Seleccione un archivo .xlsx",
+    }),
+  fileBase64: z.string().min(1, "No se pudo leer el archivo").max(15_000_000),
+});
+
 async function assertSupplierAndProjectExist(supplierId: number, projectId: number) {
   const [supplier, project] = await Promise.all([
     db.getSupplierById(supplierId),
@@ -285,6 +297,20 @@ export const suppliersRouter = router({
     .query(async ({ ctx, input }) => {
       assertCanReadSuppliers(ctx.user);
       return db.listSupplierCatalog(input ?? {});
+    }),
+
+  analyzeExcelImport: protectedProcedure
+    .input(supplierExcelImportSchema)
+    .mutation(async ({ ctx, input }) => {
+      assertCanManageSupplierCatalog(ctx.user);
+      return db.analyzeSupplierExcelImport(input);
+    }),
+
+  importExcel: protectedProcedure
+    .input(supplierExcelImportSchema)
+    .mutation(async ({ ctx, input }) => {
+      assertCanManageSupplierCatalog(ctx.user);
+      return db.importSupplierExcel(input);
     }),
 
   update: protectedProcedure

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appRouter } from "./routers";
 import * as db from "./db";
 import * as storage from "./storage";
+import * as supabaseAdmin from "./_core/supabaseAdmin";
 import { validateDocumentAttachmentFile } from "./routers/attachments";
 import {
   buildProcurementPdfBase64,
@@ -1044,6 +1045,101 @@ describe("BuildReq - Suppliers catalog", () => {
 
     expect(listSupplierCatalogSpy).not.toHaveBeenCalled();
     listSupplierCatalogSpy.mockRestore();
+  });
+
+  it("Blocks supplier Excel import analysis for unauthorized roles", async () => {
+    const { ctx } = createIngenieroContext();
+    const caller = appRouter.createCaller(ctx);
+    const analyzeSupplierExcelImportSpy = vi.spyOn(
+      db,
+      "analyzeSupplierExcelImport"
+    );
+
+    await expect(
+      caller.suppliers.analyzeExcelImport({
+        fileName: "proveedores.xlsx",
+        fileBase64: "ZXhjZWw=",
+      })
+    ).rejects.toThrow("No tiene acceso al catálogo de proveedores");
+
+    expect(analyzeSupplierExcelImportSpy).not.toHaveBeenCalled();
+    analyzeSupplierExcelImportSpy.mockRestore();
+  });
+
+  it("Authorized users can analyze supplier Excel without importing", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const analyzeSupplierExcelImportSpy = vi
+      .spyOn(db, "analyzeSupplierExcelImport")
+      .mockResolvedValue({
+        sheetName: "PROVEEDORES",
+        totalRows: 2,
+        validRows: 2,
+        insertCount: 2,
+        updateCount: 0,
+        generatedCodeCount: 2,
+        errors: [],
+        warnings: [],
+        preview: [],
+      } as any);
+    const importSupplierExcelSpy = vi.spyOn(db, "importSupplierExcel");
+
+    await expect(
+      caller.suppliers.analyzeExcelImport({
+        fileName: "proveedores.xlsx",
+        fileBase64: "ZXhjZWw=",
+      })
+    ).resolves.toMatchObject({
+      totalRows: 2,
+      insertCount: 2,
+      generatedCodeCount: 2,
+    });
+
+    expect(analyzeSupplierExcelImportSpy).toHaveBeenCalledWith({
+      fileName: "proveedores.xlsx",
+      fileBase64: "ZXhjZWw=",
+    });
+    expect(importSupplierExcelSpy).not.toHaveBeenCalled();
+
+    analyzeSupplierExcelImportSpy.mockRestore();
+    importSupplierExcelSpy.mockRestore();
+  });
+
+  it("Authorized users can import supplier Excel", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const importSupplierExcelSpy = vi
+      .spyOn(db, "importSupplierExcel")
+      .mockResolvedValue({
+        sheetName: "PROVEEDORES",
+        totalRows: 2,
+        validRows: 2,
+        insertCount: 1,
+        updateCount: 1,
+        generatedCodeCount: 1,
+        inserted: 1,
+        updated: 1,
+        errors: [],
+        warnings: [],
+        preview: [],
+      } as any);
+
+    await expect(
+      caller.suppliers.importExcel({
+        fileName: "proveedores.xlsx",
+        fileBase64: "ZXhjZWw=",
+      })
+    ).resolves.toMatchObject({
+      inserted: 1,
+      updated: 1,
+    });
+
+    expect(importSupplierExcelSpy).toHaveBeenCalledWith({
+      fileName: "proveedores.xlsx",
+      fileBase64: "ZXhjZWw=",
+    });
+
+    importSupplierExcelSpy.mockRestore();
   });
 
   it("Authorized users can create and deactivate supplier document types", async () => {
@@ -5506,6 +5602,83 @@ describe("BuildReq - Invitation System", () => {
 // Tests: User Management
 // ============================================================
 describe("BuildReq - User Management", () => {
+  it("Administracion Central can list users", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const users = [
+      {
+        id: 2,
+        openId: "user-002",
+        email: "usuario@buildreq.com",
+        name: "Usuario Test",
+        role: "user",
+        buildreqRole: "ingeniero_residente",
+      },
+    ];
+    const listUsersSpy = vi.spyOn(db, "listUsers").mockResolvedValue(users as any);
+
+    await expect(caller.userManagement.list()).resolves.toEqual(users);
+    expect(listUsersSpy).toHaveBeenCalled();
+
+    listUsersSpy.mockRestore();
+  });
+
+  it("Administracion Central can reset user passwords", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const updateUserById = vi.fn().mockResolvedValue({ error: null });
+    const getSupabaseAdminClientSpy = vi
+      .spyOn(supabaseAdmin, "getSupabaseAdminClient")
+      .mockReturnValue({
+        auth: {
+          admin: {
+            updateUserById,
+          },
+        },
+      } as any);
+    const getUserByIdSpy = vi.spyOn(db, "getUserById").mockResolvedValue({
+      id: 2,
+      openId: "auth-user-002",
+      email: "usuario@buildreq.com",
+      name: "Usuario Test",
+    } as any);
+    const updatePasswordChangeSpy = vi
+      .spyOn(db, "updateUserPasswordChangeRequirement")
+      .mockResolvedValue({ success: true } as any);
+
+    await expect(
+      caller.userManagement.resetPasswordAdmin({
+        userId: 2,
+        password: "12345678",
+      })
+    ).resolves.toEqual({ success: true });
+
+    expect(updateUserById).toHaveBeenCalledWith("auth-user-002", {
+      password: "12345678",
+    });
+    expect(updatePasswordChangeSpy).toHaveBeenCalledWith(2, true);
+
+    getSupabaseAdminClientSpy.mockRestore();
+    getUserByIdSpy.mockRestore();
+    updatePasswordChangeSpy.mockRestore();
+  });
+
+  it("Administracion Central cannot assign roles", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const updateUserRoleSpy = vi.spyOn(db, "updateUserRole");
+
+    await expect(
+      caller.userManagement.updateRole({
+        userId: 2,
+        buildreqRole: "contable",
+      })
+    ).rejects.toThrow();
+
+    expect(updateUserRoleSpy).not.toHaveBeenCalled();
+    updateUserRoleSpy.mockRestore();
+  });
+
   it("Admin can assign Project Administrator to all projects", async () => {
     const { ctx } = createUserContext({
       role: "admin",

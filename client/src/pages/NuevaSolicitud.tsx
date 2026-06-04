@@ -277,10 +277,10 @@ export default function NuevaSolicitud() {
       return;
     }
 
-    if (projectId) {
+    if (projects && projectId && !availableProjects.some((p: any) => String(p.id) === projectId)) {
       setProjectId("");
     }
-  }, [availableProjects, isProjectScopedUser, projectId]);
+  }, [availableProjects, isProjectScopedUser, projectId, projects]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -290,25 +290,7 @@ export default function NuevaSolicitud() {
     return () => window.clearTimeout(timeoutId);
   }, [targetSearch]);
 
-  useEffect(() => {
-    if (!effectiveProjectIdNumber) {
-      setItems((current) =>
-        current.map((item) =>
-          item.targetSelection ? { ...item, targetSelection: null } : item
-        )
-      );
-      return;
-    }
 
-    setItems((current) =>
-      current.map((item) =>
-        item.targetSelection &&
-        item.targetSelection.projectId !== effectiveProjectIdNumber
-          ? { ...item, targetSelection: null }
-          : item
-      )
-    );
-  }, [effectiveProjectIdNumber]);
 
   useEffect(() => {
     if (!existingRequest || !requestSnapshotKey || loadedRequestSnapshot === requestSnapshotKey) {
@@ -345,12 +327,13 @@ export default function NuevaSolicitud() {
   });
 
   const addItem = () => {
-    setItems([...items, createItemRow()]);
+    setItems((current) => [...current, createItemRow()]);
   };
 
   const removeItem = (index: number) => {
-    if (items.length === 1) return;
-    setItems(items.filter((_, i) => i !== index));
+    setItems((current) =>
+      current.length === 1 ? current : current.filter((_, i) => i !== index)
+    );
   };
 
   const updateItem = (
@@ -358,18 +341,22 @@ export default function NuevaSolicitud() {
     field: "itemName" | "quantity" | "unit",
     value: string
   ) => {
-    const updated = [...items];
-    updated[index] = { ...updated[index], [field]: value };
-    setItems(updated);
+    setItems((current) =>
+      current.map((item, i) =>
+        i === index ? { ...item, [field]: value } : item
+      )
+    );
   };
 
   const updateItemTarget = (
     index: number,
     targetSelection: RequestTargetSelection | null
   ) => {
-    const updated = [...items];
-    updated[index] = { ...updated[index], targetSelection };
-    setItems(updated);
+    setItems((current) =>
+      current.map((item, i) =>
+        i === index ? { ...item, targetSelection } : item
+      )
+    );
   };
 
   const validItems = items.filter(
@@ -822,7 +809,15 @@ export default function NuevaSolicitud() {
                                 .filter(Boolean)
                                 .join(" ")}
                               onSelect={() => {
-                                setProjectId(String(project.id));
+                                const nextProjectId = String(project.id);
+                                if (projectId !== nextProjectId) {
+                                  setProjectId(nextProjectId);
+                                  setItems((current) =>
+                                    current.map((item) =>
+                                      item.targetSelection ? { ...item, targetSelection: null } : item
+                                    )
+                                  );
+                                }
                                 setProjectPopoverOpen(false);
                               }}
                             >
