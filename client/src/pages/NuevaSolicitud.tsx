@@ -30,7 +30,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import {
@@ -160,6 +160,10 @@ function formatProjectLabel(project: any | null | undefined) {
   return `${project.code} - ${project.name}`;
 }
 
+function normalizeItemName(value: string) {
+  return value.toLocaleUpperCase("es-HN");
+}
+
 function compareProjectsByCode(a: any, b: any) {
   const codeCompare = projectCodeCollator.compare(a.code ?? "", b.code ?? "");
   if (codeCompare !== 0) return codeCompare;
@@ -223,11 +227,12 @@ export default function NuevaSolicitud() {
   const [neededBy, setNeededBy] = useState("");
   const [targetPopoverOpen, setTargetPopoverOpen] = useState<string | null>(null);
   const [unitPopoverOpen, setUnitPopoverOpen] = useState<string | null>(null);
+  const [unitSearch, setUnitSearch] = useState("");
   const [projectPopoverOpen, setProjectPopoverOpen] = useState(false);
   const [targetSearch, setTargetSearch] = useState("");
   const [debouncedTargetSearch, setDebouncedTargetSearch] = useState("");
   const [notes, setNotes] = useState("");
-  const [items, setItems] = useState<ItemRow[]>([createItemRow()]);
+  const [items, setItems] = useState<ItemRow[]>(() => [createItemRow()]);
   const [loadedRequestSnapshot, setLoadedRequestSnapshot] = useState<string | null>(null);
   const availableProjects = useMemo(() => {
     const projectList = [...(projects ?? [])].sort(compareProjectsByCode);
@@ -290,8 +295,6 @@ export default function NuevaSolicitud() {
     return () => window.clearTimeout(timeoutId);
   }, [targetSearch]);
 
-
-
   useEffect(() => {
     if (!existingRequest || !requestSnapshotKey || loadedRequestSnapshot === requestSnapshotKey) {
       return;
@@ -326,37 +329,46 @@ export default function NuevaSolicitud() {
     },
   });
 
+  const patchItem = useCallback(
+    (itemId: string, patch: Partial<Omit<ItemRow, "id">>) => {
+      setItems((current) =>
+        current.map((item) =>
+          item.id === itemId ? { ...item, ...patch } : item
+        )
+      );
+    },
+    []
+  );
+
   const addItem = () => {
+    setTargetPopoverOpen(null);
+    setTargetSearch("");
+    setUnitPopoverOpen(null);
+    setUnitSearch("");
     setItems((current) => [...current, createItemRow()]);
   };
 
-  const removeItem = (index: number) => {
+  const removeItem = (itemId: string) => {
+    setTargetPopoverOpen((current) => (current === itemId ? null : current));
+    setUnitPopoverOpen((current) => (current === itemId ? null : current));
     setItems((current) =>
-      current.length === 1 ? current : current.filter((_, i) => i !== index)
+      current.length === 1 ? current : current.filter((item) => item.id !== itemId)
     );
   };
 
   const updateItem = (
-    index: number,
+    itemId: string,
     field: "itemName" | "quantity" | "unit",
     value: string
   ) => {
-    setItems((current) =>
-      current.map((item, i) =>
-        i === index ? { ...item, [field]: value } : item
-      )
-    );
+    patchItem(itemId, { [field]: value });
   };
 
   const updateItemTarget = (
-    index: number,
+    itemId: string,
     targetSelection: RequestTargetSelection | null
   ) => {
-    setItems((current) =>
-      current.map((item, i) =>
-        i === index ? { ...item, targetSelection } : item
-      )
-    );
+    patchItem(itemId, { targetSelection });
   };
 
   const validItems = items.filter(
@@ -478,7 +490,7 @@ export default function NuevaSolicitud() {
     isEditMode && existingRequest?.request.status !== "borrador"
       ? "Guardar cambios"
       : "Crear Requisición";
-  const renderItemTargetCombobox = (item: ItemRow, index: number) => {
+  const renderItemTargetCombobox = (item: ItemRow) => {
     const open = targetPopoverOpen === item.id;
 
     return (
@@ -536,7 +548,7 @@ export default function NuevaSolicitud() {
                               value={`subproject-${subproject.id}-${subproject.code}-${subproject.name}`}
                               onSelect={() => {
                                 updateItemTarget(
-                                  index,
+                                  item.id,
                                   buildSubprojectTargetSelection(subproject)
                                 );
                                 setTargetPopoverOpen(null);
@@ -577,7 +589,7 @@ export default function NuevaSolicitud() {
                               value={`asset-${asset.itemCode}-${asset.description}`}
                               onSelect={() => {
                                 updateItemTarget(
-                                  index,
+                                  item.id,
                                   buildFixedAssetTargetSelection(asset)
                                 );
                                 setTargetPopoverOpen(null);
@@ -616,7 +628,7 @@ export default function NuevaSolicitud() {
             type="button"
             variant="outline"
             size="icon"
-            onClick={() => updateItemTarget(index, null)}
+            onClick={() => updateItemTarget(item.id, null)}
             aria-label="Limpiar destino del ítem"
           >
             <X className="h-4 w-4" />
@@ -626,14 +638,23 @@ export default function NuevaSolicitud() {
     );
   };
 
-  const renderItemUnitCombobox = (item: ItemRow, index: number) => {
+  const renderItemUnitCombobox = (item: ItemRow) => {
     const open = unitPopoverOpen === item.id;
     const selectedUnit = UNITS.find((unit) => unit.value === item.unit);
+    const normalizedSearch = unitSearch.trim().toLowerCase();
+    const filteredUnits = normalizedSearch
+      ? UNITS.filter((unit) =>
+          `${unit.value} ${unit.label}`.toLowerCase().includes(normalizedSearch)
+        )
+      : UNITS;
 
     return (
       <Popover
         open={open}
-        onOpenChange={(nextOpen) => setUnitPopoverOpen(nextOpen ? item.id : null)}
+        onOpenChange={(nextOpen) => {
+          setUnitPopoverOpen(nextOpen ? item.id : null);
+          setUnitSearch("");
+        }}
       >
         <PopoverTrigger asChild>
           <Button
@@ -649,36 +670,45 @@ export default function NuevaSolicitud() {
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-[240px] p-0" align="start">
-          <Command>
-            <CommandInput placeholder="Buscar unidad..." />
-            <CommandList>
-              <CommandEmpty>No se encontraron unidades.</CommandEmpty>
-              <CommandGroup>
-                {UNITS.map((unit) => {
-                  const selected = item.unit === unit.value;
-
-                  return (
-                    <CommandItem
-                      key={unit.value}
-                      value={`${unit.value} ${unit.label}`}
-                      onSelect={() => {
-                        updateItem(index, "unit", unit.value);
-                        setUnitPopoverOpen(null);
-                      }}
-                    >
-                      <Check
-                        className={`mr-2 h-4 w-4 ${
-                          selected ? "opacity-100" : "opacity-0"
-                        }`}
-                      />
-                      <span>{unit.label}</span>
-                    </CommandItem>
-                  );
-                })}
-              </CommandGroup>
-            </CommandList>
-          </Command>
+        <PopoverContent className="w-[260px] p-0" align="start">
+          <div className="border-b p-2">
+            <Input
+              value={unitSearch}
+              onChange={(event) => setUnitSearch(event.target.value)}
+              placeholder="Buscar unidad..."
+              className="h-9"
+            />
+          </div>
+          <div className="max-h-[300px] overflow-y-auto p-1">
+            {filteredUnits.length > 0 ? (
+              filteredUnits.map((unit) => {
+                const selected = item.unit === unit.value;
+                return (
+                  <button
+                    key={unit.value}
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                    onClick={() => {
+                      updateItem(item.id, "unit", unit.value);
+                      setUnitPopoverOpen(null);
+                      setUnitSearch("");
+                    }}
+                  >
+                    <Check
+                      className={`h-4 w-4 ${
+                        selected ? "opacity-100" : "opacity-0"
+                      }`}
+                    />
+                    <span>{unit.label}</span>
+                  </button>
+                );
+              })
+            ) : (
+              <p className="px-2 py-4 text-center text-sm text-muted-foreground">
+                No se encontraron unidades.
+              </p>
+            )}
+          </div>
         </PopoverContent>
       </Popover>
     );
@@ -1000,12 +1030,19 @@ export default function NuevaSolicitud() {
                   <div className="col-span-12 md:col-span-4">
                     <Input
                       placeholder="Ej: Cemento Portland Tipo I"
+                      data-preserve-case="true"
                       value={item.itemName}
-                      onChange={(e) => updateItem(index, "itemName", e.target.value)}
+                      onChange={(e) =>
+                        updateItem(
+                          item.id,
+                          "itemName",
+                          normalizeItemName(e.target.value)
+                        )
+                      }
                     />
                   </div>
                   <div className="col-span-12 md:col-span-3">
-                    {renderItemTargetCombobox(item, index)}
+                    {renderItemTargetCombobox(item)}
                   </div>
                   <div className="col-span-5 md:col-span-2">
                     <Input
@@ -1014,18 +1051,18 @@ export default function NuevaSolicitud() {
                       min="0.01"
                       step="any"
                       value={item.quantity}
-                      onChange={(e) => updateItem(index, "quantity", e.target.value)}
+                      onChange={(e) => updateItem(item.id, "quantity", e.target.value)}
                     />
                   </div>
                   <div className="col-span-5 md:col-span-2">
-                    {renderItemUnitCombobox(item, index)}
+                    {renderItemUnitCombobox(item)}
                   </div>
                   <div className="col-span-2 md:col-span-1 flex justify-center">
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => removeItem(index)}
+                      onClick={() => removeItem(item.id)}
                       disabled={items.length === 1}
                       className="text-muted-foreground hover:text-destructive"
                     >
