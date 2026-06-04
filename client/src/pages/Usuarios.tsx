@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { getAppSiteUrl } from "@/lib/supabase";
@@ -75,6 +75,23 @@ const PROJECT_REQUIRED_ROLES = new Set([
   "superintendente",
 ]);
 
+const nameCollator = new Intl.Collator("es-HN", {
+  numeric: true,
+  sensitivity: "base",
+});
+
+function compareUsersByName(a: any, b: any) {
+  const nameCompare = nameCollator.compare(a.name ?? "", b.name ?? "");
+  if (nameCompare !== 0) return nameCompare;
+  return nameCollator.compare(a.email ?? "", b.email ?? "");
+}
+
+function compareProjectsByName(a: any, b: any) {
+  const nameCompare = nameCollator.compare(a.name ?? "", b.name ?? "");
+  if (nameCompare !== 0) return nameCompare;
+  return nameCollator.compare(a.code ?? "", b.code ?? "");
+}
+
 function canAssignAllProjects(role?: string | null) {
   return role === "administrador_proyecto";
 }
@@ -132,9 +149,21 @@ function ProjectMultiSelect({
   placeholder?: string;
   compact?: boolean;
 }) {
+  const sortedProjects = useMemo(
+    () => [...(projects || [])].sort(compareProjectsByName),
+    [projects]
+  );
   const selectedSet = new Set(selectedProjectIds);
   const canUseAll = canAssignAllProjects(role);
   const required = Boolean(role && PROJECT_REQUIRED_ROLES.has(role));
+  const allProjectIds = sortedProjects.map((project) => Number(project.id));
+  const allExplicitlySelected =
+    allProjectIds.length > 0 &&
+    allProjectIds.every((projectId) => selectedSet.has(projectId));
+  const hasAnySelected = selectedProjectIds.length > 0;
+  const bulkActionLabel = allExplicitlySelected
+    ? "Quitar todos"
+    : "Seleccionar todos";
   const label =
     canUseAll && selectedProjectIds.length === 0
       ? "Todos los proyectos"
@@ -143,7 +172,7 @@ function ProjectMultiSelect({
         : selectedProjectIds.length === 1
           ? formatAssignedProjects({
               assignedProjectIds: selectedProjectIds,
-              assignedProjects: projects.filter((project) =>
+              assignedProjects: sortedProjects.filter((project) =>
                 selectedSet.has(project.id)
               ),
             })
@@ -161,6 +190,18 @@ function ProjectMultiSelect({
     onChange([...selectedProjectIds, projectId]);
   }
 
+  function toggleAllProjects() {
+    if (allExplicitlySelected) {
+      if (required) {
+        toast.error("Este rol requiere al menos un proyecto");
+        return;
+      }
+      onChange([]);
+      return;
+    }
+    onChange(allProjectIds);
+  }
+
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -175,6 +216,30 @@ function ProjectMultiSelect({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 p-2">
         <div className="space-y-1">
+          {sortedProjects.length > 0 ? (
+            <div
+              role="button"
+              tabIndex={0}
+              className="flex w-full cursor-pointer items-center gap-2 border-b border-border px-2 py-2 text-left text-sm font-medium hover:bg-muted"
+              onClick={toggleAllProjects}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  toggleAllProjects();
+                }
+              }}
+            >
+              <Checkbox
+                checked={
+                  allExplicitlySelected
+                    ? true
+                    : hasAnySelected
+                      ? "indeterminate"
+                      : false
+                }
+              />
+              <span>{bulkActionLabel}</span>
+            </div>
+          ) : null}
           {canUseAll ? (
             <div
               role="button"
@@ -189,7 +254,7 @@ function ProjectMultiSelect({
               <span>Todos los proyectos</span>
             </div>
           ) : null}
-          {(projects || []).map((project: any) => (
+          {sortedProjects.map((project: any) => (
             <div
               key={project.id}
               role="button"
@@ -208,7 +273,7 @@ function ProjectMultiSelect({
               </span>
             </div>
           ))}
-          {projects.length === 0 ? (
+          {sortedProjects.length === 0 ? (
             <p className="px-2 py-2 text-sm text-muted-foreground">
               No hay proyectos activos.
             </p>
@@ -236,6 +301,14 @@ export default function Usuarios() {
   const { data: invitationsList, isLoading: invLoading } =
     trpc.invitations.list.useQuery(undefined, { enabled: isSystemAdmin });
   const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
+  const sortedUsers = useMemo(
+    () => [...(users || [])].sort(compareUsersByName),
+    [users]
+  );
+  const sortedProjects = useMemo(
+    () => [...(projects || [])].sort(compareProjectsByName),
+    [projects]
+  );
   const appSiteUrl = getAppSiteUrl();
 
   const [showInviteDialog, setShowInviteDialog] = useState(false);
@@ -531,7 +604,7 @@ export default function Usuarios() {
             <CardContent className="p-0">
               {usersLoading ? (
                 <div className="p-8 text-center text-muted-foreground">Cargando usuarios...</div>
-              ) : (users || []).length === 0 ? (
+              ) : sortedUsers.length === 0 ? (
                 <div className="p-8 text-center">
                   <UsersIcon className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
                   <p className="text-muted-foreground">No hay usuarios registrados</p>
@@ -554,7 +627,7 @@ export default function Usuarios() {
                       </tr>
                     </thead>
                     <tbody>
-                      {(users || []).map((u: any) => (
+                      {sortedUsers.map((u: any) => (
                         <tr key={u.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
                           <td className="p-3 font-medium">{u.name || "—"}</td>
                           <td className="p-3 text-xs text-muted-foreground">
@@ -584,7 +657,7 @@ export default function Usuarios() {
                                     ? existingProjectIds.length > 0
                                       ? existingProjectIds
                                       : PROJECT_REQUIRED_ROLES.has(val)
-                                        ? (projects?.[0]?.id ? [projects[0].id] : [])
+                                        ? (sortedProjects[0]?.id ? [sortedProjects[0].id] : [])
                                         : []
                                     : [];
                                   updateRoleMutation.mutate({
@@ -621,7 +694,7 @@ export default function Usuarios() {
                             {isSystemAdmin && isProjectAssignableRole(u.buildreqRole) ? (
                               <ProjectMultiSelect
                                 role={u.buildreqRole}
-                                projects={projects || []}
+                                projects={sortedProjects}
                                 selectedProjectIds={getAssignedProjectIds(u)}
                                 compact
                                 onChange={(projectIds) => {
@@ -852,7 +925,7 @@ export default function Usuarios() {
                 <Label>Proyectos asignados</Label>
                 <ProjectMultiSelect
                   role={editRole}
-                  projects={projects || []}
+                  projects={sortedProjects}
                   selectedProjectIds={editProjectIds}
                   onChange={setEditProjectIds}
                 />
@@ -1054,7 +1127,7 @@ export default function Usuarios() {
                 <Label>Proyectos asignados</Label>
                 <ProjectMultiSelect
                   role={directRole}
-                  projects={projects || []}
+                  projects={sortedProjects}
                   selectedProjectIds={directProjectIds}
                   onChange={setDirectProjectIds}
                 />
@@ -1146,7 +1219,7 @@ export default function Usuarios() {
                 <Label>Proyectos asignados</Label>
                 <ProjectMultiSelect
                   role={invRole}
-                  projects={projects || []}
+                  projects={sortedProjects}
                   selectedProjectIds={invProjectIds}
                   onChange={setInvProjectIds}
                 />
