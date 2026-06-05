@@ -3113,7 +3113,7 @@ export default function Recepciones() {
               Nueva recepción
             </Button>
           </DialogTrigger>
-          <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1480px] sm:p-6 lg:p-7">
+          <DialogContent className="scrollbar-visible max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1480px] sm:p-6 lg:p-7">
             <DialogHeader className="border-b border-border/70 pb-4 pr-10">
               <div className="flex flex-wrap items-center gap-3">
                 <DialogTitle className="text-[2rem] font-bold tracking-tight sm:text-[2.4rem]">
@@ -4619,7 +4619,7 @@ export default function Recepciones() {
           if (!open) setViewReceiptId(null);
         }}
       >
-        <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1480px] sm:p-6 lg:p-7">
+        <DialogContent className="scrollbar-visible max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1480px] sm:p-6 lg:p-7">
           <DialogHeader className="border-b border-border/70 pb-4 pr-10">
             <div className="flex flex-wrap items-center gap-3">
               <DialogTitle className="text-[2rem] font-bold tracking-tight sm:text-[2.4rem]">

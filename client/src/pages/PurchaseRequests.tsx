@@ -1664,7 +1664,7 @@ export default function PurchaseRequests() {
                 </div>
 
                 <div className="max-w-full overflow-x-auto">
-                  <table className="w-full min-w-[1880px] table-fixed text-sm">
+                  <table className="w-full min-w-[1980px] table-fixed text-sm">
                     <colgroup>
                       {canConvertSelectedPurchaseRequest && (
                         <col className="w-20" />
@@ -1676,10 +1676,10 @@ export default function PurchaseRequests() {
                       <col className="w-48" />
                       <col className="w-56" />
                       <col className="w-64" />
-                      <col className="w-40" />
-                      <col className="w-36" />
-                      <col className="w-36" />
-                      <col className="w-40" />
+                      <col className="w-52" />
+                      <col className="w-44" />
+                      <col className="w-44" />
+                      <col className="w-52" />
                     </colgroup>
                     <thead>
                       <tr className="border-b border-border bg-muted/20">
@@ -1709,16 +1709,16 @@ export default function PurchaseRequests() {
                         <th className="w-52 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Responsable compra
                         </th>
-                        <th className="w-40 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        <th className="w-52 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Cantidad solicitada
                         </th>
-                        <th className="w-36 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        <th className="w-44 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Convertido
                         </th>
-                        <th className="w-36 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        <th className="w-44 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Pendiente
                         </th>
-                        <th className="w-40 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        <th className="w-52 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           A convertir
                         </th>
                       </tr>
@@ -1818,7 +1818,7 @@ export default function PurchaseRequests() {
                             <td className="p-4 align-top">
                               <div className="flex items-center justify-end gap-2">
                                 <Input
-                                  className="h-9 w-28 text-right"
+                                  className="h-9 w-36 text-right"
                                   type="number"
                                   min="0.01"
                                   step="0.01"
@@ -1832,7 +1832,7 @@ export default function PurchaseRequests() {
                                   }
                                   disabled={!canEditSelectedPurchaseRequest}
                                 />
-                                <span className="min-w-10 text-left text-xs text-muted-foreground">
+                                <span className="min-w-12 text-left text-xs text-muted-foreground">
                                   {item.unit || ""}
                                 </span>
                               </div>
@@ -1848,7 +1848,7 @@ export default function PurchaseRequests() {
                             <td className="p-4 align-top">
                               <div className="flex items-center justify-end gap-2">
                                 <Input
-                                  className="h-9 w-28 text-right"
+                                  className="h-9 w-36 text-right"
                                   type="number"
                                   min="0.01"
                                   max={pendingQuantity || undefined}
@@ -1862,7 +1862,7 @@ export default function PurchaseRequests() {
                                   }
                                   disabled={!canConvertItem}
                                 />
-                                <span className="min-w-10 text-left text-xs text-muted-foreground">
+                                <span className="min-w-12 text-left text-xs text-muted-foreground">
                                   {item.unit || ""}
                                 </span>
                               </div>

@@ -2397,7 +2397,7 @@ export default function OrdenesCompra() {
           }
         }}
       >
-        <DialogContent className="scrollbar-none max-h-[calc(100vh-1rem)] w-[calc(100vw-1rem)] max-w-[980px] overflow-y-auto rounded-2xl p-5 sm:p-6">
+        <DialogContent className="scrollbar-visible max-h-[calc(100vh-1rem)] w-[calc(100vw-1rem)] max-w-[980px] overflow-y-auto rounded-2xl p-5 sm:p-6">
           <DialogHeader className="border-b border-border/70 pb-4 pr-10">
             <DialogTitle className="text-2xl font-bold tracking-tight">
               Nueva orden de compra
@@ -2650,7 +2650,7 @@ export default function OrdenesCompra() {
           }
         }}
       >
-        <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1600px] sm:p-6 lg:p-7">
+        <DialogContent className="scrollbar-visible max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1600px] sm:p-6 lg:p-7">
           <DialogHeader className="border-b border-border/70 pb-4 pr-10">
             <div className="flex flex-wrap items-center gap-3">
               <DialogTitle className="text-[2.1rem] font-bold tracking-tight sm:text-[2.5rem]">
