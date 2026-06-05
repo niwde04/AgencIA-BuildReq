@@ -1887,7 +1887,8 @@ export default function Recepciones() {
     });
   };
 
-  const handleReceivedQuantityChange = (itemId: number, value: string) => {
+  const handleReceivedQuantityChange = (item: any, value: string) => {
+    const itemId = item.id;
     const draft = getReceiptAssetDraft(itemId);
     const nextValue = draft.isFixedAsset ? "1" : value;
     setReceivedMap(current => ({
@@ -1895,12 +1896,11 @@ export default function Recepciones() {
       [itemId]: nextValue,
     }));
     if (sourceType === "purchase_order") {
-      setPriceMap(current => ({
+      setSubtotalMap(current => ({
         ...current,
-        [itemId]: calculateReceiptUnitPriceDraftValue(
+        [itemId]: calculateReceiptSubtotalDraftValue(
           nextValue,
-          subtotalMap[itemId] ??
-            calculateReceiptSubtotalDraftValue(nextValue, current[itemId])
+          priceMap[itemId] ?? String(item.unitPrice ?? "0.00")
         ),
       }));
     }
@@ -1942,12 +1942,11 @@ export default function Recepciones() {
         ...current,
         [item.id]: "1",
       }));
-      setPriceMap(current => ({
+      setSubtotalMap(current => ({
         ...current,
-        [item.id]: calculateReceiptUnitPriceDraftValue(
+        [item.id]: calculateReceiptSubtotalDraftValue(
           "1",
-          subtotalMap[item.id] ??
-            calculateReceiptSubtotalDraftValue("1", current[item.id])
+          priceMap[item.id] ?? String(item.unitPrice ?? "0.00")
         ),
       }));
     }
@@ -3853,6 +3852,11 @@ export default function Recepciones() {
                           sourceType === "purchase_order"
                             ? getReceiptLineTaxDraft(item)
                             : null;
+                        const receiptUnitPriceDraft =
+                          sourceType === "purchase_order"
+                            ? priceMap[item.id] ??
+                              String(item.unitPrice ?? "0.00")
+                            : "0.00";
                         const lineAmounts = taxDraft
                           ? calculatePurchaseOrderLineAmounts({
                               quantity: taxDraft.quantity,
@@ -3903,14 +3907,41 @@ export default function Recepciones() {
                                     type="number"
                                     min="0"
                                     step="0.01"
-                                    className="ml-auto w-36 bg-muted/40 text-right"
-                                    value={formatMoneyDisplay(
-                                      taxDraft?.unitPrice ??
-                                        priceMap[item.id] ??
-                                        item.unitPrice ??
-                                        "0.00"
-                                    )}
-                                    readOnly
+                                    className="ml-auto w-36 text-right"
+                                    value={receiptUnitPriceDraft}
+                                    onChange={event => {
+                                      const nextUnitPrice = event.target.value;
+                                      setPriceMap(current => ({
+                                        ...current,
+                                        [item.id]: nextUnitPrice,
+                                      }));
+                                      setSubtotalMap(current => ({
+                                        ...current,
+                                        [item.id]:
+                                          calculateReceiptSubtotalDraftValue(
+                                            receivedMap[item.id] ?? "0",
+                                            nextUnitPrice
+                                          ),
+                                      }));
+                                    }}
+                                    onBlur={event => {
+                                      const nextUnitPrice = formatMoneyDisplay(
+                                        event.target.value
+                                      );
+                                      setPriceMap(current => ({
+                                        ...current,
+                                        [item.id]: nextUnitPrice,
+                                      }));
+                                      setSubtotalMap(current => ({
+                                        ...current,
+                                        [item.id]:
+                                          calculateReceiptSubtotalDraftValue(
+                                            receivedMap[item.id] ?? "0",
+                                            nextUnitPrice
+                                          ),
+                                      }));
+                                    }}
+                                    disabled={registerMutation.isPending}
                                   />
                                 ) : (
                                   <span className="text-muted-foreground">—</span>
@@ -4001,7 +4032,7 @@ export default function Recepciones() {
                                   value={receivedMap[item.id] ?? ""}
                                   onChange={event =>
                                     handleReceivedQuantityChange(
-                                      item.id,
+                                      item,
                                       event.target.value
                                     )
                                   }

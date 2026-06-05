@@ -1,5 +1,4 @@
 import { trpc } from "@/lib/trpc";
-import { downloadBase64Document } from "@/lib/document-download";
 import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import {
@@ -418,7 +417,7 @@ function withDraftQuantity(
   return {
     ...draft,
     quantity,
-    unitPrice: calculateUnitPriceDraftValue(quantity, draft.subtotal),
+    subtotal: calculateSubtotalDraftValue(quantity, draft.unitPrice),
   };
 }
 
@@ -430,6 +429,17 @@ function withDraftSubtotal(
     ...draft,
     subtotal,
     unitPrice: calculateUnitPriceDraftValue(draft.quantity, subtotal),
+  };
+}
+
+function withDraftUnitPrice(
+  draft: PurchaseOrderItemDraft,
+  unitPrice: string
+): PurchaseOrderItemDraft {
+  return {
+    ...draft,
+    unitPrice,
+    subtotal: calculateSubtotalDraftValue(draft.quantity, unitPrice),
   };
 }
 
@@ -3035,14 +3045,14 @@ export default function OrdenesCompra() {
               </div>
 
               <div className="overflow-x-auto rounded-2xl border border-border/70">
-                <table className="min-w-[1220px] table-auto text-sm lg:text-[15px]">
+                <table className="min-w-[1280px] table-auto text-sm lg:text-[15px]">
                   <colgroup>
                     <col className="w-[310px]" />
                     <col className="w-[150px]" />
                     <col className="w-[210px]" />
                     <col className="w-[190px]" />
                     <col className="w-[170px]" />
-                    <col className="w-[130px]" />
+                    <col className="w-[190px]" />
                     <col className="w-[130px]" />
                     <col className="w-[150px]" />
                   </colgroup>
@@ -3155,9 +3165,27 @@ export default function OrdenesCompra() {
                                 type="number"
                                 min="0"
                                 step="0.01"
-                                value={formatMoneyDisplay(draft.unitPrice)}
-                                readOnly
-                                className="h-10 text-right bg-muted/40"
+                                value={draft.unitPrice}
+                                onChange={event =>
+                                  setOriginItemDrafts(current => ({
+                                    ...current,
+                                    [item.id]: withDraftUnitPrice(
+                                      current[item.id] ??
+                                        getDefaultOriginItemDraft(item),
+                                      event.target.value
+                                    ),
+                                  }))
+                                }
+                                onBlur={() =>
+                                  setOriginItemDrafts(current => ({
+                                    ...current,
+                                    [item.id]: normalizeDraftMoneyValues(
+                                      current[item.id] ??
+                                        getDefaultOriginItemDraft(item)
+                                    ),
+                                  }))
+                                }
+                                className="h-10 text-right"
                               />
                             </td>
                             <td className="p-3 align-middle sm:p-4">
@@ -3203,7 +3231,7 @@ export default function OrdenesCompra() {
                                     ),
                                   }))
                                 }
-                                className="h-10 text-right font-semibold"
+                                className="h-10 w-full min-w-[170px] text-right font-semibold"
                               />
                             </td>
                             <td className="p-3 text-right align-middle font-semibold sm:p-4">
@@ -3542,14 +3570,14 @@ export default function OrdenesCompra() {
               </div>
 
               <div className="overflow-x-auto rounded-2xl border border-border/70">
-                <table className="min-w-[1420px] table-auto text-sm lg:text-[15px]">
+                <table className="min-w-[1500px] table-auto text-sm lg:text-[15px]">
                   <colgroup>
                     <col className="w-[250px]" />
                     <col className="w-[150px]" />
                     <col className="w-[230px]" />
                     <col className="w-[190px]" />
                     <col className="w-[150px]" />
-                    <col className="w-[120px]" />
+                    <col className="w-[200px]" />
                     <col className="w-[110px]" />
                     <col className="w-[130px]" />
                     <col className="w-[160px]" />
@@ -3696,11 +3724,25 @@ export default function OrdenesCompra() {
                                 type="number"
                                 min="0"
                                 step="0.01"
-                                value={formatMoneyDisplay(draft.unitPrice)}
-                                readOnly
+                                value={draft.unitPrice}
+                                onChange={event => {
+                                  const nextUnitPrice = event.target.value;
+                                  setItemDrafts(current => ({
+                                    ...current,
+                                    [item.id]: withDraftUnitPrice(
+                                      current[item.id] ?? getItemDraft(item),
+                                      nextUnitPrice
+                                    ),
+                                  }));
+                                }}
+                                onBlur={() => handleSaveContractItemPrice(item)}
                                 className="h-10 w-full text-right text-sm sm:text-base"
                                 placeholder="0.00"
-                                disabled={isSavingThisLine}
+                                disabled={
+                                  (!canEditOrderStructure &&
+                                    !canEditContractLinePrice) ||
+                                  isSavingThisLine
+                                }
                               />
                               {shouldShowMissingHistoryHint && (
                                 <div className="mt-3 w-full px-1 text-right text-[11px] leading-snug text-muted-foreground">
@@ -3754,7 +3796,7 @@ export default function OrdenesCompra() {
                                 }));
                               }}
                               onBlur={() => handleSaveContractItemPrice(item)}
-                              className="h-10 w-full max-w-[180px] text-right text-sm font-semibold sm:max-w-[200px] sm:text-base"
+                              className="h-10 w-full min-w-[180px] max-w-[240px] text-right text-sm font-semibold sm:text-base"
                               placeholder="0.00"
                               disabled={
                                 (!canEditOrderStructure &&
@@ -3969,37 +4011,6 @@ export default function OrdenesCompra() {
                 >
                   <Printer className="mr-2 h-4 w-4" />
                   Imprimir documento
-                </Button>
-
-                <Button
-                  variant="outline"
-                  size="lg"
-                  className="h-10 min-w-[210px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
-                  onClick={() => {
-                    const downloaded = downloadBase64Document({
-                      base64: detail.purchaseOrder.printedDocumentContent,
-                      fileName: detail.purchaseOrder.printedDocumentName,
-                      mimeType: detail.purchaseOrder.printedDocumentMimeType,
-                    });
-                    if (!downloaded)
-                      toast.error("La OC no tiene documento generado");
-                  }}
-                  disabled={
-                    items.length === 0 ||
-                    detail.purchaseOrder.status === "anulada" ||
-                    hasPendingPricingChanges ||
-                    hasPendingContractPriceChanges ||
-                    updateItemLineMutation.isPending ||
-                    updateContractTermsMutation.isPending ||
-                    updateContractItemPriceMutation.isPending ||
-                    deleteItemMutation.isPending ||
-                    updateMutation.isPending ||
-                    cancelOrderMutation.isPending ||
-                    reopenDraftMutation.isPending
-                  }
-                >
-                  <Download className="mr-2 h-4 w-4" />
-                  Descargar PDF
                 </Button>
 
                 {canEditOrderStructure ? (
