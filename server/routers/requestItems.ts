@@ -68,6 +68,11 @@ const QUEUE_FLOW_TYPES = [
   "solicitud_compra",
 ] as const;
 
+const SERVICE_FLOW_TYPES = new Set<(typeof QUEUE_FLOW_TYPES)[number]>([
+  "compra_directa",
+  "solicitud_compra",
+]);
+
 function canReturnQueuedFlowToRequisition(
   user: { role: string; buildreqRole?: string | null },
   flowType: (typeof QUEUE_FLOW_TYPES)[number]
@@ -451,6 +456,18 @@ export const requestItemsRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "La requisición ya no permite cambios de flujo",
+        });
+      }
+
+      if (
+        input.flowType &&
+        detail.request.requestType === "servicios" &&
+        !SERVICE_FLOW_TYPES.has(input.flowType)
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Salida de bodega y solicitud de traslado no aplican para servicios",
         });
       }
 

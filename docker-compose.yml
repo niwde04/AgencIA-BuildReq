@@ -15,6 +15,7 @@ services:
       - "4000"
     environment:
       NODE_ENV: production
+      TZ: America/Tegucigalpa
       PORT: 4000
       RUN_DB_PUSH: ${RUN_DB_PUSH:-false}
       DATABASE_URL: ${DATABASE_URL}

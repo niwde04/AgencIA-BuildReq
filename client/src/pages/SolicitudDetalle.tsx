@@ -159,6 +159,11 @@ const QUEUE_FLOW_LABELS: Record<QueueFlowType, string> = {
   solicitud_compra: "Solicitud de compra",
 };
 
+const SERVICE_QUEUE_FLOW_TYPES = new Set<QueueFlowType>([
+  "compra_directa",
+  "solicitud_compra",
+]);
+
 const QUEUE_FLOW_DESCRIPTIONS: Record<QueueFlowType, string> = {
   despacho_bodega: "Despacho desde inventario disponible del proyecto.",
   compra_directa: "Genera compra directa para los ítems seleccionados.",
@@ -934,19 +939,24 @@ export default function SolicitudDetalle() {
 
   const getVisibleQueueOptionsForItem = () => {
     const options: QueueFlowType[] = [];
+    const isServiceRequest = data?.request?.requestType === "servicios";
 
     if (
-      user?.role === "admin" ||
-      userRole === "jefe_bodega_central" ||
-      userRole === "administracion_central" ||
-      userRole === "bodeguero_proyecto"
+      !isServiceRequest &&
+      (user?.role === "admin" ||
+        userRole === "jefe_bodega_central" ||
+        userRole === "administracion_central" ||
+        userRole === "bodeguero_proyecto")
     ) {
       options.push("despacho_bodega");
     }
     if ((availableFlows || []).includes("compra_directa")) {
       options.push("compra_directa");
     }
-    if ((availableFlows || []).includes("traslado_proyecto")) {
+    if (
+      !isServiceRequest &&
+      (availableFlows || []).includes("traslado_proyecto")
+    ) {
       options.push("traslado_proyecto");
     }
     if ((availableFlows || []).includes("solicitud_compra")) {
@@ -957,6 +967,12 @@ export default function SolicitudDetalle() {
   };
 
   const getQueueDisabledReason = (item: any, flowType: QueueFlowType) => {
+    if (
+      data?.request?.requestType === "servicios" &&
+      !SERVICE_QUEUE_FLOW_TYPES.has(flowType)
+    ) {
+      return "Salida de bodega y solicitud de traslado no aplican para servicios";
+    }
     if (!item.sapItemCode) {
       return "Debe traducir el ítem a SAP antes de asignar un flujo";
     }
@@ -1126,6 +1142,10 @@ export default function SolicitudDetalle() {
         row.assignedFlowTypes.length > 0 &&
         row.hasSapCode
     );
+  const canShowQueueAssignmentForRequest =
+    request.requestType === "bienes" ||
+    request.approvalStatus === "aprobada" ||
+    request.approvalStatus === "no_requiere";
 
   return (
     <div className="w-full max-w-none space-y-6">
@@ -1518,6 +1538,8 @@ export default function SolicitudDetalle() {
                   const translatedSapCode =
                     editableItem?.sapItemCode ?? item.sapItemCode ?? "";
                   const hasSapTranslation = translatedSapCode.trim().length > 0;
+                  const shouldShowSapQueueWarning =
+                    Boolean(editableItem) && !hasSapTranslation && !queuedFlow;
 
                   return (
                     <tr
@@ -1725,10 +1747,10 @@ export default function SolicitudDetalle() {
                             request.status !== "cerrada_incompleta" &&
                             request.status !== "borrador" &&
                             request.status !== "anulada" &&
-                            request.requestType === "bienes" &&
+                            canShowQueueAssignmentForRequest &&
                             row.pendingApprovalQuantity <= 0 && (
                             <div className="space-y-1.5">
-                              {!editableItem?.sapItemCode ? (
+                              {shouldShowSapQueueWarning ? (
                                 <p className="text-[11px] text-rose-700">
                                   Debe traducir a SAP antes de enviar este ítem al flujo.
                                 </p>
@@ -1804,7 +1826,7 @@ export default function SolicitudDetalle() {
             request.status !== "borrador" &&
             request.status !== "anulada" &&
             request.approvalStatus !== "pendiente" &&
-            request.requestType === "bienes" && (
+            canShowQueueAssignmentForRequest && (
             <div className="border-t border-border bg-muted/5 p-4">
               <div className="flex items-start gap-2 text-xs text-muted-foreground">
                 <Check className="mt-0.5 h-4 w-4 text-primary" />

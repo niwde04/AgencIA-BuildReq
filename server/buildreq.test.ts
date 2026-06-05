@@ -2736,6 +2736,94 @@ describe("BuildReq - Role-based Access Control", () => {
     syncMaterialRequestFulfillmentStatusSpy.mockRestore();
   });
 
+  it("Services can only be assigned to direct purchase or purchase request", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getRequestItemByIdSpy = vi
+      .spyOn(db, "getRequestItemById")
+      .mockResolvedValue({
+        id: 41,
+        requestId: 9,
+        approvalStatus: "no_requiere",
+        sapItemCode: "SER-001",
+        deliveredQuantity: "0.00",
+        dispatchedQuantity: "0.00",
+      } as any);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 9,
+          requestedById: 2,
+          projectId: 1,
+          requestType: "servicios",
+          approvalStatus: "aprobada",
+          status: "en_proceso",
+        },
+      } as any);
+    const getSupplyFlowByRequestIdSpy = vi
+      .spyOn(db, "getSupplyFlowByRequestId")
+      .mockResolvedValue([] as any);
+    const getActivePurchaseRequestByMaterialRequestItemIdSpy = vi
+      .spyOn(db, "getActivePurchaseRequestByMaterialRequestItemId")
+      .mockResolvedValue(undefined as any);
+    const updateRequestItemSpy = vi
+      .spyOn(db, "updateRequestItem")
+      .mockResolvedValue({ id: 41 } as any);
+    const syncMaterialRequestFulfillmentStatusSpy = vi
+      .spyOn(db, "syncMaterialRequestFulfillmentStatus")
+      .mockResolvedValue({ changed: false, status: "en_proceso" } as any);
+
+    await expect(
+      caller.requestItems.assignFlow({
+        id: 41,
+        flowType: "compra_directa",
+      })
+    ).resolves.toEqual({ success: true });
+
+    await expect(
+      caller.requestItems.assignFlow({
+        id: 41,
+        flowType: "solicitud_compra",
+      })
+    ).resolves.toEqual({ success: true });
+
+    await expect(
+      caller.requestItems.assignFlow({
+        id: 41,
+        flowType: "despacho_bodega",
+      })
+    ).rejects.toThrow(
+      "Salida de bodega y solicitud de traslado no aplican para servicios"
+    );
+
+    await expect(
+      caller.requestItems.assignFlow({
+        id: 41,
+        flowType: "traslado_proyecto",
+      })
+    ).rejects.toThrow(
+      "Salida de bodega y solicitud de traslado no aplican para servicios"
+    );
+
+    expect(updateRequestItemSpy).toHaveBeenCalledTimes(2);
+    expect(updateRequestItemSpy).toHaveBeenCalledWith(41, {
+      assignedFlow: "compra_directa",
+      status: "pendiente",
+    });
+    expect(updateRequestItemSpy).toHaveBeenCalledWith(41, {
+      assignedFlow: "solicitud_compra",
+      status: "pendiente",
+    });
+
+    getRequestItemByIdSpy.mockRestore();
+    getMaterialRequestByIdSpy.mockRestore();
+    getSupplyFlowByRequestIdSpy.mockRestore();
+    getActivePurchaseRequestByMaterialRequestItemIdSpy.mockRestore();
+    updateRequestItemSpy.mockRestore();
+    syncMaterialRequestFulfillmentStatusSpy.mockRestore();
+  });
+
   it("Administrador de Proyecto can assign direct purchase or purchase request in their project", async () => {
     const { ctx } = createProjectAdminContext();
     const caller = appRouter.createCaller(ctx);

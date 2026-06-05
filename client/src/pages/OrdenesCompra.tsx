@@ -90,6 +90,7 @@ import {
   PURCHASE_ORDER_CONTRACT_FREQUENCIES,
   PURCHASE_ORDER_CONTRACT_FREQUENCY_LABELS,
   summarizePurchaseOrderLines,
+  toPurchaseOrderNumber,
   type PurchaseOrderContractFrequency,
   type PurchaseOrderTaxCode,
   type SalesTaxCatalogItem,
@@ -383,8 +384,68 @@ function formatQuantityPayload(value: number | string | null | undefined) {
 }
 
 function formatMoneyPayload(value: number | string | null | undefined) {
-  const parsed = Number(value ?? 0);
+  const parsed = toPurchaseOrderNumber(value);
   return Number.isFinite(parsed) ? parsed.toFixed(4) : "0.0000";
+}
+
+function formatMoneyDisplay(value: number | string | null | undefined) {
+  const parsed = toPurchaseOrderNumber(value);
+  return Number.isFinite(parsed) ? parsed.toFixed(2) : "0.00";
+}
+
+function calculateSubtotalDraftValue(
+  quantity: number | string | null | undefined,
+  unitPrice: number | string | null | undefined
+) {
+  return formatMoneyDisplay(
+    toPurchaseOrderNumber(quantity) * toPurchaseOrderNumber(unitPrice)
+  );
+}
+
+function calculateUnitPriceDraftValue(
+  quantity: number | string | null | undefined,
+  subtotal: number | string | null | undefined
+) {
+  const parsedQuantity = toPurchaseOrderNumber(quantity);
+  if (parsedQuantity <= 0) return "0.0000";
+  return formatMoneyPayload(toPurchaseOrderNumber(subtotal) / parsedQuantity);
+}
+
+function withDraftQuantity(
+  draft: PurchaseOrderItemDraft,
+  quantity: string
+): PurchaseOrderItemDraft {
+  return {
+    ...draft,
+    quantity,
+    unitPrice: calculateUnitPriceDraftValue(quantity, draft.subtotal),
+  };
+}
+
+function withDraftSubtotal(
+  draft: PurchaseOrderItemDraft,
+  subtotal: string
+): PurchaseOrderItemDraft {
+  return {
+    ...draft,
+    subtotal,
+    unitPrice: calculateUnitPriceDraftValue(draft.quantity, subtotal),
+  };
+}
+
+function normalizeDraftMoneyValues(
+  draft: PurchaseOrderItemDraft
+): PurchaseOrderItemDraft {
+  const quantity = draft.quantity.trim()
+    ? draft.quantity
+    : formatQuantityPayload(draft.quantity);
+  const subtotal = formatMoneyDisplay(draft.subtotal);
+  return {
+    ...draft,
+    quantity,
+    subtotal,
+    unitPrice: calculateUnitPriceDraftValue(quantity, subtotal),
+  };
 }
 
 function areTaxCodeArraysEqual(
@@ -402,6 +463,7 @@ function areTaxCodeArraysEqual(
 type PurchaseOrderItemDraft = {
   quantity: string;
   unitPrice: string;
+  subtotal: string;
   taxCode: PurchaseOrderTaxCode;
   additionalTaxCodes: string[];
 };
@@ -430,11 +492,14 @@ type PendingOrderAttachment = PreparedDocumentAttachment & {
 
 function getDefaultOriginItemDraft(item: any): PurchaseOrderItemDraft {
   const taxCode = normalizePurchaseOrderTaxCode(item.taxCode);
+  const quantity = formatQuantityPayload(
+    getPurchaseRequestItemPendingConversionQuantity(item)
+  );
+  const unitPrice = formatMoneyPayload(item.unitPrice ?? "0.00");
   return {
-    quantity: formatQuantityPayload(
-      getPurchaseRequestItemPendingConversionQuantity(item)
-    ),
-    unitPrice: formatMoneyPayload(item.unitPrice ?? "0.00"),
+    quantity,
+    unitPrice,
+    subtotal: calculateSubtotalDraftValue(quantity, unitPrice),
     taxCode,
     additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
       item.additionalTaxCodes,
@@ -970,7 +1035,7 @@ export default function OrdenesCompra() {
   const selectedOriginItemsToConvert = useMemo(
     () =>
       selectedOriginItems.map((item: any) => {
-        const draft = getOriginItemDraft(item);
+        const draft = normalizeDraftMoneyValues(getOriginItemDraft(item));
         return {
           purchaseRequestItemId: item.id,
           quantity: formatQuantityPayload(draft.quantity),
@@ -1001,7 +1066,7 @@ export default function OrdenesCompra() {
     () =>
       summarizePurchaseOrderLines(
         selectedOriginItems.map((item: any) => {
-          const draft = getOriginItemDraft(item);
+          const draft = normalizeDraftMoneyValues(getOriginItemDraft(item));
           return {
             quantity: draft.quantity,
             unitPrice: draft.unitPrice,
@@ -1249,19 +1314,24 @@ export default function OrdenesCompra() {
       Object.fromEntries(
         detail.items.map((item: any) => [
           item.id,
-          {
-            quantity: String(item.quantity ?? "0.00"),
-            unitPrice: String(item.unitPrice ?? "0.00"),
-            taxCode: normalizePurchaseOrderTaxCode(
-              item.taxCode,
-              activeSalesTaxes
-            ),
-            additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
-              item.additionalTaxCodes,
-              item.taxCode,
-              activeSalesTaxes
-            ),
-          },
+          (() => {
+            const quantity = String(item.quantity ?? "0.00");
+            const unitPrice = String(item.unitPrice ?? "0.00");
+            return {
+              quantity,
+              unitPrice,
+              subtotal: calculateSubtotalDraftValue(quantity, unitPrice),
+              taxCode: normalizePurchaseOrderTaxCode(
+                item.taxCode,
+                activeSalesTaxes
+              ),
+              additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
+                item.additionalTaxCodes,
+                item.taxCode,
+                activeSalesTaxes
+              ),
+            };
+          })(),
         ])
       )
     );
@@ -1292,6 +1362,7 @@ export default function OrdenesCompra() {
       const currentDraft = itemDrafts[item.id] ?? {
         quantity: String(item.quantity ?? "0.00"),
         unitPrice: String(item.unitPrice ?? "0.00"),
+        subtotal: calculateSubtotalDraftValue(item.quantity, item.unitPrice),
         taxCode: normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes),
         additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
           item.additionalTaxCodes,
@@ -1306,6 +1377,10 @@ export default function OrdenesCompra() {
       const nextDraft = {
         ...currentDraft,
         unitPrice: latestPrice.unitPrice,
+        subtotal: calculateSubtotalDraftValue(
+          currentDraft.quantity,
+          latestPrice.unitPrice
+        ),
       };
 
       nextDrafts[item.id] = nextDraft;
@@ -1333,6 +1408,7 @@ export default function OrdenesCompra() {
     itemDrafts[item.id] ?? {
       quantity: String(item.quantity ?? "0.00"),
       unitPrice: String(item.unitPrice ?? "0.00"),
+      subtotal: calculateSubtotalDraftValue(item.quantity, item.unitPrice),
       taxCode: normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes),
       additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
         item.additionalTaxCodes,
@@ -1345,7 +1421,7 @@ export default function OrdenesCompra() {
     () =>
       summarizePurchaseOrderLines(
         items.map((item: any) => {
-          const draft = getItemDraft(item);
+          const draft = normalizeDraftMoneyValues(getItemDraft(item));
           return {
             quantity: draft.quantity,
             unitPrice: draft.unitPrice,
@@ -1494,7 +1570,12 @@ export default function OrdenesCompra() {
       return;
     }
 
-    const draft = draftOverride ?? getItemDraft(item);
+    const rawDraft = draftOverride ?? getItemDraft(item);
+    if (!rawDraft.quantity.trim()) {
+      toast.error("Ingrese la cantidad");
+      return;
+    }
+    const draft = normalizeDraftMoneyValues(rawDraft);
     if (
       Number(draft.quantity || 0) === Number(item.quantity ?? 0) &&
       Number(draft.unitPrice || 0) === Number(item.unitPrice ?? 0) &&
@@ -1503,16 +1584,13 @@ export default function OrdenesCompra() {
     ) {
       return;
     }
-    if (!draft.quantity.trim()) {
-      toast.error("Ingrese la cantidad");
-      return;
-    }
     if (!draft.unitPrice.trim()) {
       toast.error("Ingrese el precio unitario");
       return;
     }
 
     setSavingItemId(item.id);
+    setItemDrafts(current => ({ ...current, [item.id]: draft }));
     updateItemLineMutation.mutate(
       {
         purchaseOrderItemId: item.id,
@@ -1539,7 +1617,8 @@ export default function OrdenesCompra() {
       return;
     }
 
-    const draft = getItemDraft(item);
+    const rawDraft = getItemDraft(item);
+    const draft = normalizeDraftMoneyValues(rawDraft);
     if (Number(draft.unitPrice || 0) === Number(item.unitPrice ?? 0)) {
       return;
     }
@@ -1549,6 +1628,7 @@ export default function OrdenesCompra() {
     }
 
     setSavingItemId(item.id);
+    setItemDrafts(current => ({ ...current, [item.id]: draft }));
     updateContractItemPriceMutation.mutate(
       {
         purchaseOrderItemId: item.id,
@@ -3052,8 +3132,11 @@ export default function OrdenesCompra() {
                                     setOriginItemDrafts(current => ({
                                       ...current,
                                       [item.id]: {
-                                        ...draft,
-                                        quantity: event.target.value,
+                                        ...withDraftQuantity(
+                                          current[item.id] ??
+                                            getDefaultOriginItemDraft(item),
+                                          event.target.value
+                                        ),
                                       },
                                     }))
                                   }
@@ -3071,18 +3154,10 @@ export default function OrdenesCompra() {
                               <Input
                                 type="number"
                                 min="0"
-                                step="0.0001"
-                                value={draft.unitPrice}
-                                onChange={event =>
-                                  setOriginItemDrafts(current => ({
-                                    ...current,
-                                    [item.id]: {
-                                      ...draft,
-                                      unitPrice: event.target.value,
-                                    },
-                                  }))
-                                }
-                                className="h-10 text-right"
+                                step="0.01"
+                                value={formatMoneyDisplay(draft.unitPrice)}
+                                readOnly
+                                className="h-10 text-right bg-muted/40"
                               />
                             </td>
                             <td className="p-3 align-middle sm:p-4">
@@ -3092,13 +3167,44 @@ export default function OrdenesCompra() {
                                 onChange={nextDraft =>
                                   setOriginItemDrafts(current => ({
                                     ...current,
-                                    [item.id]: nextDraft,
+                                    [item.id]: {
+                                      ...(current[item.id] ??
+                                        getDefaultOriginItemDraft(item)),
+                                      taxCode: nextDraft.taxCode,
+                                      additionalTaxCodes:
+                                        nextDraft.additionalTaxCodes,
+                                    },
                                   }))
                                 }
                               />
                             </td>
-                            <td className="p-3 text-right align-middle font-semibold sm:p-4">
-                              {formatPurchaseOrderCurrency(lineAmounts.subtotal)}
+                            <td className="p-3 align-middle sm:p-4">
+                              <Input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={draft.subtotal}
+                                onChange={event =>
+                                  setOriginItemDrafts(current => ({
+                                    ...current,
+                                    [item.id]: withDraftSubtotal(
+                                      current[item.id] ??
+                                        getDefaultOriginItemDraft(item),
+                                      event.target.value
+                                    ),
+                                  }))
+                                }
+                                onBlur={() =>
+                                  setOriginItemDrafts(current => ({
+                                    ...current,
+                                    [item.id]: normalizeDraftMoneyValues(
+                                      current[item.id] ??
+                                        getDefaultOriginItemDraft(item)
+                                    ),
+                                  }))
+                                }
+                                className="h-10 text-right font-semibold"
+                              />
                             </td>
                             <td className="p-3 text-right align-middle font-semibold sm:p-4">
                               {formatPurchaseOrderCurrency(lineAmounts.taxAmount)}
@@ -3543,13 +3649,13 @@ export default function OrdenesCompra() {
                                 step="0.01"
                                 value={draft.quantity}
                                 onChange={event => {
-                                  const nextDraft = {
-                                    ...getItemDraft(item),
-                                    quantity: event.target.value,
-                                  };
+                                  const nextQuantity = event.target.value;
                                   setItemDrafts(current => ({
                                     ...current,
-                                    [item.id]: nextDraft,
+                                    [item.id]: withDraftQuantity(
+                                      current[item.id] ?? getItemDraft(item),
+                                      nextQuantity
+                                    ),
                                   }));
                                 }}
                                 onBlur={() => handleSaveItemLine(item)}
@@ -3589,26 +3695,12 @@ export default function OrdenesCompra() {
                               <Input
                                 type="number"
                                 min="0"
-                                step="0.0001"
-                                value={draft.unitPrice}
-                                onChange={event => {
-                                  const nextDraft = {
-                                    ...getItemDraft(item),
-                                    unitPrice: event.target.value,
-                                  };
-                                  setItemDrafts(current => ({
-                                    ...current,
-                                    [item.id]: nextDraft,
-                                  }));
-                                }}
-                                onBlur={() => handleSaveContractItemPrice(item)}
+                                step="0.01"
+                                value={formatMoneyDisplay(draft.unitPrice)}
+                                readOnly
                                 className="h-10 w-full text-right text-sm sm:text-base"
                                 placeholder="0.00"
-                                disabled={
-                                  (!canEditOrderStructure &&
-                                    !canEditContractLinePrice) ||
-                                  isSavingThisLine
-                                }
+                                disabled={isSavingThisLine}
                               />
                               {shouldShowMissingHistoryHint && (
                                 <div className="mt-3 w-full px-1 text-right text-[11px] leading-snug text-muted-foreground">
@@ -3625,20 +3717,51 @@ export default function OrdenesCompra() {
                                 !canEditOrderStructure || isSavingThisLine
                               }
                               onChange={nextDraft => {
+                                const nextTaxCode = nextDraft.taxCode;
+                                const nextAdditionalTaxCodes =
+                                  nextDraft.additionalTaxCodes;
+                                const draftForSave = {
+                                  ...getItemDraft(item),
+                                  taxCode: nextTaxCode,
+                                  additionalTaxCodes: nextAdditionalTaxCodes,
+                                };
                                 setItemDrafts(current => ({
                                   ...current,
-                                  [item.id]: nextDraft,
+                                  [item.id]: {
+                                    ...(current[item.id] ?? getItemDraft(item)),
+                                    taxCode: nextTaxCode,
+                                    additionalTaxCodes: nextAdditionalTaxCodes,
+                                  },
                                 }));
-                                handleSaveItemLine(item, nextDraft);
+                                handleSaveItemLine(item, draftForSave);
                               }}
                             />
                           </td>
-                          <td className="p-3 text-right align-middle sm:p-4">
-                            <div className="whitespace-nowrap text-base font-semibold sm:text-lg">
-                              {formatPurchaseOrderCurrency(
-                                lineAmounts.subtotal
-                              )}
-                            </div>
+                          <td className="p-3 align-middle sm:p-4">
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={draft.subtotal}
+                              onChange={event => {
+                                const nextSubtotal = event.target.value;
+                                setItemDrafts(current => ({
+                                  ...current,
+                                  [item.id]: withDraftSubtotal(
+                                    current[item.id] ?? getItemDraft(item),
+                                    nextSubtotal
+                                  ),
+                                }));
+                              }}
+                              onBlur={() => handleSaveContractItemPrice(item)}
+                              className="h-10 w-full max-w-[180px] text-right text-sm font-semibold sm:max-w-[200px] sm:text-base"
+                              placeholder="0.00"
+                              disabled={
+                                (!canEditOrderStructure &&
+                                  !canEditContractLinePrice) ||
+                                isSavingThisLine
+                              }
+                            />
                           </td>
                           <td className="p-3 text-right align-middle sm:p-4">
                             <div className="whitespace-nowrap text-base font-semibold sm:text-lg">
