@@ -321,6 +321,9 @@ export const projects = pgTable(
     status: projectStatusEnum("status").default("activo").notNull(),
     startDate: timestamp("startDate"),
     endDate: timestamp("endDate"),
+    warehouseId: integer("warehouseId").references(() => warehouses.id, {
+      onDelete: "set null",
+    }),
     /** SAP B1 project code for future integration */
     sapProjectCode: varchar("sapProjectCode", { length: 50 }),
     demoBatchKey: varchar("demoBatchKey", { length: 64 }),
@@ -329,6 +332,7 @@ export const projects = pgTable(
   },
   table => ({
     demoBatchIdx: index("proj_demo_batch_idx").on(table.demoBatchKey),
+    warehouseIdx: index("proj_warehouse_idx").on(table.warehouseId),
   })
 );
 
@@ -480,6 +484,10 @@ export const requestItems = pgTable(
     fixedAssetName: varchar("fixedAssetName", { length: 500 }),
     /** Which supply flow was assigned to this specific item */
     assignedFlow: flowTypeEnum("assignedFlow"),
+    /** Warehouse selected as the source when the item is queued for inventory exit */
+    warehouseId: integer("warehouseId").references(() => warehouses.id, {
+      onDelete: "set null",
+    }),
     /** Quantity actually delivered/fulfilled */
     deliveredQuantity: decimal("deliveredQuantity", {
       precision: 12,
@@ -505,6 +513,7 @@ export const requestItems = pgTable(
     requestIdx: index("ri_request_idx").on(table.requestId),
     subProjectIdx: index("ri_subproject_idx").on(table.subProjectId),
     fixedAssetIdx: index("ri_fixed_asset_idx").on(table.fixedAssetSapItemCode),
+    warehouseIdx: index("ri_warehouse_idx").on(table.warehouseId),
   })
 );
 
@@ -1391,7 +1400,7 @@ export const openingBalances = pgTable(
     id: serial("id").primaryKey(),
     balanceNumber: varchar("balanceNumber", { length: 64 }).notNull().unique(),
     projectId: integer("projectId").notNull(),
-    warehouseId: integer("warehouseId").notNull().unique(),
+    warehouseId: integer("warehouseId").notNull(),
     createdById: integer("createdById").notNull(),
     openingDate: timestamp("openingDate").defaultNow().notNull(),
     notes: text("notes"),
@@ -1402,6 +1411,10 @@ export const openingBalances = pgTable(
     projectIdx: index("ob_project_idx").on(table.projectId),
     warehouseIdx: index("ob_warehouse_idx").on(table.warehouseId),
     createdByIdx: index("ob_created_by_idx").on(table.createdById),
+    projectWarehouseUnique: uniqueIndex("ob_project_warehouse_unique").on(
+      table.projectId,
+      table.warehouseId
+    ),
   })
 );
 
@@ -1569,10 +1582,6 @@ export const warehouses = pgTable(
     localCode: varchar("localCode", { length: 20 }),
     name: varchar("name", { length: 255 }).notNull(),
     displayName: varchar("displayName", { length: 300 }).notNull().unique(),
-    projectId: integer("projectId")
-      .references(() => projects.id, {
-        onDelete: "set null",
-      }),
     description: text("description"),
     isDefault: boolean("isDefault").default(false).notNull(),
     isActive: boolean("isActive").default(true).notNull(),
@@ -1582,19 +1591,81 @@ export const warehouses = pgTable(
   table => ({
     codeIdx: index("wh_code_idx").on(table.code),
     displayNameIdx: index("wh_display_name_idx").on(table.displayName),
-    projectIdx: index("wh_project_idx").on(table.projectId),
-    projectLocalCodeUnique: uniqueIndex("wh_project_local_code_unique").on(
-      table.projectId,
-      table.localCode
-    ),
-    projectDefaultUnique: uniqueIndex("wh_project_default_unique")
-      .on(table.projectId)
-      .where(sql`${table.projectId} IS NOT NULL AND ${table.isDefault} = true`),
   })
 );
 
 export type Warehouse = typeof warehouses.$inferSelect;
 export type InsertWarehouse = typeof warehouses.$inferInsert;
+
+export const projectWarehouseAssignments = pgTable(
+  "projectWarehouseAssignments",
+  {
+    id: serial("id").primaryKey(),
+    projectId: integer("projectId")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    warehouseId: integer("warehouseId")
+      .notNull()
+      .references(() => warehouses.id, { onDelete: "cascade" }),
+    isPrimary: boolean("isPrimary").default(false).notNull(),
+    assignedById: integer("assignedById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    projectIdx: index("pwa_project_idx").on(table.projectId),
+    warehouseIdx: index("pwa_warehouse_idx").on(table.warehouseId),
+    projectWarehouseUnique: uniqueIndex("pwa_project_warehouse_unique").on(
+      table.projectId,
+      table.warehouseId
+    ),
+    primaryProjectUnique: uniqueIndex("pwa_primary_project_unique")
+      .on(table.projectId)
+      .where(sql`${table.isPrimary} = true`),
+  })
+);
+
+export type ProjectWarehouseAssignment =
+  typeof projectWarehouseAssignments.$inferSelect;
+export type InsertProjectWarehouseAssignment =
+  typeof projectWarehouseAssignments.$inferInsert;
+
+export const warehouseUserAssignments = pgTable(
+  "warehouseUserAssignments",
+  {
+    id: serial("id").primaryKey(),
+    warehouseId: integer("warehouseId")
+      .notNull()
+      .references(() => warehouses.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    isResponsible: boolean("isResponsible").default(false).notNull(),
+    assignedById: integer("assignedById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    warehouseIdx: index("wua_warehouse_idx").on(table.warehouseId),
+    userIdx: index("wua_user_idx").on(table.userId),
+    userWarehouseUnique: uniqueIndex("wua_user_warehouse_unique").on(
+      table.userId,
+      table.warehouseId
+    ),
+    responsibleUnique: uniqueIndex("wua_responsible_unique")
+      .on(table.warehouseId)
+      .where(sql`${table.isResponsible} = true`),
+  })
+);
+
+export type WarehouseUserAssignment =
+  typeof warehouseUserAssignments.$inferSelect;
+export type InsertWarehouseUserAssignment =
+  typeof warehouseUserAssignments.$inferInsert;
 
 // ============================================================
 // INVENTORY ITEMS - For tracking stock (Bodega Central view)
@@ -1726,6 +1797,8 @@ export const sapCatalog = pgTable(
     itemCode: varchar("itemCode", { length: 50 }).notNull().unique(),
     description: varchar("description", { length: 500 }).notNull(),
     itemGroup: varchar("itemGroup", { length: 255 }),
+    brand: varchar("brand", { length: 120 }),
+    partNumber: varchar("partNumber", { length: 120 }),
     tipoArticulo: integer("tipoArticulo").default(1).notNull(),
     projectId: integer("projectId").references(() => projects.id, {
       onDelete: "set null",
@@ -1763,6 +1836,8 @@ export const sapCatalog = pgTable(
   table => ({
     codeIdx: index("sap_cat_code_idx").on(table.itemCode),
     descIdx: index("sap_cat_desc_idx").on(table.description),
+    brandIdx: index("sap_cat_brand_idx").on(table.brand),
+    partNumberIdx: index("sap_cat_part_number_idx").on(table.partNumber),
     tipoArticuloIdx: index("sap_cat_tipo_articulo_idx").on(table.tipoArticulo),
     projectIdx: index("sap_cat_project_idx").on(table.projectId),
     fixedAssetStatusIdx: index("sap_cat_fixed_asset_status_idx").on(

@@ -107,6 +107,8 @@ export const articlesRouter = router({
     .input(
       z.object({
         id: z.number().int().positive(),
+        brand: z.string().trim().max(120).nullable().optional(),
+        partNumber: z.string().trim().max(120).nullable().optional(),
         tipoArticulo: articleTypeSchema,
         projectId: z.number().int().positive().nullable().optional(),
         isActive: z.boolean(),
@@ -127,12 +129,71 @@ export const articlesRouter = router({
         }
       }
 
-      return db.updateArticle(input.id, {
+      const updateData: Parameters<typeof db.updateArticle>[1] = {
+        brand: input.brand?.trim() || null,
+        partNumber: input.partNumber?.trim() || null,
         tipoArticulo: input.tipoArticulo,
         projectId,
         isActive: input.isActive,
         allowsTaxWithholding: input.allowsTaxWithholding,
-      });
+      };
+      if (!("brand" in input)) {
+        delete updateData.brand;
+      }
+      if (!("partNumber" in input)) {
+        delete updateData.partNumber;
+      }
+
+      return db.updateArticle(input.id, updateData);
+    }),
+
+  create: protectedProcedure
+    .input(
+      z.object({
+        itemCode: z.string().trim().min(1).max(50),
+        description: z.string().trim().min(1).max(500),
+        itemGroup: z.string().trim().max(255).nullable().optional(),
+        brand: z.string().trim().max(120).nullable().optional(),
+        partNumber: z.string().trim().max(120).nullable().optional(),
+        tipoArticulo: articleTypeSchema.default(1),
+        projectId: z.number().int().positive().nullable().optional(),
+        allowsTaxWithholding: z.boolean().default(true),
+        isActive: z.boolean().default(true),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      assertCanManageArticles(ctx.user);
+      const projectId = input.tipoArticulo === 3 ? input.projectId ?? null : null;
+
+      if (projectId) {
+        const project = await db.getProjectById(projectId);
+        if (!project) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Proyecto no encontrado",
+          });
+        }
+      }
+
+      try {
+        return await db.createArticle({
+          itemCode: input.itemCode,
+          description: input.description,
+          itemGroup: input.itemGroup ?? null,
+          brand: input.brand ?? null,
+          partNumber: input.partNumber ?? null,
+          tipoArticulo: input.tipoArticulo,
+          projectId,
+          allowsTaxWithholding: input.allowsTaxWithholding,
+          isActive: input.isActive,
+        });
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            error instanceof Error ? error.message : "No se pudo crear el artículo",
+        });
+      }
     }),
 
   resolveFixedAssetCode: protectedProcedure

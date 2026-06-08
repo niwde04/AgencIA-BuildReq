@@ -161,16 +161,18 @@ export function FiscalSummaryCard({
       : rows;
 
   return (
-    <div className="w-full max-w-[360px] overflow-hidden rounded-xl border border-border bg-background text-sm">
+    <div className="w-full max-w-[420px] overflow-hidden rounded-xl border border-border bg-background text-sm">
       {displayRows.map((row, index) => (
         <div
           key={row.key}
-          className={`grid grid-cols-[1fr_auto] items-center border-border ${
+          className={`grid grid-cols-[minmax(max-content,1fr)_auto] items-center border-border ${
             index > 0 ? "border-t" : ""
           } ${row.emphasized ? "font-semibold" : ""}`}
         >
-          <span className="px-3 py-2 text-muted-foreground">{row.label}</span>
-          <span className="px-3 py-2 text-right tabular-nums text-foreground">
+          <span className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+            {row.label}
+          </span>
+          <span className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-foreground">
             {formatSummaryMoney(row.value)}
           </span>
         </div>

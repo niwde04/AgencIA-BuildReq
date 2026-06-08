@@ -25,7 +25,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Popover,
@@ -50,11 +49,10 @@ import {
   ChevronUp,
   ChevronsUpDown,
   ClipboardList,
-  Plus,
   Search,
   Warehouse,
 } from "lucide-react";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 type InventorySortField =
@@ -140,8 +138,7 @@ function formatWarehouseOptionLabel(warehouse: any | null | undefined) {
 }
 
 function formatWarehouseProjectLabel(warehouse: any | null | undefined) {
-  if (!warehouse?.project) return warehouse?.displayName ?? "";
-  return `${warehouse.project.code} - ${warehouse.project.name}`;
+  return warehouse?.displayName ?? "";
 }
 
 function formatStatus(status: string | null | undefined) {
@@ -165,6 +162,8 @@ export default function Inventario() {
   const utils = trpc.useUtils();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [debouncedGlobalSearch, setDebouncedGlobalSearch] = useState("");
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState<InventorySortField>("name");
   const [sortDir, setSortDir] = useState<SortDirection>("asc");
@@ -184,7 +183,6 @@ export default function Inventario() {
   const [assignmentProjectId, setAssignmentProjectId] = useState("none");
   const [bulkAssignmentProjectId, setBulkAssignmentProjectId] = useState("none");
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
-  const hasAttemptedWarehouseSeed = useRef(false);
 
   const [sapItemCode, setSapItemCode] = useState("");
   const [name, setName] = useState("");
@@ -205,6 +203,14 @@ export default function Inventario() {
   }, [search]);
 
   useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedGlobalSearch(globalSearch.trim());
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [globalSearch]);
+
+  useEffect(() => {
     setPage(1);
   }, [debouncedSearch, warehouseFilter, projectFilter]);
 
@@ -223,6 +229,8 @@ export default function Inventario() {
     userRole === "administracion_central" ||
     userRole === "administrador_proyecto" ||
     userRole === "bodeguero_proyecto";
+  const canUseGlobalAvailability =
+    canAccessWarehouses || user?.role === "admin";
   const allowInventoryReassignment = false;
 
   const { data: projects } = trpc.projects.list.useQuery();
@@ -234,11 +242,11 @@ export default function Inventario() {
   const warehouseOptions = useMemo(() => {
     const allWarehouses = warehouses ?? [];
     if (projectFilter === "all") return allWarehouses;
-    const selectedProjectId = Number(projectFilter);
-    return allWarehouses.filter(
-      (warehouse: any) => warehouse.project?.id === selectedProjectId
+    const selectedProject = (projects ?? []).find(
+      (project: any) => String(project.id) === projectFilter
     );
-  }, [projectFilter, warehouses]);
+    return selectedProject?.warehouse ? [selectedProject.warehouse] : [];
+  }, [projectFilter, projects, warehouses]);
   const selectedFilterProject = useMemo(
     () =>
       projectFilter === "all"
@@ -261,39 +269,28 @@ export default function Inventario() {
     ? `${selectedFilterProject.code} - ${selectedFilterProject.name}`
     : `Todos los proyectos (${(projects ?? []).length.toLocaleString("es-HN")})`;
   const allWarehouseFilterLabel = selectedFilterProject
-    ? `Todos los almacenes de ${selectedFilterProject.code}`
+    ? `Bodega asignada de ${selectedFilterProject.code}`
     : `Todos los almacenes (${warehouseOptions.length.toLocaleString("es-HN")})`;
   const selectedWarehouseFilterLabel = selectedFilterWarehouse
     ? formatWarehouseOptionLabel(selectedFilterWarehouse)
     : allWarehouseFilterLabel;
   const centralWarehouses = useMemo(
-    () => (warehouses ?? []).filter((warehouse: any) => !warehouse.project),
+    () => warehouses ?? [],
     [warehouses]
-  );
-  const createProjectWarehouses = useMemo(
-    () =>
-      projectId
-        ? (warehouses ?? []).filter(
-            (warehouse: any) => String(warehouse.project?.id) === projectId
-          )
-        : [],
-    [projectId, warehouses]
-  );
-  const defaultCreateWarehouse = useMemo(
-    () =>
-      createProjectWarehouses.find((warehouse: any) => warehouse.isDefault) ??
-      createProjectWarehouses[0] ??
-      null,
-    [createProjectWarehouses]
-  );
-  const missingProjectWarehouses = useMemo(
-    () => (projects ?? []).filter((project: any) => !project.warehouse),
-    [projects]
   );
   const selectedCreateProject = useMemo(
     () =>
       (projects ?? []).find((project: any) => String(project.id) === projectId) ?? null,
     [projectId, projects]
+  );
+  const createProjectWarehouses = useMemo(
+    () =>
+      selectedCreateProject?.warehouse ? [selectedCreateProject.warehouse] : [],
+    [selectedCreateProject]
+  );
+  const defaultCreateWarehouse = useMemo(
+    () => createProjectWarehouses[0] ?? null,
+    [createProjectWarehouses]
   );
   const selectedAssignmentProject = useMemo(
     () =>
@@ -365,6 +362,17 @@ export default function Inventario() {
   } = trpc.inventory.list.useQuery(listQueryInput, {
     placeholderData: (previousData) => previousData,
   });
+  const globalAvailabilityQuery =
+    trpc.inventory.globalAvailability.useQuery(
+      {
+        search: debouncedGlobalSearch,
+        limit: 80,
+      },
+      {
+        enabled:
+          canUseGlobalAvailability && debouncedGlobalSearch.length >= 2,
+      }
+    );
 
   const trackingQuery = trpc.inventory.tracking.useQuery(
     {
@@ -396,33 +404,6 @@ export default function Inventario() {
       setPage(data.page);
     }
   }, [data?.page, page]);
-
-  const seedWarehousesMutation = trpc.warehouses.seedDefaults.useMutation({
-    onSuccess: () => {
-      void Promise.all([
-        utils.warehouses.list.invalidate(),
-        utils.inventory.list.invalidate(),
-        utils.projects.list.invalidate(),
-      ]);
-    },
-    onError: (error) => toast.error(error.message),
-  });
-
-  useEffect(() => {
-    if (!canManage || warehousesLoading || hasAttemptedWarehouseSeed.current) {
-      return;
-    }
-
-    if (missingProjectWarehouses.length === 0) return;
-
-    hasAttemptedWarehouseSeed.current = true;
-    seedWarehousesMutation.mutate();
-  }, [
-    canManage,
-    warehousesLoading,
-    missingProjectWarehouses,
-    seedWarehousesMutation,
-  ]);
 
   const createMutation = trpc.inventory.create.useMutation({
     onSuccess: () => {
@@ -666,12 +647,6 @@ export default function Inventario() {
         </div>
         {canManage && (
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm">
-                <Plus className="h-4 w-4 mr-2" />
-                Nuevo Ítem
-              </Button>
-            </DialogTrigger>
             <DialogContent className="sm:max-w-4xl">
               <DialogHeader>
                 <DialogTitle>Nuevo Ítem de Inventario</DialogTitle>
@@ -828,17 +803,6 @@ export default function Inventario() {
                     </div>
                   </div>
                 )}
-                {canManage && missingProjectWarehouses.length > 0 ? (
-                  <Button
-                    variant="outline"
-                    onClick={() => seedWarehousesMutation.mutate()}
-                    disabled={seedWarehousesMutation.isPending}
-                  >
-                    {seedWarehousesMutation.isPending
-                      ? "Sincronizando bodegas..."
-                      : "Generar bodegas faltantes por proyecto"}
-                  </Button>
-                ) : null}
                 <Button
                   onClick={() => {
                     if (!sapItemCode || !name) {
@@ -1543,6 +1507,108 @@ export default function Inventario() {
         Los movimientos entre bodegas o proyectos se registran desde requisiciones, traslados y recepciones. Desde inventario solo consultas existencias y haces altas controladas.
       </div>
 
+      {canUseGlobalAvailability ? (
+        <Card>
+          <CardContent className="space-y-3 p-4">
+            <div className="grid gap-3 lg:grid-cols-[minmax(260px,420px)_1fr] lg:items-end">
+              <div className="relative min-w-0">
+                <Label className="mb-1 block text-xs font-medium text-muted-foreground">
+                  Consulta global de existencias
+                </Label>
+                <Search className="absolute left-3 top-[calc(50%+10px)] h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Código, artículo, marca o número de parte"
+                  value={globalSearch}
+                  onChange={(event) => setGlobalSearch(event.target.value)}
+                  className="h-9 pl-9"
+                />
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {debouncedGlobalSearch.length >= 2
+                  ? `${(globalAvailabilityQuery.data ?? []).length.toLocaleString("es-HN")} coincidencias`
+                  : "Ingrese al menos 2 caracteres"}
+              </p>
+            </div>
+
+            {debouncedGlobalSearch.length >= 2 ? (
+              globalAvailabilityQuery.isLoading ? (
+                <div className="rounded-md border p-4 text-sm text-muted-foreground">
+                  Consultando existencias...
+                </div>
+              ) : (globalAvailabilityQuery.data ?? []).length === 0 ? (
+                <div className="rounded-md border p-4 text-sm text-muted-foreground">
+                  No hay existencias disponibles para esa búsqueda.
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-md border">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/30">
+                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Código
+                        </th>
+                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Artículo
+                        </th>
+                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Bodega
+                        </th>
+                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Proyecto
+                        </th>
+                        <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Stock
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(globalAvailabilityQuery.data ?? []).map(
+                        (row: any, index: number) => (
+                          <tr
+                            key={`${row.sapItemCode}-${row.warehouse?.id ?? "central"}-${row.project?.id ?? "sin-proyecto"}-${index}`}
+                            className="border-b last:border-0"
+                          >
+                            <td className="p-3 font-mono text-xs">
+                              {row.sapItemCode}
+                            </td>
+                            <td className="max-w-[420px] p-3">
+                              <div className="font-medium">{row.itemName}</div>
+                              {row.brand || row.partNumber ? (
+                                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                  {row.brand ? (
+                                    <span>Marca: {row.brand}</span>
+                                  ) : null}
+                                  {row.partNumber ? (
+                                    <span>No. parte: {row.partNumber}</span>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </td>
+                            <td className="p-3 text-xs">
+                              {row.warehouse
+                                ? formatWarehouseOptionLabel(row.warehouse)
+                                : "Sin bodega"}
+                            </td>
+                            <td className="p-3 text-xs">
+                              {row.project
+                                ? `${row.project.code} - ${row.project.name}`
+                                : "Inventario Central"}
+                            </td>
+                            <td className="p-3 text-right font-semibold">
+                              {formatQuantity(row.quantity)} {row.unit || ""}
+                            </td>
+                          </tr>
+                        )
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
       {canManage && allowInventoryReassignment && selectedItemIds.length > 0 ? (
         <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 px-4 py-3 md:flex-row md:items-center md:justify-between">
           <p className="text-sm text-muted-foreground">
@@ -1699,7 +1765,19 @@ export default function Inventario() {
                             <td className="p-3 font-mono text-xs">
                               {item.sapItemCode}
                             </td>
-                            <td className="p-3 font-medium">{item.name}</td>
+                            <td className="max-w-[360px] p-3">
+                              <div className="font-medium">{item.name}</div>
+                              {item.brand || item.partNumber ? (
+                                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                  {item.brand ? (
+                                    <span>Marca: {item.brand}</span>
+                                  ) : null}
+                                  {item.partNumber ? (
+                                    <span>No. parte: {item.partNumber}</span>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </td>
                             <td className="p-3 text-xs">
                               {item.category || "—"}
                             </td>

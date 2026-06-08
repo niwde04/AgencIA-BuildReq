@@ -353,9 +353,7 @@ export default function NuevaDevolucion() {
     [sourceProjectWarehouses]
   );
   const defaultSourceWarehouse = useMemo(
-    () =>
-      sourceWarehouseOptions.find((warehouse: any) => warehouse.isDefault) ||
-      sourceWarehouseOptions[0],
+    () => sourceWarehouseOptions[0],
     [sourceWarehouseOptions]
   );
   const selectedReceiptNumericId = sourceReceiptId ? Number(sourceReceiptId) : 0;

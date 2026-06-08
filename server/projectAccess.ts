@@ -39,9 +39,7 @@ export function getAssignedProjectIds(user?: ProjectScopedUser | null) {
 export function hasAllProjectAccess(user?: ProjectScopedUser | null) {
   if (!user) return false;
   if (user.role === "admin") return true;
-  if (user.buildreqRole === "administrador_proyecto") {
-    return getAssignedProjectIds(user).length === 0;
-  }
+  if (user.buildreqRole === "administrador_proyecto") return false;
   return !isProjectAssignableRole(user.buildreqRole);
 }
 

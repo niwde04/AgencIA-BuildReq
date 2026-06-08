@@ -406,6 +406,15 @@ function formatPrintMoney(value: number | string | null | undefined) {
   })}`;
 }
 
+function formatPrintMoneyAmount(value: number | string | null | undefined) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return "0.00";
+  return parsed.toLocaleString("es-HN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 function formatMoneyPayload(value: number | string | null | undefined) {
   const parsed = toPurchaseOrderNumber(value);
   return Number.isFinite(parsed) ? parsed.toFixed(4) : "0.0000";
@@ -912,6 +921,12 @@ export default function Recepciones() {
       enabled: dialogOpen && Boolean(sourceProjectId),
     }
   );
+  const defaultReceiptWarehouseId = useMemo(() => {
+    const warehouses = receiptWarehouses ?? [];
+    const defaultWarehouse =
+      warehouses.find((warehouse: any) => warehouse.isDefault) ?? warehouses[0];
+    return defaultWarehouse?.id ? String(defaultWarehouse.id) : "";
+  }, [receiptWarehouses]);
   const { data: targetOptions, isLoading: targetOptionsLoading } =
     trpc.materialRequests.targetOptions.useQuery(
       {
@@ -936,14 +951,6 @@ export default function Recepciones() {
           manualItemSearch.trim().length >= 2,
       }
     );
-  const defaultReceiptWarehouse = useMemo(
-    () =>
-      (receiptWarehouses ?? []).find((warehouse: any) => warehouse.isDefault) ??
-      (receiptWarehouses ?? [])[0] ??
-      null,
-    [receiptWarehouses]
-  );
-
   useEffect(() => {
     if (
       !editingDraftReceiptDetail ||
@@ -1031,7 +1038,7 @@ export default function Recepciones() {
         ...Object.fromEntries(
           manualDraftItems.map((item: any) => [
             -Number(item.id),
-            item.warehouseId ? String(item.warehouseId) : "",
+            item.warehouseId ? String(item.warehouseId) : defaultReceiptWarehouseId,
           ])
         ),
       }));
@@ -1046,7 +1053,7 @@ export default function Recepciones() {
         ),
       }));
     }
-  }, [activeSalesTaxes, editingDraftReceiptDetail]);
+  }, [activeSalesTaxes, defaultReceiptWarehouseId, editingDraftReceiptDetail]);
 
   useEffect(() => {
     if (!sourceItems.length) {
@@ -1093,9 +1100,9 @@ export default function Recepciones() {
         draftItem?.subtotal ??
           calculateReceiptSubtotalDraftValue(nextMap[item.id], nextPriceMap[item.id])
       );
-      nextWarehouseMap[item.id] = String(
-        draftItem?.warehouseId ?? defaultReceiptWarehouse?.id ?? ""
-      );
+      nextWarehouseMap[item.id] = draftItem?.warehouseId
+        ? String(draftItem.warehouseId)
+        : defaultReceiptWarehouseId;
       const taxCode = normalizePurchaseOrderTaxCode(
         draftItem?.taxCode ?? item.taxCode,
         activeSalesTaxes
@@ -1147,7 +1154,7 @@ export default function Recepciones() {
     });
   }, [
     activeSalesTaxes,
-    defaultReceiptWarehouse?.id,
+    defaultReceiptWarehouseId,
     editingDraftReceiptDetail,
     sourceProjectId,
     sourceId,
@@ -1558,7 +1565,7 @@ export default function Recepciones() {
       }));
       setWarehouseByItemId(current => ({
         ...current,
-        [nextId]: String(defaultReceiptWarehouse?.id ?? ""),
+        [nextId]: defaultReceiptWarehouseId,
       }));
       setTargetByItemId(current => ({ ...current, [nextId]: null }));
       setAssetDrafts(current => ({
@@ -1636,6 +1643,48 @@ export default function Recepciones() {
         assetDetails: [],
       };
     });
+
+  const renderReceiptWarehouseSelector = (item: any, compact = false) => {
+    const selectedWarehouse = (receiptWarehouses ?? []).find(
+      (warehouse: any) => String(warehouse.id) === warehouseByItemId[item.id]
+    );
+
+    return (
+      <div className="min-w-0 space-y-1.5">
+        {!compact ? <Label>Bodega ingreso</Label> : null}
+        <Select
+          value={warehouseByItemId[item.id] || undefined}
+          onValueChange={value =>
+            setWarehouseByItemId(current => ({
+              ...current,
+              [item.id]: value,
+            }))
+          }
+          disabled={!receiptWarehouses?.length || registerMutation.isPending}
+        >
+          <SelectTrigger className={compact ? "min-w-52" : "w-full min-w-0"}>
+            <SelectValue placeholder="Seleccione bodega" />
+          </SelectTrigger>
+          <SelectContent className="max-w-[min(680px,calc(100vw-2rem))]">
+            {(receiptWarehouses ?? []).map((warehouse: any) => (
+              <SelectItem key={warehouse.id} value={String(warehouse.id)}>
+                {warehouse.displayName}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {selectedWarehouse ? (
+          <p className="truncate text-[10px] text-muted-foreground">
+            Ingreso a {selectedWarehouse.displayName}
+          </p>
+        ) : (
+          <p className="text-[10px] text-muted-foreground">
+            Seleccione la bodega donde entrará el producto.
+          </p>
+        )}
+      </div>
+    );
+  };
 
   const renderReceiptTargetSelector = (item: any) => {
     const selectedTarget = targetByItemId[item.id] ?? null;
@@ -1846,7 +1895,7 @@ export default function Recepciones() {
     () => getOtherChargesTotal(otherChargeDrafts),
     [otherChargeDrafts]
   );
-  const receiptTableColumnCount = sourceType === "purchase_order" ? 10 : 8;
+  const receiptTableColumnCount = sourceType === "purchase_order" ? 11 : 8;
 
   const totals = useMemo(
     () =>
@@ -2550,8 +2599,13 @@ export default function Recepciones() {
       (receiptDetail as any).receivedBy,
       receipt.receivedById
     );
+    const receiptOriginalRequester = (receiptPurchaseOrderDetail as any)
+      ?.originalRequester;
     const requestedByLabel = isPurchaseOrderReceipt
-      ? receiptPurchaseOrderDetail?.createdBy?.name || receivedByLabel
+      ? receiptOriginalRequester?.name ||
+        receiptOriginalRequester?.email ||
+        receiptPurchaseOrderDetail?.createdBy?.name ||
+        receivedByLabel
       : receivedByLabel;
     const destinationLabel = isPurchaseOrderReceipt
       ? receiptPurchaseOrderDetail?.purchaseRequest?.printDestination?.trim() ||
@@ -2611,10 +2665,18 @@ export default function Recepciones() {
           sourceItem?.currentSapItemCode ||
           sourceCode;
         const partNumber =
+          sourceItem?.partNumber ||
+          sourceItem?.catalogItem?.partNumber ||
           sourceItem?.currentSapItemCode ||
           sourceItem?.sapItemCode ||
           sourceItem?.originalSapItemCode ||
           sourceCode;
+        const brandHtml =
+          sourceItem?.brand || sourceItem?.catalogItem?.brand
+            ? `<div class="line-note"><strong>Marca:</strong> ${escapeHtml(
+                sourceItem?.brand || sourceItem?.catalogItem?.brand
+              )}</div>`
+            : "";
         const unitPrice = isPurchaseOrderReceipt
           ? item.unitPrice ?? sourceItem?.unitPrice ?? "0.00"
           : "0.00";
@@ -2650,7 +2712,7 @@ export default function Recepciones() {
         return `
           <tr>
             <td>${escapeHtml(companyCode || "-")}</td>
-            <td>${escapeHtml(item.itemName)}${targetHtml}${notesHtml}${assetHtml}</td>
+            <td>${escapeHtml(item.itemName)}${brandHtml}${targetHtml}${notesHtml}${assetHtml}</td>
             <td class="center">${escapeHtml(partNumber || "-")}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantityReceived))}</td>
             <td class="center">${escapeHtml(item.unit || "-")}</td>
@@ -2697,13 +2759,15 @@ export default function Recepciones() {
     const fiscalSummaryRows = fiscalSummaryRowsWithCharges
       .map(row => `
         <tr>
-          <td>${escapeHtml(row.label)}</td>
-          <td class="numeric">${escapeHtml(formatPrintMoney(row.value))}</td>
+          <td>${escapeHtml(
+            row.label.replace(/\blempiras\b/gi, "").replace(/\s+/g, " ").trim()
+          )}</td>
+          <td class="numeric">${escapeHtml(formatPrintMoneyAmount(row.value))}</td>
         </tr>
       `)
       .join("");
 
-    const printWindow = window.open("", "_blank", "width=1100,height=780");
+    const printWindow = window.open("", "_blank", "width=840,height=1000");
     if (!printWindow) {
       toast.error("No se pudo abrir la ventana de impresión");
       return;
@@ -2716,70 +2780,70 @@ export default function Recepciones() {
           <meta charset="utf-8" />
           <title>${escapeHtml(receipt.receiptNumber)}</title>
           <style>
-            @page { size: A4 landscape; margin: 9mm; }
+            @page { size: A4 portrait; margin: 7mm; }
             * { box-sizing: border-box; }
             body {
               background: #fff;
               color: #000;
               font-family: Arial, Helvetica, sans-serif;
-              font-size: 10px;
+              font-size: 9.5px;
               margin: 0;
             }
             .sheet {
               margin: 0 auto;
-              max-width: 279mm;
-              padding: 6mm 4mm 8mm;
+              max-width: 196mm;
+              padding: 0 1mm 3mm;
             }
             .header {
               align-items: start;
               display: grid;
-              gap: 18px;
-              grid-template-columns: 112px 1fr 120px;
+              gap: 8px;
+              grid-template-columns: 82px 1fr 108px;
             }
             .logo {
               display: block;
-              height: 52px;
-              margin-left: 6px;
+              height: 44px;
+              margin-left: 2px;
               object-fit: contain;
-              width: 70px;
+              width: 64px;
             }
             .title {
-              color: #06344f;
-              font-size: 13px;
+              color: #000;
+              font-size: 11.5px;
               font-weight: 800;
-              line-height: 1.5;
+              line-height: 1.25;
               text-align: center;
               text-transform: uppercase;
             }
             .company {
               color: #000;
-              font-size: 15px;
+              font-size: 13px;
               margin-bottom: 2px;
             }
             .document-number {
-              border: 5px double #222;
-              color: #06344f;
-              font-size: 14px;
+              border: 4px double #222;
+              color: #000;
+              font-size: 12px;
               font-weight: 800;
               margin-top: 1mm;
-              padding: 4px 8px;
+              padding: 3px 6px;
               text-align: center;
             }
             .meta {
               display: grid;
-              gap: 22px;
-              grid-template-columns: 1fr 1.08fr;
-              margin-top: 12mm;
+              gap: 10px;
+              grid-template-columns: 1fr 1fr;
+              margin-top: 6mm;
             }
             .meta-column {
               display: grid;
-              gap: 5px;
+              gap: 3px;
             }
             .field {
               display: grid;
-              gap: 8px;
-              grid-template-columns: 132px 1fr;
-              min-height: 14px;
+              gap: 4px;
+              grid-template-columns: 104px 1fr;
+              min-height: 12px;
             }
             .meta-column.right .field {
               grid-template-columns: 96px 1fr;
@@ -2789,31 +2853,34 @@ export default function Recepciones() {
             }
             .value {
               font-weight: 700;
+              overflow-wrap: anywhere;
             }
             table {
               border-collapse: collapse;
-              margin-top: 5mm;
+              margin-top: 4mm;
+              table-layout: fixed;
               width: 100%;
             }
             th {
-              border-bottom: 2px solid #56a944;
-              border-top: 2px solid #56a944;
-              font-size: 9px;
+              border-bottom: 2px solid #111;
+              border-top: 2px solid #111;
+              font-size: 8.5px;
               font-weight: 800;
-              padding: 4px 5px;
+              padding: 3px 4px;
               text-align: left;
             }
             td {
-              border-bottom: 1px solid #8ac37c;
-              padding: 5px;
+              border-bottom: 1px solid #111;
+              padding: 3px 4px;
+              overflow-wrap: anywhere;
               vertical-align: top;
             }
             .line-note,
             .asset-meta {
-              color: #444;
-              font-size: 8.5px;
-              line-height: 1.35;
-              margin-top: 2px;
+              color: #000;
+              font-size: 8px;
+              line-height: 1.25;
+              margin-top: 1px;
             }
             .charge-row td {
               font-weight: 800;
@@ -2825,25 +2892,30 @@ export default function Recepciones() {
             }
             .summary {
               display: grid;
-              grid-template-columns: 1fr 210px;
+              grid-template-columns: 1fr minmax(280px, 300px);
               margin-top: 0;
             }
             .summary-table {
               border-collapse: collapse;
               grid-column: 2;
               margin-top: 0;
+              table-layout: auto;
               width: 100%;
             }
             .summary-table td {
-              border-bottom: 1px solid #56a944;
+              border-bottom: 1px solid #111;
               font-weight: 800;
-              padding: 4px 5px;
+              padding: 3px 4px;
+              white-space: nowrap;
+            }
+            .summary-table td:first-child {
+              min-width: 170px;
             }
             .signatures {
               display: grid;
-              grid-template-columns: 260px;
+              grid-template-columns: 220px;
               justify-content: center;
-              margin-top: 18mm;
+              margin-top: 10mm;
             }
             .signature-line {
               border-top: 2px solid #111;
@@ -2944,11 +3016,11 @@ export default function Recepciones() {
                 <tr>
                   <th style="width: 13%;">Código Empresa</th>
                   <th>Descripción</th>
-                  <th style="width: 15%;" class="center">No. Parte/No. Serie</th>
+                  <th style="width: 16%;" class="center">No. Parte/No. Serie</th>
                   <th style="width: 9%;" class="numeric">Cantidad</th>
-                  <th style="width: 10%;" class="center">U Medida</th>
-                  <th style="width: 11%;" class="numeric">Valor U</th>
-                  <th style="width: 11%;" class="numeric">Valor T</th>
+                  <th style="width: 9%;" class="center">U Medida</th>
+                  <th style="width: 10%;" class="numeric">Valor U</th>
+                  <th style="width: 10%;" class="numeric">Valor T</th>
                 </tr>
               </thead>
               <tbody>
@@ -3113,7 +3185,7 @@ export default function Recepciones() {
               Nueva recepción
             </Button>
           </DialogTrigger>
-          <DialogContent className="scrollbar-visible max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1480px] sm:p-6 lg:p-7">
+          <DialogContent className="scrollbar-visible max-h-[calc(100vh-0.5rem)] w-[calc(100vw-0.25rem)] max-w-[calc(100vw-0.25rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1rem)] sm:w-[calc(100vw-0.75rem)] sm:max-w-[1920px] sm:p-6 lg:p-7">
             <DialogHeader className="border-b border-border/70 pb-4 pr-10">
               <div className="flex flex-wrap items-center gap-3">
                 <DialogTitle className="text-[2rem] font-bold tracking-tight sm:text-[2.4rem]">
@@ -3682,7 +3754,10 @@ export default function Recepciones() {
                         Agregar producto
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-[420px] p-0" align="end">
+                    <PopoverContent
+                      className="w-[min(720px,calc(100vw-2rem))] p-0"
+                      align="end"
+                    >
                       <Command shouldFilter={false}>
                         <CommandInput
                           placeholder="Buscar SKU o descripción..."
@@ -3708,9 +3783,16 @@ export default function Recepciones() {
                                       <p className="font-mono text-xs font-semibold">
                                         {item.itemCode}
                                       </p>
-                                      <p className="truncate text-sm">
+                                      <p className="whitespace-normal break-words text-sm leading-snug">
                                         {item.description}
                                       </p>
+                                      {item.brand || item.partNumber ? (
+                                        <p className="mt-1 whitespace-normal break-words text-xs text-muted-foreground">
+                                          {[item.brand && `Marca: ${item.brand}`, item.partNumber && `No. parte: ${item.partNumber}`]
+                                            .filter(Boolean)
+                                            .join(" · ")}
+                                        </p>
+                                      ) : null}
                                     </div>
                                   </CommandItem>
                                 ))}
@@ -3728,7 +3810,7 @@ export default function Recepciones() {
                 <table
                   className={`w-full text-sm ${
                     sourceType === "purchase_order"
-                      ? "min-w-[1240px]"
+                      ? "min-w-[1460px]"
                       : "min-w-[1120px]"
                   }`}
                 >
@@ -3768,15 +3850,13 @@ export default function Recepciones() {
                       <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                         Recibir ahora
                       </th>
+                      <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                        Bodega ingreso
+                      </th>
                       {sourceType === "transfer" ? (
-                        <>
-                          <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                            Almacén
-                          </th>
-                          <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                            Acción
-                          </th>
-                        </>
+                        <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Acción
+                        </th>
                       ) : null}
                     </tr>
                   </thead>
@@ -4049,41 +4129,10 @@ export default function Recepciones() {
                                   </p>
                                 ) : null}
                               </td>
+                              <td className="p-4">
+                                {renderReceiptWarehouseSelector(item, true)}
+                              </td>
                               {sourceType === "transfer" ? (
-                                <>
-                                  <td className="p-4">
-                                    <Select
-                                      value={
-                                        warehouseByItemId[item.id] || undefined
-                                      }
-                                      onValueChange={value =>
-                                        setWarehouseByItemId(current => ({
-                                          ...current,
-                                          [item.id]: value,
-                                        }))
-                                      }
-                                      disabled={
-                                        !receiptWarehouses?.length ||
-                                        registerMutation.isPending
-                                      }
-                                    >
-                                      <SelectTrigger className="min-w-48">
-                                        <SelectValue placeholder="Seleccione almacén" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        {(receiptWarehouses ?? []).map(
-                                          (warehouse: any) => (
-                                            <SelectItem
-                                              key={warehouse.id}
-                                              value={String(warehouse.id)}
-                                            >
-                                              {warehouse.displayName}
-                                            </SelectItem>
-                                          )
-                                        )}
-                                      </SelectContent>
-                                    </Select>
-                                  </td>
                                   <td className="p-4 text-right">
                                     <div className="flex flex-col items-end gap-1.5">
                                     <Button
@@ -4142,7 +4191,6 @@ export default function Recepciones() {
                                     ) : null}
                                     </div>
                                   </td>
-                                </>
                               ) : null}
                             </tr>
                             <tr
@@ -4155,43 +4203,7 @@ export default function Recepciones() {
                               >
                                 <div className="space-y-4 rounded-xl border border-border/70 bg-background p-3">
                                   {sourceType === "purchase_order" ? (
-                                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)_auto] xl:items-end">
-                                      <div className="min-w-0 space-y-1.5">
-                                        <Label>Almacén</Label>
-                                        <Select
-                                          value={
-                                            warehouseByItemId[item.id] ||
-                                            undefined
-                                          }
-                                          onValueChange={value =>
-                                            setWarehouseByItemId(current => ({
-                                              ...current,
-                                              [item.id]: value,
-                                            }))
-                                          }
-                                          disabled={
-                                            !receiptWarehouses?.length ||
-                                            registerMutation.isPending
-                                          }
-                                        >
-                                          <SelectTrigger className="w-full min-w-0">
-                                            <SelectValue placeholder="Seleccione almacén" />
-                                          </SelectTrigger>
-                                          <SelectContent className="max-w-[min(680px,calc(100vw-2rem))]">
-                                            {(receiptWarehouses ?? []).map(
-                                              (warehouse: any) => (
-                                                <SelectItem
-                                                  key={warehouse.id}
-                                                  value={String(warehouse.id)}
-                                                >
-                                                  {warehouse.displayName}
-                                                </SelectItem>
-                                              )
-                                            )}
-                                          </SelectContent>
-                                        </Select>
-                                      </div>
-
+                                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
                                       {renderReceiptTargetSelector(item)}
 
                                       <div className="flex justify-start lg:justify-end">
@@ -4619,7 +4631,7 @@ export default function Recepciones() {
           if (!open) setViewReceiptId(null);
         }}
       >
-        <DialogContent className="scrollbar-visible max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1480px] sm:p-6 lg:p-7">
+        <DialogContent className="scrollbar-visible max-h-[calc(100vh-0.5rem)] w-[calc(100vw-0.25rem)] max-w-[calc(100vw-0.25rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1rem)] sm:w-[calc(100vw-0.75rem)] sm:max-w-[1920px] sm:p-6 lg:p-7">
           <DialogHeader className="border-b border-border/70 pb-4 pr-10">
             <div className="flex flex-wrap items-center gap-3">
               <DialogTitle className="text-[2rem] font-bold tracking-tight sm:text-[2.4rem]">

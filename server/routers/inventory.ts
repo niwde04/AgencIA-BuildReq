@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { protectedProcedure, adminProcedure, router } from "../_core/trpc";
+import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { TRPCError } from "@trpc/server";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
@@ -11,6 +11,19 @@ function assertCanReadInventory(ctx: { user: { buildreqRole?: string | null } })
       message: "No tiene acceso al inventario",
     });
   }
+}
+
+function canReadGlobalAvailability(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto"
+  );
 }
 
 export const inventoryRouter = router({
@@ -34,6 +47,7 @@ export const inventoryRouter = router({
         ctx.user.role === "admin" ||
         ctx.user.buildreqRole === "jefe_bodega_central" ||
         ctx.user.buildreqRole === "administracion_central" ||
+        ctx.user.buildreqRole === "administrador_proyecto" ||
         ctx.user.buildreqRole === "bodeguero_proyecto";
 
       if (!canReadTransferOriginStock) {
@@ -82,6 +96,24 @@ export const inventoryRouter = router({
     .query(async ({ ctx, input }) => {
       assertCanReadInventory(ctx);
       return db.listInventoryItems(applyProjectScope(input ?? {}, ctx.user));
+    }),
+
+  globalAvailability: protectedProcedure
+    .input(
+      z.object({
+        search: z.string().trim().min(2).max(120),
+        limit: z.number().int().min(1).max(150).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      if (!canReadGlobalAvailability(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a la consulta global de inventario",
+        });
+      }
+
+      return db.searchGlobalInventoryAvailability(input);
     }),
 
   tracking: protectedProcedure

@@ -71,9 +71,19 @@ const PROJECT_ASSIGNABLE_ROLES = new Set([
 ]);
 const PROJECT_REQUIRED_ROLES = new Set([
   "ingeniero_residente",
+  "administrador_proyecto",
   "bodeguero_proyecto",
   "superintendente",
 ]);
+const PROJECT_MANAGER_ASSIGNABLE_ROLES = new Set([
+  "ingeniero_residente",
+  "bodeguero_proyecto",
+  "superintendente",
+]);
+const ROLE_OPTIONS = Object.entries(ROLE_LABELS).map(([value, label]) => ({
+  value,
+  label,
+}));
 
 const nameCollator = new Intl.Collator("es-HN", {
   numeric: true,
@@ -93,7 +103,7 @@ function compareProjectsByName(a: any, b: any) {
 }
 
 function canAssignAllProjects(role?: string | null) {
-  return role === "administrador_proyecto";
+  return false;
 }
 
 function isProjectAssignableRole(role?: string | null) {
@@ -130,8 +140,36 @@ function formatAssignedProjects(entity: any) {
   }
   const ids = getAssignedProjectIds(entity);
   if (ids.length > 0) return ids.map((projectId) => `Proyecto #${projectId}`).join(", ");
-  if (entity?.buildreqRole === "administrador_proyecto") return "Todos los proyectos";
+  if (entity?.buildreqRole === "administrador_proyecto") {
+    return "Sin proyectos asignados";
+  }
   return "N/A";
+}
+
+function canManageUserAccounts(user: any) {
+  return (
+    user?.role === "admin" ||
+    user?.buildreqRole === "administracion_central" ||
+    user?.buildreqRole === "administrador_proyecto"
+  );
+}
+
+function canManageListedUser(manager: any, target: any) {
+  if (!canManageUserAccounts(manager)) return false;
+  if (manager?.role === "admin") return true;
+  return target?.role !== "admin";
+}
+
+function getAssignableRoleOptions(user: any) {
+  if (user?.role === "admin" || user?.buildreqRole === "administracion_central") {
+    return ROLE_OPTIONS;
+  }
+  if (user?.buildreqRole === "administrador_proyecto") {
+    return ROLE_OPTIONS.filter(option =>
+      PROJECT_MANAGER_ASSIGNABLE_ROLES.has(option.value)
+    );
+  }
+  return [];
 }
 
 function ProjectMultiSelect({
@@ -295,11 +333,12 @@ export default function Usuarios() {
   const utils = trpc.useUtils();
   const { user } = useAuth();
   const isSystemAdmin = user?.role === "admin";
-  const canResetUserPasswords =
-    isSystemAdmin || user?.buildreqRole === "administracion_central";
+  const canManageAccounts = canManageUserAccounts(user);
+  const canUseInvitations = isSystemAdmin;
+  const canResetUserPasswords = canManageAccounts;
   const { data: users, isLoading: usersLoading } = trpc.userManagement.list.useQuery();
   const { data: invitationsList, isLoading: invLoading } =
-    trpc.invitations.list.useQuery(undefined, { enabled: isSystemAdmin });
+    trpc.invitations.list.useQuery(undefined, { enabled: canUseInvitations });
   const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
   const sortedUsers = useMemo(
     () => [...(users || [])].sort(compareUsersByName),
@@ -308,6 +347,10 @@ export default function Usuarios() {
   const sortedProjects = useMemo(
     () => [...(projects || [])].sort(compareProjectsByName),
     [projects]
+  );
+  const assignableRoleOptions = useMemo(
+    () => getAssignableRoleOptions(user),
+    [user?.role, (user as any)?.buildreqRole]
   );
   const appSiteUrl = getAppSiteUrl();
 
@@ -561,16 +604,18 @@ export default function Usuarios() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1>Gestión de Usuarios</h1>
-        {isSystemAdmin ? (
+        {canManageAccounts ? (
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setShowInviteDialog(true)}
-              className="gap-2"
-            >
-              <Mail className="h-4 w-4" />
-              Invitar Usuario
-            </Button>
+            {canUseInvitations ? (
+              <Button
+                variant="outline"
+                onClick={() => setShowInviteDialog(true)}
+                className="gap-2"
+              >
+                <Mail className="h-4 w-4" />
+                Invitar Usuario
+              </Button>
+            ) : null}
             <Button onClick={() => setShowDirectUserDialog(true)} className="gap-2">
               <UserPlus className="h-4 w-4" />
               Crear Usuario
@@ -585,7 +630,7 @@ export default function Usuarios() {
             <UsersIcon className="h-4 w-4" />
             Usuarios Activos
           </TabsTrigger>
-          {isSystemAdmin ? (
+          {canUseInvitations ? (
             <TabsTrigger value="invitations" className="gap-2">
               <Mail className="h-4 w-4" />
               Invitaciones
@@ -608,8 +653,8 @@ export default function Usuarios() {
                 <div className="p-8 text-center">
                   <UsersIcon className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
                   <p className="text-muted-foreground">No hay usuarios registrados</p>
-                  {isSystemAdmin ? (
-                    <p className="text-xs text-muted-foreground mt-1">Invite usuarios con el botón superior</p>
+                  {canManageAccounts ? (
+                    <p className="text-xs text-muted-foreground mt-1">Cree usuarios con el botón superior</p>
                   ) : null}
                 </div>
               ) : (
@@ -627,7 +672,9 @@ export default function Usuarios() {
                       </tr>
                     </thead>
                     <tbody>
-                      {sortedUsers.map((u: any) => (
+                      {sortedUsers.map((u: any) => {
+                        const canManageThisUser = canManageListedUser(user, u);
+                        return (
                         <tr key={u.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
                           <td className="p-3 font-medium">{u.name || "—"}</td>
                           <td className="p-3 text-xs text-muted-foreground">
@@ -647,7 +694,7 @@ export default function Usuarios() {
                             </Badge>
                           </td>
                           <td className="p-3">
-                            {isSystemAdmin ? (
+                            {canManageThisUser ? (
                               <Select
                                 value={u.buildreqRole || "sin_rol"}
                                 onValueChange={(val) => {
@@ -675,13 +722,11 @@ export default function Usuarios() {
                                 </SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="sin_rol" disabled>Sin rol asignado</SelectItem>
-                                  <SelectItem value="ingeniero_residente">Requiriente</SelectItem>
-                                  <SelectItem value="jefe_bodega_central">Bodega Central</SelectItem>
-                                  <SelectItem value="administracion_central">Administración Central</SelectItem>
-                                  <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
-                                  <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
-                                  <SelectItem value="superintendente">Superintendente</SelectItem>
-                                  <SelectItem value="contable">Contable</SelectItem>
+                                  {assignableRoleOptions.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </SelectItem>
+                                  ))}
                                 </SelectContent>
                               </Select>
                             ) : (
@@ -691,7 +736,7 @@ export default function Usuarios() {
                             )}
                           </td>
                           <td className="p-3">
-                            {isSystemAdmin && isProjectAssignableRole(u.buildreqRole) ? (
+                            {canManageThisUser && isProjectAssignableRole(u.buildreqRole) ? (
                               <ProjectMultiSelect
                                 role={u.buildreqRole}
                                 projects={sortedProjects}
@@ -720,7 +765,7 @@ export default function Usuarios() {
                           </td>
                           <td className="p-3">
                             <div className="flex gap-1">
-                              {isSystemAdmin ? (
+                              {canManageThisUser ? (
                                 <Button
                                   type="button"
                                   variant="outline"
@@ -732,7 +777,7 @@ export default function Usuarios() {
                                   Editar
                                 </Button>
                               ) : null}
-                              {canResetUserPasswords ? (
+                              {canResetUserPasswords && canManageThisUser ? (
                                 <Button
                                   type="button"
                                   variant="outline"
@@ -747,7 +792,8 @@ export default function Usuarios() {
                             </div>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -757,7 +803,7 @@ export default function Usuarios() {
         </TabsContent>
 
         {/* INVITATIONS TAB */}
-        {isSystemAdmin ? (
+        {canUseInvitations ? (
         <TabsContent value="invitations">
           <Card>
             <CardContent className="p-0">
@@ -910,13 +956,11 @@ export default function Usuarios() {
                   <SelectValue placeholder="Seleccionar rol" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ingeniero_residente">Requiriente</SelectItem>
-                  <SelectItem value="jefe_bodega_central">Bodega Central</SelectItem>
-                  <SelectItem value="administracion_central">Administración Central</SelectItem>
-                  <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
-                  <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
-                  <SelectItem value="superintendente">Superintendente</SelectItem>
-                  <SelectItem value="contable">Contable</SelectItem>
+                  {assignableRoleOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1112,13 +1156,11 @@ export default function Usuarios() {
                   <SelectValue placeholder="Seleccionar rol" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ingeniero_residente">Requiriente</SelectItem>
-                  <SelectItem value="jefe_bodega_central">Bodega Central</SelectItem>
-                  <SelectItem value="administracion_central">Administración Central</SelectItem>
-                  <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
-                  <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
-                  <SelectItem value="superintendente">Superintendente</SelectItem>
-                  <SelectItem value="contable">Contable</SelectItem>
+                  {assignableRoleOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1204,13 +1246,11 @@ export default function Usuarios() {
                   <SelectValue placeholder="Seleccionar rol" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ingeniero_residente">Requiriente</SelectItem>
-                  <SelectItem value="jefe_bodega_central">Bodega Central</SelectItem>
-                  <SelectItem value="administracion_central">Administración Central</SelectItem>
-                  <SelectItem value="administrador_proyecto">Administración Proyecto</SelectItem>
-                  <SelectItem value="bodeguero_proyecto">Bodega Proyecto</SelectItem>
-                  <SelectItem value="superintendente">Superintendente</SelectItem>
-                  <SelectItem value="contable">Contable</SelectItem>
+                  {assignableRoleOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

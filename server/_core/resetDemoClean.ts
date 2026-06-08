@@ -153,6 +153,10 @@ const COUNT_QUERIES: Array<{ key: string; query: string }> = [
     query: `SELECT count(*)::int AS "count" FROM "projects" WHERE "demoBatchKey" IS NULL`,
   },
   {
+    key: "projectWarehouseAssignments",
+    query: `SELECT count(*)::int AS "count" FROM "projectWarehouseAssignments"`,
+  },
+  {
     key: "demoSapCatalogKept",
     query: `SELECT count(*)::int AS "count" FROM "sapCatalog" WHERE "demoBatchKey" IS NOT NULL`,
   },
@@ -177,8 +181,8 @@ const COUNT_QUERIES: Array<{ key: string; query: string }> = [
     query: `SELECT count(*)::int AS "count" FROM "suppliers" WHERE "demoBatchKey" IS NULL`,
   },
   {
-    key: "projectWarehousesDeleted",
-    query: `SELECT count(*)::int AS "count" FROM "warehouses" WHERE "projectId" IS NOT NULL AND "projectId" NOT IN (SELECT "id" FROM "projects" WHERE "demoBatchKey" IS NOT NULL)`,
+    key: "unassignedWarehousesKept",
+    query: `SELECT count(*)::int AS "count" FROM "warehouses"`,
   },
 ];
 
@@ -207,6 +211,7 @@ const CLEANUP_STATEMENTS = [
   `DELETE FROM "supplyFlowRecords"`,
   `DELETE FROM "requestItems"`,
   `DELETE FROM "materialRequests"`,
+  `DELETE FROM "projectWarehouseAssignments"`,
   `DELETE FROM "userProjectAssignments" WHERE "projectId" IN (SELECT "id" FROM "projects" WHERE "demoBatchKey" IS NULL)`,
   `DELETE FROM "invitationProjectAssignments" WHERE "projectId" IN (SELECT "id" FROM "projects" WHERE "demoBatchKey" IS NULL)`,
   `UPDATE "users" SET "assignedProjectId" = NULL WHERE "assignedProjectId" IN (SELECT "id" FROM "projects" WHERE "demoBatchKey" IS NULL)`,
@@ -215,7 +220,7 @@ const CLEANUP_STATEMENTS = [
   `DELETE FROM "inventoryItems" WHERE "demoBatchKey" IS NULL`,
   `DELETE FROM "sapCatalog" WHERE "demoBatchKey" IS NULL`,
   `DELETE FROM "suppliers" WHERE "demoBatchKey" IS NULL`,
-  `DELETE FROM "warehouses" WHERE "projectId" IS NOT NULL AND "projectId" NOT IN (SELECT "id" FROM "projects" WHERE "demoBatchKey" IS NOT NULL)`,
+  `UPDATE "projects" SET "warehouseId" = NULL WHERE "demoBatchKey" IS NULL`,
   `DELETE FROM "projects" WHERE "demoBatchKey" IS NULL`,
 ] as const;
 

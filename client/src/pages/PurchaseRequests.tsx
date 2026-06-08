@@ -958,7 +958,7 @@ export default function PurchaseRequests() {
       })
       .join("");
 
-    const printWindow = window.open("", "_blank", "width=1100,height=780");
+    const printWindow = window.open("", "_blank", "width=840,height=1000");
     if (!printWindow) {
       toast.error("No se pudo abrir la ventana de impresión");
       return;
@@ -971,10 +971,10 @@ export default function PurchaseRequests() {
           <meta charset="utf-8" />
           <title>${escapeHtml(purchaseRequest.requestNumber)}</title>
           <style>
-            @page { size: A4 landscape; margin: 10mm; }
+            @page { size: A4 portrait; margin: 10mm; }
             * { box-sizing: border-box; }
             body {
-              color: #0f172a;
+              color: #000;
               font-family: Arial, Helvetica, sans-serif;
               font-size: 10px;
               margin: 0;
@@ -982,41 +982,41 @@ export default function PurchaseRequests() {
             }
             .sheet {
               margin: 0 auto;
-              max-width: 277mm;
-              padding: 8mm 6mm 10mm;
+              max-width: 190mm;
+              padding: 8mm 4mm 10mm;
             }
             .header {
               align-items: flex-start;
               display: grid;
-              grid-template-columns: 86px 1fr 180px;
-              gap: 18px;
+              grid-template-columns: 70px minmax(0, 1fr) 132px;
+              gap: 12px;
             }
             .logo {
               display: block;
-              height: 54px;
+              height: 48px;
               object-fit: contain;
-              width: 78px;
+              width: 66px;
             }
             .company {
-              color: #06426f;
-              font-size: 16px;
+              color: #000;
+              font-size: 13px;
               font-weight: 800;
-              line-height: 1.55;
+              line-height: 1.4;
               text-align: center;
             }
             .title-box {
               display: inline-block;
-              font-size: 15px;
+              font-size: 13px;
               margin-top: 2px;
               padding: 2px 0;
             }
             .document-number {
               border: 5px double #222;
-              color: #06344f;
-              font-size: 14px;
+              color: #000;
+              font-size: 11px;
               font-weight: 800;
               margin-top: 1mm;
-              padding: 5px 12px;
+              padding: 5px 8px;
               text-align: center;
             }
             .meta {
@@ -1042,12 +1042,14 @@ export default function PurchaseRequests() {
             table {
               border-collapse: collapse;
               margin-top: 6mm;
+              table-layout: fixed;
               width: 100%;
             }
             th, td {
-              border-bottom: 2px solid #23aee8;
-              border-top: 2px solid #23aee8;
-              padding: 3px 6px;
+              border-bottom: 2px solid #111;
+              border-top: 2px solid #111;
+              overflow-wrap: anywhere;
+              padding: 3px 4px;
               vertical-align: top;
             }
             th {
@@ -1060,7 +1062,7 @@ export default function PurchaseRequests() {
               text-align: right;
             }
             .summary td {
-              border-top: 2px solid #23aee8;
+              border-top: 2px solid #111;
               font-weight: 800;
             }
             .observations {
@@ -1077,14 +1079,14 @@ export default function PurchaseRequests() {
             .signatures {
               align-items: end;
               display: grid;
-              gap: 24px;
+              gap: 16px;
               grid-template-columns: repeat(3, 1fr);
               margin: 18mm auto 0;
-              max-width: 190mm;
+              max-width: 170mm;
             }
             .signature-line {
-              border-top: 2px solid #555;
-              font-size: 14px;
+              border-top: 2px solid #111;
+              font-size: 12px;
               font-weight: 700;
               padding-top: 4px;
               text-align: center;
@@ -1134,7 +1136,7 @@ export default function PurchaseRequests() {
                 </tr>
               </thead>
               <tbody>
-                ${itemRows || `<tr><td colspan="6">Sin ítems</td></tr>`}
+                ${itemRows || `<tr><td colspan="7">Sin ítems</td></tr>`}
                 <tr class="summary">
                   <td colspan="5">Total solicitado</td>
                   <td class="numeric">${escapeHtml(formatQuantity(totalQuantity))}</td>

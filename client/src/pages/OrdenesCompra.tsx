@@ -170,6 +170,33 @@ function formatSupplierContactMeta(contact?: any | null) {
     .join(" · ");
 }
 
+function formatPurchaseOrderItemTargetLabel(item: any) {
+  const target = item?.target ?? item?.sourceTarget;
+  if (target?.label) return String(target.label);
+
+  if (target?.type === "subproyecto" && target.subProjectId) {
+    return `Subproyecto #${target.subProjectId}`;
+  }
+
+  if (target?.type === "activo_fijo" && target.fixedAssetSapItemCode) {
+    return target.fixedAssetName
+      ? `Activo fijo: ${target.fixedAssetSapItemCode} - ${target.fixedAssetName}`
+      : `Activo fijo: ${target.fixedAssetSapItemCode}`;
+  }
+
+  if (item?.targetType === "subproyecto" && item.subProjectId) {
+    return `Subproyecto #${item.subProjectId}`;
+  }
+
+  if (item?.targetType === "activo_fijo" && item.fixedAssetSapItemCode) {
+    return item.fixedAssetName
+      ? `Activo fijo: ${item.fixedAssetSapItemCode} - ${item.fixedAssetName}`
+      : `Activo fijo: ${item.fixedAssetSapItemCode}`;
+  }
+
+  return "-";
+}
+
 function SupplierCommandList({
   suppliers,
   selectedSupplierId,
@@ -1830,11 +1857,26 @@ export default function OrdenesCompra() {
     const projectLabel = detail.project
       ? `${detail.project.code} ${detail.project.name}`
       : `Proyecto ${purchaseOrder.projectId}`;
-    const destinationLabel =
-      detail.purchaseRequest?.printDestination?.trim() ||
-      detail.project?.name ||
-      projectLabel;
-    const requestedByLabel = detail.createdBy?.name || user?.name || "-";
+    const originalRequester = (detail as any).originalRequester;
+    const requestedByLabel =
+      originalRequester?.name ||
+      originalRequester?.email ||
+      detail.createdBy?.name ||
+      user?.name ||
+      "-";
+    const originalRequestNumbers = Array.isArray(
+      (detail as any).originalRequestNumbers
+    )
+      ? ((detail as any).originalRequestNumbers as unknown[])
+          .map(value => String(value ?? "").trim())
+          .filter(Boolean)
+      : [];
+    const originalRequestLabel =
+      originalRequestNumbers.length > 0
+        ? Array.from(new Set(originalRequestNumbers)).join(", ")
+        : detail.purchaseRequest?.materialRequestId
+          ? `REQ #${detail.purchaseRequest.materialRequestId}`
+          : "-";
     const salesAdvisorLabel = formatSupplierContactPrintLabel(
       detail.preferredSupplierContact
     );
@@ -1848,6 +1890,19 @@ export default function OrdenesCompra() {
     const itemRows = items
       .map((item: any, index: number) => {
         const draft = getItemDraft(item);
+        const partNumberLabel =
+          item.partNumber ||
+          item.catalogItem?.partNumber ||
+          item.currentSapItemCode ||
+          item.originalSapItemCode ||
+          "-";
+        const targetLabel = formatPurchaseOrderItemTargetLabel(item);
+        const brandLine =
+          item.brand || item.catalogItem?.brand
+            ? `<div class="item-meta">Marca: ${escapeHtml(
+                item.brand || item.catalogItem?.brand
+              )}</div>`
+            : "";
         const amounts = calculatePurchaseOrderLineAmounts({
           quantity: draft.quantity,
           unitPrice: draft.unitPrice,
@@ -1858,10 +1913,9 @@ export default function OrdenesCompra() {
         return `
           <tr>
             <td class="center">${index + 1}</td>
-            <td>${escapeHtml(item.itemName)}</td>
-            <td class="center">${escapeHtml(
-              item.currentSapItemCode || item.originalSapItemCode || "-"
-            )}</td>
+            <td>${escapeHtml(item.itemName)}${brandLine}</td>
+            <td>${escapeHtml(targetLabel)}</td>
+            <td class="center">${escapeHtml(partNumberLabel)}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(draft.quantity))}</td>
             <td class="numeric">${escapeHtml(formatPrintMoney(draft.unitPrice))}</td>
             <td class="numeric">${escapeHtml(formatPrintMoney(amounts.subtotal))}</td>
@@ -1872,13 +1926,15 @@ export default function OrdenesCompra() {
     const fiscalSummaryRows = getPurchaseOrderFiscalSummaryRows(pricingSummary)
       .map(row => `
         <tr>
-          <td>${escapeHtml(row.label)}</td>
+          <td>${escapeHtml(
+            row.label.replace(/\blempiras\b/gi, "").replace(/\s+/g, " ").trim()
+          )}</td>
           <td class="numeric">${escapeHtml(formatPrintMoney(row.value))}</td>
         </tr>
       `)
       .join("");
 
-    const printWindow = window.open("", "_blank", "width=1100,height=780");
+    const printWindow = window.open("", "_blank", "width=840,height=1000");
     if (!printWindow) {
       toast.error("No se pudo abrir la ventana de impresión");
       return;
@@ -1891,84 +1947,87 @@ export default function OrdenesCompra() {
           <meta charset="utf-8" />
           <title>${escapeHtml(purchaseOrder.orderNumber)}</title>
           <style>
-            @page { size: A4 landscape; margin: 8mm; }
+            @page { size: A4 portrait; margin: 7mm; }
             * { box-sizing: border-box; }
             body {
               color: #000;
               font-family: Arial, Helvetica, sans-serif;
-              font-size: 12px;
+              font-size: 10.5px;
               margin: 0;
               background: #fff;
             }
             .sheet {
               margin: 0 auto;
-              max-width: 280mm;
-              padding: 0 1mm 4mm;
+              max-width: 196mm;
+              padding: 0 1mm 3mm;
             }
             .header {
               align-items: start;
               display: grid;
-              grid-template-columns: 150px 1fr 150px;
-              gap: 12px;
+              grid-template-columns: 112px 1fr 86px;
+              gap: 8px;
             }
             .logo {
               display: block;
-              height: 70px;
+              height: 56px;
               object-fit: contain;
-              width: 134px;
+              width: 108px;
             }
             .title {
-              font-size: 16px;
+              font-size: 13px;
               font-weight: 800;
-              line-height: 1.2;
+              line-height: 1.15;
               text-align: center;
               text-transform: uppercase;
             }
             .title .company {
-              font-size: 18px;
+              font-size: 15px;
             }
             .rule {
-              border-top: 4px double #333;
-              margin: 4px 0 24px;
+              border-top: 4px double #111;
+              margin: 3px 0 10px;
             }
             .meta {
               display: grid;
-              gap: 12px;
-              grid-template-columns: 1.15fr 0.85fr;
+              gap: 10px;
+              grid-template-columns: 1.08fr 0.92fr;
             }
             .meta-left,
             .meta-right {
               display: grid;
-              gap: 6px;
+              gap: 4px;
             }
             .field {
               display: grid;
-              gap: 8px;
-              grid-template-columns: 106px 1fr;
+              gap: 5px;
+              grid-template-columns: 92px 1fr;
             }
             .meta-right .field {
-              grid-template-columns: 80px 1fr;
+              grid-template-columns: 74px 1fr;
             }
             .label {
               font-weight: 800;
             }
-            .value {
-              font-weight: 700;
-            }
-            table {
-              border-collapse: collapse;
-              margin-top: 24px;
-              width: 100%;
-            }
+              .value {
+                font-weight: 700;
+                overflow-wrap: anywhere;
+              }
+              table {
+                border-collapse: collapse;
+                margin-top: 10px;
+                table-layout: fixed;
+                width: 100%;
+              }
             th {
-              border-bottom: 2px solid #999;
+              border-bottom: 2px solid #111;
               font-weight: 800;
-              padding: 4px 5px;
+                padding: 3px 4px;
               text-align: center;
             }
             td {
-              border-bottom: 1px solid #d7d7d7;
-              padding: 5px;
+              border-bottom: 1px solid #111;
+                padding: 3px 4px;
+                overflow-wrap: anywhere;
               vertical-align: top;
             }
             .center { text-align: center; }
@@ -1976,11 +2035,16 @@ export default function OrdenesCompra() {
               font-variant-numeric: tabular-nums;
               text-align: right;
             }
-            .lower {
-              display: grid;
-              grid-template-columns: 1fr 285px;
-              gap: 34px;
-              margin-top: 12px;
+              .item-meta {
+                color: #000;
+                font-size: 9px;
+                margin-top: 1px;
+              }
+              .lower {
+                display: grid;
+                grid-template-columns: 1fr minmax(280px, 300px);
+                gap: 14px;
+                margin-top: 8px;
             }
             .delivery {
               display: grid;
@@ -1989,22 +2053,25 @@ export default function OrdenesCompra() {
             .summary {
               border-collapse: collapse;
               margin-top: 0;
+              table-layout: auto;
               width: 100%;
             }
             .summary td {
-              border-bottom: 1px solid #999;
+              border-bottom: 1px solid #111;
               font-weight: 800;
-              padding: 4px 5px;
+                padding: 3px 4px;
+                white-space: nowrap;
             }
             .summary td:first-child {
+              min-width: 170px;
               text-align: left;
             }
             .signatures {
               display: grid;
-              gap: 80px;
-              grid-template-columns: repeat(2, 170px);
+              gap: 48px;
+              grid-template-columns: repeat(2, 150px);
               justify-content: center;
-              margin: 34px 0 28px;
+              margin: 22px 0 16px;
             }
             .signature {
               border-top: 2px solid #111;
@@ -2014,12 +2081,12 @@ export default function OrdenesCompra() {
             }
             .note {
               border: 2px solid #111;
-              border-radius: 18px;
-              font-size: 15px;
-              line-height: 1.45;
-              margin: 22px auto 0;
-              max-width: 94%;
-              padding: 12px 22px;
+              border-radius: 10px;
+              font-size: 10.5px;
+              line-height: 1.3;
+              margin: 12px auto 0;
+              max-width: 100%;
+              padding: 8px 12px;
               text-align: center;
             }
             .note-title {
@@ -2028,8 +2095,8 @@ export default function OrdenesCompra() {
               margin-bottom: 2px;
             }
             .footer-user {
-              font-size: 11px;
-              margin-top: 16px;
+              font-size: 10px;
+              margin-top: 8px;
             }
             @media print {
               .sheet { max-width: none; padding: 0; }
@@ -2068,10 +2135,6 @@ export default function OrdenesCompra() {
                   <div class="label">Asesor Vta:</div>
                   <div class="value">${escapeHtml(salesAdvisorLabel)}</div>
                 </div>
-                <div class="field">
-                  <div class="label">Destino:</div>
-                  <div class="value">${escapeHtml(destinationLabel)}</div>
-                </div>
               </div>
               <div class="meta-right">
                 <div class="field">
@@ -2097,15 +2160,16 @@ export default function OrdenesCompra() {
               <thead>
                 <tr>
                   <th style="width: 8%;">Ítem</th>
-                  <th>Descripcion</th>
-                  <th style="width: 16%;">No. Parte</th>
-                  <th style="width: 12%;">Cantidad</th>
-                  <th style="width: 14%;">Valor U</th>
-                  <th style="width: 14%;">Valor T</th>
+                  <th style="width: 28%;">Descripcion</th>
+                  <th style="width: 20%;">Destino</th>
+                  <th style="width: 14%;">No. Parte</th>
+                  <th style="width: 10%;">Cantidad</th>
+                  <th style="width: 10%;">Valor U</th>
+                  <th style="width: 10%;">Valor T</th>
                 </tr>
               </thead>
               <tbody>
-                ${itemRows || `<tr><td colspan="6">Sin ítems</td></tr>`}
+                ${itemRows || `<tr><td colspan="7">Sin ítems</td></tr>`}
               </tbody>
             </table>
 
@@ -2116,8 +2180,12 @@ export default function OrdenesCompra() {
                   <div class="value">${escapeHtml(deliveryDate)}</div>
                 </div>
                 <div class="field">
-                  <div class="label">Solicitado:</div>
+                  <div class="label">Solicitado por:</div>
                   <div class="value">${escapeHtml(requestedByLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Requisición:</div>
+                  <div class="value">${escapeHtml(originalRequestLabel)}</div>
                 </div>
                 <div class="field">
                   <div class="label">Observaciones:</div>

@@ -13,13 +13,43 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+const normalizeCommandSearch = (value: string) =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
+
+const commandFilter: React.ComponentProps<typeof CommandPrimitive>["filter"] = (
+  value,
+  search,
+  keywords
+) => {
+  const normalizedSearch = normalizeCommandSearch(search);
+  if (!normalizedSearch) return 1;
+
+  const haystack = normalizeCommandSearch(
+    [value, ...(keywords ?? [])].filter(Boolean).join(" ")
+  );
+  const tokens = normalizedSearch.split(" ").filter(Boolean);
+
+  if (tokens.length === 0) return 1;
+  if (!tokens.every((token) => haystack.includes(token))) return 0;
+  if (haystack.startsWith(normalizedSearch)) return 1;
+  if (haystack.includes(` ${normalizedSearch}`)) return 0.95;
+  return 0.85;
+};
+
 function Command({
   className,
+  filter,
   ...props
 }: React.ComponentProps<typeof CommandPrimitive>) {
   return (
     <CommandPrimitive
       data-slot="command"
+      filter={filter ?? commandFilter}
       className={cn(
         "bg-popover text-popover-foreground flex h-full w-full flex-col overflow-hidden rounded-md",
         className
@@ -147,7 +177,7 @@ function CommandItem({
     <CommandPrimitive.Item
       data-slot="command-item"
       className={cn(
-        "data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground [&_svg:not([class*='text-'])]:text-muted-foreground relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground [&_svg:not([class*='text-'])]:text-muted-foreground relative flex cursor-default items-start gap-2 whitespace-normal rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className
       )}
       {...props}

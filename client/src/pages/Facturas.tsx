@@ -1652,13 +1652,13 @@ export default function Facturas() {
       body {
         margin: 0;
         font-family: Arial, Helvetica, sans-serif;
-        color: #111827;
+        color: #000;
         background: #f3f4f6;
       }
       .screen-toolbar {
         padding: 10px 14px;
         font-size: 12px;
-        color: #374151;
+        color: #000;
       }
       .page {
         position: relative;

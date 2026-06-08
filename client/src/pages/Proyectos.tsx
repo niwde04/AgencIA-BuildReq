@@ -46,24 +46,14 @@ type ProjectRecord = {
   subprojectsCount?: number;
   warehouseCount?: number;
   totalStock?: string | null;
-  warehouse?: {
-    displayName: string;
-  } | null;
-  warehouses?: WarehouseRecord[];
-  defaultWarehouse?: WarehouseRecord | null;
+  warehouse?: WarehouseRecord | null;
 };
 
 type WarehouseRecord = {
   id: number;
   code: string;
-  localCode?: string | null;
   name: string;
   displayName: string;
-  description?: string | null;
-  isDefault: boolean;
-  isActive: boolean;
-  inventoryRows?: number;
-  uniqueItems?: number;
 };
 
 type SubprojectRecord = {
@@ -97,13 +87,6 @@ type SubprojectFormState = {
   isActive: boolean;
 };
 
-type WarehouseFormState = {
-  localCode: string;
-  name: string;
-  description: string;
-  isDefault: boolean;
-};
-
 const EMPTY_PROJECT_FORM: ProjectFormState = {
   code: "",
   name: "",
@@ -122,13 +105,6 @@ const EMPTY_SUBPROJECT_FORM: SubprojectFormState = {
   startDate: "",
   endDate: "",
   isActive: true,
-};
-
-const EMPTY_WAREHOUSE_FORM: WarehouseFormState = {
-  localCode: "",
-  name: "",
-  description: "",
-  isDefault: false,
 };
 
 function formatDateInput(value?: Date | string | null) {
@@ -203,19 +179,18 @@ export default function Proyectos() {
     useState<ProjectFormState>(EMPTY_PROJECT_FORM);
   const [subprojectForm, setSubprojectForm] =
     useState<SubprojectFormState>(EMPTY_SUBPROJECT_FORM);
-  const [warehouseForm, setWarehouseForm] =
-    useState<WarehouseFormState>(EMPTY_WAREHOUSE_FORM);
   const [editingSubproject, setEditingSubproject] =
     useState<SubprojectRecord | null>(null);
   const [projectSearch, setProjectSearch] = useState("");
   const [projectStatusFilter, setProjectStatusFilter] = useState("all");
 
   const isAdmin = user?.role === "admin";
-  const userRole = (user as any)?.buildreqRole || "";
-  const canManageWarehouses =
-    user?.role === "admin" ||
-    userRole === "jefe_bodega_central" ||
-    userRole === "administracion_central";
+  const buildreqRole = (user as any)?.buildreqRole;
+  const canManageProjects = isAdmin;
+  const canManageSubprojects =
+    canManageProjects ||
+    buildreqRole === "administracion_central" ||
+    buildreqRole === "administrador_proyecto";
   const selectedProjectId = selectedProject?.id ?? 0;
 
   const {
@@ -228,11 +203,6 @@ export default function Proyectos() {
       { projectId: selectedProjectId },
       { enabled: detailDialogOpen && selectedProjectId > 0 }
     );
-  const selectedProjectWarehouses = useMemo(
-    () => selectedProject?.warehouses ?? [],
-    [selectedProject]
-  );
-
   const activeProjectsCount = useMemo(
     () => (projects ?? []).filter((project: any) => project.status === "activo").length,
     [projects]
@@ -251,13 +221,8 @@ export default function Proyectos() {
         project.name,
         project.sapProjectCode,
         project.warehouse?.displayName,
-        project.defaultWarehouse?.displayName,
-        ...(project.warehouses ?? []).flatMap((warehouse) => [
-          warehouse.code,
-          warehouse.localCode,
-          warehouse.name,
-          warehouse.displayName,
-        ]),
+        project.warehouse?.code,
+        project.warehouse?.name,
       ]
         .filter(Boolean)
         .join(" ")
@@ -282,7 +247,7 @@ export default function Proyectos() {
 
   const createMutation = trpc.projects.create.useMutation({
     onSuccess: () => {
-      toast.success("Proyecto creado con su bodega operativa");
+      toast.success("Proyecto creado");
       utils.projects.list.invalidate();
       utils.warehouses.list.invalidate();
       setCreateDialogOpen(false);
@@ -315,43 +280,6 @@ export default function Proyectos() {
             }
           : current
       );
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const refreshProjectWarehouses = async () => {
-    await Promise.all([
-      utils.projects.list.invalidate(),
-      utils.warehouses.list.invalidate(),
-    ]);
-    if (!selectedProjectId) return;
-    const refreshed = await utils.projects.getById.fetch({
-      id: selectedProjectId,
-    });
-    if (refreshed) setSelectedProject(refreshed as ProjectRecord);
-  };
-
-  const createWarehouseMutation = trpc.warehouses.create.useMutation({
-    onSuccess: async () => {
-      toast.success("Almacén creado");
-      setWarehouseForm(EMPTY_WAREHOUSE_FORM);
-      await refreshProjectWarehouses();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const updateWarehouseMutation = trpc.warehouses.update.useMutation({
-    onSuccess: async () => {
-      toast.success("Almacén actualizado");
-      await refreshProjectWarehouses();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const setDefaultWarehouseMutation = trpc.warehouses.setDefault.useMutation({
-    onSuccess: async () => {
-      toast.success("Almacén principal actualizado");
-      await refreshProjectWarehouses();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -492,7 +420,7 @@ export default function Proyectos() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1>Proyectos</h1>
-        {isAdmin && (
+        {canManageProjects && (
           <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
             <DialogTrigger asChild>
               <Button size="sm">
@@ -789,7 +717,6 @@ export default function Proyectos() {
           if (!open) {
             setSelectedProject(null);
             resetSubprojectForm();
-            setWarehouseForm(EMPTY_WAREHOUSE_FORM);
           }
         }}
       >
@@ -804,7 +731,7 @@ export default function Proyectos() {
 
           {selectedProject && (
             <div className="space-y-6 pt-2">
-              {isAdmin ? (
+              {canManageProjects ? (
                 <div className="space-y-3">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1">
@@ -942,185 +869,36 @@ export default function Proyectos() {
               <div className="border-t pt-4 space-y-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-base font-semibold">Almacenes</h2>
+                    <h2 className="text-base font-semibold">Bodega asignada</h2>
                     <p className="text-xs text-muted-foreground">
-                      Inventario operativo separado dentro del proyecto.
+                      La asignación se administra desde el módulo de Almacenes.
                     </p>
                   </div>
                   <Badge variant="outline">
-                    {selectedProject.warehouseCount ?? selectedProjectWarehouses.length}
+                    {selectedProject.warehouse ? "Asignada" : "Pendiente"}
                   </Badge>
                 </div>
 
-                <div className="rounded-md border">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b bg-muted/30">
-                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                            Código
-                          </th>
-                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                            Almacén
-                          </th>
-                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                            Estado
-                          </th>
-                          {canManageWarehouses && (
-                            <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                              Acciones
-                            </th>
-                          )}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedProjectWarehouses.length === 0 ? (
-                          <tr>
-                            <td
-                              className="p-4 text-sm text-muted-foreground"
-                              colSpan={canManageWarehouses ? 4 : 3}
-                            >
-                              Este proyecto todavía no tiene almacenes.
-                            </td>
-                          </tr>
-                        ) : (
-                          selectedProjectWarehouses.map((warehouse) => (
-                            <tr key={warehouse.id} className="border-b last:border-0">
-                              <td className="p-3 font-mono text-xs">
-                                {warehouse.localCode || warehouse.code}
-                              </td>
-                              <td className="p-3">
-                                <div className="font-medium">{warehouse.name}</div>
-                                <div className="text-xs text-muted-foreground">
-                                  {warehouse.displayName}
-                                </div>
-                              </td>
-                              <td className="p-3">
-                                <div className="flex flex-wrap gap-1">
-                                  {warehouse.isDefault && (
-                                    <Badge variant="outline">Principal</Badge>
-                                  )}
-                                  <Badge variant="secondary">
-                                    {warehouse.isActive ? "Activo" : "Inactivo"}
-                                  </Badge>
-                                </div>
-                              </td>
-                              {canManageWarehouses && (
-                                <td className="p-3">
-                                  <div className="flex justify-end gap-2">
-                                    {!warehouse.isDefault && warehouse.isActive && (
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() =>
-                                          setDefaultWarehouseMutation.mutate({
-                                            id: warehouse.id,
-                                          })
-                                        }
-                                      >
-                                        Principal
-                                      </Button>
-                                    )}
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      disabled={warehouse.isDefault}
-                                      onClick={() =>
-                                        updateWarehouseMutation.mutate({
-                                          id: warehouse.id,
-                                          isActive: !warehouse.isActive,
-                                        })
-                                      }
-                                    >
-                                      {warehouse.isActive ? "Desactivar" : "Activar"}
-                                    </Button>
-                                  </div>
-                                </td>
-                              )}
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
+                {selectedProject.warehouse ? (
+                  <div className="rounded-md border p-3">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      <DetailRow
+                        label="Código"
+                        value={selectedProject.warehouse.code}
+                      />
+                      <DetailRow
+                        label="Bodega"
+                        value={selectedProject.warehouse.name}
+                      />
+                      <DetailRow
+                        label="Etiqueta inventario"
+                        value={selectedProject.warehouse.displayName}
+                      />
+                    </div>
                   </div>
-                </div>
-
-                {canManageWarehouses && (
-                  <div className="rounded-md border p-3 space-y-3">
-                    <h3 className="text-sm font-semibold">Nuevo almacén</h3>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div className="space-y-1">
-                        <Label className="text-xs">Código local *</Label>
-                        <Input
-                          value={warehouseForm.localCode}
-                          onChange={(e) =>
-                            setWarehouseForm((form) => ({
-                              ...form,
-                              localCode: e.target.value,
-                            }))
-                          }
-                          placeholder="EJ. MAT, HERR, GENERAL"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">Nombre *</Label>
-                        <Input
-                          value={warehouseForm.name}
-                          onChange={(e) =>
-                            setWarehouseForm((form) => ({
-                              ...form,
-                              name: e.target.value,
-                            }))
-                          }
-                        />
-                      </div>
-                    </div>
-                    <Textarea
-                      value={warehouseForm.description}
-                      onChange={(e) =>
-                        setWarehouseForm((form) => ({
-                          ...form,
-                          description: e.target.value,
-                        }))
-                      }
-                      rows={2}
-                      placeholder="Descripción u observaciones del almacén"
-                    />
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <label className="flex items-center gap-2 text-sm">
-                        <Switch
-                          checked={warehouseForm.isDefault}
-                          onCheckedChange={(checked) =>
-                            setWarehouseForm((form) => ({
-                              ...form,
-                              isDefault: checked,
-                            }))
-                          }
-                        />
-                        Marcar como principal
-                      </label>
-                      <Button
-                        onClick={() => {
-                          if (!selectedProject) return;
-                          if (!warehouseForm.localCode.trim() || !warehouseForm.name.trim()) {
-                            toast.error("Ingrese código y nombre del almacén");
-                            return;
-                          }
-                          createWarehouseMutation.mutate({
-                            projectId: selectedProject.id,
-                            localCode: warehouseForm.localCode,
-                            name: warehouseForm.name,
-                            description:
-                              warehouseForm.description.trim() || undefined,
-                            isDefault: warehouseForm.isDefault,
-                          });
-                        }}
-                        disabled={createWarehouseMutation.isPending}
-                      >
-                        <Plus className="h-4 w-4 mr-2" />
-                        Crear almacén
-                      </Button>
-                    </div>
+                ) : (
+                  <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                    Este proyecto todavía no tiene bodega asignada.
                   </div>
                 )}
               </div>
@@ -1184,7 +962,7 @@ export default function Proyectos() {
                               </p>
                             )}
                           </div>
-                          {isAdmin && (
+                          {canManageSubprojects && (
                             <Button
                               variant="outline"
                               size="sm"
@@ -1203,7 +981,7 @@ export default function Proyectos() {
                   </div>
                 )}
 
-                {isAdmin && (
+                {canManageSubprojects && (
                   <div className="rounded-md border p-3 space-y-3">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <h3 className="text-sm font-semibold">

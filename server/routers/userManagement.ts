@@ -1,8 +1,9 @@
 import { z } from "zod";
-import { protectedProcedure, adminProcedure, router } from "../_core/trpc";
+import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { getSupabaseAdminClient } from "../_core/supabaseAdmin";
 import { TRPCError } from "@trpc/server";
+import { getAssignedProjectIds } from "../projectAccess";
 
 const buildreqRoleSchema = z.enum([
   "ingeniero_residente",
@@ -15,16 +16,137 @@ const buildreqRoleSchema = z.enum([
 ]);
 const projectRequiredRoles = new Set([
   "ingeniero_residente",
+  "administrador_proyecto",
+  "bodeguero_proyecto",
+  "superintendente",
+]);
+const projectManagerAssignableRoles = new Set([
+  "ingeniero_residente",
   "bodeguero_proyecto",
   "superintendente",
 ]);
 
-function canManageUserPasswords(user: { role: string; buildreqRole?: string | null }) {
+type UserManager = {
+  role: string;
+  buildreqRole?: string | null;
+  assignedProjectId?: number | null;
+  assignedProjectIds?: number[] | null;
+};
+
+type ManagedUser = {
+  id?: number;
+  role?: string | null;
+  buildreqRole?: string | null;
+  assignedProjectId?: number | null;
+  assignedProjectIds?: number[] | null;
+};
+
+function canManageUsers(user: UserManager) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto"
+  );
+}
+
+function hasGlobalUserManagement(user: UserManager) {
   return user.role === "admin" || user.buildreqRole === "administracion_central";
 }
 
+function projectSetsOverlap(left: number[], right: number[]) {
+  if (left.length === 0 || right.length === 0) return false;
+  const rightSet = new Set(right);
+  return left.some(projectId => rightSet.has(projectId));
+}
+
+function getManagedUserProjectIds(user: ManagedUser) {
+  return getAssignedProjectIds({
+    role: user.role ?? "user",
+    buildreqRole: user.buildreqRole,
+    assignedProjectId: user.assignedProjectId,
+    assignedProjectIds: user.assignedProjectIds,
+  });
+}
+
+function assertCanManageUsers(user: UserManager) {
+  if (!canManageUsers(user)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para gestionar usuarios.",
+    });
+  }
+}
+
+function assertCanManageTargetUser(manager: UserManager, target: ManagedUser) {
+  if (target.role === "admin" && manager.role !== "admin") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para gestionar administradores base.",
+    });
+  }
+
+  if (hasGlobalUserManagement(manager)) return;
+
+  const managerProjectIds = getAssignedProjectIds(manager);
+  const targetProjectIds = getManagedUserProjectIds(target);
+  if (
+    target.role === "admin" ||
+    target.buildreqRole === "administracion_central" ||
+    target.buildreqRole === "jefe_bodega_central" ||
+    target.buildreqRole === "administrador_proyecto" ||
+    target.buildreqRole === "contable" ||
+    !projectSetsOverlap(managerProjectIds, targetProjectIds)
+  ) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para gestionar este usuario.",
+    });
+  }
+}
+
+function assertAssignableRoleAndProjects(
+  manager: UserManager,
+  buildreqRole: z.infer<typeof buildreqRoleSchema>,
+  assignedProjectIds: number[]
+) {
+  if (hasGlobalUserManagement(manager)) return;
+
+  if (!projectManagerAssignableRoles.has(buildreqRole)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message:
+        "El Administrador de Proyecto solo puede asignar roles operativos del proyecto.",
+    });
+  }
+
+  const managerProjectIds = getAssignedProjectIds(manager);
+  const outsideScope = assignedProjectIds.some(
+    projectId => !managerProjectIds.includes(projectId)
+  );
+  if (assignedProjectIds.length === 0 || outsideScope) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Solo puede asignar proyectos bajo su administración.",
+    });
+  }
+}
+
+function canManageUserPasswords(
+  manager: UserManager,
+  target?: ManagedUser | null
+) {
+  if (!canManageUsers(manager)) return false;
+  if (!target || hasGlobalUserManagement(manager)) return true;
+  try {
+    assertCanManageTargetUser(manager, target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const userPasswordManagementProcedure = protectedProcedure.use(async ({ ctx, next }) => {
-  if (!canManageUserPasswords(ctx.user)) {
+  if (!canManageUsers(ctx.user)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene permisos para gestionar contraseñas de usuarios.",
@@ -78,11 +200,20 @@ function resolveAssignedProjectIdsInput(input: {
 }
 
 export const userManagementRouter = router({
-  list: userPasswordManagementProcedure.query(async () => {
-    return db.listUsers();
+  list: protectedProcedure.query(async ({ ctx }) => {
+    assertCanManageUsers(ctx.user);
+    const users = await db.listUsers();
+    if (hasGlobalUserManagement(ctx.user)) {
+      return users;
+    }
+
+    const managerProjectIds = getAssignedProjectIds(ctx.user);
+    return users.filter(user =>
+      projectSetsOverlap(managerProjectIds, getAssignedProjectIds(user))
+    );
   }),
 
-  createDirect: adminProcedure
+  createDirect: protectedProcedure
     .input(
       z.object({
         name: z.string().trim().min(1),
@@ -93,7 +224,8 @@ export const userManagementRouter = router({
         assignedProjectIds: z.array(z.number().int().positive()).optional(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      assertCanManageUsers(ctx.user);
       const email = input.email.toLowerCase();
       const name = input.name.trim();
       const assignedProjectIds = normalizeAssignedProjectIds(
@@ -101,6 +233,11 @@ export const userManagementRouter = router({
         resolveAssignedProjectIdsInput(input)
       );
       assertRequiredProject(input.buildreqRole, assignedProjectIds);
+      assertAssignableRoleAndProjects(
+        ctx.user,
+        input.buildreqRole,
+        assignedProjectIds
+      );
 
       const existingUser = await db.getUserByEmail(email);
       if (existingUser) {
@@ -162,7 +299,7 @@ export const userManagementRouter = router({
       }
     }),
 
-  updateRole: adminProcedure
+  updateRole: protectedProcedure
     .input(
       z.object({
         userId: z.number(),
@@ -171,12 +308,28 @@ export const userManagementRouter = router({
         assignedProjectIds: z.array(z.number().int().positive()).optional(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      assertCanManageUsers(ctx.user);
+      if (ctx.user.role !== "admin") {
+        const user = await db.getUserById(input.userId);
+        if (!user) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Usuario no encontrado.",
+          });
+        }
+        assertCanManageTargetUser(ctx.user, user);
+      }
       const assignedProjectIds = normalizeAssignedProjectIds(
         input.buildreqRole,
         resolveAssignedProjectIdsInput(input)
       );
       assertRequiredProject(input.buildreqRole, assignedProjectIds);
+      assertAssignableRoleAndProjects(
+        ctx.user,
+        input.buildreqRole,
+        assignedProjectIds
+      );
 
       return db.updateUserRole(
         input.userId,
@@ -186,7 +339,7 @@ export const userManagementRouter = router({
       );
     }),
 
-  updateUserAdmin: adminProcedure
+  updateUserAdmin: protectedProcedure
     .input(
       z.object({
         userId: z.number(),
@@ -197,7 +350,8 @@ export const userManagementRouter = router({
         assignedProjectIds: z.array(z.number().int().positive()).optional(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      assertCanManageUsers(ctx.user);
       const user = await db.getUserById(input.userId);
       if (!user) {
         throw new TRPCError({
@@ -205,6 +359,7 @@ export const userManagementRouter = router({
           message: "Usuario no encontrado.",
         });
       }
+      assertCanManageTargetUser(ctx.user, user);
 
       const name = input.name.trim();
       const email = input.email.trim().toLowerCase();
@@ -213,6 +368,11 @@ export const userManagementRouter = router({
         resolveAssignedProjectIdsInput(input)
       );
       assertRequiredProject(input.buildreqRole, assignedProjectIds);
+      assertAssignableRoleAndProjects(
+        ctx.user,
+        input.buildreqRole,
+        assignedProjectIds
+      );
 
       try {
         const supabase = getSupabaseAdminClient();
@@ -260,12 +420,18 @@ export const userManagementRouter = router({
         password: z.string().min(8),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const user = await db.getUserById(input.userId);
       if (!user) {
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "Usuario no encontrado.",
+        });
+      }
+      if (!canManageUserPasswords(ctx.user, user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para cambiar la contraseña de este usuario.",
         });
       }
 

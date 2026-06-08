@@ -225,14 +225,14 @@ export default function Devoluciones() {
           <style>
             * { box-sizing: border-box; }
             body {
-              color: #111;
+              color: #000;
               font-family: Arial, sans-serif;
               font-size: 12px;
               margin: 32px;
             }
             header {
               align-items: flex-start;
-              border-bottom: 1px solid #d9d9d9;
+              border-bottom: 1px solid #111;
               display: grid;
               gap: 18px;
               grid-template-columns: 112px 1fr auto;
@@ -252,9 +252,9 @@ export default function Devoluciones() {
               margin: 22px 0 10px;
               text-transform: uppercase;
             }
-            .muted { color: #666; }
+            .muted { color: #000; }
             .status {
-              border: 1px solid #bdbdbd;
+              border: 1px solid #111;
               display: inline-block;
               font-size: 11px;
               margin-left: 8px;
@@ -266,12 +266,12 @@ export default function Devoluciones() {
               grid-template-columns: repeat(4, 1fr);
             }
             .box {
-              border: 1px solid #d8d8d8;
+              border: 1px solid #111;
               min-height: 70px;
               padding: 12px;
             }
             .label {
-              color: #666;
+              color: #000;
               font-size: 10px;
               font-weight: 700;
               letter-spacing: 0.06em;
@@ -280,7 +280,7 @@ export default function Devoluciones() {
             }
             .value { font-size: 13px; font-weight: 600; line-height: 1.35; }
             .justification {
-              border: 1px solid #d8d8d8;
+              border: 1px solid #111;
               line-height: 1.5;
               min-height: 72px;
               padding: 12px;
@@ -292,14 +292,14 @@ export default function Devoluciones() {
               width: 100%;
             }
             th, td {
-              border: 1px solid #d8d8d8;
+              border: 1px solid #111;
               padding: 9px;
               text-align: left;
               vertical-align: top;
             }
             th {
               background: #f4f4f4;
-              color: #555;
+              color: #000;
               font-size: 10px;
               letter-spacing: 0.06em;
               text-transform: uppercase;

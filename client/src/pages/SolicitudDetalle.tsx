@@ -28,6 +28,14 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
   ArrowLeft,
   Package,
   Truck,
@@ -35,6 +43,7 @@ import {
   ShoppingCart,
   Trash2,
   Check,
+  ChevronsUpDown,
   Search,
   AlertCircle,
   Pencil,
@@ -266,7 +275,6 @@ function ProjectStockBreakdown({
           >
             <span className="min-w-0 truncate text-[11px] text-muted-foreground">
               {formatProjectStockWarehouseLabel(warehouse)}
-              {warehouse.isDefault ? " (principal)" : ""}
             </span>
             <span
               className={`shrink-0 font-mono text-[11px] ${
@@ -409,10 +417,11 @@ function SapSearchBox({
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const querySearch = search.trim();
 
-  const { data: results } = trpc.requestItems.searchSapCatalog.useQuery(
-    { search },
-    { enabled: search.length >= 2 }
+  const { data: results, isFetching } = trpc.requestItems.searchSapCatalog.useQuery(
+    { search: querySearch },
+    { enabled: querySearch.length >= 2 }
   );
 
   useEffect(() => {
@@ -471,27 +480,29 @@ function SapSearchBox({
     return <span className="text-xs text-muted-foreground italic">Sin traducir</span>;
   }
 
+  const hasSearch = querySearch.length >= 2;
   const hasResults = results && results.length > 0;
-  const noResults = results && results.length === 0 && search.length >= 2;
+  const noResults = results && results.length === 0 && hasSearch && !isFetching;
 
   return (
     <div className="space-y-1">
-      <Popover open={open && (!!hasResults || !!noResults)} onOpenChange={setOpen}>
+      <Popover open={open && hasSearch} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <div className="relative">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
             <Input
               value={search}
               onChange={(e) => {
-                setSearch(e.target.value);
-                if (e.target.value.length >= 2) {
+                const nextSearch = e.target.value;
+                setSearch(nextSearch);
+                if (nextSearch.trim().length >= 2) {
                   setOpen(true);
                 } else {
                   setOpen(false);
                 }
               }}
               onFocus={() => {
-                if (search.length >= 2) setOpen(true);
+                if (querySearch.length >= 2) setOpen(true);
               }}
               placeholder="Buscar código SAP..."
               className="h-7 text-xs pl-7 pr-2"
@@ -499,27 +510,43 @@ function SapSearchBox({
           </div>
         </PopoverTrigger>
         <PopoverContent
-          className="p-0 w-[320px] max-h-[240px] overflow-y-auto"
+          className="w-[min(680px,calc(100vw-2rem))] max-h-[300px] overflow-y-auto p-0"
           align="start"
           sideOffset={4}
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
-          {hasResults && results.map((item: any) => (
+          {isFetching ? (
+            <div className="p-3">
+              <p className="text-xs text-muted-foreground text-center">Buscando...</p>
+            </div>
+          ) : null}
+          {!isFetching && hasResults && results.map((item: any) => (
             <button
               key={item.id}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 onSelect(item.itemCode, item.description);
                 setSearch("");
                 setIsEditing(false);
                 setOpen(false);
               }}
-              className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border last:border-0 flex items-center gap-2"
+              className="flex w-full items-start gap-3 border-b border-border px-3 py-2 text-left transition-colors last:border-0 hover:bg-muted/50"
             >
               <span className="font-mono text-xs font-bold text-primary shrink-0">
                 {item.itemCode}
               </span>
-              <span className="text-xs text-foreground truncate">
-                {item.description}
+              <span className="min-w-0 text-xs text-foreground">
+                <span className="block whitespace-normal break-words">
+                  {item.description}
+                </span>
+                {item.brand || item.partNumber ? (
+                  <span className="mt-1 block whitespace-normal break-words text-muted-foreground">
+                    {[item.brand && `Marca: ${item.brand}`, item.partNumber && `No. parte: ${item.partNumber}`]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                ) : null}
               </span>
             </button>
           ))}
@@ -569,6 +596,15 @@ export default function SolicitudDetalle() {
   );
 
   const { data: availableFlows } = trpc.supplyFlows.availableFlows.useQuery();
+  const { data: projectWarehouses } = trpc.warehouses.list.useQuery(
+    {
+      projectId: data?.request.projectId ?? 0,
+      isActive: true,
+    },
+    {
+      enabled: Boolean(data?.request.projectId),
+    }
+  );
 
   const items = data?.items ?? [];
 
@@ -581,20 +617,37 @@ export default function SolicitudDetalle() {
   });
 
   const clearSapTranslationMutation = trpc.requestItems.clearSapTranslation.useMutation({
-    onSuccess: (result) => {
+    onSuccess: (result, variables) => {
       toast.success(
         result.clearedFlow
           ? "Traducción SAP eliminada y flujo retirado"
           : "Traducción SAP eliminada"
       );
+      setSelectedWarehouseByItemId((current) => {
+        if (!(variables.id in current)) return current;
+        const next = { ...current };
+        delete next[variables.id];
+        return next;
+      });
       invalidateAll();
     },
     onError: (e) => toast.error(e.message),
   });
 
   const assignFlowMutation = trpc.requestItems.assignFlow.useMutation({
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       toast.success("Flujo actualizado");
+      setWarehousePromptItemId((current) =>
+        current === variables.id ? null : current
+      );
+      if (variables.flowType !== "despacho_bodega") {
+        setSelectedWarehouseByItemId((current) => {
+          if (!(variables.id in current)) return current;
+          const next = { ...current };
+          delete next[variables.id];
+          return next;
+        });
+      }
       invalidateAll();
     },
     onError: (e) => toast.error(e.message),
@@ -658,6 +711,15 @@ export default function SolicitudDetalle() {
   });
 
   const [assigningFlowItemId, setAssigningFlowItemId] = useState<number | null>(null);
+  const [selectedWarehouseByItemId, setSelectedWarehouseByItemId] = useState<
+    Record<number, string>
+  >({});
+  const [warehousePopoverItemId, setWarehousePopoverItemId] = useState<number | null>(
+    null
+  );
+  const [warehousePromptItemId, setWarehousePromptItemId] = useState<number | null>(
+    null
+  );
   const [rejectReason, setRejectReason] = useState("");
   const [pendingItemRejection, setPendingItemRejection] = useState<{
     itemIds: number[];
@@ -966,7 +1028,47 @@ export default function SolicitudDetalle() {
     return options.filter((value, index, array) => array.indexOf(value) === index);
   };
 
-  const getQueueDisabledReason = (item: any, flowType: QueueFlowType) => {
+  const getSelectedWarehouseValue = (item: any) =>
+    selectedWarehouseByItemId[item.id] ??
+    (item.warehouseId ? String(item.warehouseId) : "");
+
+  const getSelectedWarehouseId = (item: any) => {
+    const value = getSelectedWarehouseValue(item);
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  };
+
+  const getWarehouseOptionLabel = (warehouse: any) =>
+    warehouse.displayName ||
+    [warehouse.code || warehouse.localCode, warehouse.name]
+      .filter(Boolean)
+      .join(" - ") ||
+    `Almacén #${warehouse.id}`;
+
+  const getItemWarehouseStock = (item: any, warehouseId: number) => {
+    const warehouses = Array.isArray(item.projectStockWarehouses)
+      ? item.projectStockWarehouses
+      : [];
+    const stockEntry = warehouses.find(
+      (warehouse: any) => Number(warehouse.warehouseId) === warehouseId
+    );
+    return parseQuantityValue(stockEntry?.quantity);
+  };
+
+  const getWarehouseDispatchPendingQuantity = (item: any) => {
+    const requested = Math.max(parseQuantityValue(item.quantity), 0);
+    const dispatched = Math.min(
+      Math.max(parseQuantityValue(item.dispatchedQuantity), 0),
+      requested
+    );
+    return Math.max(requested - dispatched, 0);
+  };
+
+  const getQueueDisabledReason = (
+    item: any,
+    flowType: QueueFlowType,
+    warehouseId?: number | null
+  ) => {
     if (
       data?.request?.requestType === "servicios" &&
       !SERVICE_QUEUE_FLOW_TYPES.has(flowType)
@@ -975,6 +1077,27 @@ export default function SolicitudDetalle() {
     }
     if (!item.sapItemCode) {
       return "Debe traducir el ítem a SAP antes de asignar un flujo";
+    }
+    if (flowType === "despacho_bodega") {
+      if (!warehouseId) {
+        return "Seleccione una bodega para la salida de inventario";
+      }
+      const selectedWarehouse = (projectWarehouses ?? []).find(
+        (warehouse: any) => Number(warehouse.id) === warehouseId
+      );
+      if (!selectedWarehouse) {
+        return "La bodega seleccionada no está disponible para este proyecto";
+      }
+      const pendingQuantity = getWarehouseDispatchPendingQuantity(item);
+      const availableQuantity = getItemWarehouseStock(item, warehouseId);
+      if (
+        pendingQuantity > 0 &&
+        pendingQuantity - availableQuantity > 0.000001
+      ) {
+        return `Stock insuficiente en bodega (${formatQuantityValue(
+          availableQuantity
+        )} disponible)`;
+      }
     }
     if (flowType === "solicitud_compra" && activePurchaseRequestFlowsByItem.has(item.id)) {
       return "Este ítem ya tiene una solicitud de compra activa";
@@ -988,19 +1111,53 @@ export default function SolicitudDetalle() {
     return null;
   };
 
-  const handleQueuedFlowSelection = async (item: any, nextFlow: string) => {
+  const handleQueuedFlowSelection = async (
+    item: any,
+    nextFlow: string,
+    warehouseId?: number | null
+  ) => {
     const requestedFlow = nextFlow === "__clear__" ? null : (nextFlow as QueueFlowType);
+    const selectedWarehouseId =
+      requestedFlow === "despacho_bodega"
+        ? warehouseId ?? getSelectedWarehouseId(item)
+        : null;
 
-    if (requestedFlow && requestedFlow !== item.assignedFlow) {
-      const disabledReason = getQueueDisabledReason(item, requestedFlow);
+    if (
+      requestedFlow &&
+      (requestedFlow !== item.assignedFlow ||
+        requestedFlow === "despacho_bodega")
+    ) {
+      const disabledReason = getQueueDisabledReason(
+        item,
+        requestedFlow,
+        selectedWarehouseId
+      );
       if (disabledReason) {
+        if (
+          requestedFlow === "despacho_bodega" &&
+          !selectedWarehouseId &&
+          disabledReason === "Seleccione una bodega para la salida de inventario"
+        ) {
+          setWarehousePromptItemId(item.id);
+          toast.error(disabledReason);
+          return;
+        }
         toast.error(disabledReason);
         return;
       }
     }
 
-    if (requestedFlow === item.assignedFlow) {
+    const warehouseChanged =
+      requestedFlow === "despacho_bodega" &&
+      selectedWarehouseId &&
+      selectedWarehouseId !== Number(item.warehouseId ?? 0);
+
+    if (requestedFlow === item.assignedFlow && !warehouseChanged) {
       return;
+    }
+
+    if (requestedFlow !== "despacho_bodega") {
+      setWarehousePromptItemId((current) => (current === item.id ? null : current));
     }
 
     setAssigningFlowItemId(item.id);
@@ -1008,12 +1165,139 @@ export default function SolicitudDetalle() {
       {
         id: item.id,
         flowType: requestedFlow,
+        warehouseId: selectedWarehouseId,
       },
       {
         onSettled: () => {
           setAssigningFlowItemId((current) => (current === item.id ? null : current));
         },
       }
+    );
+  };
+
+  const renderDispatchWarehouseCombobox = (
+    item: any,
+    pendingQuantity: number,
+    disabled: boolean,
+    disabledReason?: string | null
+  ) => {
+    const warehouses = projectWarehouses ?? [];
+    const selectedValue = getSelectedWarehouseValue(item);
+    const selectedWarehouseId = Number(selectedValue || 0);
+    const selectedWarehouse = warehouses.find(
+      (warehouse: any) => Number(warehouse.id) === selectedWarehouseId
+    );
+    const isOpen = warehousePopoverItemId === item.id;
+
+    return (
+      <div className="space-y-1">
+        <Label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Bodega
+        </Label>
+        <Popover
+          open={isOpen}
+          onOpenChange={(open) => setWarehousePopoverItemId(open ? item.id : null)}
+        >
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              role="combobox"
+              aria-expanded={isOpen}
+              className="h-8 w-full justify-between px-2 text-xs font-normal"
+              disabled={disabled || warehouses.length === 0}
+            >
+              <span className="min-w-0 truncate">
+                {selectedWarehouse
+                  ? getWarehouseOptionLabel(selectedWarehouse)
+                  : selectedValue
+                    ? `Almacén #${selectedValue}`
+                    : "Seleccione bodega"}
+              </span>
+              <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[340px] p-0" align="start">
+            <Command>
+              <CommandInput placeholder="Buscar bodega por código o nombre..." />
+              <CommandList>
+                <CommandEmpty>No se encontraron bodegas.</CommandEmpty>
+                <CommandGroup>
+                  {warehouses.map((warehouse: any) => {
+                    const warehouseId = Number(warehouse.id);
+                    const stockQuantity = getItemWarehouseStock(item, warehouseId);
+                    const hasEnoughStock =
+                      pendingQuantity <= 0 ||
+                      stockQuantity - pendingQuantity >= -0.000001;
+                    const isSelected = selectedWarehouseId === warehouseId;
+                    const label = getWarehouseOptionLabel(warehouse);
+
+                    return (
+                      <CommandItem
+                        key={warehouse.id}
+                        value={`${warehouse.code ?? ""} ${warehouse.localCode ?? ""} ${
+                          warehouse.name ?? ""
+                        } ${warehouse.displayName ?? ""}`}
+                        keywords={[
+                          warehouse.code,
+                          warehouse.localCode,
+                          warehouse.name,
+                          warehouse.displayName,
+                        ].filter(Boolean)}
+                        disabled={!hasEnoughStock}
+                        onSelect={() => {
+                          if (!hasEnoughStock) return;
+                          setSelectedWarehouseByItemId((current) => ({
+                            ...current,
+                            [item.id]: String(warehouse.id),
+                          }));
+                          setWarehousePopoverItemId(null);
+                          if (
+                            item.assignedFlow === "despacho_bodega" ||
+                            warehousePromptItemId === item.id
+                          ) {
+                            void handleQueuedFlowSelection(
+                              item,
+                              "despacho_bodega",
+                              warehouseId
+                            );
+                          }
+                        }}
+                      >
+                        <Check
+                          className={`mt-0.5 h-4 w-4 ${
+                            isSelected ? "opacity-100" : "opacity-0"
+                          }`}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-medium">{label}</p>
+                          <p
+                            className={`text-[10px] ${
+                              hasEnoughStock
+                                ? "text-muted-foreground"
+                                : "text-destructive"
+                            }`}
+                          >
+                            Existencia: {formatQuantityValue(stockQuantity)}
+                            {!hasEnoughStock
+                              ? ` | Pendiente: ${formatQuantityValue(pendingQuantity)}`
+                              : ""}
+                          </p>
+                        </div>
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+        {disabledReason ? (
+          <p className="text-[10px] leading-4 text-muted-foreground">
+            {disabledReason}
+          </p>
+        ) : null}
+      </div>
     );
   };
 
@@ -1540,6 +1824,16 @@ export default function SolicitudDetalle() {
                   const hasSapTranslation = translatedSapCode.trim().length > 0;
                   const shouldShowSapQueueWarning =
                     Boolean(editableItem) && !hasSapTranslation && !queuedFlow;
+                  const selectedDispatchWarehouseId = editableItem
+                    ? getSelectedWarehouseId(editableItem)
+                    : null;
+                  const shouldShowDispatchWarehouseCombobox =
+                    Boolean(editableItem) &&
+                    request.requestType === "bienes" &&
+                    queueOptions.includes("despacho_bodega") &&
+                    (queuedFlow === "despacho_bodega" ||
+                      warehousePromptItemId === editableItem?.id ||
+                      Boolean(selectedDispatchWarehouseId));
 
                   return (
                     <tr
@@ -1759,7 +2053,11 @@ export default function SolicitudDetalle() {
                                 value={queuedFlow}
                                 onValueChange={(value) => {
                                   if (!editableItem) return;
-                                  void handleQueuedFlowSelection(editableItem, value);
+                                  void handleQueuedFlowSelection(
+                                    editableItem,
+                                    value,
+                                    selectedDispatchWarehouseId
+                                  );
                                 }}
                                 disabled={isFlowSelectionLocked}
                               >
@@ -1772,13 +2070,26 @@ export default function SolicitudDetalle() {
                                   ) : null}
                                   {queueOptions.map((flowType) => {
                                     const disabledReason = editableItem
-                                      ? getQueueDisabledReason(editableItem, flowType)
+                                      ? getQueueDisabledReason(
+                                          editableItem,
+                                          flowType,
+                                          selectedDispatchWarehouseId
+                                        )
                                       : "No hay cantidad pendiente";
+                                    const isMissingWarehousePrompt =
+                                      flowType === "despacho_bodega" &&
+                                      !selectedDispatchWarehouseId &&
+                                      disabledReason ===
+                                        "Seleccione una bodega para la salida de inventario";
                                     return (
                                       <SelectItem
                                         key={`${row.key}-${flowType}`}
                                         value={flowType}
-                                        disabled={Boolean(disabledReason) && queuedFlow !== flowType}
+                                        disabled={
+                                          Boolean(disabledReason) &&
+                                          queuedFlow !== flowType &&
+                                          !isMissingWarehousePrompt
+                                        }
                                       >
                                         {QUEUE_FLOW_LABELS[flowType]}
                                       </SelectItem>
@@ -1786,6 +2097,18 @@ export default function SolicitudDetalle() {
                                   })}
                                 </SelectContent>
                               </Select>
+                              {shouldShowDispatchWarehouseCombobox && editableItem ? (
+                                renderDispatchWarehouseCombobox(
+                                  editableItem,
+                                  row.remainingQuantity,
+                                  isFlowSelectionLocked ||
+                                    anyQueueProcessing ||
+                                    !hasSapTranslation,
+                                  !hasSapTranslation
+                                    ? "Traduce el ítem a SAP para calcular existencia por bodega."
+                                    : null
+                                )
+                              ) : null}
                               {queuedFlow && editableItem ? (
                                 <Button
                                   variant="ghost"

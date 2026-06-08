@@ -372,13 +372,6 @@ export default function SalidasBodega() {
           Boolean(deliveryRequestDetail?.request.projectId),
       }
     );
-  const defaultDeliveryWarehouse = useMemo(
-    () =>
-      (deliveryWarehouses ?? []).find((warehouse: any) => warehouse.isDefault) ??
-      (deliveryWarehouses ?? [])[0] ??
-      null,
-    [deliveryWarehouses]
-  );
   const { data: detail } = trpc.warehouseExits.getById.useQuery(
     { id: selectedId ?? 0 },
     { enabled: Boolean(selectedId) }
@@ -483,7 +476,7 @@ export default function SalidasBodega() {
       const suggestedQuantity = getSuggestedDeliveryQuantity(item);
       if (suggestedQuantity > 0) {
         nextQuantities[item.id] = suggestedQuantity.toFixed(2);
-        nextWarehouses[item.id] = String(defaultDeliveryWarehouse?.id ?? "");
+        nextWarehouses[item.id] = item.warehouseId ? String(item.warehouseId) : "";
         nextTargets[item.id] = mapWarehouseExitLineTargetToSelection(
           item,
           deliveryRequestDetail.request.projectId
@@ -493,7 +486,7 @@ export default function SalidasBodega() {
     setDeliveryQuantityByItemId(nextQuantities);
     setDeliveryWarehouseByItemId(nextWarehouses);
     setDeliveryTargetByItemId(nextTargets);
-  }, [defaultDeliveryWarehouse?.id, deliveryRequestDetail?.request.id]);
+  }, [deliveryRequestDetail?.request.id]);
 
   const eligibleMaterialRequests = useMemo(
     () =>
@@ -750,6 +743,12 @@ export default function SalidasBodega() {
       return;
     }
 
+    const receivedByName = deliveryReceivedByName.trim();
+    if (!receivedByName) {
+      toast.error("Ingrese quién recibe la salida");
+      return;
+    }
+
     const selectedItems = deliveryItems
       .map((item: any) => {
         const quantity = Number(deliveryQuantityByItemId[item.id] ?? 0);
@@ -793,7 +792,7 @@ export default function SalidasBodega() {
     createDeliveryMutation.mutate({
       requestId: deliveryRequestDetail.request.id,
       note: deliveryNotes.trim() || undefined,
-      receivedByName: deliveryReceivedByName.trim() || undefined,
+      receivedByName,
       items: selectedItems.map(({ item, quantity, warehouseId, targetSelection }) => ({
         requestItemId: item.id,
         dispatchedQuantity: quantity.toFixed(2),
@@ -906,7 +905,7 @@ export default function SalidasBodega() {
       .join("");
     const totalLines = (detail.items || []).length;
 
-    const printWindow = window.open("", "_blank", "width=1100,height=780");
+    const printWindow = window.open("", "_blank", "width=840,height=1000");
     if (!printWindow) {
       toast.error("No se pudo abrir la ventana de impresión");
       return;
@@ -919,92 +918,95 @@ export default function SalidasBodega() {
           <meta charset="utf-8" />
           <title>${escapeHtml(warehouseExit.exitNumber)}</title>
           <style>
-            @page { size: A4 landscape; margin: 9mm; }
+            @page { size: A4 portrait; margin: 7mm; }
             * { box-sizing: border-box; }
             body {
               background: #fff;
               color: #000;
               font-family: Arial, Helvetica, sans-serif;
-              font-size: 10px;
+              font-size: 9.5px;
               margin: 0;
             }
             .sheet {
               margin: 0 auto;
-              max-width: 279mm;
-              padding: 4mm 4mm 8mm;
+              max-width: 196mm;
+              padding: 0 1mm 3mm;
             }
             .header {
               align-items: start;
               display: grid;
-              gap: 18px;
-              grid-template-columns: 112px 1fr 120px;
+              gap: 8px;
+              grid-template-columns: 82px 1fr 108px;
             }
             .logo {
               display: block;
-              height: 52px;
+              height: 44px;
               object-fit: contain;
-              width: 70px;
+              width: 64px;
             }
             .title {
-              color: #06344f;
-              font-size: 13px;
+              color: #000;
+              font-size: 11.5px;
               font-weight: 800;
-              line-height: 1.5;
+              line-height: 1.25;
               text-align: center;
               text-transform: uppercase;
             }
             .company {
               color: #000;
-              font-size: 15px;
+              font-size: 13px;
               margin-bottom: 2px;
             }
             .document-number {
-              border: 5px double #222;
-              color: #d00000;
-              font-size: 14px;
+              border: 4px double #222;
+              color: #000;
+              font-size: 12px;
               font-weight: 900;
               margin-top: 0;
-              padding: 4px 8px;
+              padding: 3px 6px;
               text-align: center;
             }
             .meta {
               display: grid;
-              gap: 34px;
+              gap: 10px;
               grid-template-columns: 1fr 1fr;
-              margin-top: 8mm;
+              margin-top: 6mm;
             }
             .meta-column {
               display: grid;
-              gap: 5px;
+              gap: 3px;
             }
             .field {
               display: grid;
-              gap: 8px;
-              grid-template-columns: 120px 1fr;
-              min-height: 14px;
+              gap: 4px;
+              grid-template-columns: 98px 1fr;
+              min-height: 12px;
             }
             .label {
               font-weight: 800;
             }
             .value {
               font-weight: 700;
+              overflow-wrap: anywhere;
             }
             table {
               border-collapse: collapse;
-              margin-top: 5mm;
+              margin-top: 4mm;
+              table-layout: fixed;
               width: 100%;
             }
             th {
-              border-bottom: 2px solid #2c85a5;
-              border-top: 2px solid #2c85a5;
-              font-size: 9px;
+              border-bottom: 2px solid #111;
+              border-top: 2px solid #111;
+              font-size: 8.5px;
               font-weight: 800;
-              padding: 4px 5px;
+              padding: 3px 4px;
               text-align: left;
             }
             td {
-              border-bottom: 1px solid #78bed9;
-              padding: 5px;
+              border-bottom: 1px solid #111;
+              padding: 3px 4px;
+              overflow-wrap: anywhere;
               vertical-align: top;
             }
             .center { text-align: center; }
@@ -1013,19 +1015,19 @@ export default function SalidasBodega() {
               text-align: right;
             }
             .total-row td {
-              border-bottom: 2px solid #2c85a5;
+              border-bottom: 2px solid #111;
               font-weight: 800;
             }
             .signatures {
               display: grid;
-              gap: 58px;
-              grid-template-columns: repeat(3, 180px);
+              gap: 22px;
+              grid-template-columns: repeat(3, 150px);
               justify-content: center;
-              margin-top: 14mm;
+              margin-top: 10mm;
             }
             .signature-line {
               border-top: 2px solid #111;
-              font-size: 13px;
+              font-size: 10.5px;
               font-weight: 700;
               padding-top: 4px;
               text-align: center;
@@ -1093,14 +1095,14 @@ export default function SalidasBodega() {
             <table>
               <thead>
                 <tr>
-                  <th style="width: 18%;">Código/No. Serie</th>
+                  <th style="width: 16%;">Código/No. Serie</th>
                   <th>Identificador</th>
-                  <th style="width: 10%;" class="center">Costo</th>
-                  <th style="width: 10%;" class="numeric">Cantidad</th>
-                  <th style="width: 10%;" class="center">U Medida</th>
-                  <th style="width: 20%;">Destino</th>
-                  <th style="width: 18%;">Referencia</th>
-                  <th style="width: 8%;" class="numeric">Total</th>
+                  <th style="width: 8%;" class="center">Costo</th>
+                  <th style="width: 9%;" class="numeric">Cantidad</th>
+                  <th style="width: 9%;" class="center">U Medida</th>
+                  <th style="width: 19%;">Destino</th>
+                  <th style="width: 17%;">Referencia</th>
+                  <th style="width: 7%;" class="numeric">Total</th>
                 </tr>
               </thead>
               <tbody>
@@ -1659,7 +1661,7 @@ export default function SalidasBodega() {
           }
         }}
       >
-        <DialogContent className="max-h-[92vh] !w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] overflow-y-auto rounded-2xl p-5 sm:!w-[calc(100vw-2rem)] sm:!max-w-[calc(100vw-2rem)] sm:p-8 xl:!max-w-[1500px]">
+        <DialogContent className="max-h-[92vh] !w-[calc(100vw-0.5rem)] !max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-5 sm:!w-[calc(100vw-1rem)] sm:!max-w-[calc(100vw-1rem)] sm:p-8 xl:!max-w-[1800px] 2xl:!max-w-[1900px]">
           <DialogHeader className="border-b border-border/70 pb-5">
             <DialogTitle className="text-2xl font-bold tracking-tight sm:text-3xl">
               Nueva salida de requisición
@@ -1699,7 +1701,7 @@ export default function SalidasBodega() {
               <>
                 {deliveryItems.length > 0 ? (
                   <div className="overflow-x-auto rounded-xl border">
-                    <table className="w-full text-sm">
+                    <table className="w-full min-w-[1420px] text-sm">
                       <thead>
                         <tr className="border-b bg-muted/30">
                           <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1797,16 +1799,35 @@ export default function SalidasBodega() {
                                   <SelectTrigger className="min-w-48">
                                     <SelectValue placeholder="Seleccione almacén" />
                                   </SelectTrigger>
-                                  <SelectContent>
+                                  <SelectContent className="min-w-[280px]">
                                     {(deliveryWarehouses ?? []).map(
-                                      (warehouse: any) => (
-                                        <SelectItem
-                                          key={warehouse.id}
-                                          value={String(warehouse.id)}
-                                        >
-                                          {warehouse.displayName}
-                                        </SelectItem>
-                                      )
+                                      (warehouse: any) => {
+                                        const warehouseAvailableQuantity =
+                                          deliveryWarehouseStockByItemId
+                                            .get(item.id)
+                                            ?.get(Number(warehouse.id)) ?? 0;
+
+                                        return (
+                                          <SelectItem
+                                            key={warehouse.id}
+                                            value={String(warehouse.id)}
+                                            textValue={warehouse.displayName}
+                                          >
+                                            <span className="flex min-w-0 flex-col items-start gap-0.5">
+                                              <span className="truncate font-medium">
+                                                {warehouse.displayName}
+                                              </span>
+                                              <span className="text-[11px] text-muted-foreground">
+                                                Disponible:{" "}
+                                                {formatQuantity(
+                                                  warehouseAvailableQuantity
+                                                )}{" "}
+                                                {item.unit || ""}
+                                              </span>
+                                            </span>
+                                          </SelectItem>
+                                        );
+                                      }
                                     )}
                                   </SelectContent>
                                 </Select>
@@ -1856,7 +1877,7 @@ export default function SalidasBodega() {
                 )}
 
                 <div className="space-y-2">
-                  <Label>Recibido por</Label>
+                  <Label>Recibido por *</Label>
                   <Input
                     value={deliveryReceivedByName}
                     onChange={(event) =>
@@ -1864,6 +1885,7 @@ export default function SalidasBodega() {
                     }
                     placeholder="Nombre de quien recibe"
                     maxLength={255}
+                    required
                   />
                 </div>
 
@@ -1896,6 +1918,7 @@ export default function SalidasBodega() {
                 disabled={
                   !deliveryRequestDetail ||
                   deliveryItems.length === 0 ||
+                  !deliveryReceivedByName.trim() ||
                   createDeliveryMutation.isPending
                 }
               >

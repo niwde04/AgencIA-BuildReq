@@ -118,7 +118,7 @@ export default function Solicitudes() {
   const canCreateRequest =
     userRole !== "bodeguero_proyecto" && !isSuperintendent;
 
-  const { data: requests, isLoading } = trpc.materialRequests.list.useQuery(
+  const { data: requests, isLoading, error } = trpc.materialRequests.list.useQuery(
     statusFilter !== "all" ? { status: statusFilter } : undefined
   );
 
@@ -182,6 +182,10 @@ export default function Solicitudes() {
           {isLoading ? (
             <div className="p-8 text-center text-muted-foreground">
               Cargando requisiciones...
+            </div>
+          ) : error ? (
+            <div className="p-8 text-center text-destructive">
+              No se pudieron cargar las requisiciones: {error.message}
             </div>
           ) : filteredRequests.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground">

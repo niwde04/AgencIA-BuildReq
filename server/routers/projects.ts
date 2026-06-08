@@ -43,6 +43,32 @@ function assertProjectScopedAccess(
   }
 }
 
+function assertCanManageSubprojects(
+  user: {
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
+  },
+  projectId: number
+) {
+  if (user.role === "admin" || user.buildreqRole === "administracion_central") {
+    return;
+  }
+  if (
+    user.buildreqRole === "administrador_proyecto" &&
+    canAccessProject(user, projectId)
+  ) {
+    return;
+  }
+
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message:
+        "required permission: No tiene permisos para administrar subproyectos.",
+    });
+}
+
 function parseOptionalDate(value: string | null | undefined) {
   if (value === undefined) return undefined;
   if (value === null || value.trim() === "") return null;
@@ -241,9 +267,10 @@ export const projectsRouter = router({
       return db.listProjectSubprojects(input.projectId);
     }),
 
-  createSubproject: adminProcedure
+  createSubproject: protectedProcedure
     .input(subprojectInputSchema)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      assertCanManageSubprojects(ctx.user, input.projectId);
       const startDate = parseOptionalDate(input.startDate);
       const endDate = parseOptionalDate(input.endDate);
       assertDateRange(startDate, endDate);
@@ -264,13 +291,14 @@ export const projectsRouter = router({
       });
     }),
 
-  updateSubproject: adminProcedure
+  updateSubproject: protectedProcedure
     .input(
       subprojectInputSchema.extend({
         id: z.number().int().positive(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      assertCanManageSubprojects(ctx.user, input.projectId);
       const existing = await db.getProjectSubprojectById(input.id);
       if (!existing) {
         throw new TRPCError({
@@ -278,6 +306,7 @@ export const projectsRouter = router({
           message: "Subproyecto no encontrado",
         });
       }
+      assertCanManageSubprojects(ctx.user, existing.projectId);
 
       const startDate = parseOptionalDate(input.startDate);
       const endDate = parseOptionalDate(input.endDate);

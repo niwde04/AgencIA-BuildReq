@@ -66,7 +66,7 @@ export const openingBalancesRouter = router({
   create: protectedProcedure
     .input(
       z.object({
-        projectId: z.number().int().positive(),
+        projectId: z.number().int().positive().optional(),
         warehouseId: z.number().int().positive(),
         openingDate: z.string().optional(),
         notes: z.string().trim().max(2000).optional(),

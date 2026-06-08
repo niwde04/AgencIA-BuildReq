@@ -224,7 +224,7 @@ export default function Transfers() {
               width: 70px;
             }
             .title {
-              color: #06344f;
+              color: #000;
               font-size: 13px;
               font-weight: 800;
               line-height: 1.5;
@@ -238,7 +238,7 @@ export default function Transfers() {
             }
             .document-number {
               border: 5px double #222;
-              color: #d00000;
+              color: #000;
               font-size: 14px;
               font-weight: 900;
               margin-top: 0;
@@ -273,15 +273,15 @@ export default function Transfers() {
               width: 100%;
             }
             th {
-              border-bottom: 2px solid #2c85a5;
-              border-top: 2px solid #2c85a5;
+              border-bottom: 2px solid #111;
+              border-top: 2px solid #111;
               font-size: 9px;
               font-weight: 800;
               padding: 4px 5px;
               text-align: left;
             }
             td {
-              border-bottom: 1px solid #78bed9;
+              border-bottom: 1px solid #111;
               padding: 5px;
               vertical-align: top;
             }
@@ -291,7 +291,7 @@ export default function Transfers() {
               text-align: right;
             }
             .total-row td {
-              border-bottom: 2px solid #2c85a5;
+              border-bottom: 2px solid #111;
               font-weight: 800;
             }
             .signatures {

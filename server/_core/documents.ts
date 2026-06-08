@@ -721,7 +721,7 @@ export function buildProcurementPdfBase64(params: {
     ink: [0.11, 0.14, 0.2] as PdfRgb,
     accent: [0.82, 0.16, 0.22] as PdfRgb,
     accentSoft: [0.96, 0.9, 0.92] as PdfRgb,
-    border: [0.86, 0.88, 0.91] as PdfRgb,
+    border: [0, 0, 0] as PdfRgb,
     muted: [0.45, 0.48, 0.54] as PdfRgb,
     white: [1, 1, 1] as PdfRgb,
     rowAlt: [0.985, 0.988, 0.992] as PdfRgb,
@@ -1100,15 +1100,16 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   projectLabel: string;
   supplierLabel: string;
   createdDateLabel: string;
-  destinationLabel: string;
   deliveryDateLabel: string;
   requestedByLabel: string;
+  originalRequestLabel: string;
   salesAdvisorLabel: string;
   observations: string;
   quoteLabel: string;
   items: Array<{
     itemNumber: string;
     description: string;
+    destinationLabel: string;
     partNumber: string;
     quantityLabel: string;
     unitPriceLabel: string;
@@ -1120,15 +1121,15 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     emphasized?: boolean;
   }>;
 }) {
-  const landscapeWidth = 842;
-  const landscapeHeight = 595;
-  const marginX = 32;
-  const contentWidth = landscapeWidth - marginX * 2;
+  const pageWidth = 595;
+  const pageHeight = 842;
+  const marginX = 28;
+  const contentWidth = pageWidth - marginX * 2;
   const ink = [0, 0, 0] as PdfRgb;
-  const border = [0.62, 0.62, 0.62] as PdfRgb;
-  const lightBorder = [0.84, 0.84, 0.84] as PdfRgb;
+  const border = [0, 0, 0] as PdfRgb;
+  const lightBorder = [0, 0, 0] as PdfRgb;
   const pages: PdfPage[] = [];
-  let page = createPage({ width: landscapeWidth, height: landscapeHeight });
+  let page = createPage({ width: pageWidth, height: pageHeight });
   pages.push(page);
 
   function drawCenteredText(
@@ -1213,15 +1214,15 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     drawImageContained(page, HEH_LOGO_IMAGE, {
       x: marginX,
       top,
-      width: 102,
-      height: 56,
+      width: 82,
+      height: 48,
     });
   }
 
   function drawFirstPageHeader() {
     const headerTop = 22;
-    const titleX = marginX + 124;
-    const titleWidth = contentWidth - 248;
+    const titleX = marginX + 96;
+    const titleWidth = contentWidth - 192;
 
     drawLogo(headerTop);
     drawCenteredText(
@@ -1262,10 +1263,10 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     drawLine(page, marginX, 91, marginX + contentWidth, 91, ink, 1.1);
     drawLine(page, marginX, 95, marginX + contentWidth, 95, ink, 1.1);
 
-    let leftTop = 118;
-    let rightTop = 118;
-    const leftValueWidth = 375;
-    const rightX = marginX + 530;
+    let leftTop = 116;
+    let rightTop = 116;
+    const leftValueWidth = 236;
+    const rightX = marginX + 352;
 
     leftTop +=
       drawLabelValue({
@@ -1296,23 +1297,12 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
         value: params.salesAdvisorLabel || "-",
         maxLines: 2,
       }) + 3;
-    leftTop +=
-      drawLabelValue({
-        x: marginX,
-        top: leftTop,
-        labelWidth: 96,
-        valueWidth: leftValueWidth,
-        label: "Destino:",
-        value: params.destinationLabel,
-        maxLines: 2,
-      }) + 3;
-
     rightTop +=
       drawLabelValue({
         x: rightX,
         top: rightTop,
-        labelWidth: 78,
-        valueWidth: 160,
+        labelWidth: 72,
+        valueWidth: 112,
         label: "Pedido:",
         value: params.orderId,
       }) + 3;
@@ -1320,8 +1310,8 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       drawLabelValue({
         x: rightX,
         top: rightTop,
-        labelWidth: 78,
-        valueWidth: 160,
+        labelWidth: 72,
+        valueWidth: 112,
         label: "F Pago:",
         value: "CREDITO",
       }) + 3;
@@ -1329,8 +1319,8 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       drawLabelValue({
         x: rightX,
         top: rightTop,
-        labelWidth: 78,
-        valueWidth: 160,
+        labelWidth: 72,
+        valueWidth: 112,
         label: "Moneda:",
         value: "LEMPIRA",
       }) + 3;
@@ -1338,8 +1328,8 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       drawLabelValue({
         x: rightX,
         top: rightTop,
-        labelWidth: 78,
-        valueWidth: 160,
+        labelWidth: 72,
+        valueWidth: 112,
         label: "O Compra:",
         value: params.orderNumber,
       }) + 3;
@@ -1369,12 +1359,13 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   }
 
   const tableColumns = [
-    { key: "item", label: "Ítem", x: marginX, width: 50 },
-    { key: "description", label: "Descripcion", x: marginX + 50, width: 294 },
-    { key: "part", label: "No. Parte", x: marginX + 344, width: 124 },
-    { key: "quantity", label: "Cantidad", x: marginX + 468, width: 88 },
-    { key: "unitPrice", label: "Valor U", x: marginX + 556, width: 104 },
-    { key: "subtotal", label: "Valor T", x: marginX + 660, width: 118 },
+    { key: "item", label: "Ítem", x: marginX, width: 34 },
+    { key: "description", label: "Descripcion", x: marginX + 34, width: 154 },
+    { key: "destination", label: "Destino", x: marginX + 188, width: 105 },
+    { key: "part", label: "No. Parte", x: marginX + 293, width: 72 },
+    { key: "quantity", label: "Cant.", x: marginX + 365, width: 54 },
+    { key: "unitPrice", label: "Valor U", x: marginX + 419, width: 60 },
+    { key: "subtotal", label: "Valor T", x: marginX + 479, width: 60 },
   ];
 
   function drawTableHeader(top: number) {
@@ -1393,7 +1384,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   }
 
   function startNewPage(withTableHeader: boolean) {
-    page = createPage({ width: landscapeWidth, height: landscapeHeight });
+    page = createPage({ width: pageWidth, height: pageHeight });
     pages.push(page);
     const top = drawContinuationHeader();
     if (!withTableHeader) return top;
@@ -1439,16 +1430,30 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   function drawItemRow(item: (typeof params.items)[number], top: number) {
     const descriptionLines = wrapText(
       item.description || "-",
-      278,
-      10,
+      tableColumns[1].width - 12,
+      9,
       "F1",
       4
     );
-    const partLines = wrapText(item.partNumber || "-", 112, 9, "F1", 3);
+    const destinationLines = wrapText(
+      item.destinationLabel || "-",
+      tableColumns[2].width - 12,
+      8.5,
+      "F1",
+      4
+    );
+    const partLines = wrapText(
+      item.partNumber || "-",
+      tableColumns[3].width - 12,
+      8.5,
+      "F1",
+      3
+    );
     const rowHeight = Math.max(
       28,
-      descriptionLines.length * 12 + 12,
-      partLines.length * 11 + 12
+      descriptionLines.length * 11 + 12,
+      destinationLines.length * 10 + 12,
+      partLines.length * 10 + 12
     );
 
     drawWrappedCell({
@@ -1463,36 +1468,36 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     drawWrappedCell({
       x: tableColumns[1].x + 6,
       top: top + 7,
-      width: 278,
+      width: tableColumns[1].width - 12,
       text: item.description,
-      fontSize: 10,
-      leading: 12,
+      fontSize: 9,
+      leading: 11,
       maxLines: 4,
     });
     drawWrappedCell({
       x: tableColumns[2].x + 6,
       top: top + 7,
-      width: 112,
-      text: item.partNumber,
-      fontSize: 9,
-      align: "center",
-      leading: 11,
-      maxLines: 3,
+      width: tableColumns[2].width - 12,
+      text: item.destinationLabel,
+      fontSize: 8.5,
+      leading: 10,
+      maxLines: 4,
     });
-    drawText(page, {
+    drawWrappedCell({
       x: tableColumns[3].x + 6,
-      top: top + Math.max(8, rowHeight / 2 - 4),
+      top: top + 7,
       width: tableColumns[3].width - 12,
-      text: item.quantityLabel,
-      fontSize: 10,
-      color: ink,
-      align: "right",
+      text: item.partNumber,
+      fontSize: 8.5,
+      align: "center",
+      leading: 10,
+      maxLines: 3,
     });
     drawText(page, {
       x: tableColumns[4].x + 6,
       top: top + Math.max(8, rowHeight / 2 - 4),
       width: tableColumns[4].width - 12,
-      text: item.unitPriceLabel,
+      text: item.quantityLabel,
       fontSize: 10,
       color: ink,
       align: "right",
@@ -1501,6 +1506,15 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       x: tableColumns[5].x + 6,
       top: top + Math.max(8, rowHeight / 2 - 4),
       width: tableColumns[5].width - 12,
+      text: item.unitPriceLabel,
+      fontSize: 10,
+      color: ink,
+      align: "right",
+    });
+    drawText(page, {
+      x: tableColumns[6].x + 6,
+      top: top + Math.max(8, rowHeight / 2 - 4),
+      width: tableColumns[6].width - 12,
       text: item.subtotalLabel,
       fontSize: 10,
       color: ink,
@@ -1520,7 +1534,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   }
 
   function drawSummary(top: number) {
-    const summaryWidth = 240;
+    const summaryWidth = 260;
     const summaryX = marginX + contentWidth - summaryWidth;
     const rowHeight = 18;
     const height = params.summaryRows.length * rowHeight;
@@ -1552,9 +1566,9 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
         color: ink,
       });
       drawText(page, {
-        x: summaryX + 146,
+        x: summaryX + 180,
         top: rowTop + 5,
-        width: summaryWidth - 154,
+        width: summaryWidth - 188,
         text: row.value,
         fontSize: row.emphasized ? 9.8 : 9.2,
         font: "F2",
@@ -1568,14 +1582,14 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
 
   function drawLowerSection(top: number) {
     const summary = drawSummary(top);
-    const leftValueWidth = summary.summaryX - marginX - 130;
+    const leftValueWidth = summary.summaryX - marginX - 118;
     let leftTop = top + 2;
 
     leftTop +=
       drawLabelValue({
         x: marginX,
         top: leftTop,
-        labelWidth: 108,
+        labelWidth: 104,
         valueWidth: leftValueWidth,
         label: "Fecha Entrega:",
         value: params.deliveryDateLabel,
@@ -1584,7 +1598,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       drawLabelValue({
         x: marginX,
         top: leftTop,
-        labelWidth: 108,
+        labelWidth: 104,
         valueWidth: leftValueWidth,
         label: "Solicitado:",
         value: params.requestedByLabel,
@@ -1593,7 +1607,17 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       drawLabelValue({
         x: marginX,
         top: leftTop,
-        labelWidth: 108,
+        labelWidth: 104,
+        valueWidth: leftValueWidth,
+        label: "Requisición:",
+        value: params.originalRequestLabel,
+        maxLines: 2,
+      }) + 3;
+    leftTop +=
+      drawLabelValue({
+        x: marginX,
+        top: leftTop,
+        labelWidth: 104,
         valueWidth: leftValueWidth,
         label: "Observaciones:",
         value: params.observations,
@@ -1603,16 +1627,16 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       drawLabelValue({
         x: marginX,
         top: leftTop,
-        labelWidth: 108,
+        labelWidth: 104,
         valueWidth: leftValueWidth,
         label: "Cotización:",
         value: params.quoteLabel,
       }) + 3;
 
     const signaturesTop = Math.max(leftTop, top + summary.height) + 43;
-    const signatureWidth = 170;
-    const firstSignatureX = marginX + 225;
-    const secondSignatureX = firstSignatureX + 220;
+    const signatureWidth = 150;
+    const firstSignatureX = marginX + 96;
+    const secondSignatureX = firstSignatureX + 190;
 
     drawLine(
       page,
@@ -1681,7 +1705,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   const tableTop = drawFirstPageHeader();
   drawTableHeader(tableTop);
   let currentTop = tableTop + 24;
-  const printableBottom = landscapeHeight - 32;
+  const printableBottom = pageHeight - 32;
   const rows =
     params.items.length > 0
       ? params.items
@@ -1689,6 +1713,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
           {
             itemNumber: "-",
             description: "Sin ítems",
+            destinationLabel: "-",
             partNumber: "-",
             quantityLabel: "-",
             unitPriceLabel: "-",
@@ -1699,8 +1724,23 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   rows.forEach(item => {
     const rowHeight = Math.max(
       28,
-      wrapText(item.description || "-", 278, 10, "F1", 4).length * 12 + 12,
-      wrapText(item.partNumber || "-", 112, 9, "F1", 3).length * 11 + 12
+      wrapText(item.description || "-", tableColumns[1].width - 12, 9, "F1", 4)
+        .length *
+        11 +
+        12,
+      wrapText(
+        item.destinationLabel || "-",
+        tableColumns[2].width - 12,
+        8.5,
+        "F1",
+        4
+      ).length *
+        10 +
+        12,
+      wrapText(item.partNumber || "-", tableColumns[3].width - 12, 8.5, "F1", 3)
+        .length *
+        10 +
+        12
     );
     if (currentTop + rowHeight > printableBottom) {
       currentTop = startNewPage(true);

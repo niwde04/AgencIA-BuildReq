@@ -36,10 +36,14 @@ const EXPECTED_HEADERS = [
   "Observacion activo fijo",
 ] as const;
 
+const OPTIONAL_HEADERS = ["Marca", "Numero de parte"] as const;
+
 const FIELD_LIMITS = {
   itemCode: 50,
   description: 500,
   itemGroup: 255,
+  brand: 120,
+  partNumber: 120,
   unit: 50,
   category: 100,
   projectCode: 50,
@@ -73,7 +77,9 @@ const CONDITION_LABELS = {
 
 type ArticleType = 1 | 2 | 3;
 type AssetCondition = (typeof CONDITION_LABELS)[keyof typeof CONDITION_LABELS];
-type HeaderName = (typeof EXPECTED_HEADERS)[number];
+type HeaderName =
+  | (typeof EXPECTED_HEADERS)[number]
+  | (typeof OPTIONAL_HEADERS)[number];
 type ExcelRow = Record<string, unknown>;
 
 type CliOptions = {
@@ -92,6 +98,8 @@ type ParsedSheetRow = {
   tipoArticulo: ArticleType;
   typeLabel: string;
   itemGroup: string;
+  brand: string;
+  partNumber: string;
   shortDescription: string;
   fullDescription: string;
   unit: string;
@@ -150,6 +158,8 @@ type CatalogInput = {
   itemCode: string;
   description: string;
   itemGroup: string | null;
+  brand: string | null;
+  partNumber: string | null;
   tipoArticulo: ArticleType;
   projectCode: string | null;
   unit: string | null;
@@ -643,6 +653,8 @@ function readWorkbook(file: string): ImportData {
       tipoArticulo,
       typeLabel: getCell(row, "Tipo de articulo"),
       itemGroup: getCell(row, "Grupo SAP"),
+      brand: getCell(row, "Marca"),
+      partNumber: getCell(row, "Numero de parte"),
       shortDescription,
       fullDescription: getCell(row, "Descripcion del articulo completa"),
       unit: getCell(row, "Unidad"),
@@ -818,6 +830,18 @@ function buildCatalog(
         value => value,
         ""
       );
+      const chosenBrand = chooseByMajority(
+        group,
+        row => row.brand,
+        value => value,
+        ""
+      );
+      const chosenPartNumber = chooseByMajority(
+        group,
+        row => row.partNumber,
+        value => value,
+        ""
+      );
       const chosenUnit = chooseByMajority(group, row => row.unit, value => value, "");
       const chosenCategory = chooseByMajority(
         group,
@@ -860,6 +884,14 @@ function buildCatalog(
         chosenFullDescription.variants
       );
       addConflict(conflicts, "catalog", itemCode, "itemGroup", chosenGroup.variants);
+      addConflict(conflicts, "catalog", itemCode, "brand", chosenBrand.variants);
+      addConflict(
+        conflicts,
+        "catalog",
+        itemCode,
+        "partNumber",
+        chosenPartNumber.variants
+      );
       addConflict(conflicts, "catalog", itemCode, "unit", chosenUnit.variants);
       addConflict(conflicts, "catalog", itemCode, "category", chosenCategory.variants);
 
@@ -882,6 +914,8 @@ function buildCatalog(
         itemCode,
         description,
         itemGroup: nonEmptyOrNull(chosenGroup.value),
+        brand: nonEmptyOrNull(chosenBrand.value),
+        partNumber: nonEmptyOrNull(chosenPartNumber.value),
         tipoArticulo: chosenType.value,
         projectCode: chosenType.value === 3 ? chosenProject.value || null : null,
         unit: nonEmptyOrNull(chosenUnit.value),
@@ -1123,6 +1157,15 @@ function validateLengths(
       FIELD_LIMITS.description
     );
     validateLength(errors, "catalog", item.itemCode, "itemGroup", item.itemGroup, FIELD_LIMITS.itemGroup);
+    validateLength(errors, "catalog", item.itemCode, "brand", item.brand, FIELD_LIMITS.brand);
+    validateLength(
+      errors,
+      "catalog",
+      item.itemCode,
+      "partNumber",
+      item.partNumber,
+      FIELD_LIMITS.partNumber
+    );
     validateLength(
       errors,
       "catalog",
@@ -1565,6 +1608,8 @@ function resolveCatalogForDb(
       itemCode: item.itemCode,
       description: item.description,
       itemGroup: item.itemGroup,
+      brand: item.brand,
+      partNumber: item.partNumber,
       tipoArticulo: item.tipoArticulo,
       projectId,
       temporaryItemCode: null,
@@ -1629,6 +1674,8 @@ async function upsertCatalog(client: Client, rows: ReturnType<typeof resolveCata
           "itemCode",
           description,
           "itemGroup",
+          "brand",
+          "partNumber",
           "tipoArticulo",
           "projectId",
           "temporaryItemCode",
@@ -1650,6 +1697,8 @@ async function upsertCatalog(client: Client, rows: ReturnType<typeof resolveCata
        select x."itemCode",
               x.description,
               x."itemGroup",
+              x."brand",
+              x."partNumber",
               x."tipoArticulo",
               x."projectId",
               x."temporaryItemCode",
@@ -1674,6 +1723,8 @@ async function upsertCatalog(client: Client, rows: ReturnType<typeof resolveCata
            "itemCode" text,
            description text,
            "itemGroup" text,
+           "brand" text,
+           "partNumber" text,
            "tipoArticulo" integer,
            "projectId" integer,
            "temporaryItemCode" text,
@@ -1694,6 +1745,8 @@ async function upsertCatalog(client: Client, rows: ReturnType<typeof resolveCata
        on conflict ("itemCode") do update set
           description = excluded.description,
           "itemGroup" = excluded."itemGroup",
+          "brand" = excluded."brand",
+          "partNumber" = excluded."partNumber",
           "tipoArticulo" = excluded."tipoArticulo",
           "projectId" = excluded."projectId",
           "temporaryItemCode" = excluded."temporaryItemCode",

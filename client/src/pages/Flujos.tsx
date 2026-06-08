@@ -186,6 +186,9 @@ export default function Flujos() {
   const [dispatchNotesByFlowType, setDispatchNotesByFlowType] = useState<
     Partial<Record<QueueFlowType, string>>
   >({});
+  const [dispatchReceivedByFlowType, setDispatchReceivedByFlowType] = useState<
+    Partial<Record<QueueFlowType, string>>
+  >({});
   const [dispatchQuantityByItemId, setDispatchQuantityByItemId] = useState<Record<number, string>>(
     {}
   );
@@ -567,6 +570,12 @@ export default function Flujos() {
   };
 
   const processWarehouseDispatchFlow = async (flowType: QueueFlowType) => {
+    const receivedByName = dispatchReceivedByFlowType[flowType]?.trim() ?? "";
+    if (!receivedByName) {
+      toast.error("Ingrese quién recibe la salida");
+      return;
+    }
+
     const rows = pendingRowsByFlow[flowType];
     const dispatchRows: Array<{
       row: PendingQueueRow;
@@ -647,6 +656,7 @@ export default function Flujos() {
             warehouseId,
           })),
           note: dispatchNotesByFlowType[flowType] || undefined,
+          receivedByName,
         });
 
         if (result?.exitNumber) {
@@ -656,6 +666,10 @@ export default function Flujos() {
       }
 
       resetProcessedItemDrafts(processedItemIds);
+      setDispatchReceivedByFlowType((current) => ({
+        ...current,
+        [flowType]: "",
+      }));
       await invalidateAll();
 
       if (createdExitNumbers.length <= 1) {
@@ -1214,11 +1228,9 @@ export default function Flujos() {
                           );
                           const defaultDispatchWarehouseId =
                             dispatchWarehouseByItemId[item.id] ||
-                            (projectWarehouses.find((warehouse: any) => warehouse.isDefault)?.id
-                              ? String(projectWarehouses.find((warehouse: any) => warehouse.isDefault)?.id)
-                              : projectWarehouses[0]?.id
-                                ? String(projectWarehouses[0].id)
-                                : "");
+                            (projectWarehouses[0]?.id
+                              ? String(projectWarehouses[0].id)
+                              : "");
                           const dispatchInputValue =
                             dispatchQuantityByItemId[item.id] ??
                             getSuggestedDispatchQuantity(item).toFixed(2);
@@ -1678,19 +1690,41 @@ export default function Flujos() {
                   )}
 
                   {canProcessThisFlow && flowType === "despacho_bodega" && (
-                    <div className="space-y-2">
-                      <Label className="text-sm font-medium">Notas del despacho</Label>
-                      <Textarea
-                        value={dispatchNotesByFlowType[flowType] || ""}
-                        onChange={(event) =>
-                          setDispatchNotesByFlowType((current) => ({
-                            ...current,
-                            [flowType]: event.target.value,
-                          }))
-                        }
-                        placeholder="Observaciones para las salidas de bodega"
-                        rows={3}
-                      />
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">
+                          Recibido por *
+                        </Label>
+                        <Input
+                          value={dispatchReceivedByFlowType[flowType] || ""}
+                          onChange={(event) =>
+                            setDispatchReceivedByFlowType((current) => ({
+                              ...current,
+                              [flowType]: event.target.value,
+                            }))
+                          }
+                          placeholder="Nombre de quien recibe"
+                          maxLength={255}
+                          required
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">
+                          Notas del despacho
+                        </Label>
+                        <Textarea
+                          value={dispatchNotesByFlowType[flowType] || ""}
+                          onChange={(event) =>
+                            setDispatchNotesByFlowType((current) => ({
+                              ...current,
+                              [flowType]: event.target.value,
+                            }))
+                          }
+                          placeholder="Observaciones para las salidas de bodega"
+                          rows={3}
+                        />
+                      </div>
                     </div>
                   )}
 
@@ -1795,7 +1829,10 @@ export default function Flujos() {
                       {flowType === "despacho_bodega" && (
                         <Button
                           onClick={() => void processWarehouseDispatchFlow(flowType)}
-                          disabled={isProcessing}
+                          disabled={
+                            isProcessing ||
+                            !dispatchReceivedByFlowType[flowType]?.trim()
+                          }
                         >
                           {isProcessing ? "Creando..." : "Crear salida de inventario"}
                         </Button>

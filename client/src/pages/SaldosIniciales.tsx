@@ -252,9 +252,7 @@ export default function SaldosIniciales() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [resolvingSapIndex, setResolvingSapIndex] = useState<number | null>(null);
-  const [projectComboboxOpen, setProjectComboboxOpen] = useState(false);
   const [warehouseComboboxOpen, setWarehouseComboboxOpen] = useState(false);
-  const [projectId, setProjectId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
   const [openingDate, setOpeningDate] = useState(
     new Date().toISOString().slice(0, 10)
@@ -269,7 +267,7 @@ export default function SaldosIniciales() {
   >(null);
 
   const { data: balances, isLoading } = trpc.openingBalances.list.useQuery();
-  const { data: projects } = trpc.projects.list.useQuery();
+  const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
   const { data: detail } = trpc.openingBalances.getById.useQuery(
     { id: selectedId ?? 0 },
     { enabled: Boolean(selectedId) }
@@ -283,24 +281,35 @@ export default function SaldosIniciales() {
     [balances]
   );
 
-  const availableProjects = useMemo(() => {
-    return (projects ?? []).filter(
-      (project: any) =>
-        project.status === "activo" &&
-        (project.warehouses ?? []).some((warehouse: any) => warehouse.isActive)
-    );
-  }, [projects]);
+  const warehouseOptions = useMemo(() => {
+    const byWarehouseId = new Map<number, any>();
+    for (const project of projects ?? []) {
+      for (const warehouse of project.warehouses ?? []) {
+        if (!warehouse.isActive) continue;
+        const warehouseKey = Number(warehouse.id);
+        const option = {
+          warehouse,
+          project,
+          hasOpeningBalance: warehousesWithOpeningBalanceIds.has(warehouseKey),
+        };
+        const current = byWarehouseId.get(warehouseKey);
+        if (!current || (warehouse.isPrimary && !current.warehouse?.isPrimary)) {
+          byWarehouseId.set(warehouseKey, option);
+        }
+      }
+    }
 
-  const selectableProjectsCount = useMemo(
-    () =>
-      availableProjects.filter(
-        (project: any) =>
-          (project.warehouses ?? []).some(
-            (warehouse: any) =>
-              warehouse.isActive && !warehousesWithOpeningBalanceIds.has(warehouse.id)
-          )
-      ).length,
-    [availableProjects, warehousesWithOpeningBalanceIds]
+    return Array.from(byWarehouseId.values()).sort((left, right) =>
+      formatWarehouseLabel(left.warehouse).localeCompare(
+        formatWarehouseLabel(right.warehouse),
+        "es-HN"
+      )
+    );
+  }, [projects, warehousesWithOpeningBalanceIds]);
+
+  const selectableWarehousesCount = useMemo(
+    () => warehouseOptions.filter((option: any) => !option.hasOpeningBalance).length,
+    [warehouseOptions]
   );
 
   const registeredOpeningBalanceCount = useMemo(
@@ -311,40 +320,24 @@ export default function SaldosIniciales() {
     [balances]
   );
 
-  const selectedProject = useMemo(
+  const selectedWarehouseOption = useMemo(
     () =>
-      (projects ?? []).find((project: any) => String(project.id) === projectId) ?? null,
-    [projectId, projects]
-  );
-  const selectedProjectWarehouses = useMemo(
-    () =>
-      ((selectedProject?.warehouses ?? []) as any[]).filter(
-        warehouse => warehouse.isActive
-      ),
-    [selectedProject]
-  );
-  const selectedWarehouse = useMemo(
-    () =>
-      selectedProjectWarehouses.find(
-        (warehouse: any) => String(warehouse.id) === warehouseId
+      warehouseOptions.find(
+        (option: any) => String(option.warehouse.id) === warehouseId
       ) ?? null,
-    [selectedProjectWarehouses, warehouseId]
+    [warehouseOptions, warehouseId]
   );
+  const selectedWarehouse = selectedWarehouseOption?.warehouse ?? null;
   useEffect(() => {
-    if (!selectedProjectWarehouses.length) {
-      setWarehouseId("");
-      return;
-    }
-    const currentStillAvailable = selectedProjectWarehouses.some(
-      warehouse => String(warehouse.id) === warehouseId
+    if (!warehouseId) return;
+    const currentStillAvailable = warehouseOptions.some(
+      (option: any) =>
+        String(option.warehouse.id) === warehouseId && !option.hasOpeningBalance
     );
     if (!currentStillAvailable) {
-      const defaultWarehouse =
-        selectedProjectWarehouses.find(warehouse => warehouse.isDefault) ??
-        selectedProjectWarehouses[0];
-      setWarehouseId(String(defaultWarehouse.id));
+      setWarehouseId("");
     }
-  }, [selectedProjectWarehouses, warehouseId]);
+  }, [warehouseOptions, warehouseId]);
 
   const createMutation = trpc.openingBalances.create.useMutation({
     onSuccess: (result) => {
@@ -380,9 +373,7 @@ export default function SaldosIniciales() {
   });
 
   const resetForm = () => {
-    setProjectId("");
     setWarehouseId("");
-    setProjectComboboxOpen(false);
     setWarehouseComboboxOpen(false);
     setOpeningDate(new Date().toISOString().slice(0, 10));
     setNotes("");
@@ -523,7 +514,7 @@ export default function SaldosIniciales() {
         <div className="space-y-1">
           <h1>Saldos Iniciales</h1>
           <p className="text-sm text-muted-foreground">
-            Registra la existencia con la que arranca cada bodega de proyecto.
+            Registra la existencia con la que arranca cada almacén.
             Este documento suma al stock actual y queda como apertura formal.
           </p>
         </div>
@@ -536,7 +527,7 @@ export default function SaldosIniciales() {
           }}
         >
           <DialogTrigger asChild>
-            <Button disabled={selectableProjectsCount === 0}>
+            <Button disabled={selectableWarehousesCount === 0}>
               <Plus className="mr-2 h-4 w-4" />
               Registrar saldo inicial
             </Button>
@@ -551,76 +542,73 @@ export default function SaldosIniciales() {
             <div className="space-y-5 pt-2">
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Proyecto *</Label>
+                  <Label className="text-sm font-semibold">Almacén *</Label>
                   <Popover
-                    open={projectComboboxOpen}
-                    onOpenChange={setProjectComboboxOpen}
+                    open={warehouseComboboxOpen}
+                    onOpenChange={setWarehouseComboboxOpen}
                   >
                     <PopoverTrigger asChild>
                       <Button
                         type="button"
                         variant="outline"
                         role="combobox"
-                        aria-expanded={projectComboboxOpen}
+                        aria-expanded={warehouseComboboxOpen}
                         className="h-12 w-full justify-between px-3 text-base font-normal"
                       >
                         <span
-                          className={`truncate ${projectId ? "" : "text-muted-foreground"}`}
+                          className={`truncate ${warehouseId ? "" : "text-muted-foreground"}`}
                         >
-                          {formatProjectLabel(selectedProject)}
+                          {formatWarehouseLabel(selectedWarehouse)}
                         </span>
                         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent
                       align="start"
-                      className="w-[min(680px,calc(100vw-3rem))] p-0"
+                      className="w-[min(760px,calc(100vw-3rem))] p-0"
                     >
                       <Command>
-                        <CommandInput placeholder="Buscar proyecto por código o nombre..." />
+                        <CommandInput placeholder="Buscar almacén por código o nombre..." />
                         <CommandList className="max-h-[360px]">
-                          <CommandEmpty>No se encontraron proyectos.</CommandEmpty>
+                          <CommandEmpty>No se encontraron almacenes.</CommandEmpty>
                           <CommandGroup>
-                            {availableProjects.map((project: any) => {
-                              const hasAvailableWarehouse = (project.warehouses ?? []).some(
-                                (warehouse: any) =>
-                                  warehouse.isActive &&
-                                  !warehousesWithOpeningBalanceIds.has(warehouse.id)
-                              );
+                            {warehouseOptions.map((option: any) => {
+                              const { warehouse, project, hasOpeningBalance } = option;
                               return (
                                 <CommandItem
-                                  key={project.id}
+                                  key={warehouse.id}
                                   value={[
+                                    warehouse.code,
+                                    warehouse.localCode,
+                                    warehouse.name,
+                                    warehouse.displayName,
                                     project.code,
                                     project.name,
-                                    project.sapProjectCode,
-                                    hasAvailableWarehouse ? "" : "sin almacenes libres",
+                                    hasOpeningBalance ? "saldo registrado" : "",
                                   ]
                                     .filter(Boolean)
                                     .join(" ")}
-                                  disabled={!hasAvailableWarehouse}
+                                  disabled={hasOpeningBalance}
                                   onSelect={() => {
-                                    setProjectId(String(project.id));
-                                    setWarehouseId("");
-                                    setProjectComboboxOpen(false);
+                                    setWarehouseId(String(warehouse.id));
+                                    setWarehouseComboboxOpen(false);
                                   }}
                                 >
                                   <Check
                                     className={`h-4 w-4 ${
-                                      projectId === String(project.id)
+                                      warehouseId === String(warehouse.id)
                                         ? "opacity-100"
                                         : "opacity-0"
                                     }`}
                                   />
                                   <span className="min-w-0">
                                     <span className="block truncate">
-                                      {formatProjectLabel(project)}
+                                      {formatWarehouseLabel(warehouse)}
                                     </span>
-                                    {!hasAvailableWarehouse ? (
-                                      <span className="block truncate text-xs text-muted-foreground">
-                                        Sin almacenes libres
-                                      </span>
-                                    ) : null}
+                                    <span className="block truncate text-xs text-muted-foreground">
+                                      {formatProjectLabel(project)}
+                                      {hasOpeningBalance ? " · saldo registrado" : ""}
+                                    </span>
                                   </span>
                                 </CommandItem>
                               );
@@ -631,8 +619,8 @@ export default function SaldosIniciales() {
                     </PopoverContent>
                   </Popover>
                   <p className="text-xs text-muted-foreground">
-                    Mostrando {availableProjects.length.toLocaleString("es-HN")}{" "}
-                    proyectos activos con almacenes
+                    Mostrando {warehouseOptions.length.toLocaleString("es-HN")}{" "}
+                    almacenes activos
                     {registeredOpeningBalanceCount > 0
                       ? `; ${registeredOpeningBalanceCount.toLocaleString("es-HN")} ya tienen saldo inicial`
                       : ""}
@@ -649,92 +637,6 @@ export default function SaldosIniciales() {
                     onChange={(event) => setOpeningDate(event.target.value)}
                   />
                 </div>
-              </div>
-
-              <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
-                <Label className="text-sm font-semibold">
-                  Almacén que recibirá el saldo *
-                </Label>
-                <Popover
-                  open={warehouseComboboxOpen}
-                  onOpenChange={setWarehouseComboboxOpen}
-                >
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      role="combobox"
-                      aria-expanded={warehouseComboboxOpen}
-                      disabled={!selectedProject}
-                      className="mt-2 h-12 w-full justify-between px-3 text-base font-normal"
-                    >
-                      <span
-                        className={`truncate ${warehouseId ? "" : "text-muted-foreground"}`}
-                      >
-                        {formatWarehouseLabel(selectedWarehouse)}
-                      </span>
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="start"
-                    className="w-[min(760px,calc(100vw-3rem))] p-0"
-                  >
-                    <Command>
-                      <CommandInput placeholder="Buscar almacén..." />
-                      <CommandList className="max-h-[320px]">
-                        <CommandEmpty>No se encontraron almacenes.</CommandEmpty>
-                        <CommandGroup>
-                          {selectedProjectWarehouses.map((warehouse: any) => {
-                            const hasOpeningBalance =
-                              warehousesWithOpeningBalanceIds.has(warehouse.id);
-                            return (
-                              <CommandItem
-                                key={warehouse.id}
-                                value={[
-                                  warehouse.code,
-                                  warehouse.localCode,
-                                  warehouse.name,
-                                  warehouse.displayName,
-                                  warehouse.isDefault ? "principal" : "",
-                                  hasOpeningBalance ? "saldo registrado" : "",
-                                ]
-                                  .filter(Boolean)
-                                  .join(" ")}
-                                disabled={hasOpeningBalance}
-                                onSelect={() => {
-                                  setWarehouseId(String(warehouse.id));
-                                  setWarehouseComboboxOpen(false);
-                                }}
-                              >
-                                <Check
-                                  className={`h-4 w-4 ${
-                                    warehouseId === String(warehouse.id)
-                                      ? "opacity-100"
-                                      : "opacity-0"
-                                  }`}
-                                />
-                                <span className="min-w-0">
-                                  <span className="block truncate">
-                                    {formatWarehouseLabel(warehouse)}
-                                  </span>
-                                  <span className="block truncate text-xs text-muted-foreground">
-                                    {warehouse.isDefault ? "Principal" : "Almacén"}
-                                    {hasOpeningBalance ? " · saldo registrado" : ""}
-                                  </span>
-                                </span>
-                              </CommandItem>
-                            );
-                          })}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Esta carga inicial sumará a cualquier existencia que ya tenga
-                  la bodega del proyecto.
-                </p>
               </div>
 
               <div className="space-y-2">
@@ -850,9 +752,9 @@ export default function SaldosIniciales() {
                 </div>
               </div>
 
-              {selectableProjectsCount === 0 ? (
+              {selectableWarehousesCount === 0 ? (
                 <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm text-muted-foreground">
-                  Todas las bodegas activas ya tienen su saldo inicial registrado.
+                  Todos los almacenes activos ya tienen su saldo inicial registrado.
                 </div>
               ) : null}
 
@@ -870,11 +772,7 @@ export default function SaldosIniciales() {
                   className="h-12 px-7 text-base font-semibold"
                   disabled={createMutation.isPending}
                   onClick={() => {
-                    if (!projectId) {
-                      toast.error("Seleccione un proyecto");
-                      return;
-                    }
-                    if (!warehouseId) {
+                    if (!selectedWarehouseOption) {
                       toast.error("Seleccione un almacén");
                       return;
                     }
@@ -892,8 +790,7 @@ export default function SaldosIniciales() {
                     }
 
                     createMutation.mutate({
-                      projectId: Number(projectId),
-                      warehouseId: Number(warehouseId),
+                      warehouseId: Number(selectedWarehouseOption.warehouse.id),
                       openingDate,
                       notes: notes || undefined,
                       items: validItems.map((item) => ({

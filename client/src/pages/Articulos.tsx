@@ -25,7 +25,7 @@ import {
   ASSET_CONDITION_VALUES,
   type AssetCondition,
 } from "@shared/fixed-assets";
-import { PackageSearch, Pencil, Save, Search } from "lucide-react";
+import { PackageSearch, Pencil, Plus, Save, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -36,6 +36,8 @@ type ArticleRecord = {
   itemCode: string;
   description: string;
   itemGroup?: string | null;
+  brand?: string | null;
+  partNumber?: string | null;
   tipoArticulo: number;
   projectId?: number | null;
   temporaryItemCode?: string | null;
@@ -72,12 +74,36 @@ type FixedAssetDetailDraft = {
   plateOrCode: string;
 };
 
+type ArticleCreateFormState = {
+  itemCode: string;
+  description: string;
+  itemGroup: string;
+  brand: string;
+  partNumber: string;
+  tipoArticulo: ArticleType;
+  projectId: string;
+  allowsTaxWithholding: boolean;
+  isActive: boolean;
+};
+
 const PAGE_SIZE = 25;
 
 const ARTICLE_TYPE_LABELS: Record<ArticleType, string> = {
   1: "Artículo",
   2: "Servicio",
   3: "Activo fijo",
+};
+
+const EMPTY_CREATE_ARTICLE_FORM: ArticleCreateFormState = {
+  itemCode: "",
+  description: "",
+  itemGroup: "",
+  brand: "",
+  partNumber: "",
+  tipoArticulo: 1,
+  projectId: "none",
+  allowsTaxWithholding: true,
+  isActive: true,
 };
 
 function parseArticleType(value: string): ArticleType | undefined {
@@ -143,10 +169,15 @@ export default function Articulos() {
   const [withholdingFilter, setWithholdingFilter] = useState("all");
   const [fixedAssetStatusFilter, setFixedAssetStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [createForm, setCreateForm] =
+    useState<ArticleCreateFormState>(EMPTY_CREATE_ARTICLE_FORM);
   const [selectedArticle, setSelectedArticle] = useState<ArticleRecord | null>(
     null
   );
   const [editType, setEditType] = useState<ArticleType>(1);
+  const [editBrand, setEditBrand] = useState("");
+  const [editPartNumber, setEditPartNumber] = useState("");
   const [editActive, setEditActive] = useState(true);
   const [editProjectId, setEditProjectId] = useState("none");
   const [editAllowsTaxWithholding, setEditAllowsTaxWithholding] =
@@ -256,6 +287,15 @@ export default function Articulos() {
     }
   }, [data?.page, page]);
 
+  const createMutation = trpc.articles.create.useMutation({
+    onSuccess: () => {
+      toast.success("Artículo creado");
+      utils.articles.list.invalidate();
+      setCreateDialogOpen(false);
+      setCreateForm(EMPTY_CREATE_ARTICLE_FORM);
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const updateMutation = trpc.articles.update.useMutation({
     onSuccess: () => {
       toast.success("Artículo actualizado");
@@ -310,6 +350,8 @@ export default function Articulos() {
   const openEditDialog = (article: ArticleRecord) => {
     setSelectedArticle(article);
     setEditType(parseArticleType(String(article.tipoArticulo)) ?? 1);
+    setEditBrand(article.brand ?? "");
+    setEditPartNumber(article.partNumber ?? "");
     setEditProjectId(article.projectId ? String(article.projectId) : "none");
     setEditActive(article.isActive);
     setEditAllowsTaxWithholding(article.allowsTaxWithholding);
@@ -317,6 +359,35 @@ export default function Articulos() {
     setFixedAssetDetailDraft(buildFixedAssetDraft(article));
     setFixedAssetObservationDraft(article.fixedAssetObservation ?? "");
     setFixedAssetIsLeasingDraft(article.fixedAssetIsLeasing === true);
+  };
+
+  const submitCreate = () => {
+    if (!canManage) {
+      toast.error("No tiene permisos para crear artículos");
+      return;
+    }
+    if (!createForm.itemCode.trim() || !createForm.description.trim()) {
+      toast.error("Código y descripción son obligatorios");
+      return;
+    }
+
+    const selectedProjectId =
+      createForm.projectId !== "none" ? Number(createForm.projectId) : null;
+
+    createMutation.mutate({
+      itemCode: createForm.itemCode.trim(),
+      description: createForm.description.trim(),
+      itemGroup: createForm.itemGroup.trim() || null,
+      brand: createForm.brand.trim() || null,
+      partNumber: createForm.partNumber.trim() || null,
+      tipoArticulo: createForm.tipoArticulo,
+      projectId:
+        createForm.tipoArticulo === 3 && selectedProjectId
+          ? selectedProjectId
+          : null,
+      allowsTaxWithholding: createForm.allowsTaxWithholding,
+      isActive: createForm.isActive,
+    });
   };
 
   const updateFixedAssetDraftField = (
@@ -388,6 +459,8 @@ export default function Articulos() {
 
     updateMutation.mutate({
       id: selectedArticle.id,
+      brand: editBrand.trim() || null,
+      partNumber: editPartNumber.trim() || null,
       tipoArticulo: editType,
       projectId: editType === 3 && selectedProjectId ? selectedProjectId : null,
       isActive: editActive,
@@ -405,16 +478,22 @@ export default function Articulos() {
               ? "No fue posible cargar los artículos"
               : isFetching && !isLoading
                 ? "Actualizando resultados..."
-                : `${total.toLocaleString("es-HN")} registros encontrados`}
+              : `${total.toLocaleString("es-HN")} registros encontrados`}
           </p>
         </div>
+        {canManage ? (
+          <Button onClick={() => setCreateDialogOpen(true)} className="gap-2">
+            <Plus className="h-4 w-4" />
+            Crear artículo
+          </Button>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(240px,1fr)_180px_160px_190px_210px]">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Buscar por código, descripción o grupo"
+            placeholder="Buscar por código, descripción, marca o número de parte"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
@@ -559,6 +638,16 @@ export default function Articulos() {
                         </td>
                         <td className="max-w-[520px] p-3">
                           <div className="font-medium">{article.description}</div>
+                          {article.brand || article.partNumber ? (
+                            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                              {article.brand ? (
+                                <span>Marca: {article.brand}</span>
+                              ) : null}
+                              {article.partNumber ? (
+                                <span>No. parte: {article.partNumber}</span>
+                              ) : null}
+                            </div>
+                          ) : null}
                           {article.temporaryItemCode || article.fixedAssetSerialNumber ? (
                             <div className="mt-2 flex flex-wrap gap-1.5">
                               {fixedAssetStatusLabel ? (
@@ -680,6 +769,183 @@ export default function Articulos() {
       </Card>
 
       <Dialog
+        open={createDialogOpen}
+        onOpenChange={(open) => {
+          setCreateDialogOpen(open);
+          if (!open) setCreateForm(EMPTY_CREATE_ARTICLE_FORM);
+        }}
+      >
+        <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Crear artículo</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label className="text-xs">Código *</Label>
+                <Input
+                  value={createForm.itemCode}
+                  onChange={(event) =>
+                    setCreateForm((form) => ({
+                      ...form,
+                      itemCode: event.target.value,
+                    }))
+                  }
+                  placeholder="SAP o código interno"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Grupo</Label>
+                <Input
+                  value={createForm.itemGroup}
+                  onChange={(event) =>
+                    setCreateForm((form) => ({
+                      ...form,
+                      itemGroup: event.target.value,
+                    }))
+                  }
+                  placeholder="Familia o grupo"
+                />
+              </div>
+              <div className="space-y-1 md:col-span-2">
+                <Label className="text-xs">Descripción *</Label>
+                <Textarea
+                  rows={2}
+                  value={createForm.description}
+                  onChange={(event) =>
+                    setCreateForm((form) => ({
+                      ...form,
+                      description: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Marca</Label>
+                <Input
+                  value={createForm.brand}
+                  onChange={(event) =>
+                    setCreateForm((form) => ({
+                      ...form,
+                      brand: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">
+                  Número de parte / código de bodega
+                </Label>
+                <Input
+                  value={createForm.partNumber}
+                  onChange={(event) =>
+                    setCreateForm((form) => ({
+                      ...form,
+                      partNumber: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_180px_220px]">
+              <div className="space-y-1">
+                <Label className="text-xs">Tipo</Label>
+                <Select
+                  value={String(createForm.tipoArticulo)}
+                  onValueChange={(value) => {
+                    const tipoArticulo = parseArticleType(value) ?? 1;
+                    setCreateForm((form) => ({
+                      ...form,
+                      tipoArticulo,
+                      projectId:
+                        tipoArticulo === 3 ? form.projectId : "none",
+                    }));
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">Artículo</SelectItem>
+                    <SelectItem value="2">Servicio</SelectItem>
+                    <SelectItem value="3">Activo fijo</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center justify-between rounded-md border p-3">
+                <Label className="text-sm">Activo</Label>
+                <Switch
+                  checked={createForm.isActive}
+                  onCheckedChange={(isActive) =>
+                    setCreateForm((form) => ({ ...form, isActive }))
+                  }
+                />
+              </div>
+              <div className="flex items-center justify-between rounded-md border p-3">
+                <Label className="text-sm">Permite retención</Label>
+                <Switch
+                  checked={createForm.allowsTaxWithholding}
+                  onCheckedChange={(allowsTaxWithholding) =>
+                    setCreateForm((form) => ({
+                      ...form,
+                      allowsTaxWithholding,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+
+            {createForm.tipoArticulo === 3 ? (
+              <div className="space-y-1">
+                <Label className="text-xs">Proyecto del activo fijo</Label>
+                <Select
+                  value={createForm.projectId}
+                  onValueChange={(projectId) =>
+                    setCreateForm((form) => ({ ...form, projectId }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccione proyecto" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sin proyecto asignado</SelectItem>
+                    {projectOptions.map((project) => (
+                      <SelectItem key={project.id} value={String(project.id)}>
+                        {getProjectLabel(project)}
+                        {project.status && project.status !== "activo"
+                          ? " (inactivo)"
+                          : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+
+            <div className="flex justify-end gap-2 border-t pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCreateDialogOpen(false)}
+                disabled={createMutation.isPending}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                onClick={submitCreate}
+                disabled={createMutation.isPending}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                {createMutation.isPending ? "Creando..." : "Crear artículo"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={Boolean(selectedArticle)}
         onOpenChange={(open) => {
           if (!open) setSelectedArticle(null);
@@ -719,6 +985,35 @@ export default function Articulos() {
                 <div className="space-y-1">
                   <Label className="text-xs">Descripción</Label>
                   <Input value={selectedArticle.description} readOnly />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Marca</Label>
+                  <Input
+                    value={
+                      canEditSelectedArticleCatalog
+                        ? editBrand
+                        : selectedArticle.brand || ""
+                    }
+                    disabled={!canEditSelectedArticleCatalog}
+                    onChange={(event) => setEditBrand(event.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    Número de parte / código de bodega
+                  </Label>
+                  <Input
+                    value={
+                      canEditSelectedArticleCatalog
+                        ? editPartNumber
+                        : selectedArticle.partNumber || ""
+                    }
+                    disabled={!canEditSelectedArticleCatalog}
+                    onChange={(event) => setEditPartNumber(event.target.value)}
+                  />
                 </div>
               </div>
 

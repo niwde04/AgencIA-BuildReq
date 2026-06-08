@@ -122,6 +122,81 @@ function canAccessRequest(
   return true;
 }
 
+function parseQuantityValue(value: unknown) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatQuantityValue(value: unknown) {
+  return parseQuantityValue(value).toFixed(2);
+}
+
+function getWarehouseDispatchPendingQuantity(item: {
+  quantity?: string | number | null;
+  dispatchedQuantity?: string | number | null;
+}) {
+  const requested = Math.max(parseQuantityValue(item.quantity), 0);
+  const dispatched = Math.min(
+    Math.max(parseQuantityValue(item.dispatchedQuantity), 0),
+    requested
+  );
+  return Math.max(requested - dispatched, 0);
+}
+
+async function validateDispatchWarehouseForItem(params: {
+  projectId: number;
+  item: any;
+  warehouseId?: number | null;
+}) {
+  if (!params.warehouseId) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Seleccione una bodega para la salida de inventario",
+    });
+  }
+
+  const projectWarehouses = await db.listWarehouses({
+    projectId: params.projectId,
+    isActive: true,
+  });
+  const selectedWarehouse = projectWarehouses.find(
+    (warehouse: any) => Number(warehouse.id) === params.warehouseId
+  );
+  if (!selectedWarehouse) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "La bodega seleccionada no está activa o no está asignada al proyecto",
+    });
+  }
+
+  const pendingQuantity = getWarehouseDispatchPendingQuantity(params.item);
+  const stockRows = await db.listProjectStockForItems({
+    projectId: params.projectId,
+    items: [
+      {
+        id: params.item.id,
+        sapItemCode: params.item.sapItemCode,
+        itemName: params.item.itemName,
+      },
+    ],
+  });
+  const warehouseStock = stockRows[0]?.warehouses?.find(
+    (entry: any) => Number(entry.warehouseId) === params.warehouseId
+  );
+  const availableQuantity = parseQuantityValue(warehouseStock?.quantity);
+  if (pendingQuantity > 0 && pendingQuantity - availableQuantity > 0.000001) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `Stock insuficiente en la bodega seleccionada. Disponible: ${formatQuantityValue(
+        availableQuantity
+      )}, pendiente: ${formatQuantityValue(pendingQuantity)}`,
+    });
+  }
+
+  return params.warehouseId;
+}
+
 async function assertItemApprovedForProcessing(requestItemId: number) {
   const item = await db.getRequestItemById(requestItemId);
   if (!item) {
@@ -384,6 +459,7 @@ export const requestItemsRouter = router({
         sapItemCode: null,
         sapItemDescription: null,
         assignedFlow: null,
+        warehouseId: null,
         status: "pendiente",
       });
       await syncRequestStatusFromAssignments(item.requestId, ctx.user.id);
@@ -398,6 +474,7 @@ export const requestItemsRouter = router({
     .input(
       z.object({
         id: z.number(),
+        warehouseId: z.number().int().positive().nullable().optional(),
         flowType: z
           .enum([
             "compra_directa",
@@ -488,6 +565,7 @@ export const requestItemsRouter = router({
 
         await db.updateRequestItem(item.id, {
           assignedFlow: null,
+          warehouseId: null,
           status: "pendiente",
         });
         await syncRequestStatusFromAssignments(item.requestId, ctx.user.id);
@@ -521,8 +599,18 @@ export const requestItemsRouter = router({
         });
       }
 
+      const selectedWarehouseId =
+        input.flowType === "despacho_bodega"
+          ? await validateDispatchWarehouseForItem({
+              projectId: detail.request.projectId,
+              item,
+              warehouseId: input.warehouseId,
+            })
+          : null;
+
       await db.updateRequestItem(item.id, {
         assignedFlow: input.flowType,
+        warehouseId: selectedWarehouseId,
         status: "pendiente",
       });
       await syncRequestStatusFromAssignments(item.requestId, ctx.user.id);
@@ -558,6 +646,7 @@ export const requestItemsRouter = router({
         requestIds.add(item.requestId);
         await db.updateRequestItem(item.id, {
           assignedFlow: null,
+          warehouseId: null,
           status: "pendiente",
         });
       }
@@ -610,7 +699,7 @@ export const requestItemsRouter = router({
         dispatchedQuantity: z.string(),
         warehouseId: z.number().int().positive().optional(),
         note: z.string().optional(),
-        receivedByName: z.string().trim().max(255).optional(),
+        receivedByName: z.string().trim().min(1).max(255),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -683,7 +772,7 @@ export const requestItemsRouter = router({
           )
           .min(1),
         note: z.string().optional(),
-        receivedByName: z.string().trim().max(255).optional(),
+        receivedByName: z.string().trim().min(1).max(255),
       })
     )
     .mutation(async ({ ctx, input }) => {

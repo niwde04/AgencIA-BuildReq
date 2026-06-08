@@ -1032,11 +1032,11 @@ export default function NuevaSolicitud() {
                       placeholder="Ej: Cemento Portland Tipo I"
                       data-preserve-case="true"
                       value={item.itemName}
-                      onChange={(e) =>
+                      onInput={(e) =>
                         updateItem(
                           item.id,
                           "itemName",
-                          normalizeItemName(e.target.value)
+                          normalizeItemName(e.currentTarget.value)
                         )
                       }
                     />

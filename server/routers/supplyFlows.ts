@@ -878,6 +878,12 @@ export const supplyFlowsRouter = router({
           message: "No tiene acceso a esta solicitud",
         });
       }
+      if (!input.sourceWarehouseId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Seleccione almacén origen para el despacho",
+        });
+      }
       assertItemApprovedForProcessing(detail, item);
       await db.recordWarehouseExit({
         requestId: input.requestId,

@@ -120,7 +120,15 @@ function uppercaseInputValue(
   const selectionEnd = element.selectionEnd;
   const selectionDirection = element.selectionDirection;
 
-  element.value = upperValue;
+  const prototype = element instanceof HTMLTextAreaElement
+    ? HTMLTextAreaElement.prototype
+    : HTMLInputElement.prototype;
+  const valueSetter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+  if (valueSetter) {
+    valueSetter.call(element, upperValue);
+  } else {
+    element.value = upperValue;
+  }
 
   if (
     document.activeElement === element &&

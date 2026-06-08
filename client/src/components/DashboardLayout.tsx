@@ -95,7 +95,18 @@ const allMenuItems: MenuItem[] = [
     icon: Warehouse,
     label: "Inventario",
     path: "/inventario",
-    roles: ["jefe_bodega_central", "administracion_central", "bodeguero_proyecto"],
+    roles: [
+      "jefe_bodega_central",
+      "administracion_central",
+      "administrador_proyecto",
+      "bodeguero_proyecto",
+    ],
+  },
+  {
+    icon: Database,
+    label: "Saldos Iniciales",
+    path: "/saldos-iniciales",
+    roles: ["jefe_bodega_central", "administracion_central", "admin"],
   },
   {
     icon: Tags,
@@ -129,7 +140,13 @@ const allMenuItems: MenuItem[] = [
     icon: Building2,
     label: "Almacenes",
     path: "/almacenes",
-    roles: ["jefe_bodega_central", "administracion_central", "admin"],
+    roles: [
+      "jefe_bodega_central",
+      "administracion_central",
+      "administrador_proyecto",
+      "bodeguero_proyecto",
+      "admin",
+    ],
   },
   {
     icon: FileText,
@@ -230,7 +247,7 @@ const allMenuItems: MenuItem[] = [
     icon: Users,
     label: "Usuarios",
     path: "/usuarios",
-    roles: ["admin", "administracion_central"],
+    roles: ["admin", "administracion_central", "administrador_proyecto"],
   },
   {
     icon: Database,
