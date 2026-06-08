@@ -11008,6 +11008,8 @@ export async function unassignUserFromWarehouse(params: {
 export type InventorySortField =
   | "sapItemCode"
   | "name"
+  | "brand"
+  | "partNumber"
   | "category"
   | "unit"
   | "currentStock"
@@ -11114,6 +11116,10 @@ export async function listInventoryItems(filters?: InventoryListFilters) {
         return inventoryItems.sapItemCode;
       case "category":
         return inventoryItems.category;
+      case "brand":
+        return sapCatalog.brand;
+      case "partNumber":
+        return sapCatalog.partNumber;
       case "unit":
         return inventoryItems.unit;
       case "currentStock":

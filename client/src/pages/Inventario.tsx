@@ -58,6 +58,8 @@ import { toast } from "sonner";
 type InventorySortField =
   | "sapItemCode"
   | "name"
+  | "brand"
+  | "partNumber"
   | "category"
   | "unit"
   | "currentStock"
@@ -77,6 +79,8 @@ const columns: Array<{
 }> = [
   { key: "sapItemCode", label: "Código SAP" },
   { key: "name", label: "Nombre" },
+  { key: "brand", label: "Marca" },
+  { key: "partNumber", label: "No. parte" },
   { key: "category", label: "Categoría" },
   { key: "unit", label: "Unidad" },
   { key: "currentStock", label: "Stock", align: "right" },
@@ -1674,7 +1678,7 @@ export default function Inventario() {
           ) : (
             <>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full min-w-[1560px] text-sm">
                   <thead>
                     <tr className="border-b border-border">
                       {canManage && allowInventoryReassignment ? (
@@ -1767,16 +1771,12 @@ export default function Inventario() {
                             </td>
                             <td className="max-w-[360px] p-3">
                               <div className="font-medium">{item.name}</div>
-                              {item.brand || item.partNumber ? (
-                                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                                  {item.brand ? (
-                                    <span>Marca: {item.brand}</span>
-                                  ) : null}
-                                  {item.partNumber ? (
-                                    <span>No. parte: {item.partNumber}</span>
-                                  ) : null}
-                                </div>
-                              ) : null}
+                            </td>
+                            <td className="p-3 text-xs">
+                              {item.brand || "—"}
+                            </td>
+                            <td className="p-3 text-xs">
+                              {item.partNumber || "—"}
                             </td>
                             <td className="p-3 text-xs">
                               {item.category || "—"}

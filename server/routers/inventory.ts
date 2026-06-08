@@ -81,6 +81,8 @@ export const inventoryRouter = router({
             .enum([
               "sapItemCode",
               "name",
+              "brand",
+              "partNumber",
               "category",
               "unit",
               "currentStock",
