@@ -224,7 +224,9 @@ function buildSubprojectReceiptTargetSelection(
   };
 }
 
-function buildFixedAssetReceiptTargetSelection(asset: any): ReceiptTargetSelection {
+function buildFixedAssetReceiptTargetSelection(
+  asset: any
+): ReceiptTargetSelection {
   return {
     targetType: "activo_fijo",
     projectId: asset.projectId,
@@ -508,6 +510,17 @@ function getSourceItemCode(item: any) {
   );
 }
 
+function isReceiptServiceItem(item: any) {
+  return (
+    Number(
+      item?.tipoArticulo ??
+        item?.catalogItem?.tipoArticulo ??
+        item?.catalog?.tipoArticulo ??
+        0
+    ) === 2
+  );
+}
+
 function receiptItemHasStoredFinancials(item: any) {
   return (
     Number(item?.subtotal ?? 0) > 0 ||
@@ -623,6 +636,7 @@ type ManualReceiptItem = {
   sapItemCode: string;
   itemName: string;
   unit?: string | null;
+  tipoArticulo?: number | null;
   unitPrice: string;
   taxCode: PurchaseOrderTaxCode;
   additionalTaxCodes: string[];
@@ -732,7 +746,9 @@ export default function Recepciones() {
   const [receiptDate, setReceiptDate] = useState(todayDateValue());
   const [emissionDeadline, setEmissionDeadline] = useState("");
   const [receivedMap, setReceivedMap] = useState<Record<number, string>>({});
-  const [warehouseByItemId, setWarehouseByItemId] = useState<Record<number, string>>({});
+  const [warehouseByItemId, setWarehouseByItemId] = useState<
+    Record<number, string>
+  >({});
   const [priceMap, setPriceMap] = useState<Record<number, string>>({});
   const [subtotalMap, setSubtotalMap] = useState<Record<number, string>>({});
   const [taxCodeByItemId, setTaxCodeByItemId] = useState<
@@ -762,9 +778,9 @@ export default function Recepciones() {
   const [closeReceiptLineItem, setCloseReceiptLineItem] = useState<any | null>(
     null
   );
-  const [closeTransferLineItem, setCloseTransferLineItem] = useState<any | null>(
-    null
-  );
+  const [closeTransferLineItem, setCloseTransferLineItem] = useState<
+    any | null
+  >(null);
   const [transferClosureDrafts, setTransferClosureDrafts] = useState<
     Record<number, { reason: string; note: string }>
   >({});
@@ -805,7 +821,9 @@ export default function Recepciones() {
   });
   const activeSalesTaxes = useMemo(
     () =>
-      (salesTaxes?.length ? salesTaxes : DEFAULT_SALES_TAXES) as SalesTaxCatalogItem[],
+      (salesTaxes?.length
+        ? salesTaxes
+        : DEFAULT_SALES_TAXES) as SalesTaxCatalogItem[],
     [salesTaxes]
   );
   const { data: purchaseOrderDetail, isLoading: purchaseOrderDetailLoading } =
@@ -820,10 +838,7 @@ export default function Recepciones() {
     trpc.transfers.getById.useQuery(
       { id: Number(sourceId) },
       {
-        enabled:
-          dialogOpen &&
-          sourceType === "transfer" &&
-          Boolean(sourceId),
+        enabled: dialogOpen && sourceType === "transfer" && Boolean(sourceId),
       }
     );
 
@@ -859,26 +874,27 @@ export default function Recepciones() {
   const {
     data: receiptPurchaseOrderDetail,
     isLoading: receiptPurchaseOrderDetailLoading,
-  } =
-    trpc.purchaseOrders.getById.useQuery(
-      { id: receiptDetail?.receipt.sourceId ?? 0 },
-      {
-        enabled:
-          viewReceiptId !== null &&
-          receiptDetail?.receipt.sourceType === "purchase_order" &&
-          Boolean(receiptDetail?.receipt.sourceId),
-      }
-    );
-  const { data: receiptTransferDetail, isLoading: receiptTransferDetailLoading } =
-    trpc.transfers.getById.useQuery(
-      { id: receiptDetail?.receipt.sourceId ?? 0 },
-      {
-        enabled:
-          viewReceiptId !== null &&
-          receiptDetail?.receipt.sourceType === "transfer" &&
-          Boolean(receiptDetail?.receipt.sourceId),
-      }
-    );
+  } = trpc.purchaseOrders.getById.useQuery(
+    { id: receiptDetail?.receipt.sourceId ?? 0 },
+    {
+      enabled:
+        viewReceiptId !== null &&
+        receiptDetail?.receipt.sourceType === "purchase_order" &&
+        Boolean(receiptDetail?.receipt.sourceId),
+    }
+  );
+  const {
+    data: receiptTransferDetail,
+    isLoading: receiptTransferDetailLoading,
+  } = trpc.transfers.getById.useQuery(
+    { id: receiptDetail?.receipt.sourceId ?? 0 },
+    {
+      enabled:
+        viewReceiptId !== null &&
+        receiptDetail?.receipt.sourceType === "transfer" &&
+        Boolean(receiptDetail?.receipt.sourceId),
+    }
+  );
 
   const resetForm = () => {
     fiscalRangeAutofillRef.current = null;
@@ -921,9 +937,10 @@ export default function Recepciones() {
 
   const sourceItems = useMemo(
     () =>
-      (activeSourceDetail?.items ?? []).filter(
-        (item: any) =>
-          isContractPurchaseOrder ? !item.receiptClosed : getPendingQuantity(item) > 0
+      (activeSourceDetail?.items ?? []).filter((item: any) =>
+        isContractPurchaseOrder
+          ? !item.receiptClosed
+          : getPendingQuantity(item) > 0
       ),
     [activeSourceDetail, isContractPurchaseOrder]
   );
@@ -941,7 +958,7 @@ export default function Recepciones() {
         ? transferDetail.transferRequest.destinationProjectId
         : transferDetail?.transferRequest?.destinationType === "bodega_central"
           ? transferDetail.transferRequest.projectId
-        : undefined;
+          : undefined;
   const receiptWarehouseProjectId = isCentralWarehouseTransfer
     ? undefined
     : sourceProjectId;
@@ -975,7 +992,10 @@ export default function Recepciones() {
       ? String(transferDetail.destinationWarehouse.id)
       : "";
 
-    if (destinationWarehouseId && destinationWarehouseId !== sourceWarehouseId) {
+    if (
+      destinationWarehouseId &&
+      destinationWarehouseId !== sourceWarehouseId
+    ) {
       return destinationWarehouseId;
     }
 
@@ -1059,6 +1079,10 @@ export default function Recepciones() {
         sapItemCode: String(item.sapItemCode),
         itemName: String(item.itemName ?? item.sapItemCode),
         unit: item.unit ?? null,
+        tipoArticulo:
+          typeof item.tipoArticulo === "number"
+            ? item.tipoArticulo
+            : (item.catalogItem?.tipoArticulo ?? null),
         unitPrice: String(item.unitPrice ?? "0.0000"),
         taxCode: normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes),
         additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
@@ -1066,7 +1090,9 @@ export default function Recepciones() {
           normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes),
           activeSalesTaxes
         ),
-        quantityExpected: String(item.quantityExpected ?? item.quantityReceived ?? "0"),
+        quantityExpected: String(
+          item.quantityExpected ?? item.quantityReceived ?? "0"
+        ),
         receivedQuantity: String(item.quantityReceived ?? "0"),
       })
     );
@@ -1080,7 +1106,9 @@ export default function Recepciones() {
       }));
       setPriceMap(current => ({
         ...current,
-        ...Object.fromEntries(nextManualItems.map(item => [item.id, item.unitPrice])),
+        ...Object.fromEntries(
+          nextManualItems.map(item => [item.id, item.unitPrice])
+        ),
       }));
       setSubtotalMap(current => ({
         ...current,
@@ -1102,13 +1130,19 @@ export default function Recepciones() {
         ...Object.fromEntries(
           manualDraftItems.map((item: any) => [
             -Number(item.id),
-            item.warehouseId ? String(item.warehouseId) : defaultReceiptWarehouseId,
+            isReceiptServiceItem(item)
+              ? ""
+              : item.warehouseId
+                ? String(item.warehouseId)
+                : defaultReceiptWarehouseId,
           ])
         ),
       }));
       setTaxCodeByItemId(current => ({
         ...current,
-        ...Object.fromEntries(nextManualItems.map(item => [item.id, item.taxCode])),
+        ...Object.fromEntries(
+          nextManualItems.map(item => [item.id, item.taxCode])
+        ),
       }));
       setAdditionalTaxCodesByItemId(current => ({
         ...current,
@@ -1155,14 +1189,17 @@ export default function Recepciones() {
       nextMap[item.id] = draftItem
         ? String(draftItem.quantityReceived ?? "0")
         : isSavedFixedAsset
-        ? "1"
-        : String(getReceivableQuantity(item));
+          ? "1"
+          : String(getReceivableQuantity(item));
       nextPriceMap[item.id] = String(
         draftItem?.unitPrice ?? (item as any).unitPrice ?? "0.00"
       );
       nextSubtotalMap[item.id] = formatMoneyDisplay(
         draftItem?.subtotal ??
-          calculateReceiptSubtotalDraftValue(nextMap[item.id], nextPriceMap[item.id])
+          calculateReceiptSubtotalDraftValue(
+            nextMap[item.id],
+            nextPriceMap[item.id]
+          )
       );
       const draftWarehouseId = draftItem?.warehouseId
         ? String(draftItem.warehouseId)
@@ -1171,20 +1208,25 @@ export default function Recepciones() {
         sourceType === "transfer" && item.sourceWarehouseId
           ? String(item.sourceWarehouseId)
           : "";
-      nextWarehouseMap[item.id] =
-        draftWarehouseId && draftWarehouseId !== sourceWarehouseId
-          ? draftWarehouseId
-          : getDefaultReceiptWarehouseIdForItem(item);
+      if (sourceType === "purchase_order" && isReceiptServiceItem(item)) {
+        nextWarehouseMap[item.id] = "";
+      } else {
+        nextWarehouseMap[item.id] =
+          draftWarehouseId && draftWarehouseId !== sourceWarehouseId
+            ? draftWarehouseId
+            : getDefaultReceiptWarehouseIdForItem(item);
+      }
       const taxCode = normalizePurchaseOrderTaxCode(
         draftItem?.taxCode ?? item.taxCode,
         activeSalesTaxes
       );
       nextTaxCodeMap[item.id] = taxCode;
-      nextAdditionalTaxCodesMap[item.id] = normalizePurchaseOrderAdditionalTaxCodes(
-        draftItem?.additionalTaxCodes ?? item.additionalTaxCodes,
-        taxCode,
-        activeSalesTaxes
-      );
+      nextAdditionalTaxCodesMap[item.id] =
+        normalizePurchaseOrderAdditionalTaxCodes(
+          draftItem?.additionalTaxCodes ?? item.additionalTaxCodes,
+          taxCode,
+          activeSalesTaxes
+        );
       nextTargetMap[item.id] = mapReceiptLineTargetToSelection(
         draftItem ?? item,
         sourceProjectId
@@ -1211,7 +1253,10 @@ export default function Recepciones() {
               draftItem.isFixedAsset === true ? 1 : 0
             ),
           };
-        } else if (sourceType === "purchase_order" && item.isFixedAsset === true) {
+        } else if (
+          sourceType === "purchase_order" &&
+          item.isFixedAsset === true
+        ) {
           nextDrafts[item.id] = {
             isFixedAsset: true,
             isLeasing: item.isLeasing === true,
@@ -1429,7 +1474,9 @@ export default function Recepciones() {
           "código temporal";
         toast.success(`Activo fijo guardado como borrador: ${articleCode}`);
         if (sourceType === "purchase_order" && sourceId) {
-          void utils.purchaseOrders.getById.invalidate({ id: Number(sourceId) });
+          void utils.purchaseOrders.getById.invalidate({
+            id: Number(sourceId),
+          });
         }
         void utils.purchaseOrders.list.invalidate();
         void utils.articles.list.invalidate();
@@ -1492,11 +1539,13 @@ export default function Recepciones() {
     sourceType === "transfer" &&
     ((user as any)?.buildreqRole === "administracion_central" ||
       (() => {
-        if ((user as any)?.buildreqRole !== "administrador_proyecto") return false;
+        if ((user as any)?.buildreqRole !== "administrador_proyecto")
+          return false;
         if (sourceProjectId === undefined) return false;
         const rawAssignedProjectIds = (user as any)?.assignedProjectIds;
         const assignedProjectIds =
-          Array.isArray(rawAssignedProjectIds) && rawAssignedProjectIds.length > 0
+          Array.isArray(rawAssignedProjectIds) &&
+          rawAssignedProjectIds.length > 0
             ? rawAssignedProjectIds.map(Number)
             : (user as any)?.assignedProjectId
               ? [(user as any).assignedProjectId]
@@ -1587,7 +1636,7 @@ export default function Recepciones() {
           item.additionalTaxCodes,
           taxCode,
           activeSalesTaxes
-      ),
+        ),
     };
   };
 
@@ -1622,6 +1671,7 @@ export default function Recepciones() {
         sapItemCode: lookup?.sapItemCode || sapItemCode,
         itemName,
         unit: lookup?.unit ?? null,
+        tipoArticulo: lookup?.tipoArticulo ?? catalogItem.tipoArticulo ?? null,
         unitPrice: "0.0000",
         taxCode: "exe",
         additionalTaxCodes: [],
@@ -1643,7 +1693,9 @@ export default function Recepciones() {
       }));
       setWarehouseByItemId(current => ({
         ...current,
-        [nextId]: defaultReceiptWarehouseId,
+        [nextId]: isReceiptServiceItem(manualItem)
+          ? ""
+          : defaultReceiptWarehouseId,
       }));
       setTargetByItemId(current => ({ ...current, [nextId]: null }));
       setAssetDrafts(current => ({
@@ -1662,7 +1714,9 @@ export default function Recepciones() {
   };
 
   const removeManualReceiptItem = (itemId: number) => {
-    setManualReceiptItems(current => current.filter(item => item.id !== itemId));
+    setManualReceiptItems(current =>
+      current.filter(item => item.id !== itemId)
+    );
     setReceivedMap(current => {
       const { [itemId]: _removed, ...next } = current;
       return next;
@@ -1700,13 +1754,18 @@ export default function Recepciones() {
   const buildManualReceiptItemPayload = () =>
     manualReceiptItems.map(item => {
       const taxDraft = getReceiptLineTaxDraft(item);
-      const quantityReceived = receivedMap[item.id] || item.receivedQuantity || "0";
+      const quantityReceived =
+        receivedMap[item.id] || item.receivedQuantity || "0";
+      const isServiceLine = isReceiptServiceItem(item);
       return {
+        requiresWarehouse: !isServiceLine,
         sourceItemId: null,
         sapItemCode: item.sapItemCode,
-        warehouseId: warehouseByItemId[item.id]
-          ? Number(warehouseByItemId[item.id])
-          : undefined,
+        warehouseId: isServiceLine
+          ? undefined
+          : warehouseByItemId[item.id]
+            ? Number(warehouseByItemId[item.id])
+            : undefined,
         itemName: item.itemName,
         quantityExpected: quantityReceived,
         quantityReceived,
@@ -1723,6 +1782,20 @@ export default function Recepciones() {
     });
 
   const renderReceiptWarehouseSelector = (item: any, compact = false) => {
+    if (sourceType === "purchase_order" && isReceiptServiceItem(item)) {
+      return (
+        <div className="min-w-0 space-y-1.5">
+          {!compact ? <Label>Bodega ingreso</Label> : null}
+          <div className="flex min-h-10 min-w-52 items-center rounded-md border border-dashed border-border bg-muted/20 px-3 text-sm font-medium text-muted-foreground">
+            No aplica - Servicio
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            No ingresa a inventario.
+          </p>
+        </div>
+      );
+    }
+
     const sourceWarehouseId =
       sourceType === "transfer" && item.sourceWarehouseId
         ? String(item.sourceWarehouseId)
@@ -1742,7 +1815,8 @@ export default function Recepciones() {
       (warehouse: any) => String(warehouse.id) === warehouseByItemId[item.id]
     );
     const selectedIsSourceWarehouse =
-      Boolean(sourceWarehouseId) && warehouseByItemId[item.id] === sourceWarehouseId;
+      Boolean(sourceWarehouseId) &&
+      warehouseByItemId[item.id] === sourceWarehouseId;
     const selectedIsWrongReturnDestination =
       Boolean(lockedDestinationWarehouseId) &&
       Boolean(warehouseByItemId[item.id]) &&
@@ -1772,8 +1846,7 @@ export default function Recepciones() {
             {(receiptWarehouses ?? []).map((warehouse: any) => {
               const warehouseId = String(warehouse.id);
               const isSourceWarehouse =
-                Boolean(sourceWarehouseId) &&
-                warehouseId === sourceWarehouseId;
+                Boolean(sourceWarehouseId) && warehouseId === sourceWarehouseId;
               const isWrongReturnDestination =
                 Boolean(lockedDestinationWarehouseId) &&
                 warehouseId !== lockedDestinationWarehouseId;
@@ -1844,7 +1917,9 @@ export default function Recepciones() {
               >
                 <span
                   className={
-                    selectedTarget ? "truncate" : "truncate text-muted-foreground"
+                    selectedTarget
+                      ? "truncate"
+                      : "truncate text-muted-foreground"
                   }
                 >
                   {selectedTarget?.label ?? "Subproyecto o activo fijo"}
@@ -1875,8 +1950,7 @@ export default function Recepciones() {
                           {(targetOptions?.subprojects ?? []).map(
                             (subproject: any) => {
                               const selected =
-                                selectedTarget?.targetType ===
-                                  "subproyecto" &&
+                                selectedTarget?.targetType === "subproyecto" &&
                                 selectedTarget.subProjectId === subproject.id;
 
                               return (
@@ -1922,8 +1996,7 @@ export default function Recepciones() {
                           {(targetOptions?.fixedAssets ?? []).map(
                             (asset: any) => {
                               const selected =
-                                selectedTarget?.targetType ===
-                                  "activo_fijo" &&
+                                selectedTarget?.targetType === "activo_fijo" &&
                                 selectedTarget.fixedAssetSapItemCode ===
                                   asset.itemCode;
 
@@ -2048,7 +2121,10 @@ export default function Recepciones() {
   });
 
   const getTransferCloseQuantity = (item: any) => {
-    const requestedQuantity = Math.max(Number(receivedMap[item.id] ?? 0) || 0, 0);
+    const requestedQuantity = Math.max(
+      Number(receivedMap[item.id] ?? 0) || 0,
+      0
+    );
     return Math.max(getPendingQuantity(item) - requestedQuantity, 0);
   };
 
@@ -2093,10 +2169,7 @@ export default function Recepciones() {
         ...current,
         [itemId]: {
           ...draft,
-          assetDetails: normalizeFixedAssetDetails(
-            draft.assetDetails,
-            1
-          ),
+          assetDetails: normalizeFixedAssetDetails(draft.assetDetails, 1),
         },
       };
     });
@@ -2104,7 +2177,9 @@ export default function Recepciones() {
 
   const handleFixedAssetToggle = (item: any, checked: boolean) => {
     if (sourceType !== "purchase_order") {
-      toast.error("Los activos fijos temporales se guardan desde órdenes de compra");
+      toast.error(
+        "Los activos fijos temporales se guardan desde órdenes de compra"
+      );
       return;
     }
     if (!checked && item.fixedAssetArticleId) {
@@ -2260,13 +2335,16 @@ export default function Recepciones() {
               ? (result as any).item
               : sourceItem;
             const taxDraft = getReceiptLineTaxDraft(sourceItem);
+            const isServiceLine = isReceiptServiceItem(sourceItem);
 
             return {
               sourceItemId: sourceItem.id,
               sapItemCode: getSourceItemCode(sourceItem),
-              warehouseId: warehouseByItemId[sourceItem.id]
-                ? Number(warehouseByItemId[sourceItem.id])
-                : undefined,
+              warehouseId: isServiceLine
+                ? undefined
+                : warehouseByItemId[sourceItem.id]
+                  ? Number(warehouseByItemId[sourceItem.id])
+                  : undefined,
               itemName: sourceItem.itemName,
               quantityExpected: String(getReceivableQuantity(sourceItem)),
               quantityReceived: isFixedAsset
@@ -2368,7 +2446,9 @@ export default function Recepciones() {
           documentRangeEnd,
         })
       ) {
-        toast.error("El rango autorizado final debe ser mayor o igual al inicial");
+        toast.error(
+          "El rango autorizado final debe ser mayor o igual al inicial"
+        );
         return;
       }
       if (
@@ -2378,7 +2458,9 @@ export default function Recepciones() {
           documentRangeEnd,
         })
       ) {
-        toast.error("El número documento debe estar dentro del rango autorizado");
+        toast.error(
+          "El número documento debe estar dentro del rango autorizado"
+        );
         return;
       }
       if (!documentDate) {
@@ -2444,64 +2526,79 @@ export default function Recepciones() {
 
     const receiptItems: any[] = [
       ...sourceItems.map((item: any) => {
-      const closureDraft = transferClosureDrafts[item.id];
-      const closeQuantity =
-        sourceType === "transfer" && closureDraft
-          ? getTransferCloseQuantity(item)
-          : 0;
-      const assetDraft = getReceiptAssetDraft(item.id);
-      const isFixedAsset = assetDraft.isFixedAsset === true;
-      const receivedQuantity = getPositiveIntegerQuantity(receivedMap[item.id]);
-      const taxDraft =
-        sourceType === "purchase_order" ? getReceiptLineTaxDraft(item) : null;
+        const closureDraft = transferClosureDrafts[item.id];
+        const closeQuantity =
+          sourceType === "transfer" && closureDraft
+            ? getTransferCloseQuantity(item)
+            : 0;
+        const assetDraft = getReceiptAssetDraft(item.id);
+        const isFixedAsset = assetDraft.isFixedAsset === true;
+        const isServiceLine =
+          sourceType === "purchase_order" && isReceiptServiceItem(item);
+        const receivedQuantity = getPositiveIntegerQuantity(
+          receivedMap[item.id]
+        );
+        const taxDraft =
+          sourceType === "purchase_order" ? getReceiptLineTaxDraft(item) : null;
 
-      return {
-        sourceItemId: item.id,
-        sapItemCode: getSourceItemCode(item),
-        warehouseId: warehouseByItemId[item.id]
-          ? Number(warehouseByItemId[item.id])
-          : undefined,
-        itemName: item.itemName,
-        quantityExpected: String(getReceivableQuantity(item)),
-        quantityReceived: receivedMap[item.id] || "0",
-        unit: item.unit || undefined,
-        unitPrice:
-          sourceType === "purchase_order"
-            ? formatMoneyPayload(
-                priceMap[item.id] || String(item.unitPrice ?? "0.00")
+        return {
+          requiresWarehouse: !isServiceLine,
+          sourceItemId: item.id,
+          sapItemCode: getSourceItemCode(item),
+          warehouseId: isServiceLine
+            ? undefined
+            : warehouseByItemId[item.id]
+              ? Number(warehouseByItemId[item.id])
+              : undefined,
+          itemName: item.itemName,
+          quantityExpected: String(getReceivableQuantity(item)),
+          quantityReceived: receivedMap[item.id] || "0",
+          unit: item.unit || undefined,
+          unitPrice:
+            sourceType === "purchase_order"
+              ? formatMoneyPayload(
+                  priceMap[item.id] || String(item.unitPrice ?? "0.00")
+                )
+              : "0.00",
+          ...(taxDraft
+            ? {
+                taxCode: taxDraft.taxCode,
+                additionalTaxCodes: taxDraft.additionalTaxCodes,
+                ...getReceiptTargetPayload(targetByItemId[item.id] ?? null),
+              }
+            : {}),
+          notes: assetDraft.notes.trim() || undefined,
+          isFixedAsset,
+          isLeasing: isFixedAsset ? assetDraft.isLeasing : false,
+          assetDetails: isFixedAsset
+            ? normalizeFixedAssetDetails(
+                assetDraft.assetDetails,
+                receivedQuantity
               )
-            : "0.00",
-        ...(taxDraft
-          ? {
-              taxCode: taxDraft.taxCode,
-              additionalTaxCodes: taxDraft.additionalTaxCodes,
-              ...getReceiptTargetPayload(targetByItemId[item.id] ?? null),
-            }
-          : {}),
-        notes: assetDraft.notes.trim() || undefined,
-        isFixedAsset,
-        isLeasing: isFixedAsset ? assetDraft.isLeasing : false,
-        assetDetails: isFixedAsset
-          ? normalizeFixedAssetDetails(assetDraft.assetDetails, receivedQuantity)
-          : [],
-        closeRemaining: closeQuantity > 0,
-        closeReason:
-          closeQuantity > 0
-            ? TRANSFER_CLOSE_REASONS.find(
-                reason => reason.value === closureDraft?.reason
-              )?.label || closureDraft?.reason
-            : undefined,
-        closeNote: closeQuantity > 0 ? closureDraft?.note : undefined,
-      };
+            : [],
+          closeRemaining: closeQuantity > 0,
+          closeReason:
+            closeQuantity > 0
+              ? TRANSFER_CLOSE_REASONS.find(
+                  reason => reason.value === closureDraft?.reason
+                )?.label || closureDraft?.reason
+              : undefined,
+          closeNote: closeQuantity > 0 ? closureDraft?.note : undefined,
+        };
       }),
-      ...(sourceType === "purchase_order" ? buildManualReceiptItemPayload() : []),
+      ...(sourceType === "purchase_order"
+        ? buildManualReceiptItemPayload()
+        : []),
     ];
 
     const hasPositiveReceipt = receiptItems.some(
       item => Number(item.quantityReceived || 0) > 0
     );
     const missingWarehouse = receiptItems.find(
-      item => Number(item.quantityReceived || 0) > 0 && !item.warehouseId
+      item =>
+        item.requiresWarehouse !== false &&
+        Number(item.quantityReceived || 0) > 0 &&
+        !item.warehouseId
     );
     if (missingWarehouse) {
       toast.error(`Seleccione almacén para ${missingWarehouse.itemName}`);
@@ -2535,7 +2632,10 @@ export default function Recepciones() {
         ) {
           return false;
         }
-        return Number(item.warehouseId) !== Number(lockedReturnDestinationWarehouseId);
+        return (
+          Number(item.warehouseId) !==
+          Number(lockedReturnDestinationWarehouseId)
+        );
       });
       if (wrongReturnDestinationWarehouse) {
         toast.error(
@@ -2577,6 +2677,9 @@ export default function Recepciones() {
 
     const currentPostingDate = todayDateValue();
     setPostingDate(currentPostingDate);
+    const registrationItems = receiptItems.map(
+      ({ requiresWarehouse: _requiresWarehouse, ...item }) => item
+    );
 
     registerMutation.mutate({
       sourceType,
@@ -2596,23 +2699,23 @@ export default function Recepciones() {
         : undefined,
       documentRangeStart:
         sourceType === "purchase_order" && documentRangeStart.trim()
-        ? isPurchaseOrderFiscalDocument
-          ? formatInvoiceNumberInput(documentRangeStart)
-          : documentRangeStart.trim()
-        : undefined,
+          ? isPurchaseOrderFiscalDocument
+            ? formatInvoiceNumberInput(documentRangeStart)
+            : documentRangeStart.trim()
+          : undefined,
       documentRangeEnd:
         sourceType === "purchase_order" && documentRangeEnd.trim()
-        ? isPurchaseOrderFiscalDocument
-          ? formatInvoiceNumberInput(documentRangeEnd)
-          : documentRangeEnd.trim()
-        : undefined,
+          ? isPurchaseOrderFiscalDocument
+            ? formatInvoiceNumberInput(documentRangeEnd)
+            : documentRangeEnd.trim()
+          : undefined,
       documentDate: documentDate || undefined,
       documentDueDate: documentDueDate || undefined,
       postingDate: currentPostingDate,
       receiptDate,
       emissionDeadline: emissionDeadline || undefined,
       notes: notes || undefined,
-      items: receiptItems,
+      items: registrationItems,
       otherCharges: otherChargesPayload,
     });
   };
@@ -2648,7 +2751,9 @@ export default function Recepciones() {
       );
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "No se pudo preparar el adjunto"
+        error instanceof Error
+          ? error.message
+          : "No se pudo preparar el adjunto"
       );
     } finally {
       setPreparingReceiptAttachment(false);
@@ -2665,8 +2770,7 @@ export default function Recepciones() {
     receiptDetail?.receipt.sourceType === "purchase_order"
       ? receiptPurchaseOrderDetail?.purchaseOrder.orderNumber ||
         "Orden de Compra"
-      : receiptTransferDetail?.transfer?.transferNumber ||
-        "Traslado";
+      : receiptTransferDetail?.transfer?.transferNumber || "Traslado";
 
   const receiptSourceSecondaryLabel =
     receiptDetail?.receipt.sourceType === "purchase_order"
@@ -2728,7 +2832,10 @@ export default function Recepciones() {
   ]);
 
   const receiptDetailPricingSummary = useMemo(() => {
-    if (!receiptDetail || receiptDetail.receipt.sourceType !== "purchase_order") {
+    if (
+      !receiptDetail ||
+      receiptDetail.receipt.sourceType !== "purchase_order"
+    ) {
       return null;
     }
 
@@ -2752,8 +2859,8 @@ export default function Recepciones() {
     const receipt = receiptDetail.receipt;
     const isPurchaseOrderReceipt = receipt.sourceType === "purchase_order";
     const sourceItems = isPurchaseOrderReceipt
-      ? receiptPurchaseOrderDetail?.items ?? []
-      : receiptTransferDetail?.items ?? [];
+      ? (receiptPurchaseOrderDetail?.items ?? [])
+      : (receiptTransferDetail?.items ?? []);
     const sourceItemsById = new Map(
       sourceItems.map((item: any) => [item.id, item])
     );
@@ -2810,7 +2917,9 @@ export default function Recepciones() {
           }))
           .filter(
             (charge: { concept: string; amount: number }) =>
-              charge.concept && Number.isFinite(charge.amount) && charge.amount > 0
+              charge.concept &&
+              Number.isFinite(charge.amount) &&
+              charge.amount > 0
           )
       : [];
 
@@ -2847,7 +2956,7 @@ export default function Recepciones() {
               )}</div>`
             : "";
         const unitPrice = isPurchaseOrderReceipt
-          ? item.unitPrice ?? sourceItem?.unitPrice ?? "0.00"
+          ? (item.unitPrice ?? sourceItem?.unitPrice ?? "0.00")
           : "0.00";
         const summaryInput = getReceiptLineTaxSummaryInput(item, sourceItem);
         const amounts = calculatePurchaseOrderLineAmounts(summaryInput);
@@ -2908,7 +3017,8 @@ export default function Recepciones() {
       .join("");
     const fiscalSummary = summarizePurchaseOrderLines(summaryLines);
     const otherChargesTotal = getOtherChargesTotal(receiptOtherCharges);
-    const fiscalSummaryBaseRows = getPurchaseOrderFiscalSummaryRows(fiscalSummary);
+    const fiscalSummaryBaseRows =
+      getPurchaseOrderFiscalSummaryRows(fiscalSummary);
     const fiscalSummaryRowsWithCharges =
       otherChargesTotal > 0
         ? [
@@ -2926,14 +3036,19 @@ export default function Recepciones() {
           ]
         : fiscalSummaryBaseRows;
     const fiscalSummaryRows = fiscalSummaryRowsWithCharges
-      .map(row => `
+      .map(
+        row => `
         <tr>
           <td>${escapeHtml(
-            row.label.replace(/\blempiras\b/gi, "").replace(/\s+/g, " ").trim()
+            row.label
+              .replace(/\blempiras\b/gi, "")
+              .replace(/\s+/g, " ")
+              .trim()
           )}</td>
           <td class="numeric">${escapeHtml(formatPrintMoneyAmount(row.value))}</td>
         </tr>
-      `)
+      `
+      )
       .join("");
 
     const printWindow = window.open("", "_blank", "width=840,height=1000");
@@ -3314,8 +3429,12 @@ export default function Recepciones() {
     setDocumentRangeEnd(row.receipt.documentRangeEnd ?? "");
     setDocumentDate(toDateInputValue(row.receipt.documentDate));
     setDocumentDueDate(toDateInputValue(row.receipt.documentDueDate));
-    setPostingDate(toDateInputValue(row.receipt.postingDate) || todayDateValue());
-    setReceiptDate(toDateInputValue(row.receipt.receiptDate) || todayDateValue());
+    setPostingDate(
+      toDateInputValue(row.receipt.postingDate) || todayDateValue()
+    );
+    setReceiptDate(
+      toDateInputValue(row.receipt.receiptDate) || todayDateValue()
+    );
     setDialogOpen(true);
   };
   const fixedAssetReceiptBlockReason = getFixedAssetReceiptBlockReason();
@@ -3348,937 +3467,1926 @@ export default function Recepciones() {
               }
             }}
           >
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              Nueva recepción
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="scrollbar-visible max-h-[calc(100vh-0.5rem)] w-[calc(100vw-0.25rem)] max-w-[calc(100vw-0.25rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1rem)] sm:w-[calc(100vw-0.75rem)] sm:max-w-[1920px] sm:p-6 lg:p-7">
-            <DialogHeader className="border-b border-border/70 pb-4 pr-10">
-              <div className="flex flex-wrap items-center gap-3">
-                <DialogTitle className="text-[2rem] font-bold tracking-tight sm:text-[2.4rem]">
-                  {sourceHeaderTitle}
-                </DialogTitle>
-                {sourceStatusLabel ? (
-                  <Badge
-                    variant="outline"
-                    className={`text-sm ${
-                      isContractPurchaseOrder
-                        ? purchaseOrderContractSummary.isExpired
-                          ? "border-rose-300 bg-rose-50 text-rose-700"
-                          : purchaseOrderContractSummary.expiresSoon
-                            ? "border-amber-300 bg-amber-50 text-amber-800"
-                            : "border-cyan-300 bg-cyan-50 text-cyan-700"
-                        : getSourceStatusColor(sourceType, sourceStatusKey)
-                    }`}
-                  >
-                    {sourceStatusLabel}
-                  </Badge>
-                ) : null}
-              </div>
-            </DialogHeader>
-
-            <div className="min-w-0 space-y-5">
-              <div className="grid gap-3 md:grid-cols-12">
-                <div className="space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Tipo de origen
-                  </Label>
-                  <Select
-                    value={sourceType}
-                    onValueChange={value => {
-                      fiscalRangeAutofillRef.current = null;
-                      lastFiscalRangeLookupKeyRef.current = "";
-                      setSourceType(value as "purchase_order" | "transfer");
-                      setSourceId("");
-                      setReceivedMap({});
-                      setWarehouseByItemId({});
-                      setPriceMap({});
-                      setSubtotalMap({});
-                      setTaxCodeByItemId({});
-                      setAdditionalTaxCodesByItemId({});
-                      setTargetByItemId({});
-                      setTargetPopoverOpen(null);
-                      setTargetSearch("");
-                      setManualReceiptItems([]);
-                      setManualItemSearch("");
-                      setManualItemPopoverOpen(false);
-                      setIsFiscalDocument(true);
-                      setCai("");
-                      setInvoiceNumber("");
-                      setDocumentRangeStart("");
-                      setDocumentRangeEnd("");
-                      setDocumentDate("");
-                      setDocumentDueDate("");
-                      setEmissionDeadline("");
-                      setPostingDate(todayDateValue());
-                      setReceiptDate(todayDateValue());
-                      setTransferClosureDrafts({});
-                    }}
-                  >
-                    <SelectTrigger className="h-11 w-full text-sm sm:h-12 sm:text-base">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="purchase_order">
-                        Orden de Compra
-                      </SelectItem>
-                      <SelectItem value="transfer">
-                        Traslado
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-5">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Documento origen
-                  </Label>
-                  <Select
-                    value={sourceId}
-                    onValueChange={value => {
-                      fiscalRangeAutofillRef.current = null;
-                      lastFiscalRangeLookupKeyRef.current = "";
-                      setSourceId(value);
-                      setReceivedMap({});
-                      setWarehouseByItemId({});
-                      setPriceMap({});
-                      setSubtotalMap({});
-                      setTaxCodeByItemId({});
-                      setAdditionalTaxCodesByItemId({});
-                      setTargetByItemId({});
-                      setTargetPopoverOpen(null);
-                      setTargetSearch("");
-                      setManualReceiptItems([]);
-                      setManualItemSearch("");
-                      setManualItemPopoverOpen(false);
-                      setIsFiscalDocument(true);
-                      setCai("");
-                      setInvoiceNumber("");
-                      setDocumentRangeStart("");
-                      setDocumentRangeEnd("");
-                      setDocumentDate("");
-                      setDocumentDueDate("");
-                      setEmissionDeadline("");
-                      setPostingDate(todayDateValue());
-                      setReceiptDate(todayDateValue());
-                      setTransferClosureDrafts({});
-                    }}
-                  >
-                    <SelectTrigger className="h-11 w-full text-sm sm:h-12 sm:text-base">
-                      <SelectValue placeholder="Seleccione documento" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[320px]">
-                      {sourceType === "purchase_order"
-                        ? availablePurchaseOrders.map((row: any) => (
-                            <SelectItem
-                              key={row.purchaseOrder.id}
-                              value={String(row.purchaseOrder.id)}
-                              className="py-2.5"
-                            >
-                              {row.purchaseOrder.orderNumber} —{" "}
-                              {row.supplier?.name || "Proveedor pendiente"}
-                              {row.purchaseOrder.appliesContract &&
-                              row.contractSummary?.statusLabel
-                                ? ` — ${row.contractSummary.statusLabel}`
-                                : ""}
-                            </SelectItem>
-                          ))
-                        : availableTransfers.map((row: any) => (
-                            <SelectItem
-                              key={row.transfer.id}
-                              value={String(row.transfer.id)}
-                              className="py-2.5"
-                            >
-                              {row.transfer.transferNumber} —{" "}
-                              {row.transferRequest?.requestNumber || "Solicitud"}
-                              {" — "}
-                              {getTransferDestinationLabel(
-                                row,
-                                "Destino pendiente"
-                              )}
-                            </SelectItem>
-                          ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-sm leading-relaxed text-muted-foreground">
-                    {sourceType === "purchase_order"
-                      ? "Solo aparecen órdenes emitidas con saldo pendiente o contratos vigentes por facturar."
-                      : "Solo aparecen traslados confirmados con saldo pendiente por recibir."}
-                  </p>
-                </div>
-
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Proyecto
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {sourceProjectLabel}
-                  </p>
-                </div>
-
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Fecha base
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {sourceNeededByLabel}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-12">
-                <div
-                  className={`space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 ${
-                    sourceType === "transfer" ? "md:col-span-3" : "md:col-span-4"
-                  }`}
-                >
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    {sourceType === "purchase_order"
-                      ? "Proveedor"
-                      : "Referencia del origen"}
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {sourceSecondaryLabel}
-                  </p>
-                  {sourceSupplierRtnLabel ? (
-                    <p className="text-xs leading-relaxed text-muted-foreground">
-                      RTN: {sourceSupplierRtnLabel}
-                    </p>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                Nueva recepción
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="scrollbar-visible max-h-[calc(100vh-0.5rem)] w-[calc(100vw-0.25rem)] max-w-[calc(100vw-0.25rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1rem)] sm:w-[calc(100vw-0.75rem)] sm:max-w-[1920px] sm:p-6 lg:p-7">
+              <DialogHeader className="border-b border-border/70 pb-4 pr-10">
+                <div className="flex flex-wrap items-center gap-3">
+                  <DialogTitle className="text-[2rem] font-bold tracking-tight sm:text-[2.4rem]">
+                    {sourceHeaderTitle}
+                  </DialogTitle>
+                  {sourceStatusLabel ? (
+                    <Badge
+                      variant="outline"
+                      className={`text-sm ${
+                        isContractPurchaseOrder
+                          ? purchaseOrderContractSummary.isExpired
+                            ? "border-rose-300 bg-rose-50 text-rose-700"
+                            : purchaseOrderContractSummary.expiresSoon
+                              ? "border-amber-300 bg-amber-50 text-amber-800"
+                              : "border-cyan-300 bg-cyan-50 text-cyan-700"
+                          : getSourceStatusColor(sourceType, sourceStatusKey)
+                      }`}
+                    >
+                      {sourceStatusLabel}
+                    </Badge>
                   ) : null}
                 </div>
-                {sourceType === "transfer" ? (
-                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
+              </DialogHeader>
+
+              <div className="min-w-0 space-y-5">
+                <div className="grid gap-3 md:grid-cols-12">
+                  <div className="space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
                     <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                      Bodega origen
+                      Tipo de origen
+                    </Label>
+                    <Select
+                      value={sourceType}
+                      onValueChange={value => {
+                        fiscalRangeAutofillRef.current = null;
+                        lastFiscalRangeLookupKeyRef.current = "";
+                        setSourceType(value as "purchase_order" | "transfer");
+                        setSourceId("");
+                        setReceivedMap({});
+                        setWarehouseByItemId({});
+                        setPriceMap({});
+                        setSubtotalMap({});
+                        setTaxCodeByItemId({});
+                        setAdditionalTaxCodesByItemId({});
+                        setTargetByItemId({});
+                        setTargetPopoverOpen(null);
+                        setTargetSearch("");
+                        setManualReceiptItems([]);
+                        setManualItemSearch("");
+                        setManualItemPopoverOpen(false);
+                        setIsFiscalDocument(true);
+                        setCai("");
+                        setInvoiceNumber("");
+                        setDocumentRangeStart("");
+                        setDocumentRangeEnd("");
+                        setDocumentDate("");
+                        setDocumentDueDate("");
+                        setEmissionDeadline("");
+                        setPostingDate(todayDateValue());
+                        setReceiptDate(todayDateValue());
+                        setTransferClosureDrafts({});
+                      }}
+                    >
+                      <SelectTrigger className="h-11 w-full text-sm sm:h-12 sm:text-base">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="purchase_order">
+                          Orden de Compra
+                        </SelectItem>
+                        <SelectItem value="transfer">Traslado</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-5">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Documento origen
+                    </Label>
+                    <Select
+                      value={sourceId}
+                      onValueChange={value => {
+                        fiscalRangeAutofillRef.current = null;
+                        lastFiscalRangeLookupKeyRef.current = "";
+                        setSourceId(value);
+                        setReceivedMap({});
+                        setWarehouseByItemId({});
+                        setPriceMap({});
+                        setSubtotalMap({});
+                        setTaxCodeByItemId({});
+                        setAdditionalTaxCodesByItemId({});
+                        setTargetByItemId({});
+                        setTargetPopoverOpen(null);
+                        setTargetSearch("");
+                        setManualReceiptItems([]);
+                        setManualItemSearch("");
+                        setManualItemPopoverOpen(false);
+                        setIsFiscalDocument(true);
+                        setCai("");
+                        setInvoiceNumber("");
+                        setDocumentRangeStart("");
+                        setDocumentRangeEnd("");
+                        setDocumentDate("");
+                        setDocumentDueDate("");
+                        setEmissionDeadline("");
+                        setPostingDate(todayDateValue());
+                        setReceiptDate(todayDateValue());
+                        setTransferClosureDrafts({});
+                      }}
+                    >
+                      <SelectTrigger className="h-11 w-full text-sm sm:h-12 sm:text-base">
+                        <SelectValue placeholder="Seleccione documento" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[320px]">
+                        {sourceType === "purchase_order"
+                          ? availablePurchaseOrders.map((row: any) => (
+                              <SelectItem
+                                key={row.purchaseOrder.id}
+                                value={String(row.purchaseOrder.id)}
+                                className="py-2.5"
+                              >
+                                {row.purchaseOrder.orderNumber} —{" "}
+                                {row.supplier?.name || "Proveedor pendiente"}
+                                {row.purchaseOrder.appliesContract &&
+                                row.contractSummary?.statusLabel
+                                  ? ` — ${row.contractSummary.statusLabel}`
+                                  : ""}
+                              </SelectItem>
+                            ))
+                          : availableTransfers.map((row: any) => (
+                              <SelectItem
+                                key={row.transfer.id}
+                                value={String(row.transfer.id)}
+                                className="py-2.5"
+                              >
+                                {row.transfer.transferNumber} —{" "}
+                                {row.transferRequest?.requestNumber ||
+                                  "Solicitud"}
+                                {" — "}
+                                {getTransferDestinationLabel(
+                                  row,
+                                  "Destino pendiente"
+                                )}
+                              </SelectItem>
+                            ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      {sourceType === "purchase_order"
+                        ? "Solo aparecen órdenes emitidas con saldo pendiente o contratos vigentes por facturar."
+                        : "Solo aparecen traslados confirmados con saldo pendiente por recibir."}
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Proyecto
                     </Label>
                     <p className="text-sm font-semibold leading-snug sm:text-base">
-                      {transferSourceWarehouseLabel || "Bodega pendiente"}
+                      {sourceProjectLabel}
                     </p>
                   </div>
-                ) : null}
-                <div
-                  className={`space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 ${
-                    sourceType === "transfer" ? "md:col-span-2" : "md:col-span-3"
-                  }`}
-                >
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Estado del origen
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {sourceStatusLabel || "Pendiente de selección"}
-                  </p>
-                </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Pendiente total
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {formatQuantity(totals.pending)}
-                  </p>
-                </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Recibir ahora
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {formatQuantity(totals.receiving)}
-                  </p>
-                </div>
-              </div>
 
-              {isContractPurchaseOrder ? (
-                <div
-                  className={`flex items-start gap-2 rounded-xl border p-3 text-sm ${
-                    contractReceiptBlockReason
-                      ? "border-rose-300 bg-rose-50 text-rose-700"
-                      : purchaseOrderContractSummary.expiresSoon
-                        ? "border-amber-300 bg-amber-50 text-amber-800"
-                        : "border-cyan-300 bg-cyan-50 text-cyan-700"
-                  }`}
-                >
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>
-                    {contractReceiptBlockReason ||
-                      `OC con contrato: ${purchaseOrderContractSummary.statusLabel}.`}
-                  </span>
-                </div>
-              ) : null}
-
-              <div className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-4 sm:p-5">
-                {sourceType === "purchase_order" ? (
-                  <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border/70 bg-background px-3 py-2.5">
-                    <Checkbox
-                      id="receipt-fiscal-document"
-                      checked={isFiscalDocument}
-                      onCheckedChange={checked => {
-                        const nextIsFiscal = checked === true;
-                        setIsFiscalDocument(nextIsFiscal);
-                        if (nextIsFiscal) {
-                          setCai(current => formatCaiInput(current));
-                          setInvoiceNumber(current =>
-                            formatInvoiceNumberInput(current)
-                          );
-                          setDocumentRangeStart(current =>
-                            formatInvoiceNumberInput(current)
-                          );
-                          setDocumentRangeEnd(current =>
-                            formatInvoiceNumberInput(current)
-                          );
-                        }
-                      }}
-                    />
-                    <Label htmlFor="receipt-fiscal-document">
-                      Documento fiscal
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Fecha base
                     </Label>
-                    <Badge variant="outline" className="text-xs">
-                      {isFiscalDocument ? "Fiscal" : "Extranjero"}
-                    </Badge>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {sourceNeededByLabel}
+                    </p>
                   </div>
-                ) : null}
+                </div>
 
-                <div
-                  className={`grid min-w-0 gap-3 md:grid-cols-2 ${
-                    sourceType === "purchase_order"
-                      ? "lg:grid-cols-3 xl:grid-cols-4"
-                      : "lg:grid-cols-2"
-                  }`}
-                >
-                  {sourceType === "purchase_order" ? (
-                    <>
-                      <div className="space-y-2">
-                        <Label htmlFor="receipt-invoice-number">
-                          Número documento
-                        </Label>
-                        <Input
-                          id="receipt-invoice-number"
-                          value={invoiceNumber}
-                          onChange={event =>
-                            setInvoiceNumber(
-                              isFiscalDocument
-                                ? formatInvoiceNumberInput(event.target.value)
-                                : event.target.value
-                            )
-                          }
-                          placeholder={
-                            isFiscalDocument
-                              ? INVOICE_NUMBER_FORMAT_EXAMPLE
-                              : "Ej. INV-EXT-001"
-                          }
-                          inputMode={isFiscalDocument ? "numeric" : "text"}
-                          maxLength={
-                            isFiscalDocument
-                              ? INVOICE_NUMBER_FORMAT_EXAMPLE.length
-                              : undefined
-                          }
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="receipt-cai">
-                          {isFiscalDocument ? "CAI" : "CAI / referencia"}
-                        </Label>
-                        <Input
-                          id="receipt-cai"
-                          value={cai}
-                          onChange={event =>
-                            setCai(
-                              isFiscalDocument
-                                ? formatCaiInput(event.target.value)
-                                : event.target.value
-                            )
-                          }
-                          placeholder={
-                            isFiscalDocument
-                              ? CAI_FORMAT_EXAMPLE
-                              : "Referencia del documento"
-                          }
-                          maxLength={
-                            isFiscalDocument
-                              ? CAI_FORMAT_EXAMPLE.length
-                              : undefined
-                          }
-                          autoCapitalize="characters"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="receipt-document-range-start">
-                          Rango autorizado inicial
-                        </Label>
-                        <Input
-                          id="receipt-document-range-start"
-                          value={documentRangeStart}
-                          onChange={event =>
-                            setDocumentRangeStart(
-                              isFiscalDocument
-                                ? formatInvoiceNumberInput(event.target.value)
-                                : event.target.value
-                            )
-                          }
-                          placeholder={
-                            isFiscalDocument
-                              ? INVOICE_NUMBER_FORMAT_EXAMPLE
-                              : "Rango autorizado inicial"
-                          }
-                          inputMode={isFiscalDocument ? "numeric" : "text"}
-                          maxLength={
-                            isFiscalDocument
-                              ? INVOICE_NUMBER_FORMAT_EXAMPLE.length
-                              : undefined
-                          }
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="receipt-document-range-end">
-                          Rango autorizado final
-                        </Label>
-                        <Input
-                          id="receipt-document-range-end"
-                          value={documentRangeEnd}
-                          onChange={event =>
-                            setDocumentRangeEnd(
-                              isFiscalDocument
-                                ? formatInvoiceNumberInput(event.target.value)
-                                : event.target.value
-                            )
-                          }
-                          placeholder={
-                            isFiscalDocument
-                              ? INVOICE_NUMBER_FORMAT_EXAMPLE
-                              : "Rango autorizado final"
-                          }
-                          inputMode={isFiscalDocument ? "numeric" : "text"}
-                          maxLength={
-                            isFiscalDocument
-                              ? INVOICE_NUMBER_FORMAT_EXAMPLE.length
-                              : undefined
-                          }
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="receipt-document-date">
-                          Fecha documento
-                        </Label>
-                        <Input
-                          id="receipt-document-date"
-                          type="date"
-                          value={documentDate}
-                          onChange={event => setDocumentDate(event.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="receipt-emission-deadline">
-                          Fecha límite de emisión
-                        </Label>
-                        <Input
-                          id="receipt-emission-deadline"
-                          type="date"
-                          value={emissionDeadline}
-                          onChange={event =>
-                            setEmissionDeadline(event.target.value)
-                          }
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="receipt-document-due-date">
-                          Fecha vencimiento (crédito)
-                        </Label>
-                        <Input
-                          id="receipt-document-due-date"
-                          type="date"
-                          value={documentDueDate}
-                          onChange={event =>
-                            setDocumentDueDate(event.target.value)
-                          }
-                        />
-                      </div>
-                    </>
+                <div className="grid gap-3 md:grid-cols-12">
+                  <div
+                    className={`space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 ${
+                      sourceType === "transfer"
+                        ? "md:col-span-3"
+                        : "md:col-span-4"
+                    }`}
+                  >
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      {sourceType === "purchase_order"
+                        ? "Proveedor"
+                        : "Referencia del origen"}
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {sourceSecondaryLabel}
+                    </p>
+                    {sourceSupplierRtnLabel ? (
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        RTN: {sourceSupplierRtnLabel}
+                      </p>
+                    ) : null}
+                  </div>
+                  {sourceType === "transfer" ? (
+                    <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
+                      <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                        Bodega origen
+                      </Label>
+                      <p className="text-sm font-semibold leading-snug sm:text-base">
+                        {transferSourceWarehouseLabel || "Bodega pendiente"}
+                      </p>
+                    </div>
                   ) : null}
-                  <div className="space-y-2">
-                    <Label htmlFor="receipt-posting-date">
-                      Fecha contabilización
+                  <div
+                    className={`space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 ${
+                      sourceType === "transfer"
+                        ? "md:col-span-2"
+                        : "md:col-span-3"
+                    }`}
+                  >
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Estado del origen
                     </Label>
-                    <Input
-                      id="receipt-posting-date"
-                      type="date"
-                      value={postingDate}
-                      readOnly
-                      className="bg-muted/40"
-                    />
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {sourceStatusLabel || "Pendiente de selección"}
+                    </p>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="receipt-receipt-date">
-                      Fecha recepción
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Pendiente total
                     </Label>
-                    <Input
-                      id="receipt-receipt-date"
-                      type="date"
-                      value={receiptDate}
-                      onChange={event => setReceiptDate(event.target.value)}
-                    />
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {formatQuantity(totals.pending)}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Recibir ahora
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {formatQuantity(totals.receiving)}
+                    </p>
                   </div>
                 </div>
 
-                {currentDocumentHasEmissionDeadlineIssue ? (
-                  <div className="flex items-start gap-2 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+                {isContractPurchaseOrder ? (
+                  <div
+                    className={`flex items-start gap-2 rounded-xl border p-3 text-sm ${
+                      contractReceiptBlockReason
+                        ? "border-rose-300 bg-rose-50 text-rose-700"
+                        : purchaseOrderContractSummary.expiresSoon
+                          ? "border-amber-300 bg-amber-50 text-amber-800"
+                          : "border-cyan-300 bg-cyan-50 text-cyan-700"
+                    }`}
+                  >
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>
-                      {EMISSION_DEADLINE_ISSUE_MESSAGE}. Se permitirá registrar
-                      la recepción, pero quedará marcada con alerta.
+                      {contractReceiptBlockReason ||
+                        `OC con contrato: ${purchaseOrderContractSummary.statusLabel}.`}
                     </span>
                   </div>
                 ) : null}
 
-                <div className="space-y-2">
-                  <Label htmlFor="receipt-notes">Notas</Label>
-                  <Textarea
-                    id="receipt-notes"
-                    value={notes}
-                    onChange={event => setNotes(event.target.value)}
-                    rows={3}
-                    placeholder={
+                <div className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-4 sm:p-5">
+                  {sourceType === "purchase_order" ? (
+                    <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border/70 bg-background px-3 py-2.5">
+                      <Checkbox
+                        id="receipt-fiscal-document"
+                        checked={isFiscalDocument}
+                        onCheckedChange={checked => {
+                          const nextIsFiscal = checked === true;
+                          setIsFiscalDocument(nextIsFiscal);
+                          if (nextIsFiscal) {
+                            setCai(current => formatCaiInput(current));
+                            setInvoiceNumber(current =>
+                              formatInvoiceNumberInput(current)
+                            );
+                            setDocumentRangeStart(current =>
+                              formatInvoiceNumberInput(current)
+                            );
+                            setDocumentRangeEnd(current =>
+                              formatInvoiceNumberInput(current)
+                            );
+                          }
+                        }}
+                      />
+                      <Label htmlFor="receipt-fiscal-document">
+                        Documento fiscal
+                      </Label>
+                      <Badge variant="outline" className="text-xs">
+                        {isFiscalDocument ? "Fiscal" : "Extranjero"}
+                      </Badge>
+                    </div>
+                  ) : null}
+
+                  <div
+                    className={`grid min-w-0 gap-3 md:grid-cols-2 ${
                       sourceType === "purchase_order"
-                        ? "Observaciones, referencia de documento o comentarios de recepción"
-                        : "Observaciones o comentarios de recepción"
-                    }
-                  />
-                </div>
-              </div>
-
-              <section className="min-w-0 space-y-3 rounded-2xl border border-border/70 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-lg font-semibold">Adjuntos</h3>
-                  <div>
-                    <input
-                      ref={receiptAttachmentInputRef}
-                      type="file"
-                      multiple
-                      accept="application/pdf,image/jpeg,image/png,image/webp"
-                      className="hidden"
-                      onChange={handlePendingReceiptAttachmentChange}
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => receiptAttachmentInputRef.current?.click()}
-                      disabled={
-                        preparingReceiptAttachment ||
-                        registerMutation.isPending ||
-                        uploadPendingReceiptAttachmentMutation.isPending
-                      }
-                    >
-                      <Upload className="mr-2 h-4 w-4" />
-                      {preparingReceiptAttachment ? "Preparando..." : "Adjuntar"}
-                    </Button>
-                  </div>
-                </div>
-
-                {pendingReceiptAttachments.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-                    Sin archivos seleccionados.
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {pendingReceiptAttachments.map(attachment => {
-                      const AttachmentIcon = attachment.mimeType.startsWith("image/")
-                        ? ImageIcon
-                        : FileText;
-                      return (
-                        <div
-                          key={attachment.id}
-                          className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 p-3"
-                        >
-                          <div className="flex min-w-0 items-center gap-2">
-                            <AttachmentIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium">
-                                {attachment.fileName}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {formatAttachmentSize(attachment.fileSize)}
-                              </p>
-                            </div>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            onClick={() =>
-                              removePendingReceiptAttachment(attachment.id)
-                            }
-                            disabled={
-                              registerMutation.isPending ||
-                              uploadPendingReceiptAttachmentMutation.isPending
-                            }
-                            aria-label={`Quitar ${attachment.fileName}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </section>
-
-              {sourceType === "purchase_order" && sourceId ? (
-                <div className="flex justify-end">
-                  <Popover
-                    open={manualItemPopoverOpen}
-                    onOpenChange={open => {
-                      setManualItemPopoverOpen(open);
-                      if (!open) setManualItemSearch("");
-                    }}
+                        ? "lg:grid-cols-3 xl:grid-cols-4"
+                        : "lg:grid-cols-2"
+                    }`}
                   >
-                    <PopoverTrigger asChild>
+                    {sourceType === "purchase_order" ? (
+                      <>
+                        <div className="space-y-2">
+                          <Label htmlFor="receipt-invoice-number">
+                            Número documento
+                          </Label>
+                          <Input
+                            id="receipt-invoice-number"
+                            value={invoiceNumber}
+                            onChange={event =>
+                              setInvoiceNumber(
+                                isFiscalDocument
+                                  ? formatInvoiceNumberInput(event.target.value)
+                                  : event.target.value
+                              )
+                            }
+                            placeholder={
+                              isFiscalDocument
+                                ? INVOICE_NUMBER_FORMAT_EXAMPLE
+                                : "Ej. INV-EXT-001"
+                            }
+                            inputMode={isFiscalDocument ? "numeric" : "text"}
+                            maxLength={
+                              isFiscalDocument
+                                ? INVOICE_NUMBER_FORMAT_EXAMPLE.length
+                                : undefined
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="receipt-cai">
+                            {isFiscalDocument ? "CAI" : "CAI / referencia"}
+                          </Label>
+                          <Input
+                            id="receipt-cai"
+                            value={cai}
+                            onChange={event =>
+                              setCai(
+                                isFiscalDocument
+                                  ? formatCaiInput(event.target.value)
+                                  : event.target.value
+                              )
+                            }
+                            placeholder={
+                              isFiscalDocument
+                                ? CAI_FORMAT_EXAMPLE
+                                : "Referencia del documento"
+                            }
+                            maxLength={
+                              isFiscalDocument
+                                ? CAI_FORMAT_EXAMPLE.length
+                                : undefined
+                            }
+                            autoCapitalize="characters"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="receipt-document-range-start">
+                            Rango autorizado inicial
+                          </Label>
+                          <Input
+                            id="receipt-document-range-start"
+                            value={documentRangeStart}
+                            onChange={event =>
+                              setDocumentRangeStart(
+                                isFiscalDocument
+                                  ? formatInvoiceNumberInput(event.target.value)
+                                  : event.target.value
+                              )
+                            }
+                            placeholder={
+                              isFiscalDocument
+                                ? INVOICE_NUMBER_FORMAT_EXAMPLE
+                                : "Rango autorizado inicial"
+                            }
+                            inputMode={isFiscalDocument ? "numeric" : "text"}
+                            maxLength={
+                              isFiscalDocument
+                                ? INVOICE_NUMBER_FORMAT_EXAMPLE.length
+                                : undefined
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="receipt-document-range-end">
+                            Rango autorizado final
+                          </Label>
+                          <Input
+                            id="receipt-document-range-end"
+                            value={documentRangeEnd}
+                            onChange={event =>
+                              setDocumentRangeEnd(
+                                isFiscalDocument
+                                  ? formatInvoiceNumberInput(event.target.value)
+                                  : event.target.value
+                              )
+                            }
+                            placeholder={
+                              isFiscalDocument
+                                ? INVOICE_NUMBER_FORMAT_EXAMPLE
+                                : "Rango autorizado final"
+                            }
+                            inputMode={isFiscalDocument ? "numeric" : "text"}
+                            maxLength={
+                              isFiscalDocument
+                                ? INVOICE_NUMBER_FORMAT_EXAMPLE.length
+                                : undefined
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="receipt-document-date">
+                            Fecha documento
+                          </Label>
+                          <Input
+                            id="receipt-document-date"
+                            type="date"
+                            value={documentDate}
+                            onChange={event =>
+                              setDocumentDate(event.target.value)
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="receipt-emission-deadline">
+                            Fecha límite de emisión
+                          </Label>
+                          <Input
+                            id="receipt-emission-deadline"
+                            type="date"
+                            value={emissionDeadline}
+                            onChange={event =>
+                              setEmissionDeadline(event.target.value)
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="receipt-document-due-date">
+                            Fecha vencimiento (crédito)
+                          </Label>
+                          <Input
+                            id="receipt-document-due-date"
+                            type="date"
+                            value={documentDueDate}
+                            onChange={event =>
+                              setDocumentDueDate(event.target.value)
+                            }
+                          />
+                        </div>
+                      </>
+                    ) : null}
+                    <div className="space-y-2">
+                      <Label htmlFor="receipt-posting-date">
+                        Fecha contabilización
+                      </Label>
+                      <Input
+                        id="receipt-posting-date"
+                        type="date"
+                        value={postingDate}
+                        readOnly
+                        className="bg-muted/40"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="receipt-receipt-date">
+                        Fecha recepción
+                      </Label>
+                      <Input
+                        id="receipt-receipt-date"
+                        type="date"
+                        value={receiptDate}
+                        onChange={event => setReceiptDate(event.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  {currentDocumentHasEmissionDeadlineIssue ? (
+                    <div className="flex items-start gap-2 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        {EMISSION_DEADLINE_ISSUE_MESSAGE}. Se permitirá
+                        registrar la recepción, pero quedará marcada con alerta.
+                      </span>
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-2">
+                    <Label htmlFor="receipt-notes">Notas</Label>
+                    <Textarea
+                      id="receipt-notes"
+                      value={notes}
+                      onChange={event => setNotes(event.target.value)}
+                      rows={3}
+                      placeholder={
+                        sourceType === "purchase_order"
+                          ? "Observaciones, referencia de documento o comentarios de recepción"
+                          : "Observaciones o comentarios de recepción"
+                      }
+                    />
+                  </div>
+                </div>
+
+                <section className="min-w-0 space-y-3 rounded-2xl border border-border/70 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h3 className="text-lg font-semibold">Adjuntos</h3>
+                    <div>
+                      <input
+                        ref={receiptAttachmentInputRef}
+                        type="file"
+                        multiple
+                        accept="application/pdf,image/jpeg,image/png,image/webp"
+                        className="hidden"
+                        onChange={handlePendingReceiptAttachmentChange}
+                      />
                       <Button
                         type="button"
                         variant="outline"
-                        className="gap-2"
-                        disabled={registerMutation.isPending}
+                        onClick={() =>
+                          receiptAttachmentInputRef.current?.click()
+                        }
+                        disabled={
+                          preparingReceiptAttachment ||
+                          registerMutation.isPending ||
+                          uploadPendingReceiptAttachmentMutation.isPending
+                        }
                       >
-                        <Plus className="h-4 w-4" />
-                        Agregar producto
+                        <Upload className="mr-2 h-4 w-4" />
+                        {preparingReceiptAttachment
+                          ? "Preparando..."
+                          : "Adjuntar"}
                       </Button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      className="w-[min(720px,calc(100vw-2rem))] p-0"
-                      align="end"
-                    >
-                      <Command shouldFilter={false}>
-                        <CommandInput
-                          placeholder="Buscar SKU o descripción..."
-                          value={manualItemSearch}
-                          onValueChange={setManualItemSearch}
-                        />
-                        <CommandList>
-                          {manualItemSearch.trim().length < 2 ? (
-                            <div className="p-3 text-sm text-muted-foreground">
-                              Escriba al menos 2 caracteres.
-                            </div>
-                          ) : (
-                            <>
-                              <CommandEmpty>Sin resultados.</CommandEmpty>
-                              <CommandGroup heading="Catálogo SAP">
-                                {(manualSapResults ?? []).map((item: any) => (
-                                  <CommandItem
-                                    key={item.id}
-                                    value={`${item.itemCode}-${item.description}`}
-                                    onSelect={() => void addManualReceiptItem(item)}
-                                  >
-                                    <div className="min-w-0">
-                                      <p className="font-mono text-xs font-semibold">
-                                        {item.itemCode}
-                                      </p>
-                                      <p className="whitespace-normal break-words text-sm leading-snug">
-                                        {item.description}
-                                      </p>
-                                      {item.brand || item.partNumber ? (
-                                        <p className="mt-1 whitespace-normal break-words text-xs text-muted-foreground">
-                                          {[item.brand && `Marca: ${item.brand}`, item.partNumber && `No. parte: ${item.partNumber}`]
-                                            .filter(Boolean)
-                                            .join(" · ")}
-                                        </p>
-                                      ) : null}
-                                    </div>
-                                  </CommandItem>
-                                ))}
-                              </CommandGroup>
-                            </>
-                          )}
-                        </CommandList>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-              ) : null}
+                    </div>
+                  </div>
 
-              <div className="overflow-x-auto rounded-2xl border border-border/70">
-                <table
-                  className={`w-full text-sm ${
-                    sourceType === "purchase_order"
-                      ? "min-w-[1460px]"
-                      : "min-w-[1120px]"
-                  }`}
-                >
-                  <thead>
-                    <tr className="border-b border-border/70 bg-muted/20">
-                      <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                        Ítem
-                      </th>
-                      <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                        SAP actual
-                      </th>
-                      <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                        Pendiente
-                      </th>
-                      <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                        Recibido
-                      </th>
-                      <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                        Precio confirmado
-                      </th>
-                      {sourceType === "purchase_order" ? (
-                        <>
-                          <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                            Impuesto
-                          </th>
-                          <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                            Subtotal
-                          </th>
-                          <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                            ISV
-                          </th>
-                          <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                            Total
-                          </th>
-                        </>
-                      ) : null}
-                      <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                        Recibir ahora
-                      </th>
-                      <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                        Bodega ingreso
-                      </th>
-                      {sourceType === "transfer" ? (
-                        <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                          Acción
-                        </th>
-                      ) : null}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {!sourceId ? (
-                      <tr>
-                        <td
-                          className="p-4 text-sm text-muted-foreground"
-                          colSpan={receiptTableColumnCount}
-                        >
-                          Selecciona una orden de compra o traslado para cargar
-                          sus ítems.
-                        </td>
-                      </tr>
-                    ) : activeSourceLoading ? (
-                      <tr>
-                        <td
-                          className="p-4 text-sm text-muted-foreground"
-                          colSpan={receiptTableColumnCount}
-                        >
-                          Cargando detalle del documento...
-                        </td>
-                      </tr>
-                    ) : receiptEditableItems.length === 0 ? (
-                      <tr>
-                        <td
-                          className="p-4 text-sm text-muted-foreground"
-                          colSpan={receiptTableColumnCount}
-                        >
-                          Este documento no tiene ítems pendientes por recibir.
-                          Puede agregar un producto manualmente con el botón
-                          superior.
-                        </td>
-                      </tr>
-                    ) : (
-                      receiptEditableItems.map((item: any) => {
-                        const isManualItem = item.isManualReceiptItem === true;
-                        const pendingQuantity =
-                          getEditableReceiptExpectedQuantity(item);
-                        const receivingQuantity =
-                          Number(receivedMap[item.id] ?? 0) || 0;
-                        const excessQuantity = Math.max(
-                          receivingQuantity - pendingQuantity,
-                          0
-                        );
-                        const sourceCode = getSourceItemCode(item);
-                        const transferCloseQuantity = getTransferCloseQuantity(item);
-                        const transferClosureDraft =
-                          transferClosureDrafts[item.id];
-                        const assetDraft = getReceiptAssetDraft(item.id);
-                        const isSavedFixedAsset =
-                          sourceType === "purchase_order" &&
-                          !isManualItem &&
-                          item.isFixedAsset === true;
-                        const isLineFixedAsset =
-                          assetDraft.isFixedAsset || isSavedFixedAsset;
-                        const assetUnitCount = isLineFixedAsset
-                          ? 1
-                          : getPositiveIntegerQuantity(receivedMap[item.id]);
-                        const assetDetails = isLineFixedAsset
-                          ? normalizeFixedAssetDetails(assetDraft.assetDetails, 1)
-                          : [];
-                        const fixedAssetQuantityLocked =
-                          sourceType === "purchase_order" && isLineFixedAsset;
-                        const assetInputsDisabled =
-                          item.fixedAssetStatus === "resuelto";
-                        const fixedAssetDraftSaved =
-                          Boolean(item.fixedAssetArticleId) &&
-                          item.fixedAssetStatus === "pendiente";
-                        const fixedAssetResolved =
-                          item.fixedAssetStatus === "resuelto";
-                        const taxDraft =
-                          sourceType === "purchase_order"
-                            ? getReceiptLineTaxDraft(item)
-                            : null;
-                        const receiptUnitPriceDraft =
-                          sourceType === "purchase_order"
-                            ? priceMap[item.id] ??
-                              String(item.unitPrice ?? "0.00")
-                            : "0.00";
-                        const lineAmounts = taxDraft
-                          ? calculatePurchaseOrderLineAmounts({
-                              quantity: taxDraft.quantity,
-                              unitPrice: taxDraft.unitPrice,
-                              taxCode: taxDraft.taxCode,
-                              additionalTaxCodes: taxDraft.additionalTaxCodes,
-                              taxes: activeSalesTaxes,
-                            })
-                          : null;
+                  {pendingReceiptAttachments.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                      Sin archivos seleccionados.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {pendingReceiptAttachments.map(attachment => {
+                        const AttachmentIcon = attachment.mimeType.startsWith(
+                          "image/"
+                        )
+                          ? ImageIcon
+                          : FileText;
                         return (
-                          <Fragment key={item.id}>
-                            <tr className="border-b border-border/70">
-                              <td className="p-4">
-                                <div className="font-semibold">
-                                  {item.itemName}
-                                  {isManualItem ? (
-                                    <Badge
-                                      variant="outline"
-                                      className="ml-2 align-middle"
+                          <div
+                            key={attachment.id}
+                            className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 p-3"
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              <AttachmentIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium">
+                                  {attachment.fileName}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {formatAttachmentSize(attachment.fileSize)}
+                                </p>
+                              </div>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              onClick={() =>
+                                removePendingReceiptAttachment(attachment.id)
+                              }
+                              disabled={
+                                registerMutation.isPending ||
+                                uploadPendingReceiptAttachmentMutation.isPending
+                              }
+                              aria-label={`Quitar ${attachment.fileName}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+
+                {sourceType === "purchase_order" && sourceId ? (
+                  <div className="flex justify-end">
+                    <Popover
+                      open={manualItemPopoverOpen}
+                      onOpenChange={open => {
+                        setManualItemPopoverOpen(open);
+                        if (!open) setManualItemSearch("");
+                      }}
+                    >
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="gap-2"
+                          disabled={registerMutation.isPending}
+                        >
+                          <Plus className="h-4 w-4" />
+                          Agregar producto
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        className="w-[min(720px,calc(100vw-2rem))] p-0"
+                        align="end"
+                      >
+                        <Command shouldFilter={false}>
+                          <CommandInput
+                            placeholder="Buscar SKU o descripción..."
+                            value={manualItemSearch}
+                            onValueChange={setManualItemSearch}
+                          />
+                          <CommandList>
+                            {manualItemSearch.trim().length < 2 ? (
+                              <div className="p-3 text-sm text-muted-foreground">
+                                Escriba al menos 2 caracteres.
+                              </div>
+                            ) : (
+                              <>
+                                <CommandEmpty>Sin resultados.</CommandEmpty>
+                                <CommandGroup heading="Catálogo SAP">
+                                  {(manualSapResults ?? []).map((item: any) => (
+                                    <CommandItem
+                                      key={item.id}
+                                      value={`${item.itemCode}-${item.description}`}
+                                      onSelect={() =>
+                                        void addManualReceiptItem(item)
+                                      }
                                     >
-                                      Agregado
-                                    </Badge>
-                                  ) : null}
-                                </div>
-                                {sourceCode ? (
-                                  <div className="mt-1 text-xs text-muted-foreground">
-                                    {isManualItem ? "SKU" : "Original"}:{" "}
-                                    {sourceCode}
+                                      <div className="min-w-0">
+                                        <p className="font-mono text-xs font-semibold">
+                                          {item.itemCode}
+                                        </p>
+                                        <p className="whitespace-normal break-words text-sm leading-snug">
+                                          {item.description}
+                                        </p>
+                                        {item.brand || item.partNumber ? (
+                                          <p className="mt-1 whitespace-normal break-words text-xs text-muted-foreground">
+                                            {[
+                                              item.brand &&
+                                                `Marca: ${item.brand}`,
+                                              item.partNumber &&
+                                                `No. parte: ${item.partNumber}`,
+                                            ]
+                                              .filter(Boolean)
+                                              .join(" · ")}
+                                          </p>
+                                        ) : null}
+                                      </div>
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </>
+                            )}
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                ) : null}
+
+                <div className="overflow-x-auto rounded-2xl border border-border/70">
+                  <table
+                    className={`w-full text-sm ${
+                      sourceType === "purchase_order"
+                        ? "min-w-[1460px]"
+                        : "min-w-[1120px]"
+                    }`}
+                  >
+                    <thead>
+                      <tr className="border-b border-border/70 bg-muted/20">
+                        <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Ítem
+                        </th>
+                        <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          SAP actual
+                        </th>
+                        <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Pendiente
+                        </th>
+                        <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Recibido
+                        </th>
+                        <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Precio confirmado
+                        </th>
+                        {sourceType === "purchase_order" ? (
+                          <>
+                            <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                              Impuesto
+                            </th>
+                            <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                              Subtotal
+                            </th>
+                            <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                              ISV
+                            </th>
+                            <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                              Total
+                            </th>
+                          </>
+                        ) : null}
+                        <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Recibir ahora
+                        </th>
+                        <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Bodega ingreso
+                        </th>
+                        {sourceType === "transfer" ? (
+                          <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                            Acción
+                          </th>
+                        ) : null}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {!sourceId ? (
+                        <tr>
+                          <td
+                            className="p-4 text-sm text-muted-foreground"
+                            colSpan={receiptTableColumnCount}
+                          >
+                            Selecciona una orden de compra o traslado para
+                            cargar sus ítems.
+                          </td>
+                        </tr>
+                      ) : activeSourceLoading ? (
+                        <tr>
+                          <td
+                            className="p-4 text-sm text-muted-foreground"
+                            colSpan={receiptTableColumnCount}
+                          >
+                            Cargando detalle del documento...
+                          </td>
+                        </tr>
+                      ) : receiptEditableItems.length === 0 ? (
+                        <tr>
+                          <td
+                            className="p-4 text-sm text-muted-foreground"
+                            colSpan={receiptTableColumnCount}
+                          >
+                            Este documento no tiene ítems pendientes por
+                            recibir. Puede agregar un producto manualmente con
+                            el botón superior.
+                          </td>
+                        </tr>
+                      ) : (
+                        receiptEditableItems.map((item: any) => {
+                          const isManualItem =
+                            item.isManualReceiptItem === true;
+                          const pendingQuantity =
+                            getEditableReceiptExpectedQuantity(item);
+                          const receivingQuantity =
+                            Number(receivedMap[item.id] ?? 0) || 0;
+                          const excessQuantity = Math.max(
+                            receivingQuantity - pendingQuantity,
+                            0
+                          );
+                          const sourceCode = getSourceItemCode(item);
+                          const transferCloseQuantity =
+                            getTransferCloseQuantity(item);
+                          const transferClosureDraft =
+                            transferClosureDrafts[item.id];
+                          const assetDraft = getReceiptAssetDraft(item.id);
+                          const isSavedFixedAsset =
+                            sourceType === "purchase_order" &&
+                            !isManualItem &&
+                            item.isFixedAsset === true;
+                          const isLineFixedAsset =
+                            assetDraft.isFixedAsset || isSavedFixedAsset;
+                          const assetUnitCount = isLineFixedAsset
+                            ? 1
+                            : getPositiveIntegerQuantity(receivedMap[item.id]);
+                          const assetDetails = isLineFixedAsset
+                            ? normalizeFixedAssetDetails(
+                                assetDraft.assetDetails,
+                                1
+                              )
+                            : [];
+                          const fixedAssetQuantityLocked =
+                            sourceType === "purchase_order" && isLineFixedAsset;
+                          const assetInputsDisabled =
+                            item.fixedAssetStatus === "resuelto";
+                          const fixedAssetDraftSaved =
+                            Boolean(item.fixedAssetArticleId) &&
+                            item.fixedAssetStatus === "pendiente";
+                          const fixedAssetResolved =
+                            item.fixedAssetStatus === "resuelto";
+                          const taxDraft =
+                            sourceType === "purchase_order"
+                              ? getReceiptLineTaxDraft(item)
+                              : null;
+                          const receiptUnitPriceDraft =
+                            sourceType === "purchase_order"
+                              ? (priceMap[item.id] ??
+                                String(item.unitPrice ?? "0.00"))
+                              : "0.00";
+                          const lineAmounts = taxDraft
+                            ? calculatePurchaseOrderLineAmounts({
+                                quantity: taxDraft.quantity,
+                                unitPrice: taxDraft.unitPrice,
+                                taxCode: taxDraft.taxCode,
+                                additionalTaxCodes: taxDraft.additionalTaxCodes,
+                                taxes: activeSalesTaxes,
+                              })
+                            : null;
+                          return (
+                            <Fragment key={item.id}>
+                              <tr className="border-b border-border/70">
+                                <td className="p-4">
+                                  <div className="font-semibold">
+                                    {item.itemName}
+                                    {isManualItem ? (
+                                      <Badge
+                                        variant="outline"
+                                        className="ml-2 align-middle"
+                                      >
+                                        Agregado
+                                      </Badge>
+                                    ) : null}
                                   </div>
+                                  {sourceCode ? (
+                                    <div className="mt-1 text-xs text-muted-foreground">
+                                      {isManualItem ? "SKU" : "Original"}:{" "}
+                                      {sourceCode}
+                                    </div>
+                                  ) : null}
+                                </td>
+                                <td className="p-4 font-mono text-sm">
+                                  {sourceCode || "—"}
+                                </td>
+                                <td className="p-4 text-right font-semibold">
+                                  {formatQuantity(pendingQuantity)}{" "}
+                                  {item.unit || ""}
+                                </td>
+                                <td className="p-4 text-right text-muted-foreground">
+                                  {formatQuantity(
+                                    isManualItem
+                                      ? "0.00"
+                                      : item.receivedQuantity
+                                  )}{" "}
+                                  {item.unit || ""}
+                                </td>
+                                <td className="p-4 text-right">
+                                  {sourceType === "purchase_order" ? (
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      className="ml-auto w-36 text-right"
+                                      value={receiptUnitPriceDraft}
+                                      onChange={event => {
+                                        const nextUnitPrice =
+                                          event.target.value;
+                                        setPriceMap(current => ({
+                                          ...current,
+                                          [item.id]: nextUnitPrice,
+                                        }));
+                                        setSubtotalMap(current => ({
+                                          ...current,
+                                          [item.id]:
+                                            calculateReceiptSubtotalDraftValue(
+                                              receivedMap[item.id] ?? "0",
+                                              nextUnitPrice
+                                            ),
+                                        }));
+                                      }}
+                                      onBlur={event => {
+                                        const nextUnitPrice =
+                                          formatMoneyDisplay(
+                                            event.target.value
+                                          );
+                                        setPriceMap(current => ({
+                                          ...current,
+                                          [item.id]: nextUnitPrice,
+                                        }));
+                                        setSubtotalMap(current => ({
+                                          ...current,
+                                          [item.id]:
+                                            calculateReceiptSubtotalDraftValue(
+                                              receivedMap[item.id] ?? "0",
+                                              nextUnitPrice
+                                            ),
+                                        }));
+                                      }}
+                                      disabled={registerMutation.isPending}
+                                    />
+                                  ) : (
+                                    <span className="text-muted-foreground">
+                                      —
+                                    </span>
+                                  )}
+                                </td>
+                                {sourceType === "purchase_order" &&
+                                taxDraft &&
+                                lineAmounts ? (
+                                  <>
+                                    <td className="p-4">
+                                      <PurchaseOrderTaxControls
+                                        draft={taxDraft}
+                                        taxes={activeSalesTaxes}
+                                        disabled={registerMutation.isPending}
+                                        onChange={nextDraft => {
+                                          setTaxCodeByItemId(current => ({
+                                            ...current,
+                                            [item.id]: nextDraft.taxCode,
+                                          }));
+                                          setAdditionalTaxCodesByItemId(
+                                            current => ({
+                                              ...current,
+                                              [item.id]:
+                                                nextDraft.additionalTaxCodes,
+                                            })
+                                          );
+                                        }}
+                                      />
+                                    </td>
+                                    <td className="p-4 text-right">
+                                      <Input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        className="ml-auto w-36 text-right font-semibold"
+                                        value={getReceiptLineSubtotalDraft(
+                                          item
+                                        )}
+                                        onChange={event => {
+                                          const nextSubtotal =
+                                            event.target.value;
+                                          setSubtotalMap(current => ({
+                                            ...current,
+                                            [item.id]: nextSubtotal,
+                                          }));
+                                          setPriceMap(current => ({
+                                            ...current,
+                                            [item.id]:
+                                              calculateReceiptUnitPriceDraftValue(
+                                                receivedMap[item.id] ?? "0",
+                                                nextSubtotal
+                                              ),
+                                          }));
+                                        }}
+                                        onBlur={event => {
+                                          const nextSubtotal =
+                                            formatMoneyDisplay(
+                                              event.target.value
+                                            );
+                                          setSubtotalMap(current => ({
+                                            ...current,
+                                            [item.id]: nextSubtotal,
+                                          }));
+                                          setPriceMap(current => ({
+                                            ...current,
+                                            [item.id]:
+                                              calculateReceiptUnitPriceDraftValue(
+                                                receivedMap[item.id] ?? "0",
+                                                nextSubtotal
+                                              ),
+                                          }));
+                                        }}
+                                        disabled={registerMutation.isPending}
+                                      />
+                                    </td>
+                                    <td className="p-4 text-right font-semibold">
+                                      {formatPurchaseOrderCurrency(
+                                        lineAmounts.taxAmount
+                                      )}
+                                    </td>
+                                    <td className="p-4 text-right font-semibold">
+                                      {formatPurchaseOrderCurrency(
+                                        lineAmounts.total
+                                      )}
+                                    </td>
+                                  </>
                                 ) : null}
-                              </td>
-                              <td className="p-4 font-mono text-sm">
-                                {sourceCode || "—"}
-                              </td>
-                              <td className="p-4 text-right font-semibold">
-                                {formatQuantity(pendingQuantity)}{" "}
-                                {item.unit || ""}
-                              </td>
-                              <td className="p-4 text-right text-muted-foreground">
-                                {formatQuantity(
-                                  isManualItem ? "0.00" : item.receivedQuantity
-                                )}{" "}
-                                {item.unit || ""}
-                              </td>
-                              <td className="p-4 text-right">
-                                {sourceType === "purchase_order" ? (
+                                <td className="p-4 text-right">
                                   <Input
                                     type="number"
                                     min="0"
                                     step="0.01"
                                     className="ml-auto w-36 text-right"
-                                    value={receiptUnitPriceDraft}
-                                    onChange={event => {
-                                      const nextUnitPrice = event.target.value;
-                                      setPriceMap(current => ({
-                                        ...current,
-                                        [item.id]: nextUnitPrice,
-                                      }));
-                                      setSubtotalMap(current => ({
-                                        ...current,
-                                        [item.id]:
-                                          calculateReceiptSubtotalDraftValue(
-                                            receivedMap[item.id] ?? "0",
-                                            nextUnitPrice
-                                          ),
-                                      }));
-                                    }}
-                                    onBlur={event => {
-                                      const nextUnitPrice = formatMoneyDisplay(
+                                    value={receivedMap[item.id] ?? ""}
+                                    onChange={event =>
+                                      handleReceivedQuantityChange(
+                                        item,
                                         event.target.value
-                                      );
-                                      setPriceMap(current => ({
-                                        ...current,
-                                        [item.id]: nextUnitPrice,
-                                      }));
-                                      setSubtotalMap(current => ({
-                                        ...current,
-                                        [item.id]:
-                                          calculateReceiptSubtotalDraftValue(
-                                            receivedMap[item.id] ?? "0",
-                                            nextUnitPrice
-                                          ),
-                                      }));
-                                    }}
-                                    disabled={registerMutation.isPending}
+                                      )
+                                    }
+                                    disabled={
+                                      (!isManualItem && pendingQuantity <= 0) ||
+                                      fixedAssetQuantityLocked
+                                    }
                                   />
-                                ) : (
-                                  <span className="text-muted-foreground">—</span>
-                                )}
-                              </td>
-                              {sourceType === "purchase_order" &&
-                              taxDraft &&
-                              lineAmounts ? (
-                                <>
-                                  <td className="p-4">
-                                    <PurchaseOrderTaxControls
-                                      draft={taxDraft}
-                                      taxes={activeSalesTaxes}
-                                      disabled={registerMutation.isPending}
-                                      onChange={nextDraft => {
-                                        setTaxCodeByItemId(current => ({
-                                          ...current,
-                                          [item.id]: nextDraft.taxCode,
-                                        }));
-                                        setAdditionalTaxCodesByItemId(
-                                          current => ({
-                                            ...current,
-                                            [item.id]:
-                                              nextDraft.additionalTaxCodes,
-                                          })
-                                        );
-                                      }}
-                                    />
-                                  </td>
+                                  {!isManualItem && excessQuantity > 0 ? (
+                                    <p className="mt-1 text-xs font-medium text-emerald-700">
+                                      Exceso permitido:{" "}
+                                      {formatQuantity(excessQuantity)}{" "}
+                                      {item.unit || ""}
+                                    </p>
+                                  ) : null}
+                                </td>
+                                <td className="p-4">
+                                  {renderReceiptWarehouseSelector(item, true)}
+                                </td>
+                                {sourceType === "transfer" ? (
                                   <td className="p-4 text-right">
-                                    <Input
-                                      type="number"
-                                      min="0"
-                                      step="0.01"
-                                      className="ml-auto w-36 text-right font-semibold"
-                                      value={getReceiptLineSubtotalDraft(item)}
-                                      onChange={event => {
-                                        const nextSubtotal = event.target.value;
-                                        setSubtotalMap(current => ({
-                                          ...current,
-                                          [item.id]: nextSubtotal,
-                                        }));
-                                        setPriceMap(current => ({
-                                          ...current,
-                                          [item.id]:
-                                            calculateReceiptUnitPriceDraftValue(
-                                              receivedMap[item.id] ?? "0",
-                                              nextSubtotal
-                                            ),
-                                        }));
-                                      }}
-                                      onBlur={event => {
-                                        const nextSubtotal = formatMoneyDisplay(
-                                          event.target.value
-                                        );
-                                        setSubtotalMap(current => ({
-                                          ...current,
-                                          [item.id]: nextSubtotal,
-                                        }));
-                                        setPriceMap(current => ({
-                                          ...current,
-                                          [item.id]:
-                                            calculateReceiptUnitPriceDraftValue(
-                                              receivedMap[item.id] ?? "0",
-                                              nextSubtotal
-                                            ),
-                                        }));
-                                      }}
-                                      disabled={registerMutation.isPending}
-                                    />
+                                    <div className="flex flex-col items-end gap-1.5">
+                                      <Button
+                                        variant={
+                                          transferClosureDraft &&
+                                          transferCloseQuantity > 0
+                                            ? "default"
+                                            : "outline"
+                                        }
+                                        size="sm"
+                                        className="ml-auto gap-2"
+                                        onClick={() => {
+                                          if (!canCloseTransferLines) return;
+                                          setCloseTransferLineItem(item);
+                                          setTransferCloseReason(
+                                            transferClosureDraft?.reason ||
+                                              TRANSFER_CLOSE_REASONS[0].value
+                                          );
+                                          setTransferCloseNote(
+                                            transferClosureDraft?.note || ""
+                                          );
+                                        }}
+                                        disabled={
+                                          !canCloseTransferLines ||
+                                          transferCloseQuantity <= 0
+                                        }
+                                        title={
+                                          !canCloseTransferLines
+                                            ? "Solo Administración Central o el administrador del proyecto destino pueden cerrar saldos de traslado"
+                                            : transferCloseQuantity <= 0
+                                              ? "No hay saldo restante para cerrar; baja Recibir ahora si no recibiste todo"
+                                              : "Cerrar saldo pendiente, devolverlo al origen y regresarlo a requisición"
+                                        }
+                                      >
+                                        <RotateCcw className="h-4 w-4" />
+                                        {!canCloseTransferLines
+                                          ? "Sin autorización"
+                                          : transferCloseQuantity <= 0
+                                            ? "Sin saldo"
+                                            : transferClosureDraft
+                                              ? "Cierre marcado"
+                                              : "Cerrar saldo"}
+                                      </Button>
+                                      {transferClosureDraft &&
+                                      transferCloseQuantity > 0 ? (
+                                        <span className="text-xs text-muted-foreground">
+                                          Devuelve{" "}
+                                          {formatQuantity(
+                                            transferCloseQuantity
+                                          )}{" "}
+                                          {item.unit || ""} al origen y a
+                                          requisición
+                                        </span>
+                                      ) : canCloseTransferLines &&
+                                        transferCloseQuantity <= 0 ? (
+                                        <span className="max-w-48 text-right text-xs text-muted-foreground">
+                                          Baja Recibir ahora para cerrar saldo.
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  </td>
+                                ) : null}
+                              </tr>
+                              <tr
+                                key={`${item.id}-asset`}
+                                className="border-b border-border/70 bg-muted/10 last:border-0"
+                              >
+                                <td
+                                  colSpan={receiptTableColumnCount}
+                                  className="p-4 pt-0"
+                                >
+                                  <div className="space-y-4 rounded-xl border border-border/70 bg-background p-3">
+                                    {sourceType === "purchase_order" ? (
+                                      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
+                                        {renderReceiptTargetSelector(item)}
+
+                                        <div className="flex justify-start lg:justify-end">
+                                          {isManualItem ? (
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="sm"
+                                              className="gap-2"
+                                              onClick={() =>
+                                                removeManualReceiptItem(item.id)
+                                              }
+                                              disabled={
+                                                registerMutation.isPending
+                                              }
+                                            >
+                                              <Trash2 className="h-4 w-4" />
+                                              Quitar
+                                            </Button>
+                                          ) : !isContractPurchaseOrder &&
+                                            canManuallyCloseReceiptLine(
+                                              item
+                                            ) ? (
+                                            <Button
+                                              variant="outline"
+                                              size="sm"
+                                              className="gap-2"
+                                              onClick={() =>
+                                                setCloseReceiptLineItem(item)
+                                              }
+                                              disabled={
+                                                closeReceiptLineMutation.isPending
+                                              }
+                                            >
+                                              {closeReceiptLineMutation.isPending &&
+                                              closeReceiptLineItem?.id ===
+                                                item.id ? (
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                              ) : (
+                                                <ShieldX className="h-4 w-4" />
+                                              )}
+                                              Cerrar línea
+                                            </Button>
+                                          ) : (
+                                            <span className="text-xs text-muted-foreground">
+                                              Sin acción pendiente
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ) : null}
+
+                                    <div className="flex flex-wrap items-center gap-4">
+                                      <label className="flex items-center gap-2 text-sm font-medium">
+                                        <Checkbox
+                                          checked={isLineFixedAsset}
+                                          disabled={
+                                            sourceType !== "purchase_order" ||
+                                            isManualItem ||
+                                            Boolean(item.fixedAssetArticleId) ||
+                                            (!isLineFixedAsset &&
+                                              (receivingQuantity !== 1 ||
+                                                item.targetType !==
+                                                  "activo_fijo"))
+                                          }
+                                          onCheckedChange={checked =>
+                                            handleFixedAssetToggle(
+                                              item,
+                                              checked === true
+                                            )
+                                          }
+                                        />
+                                        Activo fijo
+                                      </label>
+                                      {!isLineFixedAsset &&
+                                      (receivingQuantity !== 1 ||
+                                        item.targetType !== "activo_fijo") ? (
+                                        <span className="text-xs text-muted-foreground bg-muted/50 px-2 py-0.5 rounded border border-border/50">
+                                          {item.targetType !== "activo_fijo"
+                                            ? "Solo disponible para productos de tipo Activo Fijo"
+                                            : "Solo disponible cuando la cantidad a recibir es exactamente 1"}
+                                        </span>
+                                      ) : null}
+                                      {isLineFixedAsset ? (
+                                        <label className="flex items-center gap-2 text-sm font-medium">
+                                          <Checkbox
+                                            checked={assetDraft.isLeasing}
+                                            disabled={assetInputsDisabled}
+                                            onCheckedChange={checked =>
+                                              updateReceiptAssetDraft(
+                                                item.id,
+                                                draft => ({
+                                                  ...draft,
+                                                  isLeasing: checked === true,
+                                                })
+                                              )
+                                            }
+                                          />
+                                          Leasing
+                                        </label>
+                                      ) : null}
+                                      {isLineFixedAsset ? (
+                                        <Badge
+                                          variant="outline"
+                                          className="border-blue-300 text-blue-700"
+                                        >
+                                          {assetUnitCount} unidad(es) con serie
+                                        </Badge>
+                                      ) : null}
+                                      {fixedAssetDraftSaved ? (
+                                        <Badge
+                                          variant="outline"
+                                          className="border-amber-300 text-amber-700"
+                                        >
+                                          Pendiente Contabilidad
+                                        </Badge>
+                                      ) : null}
+                                      {fixedAssetResolved ? (
+                                        <Badge
+                                          variant="outline"
+                                          className="border-emerald-300 text-emerald-700"
+                                        >
+                                          Código real listo
+                                        </Badge>
+                                      ) : null}
+                                    </div>
+
+                                    <div className="space-y-2">
+                                      <Label>Observación de línea</Label>
+                                      <Textarea
+                                        rows={2}
+                                        value={assetDraft.notes}
+                                        disabled={assetInputsDisabled}
+                                        onChange={event =>
+                                          updateReceiptAssetDraft(
+                                            item.id,
+                                            draft => ({
+                                              ...draft,
+                                              notes: event.target.value,
+                                            })
+                                          )
+                                        }
+                                        placeholder="Observaciones de este producto recibido"
+                                      />
+                                    </div>
+
+                                    {isLineFixedAsset ? (
+                                      assetUnitCount === 0 ? (
+                                        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                                          Ingrese una cantidad entera mayor que
+                                          cero en “Recibir ahora” para capturar
+                                          las unidades del activo.
+                                        </div>
+                                      ) : (
+                                        <div className="space-y-3">
+                                          {assetDetails.map((detail, index) => (
+                                            <div
+                                              key={`${item.id}-asset-${index}`}
+                                              className="rounded-lg border border-border/70 p-3"
+                                            >
+                                              <div className="mb-3 text-sm font-semibold">
+                                                Unidad {index + 1}
+                                              </div>
+                                              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                                                <div className="space-y-1.5">
+                                                  <Label>Número de serie</Label>
+                                                  <Input
+                                                    value={detail.serialNumber}
+                                                    disabled={
+                                                      assetInputsDisabled
+                                                    }
+                                                    onChange={event =>
+                                                      updateAssetDetail(
+                                                        item.id,
+                                                        index,
+                                                        "serialNumber",
+                                                        event.target.value
+                                                      )
+                                                    }
+                                                    placeholder="Serie"
+                                                  />
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                  <Label>Condición</Label>
+                                                  <Select
+                                                    value={detail.condition}
+                                                    disabled={
+                                                      assetInputsDisabled
+                                                    }
+                                                    onValueChange={value =>
+                                                      updateAssetDetail(
+                                                        item.id,
+                                                        index,
+                                                        "condition",
+                                                        value
+                                                      )
+                                                    }
+                                                  >
+                                                    <SelectTrigger>
+                                                      <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                      {ASSET_CONDITION_VALUES.map(
+                                                        condition => (
+                                                          <SelectItem
+                                                            key={condition}
+                                                            value={condition}
+                                                          >
+                                                            {
+                                                              ASSET_CONDITION_LABELS[
+                                                                condition
+                                                              ]
+                                                            }
+                                                          </SelectItem>
+                                                        )
+                                                      )}
+                                                    </SelectContent>
+                                                  </Select>
+                                                </div>
+                                                {ASSET_DETAIL_OPTIONAL_FIELDS.map(
+                                                  field => (
+                                                    <div
+                                                      key={field.key}
+                                                      className="space-y-1.5"
+                                                    >
+                                                      <Label>
+                                                        {field.label}
+                                                      </Label>
+                                                      <Input
+                                                        value={String(
+                                                          detail[field.key] ??
+                                                            ""
+                                                        )}
+                                                        disabled={
+                                                          assetInputsDisabled
+                                                        }
+                                                        onChange={event =>
+                                                          updateAssetDetail(
+                                                            item.id,
+                                                            index,
+                                                            field.key,
+                                                            event.target.value
+                                                          )
+                                                        }
+                                                        placeholder={
+                                                          field.placeholder
+                                                        }
+                                                      />
+                                                    </div>
+                                                  )
+                                                )}
+                                              </div>
+                                            </div>
+                                          ))}
+                                          <div className="flex flex-col items-start gap-2 border-t border-border/70 pt-3 sm:flex-row sm:items-center sm:justify-between">
+                                            <p className="text-xs text-muted-foreground">
+                                              {fixedAssetResolved
+                                                ? `Código final: ${
+                                                    getSourceItemCode(item) ||
+                                                    "—"
+                                                  }`
+                                                : fixedAssetDraftSaved
+                                                  ? `Borrador temporal: ${
+                                                      getSourceItemCode(item) ||
+                                                      "pendiente"
+                                                    }`
+                                                  : "Guarde el activo como borrador para crear el artículo temporal."}
+                                            </p>
+                                            <Button
+                                              type="button"
+                                              variant={
+                                                fixedAssetResolved
+                                                  ? "outline"
+                                                  : "default"
+                                              }
+                                              size="sm"
+                                              onClick={() =>
+                                                handleSaveFixedAssetDraft(item)
+                                              }
+                                              disabled={
+                                                fixedAssetResolved ||
+                                                saveFixedAssetDraftMutation.isPending ||
+                                                saveReceiptDraftMutation.isPending
+                                              }
+                                            >
+                                              {saveFixedAssetDraftMutation.isPending ||
+                                              saveReceiptDraftMutation.isPending
+                                                ? "Guardando..."
+                                                : fixedAssetResolved
+                                                  ? "Código real listo"
+                                                  : fixedAssetDraftSaved
+                                                    ? "Actualizar borrador"
+                                                    : "Guardar como borrador"}
+                                            </Button>
+                                          </div>
+                                        </div>
+                                      )
+                                    ) : null}
+                                  </div>
+                                </td>
+                              </tr>
+                            </Fragment>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {sourceType === "purchase_order" ? (
+                  <section className="space-y-3 border-t border-border/70 px-1 py-4 sm:px-2">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <h3 className="text-sm font-semibold">Otros cargos</h3>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                        onClick={() =>
+                          setOtherChargeDrafts(current => [
+                            ...current,
+                            createReceiptOtherChargeDraft(),
+                          ])
+                        }
+                        disabled={registerMutation.isPending}
+                      >
+                        <Plus className="h-4 w-4" />
+                        Agregar
+                      </Button>
+                    </div>
+                    {otherChargeDrafts.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-sm text-muted-foreground">
+                        Sin otros cargos.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {otherChargeDrafts.map(charge => (
+                          <div
+                            key={charge.id}
+                            className="grid gap-2 md:grid-cols-[1fr_180px_auto]"
+                          >
+                            <Input
+                              value={charge.concept}
+                              onChange={event =>
+                                setOtherChargeDrafts(current =>
+                                  current.map(entry =>
+                                    entry.id === charge.id
+                                      ? {
+                                          ...entry,
+                                          concept: event.target.value,
+                                        }
+                                      : entry
+                                  )
+                                )
+                              }
+                              placeholder="Concepto"
+                              maxLength={255}
+                              disabled={registerMutation.isPending}
+                            />
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.0001"
+                              value={charge.amount}
+                              onChange={event =>
+                                setOtherChargeDrafts(current =>
+                                  current.map(entry =>
+                                    entry.id === charge.id
+                                      ? {
+                                          ...entry,
+                                          amount: event.target.value,
+                                        }
+                                      : entry
+                                  )
+                                )
+                              }
+                              placeholder="0.00"
+                              className="text-right"
+                              disabled={registerMutation.isPending}
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              onClick={() =>
+                                setOtherChargeDrafts(current =>
+                                  current.filter(
+                                    entry => entry.id !== charge.id
+                                  )
+                                )
+                              }
+                              disabled={registerMutation.isPending}
+                              aria-label="Quitar otro cargo"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                ) : null}
+
+                {sourceType === "purchase_order" ? (
+                  <div className="flex justify-end border-t border-border bg-muted/10 px-3 py-4 sm:px-4">
+                    <FiscalSummaryCard
+                      summary={receiptPricingSummary}
+                      otherChargesTotal={receiptOtherChargesTotal}
+                    />
+                  </div>
+                ) : null}
+
+                <div className="flex flex-col items-end border-t border-border/70 pt-4">
+                  <Button
+                    size="lg"
+                    className="min-w-[240px] text-sm font-semibold sm:h-11 sm:text-base"
+                    onClick={handleRegisterReceipt}
+                    disabled={
+                      registerMutation.isPending ||
+                      !sourceId ||
+                      activeSourceLoading ||
+                      Boolean(contractReceiptBlockReason) ||
+                      Boolean(fixedAssetReceiptBlockReason)
+                    }
+                  >
+                    {registerMutation.isPending
+                      ? "Registrando..."
+                      : "Registrar recepción"}
+                  </Button>
+                  {fixedAssetReceiptBlockReason ? (
+                    <p className="mt-2 max-w-md text-right text-xs text-amber-700">
+                      {fixedAssetReceiptBlockReason}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        <Dialog
+          open={viewReceiptId !== null}
+          onOpenChange={open => {
+            if (!open) setViewReceiptId(null);
+          }}
+        >
+          <DialogContent className="scrollbar-visible max-h-[calc(100vh-0.5rem)] w-[calc(100vw-0.25rem)] max-w-[calc(100vw-0.25rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1rem)] sm:w-[calc(100vw-0.75rem)] sm:max-w-[1920px] sm:p-6 lg:p-7">
+            <DialogHeader className="border-b border-border/70 pb-4 pr-10">
+              <div className="flex flex-wrap items-center gap-3">
+                <DialogTitle className="text-[2rem] font-bold tracking-tight sm:text-[2.4rem]">
+                  {receiptDetail?.receipt.receiptNumber ||
+                    "Detalle de recepción"}
+                </DialogTitle>
+                {receiptDetail ? (
+                  <Badge
+                    variant="outline"
+                    className={`text-sm ${getReceiptStatusColor(
+                      receiptDetail.receipt,
+                      receiptDetail.invoice
+                    )}`}
+                  >
+                    {getReceiptStatusLabel(
+                      receiptDetail.receipt,
+                      receiptDetail.invoice
+                    )}
+                  </Badge>
+                ) : null}
+              </div>
+            </DialogHeader>
+
+            {receiptDetailLoading ? (
+              <div className="py-8 text-center text-muted-foreground">
+                Cargando recepción...
+              </div>
+            ) : receiptDetailIsError ? (
+              <div className="flex flex-col items-center justify-center gap-4 py-10 text-center">
+                <AlertTriangle className="h-8 w-8 text-destructive" />
+                <div className="space-y-1">
+                  <p className="font-semibold text-foreground">
+                    No se pudo cargar la recepción.
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {receiptDetailError?.message ||
+                      "Intenta de nuevo o revisa el servidor."}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() => void refetchReceiptDetail()}
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Reintentar
+                </Button>
+              </div>
+            ) : !receiptDetail ? (
+              <div className="py-8 text-center text-muted-foreground">
+                No se encontró la recepción.
+              </div>
+            ) : receiptDetail ? (
+              <div className="space-y-5">
+                {getReceiptHasEmissionDeadlineIssue(
+                  receiptDetail.receipt,
+                  receiptDetail.invoice
+                ) ? (
+                  <div className="flex items-start gap-2 rounded-2xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-700">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div>
+                      <p className="font-semibold">
+                        {EMISSION_DEADLINE_ISSUE_MESSAGE}
+                      </p>
+                      <p>
+                        La fecha del documento es posterior a la fecha límite de
+                        emisión autorizada.
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="grid gap-3 md:grid-cols-12">
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Tipo de origen
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {receiptDetail.receipt.sourceType === "purchase_order"
+                        ? SOURCE_TYPE_LABELS.purchase_order
+                        : SOURCE_TYPE_LABELS.transfer}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-5">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Documento origen
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {receiptSourceHeaderTitle}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Proyecto
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {receiptDetail.project
+                        ? `${receiptDetail.project.code} — ${receiptDetail.project.name}`
+                        : "—"}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Estado del origen
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {receiptSourceStatusLabel}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-12">
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-4">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      {receiptDetail.receipt.sourceType === "purchase_order"
+                        ? "Proveedor"
+                        : "Referencia del origen"}
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {receiptSourceSecondaryLabel}
+                    </p>
+                    {receiptSourceSupplierRtnLabel ? (
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        RTN: {receiptSourceSupplierRtnLabel}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Tipo documento
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {receiptDetail.receipt.sourceType === "purchase_order"
+                        ? receiptDetail.receipt.isFiscalDocument
+                          ? getDocumentTypeLabelFromNumber(
+                              receiptDetail.receipt.invoiceNumber
+                            ) || "Documento fiscal"
+                          : "Documento extranjero"
+                        : "—"}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Número documento
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {receiptDetail.receipt.invoiceNumber || "—"}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      {receiptDetail.receipt.isFiscalDocument
+                        ? "CAI"
+                        : "CAI / referencia"}
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {receiptDetail.receipt.cai || "—"}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Rango autorizado inicial
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {receiptDetail.receipt.documentRangeStart || "—"}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Rango autorizado final
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {receiptDetail.receipt.documentRangeEnd || "—"}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Registrada por
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {formatUserReference(
+                        (receiptDetail as any).receivedBy,
+                        receiptDetail.receipt.receivedById
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-4">
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Fecha documento
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {formatDateLabel(receiptDetail.receipt.documentDate)}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Fecha vencimiento (crédito)
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {formatDateLabel(receiptDetail.receipt.documentDueDate)}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Fecha contabilización
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {formatDateLabel(receiptDetail.receipt.postingDate)}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Fecha recepción
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {formatDateLabel(receiptDetail.receipt.receiptDate)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2 rounded-2xl border border-border/70 bg-muted/10 p-4 sm:p-5">
+                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                    Notas
+                  </Label>
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                    {receiptDetail.receipt.notes?.trim() ||
+                      "Sin notas registradas"}
+                  </p>
+                </div>
+
+                <div className="overflow-x-auto rounded-2xl border border-border/70">
+                  <table
+                    className={`w-full text-sm ${
+                      receiptDetail?.receipt.sourceType === "purchase_order"
+                        ? "min-w-[980px]"
+                        : ""
+                    }`}
+                  >
+                    <thead>
+                      <tr className="border-b border-border/70 bg-muted/20">
+                        <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Ítem
+                        </th>
+                        <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Código
+                        </th>
+                        <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Esperado
+                        </th>
+                        <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Recibido
+                        </th>
+                        <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Precio confirmado
+                        </th>
+                        {receiptDetail.receipt.sourceType ===
+                        "purchase_order" ? (
+                          <>
+                            <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                              Subtotal
+                            </th>
+                            <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                              ISV
+                            </th>
+                            <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                              Total
+                            </th>
+                          </>
+                        ) : null}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {receiptDetail.items.length === 0 ? (
+                        <tr>
+                          <td
+                            className="p-4 text-sm text-muted-foreground"
+                            colSpan={
+                              receiptDetail?.receipt.sourceType ===
+                              "purchase_order"
+                                ? 8
+                                : 5
+                            }
+                          >
+                            Esta recepción no tiene ítems registrados.
+                          </td>
+                        </tr>
+                      ) : (
+                        receiptDetail.items.map((item: any) => {
+                          const itemCode =
+                            receiptSourceItemCodes.get(item.sourceItemId) ??
+                            getSourceItemCode(item);
+                          const sourceItem = receiptSourceItemsById.get(
+                            item.sourceItemId
+                          );
+                          const lineAmounts = calculateReceiptLineAmounts(
+                            item,
+                            sourceItem
+                          );
+                          const targetLabel =
+                            receiptDetail.receipt.sourceType ===
+                            "purchase_order"
+                              ? formatReceiptLineTargetLabel(
+                                  item,
+                                  sourceItem,
+                                  receiptDetail.receipt.projectId
+                                )
+                              : null;
+                          const assetDetails = parseFixedAssetDetails(
+                            item.assetDetails
+                          );
+
+                          return (
+                            <tr
+                              key={item.id}
+                              className="border-b border-border/70 last:border-0"
+                            >
+                              <td className="p-4">
+                                <div className="font-semibold">
+                                  {item.itemName}
+                                </div>
+                                {item.notes ? (
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    {item.notes}
+                                  </div>
+                                ) : null}
+                                {targetLabel ? (
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    Destino: {targetLabel}
+                                  </div>
+                                ) : null}
+                                {item.isFixedAsset ? (
+                                  <div className="mt-2 space-y-1.5">
+                                    <div className="flex flex-wrap gap-1.5">
+                                      <Badge
+                                        variant="outline"
+                                        className="border-blue-300 text-blue-700"
+                                      >
+                                        Activo fijo
+                                      </Badge>
+                                      {item.isLeasing ? (
+                                        <Badge
+                                          variant="outline"
+                                          className="border-violet-300 text-violet-700"
+                                        >
+                                          Leasing
+                                        </Badge>
+                                      ) : null}
+                                      <Badge variant="outline">
+                                        {assetDetails.length} unidad(es)
+                                      </Badge>
+                                    </div>
+                                    {assetDetails.length > 0 ? (
+                                      <div className="space-y-1 text-xs text-muted-foreground">
+                                        {assetDetails.map((detail, index) => (
+                                          <div
+                                            key={`${item.id}-asset-${index}`}
+                                          >
+                                            Unidad {index + 1}:{" "}
+                                            {getAssetDetailSummary(detail)}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </td>
+                              <td className="p-4 font-mono text-sm">
+                                {itemCode || "—"}
+                              </td>
+                              <td className="p-4 text-right font-semibold">
+                                {formatQuantity(item.quantityExpected)}{" "}
+                                {item.unit || ""}
+                              </td>
+                              <td className="p-4 text-right text-muted-foreground">
+                                {formatQuantity(item.quantityReceived)}{" "}
+                                {item.unit || ""}
+                              </td>
+                              <td className="p-4 text-right font-medium">
+                                {formatPrintMoney(item.unitPrice)}
+                              </td>
+                              {receiptDetail.receipt.sourceType ===
+                              "purchase_order" ? (
+                                <>
+                                  <td className="p-4 text-right font-semibold">
+                                    {formatPurchaseOrderCurrency(
+                                      lineAmounts.subtotal
+                                    )}
                                   </td>
                                   <td className="p-4 text-right font-semibold">
                                     {formatPurchaseOrderCurrency(
@@ -4286,1137 +5394,211 @@ export default function Recepciones() {
                                     )}
                                   </td>
                                   <td className="p-4 text-right font-semibold">
-                                    {formatPurchaseOrderCurrency(lineAmounts.total)}
+                                    {formatPurchaseOrderCurrency(
+                                      lineAmounts.total
+                                    )}
                                   </td>
                                 </>
                               ) : null}
-                              <td className="p-4 text-right">
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  className="ml-auto w-36 text-right"
-                                  value={receivedMap[item.id] ?? ""}
-                                  onChange={event =>
-                                    handleReceivedQuantityChange(
-                                      item,
-                                      event.target.value
-                                    )
-                                  }
-                                  disabled={
-                                    (!isManualItem && pendingQuantity <= 0) ||
-                                    fixedAssetQuantityLocked
-                                  }
-                                />
-                                {!isManualItem && excessQuantity > 0 ? (
-                                  <p className="mt-1 text-xs font-medium text-emerald-700">
-                                    Exceso permitido:{" "}
-                                    {formatQuantity(excessQuantity)}{" "}
-                                    {item.unit || ""}
-                                  </p>
-                                ) : null}
-                              </td>
-                              <td className="p-4">
-                                {renderReceiptWarehouseSelector(item, true)}
-                              </td>
-                              {sourceType === "transfer" ? (
-                                  <td className="p-4 text-right">
-                                    <div className="flex flex-col items-end gap-1.5">
-                                    <Button
-                                      variant={
-                                        transferClosureDraft &&
-                                        transferCloseQuantity > 0
-                                          ? "default"
-                                          : "outline"
-                                      }
-                                      size="sm"
-                                      className="ml-auto gap-2"
-                                      onClick={() => {
-                                        if (!canCloseTransferLines) return;
-                                        setCloseTransferLineItem(item);
-                                        setTransferCloseReason(
-                                          transferClosureDraft?.reason ||
-                                            TRANSFER_CLOSE_REASONS[0].value
-                                        );
-                                        setTransferCloseNote(
-                                          transferClosureDraft?.note || ""
-                                        );
-                                      }}
-                                      disabled={
-                                        !canCloseTransferLines ||
-                                        transferCloseQuantity <= 0
-                                      }
-                                      title={
-                                        !canCloseTransferLines
-                                          ? "Solo Administración Central o el administrador del proyecto destino pueden cerrar saldos de traslado"
-                                          : transferCloseQuantity <= 0
-                                            ? "No hay saldo restante para cerrar; baja Recibir ahora si no recibiste todo"
-                                            : "Cerrar saldo pendiente, devolverlo al origen y regresarlo a requisición"
-                                      }
-                                    >
-                                      <RotateCcw className="h-4 w-4" />
-                                      {!canCloseTransferLines
-                                        ? "Sin autorización"
-                                        : transferCloseQuantity <= 0
-                                          ? "Sin saldo"
-                                          : transferClosureDraft
-                                            ? "Cierre marcado"
-                                            : "Cerrar saldo"}
-                                    </Button>
-                                    {transferClosureDraft &&
-                                    transferCloseQuantity > 0 ? (
-                                      <span className="text-xs text-muted-foreground">
-                                        Devuelve{" "}
-                                        {formatQuantity(transferCloseQuantity)}{" "}
-                                        {item.unit || ""} al origen y a requisición
-                                      </span>
-                                    ) : canCloseTransferLines &&
-                                      transferCloseQuantity <= 0 ? (
-                                      <span className="max-w-48 text-right text-xs text-muted-foreground">
-                                        Baja Recibir ahora para cerrar saldo.
-                                      </span>
-                                    ) : null}
-                                    </div>
-                                  </td>
-                              ) : null}
                             </tr>
-                            <tr
-                              key={`${item.id}-asset`}
-                              className="border-b border-border/70 bg-muted/10 last:border-0"
-                            >
-                              <td
-                                colSpan={receiptTableColumnCount}
-                                className="p-4 pt-0"
-                              >
-                                <div className="space-y-4 rounded-xl border border-border/70 bg-background p-3">
-                                  {sourceType === "purchase_order" ? (
-                                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
-                                      {renderReceiptTargetSelector(item)}
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
 
-                                      <div className="flex justify-start lg:justify-end">
-                                        {isManualItem ? (
-                                          <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="sm"
-                                            className="gap-2"
-                                            onClick={() =>
-                                              removeManualReceiptItem(item.id)
-                                            }
-                                            disabled={registerMutation.isPending}
-                                          >
-                                            <Trash2 className="h-4 w-4" />
-                                            Quitar
-                                          </Button>
-                                        ) : !isContractPurchaseOrder &&
-                                        canManuallyCloseReceiptLine(item) ? (
-                                          <Button
-                                            variant="outline"
-                                            size="sm"
-                                            className="gap-2"
-                                            onClick={() =>
-                                              setCloseReceiptLineItem(item)
-                                            }
-                                            disabled={
-                                              closeReceiptLineMutation.isPending
-                                            }
-                                          >
-                                            {closeReceiptLineMutation.isPending &&
-                                            closeReceiptLineItem?.id ===
-                                              item.id ? (
-                                              <Loader2 className="h-4 w-4 animate-spin" />
-                                            ) : (
-                                              <ShieldX className="h-4 w-4" />
-                                            )}
-                                            Cerrar línea
-                                          </Button>
-                                        ) : (
-                                          <span className="text-xs text-muted-foreground">
-                                            Sin acción pendiente
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  ) : null}
-
-                                  <div className="flex flex-wrap items-center gap-4">
-                                    <label className="flex items-center gap-2 text-sm font-medium">
-                                      <Checkbox
-                                        checked={isLineFixedAsset}
-                                        disabled={
-                                          sourceType !== "purchase_order" ||
-                                          isManualItem ||
-                                          Boolean(item.fixedAssetArticleId) ||
-                                          (!isLineFixedAsset && (receivingQuantity !== 1 || item.targetType !== "activo_fijo"))
-                                        }
-                                        onCheckedChange={checked =>
-                                          handleFixedAssetToggle(
-                                            item,
-                                            checked === true
-                                          )
-                                        }
-                                      />
-                                      Activo fijo
-                                    </label>
-                                    {!isLineFixedAsset && (receivingQuantity !== 1 || item.targetType !== "activo_fijo") ? (
-                                      <span className="text-xs text-muted-foreground bg-muted/50 px-2 py-0.5 rounded border border-border/50">
-                                        {item.targetType !== "activo_fijo"
-                                          ? "Solo disponible para productos de tipo Activo Fijo"
-                                          : "Solo disponible cuando la cantidad a recibir es exactamente 1"}
-                                      </span>
-                                    ) : null}
-                                    {isLineFixedAsset ? (
-                                      <label className="flex items-center gap-2 text-sm font-medium">
-                                        <Checkbox
-                                          checked={assetDraft.isLeasing}
-                                          disabled={assetInputsDisabled}
-                                          onCheckedChange={checked =>
-                                            updateReceiptAssetDraft(
-                                              item.id,
-                                              draft => ({
-                                                ...draft,
-                                                isLeasing: checked === true,
-                                              })
-                                            )
-                                          }
-                                        />
-                                        Leasing
-                                      </label>
-                                    ) : null}
-                                    {isLineFixedAsset ? (
-                                      <Badge
-                                        variant="outline"
-                                        className="border-blue-300 text-blue-700"
-                                      >
-                                        {assetUnitCount} unidad(es) con serie
-                                      </Badge>
-                                    ) : null}
-                                    {fixedAssetDraftSaved ? (
-                                      <Badge
-                                        variant="outline"
-                                        className="border-amber-300 text-amber-700"
-                                      >
-                                        Pendiente Contabilidad
-                                      </Badge>
-                                    ) : null}
-                                    {fixedAssetResolved ? (
-                                      <Badge
-                                        variant="outline"
-                                        className="border-emerald-300 text-emerald-700"
-                                      >
-                                        Código real listo
-                                      </Badge>
-                                    ) : null}
-                                  </div>
-
-                                  <div className="space-y-2">
-                                    <Label>Observación de línea</Label>
-                                    <Textarea
-                                      rows={2}
-                                      value={assetDraft.notes}
-                                      disabled={assetInputsDisabled}
-                                      onChange={event =>
-                                        updateReceiptAssetDraft(
-                                          item.id,
-                                          draft => ({
-                                            ...draft,
-                                            notes: event.target.value,
-                                          })
-                                        )
-                                      }
-                                      placeholder="Observaciones de este producto recibido"
-                                    />
-                                  </div>
-
-                                  {isLineFixedAsset ? (
-                                    assetUnitCount === 0 ? (
-                                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                                        Ingrese una cantidad entera mayor que cero
-                                        en “Recibir ahora” para capturar las
-                                        unidades del activo.
-                                      </div>
-                                    ) : (
-                                      <div className="space-y-3">
-                                        {assetDetails.map((detail, index) => (
-                                          <div
-                                            key={`${item.id}-asset-${index}`}
-                                            className="rounded-lg border border-border/70 p-3"
-                                          >
-                                            <div className="mb-3 text-sm font-semibold">
-                                              Unidad {index + 1}
-                                            </div>
-                                            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                                              <div className="space-y-1.5">
-                                                <Label>Número de serie</Label>
-                                                <Input
-                                                  value={detail.serialNumber}
-                                                  disabled={assetInputsDisabled}
-                                                  onChange={event =>
-                                                    updateAssetDetail(
-                                                      item.id,
-                                                      index,
-                                                      "serialNumber",
-                                                      event.target.value
-                                                    )
-                                                  }
-                                                  placeholder="Serie"
-                                                />
-                                              </div>
-                                              <div className="space-y-1.5">
-                                                <Label>Condición</Label>
-                                                <Select
-                                                  value={detail.condition}
-                                                  disabled={assetInputsDisabled}
-                                                  onValueChange={value =>
-                                                    updateAssetDetail(
-                                                      item.id,
-                                                      index,
-                                                      "condition",
-                                                      value
-                                                    )
-                                                  }
-                                                >
-                                                  <SelectTrigger>
-                                                    <SelectValue />
-                                                  </SelectTrigger>
-                                                  <SelectContent>
-                                                    {ASSET_CONDITION_VALUES.map(
-                                                      condition => (
-                                                        <SelectItem
-                                                          key={condition}
-                                                          value={condition}
-                                                        >
-                                                          {
-                                                            ASSET_CONDITION_LABELS[
-                                                              condition
-                                                            ]
-                                                          }
-                                                        </SelectItem>
-                                                      )
-                                                    )}
-                                                  </SelectContent>
-                                                </Select>
-                                              </div>
-                                              {ASSET_DETAIL_OPTIONAL_FIELDS.map(
-                                                field => (
-                                                  <div
-                                                    key={field.key}
-                                                    className="space-y-1.5"
-                                                  >
-                                                    <Label>{field.label}</Label>
-                                                    <Input
-                                                      value={
-                                                        String(
-                                                          detail[field.key] ?? ""
-                                                        )
-                                                      }
-                                                      disabled={
-                                                        assetInputsDisabled
-                                                      }
-                                                      onChange={event =>
-                                                        updateAssetDetail(
-                                                          item.id,
-                                                          index,
-                                                          field.key,
-                                                          event.target.value
-                                                        )
-                                                      }
-                                                      placeholder={field.placeholder}
-                                                    />
-                                                  </div>
-                                                )
-                                              )}
-                                            </div>
-                                          </div>
-                                        ))}
-                                        <div className="flex flex-col items-start gap-2 border-t border-border/70 pt-3 sm:flex-row sm:items-center sm:justify-between">
-                                          <p className="text-xs text-muted-foreground">
-                                            {fixedAssetResolved
-                                              ? `Código final: ${
-                                                  getSourceItemCode(item) || "—"
-                                                }`
-                                              : fixedAssetDraftSaved
-                                                ? `Borrador temporal: ${
-                                                    getSourceItemCode(item) ||
-                                                    "pendiente"
-                                                  }`
-                                                : "Guarde el activo como borrador para crear el artículo temporal."}
-                                          </p>
-                                          <Button
-                                            type="button"
-                                            variant={
-                                              fixedAssetResolved
-                                                ? "outline"
-                                                : "default"
-                                            }
-                                            size="sm"
-                                            onClick={() =>
-                                              handleSaveFixedAssetDraft(item)
-                                            }
-                                            disabled={
-                                              fixedAssetResolved ||
-                                              saveFixedAssetDraftMutation.isPending ||
-                                              saveReceiptDraftMutation.isPending
-                                            }
-                                          >
-                                            {saveFixedAssetDraftMutation.isPending ||
-                                            saveReceiptDraftMutation.isPending
-                                              ? "Guardando..."
-                                              : fixedAssetResolved
-                                                ? "Código real listo"
-                                                : fixedAssetDraftSaved
-                                                  ? "Actualizar borrador"
-                                                  : "Guardar como borrador"}
-                                          </Button>
-                                        </div>
-                                      </div>
-                                    )
-                                  ) : null}
-                                </div>
-                              </td>
-                            </tr>
-                          </Fragment>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {sourceType === "purchase_order" ? (
-                <section className="space-y-3 border-t border-border/70 px-1 py-4 sm:px-2">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <h3 className="text-sm font-semibold">Otros cargos</h3>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-2"
-                      onClick={() =>
-                        setOtherChargeDrafts(current => [
-                          ...current,
-                          createReceiptOtherChargeDraft(),
-                        ])
-                      }
-                      disabled={registerMutation.isPending}
-                    >
-                      <Plus className="h-4 w-4" />
-                      Agregar
-                    </Button>
-                  </div>
-                  {otherChargeDrafts.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-sm text-muted-foreground">
-                      Sin otros cargos.
+                {receiptDetail.receipt.sourceType === "purchase_order" &&
+                (receiptDetail as any).otherCharges?.length ? (
+                  <section className="rounded-2xl border border-border/70">
+                    <div className="border-b border-border/70 px-4 py-3">
+                      <h3 className="font-semibold">Otros cargos</h3>
                     </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {otherChargeDrafts.map(charge => (
-                        <div
-                          key={charge.id}
-                          className="grid gap-2 md:grid-cols-[1fr_180px_auto]"
-                        >
-                          <Input
-                            value={charge.concept}
-                            onChange={event =>
-                              setOtherChargeDrafts(current =>
-                                current.map(entry =>
-                                  entry.id === charge.id
-                                    ? {
-                                        ...entry,
-                                        concept: event.target.value,
-                                      }
-                                    : entry
-                                )
-                              )
-                            }
-                            placeholder="Concepto"
-                            maxLength={255}
-                            disabled={registerMutation.isPending}
-                          />
-                          <Input
-                            type="number"
-                            min="0"
-                            step="0.0001"
-                            value={charge.amount}
-                            onChange={event =>
-                              setOtherChargeDrafts(current =>
-                                current.map(entry =>
-                                  entry.id === charge.id
-                                    ? {
-                                        ...entry,
-                                        amount: event.target.value,
-                                      }
-                                    : entry
-                                )
-                              )
-                            }
-                            placeholder="0.00"
-                            className="text-right"
-                            disabled={registerMutation.isPending}
-                          />
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            onClick={() =>
-                              setOtherChargeDrafts(current =>
-                                current.filter(entry => entry.id !== charge.id)
-                              )
-                            }
-                            disabled={registerMutation.isPending}
-                            aria-label="Quitar otro cargo"
+                    <div className="divide-y divide-border/70">
+                      {(receiptDetail as any).otherCharges.map(
+                        (charge: any) => (
+                          <div
+                            key={charge.id}
+                            className="grid grid-cols-[1fr_auto] gap-3 px-4 py-3 text-sm"
                           >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      ))}
+                            <span className="font-medium">
+                              {charge.concept}
+                            </span>
+                            <span className="font-semibold tabular-nums">
+                              {formatPurchaseOrderCurrency(charge.amount)}
+                            </span>
+                          </div>
+                        )
+                      )}
                     </div>
-                  )}
-                </section>
-              ) : null}
+                  </section>
+                ) : null}
 
-              {sourceType === "purchase_order" ? (
-                <div className="flex justify-end border-t border-border bg-muted/10 px-3 py-4 sm:px-4">
-                  <FiscalSummaryCard
-                    summary={receiptPricingSummary}
-                    otherChargesTotal={receiptOtherChargesTotal}
+                {receiptDetailPricingSummary ? (
+                  <div className="flex justify-end border-t border-border bg-muted/10 px-3 py-4 sm:px-4">
+                    <FiscalSummaryCard
+                      summary={receiptDetailPricingSummary}
+                      otherChargesTotal={receiptDetailOtherChargesTotal}
+                    />
+                  </div>
+                ) : null}
+
+                <DocumentAttachmentsPanel
+                  entityType="receipt"
+                  entityId={receiptDetail.receipt.id}
+                  category="comprobante_entrega"
+                  title="Adjuntos"
+                  canManage={canManageReceiptAttachments}
+                />
+
+                <div className="flex flex-wrap justify-end gap-3 border-t border-border/70 pt-1">
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    className="h-10 min-w-[210px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
+                    onClick={handlePrintReceipt}
+                    disabled={
+                      receiptDetail.items.length === 0 ||
+                      receiptSourceDetailLoading
+                    }
+                  >
+                    <Printer className="mr-2 h-4 w-4" />
+                    Imprimir documento
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={closeTransferLineItem !== null}
+          onOpenChange={open => {
+            if (!open) {
+              setCloseTransferLineItem(null);
+              setTransferCloseReason(TRANSFER_CLOSE_REASONS[0].value);
+              setTransferCloseNote("");
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-[560px]">
+            <DialogHeader>
+              <DialogTitle>Cerrar saldo de traslado</DialogTitle>
+              <DialogDescription>
+                El saldo que ya no se recibirá se devolverá al proyecto origen y
+                volverá a la requisición al registrar la recepción.
+              </DialogDescription>
+            </DialogHeader>
+
+            {closeTransferLineItem ? (
+              <div className="space-y-4">
+                <div className="rounded-lg border border-border/70 bg-muted/20 p-3 text-sm">
+                  <div className="font-semibold">
+                    {closeTransferLineItem.itemName}
+                  </div>
+                  <div className="mt-1 text-muted-foreground">
+                    Se recibirá{" "}
+                    <strong>
+                      {formatQuantity(
+                        Number(receivedMap[closeTransferLineItem.id] ?? 0) || 0
+                      )}{" "}
+                      {closeTransferLineItem.unit || ""}
+                    </strong>{" "}
+                    y se devolverá al origen y volverá a requisición el saldo de{" "}
+                    <strong>
+                      {formatQuantity(
+                        getTransferCloseQuantity(closeTransferLineItem)
+                      )}{" "}
+                      {closeTransferLineItem.unit || ""}
+                    </strong>
+                    .
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Motivo</Label>
+                  <Select
+                    value={transferCloseReason}
+                    onValueChange={setTransferCloseReason}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TRANSFER_CLOSE_REASONS.map(reason => (
+                        <SelectItem key={reason.value} value={reason.value}>
+                          {reason.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="transfer-close-note">Nota obligatoria</Label>
+                  <Textarea
+                    id="transfer-close-note"
+                    rows={4}
+                    value={transferCloseNote}
+                    onChange={event => setTransferCloseNote(event.target.value)}
+                    placeholder="Explique por qué el saldo no se recibirá, regresa al origen y vuelve a requisición"
                   />
                 </div>
-              ) : null}
-
-              <div className="flex flex-col items-end border-t border-border/70 pt-4">
-                <Button
-                  size="lg"
-                  className="min-w-[240px] text-sm font-semibold sm:h-11 sm:text-base"
-                  onClick={handleRegisterReceipt}
-                  disabled={
-                    registerMutation.isPending ||
-                    !sourceId ||
-                    activeSourceLoading ||
-                    Boolean(contractReceiptBlockReason) ||
-                    Boolean(fixedAssetReceiptBlockReason)
-                  }
-                >
-                  {registerMutation.isPending
-                    ? "Registrando..."
-                    : "Registrar recepción"}
-                </Button>
-                {fixedAssetReceiptBlockReason ? (
-                  <p className="mt-2 max-w-md text-right text-xs text-amber-700">
-                    {fixedAssetReceiptBlockReason}
-                  </p>
-                ) : null}
               </div>
-            </div>
+            ) : null}
+
+            <DialogFooter>
+              {closeTransferLineItem &&
+              transferClosureDrafts[closeTransferLineItem.id] ? (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setTransferClosureDrafts(current => {
+                      const next = { ...current };
+                      delete next[closeTransferLineItem.id];
+                      return next;
+                    });
+                    setCloseTransferLineItem(null);
+                  }}
+                >
+                  Quitar cierre
+                </Button>
+              ) : null}
+              <Button
+                variant="outline"
+                onClick={() => setCloseTransferLineItem(null)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={() => {
+                  if (!closeTransferLineItem) return;
+                  if (getTransferCloseQuantity(closeTransferLineItem) <= 0) {
+                    toast.error("No hay saldo pendiente para cerrar");
+                    return;
+                  }
+                  if (!transferCloseNote.trim()) {
+                    toast.error("Ingrese una nota para cerrar el saldo");
+                    return;
+                  }
+
+                  setTransferClosureDrafts(current => ({
+                    ...current,
+                    [closeTransferLineItem.id]: {
+                      reason: transferCloseReason,
+                      note: transferCloseNote.trim(),
+                    },
+                  }));
+                  setCloseTransferLineItem(null);
+                  toast.success("Cierre marcado para esta recepción");
+                }}
+              >
+                Marcar cierre
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
-
-      <Dialog
-        open={viewReceiptId !== null}
-        onOpenChange={open => {
-          if (!open) setViewReceiptId(null);
-        }}
-      >
-        <DialogContent className="scrollbar-visible max-h-[calc(100vh-0.5rem)] w-[calc(100vw-0.25rem)] max-w-[calc(100vw-0.25rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1rem)] sm:w-[calc(100vw-0.75rem)] sm:max-w-[1920px] sm:p-6 lg:p-7">
-          <DialogHeader className="border-b border-border/70 pb-4 pr-10">
-            <div className="flex flex-wrap items-center gap-3">
-              <DialogTitle className="text-[2rem] font-bold tracking-tight sm:text-[2.4rem]">
-                {receiptDetail?.receipt.receiptNumber || "Detalle de recepción"}
-              </DialogTitle>
-              {receiptDetail ? (
-                <Badge
-                  variant="outline"
-                  className={`text-sm ${
-                    getReceiptStatusColor(
-                      receiptDetail.receipt,
-                      receiptDetail.invoice
-                    )
-                  }`}
-                >
-                  {getReceiptStatusLabel(
-                    receiptDetail.receipt,
-                    receiptDetail.invoice
-                  )}
-                </Badge>
-              ) : null}
-            </div>
-          </DialogHeader>
-
-          {receiptDetailLoading ? (
-            <div className="py-8 text-center text-muted-foreground">
-              Cargando recepción...
-            </div>
-          ) : receiptDetailIsError ? (
-            <div className="flex flex-col items-center justify-center gap-4 py-10 text-center">
-              <AlertTriangle className="h-8 w-8 text-destructive" />
-              <div className="space-y-1">
-                <p className="font-semibold text-foreground">
-                  No se pudo cargar la recepción.
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  {receiptDetailError?.message ||
-                    "Intenta de nuevo o revisa el servidor."}
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="gap-2"
-                onClick={() => void refetchReceiptDetail()}
-              >
-                <RotateCcw className="h-4 w-4" />
-                Reintentar
-              </Button>
-            </div>
-          ) : !receiptDetail ? (
-            <div className="py-8 text-center text-muted-foreground">
-              No se encontró la recepción.
-            </div>
-          ) : receiptDetail ? (
-            <div className="space-y-5">
-              {getReceiptHasEmissionDeadlineIssue(
-                receiptDetail.receipt,
-                receiptDetail.invoice
-              ) ? (
-                <div className="flex items-start gap-2 rounded-2xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-700">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <div>
-                    <p className="font-semibold">
-                      {EMISSION_DEADLINE_ISSUE_MESSAGE}
-                    </p>
-                    <p>
-                      La fecha del documento es posterior a la fecha límite de
-                      emisión autorizada.
-                    </p>
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="grid gap-3 md:grid-cols-12">
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Tipo de origen
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {receiptDetail.receipt.sourceType === "purchase_order"
-                      ? SOURCE_TYPE_LABELS.purchase_order
-                      : SOURCE_TYPE_LABELS.transfer}
-                  </p>
-                </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-5">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Documento origen
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {receiptSourceHeaderTitle}
-                  </p>
-                </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Proyecto
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {receiptDetail.project
-                      ? `${receiptDetail.project.code} — ${receiptDetail.project.name}`
-                      : "—"}
-                  </p>
-                </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Estado del origen
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {receiptSourceStatusLabel}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-12">
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-4">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    {receiptDetail.receipt.sourceType === "purchase_order"
-                      ? "Proveedor"
-                      : "Referencia del origen"}
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {receiptSourceSecondaryLabel}
-                  </p>
-                  {receiptSourceSupplierRtnLabel ? (
-                    <p className="text-xs leading-relaxed text-muted-foreground">
-                      RTN: {receiptSourceSupplierRtnLabel}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Tipo documento
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {receiptDetail.receipt.sourceType === "purchase_order"
-                      ? receiptDetail.receipt.isFiscalDocument
-                        ? getDocumentTypeLabelFromNumber(
-                            receiptDetail.receipt.invoiceNumber
-                          ) || "Documento fiscal"
-                        : "Documento extranjero"
-                      : "—"}
-                  </p>
-                </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Número documento
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {receiptDetail.receipt.invoiceNumber || "—"}
-                  </p>
-                </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    {receiptDetail.receipt.isFiscalDocument
-                      ? "CAI"
-                      : "CAI / referencia"}
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {receiptDetail.receipt.cai || "—"}
-                  </p>
-                </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Rango autorizado inicial
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {receiptDetail.receipt.documentRangeStart || "—"}
-                  </p>
-                </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Rango autorizado final
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {receiptDetail.receipt.documentRangeEnd || "—"}
-                  </p>
-                </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Registrada por
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {formatUserReference(
-                      (receiptDetail as any).receivedBy,
-                      receiptDetail.receipt.receivedById
-                    )}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-4">
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Fecha documento
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {formatDateLabel(receiptDetail.receipt.documentDate)}
-                  </p>
-                </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Fecha vencimiento (crédito)
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {formatDateLabel(receiptDetail.receipt.documentDueDate)}
-                  </p>
-                </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Fecha contabilización
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {formatDateLabel(receiptDetail.receipt.postingDate)}
-                  </p>
-                </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
-                  <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                    Fecha recepción
-                  </Label>
-                  <p className="text-sm font-semibold leading-snug sm:text-base">
-                    {formatDateLabel(receiptDetail.receipt.receiptDate)}
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-2 rounded-2xl border border-border/70 bg-muted/10 p-4 sm:p-5">
-                <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                  Notas
-                </Label>
-                <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
-                  {receiptDetail.receipt.notes?.trim() ||
-                    "Sin notas registradas"}
-                </p>
-              </div>
-
-              <div className="overflow-x-auto rounded-2xl border border-border/70">
-                <table
-                  className={`w-full text-sm ${
-                    receiptDetail?.receipt.sourceType === "purchase_order"
-                      ? "min-w-[980px]"
-                      : ""
-                  }`}
-                >
-                  <thead>
-                    <tr className="border-b border-border/70 bg-muted/20">
-                      <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                        Ítem
-                      </th>
-                      <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                        Código
-                      </th>
-                      <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                        Esperado
-                      </th>
-                      <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                        Recibido
-                      </th>
-                      <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                        Precio confirmado
-                      </th>
-                      {receiptDetail.receipt.sourceType ===
-                      "purchase_order" ? (
-                        <>
-                          <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                            Subtotal
-                          </th>
-                          <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                            ISV
-                          </th>
-                          <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                            Total
-                          </th>
-                        </>
-                      ) : null}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {receiptDetail.items.length === 0 ? (
-                      <tr>
-                        <td
-                          className="p-4 text-sm text-muted-foreground"
-                          colSpan={
-                            receiptDetail?.receipt.sourceType ===
-                            "purchase_order"
-                              ? 8
-                              : 5
-                          }
-                        >
-                          Esta recepción no tiene ítems registrados.
-                        </td>
-                      </tr>
-                    ) : (
-                      receiptDetail.items.map((item: any) => {
-                        const itemCode =
-                          receiptSourceItemCodes.get(item.sourceItemId) ??
-                          getSourceItemCode(item);
-                        const sourceItem = receiptSourceItemsById.get(
-                          item.sourceItemId
-                        );
-                        const lineAmounts = calculateReceiptLineAmounts(
-                          item,
-                          sourceItem
-                        );
-                        const targetLabel =
-                          receiptDetail.receipt.sourceType === "purchase_order"
-                            ? formatReceiptLineTargetLabel(
-                                item,
-                                sourceItem,
-                                receiptDetail.receipt.projectId
-                              )
-                            : null;
-                        const assetDetails = parseFixedAssetDetails(
-                          item.assetDetails
-                        );
-
-                        return (
-                          <tr
-                            key={item.id}
-                            className="border-b border-border/70 last:border-0"
-                          >
-                            <td className="p-4">
-                              <div className="font-semibold">
-                                {item.itemName}
-                              </div>
-                              {item.notes ? (
-                                <div className="mt-1 text-xs text-muted-foreground">
-                                  {item.notes}
-                                </div>
-                              ) : null}
-                              {targetLabel ? (
-                                <div className="mt-1 text-xs text-muted-foreground">
-                                  Destino: {targetLabel}
-                                </div>
-                              ) : null}
-                              {item.isFixedAsset ? (
-                                <div className="mt-2 space-y-1.5">
-                                  <div className="flex flex-wrap gap-1.5">
-                                    <Badge
-                                      variant="outline"
-                                      className="border-blue-300 text-blue-700"
-                                    >
-                                      Activo fijo
-                                    </Badge>
-                                    {item.isLeasing ? (
-                                      <Badge
-                                        variant="outline"
-                                        className="border-violet-300 text-violet-700"
-                                      >
-                                        Leasing
-                                      </Badge>
-                                    ) : null}
-                                    <Badge variant="outline">
-                                      {assetDetails.length} unidad(es)
-                                    </Badge>
-                                  </div>
-                                  {assetDetails.length > 0 ? (
-                                    <div className="space-y-1 text-xs text-muted-foreground">
-                                      {assetDetails.map((detail, index) => (
-                                        <div key={`${item.id}-asset-${index}`}>
-                                          Unidad {index + 1}:{" "}
-                                          {getAssetDetailSummary(detail)}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                            </td>
-                            <td className="p-4 font-mono text-sm">
-                              {itemCode || "—"}
-                            </td>
-                            <td className="p-4 text-right font-semibold">
-                              {formatQuantity(item.quantityExpected)}{" "}
-                              {item.unit || ""}
-                            </td>
-                            <td className="p-4 text-right text-muted-foreground">
-                              {formatQuantity(item.quantityReceived)}{" "}
-                              {item.unit || ""}
-                            </td>
-                            <td className="p-4 text-right font-medium">
-                              {formatPrintMoney(item.unitPrice)}
-                            </td>
-                            {receiptDetail.receipt.sourceType ===
-                            "purchase_order" ? (
-                              <>
-                                <td className="p-4 text-right font-semibold">
-                                  {formatPurchaseOrderCurrency(
-                                    lineAmounts.subtotal
-                                  )}
-                                </td>
-                                <td className="p-4 text-right font-semibold">
-                                  {formatPurchaseOrderCurrency(
-                                    lineAmounts.taxAmount
-                                  )}
-                                </td>
-                                <td className="p-4 text-right font-semibold">
-                                  {formatPurchaseOrderCurrency(
-                                    lineAmounts.total
-                                  )}
-                                </td>
-                              </>
-                            ) : null}
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {receiptDetail.receipt.sourceType === "purchase_order" &&
-              (receiptDetail as any).otherCharges?.length ? (
-                <section className="rounded-2xl border border-border/70">
-                  <div className="border-b border-border/70 px-4 py-3">
-                    <h3 className="font-semibold">Otros cargos</h3>
-                  </div>
-                  <div className="divide-y divide-border/70">
-                    {(receiptDetail as any).otherCharges.map((charge: any) => (
-                      <div
-                        key={charge.id}
-                        className="grid grid-cols-[1fr_auto] gap-3 px-4 py-3 text-sm"
-                      >
-                        <span className="font-medium">{charge.concept}</span>
-                        <span className="font-semibold tabular-nums">
-                          {formatPurchaseOrderCurrency(charge.amount)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-
-              {receiptDetailPricingSummary ? (
-                <div className="flex justify-end border-t border-border bg-muted/10 px-3 py-4 sm:px-4">
-                  <FiscalSummaryCard
-                    summary={receiptDetailPricingSummary}
-                    otherChargesTotal={receiptDetailOtherChargesTotal}
-                  />
-                </div>
-              ) : null}
-
-              <DocumentAttachmentsPanel
-                entityType="receipt"
-                entityId={receiptDetail.receipt.id}
-                category="comprobante_entrega"
-                title="Adjuntos"
-                canManage={canManageReceiptAttachments}
-              />
-
-              <div className="flex flex-wrap justify-end gap-3 border-t border-border/70 pt-1">
-                <Button
-                  variant="outline"
-                  size="lg"
-                  className="h-10 min-w-[210px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
-                  onClick={handlePrintReceipt}
-                  disabled={
-                    receiptDetail.items.length === 0 ||
-                    receiptSourceDetailLoading
-                  }
-                >
-                  <Printer className="mr-2 h-4 w-4" />
-                  Imprimir documento
-                </Button>
-              </div>
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={closeTransferLineItem !== null}
-        onOpenChange={open => {
-          if (!open) {
-            setCloseTransferLineItem(null);
-            setTransferCloseReason(TRANSFER_CLOSE_REASONS[0].value);
-            setTransferCloseNote("");
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-[560px]">
-          <DialogHeader>
-            <DialogTitle>Cerrar saldo de traslado</DialogTitle>
-            <DialogDescription>
-              El saldo que ya no se recibirá se devolverá al proyecto origen y
-              volverá a la requisición al registrar la recepción.
-            </DialogDescription>
-          </DialogHeader>
-
-          {closeTransferLineItem ? (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-border/70 bg-muted/20 p-3 text-sm">
-                <div className="font-semibold">
-                  {closeTransferLineItem.itemName}
-                </div>
-                <div className="mt-1 text-muted-foreground">
-                  Se recibirá{" "}
-                  <strong>
-                    {formatQuantity(
-                      Number(receivedMap[closeTransferLineItem.id] ?? 0) || 0
-                    )}{" "}
-                    {closeTransferLineItem.unit || ""}
-                  </strong>{" "}
-                  y se devolverá al origen y volverá a requisición el saldo de{" "}
-                  <strong>
-                    {formatQuantity(
-                      getTransferCloseQuantity(closeTransferLineItem)
-                    )}{" "}
-                    {closeTransferLineItem.unit || ""}
-                  </strong>
-                  .
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Motivo</Label>
-                <Select
-                  value={transferCloseReason}
-                  onValueChange={setTransferCloseReason}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TRANSFER_CLOSE_REASONS.map(reason => (
-                      <SelectItem key={reason.value} value={reason.value}>
-                        {reason.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="transfer-close-note">Nota obligatoria</Label>
-                <Textarea
-                  id="transfer-close-note"
-                  rows={4}
-                  value={transferCloseNote}
-                  onChange={event => setTransferCloseNote(event.target.value)}
-                  placeholder="Explique por qué el saldo no se recibirá, regresa al origen y vuelve a requisición"
-                />
-              </div>
-            </div>
-          ) : null}
-
-          <DialogFooter>
-            {closeTransferLineItem &&
-            transferClosureDrafts[closeTransferLineItem.id] ? (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setTransferClosureDrafts(current => {
-                    const next = { ...current };
-                    delete next[closeTransferLineItem.id];
-                    return next;
-                  });
-                  setCloseTransferLineItem(null);
-                }}
-              >
-                Quitar cierre
-              </Button>
-            ) : null}
-            <Button
-              variant="outline"
-              onClick={() => setCloseTransferLineItem(null)}
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={() => {
-                if (!closeTransferLineItem) return;
-                if (getTransferCloseQuantity(closeTransferLineItem) <= 0) {
-                  toast.error("No hay saldo pendiente para cerrar");
-                  return;
-                }
-                if (!transferCloseNote.trim()) {
-                  toast.error("Ingrese una nota para cerrar el saldo");
-                  return;
-                }
-
-                setTransferClosureDrafts(current => ({
-                  ...current,
-                  [closeTransferLineItem.id]: {
-                    reason: transferCloseReason,
-                    note: transferCloseNote.trim(),
-                  },
-                }));
-                setCloseTransferLineItem(null);
-                toast.success("Cierre marcado para esta recepción");
-              }}
-            >
-              Marcar cierre
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-        </div>
 
       <AlertDialog
         open={closeReceiptLineItem !== null}
@@ -5582,9 +5764,10 @@ export default function Recepciones() {
                       <td className="p-3">
                         <Badge
                           variant="outline"
-                          className={`text-xs ${
-                            getReceiptStatusColor(row.receipt, row.invoice)
-                          }`}
+                          className={`text-xs ${getReceiptStatusColor(
+                            row.receipt,
+                            row.invoice
+                          )}`}
                         >
                           {getReceiptStatusLabel(row.receipt, row.invoice)}
                         </Badge>

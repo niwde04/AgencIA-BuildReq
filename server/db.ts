@@ -646,7 +646,9 @@ function buildPurchaseOrderSummaryRows(
 // ============================================================
 // USERS
 // ============================================================
-function normalizeProjectIds(projectIds?: Array<number | null | undefined> | null) {
+function normalizeProjectIds(
+  projectIds?: Array<number | null | undefined> | null
+) {
   if (!Array.isArray(projectIds)) return [];
   return Array.from(
     new Set(
@@ -736,13 +738,16 @@ async function replaceInvitationProjectAssignmentsForInvitation(
 
 async function hydrateUsersWithAssignedProjects<T extends User>(
   rows: T[]
-): Promise<Array<T & { assignedProjectIds: number[]; assignedProjects: any[] }>> {
+): Promise<
+  Array<T & { assignedProjectIds: number[]; assignedProjects: any[] }>
+> {
   const db = await getDb();
-  if (!db || rows.length === 0) return rows.map(row => ({
-    ...row,
-    assignedProjectIds: row.assignedProjectId ? [row.assignedProjectId] : [],
-    assignedProjects: [],
-  }));
+  if (!db || rows.length === 0)
+    return rows.map(row => ({
+      ...row,
+      assignedProjectIds: row.assignedProjectId ? [row.assignedProjectId] : [],
+      assignedProjects: [],
+    }));
 
   const userIds = rows.map(row => row.id);
   const assignmentRows = await db
@@ -779,17 +784,18 @@ async function hydrateUsersWithAssignedProjects<T extends User>(
   });
 }
 
-async function hydrateInvitationsWithAssignedProjects<
-  T extends Invitation,
->(rows: T[]): Promise<
+async function hydrateInvitationsWithAssignedProjects<T extends Invitation>(
+  rows: T[]
+): Promise<
   Array<T & { assignedProjectIds: number[]; assignedProjects: any[] }>
 > {
   const db = await getDb();
-  if (!db || rows.length === 0) return rows.map(row => ({
-    ...row,
-    assignedProjectIds: row.assignedProjectId ? [row.assignedProjectId] : [],
-    assignedProjects: [],
-  }));
+  if (!db || rows.length === 0)
+    return rows.map(row => ({
+      ...row,
+      assignedProjectIds: row.assignedProjectId ? [row.assignedProjectId] : [],
+      assignedProjects: [],
+    }));
 
   const invitationIds = rows.map(row => row.id);
   const assignmentRows = await db
@@ -798,7 +804,10 @@ async function hydrateInvitationsWithAssignedProjects<
       project: projects,
     })
     .from(invitationProjectAssignments)
-    .innerJoin(projects, eq(invitationProjectAssignments.projectId, projects.id))
+    .innerJoin(
+      projects,
+      eq(invitationProjectAssignments.projectId, projects.id)
+    )
     .where(inArray(invitationProjectAssignments.invitationId, invitationIds))
     .orderBy(asc(projects.code), asc(projects.name));
 
@@ -864,7 +873,8 @@ export async function upsertUser(
     values.assignedProjectId = user.assignedProjectId ?? null;
     updateSet.assignedProjectId = user.assignedProjectId ?? null;
   } else if (user.assignedProjectIds !== undefined) {
-    values.assignedProjectId = normalizeProjectIds(user.assignedProjectIds)[0] ?? null;
+    values.assignedProjectId =
+      normalizeProjectIds(user.assignedProjectIds)[0] ?? null;
     updateSet.assignedProjectId =
       normalizeProjectIds(user.assignedProjectIds)[0] ?? null;
   }
@@ -987,7 +997,10 @@ export async function updateUserRole(
         ? [assignedProjectId]
         : [];
   const legacyAssignedProjectId = normalizedProjectIds[0] ?? null;
-  const targetUsers = await db.select({ id: users.id }).from(users).where(where);
+  const targetUsers = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(where);
 
   await db
     .update(users)
@@ -1057,7 +1070,10 @@ export async function updateUserPasswordChangeRequirement(
 // ============================================================
 // PROJECTS
 // ============================================================
-function mapWarehouseSummary(row: Warehouse, options?: { isPrimary?: boolean }) {
+function mapWarehouseSummary(
+  row: Warehouse,
+  options?: { isPrimary?: boolean }
+) {
   return {
     id: row.id,
     code: row.code,
@@ -1085,7 +1101,9 @@ function orderProjectWarehouses(
   return uniqueWarehouses.sort((left, right) => {
     if (left.id === project.warehouseId) return -1;
     if (right.id === project.warehouseId) return 1;
-    return left.code.localeCompare(right.code) || left.name.localeCompare(right.name);
+    return (
+      left.code.localeCompare(right.code) || left.name.localeCompare(right.name)
+    );
   });
 }
 
@@ -1152,7 +1170,10 @@ async function getProjectWarehousesByProjectId(
   for (const project of projectRows) {
     warehousesByProjectId.set(
       project.id,
-      orderProjectWarehouses(project, warehousesByProjectId.get(project.id) ?? [])
+      orderProjectWarehouses(
+        project,
+        warehousesByProjectId.get(project.id) ?? []
+      )
     );
   }
 
@@ -1170,10 +1191,14 @@ function mapProjectWithWarehouses(
 ) {
   const orderedWarehouses = orderProjectWarehouses(project, assignedWarehouses);
   const warehouseSummaries = orderedWarehouses.map(warehouse =>
-    mapWarehouseSummary(warehouse, { isPrimary: warehouse.id === project.warehouseId })
+    mapWarehouseSummary(warehouse, {
+      isPrimary: warehouse.id === project.warehouseId,
+    })
   );
   const warehouseSummary =
-    warehouseSummaries.find(warehouse => warehouse.id === project.warehouseId) ??
+    warehouseSummaries.find(
+      warehouse => warehouse.id === project.warehouseId
+    ) ??
     warehouseSummaries[0] ??
     null;
 
@@ -1203,25 +1228,30 @@ export async function listProjects(statusFilter?: string) {
     .orderBy(desc(projects.createdAt));
 
   const projectIds = projectRows.map(project => project.id);
-  const [warehousesByProjectId, subprojectCounts, inventoryRows] = await Promise.all([
-    getProjectWarehousesByProjectId(db, projectRows),
-    db
-      .select({
-        projectId: projectSubprojects.projectId,
-        total: count(),
-      })
-      .from(projectSubprojects)
-      .groupBy(projectSubprojects.projectId),
-    db
-      .select({
-        projectId: inventoryItems.projectId,
-        inventoryRows: count(),
-        totalStock: sql<string>`coalesce(sum(${inventoryItems.currentStock}), 0)`,
-      })
-      .from(inventoryItems)
-      .where(projectIds.length > 0 ? inArray(inventoryItems.projectId, projectIds) : sql`1 = 0`)
-      .groupBy(inventoryItems.projectId),
-  ]);
+  const [warehousesByProjectId, subprojectCounts, inventoryRows] =
+    await Promise.all([
+      getProjectWarehousesByProjectId(db, projectRows),
+      db
+        .select({
+          projectId: projectSubprojects.projectId,
+          total: count(),
+        })
+        .from(projectSubprojects)
+        .groupBy(projectSubprojects.projectId),
+      db
+        .select({
+          projectId: inventoryItems.projectId,
+          inventoryRows: count(),
+          totalStock: sql<string>`coalesce(sum(${inventoryItems.currentStock}), 0)`,
+        })
+        .from(inventoryItems)
+        .where(
+          projectIds.length > 0
+            ? inArray(inventoryItems.projectId, projectIds)
+            : sql`1 = 0`
+        )
+        .groupBy(inventoryItems.projectId),
+    ]);
 
   const countByProject = new Map(
     subprojectCounts.map(entry => [entry.projectId, entry.total])
@@ -1258,25 +1288,31 @@ export async function getProjectById(id: number) {
     .limit(1);
   if (!project) return undefined;
 
-  const [warehousesByProjectId, subprojects, inventorySummary] = await Promise.all([
-    getProjectWarehousesByProjectId(db, [project]),
-    db
-      .select({ total: count() })
-      .from(projectSubprojects)
-      .where(eq(projectSubprojects.projectId, id)),
-    db
-      .select({
-        inventoryRows: count(),
-        totalStock: sql<string>`coalesce(sum(${inventoryItems.currentStock}), 0)`,
-      })
-      .from(inventoryItems)
-      .where(eq(inventoryItems.projectId, id)),
-  ]);
+  const [warehousesByProjectId, subprojects, inventorySummary] =
+    await Promise.all([
+      getProjectWarehousesByProjectId(db, [project]),
+      db
+        .select({ total: count() })
+        .from(projectSubprojects)
+        .where(eq(projectSubprojects.projectId, id)),
+      db
+        .select({
+          inventoryRows: count(),
+          totalStock: sql<string>`coalesce(sum(${inventoryItems.currentStock}), 0)`,
+        })
+        .from(inventoryItems)
+        .where(eq(inventoryItems.projectId, id)),
+    ]);
 
-  return mapProjectWithWarehouses(project, warehousesByProjectId.get(project.id) ?? [], subprojects?.[0]?.total ?? 0, {
-    inventoryRows: Number(inventorySummary?.[0]?.inventoryRows ?? 0),
-    totalStock: inventorySummary?.[0]?.totalStock ?? "0.00",
-  });
+  return mapProjectWithWarehouses(
+    project,
+    warehousesByProjectId.get(project.id) ?? [],
+    subprojects?.[0]?.total ?? 0,
+    {
+      inventoryRows: Number(inventorySummary?.[0]?.inventoryRows ?? 0),
+      totalStock: inventorySummary?.[0]?.totalStock ?? "0.00",
+    }
+  );
 }
 
 export async function getProjectByCode(code: string) {
@@ -1673,7 +1709,11 @@ export async function listMaterialRequests(filters?: {
   if (filters?.projectId)
     conditions.push(eq(materialRequests.projectId, filters.projectId));
   if (filters?.projectIds) {
-    applyProjectScope(conditions, materialRequests.projectId, filters.projectIds);
+    applyProjectScope(
+      conditions,
+      materialRequests.projectId,
+      filters.projectIds
+    );
   }
   if (filters?.status) {
     conditions.push(sql`${materialRequests.status}::text = ${filters.status}`);
@@ -1889,7 +1929,9 @@ async function getProjectStockBreakdownByWarehouse(params: {
           .from(warehouses)
           .where(inArray(warehouses.id, Array.from(extraWarehouseIds)))
       : [];
-  const extraWarehouseById = new Map(extraWarehouseRows.map(row => [row.id, row]));
+  const extraWarehouseById = new Map(
+    extraWarehouseRows.map(row => [row.id, row])
+  );
   const total = Array.from(quantitiesByWarehouse.values()).reduce(
     (sum, quantity) => sum + quantity,
     legacyQuantity
@@ -1919,7 +1961,9 @@ async function getProjectStockBreakdownByWarehouse(params: {
           displayName: `Almacén #${warehouseId}`,
           isDefault: false,
           isActive: false,
-          quantity: toDecimalString(quantitiesByWarehouse.get(warehouseId) ?? 0),
+          quantity: toDecimalString(
+            quantitiesByWarehouse.get(warehouseId) ?? 0
+          ),
         };
   });
   const legacyBreakdown =
@@ -1987,7 +2031,10 @@ export async function listProjectStockForItems(params: {
     );
     const warehouseRows =
       db && warehouseIds.length > 0
-        ? await db.select().from(warehouses).where(inArray(warehouses.id, warehouseIds))
+        ? await db
+            .select()
+            .from(warehouses)
+            .where(inArray(warehouses.id, warehouseIds))
         : [];
     const warehouseById = new Map(warehouseRows.map(row => [row.id, row]));
     const quantityByWarehouse = new Map<number | null, number>();
@@ -2007,21 +2054,25 @@ export async function listProjectStockForItems(params: {
     stockByKey.set(key, toDecimalString(total));
     breakdownByKey.set(
       key,
-      Array.from(quantityByWarehouse.entries()).map(([warehouseId, quantity]) => {
-        const warehouse =
-          typeof warehouseId === "number" ? warehouseById.get(warehouseId) : null;
-        return {
-          warehouseId,
-          warehouseCode: warehouse?.code ?? null,
-          warehouseName: warehouse?.name ?? null,
-          displayName:
-            warehouse?.displayName ??
-            stockRows.find(row => row.warehouseId === warehouseId)
-              ?.warehouseLocation ??
-            null,
-          quantity: toDecimalString(quantity),
-        };
-      })
+      Array.from(quantityByWarehouse.entries()).map(
+        ([warehouseId, quantity]) => {
+          const warehouse =
+            typeof warehouseId === "number"
+              ? warehouseById.get(warehouseId)
+              : null;
+          return {
+            warehouseId,
+            warehouseCode: warehouse?.code ?? null,
+            warehouseName: warehouse?.name ?? null,
+            displayName:
+              warehouse?.displayName ??
+              stockRows.find(row => row.warehouseId === warehouseId)
+                ?.warehouseLocation ??
+              null,
+            quantity: toDecimalString(quantity),
+          };
+        }
+      )
     );
   }
 
@@ -2091,7 +2142,9 @@ export async function listVisibleWarehouseStockForItems(params: {
     if (sapItemCode) {
       itemConditions.push(eq(inventoryItems.sapItemCode, sapItemCode));
     } else {
-      itemConditions.push(sql`lower(${inventoryItems.name}) = lower(${itemName})`);
+      itemConditions.push(
+        sql`lower(${inventoryItems.name}) = lower(${itemName})`
+      );
     }
 
     const rows = await db
@@ -2130,16 +2183,19 @@ export async function listVisibleWarehouseStockForItems(params: {
         return [];
       }
 
-      return [{
-        warehouseId: row.warehouseId,
-        warehouseCode: row.warehouseCode,
-        warehouseName: row.warehouseName,
-        displayName: row.warehouseDisplayName ?? row.warehouseLocation ?? null,
-        projectId: row.projectId,
-        projectCode: row.projectCode,
-        projectName: row.projectName,
-        quantity: toDecimalString(row.quantity),
-      }];
+      return [
+        {
+          warehouseId: row.warehouseId,
+          warehouseCode: row.warehouseCode,
+          warehouseName: row.warehouseName,
+          displayName:
+            row.warehouseDisplayName ?? row.warehouseLocation ?? null,
+          projectId: row.projectId,
+          projectCode: row.projectCode,
+          projectName: row.projectName,
+          quantity: toDecimalString(row.quantity),
+        },
+      ];
     });
     const total = options.reduce(
       (sum, row) => sum + parseDecimal(row.quantity),
@@ -2266,7 +2322,7 @@ export async function getMaterialRequestById(id: number) {
     const nextValue = {
       sourceWarehouseId: row.sourceWarehouseId ?? null,
       receiptWarehouseId: hasReceiptWarehouse ? row.receiptWarehouseId : null,
-      receiptItemId: hasReceiptWarehouse ? row.receiptItemId ?? null : null,
+      receiptItemId: hasReceiptWarehouse ? (row.receiptItemId ?? null) : null,
     };
 
     if (!current) {
@@ -3477,7 +3533,9 @@ export async function recordWarehouseExitBatch(params: {
       entry.warehouseId
     );
     if (!assignment) {
-      throw new Error(`Seleccione un almacén activo del proyecto para ${item.itemName}`);
+      throw new Error(
+        `Seleccione un almacén activo del proyecto para ${item.itemName}`
+      );
     }
     const sapItemCode = item.sapItemCode?.trim() || null;
     const stockKey = `${sapItemCode || item.itemName.trim().toLowerCase()}::${entry.warehouseId}`;
@@ -3555,7 +3613,9 @@ export async function recordWarehouseExitBatch(params: {
         projectId: request.projectId,
         itemName: item.sapItemDescription || item.itemName,
         targetType: hasExplicitTarget ? entry.targetType : item.targetType,
-        subProjectId: hasExplicitTarget ? entry.subProjectId : item.subProjectId,
+        subProjectId: hasExplicitTarget
+          ? entry.subProjectId
+          : item.subProjectId,
         fixedAssetSapItemCode: hasExplicitTarget
           ? entry.fixedAssetSapItemCode
           : item.fixedAssetSapItemCode,
@@ -3731,7 +3791,11 @@ export async function listSupplyFlowRecords(filters?: {
     conditions.push(eq(materialRequests.projectId, filters.projectId));
   }
   if (filters?.projectIds) {
-    applyProjectScope(conditions, materialRequests.projectId, filters.projectIds);
+    applyProjectScope(
+      conditions,
+      materialRequests.projectId,
+      filters.projectIds
+    );
   }
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
@@ -3777,7 +3841,11 @@ export async function listPendingFlowQueueItems(filters?: {
     conditions.push(eq(materialRequests.projectId, filters.projectId));
   }
   if (filters?.projectIds) {
-    applyProjectScope(conditions, materialRequests.projectId, filters.projectIds);
+    applyProjectScope(
+      conditions,
+      materialRequests.projectId,
+      filters.projectIds
+    );
   }
 
   const candidateRows = await db
@@ -3882,11 +3950,11 @@ export async function listPendingFlowQueueItems(filters?: {
           sapItemDescription: resolvedSapDescription,
           projectStock:
             row.item.assignedFlow === "despacho_bodega"
-              ? currentProjectStock?.quantity ?? "0.00"
+              ? (currentProjectStock?.quantity ?? "0.00")
               : row.item.projectStock,
           projectStockWarehouses:
             row.item.assignedFlow === "despacho_bodega"
-              ? currentProjectStock?.warehouses ?? []
+              ? (currentProjectStock?.warehouses ?? [])
               : [],
         },
         purchaseInsight: {
@@ -4195,7 +4263,7 @@ function buildSupplierContactSnapshot(
 
 function buildPurchaseOrderSalesAdvisorContact(
   purchaseOrder: typeof purchaseOrders.$inferSelect,
-  contact: (typeof supplierContacts.$inferSelect) | null | undefined
+  contact: typeof supplierContacts.$inferSelect | null | undefined
 ) {
   const name = purchaseOrder.salesAdvisorName?.trim() || contact?.name || "";
   if (!name) return null;
@@ -4251,7 +4319,8 @@ function buildPurchaseOrderItemDestinationLabel(item: {
   }
 
   if (targetType === "activo_fijo") {
-    const code = item.target?.fixedAssetSapItemCode ?? item.fixedAssetSapItemCode;
+    const code =
+      item.target?.fixedAssetSapItemCode ?? item.fixedAssetSapItemCode;
     const name = item.target?.fixedAssetName ?? item.fixedAssetName;
     if (!code) return "-";
     return name ? `Activo fijo: ${code} - ${name}` : `Activo fijo: ${code}`;
@@ -4427,7 +4496,11 @@ export async function listPurchaseRequests(filters?: {
   if (filters?.projectId)
     conditions.push(eq(purchaseRequests.projectId, filters.projectId));
   if (filters?.projectIds) {
-    applyProjectScope(conditions, purchaseRequests.projectId, filters.projectIds);
+    applyProjectScope(
+      conditions,
+      purchaseRequests.projectId,
+      filters.projectIds
+    );
   }
   if (filters?.status)
     conditions.push(eq(purchaseRequests.status, filters.status as any));
@@ -5230,10 +5303,7 @@ export async function getPurchaseOrderById(id: number) {
     )
     .leftJoin(
       purchaseRequestItemSubprojects,
-      eq(
-        purchaseRequestItems.subProjectId,
-        purchaseRequestItemSubprojects.id
-      )
+      eq(purchaseRequestItems.subProjectId, purchaseRequestItemSubprojects.id)
     )
     .leftJoin(
       sourceItemSubprojects,
@@ -5289,8 +5359,7 @@ export async function getPurchaseOrderById(id: number) {
     return {
       ...row.item,
       targetType: target?.type ?? null,
-      subProjectId:
-        target?.type === "subproyecto" ? target.subProjectId : null,
+      subProjectId: target?.type === "subproyecto" ? target.subProjectId : null,
       fixedAssetSapItemCode:
         target?.type === "activo_fijo" ? target.fixedAssetSapItemCode : null,
       fixedAssetName:
@@ -5379,9 +5448,14 @@ export async function getPurchaseOrderById(id: number) {
     neededBy: rows[0].purchaseOrder.neededBy,
     printedAt: rows[0].purchaseOrder.printedAt,
     requestedByLabel:
-      originalRequester?.name ?? originalRequester?.email ?? rows[0].createdBy?.name ?? "-",
+      originalRequester?.name ??
+      originalRequester?.email ??
+      rows[0].createdBy?.name ??
+      "-",
     originalRequestLabel:
-      originalRequestNumbers.length > 0 ? originalRequestNumbers.join(", ") : "-",
+      originalRequestNumbers.length > 0
+        ? originalRequestNumbers.join(", ")
+        : "-",
     salesAdvisorLabel: formatSupplierContactReference(preferredSupplierContact),
     observations: rows[0].purchaseOrder.notes,
     quoteLabel: rows[0].purchaseRequest?.quoteAttachmentId
@@ -5536,13 +5610,13 @@ export async function updatePurchaseOrderContractTerms(params: {
     const nextData: Partial<InsertPurchaseOrder> = {
       appliesContract: params.appliesContract,
       contractPaymentFrequency: params.appliesContract
-        ? params.contractPaymentFrequency ?? null
+        ? (params.contractPaymentFrequency ?? null)
         : null,
       contractFirstPaymentDate: params.appliesContract
-        ? params.contractFirstPaymentDate ?? null
+        ? (params.contractFirstPaymentDate ?? null)
         : null,
       contractEndDate: params.appliesContract
-        ? params.contractEndDate ?? null
+        ? (params.contractEndDate ?? null)
         : null,
       updatedAt: new Date(),
     };
@@ -5565,7 +5639,11 @@ export async function updatePurchaseOrderContractTerms(params: {
       "contractEndDate",
     ];
     const logs = auditFields
-      .filter(field => String((current as any)[field] ?? "") !== String((nextData as any)[field] ?? ""))
+      .filter(
+        field =>
+          String((current as any)[field] ?? "") !==
+          String((nextData as any)[field] ?? "")
+      )
       .map(field => ({
         purchaseOrderId: params.purchaseOrderId,
         purchaseOrderItemId: null,
@@ -5606,7 +5684,9 @@ export async function syncPurchaseOrderReceiptStatus(purchaseOrderId: number) {
     .from(purchaseOrderItems)
     .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId));
 
-  const invoiceCountMap = await getPurchaseOrderInvoiceCountMap([purchaseOrderId]);
+  const invoiceCountMap = await getPurchaseOrderInvoiceCountMap([
+    purchaseOrderId,
+  ]);
   const nextStatus = purchaseOrder?.appliesContract
     ? invoiceCountMap.get(purchaseOrderId)
       ? ("parcialmente_recibida" as const)
@@ -5840,18 +5920,19 @@ export async function getTransferRequestById(id: number) {
     rows[0].transferRequest.destinationProjectId
       ? await getProjectById(rows[0].transferRequest.destinationProjectId)
       : null;
-  const reverseLogisticDestinationWarehouse =
-    rows[0].transferRequest.reverseLogisticId
-      ? (await getReverseLogisticById(
-          rows[0].transferRequest.reverseLogisticId
-        ))?.destinationWarehouse ?? null
-      : null;
+  const reverseLogisticDestinationWarehouse = rows[0].transferRequest
+    .reverseLogisticId
+    ? ((await getReverseLogisticById(rows[0].transferRequest.reverseLogisticId))
+        ?.destinationWarehouse ?? null)
+    : null;
 
   return {
     ...rows[0],
     destinationProject,
     destinationWarehouse:
-      reverseLogisticDestinationWarehouse ?? destinationProject?.warehouse ?? null,
+      reverseLogisticDestinationWarehouse ??
+      destinationProject?.warehouse ??
+      null,
     items: enrichedItems,
   };
 }
@@ -6225,12 +6306,11 @@ export async function getTransferById(id: number) {
     rows[0].transferRequest.destinationProjectId
       ? await getProjectById(rows[0].transferRequest.destinationProjectId)
       : null;
-  const reverseLogisticDestinationWarehouse =
-    rows[0].transferRequest?.reverseLogisticId
-      ? (await getReverseLogisticById(
-          rows[0].transferRequest.reverseLogisticId
-        ))?.destinationWarehouse ?? null
-      : null;
+  const reverseLogisticDestinationWarehouse = rows[0].transferRequest
+    ?.reverseLogisticId
+    ? ((await getReverseLogisticById(rows[0].transferRequest.reverseLogisticId))
+        ?.destinationWarehouse ?? null)
+    : null;
   const originProject = rows[0].transferRequest?.projectId
     ? await getProjectById(rows[0].transferRequest.projectId)
     : null;
@@ -6269,20 +6349,19 @@ export async function getTransferById(id: number) {
       return {
         ...item,
         sourceWarehouse: item.sourceWarehouseId
-          ? (await getWarehouseById(item.sourceWarehouseId)) ?? null
+          ? ((await getWarehouseById(item.sourceWarehouseId)) ?? null)
           : null,
         target,
-        targetLabel:
-          requestItemTarget
-            ? buildWarehouseExitTargetLabel({
-                targetType: requestItemTarget.item.targetType,
-                subProjectId: requestItemTarget.item.subProjectId,
-                subproject: requestItemTarget.subproject,
-                fixedAssetSapItemCode:
-                  requestItemTarget.item.fixedAssetSapItemCode,
-                fixedAssetName: requestItemTarget.item.fixedAssetName,
-              })
-            : null,
+        targetLabel: requestItemTarget
+          ? buildWarehouseExitTargetLabel({
+              targetType: requestItemTarget.item.targetType,
+              subProjectId: requestItemTarget.item.subProjectId,
+              subproject: requestItemTarget.subproject,
+              fixedAssetSapItemCode:
+                requestItemTarget.item.fixedAssetSapItemCode,
+              fixedAssetName: requestItemTarget.item.fixedAssetName,
+            })
+          : null,
       };
     })
   );
@@ -6292,7 +6371,9 @@ export async function getTransferById(id: number) {
     originWarehouse: originProject?.warehouse ?? null,
     destinationProject,
     destinationWarehouse:
-      reverseLogisticDestinationWarehouse ?? destinationProject?.warehouse ?? null,
+      reverseLogisticDestinationWarehouse ??
+      destinationProject?.warehouse ??
+      null,
     createdBy: rows[0].createdBy
       ? {
           id: rows[0].createdBy.id,
@@ -6328,10 +6409,7 @@ export async function updateTransferPrintFields(
 }
 
 function hasReceiptItemFinancialSnapshot(
-  receiptItem: Pick<
-    InsertReceiptItem,
-    "subtotal" | "taxAmount" | "total"
-  >
+  receiptItem: Pick<InsertReceiptItem, "subtotal" | "taxAmount" | "total">
 ) {
   return (
     parseDecimal(receiptItem.subtotal) > 0 ||
@@ -6460,7 +6538,9 @@ async function upsertSupplierFiscalDocumentRange(params: {
   return range ?? null;
 }
 
-async function upsertSupplierFiscalDocumentRangeForInvoiceId(invoiceId: number) {
+async function upsertSupplierFiscalDocumentRangeForInvoiceId(
+  invoiceId: number
+) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
@@ -6643,30 +6723,31 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
           ),
           taxCode: amounts.taxCode,
           additionalTaxCodes: amounts.additionalTaxCodes,
-          targetType:
-            receiptItem.targetType ?? sourceItem?.targetType ?? null,
+          targetType: receiptItem.targetType ?? sourceItem?.targetType ?? null,
           subProjectId:
             (receiptItem.targetType ?? sourceItem?.targetType) === "subproyecto"
-              ? receiptItem.subProjectId ?? sourceItem?.subProjectId ?? null
+              ? (receiptItem.subProjectId ?? sourceItem?.subProjectId ?? null)
               : null,
           fixedAssetSapItemCode:
             (receiptItem.targetType ?? sourceItem?.targetType) === "activo_fijo"
-              ? receiptItem.fixedAssetSapItemCode ??
+              ? (receiptItem.fixedAssetSapItemCode ??
                 sourceItem?.fixedAssetSapItemCode ??
-                null
+                null)
               : null,
           fixedAssetName:
             (receiptItem.targetType ?? sourceItem?.targetType) === "activo_fijo"
-              ? receiptItem.fixedAssetName ?? sourceItem?.fixedAssetName ?? null
+              ? (receiptItem.fixedAssetName ??
+                sourceItem?.fixedAssetName ??
+                null)
               : null,
           isFixedAsset: receiptItem.isFixedAsset ?? false,
           isLeasing:
             receiptItem.isFixedAsset === true
-              ? receiptItem.isLeasing ?? false
+              ? (receiptItem.isLeasing ?? false)
               : false,
           assetDetails:
             receiptItem.isFixedAsset === true
-              ? receiptItem.assetDetails ?? []
+              ? (receiptItem.assetDetails ?? [])
               : [],
           lineObservation: receiptItem.notes ?? null,
           allowsTaxWithholding: catalogItem?.allowsTaxWithholding ?? true,
@@ -6867,9 +6948,38 @@ export async function registerReceipt(
     if (!purchaseOrderDetail) {
       throw new Error("Orden de compra no encontrada");
     }
+    const purchaseOrderDetailItemsById = new Map(
+      (purchaseOrderDetail.items ?? []).map((detailItem: any) => [
+        detailItem.id,
+        detailItem,
+      ])
+    );
+    const isServicePurchaseOrderItem = async (item: {
+      sourceItemId?: number | null;
+      sapItemCode?: string | null;
+    }) => {
+      if (item.sourceItemId) {
+        const detailItem = purchaseOrderDetailItemsById.get(item.sourceItemId);
+        return (
+          Number(
+            detailItem?.catalogItem?.tipoArticulo ??
+              detailItem?.tipoArticulo ??
+              0
+          ) === 2
+        );
+      }
+
+      const sapItemCode = item.sapItemCode?.trim();
+      if (!sapItemCode) return false;
+      const catalogItem = await lookupSapItemByCode(sapItemCode);
+      return Number(catalogItem?.tipoArticulo ?? 0) === 2;
+    };
 
     for (const item of items) {
       if (!item.sourceItemId) {
+        if (await isServicePurchaseOrderItem(item)) {
+          continue;
+        }
         await addInventoryStock({
           sapItemCode: item.sapItemCode ?? null,
           itemName: item.itemName,
@@ -6887,6 +6997,7 @@ export async function registerReceipt(
         .where(eq(purchaseOrderItems.id, item.sourceItemId))
         .limit(1);
       if (!existingItem) continue;
+      const isServiceLine = await isServicePurchaseOrderItem(item);
       const nextReceived =
         parseDecimal(existingItem.receivedQuantity) +
         parseDecimal(item.quantityReceived);
@@ -6946,15 +7057,17 @@ export async function registerReceipt(
         }
       }
 
-      await addInventoryStock({
-        sapItemCode:
-          existingItem.currentSapItemCode ?? existingItem.originalSapItemCode,
-        itemName: existingItem.itemName,
-        unit: existingItem.unit,
-        projectId: purchaseOrderDetail.purchaseOrder.projectId,
-        warehouseId: item.warehouseId,
-        quantity: item.quantityReceived,
-      });
+      if (!isServiceLine) {
+        await addInventoryStock({
+          sapItemCode:
+            existingItem.currentSapItemCode ?? existingItem.originalSapItemCode,
+          itemName: existingItem.itemName,
+          unit: existingItem.unit,
+          projectId: purchaseOrderDetail.purchaseOrder.projectId,
+          warehouseId: item.warehouseId,
+          quantity: item.quantityReceived,
+        });
+      }
     }
     await syncPurchaseOrderReceiptStatus(data.sourceId);
 
@@ -7237,7 +7350,8 @@ export async function saveReceiptDraft(
     .limit(1);
 
   const receiptNumber =
-    existingDraft?.receiptNumber ?? (await generateReceiptNumber(data.projectId));
+    existingDraft?.receiptNumber ??
+    (await generateReceiptNumber(data.projectId));
   const receiptData = {
     ...data,
     receiptNumber,
@@ -7255,14 +7369,11 @@ export async function saveReceiptDraft(
           receiptNumber: receipts.receiptNumber,
           status: receipts.status,
         })
-    : await db
-        .insert(receipts)
-        .values(receiptData)
-        .returning({
-          id: receipts.id,
-          receiptNumber: receipts.receiptNumber,
-          status: receipts.status,
-        });
+    : await db.insert(receipts).values(receiptData).returning({
+        id: receipts.id,
+        receiptNumber: receipts.receiptNumber,
+        status: receipts.status,
+      });
 
   await db.delete(receiptItems).where(eq(receiptItems.receiptId, draft.id));
   await db
@@ -7479,7 +7590,8 @@ export async function listSalesTaxes(filters?: SalesTaxListFilters) {
 
   if (!db) {
     const items = defaultSalesTaxRows().filter(
-      row => filters?.isActive === undefined || row.isActive === filters.isActive
+      row =>
+        filters?.isActive === undefined || row.isActive === filters.isActive
     );
     return {
       items,
@@ -8305,7 +8417,9 @@ export async function replaceInvoiceRetentions(
     const invoice = invoiceRow.invoice;
     const hasRetentions = retentions.length > 0;
     const normalizedRetentionReceiptNumber =
-      retentionReceiptNumber?.trim() || invoice.retentionReceiptNumber?.trim() || null;
+      retentionReceiptNumber?.trim() ||
+      invoice.retentionReceiptNumber?.trim() ||
+      null;
     if (hasRetentions && !normalizedRetentionReceiptNumber) {
       throw new Error(
         "Ingrese el número de comprobante de retención antes de guardar retenciones"
@@ -8381,12 +8495,16 @@ export async function replaceInvoiceRetentions(
 
     const normalizedRetentions = retentions.map(retention => {
       const invoiceItemId = retention.invoiceItemId ?? null;
-      const invoiceItem = invoiceItemId ? itemsById.get(invoiceItemId) : undefined;
+      const invoiceItem = invoiceItemId
+        ? itemsById.get(invoiceItemId)
+        : undefined;
       if (invoiceItemId && !invoiceItem) {
         throw new Error("La línea de factura seleccionada no existe");
       }
       if (invoiceItem && invoiceItem.allowsTaxWithholding === false) {
-        throw new Error("La línea seleccionada no permite retención de impuestos");
+        throw new Error(
+          "La línea seleccionada no permite retención de impuestos"
+        );
       }
 
       const catalogRetention = catalogById.get(retention.retentionCatalogId);
@@ -8928,7 +9046,9 @@ async function resolveWarehouseExitItemTarget(params: {
 
   if (params.targetType === "subproyecto") {
     if (!params.subProjectId) {
-      throw new Error(`Seleccione un subproyecto válido para ${params.itemName}`);
+      throw new Error(
+        `Seleccione un subproyecto válido para ${params.itemName}`
+      );
     }
 
     const subproject = await getProjectSubprojectById(params.subProjectId);
@@ -9013,7 +9133,10 @@ export async function createWarehouseExit(
         throw new Error("Todas las cantidades deben ser mayores que cero");
       }
 
-      const assignment = await resolveProjectAssignment(project.id, item.warehouseId);
+      const assignment = await resolveProjectAssignment(
+        project.id,
+        item.warehouseId
+      );
       if (!assignment) {
         throw new Error("Debe seleccionar almacén para todos los ítems");
       }
@@ -9303,7 +9426,11 @@ export async function listOpeningBalances(filters?: {
     conditions.push(eq(openingBalances.projectId, filters.projectId));
   }
   if (filters?.projectIds) {
-    applyProjectScope(conditions, openingBalances.projectId, filters.projectIds);
+    applyProjectScope(
+      conditions,
+      openingBalances.projectId,
+      filters.projectIds
+    );
   }
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -9444,10 +9571,7 @@ async function getOpeningBalanceProjectForWarehouse(warehouseId: number) {
       isPrimary: projectWarehouseAssignments.isPrimary,
     })
     .from(projectWarehouseAssignments)
-    .innerJoin(
-      projects,
-      eq(projectWarehouseAssignments.projectId, projects.id)
-    )
+    .innerJoin(projects, eq(projectWarehouseAssignments.projectId, projects.id))
     .where(
       and(
         eq(projectWarehouseAssignments.warehouseId, warehouseId),
@@ -9501,7 +9625,10 @@ export async function createOpeningBalance(
     );
   }
 
-  const assignment = await resolveProjectAssignment(project.id, data.warehouseId);
+  const assignment = await resolveProjectAssignment(
+    project.id,
+    data.warehouseId
+  );
   if (!assignment) {
     throw new Error("Debe seleccionar un almacén del proyecto");
   }
@@ -9509,9 +9636,7 @@ export async function createOpeningBalance(
   const existingBalance = await db
     .select()
     .from(openingBalances)
-    .where(
-      eq(openingBalances.warehouseId, warehouse.id)
-    )
+    .where(eq(openingBalances.warehouseId, warehouse.id))
     .limit(1);
 
   if (existingBalance[0]) {
@@ -9920,7 +10045,10 @@ export async function listReverseLogistics(filters?: {
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const destinationProjects = alias(projects, "reverse_logistics_destination_projects");
+  const destinationProjects = alias(
+    projects,
+    "reverse_logistics_destination_projects"
+  );
   const destinationWarehouses = alias(
     warehouses,
     "reverse_logistics_destination_warehouses"
@@ -9952,7 +10080,10 @@ export async function getReverseLogisticById(id: number) {
   if (!db) return undefined;
 
   const itemWarehouses = alias(warehouses, "reverse_logistics_item_warehouses");
-  const destinationProjects = alias(projects, "reverse_logistics_destination_projects");
+  const destinationProjects = alias(
+    projects,
+    "reverse_logistics_destination_projects"
+  );
   const destinationWarehouses = alias(
     warehouses,
     "reverse_logistics_destination_warehouses"
@@ -10072,10 +10203,11 @@ export async function createTransferFromReverseLogistic(
     .where(
       and(
         eq(transferRequests.reverseLogisticId, id),
-        inArray(
-          transferRequests.status,
-          ["pendiente", "aprobada", "convertida"] as any
-        )
+        inArray(transferRequests.status, [
+          "pendiente",
+          "aprobada",
+          "convertida",
+        ] as any)
       )
     )
     .limit(1);
@@ -10134,7 +10266,9 @@ export async function createTransferFromReverseLogistic(
   for (const item of detail.items) {
     const quantity = parseDecimal(item.quantity);
     if (quantity <= 0) {
-      throw new Error(`La cantidad de ${item.itemName} debe ser mayor que cero`);
+      throw new Error(
+        `La cantidad de ${item.itemName} debe ser mayor que cero`
+      );
     }
 
     if (!item.warehouseId || !activeWarehouseIds.has(item.warehouseId)) {
@@ -10653,7 +10787,10 @@ async function getProjectAssignedWarehouseByProjectId(projectId: number) {
   return warehousesByProjectId.get(projectId)?.[0];
 }
 
-export async function listProjectWarehouses(projectId: number, filters?: { isActive?: boolean }) {
+export async function listProjectWarehouses(
+  projectId: number,
+  filters?: { isActive?: boolean }
+) {
   const db = await getDb();
   if (!db) return [] as Warehouse[];
   const [project] = await db
@@ -11137,7 +11274,9 @@ export async function listWarehouses(filters?: {
       db
         .select({ warehouseId: projectWarehouseAssignments.warehouseId })
         .from(projectWarehouseAssignments)
-        .where(inArray(projectWarehouseAssignments.projectId, scopedProjectIds)),
+        .where(
+          inArray(projectWarehouseAssignments.projectId, scopedProjectIds)
+        ),
       db
         .select({ warehouseId: projects.warehouseId })
         .from(projects)
@@ -11195,25 +11334,28 @@ export async function listWarehouses(filters?: {
     )
     .orderBy(asc(warehouses.name), asc(warehouses.code));
 
-  const assignedUsersByWarehouseId = await getWarehouseAssignedUsersByWarehouseIds(
-    rows.map(row => row.warehouse.id)
-  );
+  const assignedUsersByWarehouseId =
+    await getWarehouseAssignedUsersByWarehouseIds(
+      rows.map(row => row.warehouse.id)
+    );
 
-  return rows.map(({ warehouse, projectCount, inventoryRows, uniqueItems, totalStock }) => {
-    const assignedUsers = assignedUsersByWarehouseId.get(warehouse.id) ?? [];
-    return {
-      ...warehouse,
-      warehouseType: "padre",
-      project: null,
-      responsibleUser: assignedUsers.find(user => user.isResponsible) ?? null,
-      assignedUsersCount: assignedUsers.length,
-      projectCount: Number(projectCount ?? 0),
-      assignedProjectsCount: Number(projectCount ?? 0),
-      inventoryRows: Number(inventoryRows ?? 0),
-      uniqueItems: Number(uniqueItems ?? 0),
-      totalStock: toDecimalString(totalStock),
-    };
-  });
+  return rows.map(
+    ({ warehouse, projectCount, inventoryRows, uniqueItems, totalStock }) => {
+      const assignedUsers = assignedUsersByWarehouseId.get(warehouse.id) ?? [];
+      return {
+        ...warehouse,
+        warehouseType: "padre",
+        project: null,
+        responsibleUser: assignedUsers.find(user => user.isResponsible) ?? null,
+        assignedUsersCount: assignedUsers.length,
+        projectCount: Number(projectCount ?? 0),
+        assignedProjectsCount: Number(projectCount ?? 0),
+        inventoryRows: Number(inventoryRows ?? 0),
+        uniqueItems: Number(uniqueItems ?? 0),
+        totalStock: toDecimalString(totalStock),
+      };
+    }
+  );
 }
 
 export async function createWarehouse(data: {
@@ -11258,7 +11400,10 @@ export async function createWarehouse(data: {
     isActive: true,
   } satisfies InsertWarehouse;
 
-  const [warehouse] = await db.insert(warehouses).values(warehousePayload).returning();
+  const [warehouse] = await db
+    .insert(warehouses)
+    .values(warehousePayload)
+    .returning();
 
   return {
     warehouse,
@@ -11305,13 +11450,11 @@ export async function getWarehouseDetailById(id: number) {
       isPrimary: projectWarehouseAssignments.isPrimary,
     })
     .from(projectWarehouseAssignments)
-    .innerJoin(
-      projects,
-      eq(projectWarehouseAssignments.projectId, projects.id)
-    )
+    .innerJoin(projects, eq(projectWarehouseAssignments.projectId, projects.id))
     .where(eq(projectWarehouseAssignments.warehouseId, id))
     .orderBy(asc(projects.code), asc(projects.name));
-  const assignedUsersByWarehouseId = await getWarehouseAssignedUsersByWarehouseIds([id]);
+  const assignedUsersByWarehouseId =
+    await getWarehouseAssignedUsersByWarehouseIds([id]);
   const assignedUsers = assignedUsersByWarehouseId.get(id) ?? [];
   return {
     ...rows[0].warehouse,
@@ -11369,7 +11512,10 @@ export async function updateWarehouse(
   const nextIsActive = data.isActive ?? warehouse.isActive;
   const nextDisplayName = buildWarehouseDisplayName(nextCode, nextName);
 
-  if (nextCode !== warehouse.code || nextDisplayName !== warehouse.displayName) {
+  if (
+    nextCode !== warehouse.code ||
+    nextDisplayName !== warehouse.displayName
+  ) {
     const duplicateRows = await db
       .select({ id: warehouses.id })
       .from(warehouses)
@@ -11507,7 +11653,9 @@ export async function unassignProjectFromWarehouse(params: {
     sql`${inventoryItems.currentStock}::numeric > 0`,
   ];
   if (params.warehouseId) {
-    inventoryConditions.push(eq(inventoryItems.warehouseId, params.warehouseId));
+    inventoryConditions.push(
+      eq(inventoryItems.warehouseId, params.warehouseId)
+    );
   }
 
   const [stockRow] = await db
@@ -11669,9 +11817,7 @@ export async function assignUserToWarehouse(params: {
       await tx
         .update(warehouseUserAssignments)
         .set({
-          isResponsible: params.isResponsible
-            ? true
-            : existing.isResponsible,
+          isResponsible: params.isResponsible ? true : existing.isResponsible,
           assignedById: params.assignedById ?? existing.assignedById,
           updatedAt: new Date(),
         })
@@ -12469,13 +12615,21 @@ export async function getInventoryKardex(params: {
   const scopeProjectIds = await resolveInventoryScopeProjectIds(params);
 
   const balanceConditions = [eq(inventoryItems.sapItemCode, sapItemCode)];
-  applyProjectScope(balanceConditions, inventoryItems.projectId, scopeProjectIds);
+  applyProjectScope(
+    balanceConditions,
+    inventoryItems.projectId,
+    scopeProjectIds
+  );
   if (params.warehouseId) {
     balanceConditions.push(eq(inventoryItems.warehouseId, params.warehouseId));
   }
 
   const openingConditions = [eq(openingBalanceItems.sapItemCode, sapItemCode)];
-  applyProjectScope(openingConditions, openingBalances.projectId, scopeProjectIds);
+  applyProjectScope(
+    openingConditions,
+    openingBalances.projectId,
+    scopeProjectIds
+  );
   if (params.warehouseId) {
     openingConditions.push(eq(openingBalances.warehouseId, params.warehouseId));
   }
@@ -12493,7 +12647,9 @@ export async function getInventoryKardex(params: {
     scopeProjectIds
   );
   if (params.warehouseId) {
-    purchaseReceiptConditions.push(eq(receiptItems.warehouseId, params.warehouseId));
+    purchaseReceiptConditions.push(
+      eq(receiptItems.warehouseId, params.warehouseId)
+    );
   }
 
   const transferReceiptConditions = [
@@ -12506,7 +12662,9 @@ export async function getInventoryKardex(params: {
     scopeProjectIds
   );
   if (params.warehouseId) {
-    transferReceiptConditions.push(eq(receiptItems.warehouseId, params.warehouseId));
+    transferReceiptConditions.push(
+      eq(receiptItems.warehouseId, params.warehouseId)
+    );
   }
 
   const warehouseExitConditions = [
@@ -12656,7 +12814,10 @@ export async function getInventoryKardex(params: {
         eq(transfers.transferRequestId, transferRequests.id)
       )
       .leftJoin(projects, eq(transferRequests.projectId, projects.id))
-      .leftJoin(warehouses, eq(transferRequestItems.sourceWarehouseId, warehouses.id))
+      .leftJoin(
+        warehouses,
+        eq(transferRequestItems.sourceWarehouseId, warehouses.id)
+      )
       .where(and(...transferExitConditions))
       .orderBy(desc(transfers.createdAt), desc(transferRequestItems.id))
       .limit(75),
@@ -12704,7 +12865,14 @@ export async function getInventoryKardex(params: {
       notes: item.notes,
     })),
     ...purchaseReceiptRows.map(
-      ({ receipt, receiptItem, sourceItem, purchaseOrder, project, warehouse }) => ({
+      ({
+        receipt,
+        receiptItem,
+        sourceItem,
+        purchaseOrder,
+        project,
+        warehouse,
+      }) => ({
         id: `receipt-po-${receiptItem.id}`,
         type: "recepcion_oc" as const,
         direction: "entrada" as const,
@@ -12756,20 +12924,22 @@ export async function getInventoryKardex(params: {
       unit: item.unit,
       notes: item.notes ?? warehouseExit.notes,
     })),
-    ...transferExitRows.map(({ transfer, transferRequest, item, project, warehouse }) => ({
-      id: `transfer-exit-${item.id}`,
-      type: "salida_traslado" as const,
-      direction: "salida" as const,
-      documentNumber: transfer.transferNumber,
-      sourceNumber: transferRequest.requestNumber,
-      date: transfer.createdAt,
-      project,
-      warehouse: warehouse ? mapWarehouseSummary(warehouse) : null,
-      itemName: item.itemName,
-      quantity: toDecimalString(item.quantity),
-      unit: item.unit,
-      notes: transferRequest.notes,
-    })),
+    ...transferExitRows.map(
+      ({ transfer, transferRequest, item, project, warehouse }) => ({
+        id: `transfer-exit-${item.id}`,
+        type: "salida_traslado" as const,
+        direction: "salida" as const,
+        documentNumber: transfer.transferNumber,
+        sourceNumber: transferRequest.requestNumber,
+        date: transfer.createdAt,
+        project,
+        warehouse: warehouse ? mapWarehouseSummary(warehouse) : null,
+        itemName: item.itemName,
+        quantity: toDecimalString(item.quantity),
+        unit: item.unit,
+        notes: transferRequest.notes,
+      })
+    ),
   ].sort((left, right) => {
     const leftTime = left.date ? new Date(left.date).getTime() : 0;
     const rightTime = right.date ? new Date(right.date).getTime() : 0;
@@ -13114,7 +13284,11 @@ export async function getDashboardStats(filters?: {
     requestConditions.push(eq(materialRequests.projectId, filters.projectId));
   }
   if (filters?.projectIds) {
-    applyProjectScope(requestConditions, materialRequests.projectId, filters.projectIds);
+    applyProjectScope(
+      requestConditions,
+      materialRequests.projectId,
+      filters.projectIds
+    );
   }
   const requestWhere =
     requestConditions.length > 0 ? and(...requestConditions) : undefined;
@@ -13131,7 +13305,11 @@ export async function getDashboardStats(filters?: {
     );
   }
   if (filters?.projectIds) {
-    applyProjectScope(returnConditions, reverseLogistics.sourceProjectId, filters.projectIds);
+    applyProjectScope(
+      returnConditions,
+      reverseLogistics.sourceProjectId,
+      filters.projectIds
+    );
   }
   const returnWhere =
     returnConditions.length > 0 ? and(...returnConditions) : undefined;
@@ -13168,29 +13346,32 @@ export async function getDashboardStats(filters?: {
             )
           )
     : filters?.projectId
-    ? await db
-        .select({ count: count() })
-        .from(projects)
-        .where(
-          and(eq(projects.status, "activo"), eq(projects.id, filters.projectId))
-        )
-    : filters?.requestedById
       ? await db
-          .select({
-            count: sql<number>`count(distinct ${materialRequests.projectId})`,
-          })
-          .from(materialRequests)
-          .leftJoin(projects, eq(materialRequests.projectId, projects.id))
+          .select({ count: count() })
+          .from(projects)
           .where(
             and(
               eq(projects.status, "activo"),
-              eq(materialRequests.requestedById, filters.requestedById)
+              eq(projects.id, filters.projectId)
             )
           )
-      : await db
-          .select({ count: count() })
-          .from(projects)
-          .where(eq(projects.status, "activo"));
+      : filters?.requestedById
+        ? await db
+            .select({
+              count: sql<number>`count(distinct ${materialRequests.projectId})`,
+            })
+            .from(materialRequests)
+            .leftJoin(projects, eq(materialRequests.projectId, projects.id))
+            .where(
+              and(
+                eq(projects.status, "activo"),
+                eq(materialRequests.requestedById, filters.requestedById)
+              )
+            )
+        : await db
+            .select({ count: count() })
+            .from(projects)
+            .where(eq(projects.status, "activo"));
   const [totalReturns] = await db
     .select({ count: count() })
     .from(reverseLogistics)
@@ -13581,7 +13762,7 @@ export async function createArticle(data: {
       brand: data.brand?.trim() || null,
       partNumber: data.partNumber?.trim() || null,
       tipoArticulo: data.tipoArticulo,
-      projectId: data.tipoArticulo === 3 ? data.projectId ?? null : null,
+      projectId: data.tipoArticulo === 3 ? (data.projectId ?? null) : null,
       allowsTaxWithholding: data.allowsTaxWithholding ?? true,
       isActive: data.isActive ?? true,
     })
@@ -13604,10 +13785,7 @@ export function buildTemporaryFixedAssetItemCode(params: {
 }) {
   const projectCode = normalizeTemporaryProjectCode(params.projectCode);
   const prefix = `OC-${projectCode}-`;
-  const sequencePattern = new RegExp(
-    `^${escapeRegExp(prefix)}(\\d{4})$`,
-    "i"
-  );
+  const sequencePattern = new RegExp(`^${escapeRegExp(prefix)}(\\d{4})$`, "i");
   const maxSequence = params.existingCodes.reduce((max, value) => {
     const match = String(value ?? "").match(sequencePattern);
     if (!match) return max;
@@ -13766,10 +13944,7 @@ export async function savePurchaseOrderFixedAssetDraftLine(params: {
         .where(eq(sapCatalog.id, article.id))
         .returning();
     } else {
-      [article] = await tx
-        .insert(sapCatalog)
-        .values(articleValues)
-        .returning();
+      [article] = await tx.insert(sapCatalog).values(articleValues).returning();
     }
 
     if (!article) {
@@ -13951,7 +14126,7 @@ function getSearchTokens(value: string) {
 }
 
 function escapeLikePattern(value: string) {
-  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+  return value.replace(/[\\%_]/g, match => `\\${match}`);
 }
 
 function containsSearchPattern(value: string) {
@@ -13973,8 +14148,12 @@ function normalizedLike(column: any, pattern: string) {
 function buildSearchTokenConditions(search: string, columns: any[]) {
   const tokens = getSearchTokens(search);
   return tokens.map(
-    (token) =>
-      or(...columns.map((column) => normalizedLike(column, containsSearchPattern(token))))!
+    token =>
+      or(
+        ...columns.map(column =>
+          normalizedLike(column, containsSearchPattern(token))
+        )
+      )!
   );
 }
 
@@ -14209,7 +14388,9 @@ async function buildSupplierExcelImportAnalysisFromDb(
   };
 }
 
-export async function analyzeSupplierExcelImport(input: SupplierExcelFileInput) {
+export async function analyzeSupplierExcelImport(
+  input: SupplierExcelFileInput
+) {
   const { analysis } = await buildSupplierExcelImportAnalysisFromDb(input);
   return summarizeSupplierExcelImportAnalysis(analysis);
 }
@@ -14218,7 +14399,9 @@ export async function importSupplierExcel(input: SupplierExcelFileInput) {
   const { db, analysis } = await buildSupplierExcelImportAnalysisFromDb(input);
 
   if (analysis.errors.length > 0) {
-    throw new Error(analysis.errors[0]?.message ?? "El archivo contiene errores");
+    throw new Error(
+      analysis.errors[0]?.message ?? "El archivo contiene errores"
+    );
   }
 
   const now = new Date();
@@ -14282,7 +14465,11 @@ export async function listSupplierContacts(params: {
     conditions.push(eq(supplierContacts.projectId, params.projectId));
   }
   if (params.projectIds) {
-    applyProjectScope(conditions, supplierContacts.projectId, params.projectIds);
+    applyProjectScope(
+      conditions,
+      supplierContacts.projectId,
+      params.projectIds
+    );
   }
   if (!params.includeInactive) {
     conditions.push(eq(supplierContacts.isActive, true));
@@ -14320,10 +14507,7 @@ export async function createSupplierContact(data: InsertSupplierContact) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  const [contact] = await db
-    .insert(supplierContacts)
-    .values(data)
-    .returning();
+  const [contact] = await db.insert(supplierContacts).values(data).returning();
 
   return contact;
 }
@@ -14383,7 +14567,10 @@ export async function listSupplierDocumentTypes(params?: {
     .select()
     .from(supplierDocumentTypes)
     .where(where)
-    .orderBy(desc(supplierDocumentTypes.isActive), asc(supplierDocumentTypes.name));
+    .orderBy(
+      desc(supplierDocumentTypes.isActive),
+      asc(supplierDocumentTypes.name)
+    );
 }
 
 export async function getSupplierDocumentTypeById(id: number) {
@@ -14461,7 +14648,10 @@ export async function listSupplierDocuments(supplierId: number) {
     .innerJoin(attachments, eq(supplierDocuments.attachmentId, attachments.id))
     .leftJoin(users, eq(supplierDocuments.createdById, users.id))
     .where(eq(supplierDocuments.supplierId, supplierId))
-    .orderBy(desc(supplierDocuments.documentDate), desc(supplierDocuments.createdAt));
+    .orderBy(
+      desc(supplierDocuments.documentDate),
+      desc(supplierDocuments.createdAt)
+    );
 }
 
 export async function getSupplierDocumentById(id: number) {

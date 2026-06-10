@@ -49,7 +49,9 @@ function createUserContext(overrides: Partial<AuthenticatedUser> = {}): {
     ...overrides,
   };
   if (!("assignedProjectIds" in overrides)) {
-    user.assignedProjectIds = user.assignedProjectId ? [user.assignedProjectId] : [];
+    user.assignedProjectIds = user.assignedProjectId
+      ? [user.assignedProjectId]
+      : [];
   }
   if (!("assignedProjects" in overrides)) {
     user.assignedProjects = [];
@@ -114,7 +116,9 @@ function createProjectAdminContext(overrides: Partial<AuthenticatedUser> = {}) {
   });
 }
 
-function createProjectBodegueroContext(overrides: Partial<AuthenticatedUser> = {}) {
+function createProjectBodegueroContext(
+  overrides: Partial<AuthenticatedUser> = {}
+) {
   return createUserContext({
     id: 6,
     openId: "test-project-bodeguero-001",
@@ -138,7 +142,9 @@ function createContableContext(overrides: Partial<AuthenticatedUser> = {}) {
   });
 }
 
-function createSuperintendentContext(overrides: Partial<AuthenticatedUser> = {}) {
+function createSuperintendentContext(
+  overrides: Partial<AuthenticatedUser> = {}
+) {
   return createUserContext({
     id: 8,
     openId: "test-superintendente-001",
@@ -155,9 +161,9 @@ const VALID_INVOICE_NUMBER = "000-001-01-00010571";
 const VALID_INVOICE_NUMBER_ALT = "000-001-01-00010572";
 const VALID_DOCUMENT_RANGE_START = "000-001-01-00000001";
 const VALID_DOCUMENT_RANGE_END = "000-001-01-99999999";
-const VALID_PDF_BASE64 = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF").toString(
-  "base64"
-);
+const VALID_PDF_BASE64 = Buffer.from(
+  "%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF"
+).toString("base64");
 const DEFAULT_PROJECT_WAREHOUSE_ID = 101;
 const DEFAULT_PROJECT_WAREHOUSE = {
   id: DEFAULT_PROJECT_WAREHOUSE_ID,
@@ -387,7 +393,9 @@ describe("BuildReq - Tax retentions catalog", () => {
         totalPages: 1,
       } as any);
 
-    await expect(caller.retentions.list({ page: 1, pageSize: 25 })).resolves.toEqual(
+    await expect(
+      caller.retentions.list({ page: 1, pageSize: 25 })
+    ).resolves.toEqual(
       expect.objectContaining({
         total: 1,
         items: [expect.objectContaining({ taxCode: "RT125" })],
@@ -709,7 +717,9 @@ describe("BuildReq - Articles catalog", () => {
         id: 10,
         itemCode: "12120100014",
       })
-    ).resolves.toEqual(expect.objectContaining({ fixedAssetStatus: "resuelto" }));
+    ).resolves.toEqual(
+      expect.objectContaining({ fixedAssetStatus: "resuelto" })
+    );
 
     expect(resolveFixedAssetArticleCodeSpy).toHaveBeenCalledWith({
       id: 10,
@@ -820,15 +830,13 @@ describe("BuildReq - Articles catalog", () => {
   it("Admin or Jefe de Bodega can update article type and status", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
-    const updateArticleSpy = vi
-      .spyOn(db, "updateArticle")
-      .mockResolvedValue({
-        id: 1,
-        tipoArticulo: 3,
-        projectId: null,
-        isActive: false,
-        allowsTaxWithholding: false,
-      } as any);
+    const updateArticleSpy = vi.spyOn(db, "updateArticle").mockResolvedValue({
+      id: 1,
+      tipoArticulo: 3,
+      projectId: null,
+      isActive: false,
+      allowsTaxWithholding: false,
+    } as any);
 
     await expect(
       caller.articles.update({
@@ -1388,7 +1396,9 @@ describe("BuildReq - Suppliers catalog", () => {
       url: "https://storage.local/signed-contrato.pdf",
     });
 
-    await expect(caller.suppliers.listDocuments({ supplierId: 5 })).resolves.toEqual([
+    await expect(
+      caller.suppliers.listDocuments({ supplierId: 5 })
+    ).resolves.toEqual([
       expect.objectContaining({
         id: 45,
         status: "vencido",
@@ -1522,9 +1532,11 @@ describe("BuildReq - Suppliers catalog", () => {
         attachment,
         createdBy: null,
       } as any);
-    const storageDeleteSpy = vi.spyOn(storage, "storageDelete").mockResolvedValue({
-      key: attachment.fileKey,
-    });
+    const storageDeleteSpy = vi
+      .spyOn(storage, "storageDelete")
+      .mockResolvedValue({
+        key: attachment.fileKey,
+      });
     const deleteAttachmentSpy = vi
       .spyOn(db, "deleteAttachment")
       .mockResolvedValue(undefined);
@@ -1636,7 +1648,9 @@ describe("BuildReq - Project subprojects", () => {
         name: "Etapa espejo",
         isActive: true,
       })
-    ).resolves.toEqual(expect.objectContaining({ projectId: 2, code: "SP-001" }));
+    ).resolves.toEqual(
+      expect.objectContaining({ projectId: 2, code: "SP-001" })
+    );
 
     expect(getProjectSubprojectByCodeSpy).toHaveBeenCalledWith(2, "SP-001");
 
@@ -2111,14 +2125,15 @@ describe("BuildReq - Role-based Access Control", () => {
       .spyOn(db, "listPurchaseOrders")
       .mockResolvedValue([] as any);
     const listInvoicesSpy = vi.spyOn(db, "listInvoices").mockResolvedValue([]);
-    const getProjectByIdSpy = vi
-      .spyOn(db, "getProjectById")
-      .mockImplementation(async (projectId: number) => ({
-        id: projectId,
-        code: `00${projectId}`,
-        name: `Proyecto ${projectId}`,
-        status: "activo",
-      }) as any);
+    const getProjectByIdSpy = vi.spyOn(db, "getProjectById").mockImplementation(
+      async (projectId: number) =>
+        ({
+          id: projectId,
+          code: `00${projectId}`,
+          name: `Proyecto ${projectId}`,
+          status: "activo",
+        }) as any
+    );
 
     await expect(caller.materialRequests.list()).resolves.toEqual([]);
     await expect(caller.purchaseOrders.list()).resolves.toEqual([]);
@@ -2128,7 +2143,9 @@ describe("BuildReq - Role-based Access Control", () => {
       expect.objectContaining({ id: 2 }),
     ]);
 
-    expect(listMaterialRequestsSpy).toHaveBeenCalledWith({ projectIds: [1, 2] });
+    expect(listMaterialRequestsSpy).toHaveBeenCalledWith({
+      projectIds: [1, 2],
+    });
     expect(listPurchaseOrdersSpy).toHaveBeenCalledWith({ projectIds: [1, 2] });
     expect(listInvoicesSpy).toHaveBeenCalledWith(
       expect.objectContaining({ projectIds: [1, 2] })
@@ -2204,7 +2221,9 @@ describe("BuildReq - Role-based Access Control", () => {
       .spyOn(db, "syncMaterialRequestFulfillmentStatus")
       .mockResolvedValue({ changed: false } as any);
 
-    await expect(caller.materialRequests.getById({ id: 22 })).rejects.toMatchObject({
+    await expect(
+      caller.materialRequests.getById({ id: 22 })
+    ).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
 
@@ -2258,9 +2277,9 @@ describe("BuildReq - Role-based Access Control", () => {
         decision: "aprobada",
       })
     ).rejects.toThrow("El Superintendente solo puede consultar requisiciones");
-    await expect(
-      caller.materialRequests.approve({ id: 22 })
-    ).rejects.toThrow("El Superintendente solo puede consultar requisiciones");
+    await expect(caller.materialRequests.approve({ id: 22 })).rejects.toThrow(
+      "El Superintendente solo puede consultar requisiciones"
+    );
     await expect(
       caller.materialRequests.reject({ id: 22, reason: "No aplica" })
     ).rejects.toThrow("El Superintendente solo puede consultar requisiciones");
@@ -2821,7 +2840,10 @@ describe("BuildReq - Role-based Access Control", () => {
     const listWarehousesSpy = vi
       .spyOn(db, "listWarehouses")
       .mockResolvedValue([] as any);
-    const listProjectStockForItemsSpy = vi.spyOn(db, "listProjectStockForItems");
+    const listProjectStockForItemsSpy = vi.spyOn(
+      db,
+      "listProjectStockForItems"
+    );
     const updateRequestItemSpy = vi.spyOn(db, "updateRequestItem");
 
     await expect(
@@ -3231,15 +3253,16 @@ describe("BuildReq - Role-based Access Control", () => {
     const caller = appRouter.createCaller(ctx);
     const getRequestItemByIdSpy = vi
       .spyOn(db, "getRequestItemById")
-      .mockImplementation(async (id: number) =>
-        ({
-          id,
-          requestId: 9,
-          assignedFlow: "compra_directa",
-          approvalStatus: "aprobada",
-          deliveredQuantity: "0.00",
-          dispatchedQuantity: "0.00",
-        }) as any
+      .mockImplementation(
+        async (id: number) =>
+          ({
+            id,
+            requestId: 9,
+            assignedFlow: "compra_directa",
+            approvalStatus: "aprobada",
+            deliveredQuantity: "0.00",
+            dispatchedQuantity: "0.00",
+          }) as any
       );
     const getMaterialRequestByIdSpy = vi
       .spyOn(db, "getMaterialRequestById")
@@ -3780,7 +3803,9 @@ describe("BuildReq - Role-based Access Control", () => {
       } as any);
     const createSupplyFlowRecordSpy = vi
       .spyOn(db, "createSupplyFlowRecord")
-      .mockImplementation(async (data: any) => ({ id: data.requestItemId } as any));
+      .mockImplementation(
+        async (data: any) => ({ id: data.requestItemId }) as any
+      );
     const syncMaterialRequestFulfillmentStatusSpy = vi
       .spyOn(db, "syncMaterialRequestFulfillmentStatus")
       .mockResolvedValue({ changed: false, status: "en_proceso" } as any);
@@ -3868,30 +3893,31 @@ describe("BuildReq - Role-based Access Control", () => {
     const caller = appRouter.createCaller(ctx);
     const getMaterialRequestByIdSpy = vi
       .spyOn(db, "getMaterialRequestById")
-      .mockImplementation(async (requestId: number) =>
-        ({
-          request: {
-            id: requestId,
-            requestNumber: `REQ-2026-${requestId}`,
-            requestedById: 2,
-            projectId: requestId === 9 ? 1 : 2,
-            requestType: "bienes",
-            approvalStatus: "aprobada",
-            neededBy: null,
-          },
-          items: [
-            {
-              id: requestId === 9 ? 41 : 42,
-              requestId,
-              itemName: "cemento",
-              quantity: "5.00",
-              unit: "und",
-              sapItemCode: "SAP-001",
-              sapItemDescription: "Cemento",
+      .mockImplementation(
+        async (requestId: number) =>
+          ({
+            request: {
+              id: requestId,
+              requestNumber: `REQ-2026-${requestId}`,
+              requestedById: 2,
+              projectId: requestId === 9 ? 1 : 2,
+              requestType: "bienes",
               approvalStatus: "aprobada",
+              neededBy: null,
             },
-          ],
-        }) as any
+            items: [
+              {
+                id: requestId === 9 ? 41 : 42,
+                requestId,
+                itemName: "cemento",
+                quantity: "5.00",
+                unit: "und",
+                sapItemCode: "SAP-001",
+                sapItemDescription: "Cemento",
+                approvalStatus: "aprobada",
+              },
+            ],
+          }) as any
       );
     const getActivePurchaseRequestByMaterialRequestItemIdSpy = vi
       .spyOn(db, "getActivePurchaseRequestByMaterialRequestItemId")
@@ -4017,12 +4043,13 @@ describe("BuildReq - Role-based Access Control", () => {
     const caller = appRouter.createCaller(ctx);
     const getRequestItemByIdSpy = vi
       .spyOn(db, "getRequestItemById")
-      .mockImplementation(async (id: number) =>
-        ({
-          id,
-          requestId: 9,
-          approvalStatus: "aprobada",
-        }) as any
+      .mockImplementation(
+        async (id: number) =>
+          ({
+            id,
+            requestId: 9,
+            approvalStatus: "aprobada",
+          }) as any
       );
     const getMaterialRequestByIdSpy = vi
       .spyOn(db, "getMaterialRequestById")
@@ -4282,9 +4309,7 @@ describe("BuildReq - Role-based Access Control", () => {
         exitNumber: "SB-2026-0001",
       } as any);
 
-    await expect(
-      caller.warehouseExits.emit({ id: 33 })
-    ).resolves.toEqual({
+    await expect(caller.warehouseExits.emit({ id: 33 })).resolves.toEqual({
       success: true,
       exitNumber: "SB-2026-0001",
     });
@@ -6007,13 +6032,14 @@ describe("BuildReq - Invitation System", () => {
     const createInvitationSpy = vi
       .spyOn(db, "createInvitation")
       .mockResolvedValue({ id: 78 } as any);
-    const getProjectByIdSpy = vi
-      .spyOn(db, "getProjectById")
-      .mockImplementation(async (projectId: number) => ({
-        id: projectId,
-        code: `00${projectId}`,
-        name: `Proyecto ${projectId}`,
-      }) as any);
+    const getProjectByIdSpy = vi.spyOn(db, "getProjectById").mockImplementation(
+      async (projectId: number) =>
+        ({
+          id: projectId,
+          code: `00${projectId}`,
+          name: `Proyecto ${projectId}`,
+        }) as any
+    );
 
     await expect(
       caller.invitations.create({
@@ -6105,7 +6131,9 @@ describe("BuildReq - User Management", () => {
         buildreqRole: "ingeniero_residente",
       },
     ];
-    const listUsersSpy = vi.spyOn(db, "listUsers").mockResolvedValue(users as any);
+    const listUsersSpy = vi
+      .spyOn(db, "listUsers")
+      .mockResolvedValue(users as any);
 
     await expect(caller.userManagement.list()).resolves.toEqual(users);
     expect(listUsersSpy).toHaveBeenCalled();
@@ -7392,7 +7420,8 @@ describe("BuildReq - Purchase Orders", () => {
       })
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
-      message: "Ingrese un precio unitario mayor que cero antes de emitir la OC",
+      message:
+        "Ingrese un precio unitario mayor que cero antes de emitir la OC",
     });
     expect(updatePurchaseOrderSpy).not.toHaveBeenCalled();
 
@@ -7613,12 +7642,14 @@ describe("BuildReq - Receipts", () => {
           },
         ],
       } as any);
-    const saveReceiptDraftSpy = vi.spyOn(db, "saveReceiptDraft").mockResolvedValue({
-      id: 9,
-      receiptNumber: "RC-006-0001",
-      status: "borrador",
-      updated: false,
-    } as any);
+    const saveReceiptDraftSpy = vi
+      .spyOn(db, "saveReceiptDraft")
+      .mockResolvedValue({
+        id: 9,
+        receiptNumber: "RC-006-0001",
+        status: "borrador",
+        updated: false,
+      } as any);
 
     await expect(
       caller.receipts.saveDraft({
@@ -7784,6 +7815,86 @@ describe("BuildReq - Receipts", () => {
 
     getPurchaseOrderByIdSpy.mockRestore();
     getProjectSubprojectByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("allows receiving purchase order services without warehouse inventory entry", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "emitida",
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "MANTENIMIENTO PREVENTIVO DE VEHÍCULOS",
+            quantity: "1.00",
+            receivedQuantity: "0.00",
+            unit: "und",
+            currentSapItemCode: "100000005",
+            catalogItem: {
+              itemCode: "100000005",
+              description: "MANTENIMIENTO PREVENTIVO DE VEHÍCULOS",
+              tipoArticulo: 2,
+            },
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({
+        id: 6,
+        receiptNumber: "RC-2026-0001",
+        status: "completa",
+      } as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            itemName: "MANTENIMIENTO PREVENTIVO DE VEHÍCULOS",
+            quantityExpected: "1.00",
+            quantityReceived: "1.00",
+            unit: "und",
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      id: 6,
+      receiptNumber: "RC-2026-0001",
+      status: "completa",
+    });
+
+    const receiptItems = registerReceiptSpy.mock.calls[0]?.[1] as any[];
+    expect(receiptItems[0]).toEqual(
+      expect.objectContaining({
+        sourceItemId: 15,
+        sapItemCode: "100000005",
+        quantityReceived: "1.00",
+      })
+    );
+    expect(receiptItems[0].warehouseId).toBeUndefined();
+
+    getPurchaseOrderByIdSpy.mockRestore();
     registerReceiptSpy.mockRestore();
   });
 
@@ -9439,8 +9550,7 @@ describe("BuildReq - Receipts", () => {
       })
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
-      message:
-        "La OC de contrato ya alcanzó el total de facturas programadas",
+      message: "La OC de contrato ya alcanzó el total de facturas programadas",
     });
 
     expect(registerReceiptSpy).not.toHaveBeenCalled();
@@ -9750,7 +9860,9 @@ describe("BuildReq - Invoices", () => {
     const caller = appRouter.createCaller(ctx);
     const listInvoicesSpy = vi.spyOn(db, "listInvoices").mockResolvedValue([]);
 
-    await expect(caller.invoices.list({ status: "borrador" as any })).resolves.toEqual([]);
+    await expect(
+      caller.invoices.list({ status: "borrador" as any })
+    ).resolves.toEqual([]);
     expect(listInvoicesSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         status: undefined,
@@ -9758,7 +9870,9 @@ describe("BuildReq - Invoices", () => {
       })
     );
 
-    await expect(caller.invoices.list({ status: "registrada" })).resolves.toEqual([]);
+    await expect(
+      caller.invoices.list({ status: "registrada" })
+    ).resolves.toEqual([]);
     expect(listInvoicesSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "registrada",
@@ -10456,7 +10570,9 @@ describe("BuildReq - Invoices", () => {
         isFixedAsset: true,
         assetDetails: [{ serialNumber: "SN-001", condition: "nuevo" }],
       })
-    ).rejects.toThrow("Solo se pueden editar facturas en borrador o rechazadas");
+    ).rejects.toThrow(
+      "Solo se pueden editar facturas en borrador o rechazadas"
+    );
 
     expect(updateInvoiceItemAssetDetailsSpy).not.toHaveBeenCalled();
     getInvoiceByIdSpy.mockRestore();
@@ -10525,16 +10641,20 @@ describe("BuildReq - Invoices", () => {
         netPayable: "930.00",
       })
     );
-    expect(replaceInvoiceRetentionsSpy).toHaveBeenCalledWith(10, [
-      expect.objectContaining({
-        retentionCatalogId: 1,
-        baseAmount: "1000.00",
-      }),
-      expect.objectContaining({
-        retentionCatalogId: 2,
-        baseAmount: "500.00",
-      }),
-    ], undefined);
+    expect(replaceInvoiceRetentionsSpy).toHaveBeenCalledWith(
+      10,
+      [
+        expect.objectContaining({
+          retentionCatalogId: 1,
+          baseAmount: "1000.00",
+        }),
+        expect.objectContaining({
+          retentionCatalogId: 2,
+          baseAmount: "500.00",
+        }),
+      ],
+      undefined
+    );
 
     getInvoiceByIdSpy.mockRestore();
     replaceInvoiceRetentionsSpy.mockRestore();
@@ -10550,7 +10670,10 @@ describe("BuildReq - Invoices", () => {
         retentionReceiptNumber: null,
       },
     } as any);
-    const replaceInvoiceRetentionsSpy = vi.spyOn(db, "replaceInvoiceRetentions");
+    const replaceInvoiceRetentionsSpy = vi.spyOn(
+      db,
+      "replaceInvoiceRetentions"
+    );
 
     await expect(
       caller.invoices.replaceRetentions({
@@ -10609,18 +10732,22 @@ describe("BuildReq - Invoices", () => {
         netPayable: "865.00",
       })
     );
-    expect(replaceInvoiceRetentionsSpy).toHaveBeenCalledWith(10, [
-      expect.objectContaining({
-        invoiceItemId: 77,
-        retentionCatalogId: 1,
-        baseAmount: "1000.00",
-      }),
-      expect.objectContaining({
-        invoiceItemId: 77,
-        retentionCatalogId: 2,
-        baseAmount: "1000.00",
-      }),
-    ], undefined);
+    expect(replaceInvoiceRetentionsSpy).toHaveBeenCalledWith(
+      10,
+      [
+        expect.objectContaining({
+          invoiceItemId: 77,
+          retentionCatalogId: 1,
+          baseAmount: "1000.00",
+        }),
+        expect.objectContaining({
+          invoiceItemId: 77,
+          retentionCatalogId: 2,
+          baseAmount: "1000.00",
+        }),
+      ],
+      undefined
+    );
 
     getInvoiceByIdSpy.mockRestore();
     replaceInvoiceRetentionsSpy.mockRestore();
@@ -10660,15 +10787,13 @@ describe("BuildReq - Invoices", () => {
   it("returns a validation error when supplier does not allow retentions", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
-    const getInvoiceByIdSpy = vi
-      .spyOn(db, "getInvoiceById")
-      .mockResolvedValue({
-        ...invoiceDetail,
-        supplier: {
-          ...invoiceDetail.supplier,
-          allowsTaxWithholding: false,
-        },
-      } as any);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      supplier: {
+        ...invoiceDetail.supplier,
+        allowsTaxWithholding: false,
+      },
+    } as any);
     const replaceInvoiceRetentionsSpy = vi
       .spyOn(db, "replaceInvoiceRetentions")
       .mockRejectedValue(
@@ -10883,7 +11008,8 @@ describe("BuildReq - Document attachments", () => {
       })
     ).rejects.toMatchObject({
       code: "FORBIDDEN",
-      message: "No tiene permisos para administrar adjuntos de órdenes de compra",
+      message:
+        "No tiene permisos para administrar adjuntos de órdenes de compra",
     });
     expect(storagePutSpy).not.toHaveBeenCalled();
 
@@ -11008,7 +11134,8 @@ describe("BuildReq - Document attachments", () => {
       })
     ).rejects.toMatchObject({
       code: "FORBIDDEN",
-      message: "No tiene permisos para administrar adjuntos de esta requisicion",
+      message:
+        "No tiene permisos para administrar adjuntos de esta requisicion",
     });
     expect(storagePutSpy).not.toHaveBeenCalled();
 
@@ -11049,12 +11176,14 @@ describe("BuildReq - Document attachments", () => {
   it("deletes attachment files from storage after authorization", async () => {
     const { ctx } = createProjectAdminContext();
     const caller = appRouter.createCaller(ctx);
-    const getAttachmentByIdSpy = vi.spyOn(db, "getAttachmentById").mockResolvedValue({
-      id: 700,
-      entityType: "purchase_order",
-      entityId: 44,
-      fileKey: "buildreq/purchase_order/44/factura.pdf",
-    } as any);
+    const getAttachmentByIdSpy = vi
+      .spyOn(db, "getAttachmentById")
+      .mockResolvedValue({
+        id: 700,
+        entityType: "purchase_order",
+        entityId: 44,
+        fileKey: "buildreq/purchase_order/44/factura.pdf",
+      } as any);
     const getPurchaseOrderByIdSpy = vi
       .spyOn(db, "getPurchaseOrderById")
       .mockResolvedValue({
@@ -11258,7 +11387,10 @@ describe("BuildReq - Transfer Requests", () => {
       status: "anulada",
       rejectionReason: "Solicitud anulada manualmente",
     });
-    expect(updateReverseLogisticStatusSpy).toHaveBeenCalledWith(88, "pendiente");
+    expect(updateReverseLogisticStatusSpy).toHaveBeenCalledWith(
+      88,
+      "pendiente"
+    );
 
     getTransferRequestByIdSpy.mockRestore();
     updateTransferRequestSpy.mockRestore();
@@ -11958,9 +12090,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
     await expect(
       caller.purchaseOrders.createFromPurchaseRequest({
         purchaseRequestId: 73,
-        itemsToConvert: [
-          { purchaseRequestItemId: 7301, quantity: "201.00" },
-        ],
+        itemsToConvert: [{ purchaseRequestItemId: 7301, quantity: "201.00" }],
       })
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
@@ -12284,7 +12414,9 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
       })
     ).rejects.toThrow("No tiene acceso a órdenes de compra de otro proyecto");
     expect(createPurchaseOrderSpy).not.toHaveBeenCalled();
-    expect(adjustPurchaseRequestItemConvertedQuantitySpy).not.toHaveBeenCalled();
+    expect(
+      adjustPurchaseRequestItemConvertedQuantitySpy
+    ).not.toHaveBeenCalled();
     expect(syncPurchaseRequestConversionStatusSpy).not.toHaveBeenCalled();
 
     getPurchaseRequestByIdSpy.mockRestore();
@@ -12406,10 +12538,13 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
       .mockResolvedValue({ success: true } as any);
     const adjustPurchaseRequestItemConvertedQuantitySpy = vi
       .spyOn(db, "adjustPurchaseRequestItemConvertedQuantity")
-      .mockImplementation(async (id: number) => ({
-        id,
-        purchaseRequestId: 56,
-      }) as any);
+      .mockImplementation(
+        async (id: number) =>
+          ({
+            id,
+            purchaseRequestId: 56,
+          }) as any
+      );
     const syncPurchaseRequestConversionStatusSpy = vi
       .spyOn(db, "syncPurchaseRequestConversionStatus")
       .mockResolvedValue("convertida" as any);

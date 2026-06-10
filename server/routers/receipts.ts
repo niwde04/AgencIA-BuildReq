@@ -29,7 +29,10 @@ const RECEIVABLE_TRANSFER_STATUSES = new Set([
   "parcialmente_recibido",
 ]);
 
-function canAccessReceipts(user: { role: string; buildreqRole?: string | null }) {
+function canAccessReceipts(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -223,8 +226,7 @@ async function resolveReceiptLineTarget(params: {
     };
   }
 
-  const fixedAssetSapItemCode =
-    requestedTarget.fixedAssetSapItemCode?.trim();
+  const fixedAssetSapItemCode = requestedTarget.fixedAssetSapItemCode?.trim();
   if (!fixedAssetSapItemCode) {
     throw new TRPCError({
       code: "BAD_REQUEST",
@@ -366,9 +368,27 @@ function canCloseTransferReceiptLine(
   );
 }
 
+function isPurchaseOrderServiceLine(params: {
+  sourceItem?: any;
+  catalogItem?: { tipoArticulo?: number | null } | null;
+}) {
+  return (
+    Number(
+      params.sourceItem?.catalogItem?.tipoArticulo ??
+        params.sourceItem?.tipoArticulo ??
+        params.catalogItem?.tipoArticulo ??
+        0
+    ) === 2
+  );
+}
+
 async function assertReceiptWarehouses(
   projectId: number,
-  items: Array<{ warehouseId?: number; quantityReceived: string; itemName: string }>,
+  items: Array<{
+    warehouseId?: number;
+    quantityReceived: string;
+    itemName: string;
+  }>,
   options?: { allowAnyActiveWarehouse?: boolean }
 ) {
   const activeWarehouses = options?.allowAnyActiveWarehouse
@@ -401,7 +421,8 @@ function preparePurchaseOrderReceiptItemFinancialData(params: {
   try {
     return db.prepareReceiptItemFinancialDataForLine({
       quantity: params.item.quantityReceived,
-      unitPrice: params.item.unitPrice ?? params.sourceItem?.unitPrice ?? "0.00",
+      unitPrice:
+        params.item.unitPrice ?? params.sourceItem?.unitPrice ?? "0.00",
       taxCode: params.item.taxCode ?? params.sourceItem?.taxCode ?? "exe",
       additionalTaxCodes:
         params.item.additionalTaxCodes ??
@@ -413,7 +434,9 @@ function preparePurchaseOrderReceiptItemFinancialData(params: {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message:
-        error instanceof Error ? error.message : "Seleccione un impuesto válido",
+        error instanceof Error
+          ? error.message
+          : "Seleccione un impuesto válido",
     });
   }
 }
@@ -565,7 +588,12 @@ export const receiptsRouter = router({
       const itemsById = new Map(
         (detail.items ?? []).map((item: any) => [item.id, item])
       );
-      for (const item of input.items) {
+      const serviceReceiptLineIndexes = new Set<number>();
+      for (let itemIndex = 0; itemIndex < input.items.length; itemIndex += 1) {
+        const item = input.items[itemIndex];
+        let catalogItem: Awaited<
+          ReturnType<typeof db.lookupSapItemByCode>
+        > | null = null;
         if (!item.sourceItemId) {
           if (!item.sapItemCode?.trim()) {
             throw new TRPCError({
@@ -573,20 +601,25 @@ export const receiptsRouter = router({
               message: "Seleccione un SKU para cada producto agregado",
             });
           }
-          const catalogItem = await db.lookupSapItemByCode(item.sapItemCode);
+          catalogItem = await db.lookupSapItemByCode(item.sapItemCode);
           if (!catalogItem) {
             throw new TRPCError({
               code: "BAD_REQUEST",
               message: `El SKU ${item.sapItemCode} no existe en el catálogo SAP`,
             });
           }
-          continue;
-        }
-        if (!itemsById.has(item.sourceItemId)) {
+        } else if (!itemsById.has(item.sourceItemId)) {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: "El borrador incluye un ítem que ya no existe en la orden",
           });
+        }
+
+        const sourceItem = item.sourceItemId
+          ? itemsById.get(item.sourceItemId)
+          : undefined;
+        if (isPurchaseOrderServiceLine({ sourceItem, catalogItem })) {
+          serviceReceiptLineIndexes.add(itemIndex);
         }
       }
 
@@ -594,49 +627,51 @@ export const receiptsRouter = router({
       const now = new Date();
       const activeSalesTaxes = await db.getActiveSalesTaxCatalog();
       const draftData = {
-          sourceType: input.sourceType,
-          sourceId: input.sourceId,
-          projectId: input.projectId,
-          receivedById: ctx.user.id,
-          isFiscalDocument,
-          cai: input.cai?.trim()
-            ? isValidCai(input.cai)
-              ? formatCaiInput(input.cai)
-              : input.cai.trim()
-            : null,
-          invoiceNumber: input.invoiceNumber?.trim()
-            ? isValidInvoiceNumber(input.invoiceNumber)
-              ? formatInvoiceNumberInput(input.invoiceNumber)
-              : input.invoiceNumber.trim()
-            : null,
-          documentRangeStart: input.documentRangeStart?.trim()
-            ? isValidInvoiceNumber(input.documentRangeStart)
-              ? formatInvoiceNumberInput(input.documentRangeStart)
-              : input.documentRangeStart.trim()
-            : null,
-          documentRangeEnd: input.documentRangeEnd?.trim()
-            ? isValidInvoiceNumber(input.documentRangeEnd)
-              ? formatInvoiceNumberInput(input.documentRangeEnd)
-              : input.documentRangeEnd.trim()
-            : null,
-          documentDate: input.documentDate
-            ? parseDateInput(input.documentDate)
-            : null,
-          documentDueDate: input.documentDueDate
-            ? parseDateInput(input.documentDueDate)
-            : null,
-          postingDate: input.postingDate
-            ? parseDateInput(input.postingDate)
-            : now,
-          receiptDate: input.receiptDate
-            ? parseDateInput(input.receiptDate)
-            : now,
-          notes: input.notes?.trim() || null,
-        };
-      const draftItems = await Promise.all(input.items.map(async item => {
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+        projectId: input.projectId,
+        receivedById: ctx.user.id,
+        isFiscalDocument,
+        cai: input.cai?.trim()
+          ? isValidCai(input.cai)
+            ? formatCaiInput(input.cai)
+            : input.cai.trim()
+          : null,
+        invoiceNumber: input.invoiceNumber?.trim()
+          ? isValidInvoiceNumber(input.invoiceNumber)
+            ? formatInvoiceNumberInput(input.invoiceNumber)
+            : input.invoiceNumber.trim()
+          : null,
+        documentRangeStart: input.documentRangeStart?.trim()
+          ? isValidInvoiceNumber(input.documentRangeStart)
+            ? formatInvoiceNumberInput(input.documentRangeStart)
+            : input.documentRangeStart.trim()
+          : null,
+        documentRangeEnd: input.documentRangeEnd?.trim()
+          ? isValidInvoiceNumber(input.documentRangeEnd)
+            ? formatInvoiceNumberInput(input.documentRangeEnd)
+            : input.documentRangeEnd.trim()
+          : null,
+        documentDate: input.documentDate
+          ? parseDateInput(input.documentDate)
+          : null,
+        documentDueDate: input.documentDueDate
+          ? parseDateInput(input.documentDueDate)
+          : null,
+        postingDate: input.postingDate
+          ? parseDateInput(input.postingDate)
+          : now,
+        receiptDate: input.receiptDate
+          ? parseDateInput(input.receiptDate)
+          : now,
+        notes: input.notes?.trim() || null,
+      };
+      const draftItems = await Promise.all(
+        input.items.map(async (item, index) => {
           const sourceItem = item.sourceItemId
             ? itemsById.get(item.sourceItemId)
             : undefined;
+          const isServiceLine = serviceReceiptLineIndexes.has(index);
           const targetFields = await resolveReceiptLineTarget({
             item,
             sourceItem,
@@ -662,7 +697,7 @@ export const receiptsRouter = router({
               sourceItem?.originalSapItemCode ??
               item.sapItemCode?.trim() ??
               null,
-            warehouseId: item.warehouseId,
+            warehouseId: isServiceLine ? undefined : item.warehouseId,
             itemName: item.itemName,
             quantityExpected: item.quantityExpected,
             quantityReceived: item.quantityReceived,
@@ -677,7 +712,8 @@ export const receiptsRouter = router({
               ? normalizeFixedAssetDetails(item.assetDetails, assetCount)
               : [],
           };
-        }));
+        })
+      );
       const otherCharges = normalizeReceiptOtherCharges(input.otherCharges);
       return otherCharges.length > 0
         ? db.saveReceiptDraft(draftData, draftItems, otherCharges)
@@ -836,6 +872,7 @@ export const receiptsRouter = router({
       }
       let purchaseOrderItemsByIdForPayload = new Map<number, any>();
       let allowAnyActiveReceiptWarehouse = false;
+      const serviceReceiptLineIndexes = new Set<number>();
 
       if (input.sourceType === "purchase_order") {
         const detail = await db.getPurchaseOrderById(input.sourceId);
@@ -855,10 +892,7 @@ export const receiptsRouter = router({
         }
 
         if (
-          !canReceivePurchaseOrder(
-            detail.purchaseOrder,
-            detail.contractSummary
-          )
+          !canReceivePurchaseOrder(detail.purchaseOrder, detail.contractSummary)
         ) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -877,7 +911,8 @@ export const receiptsRouter = router({
           ) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: "La OC de contrato no tiene una programación de pagos válida",
+              message:
+                "La OC de contrato no tiene una programación de pagos válida",
             });
           }
           if (contractSummary.isExpired) {
@@ -896,7 +931,9 @@ export const receiptsRouter = router({
           }
         }
 
-        const itemsById = new Map((detail.items ?? []).map((item: any) => [item.id, item]));
+        const itemsById = new Map(
+          (detail.items ?? []).map((item: any) => [item.id, item])
+        );
         purchaseOrderItemsByIdForPayload = itemsById;
         const unresolvedFixedAsset = (detail.items ?? []).find(
           (item: any) =>
@@ -910,10 +947,18 @@ export const receiptsRouter = router({
         }
         let hasPositiveReceipt = false;
 
-        for (const item of input.items) {
+        for (
+          let itemIndex = 0;
+          itemIndex < input.items.length;
+          itemIndex += 1
+        ) {
+          const item = input.items[itemIndex];
           const sourceItem = item.sourceItemId
             ? itemsById.get(item.sourceItemId)
             : undefined;
+          let catalogItem: Awaited<
+            ReturnType<typeof db.lookupSapItemByCode>
+          > | null = null;
           if (!sourceItem) {
             if (!item.sapItemCode?.trim()) {
               throw new TRPCError({
@@ -921,7 +966,7 @@ export const receiptsRouter = router({
                 message: "Seleccione un SKU para cada producto agregado",
               });
             }
-            const catalogItem = await db.lookupSapItemByCode(item.sapItemCode);
+            catalogItem = await db.lookupSapItemByCode(item.sapItemCode);
             if (!catalogItem) {
               throw new TRPCError({
                 code: "BAD_REQUEST",
@@ -938,7 +983,14 @@ export const receiptsRouter = router({
           }
 
           const requestedQuantity = Number(item.quantityReceived ?? 0);
-          if (requestedQuantity > 0 && !item.warehouseId) {
+          const isServiceLine = isPurchaseOrderServiceLine({
+            sourceItem,
+            catalogItem,
+          });
+          if (isServiceLine) {
+            serviceReceiptLineIndexes.add(itemIndex);
+          }
+          if (requestedQuantity > 0 && !isServiceLine && !item.warehouseId) {
             throw new TRPCError({
               code: "BAD_REQUEST",
               message: `Seleccione almacén destino para ${
@@ -1011,7 +1063,8 @@ export const receiptsRouter = router({
         if (!hasPositiveReceipt) {
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message: "Ingrese al menos una cantidad mayor que cero para registrar la recepción",
+            message:
+              "Ingrese al menos una cantidad mayor que cero para registrar la recepción",
           });
         }
       } else {
@@ -1046,11 +1099,14 @@ export const receiptsRouter = router({
         if (!RECEIVABLE_TRANSFER_STATUSES.has(detail.transfer.status)) {
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message: "Solo se pueden recibir traslados confirmados o con saldo pendiente",
+            message:
+              "Solo se pueden recibir traslados confirmados o con saldo pendiente",
           });
         }
 
-        const itemsById = new Map((detail.items ?? []).map((item: any) => [item.id, item]));
+        const itemsById = new Map(
+          (detail.items ?? []).map((item: any) => [item.id, item])
+        );
         const lockedReverseLogisticDestinationWarehouseId =
           detail.transferRequest?.reverseLogisticId &&
           detail.transferRequest.destinationType === "proyecto" &&
@@ -1067,7 +1123,8 @@ export const receiptsRouter = router({
           if (!sourceItem) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: "La recepción incluye un ítem que ya no existe en el traslado",
+              message:
+                "La recepción incluye un ítem que ya no existe en el traslado",
             });
           }
 
@@ -1161,7 +1218,13 @@ export const receiptsRouter = router({
         input.sourceType === "purchase_order" &&
         input.isFiscalDocument !== false;
 
-      await assertReceiptWarehouses(input.projectId, input.items, {
+      const warehouseRequiredItems =
+        input.sourceType === "purchase_order"
+          ? input.items.filter(
+              (_item, index) => !serviceReceiptLineIndexes.has(index)
+            )
+          : input.items;
+      await assertReceiptWarehouses(input.projectId, warehouseRequiredItems, {
         allowAnyActiveWarehouse: allowAnyActiveReceiptWarehouse,
       });
 
@@ -1179,47 +1242,53 @@ export const receiptsRouter = router({
       }
 
       const receiptData = {
-          sourceType: input.sourceType,
-          sourceId: input.sourceId,
-          projectId: input.projectId,
-          receivedById: ctx.user.id,
-          status: "pendiente" as const,
-          isFiscalDocument,
-          cai: input.cai?.trim()
-            ? isFiscalDocument
-              ? formatCaiInput(input.cai)
-              : input.cai.trim()
-            : null,
-          invoiceNumber: input.invoiceNumber
-            ? isFiscalDocument
-              ? formatInvoiceNumberInput(input.invoiceNumber)
-              : input.invoiceNumber.trim()
-            : null,
-          documentRangeStart: input.documentRangeStart
-            ? isFiscalDocument
-              ? formatInvoiceNumberInput(input.documentRangeStart)
-              : input.documentRangeStart.trim()
-            : null,
-          documentRangeEnd: input.documentRangeEnd
-            ? isFiscalDocument
-              ? formatInvoiceNumberInput(input.documentRangeEnd)
-              : input.documentRangeEnd.trim()
-            : null,
-          documentDate: input.documentDate ? parseDateInput(input.documentDate) : null,
-          documentDueDate: input.documentDueDate
-            ? parseDateInput(input.documentDueDate)
-            : null,
-          postingDate: parseDateInput(input.postingDate),
-          receiptDate: parseDateInput(input.receiptDate || input.postingDate),
-          emissionDeadline: input.emissionDeadline
-            ? parseDateInput(input.emissionDeadline)
-            : null,
-          notes: input.notes,
-        };
-      const receiptItems = await Promise.all(input.items.map(async (item) => {
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+        projectId: input.projectId,
+        receivedById: ctx.user.id,
+        status: "pendiente" as const,
+        isFiscalDocument,
+        cai: input.cai?.trim()
+          ? isFiscalDocument
+            ? formatCaiInput(input.cai)
+            : input.cai.trim()
+          : null,
+        invoiceNumber: input.invoiceNumber
+          ? isFiscalDocument
+            ? formatInvoiceNumberInput(input.invoiceNumber)
+            : input.invoiceNumber.trim()
+          : null,
+        documentRangeStart: input.documentRangeStart
+          ? isFiscalDocument
+            ? formatInvoiceNumberInput(input.documentRangeStart)
+            : input.documentRangeStart.trim()
+          : null,
+        documentRangeEnd: input.documentRangeEnd
+          ? isFiscalDocument
+            ? formatInvoiceNumberInput(input.documentRangeEnd)
+            : input.documentRangeEnd.trim()
+          : null,
+        documentDate: input.documentDate
+          ? parseDateInput(input.documentDate)
+          : null,
+        documentDueDate: input.documentDueDate
+          ? parseDateInput(input.documentDueDate)
+          : null,
+        postingDate: parseDateInput(input.postingDate),
+        receiptDate: parseDateInput(input.receiptDate || input.postingDate),
+        emissionDeadline: input.emissionDeadline
+          ? parseDateInput(input.emissionDeadline)
+          : null,
+        notes: input.notes,
+      };
+      const receiptItems = await Promise.all(
+        input.items.map(async (item, index) => {
           const sourceItem = item.sourceItemId
             ? purchaseOrderItemsByIdForPayload.get(item.sourceItemId)
             : undefined;
+          const isServiceLine =
+            input.sourceType === "purchase_order" &&
+            serviceReceiptLineIndexes.has(index);
           const targetFields =
             input.sourceType === "purchase_order"
               ? await resolveReceiptLineTarget({
@@ -1260,14 +1329,14 @@ export const receiptsRouter = router({
               sourceItem?.originalSapItemCode ??
               item.sapItemCode?.trim() ??
               null,
-            warehouseId: item.warehouseId,
+            warehouseId: isServiceLine ? undefined : item.warehouseId,
             itemName: item.itemName,
             quantityExpected: item.quantityExpected,
             quantityReceived: item.quantityReceived,
             unit: item.unit,
             unitPrice:
               input.sourceType === "purchase_order"
-                ? item.unitPrice ?? "0.00"
+                ? (item.unitPrice ?? "0.00")
                 : "0.00",
             ...financialData,
             ...targetFields,
@@ -1294,7 +1363,8 @@ export const receiptsRouter = router({
                 ? ctx.user.id
                 : undefined,
           };
-        }));
+        })
+      );
 
       return otherCharges.length > 0
         ? db.registerReceipt(receiptData, receiptItems, otherCharges)
