@@ -56,6 +56,61 @@ function getDestinationLabel(transferRequest: any) {
     : `Proyecto ${transferRequest.destinationProjectId ?? ""}`.trim();
 }
 
+function getWarehouseLabel(warehouse: any): string {
+  if (!warehouse) return "—";
+  return (
+    warehouse.displayName ||
+    [warehouse.code || warehouse.localCode, warehouse.name]
+      .filter(Boolean)
+      .join(" - ") ||
+    `Bodega ${warehouse.id ?? ""}`.trim()
+  );
+}
+
+function getProjectLabel(project: any): string {
+  if (!project) return "—";
+  return `${project.code} — ${project.name}`;
+}
+
+function getRequestingProjectLabel(detail: any): string {
+  if (detail?.transferRequest?.destinationType === "proyecto") {
+    if (detail.destinationProject) {
+      return getProjectLabel(detail.destinationProject);
+    }
+    if (detail.transferRequest.destinationProjectId) {
+      return `Proyecto ${detail.transferRequest.destinationProjectId}`;
+    }
+  }
+
+  if (detail?.materialRequest?.projectId) {
+    return `Proyecto ${detail.materialRequest.projectId}`;
+  }
+
+  return getProjectLabel(detail?.project);
+}
+
+function getSourceWarehouseSummary(detail: any): string {
+  const labels = Array.from(
+    new Set<string>(
+      (detail?.items || [])
+        .map((item: any) => getWarehouseLabel(item.sourceWarehouse))
+        .filter((label: string) => label && label !== "—")
+    )
+  );
+
+  if (labels.length === 1) return labels[0];
+  if (labels.length > 1) return "Ver origen por línea";
+  return "—";
+}
+
+function getDestinationWarehouseSummary(detail: any): string {
+  if (detail?.transferRequest?.destinationType === "bodega_central") {
+    return "Se define en recepción";
+  }
+
+  return getWarehouseLabel(detail?.destinationWarehouse);
+}
+
 export default function TransferRequests() {
   const utils = trpc.useUtils();
   const { user } = useAuth();
@@ -467,7 +522,7 @@ export default function TransferRequests() {
       </Card>
 
       <Dialog open={Boolean(detailId)} onOpenChange={(open) => !open && setDetailId(null)}>
-        <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1200px] sm:p-6 lg:p-7">
+        <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1500px] sm:p-6 lg:p-7 xl:max-w-[1600px]">
           <DialogHeader>
             <DialogTitle>{detail?.transferRequest.requestNumber || "Solicitud de Traslado"}</DialogTitle>
           </DialogHeader>
@@ -481,19 +536,25 @@ export default function TransferRequests() {
             </div>
           ) : detail ? (
             <div className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid gap-4 md:grid-cols-4">
                 <div>
-                  <Label className="text-xs text-muted-foreground">Proyecto origen</Label>
+                  <Label className="text-xs text-muted-foreground">
+                    Proyecto que solicita
+                  </Label>
                   <p className="text-sm font-medium">
-                    {detail.project ? `${detail.project.code} — ${detail.project.name}` : "—"}
+                    {getRequestingProjectLabel(detail)}
                   </p>
                 </div>
                 <div>
-                  <Label className="text-xs text-muted-foreground">Destino</Label>
+                  <Label className="text-xs text-muted-foreground">Bodega origen</Label>
                   <p className="text-sm font-medium">
-                    {detail.transferRequest.destinationType === "bodega_central"
-                      ? "Bodega Central"
-                      : `Proyecto ${detail.transferRequest.destinationProjectId ?? ""}`}
+                    {getSourceWarehouseSummary(detail)}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Bodega destino</Label>
+                  <p className="text-sm font-medium">
+                    {getDestinationWarehouseSummary(detail)}
                   </p>
                 </div>
                 <div>
@@ -511,8 +572,8 @@ export default function TransferRequests() {
                 </div>
               </div>
 
-              <div className="rounded border border-border">
-                <table className="w-full text-sm">
+              <div className="overflow-x-auto rounded border border-border">
+                <table className="w-full min-w-[1320px] text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
                       <th className="w-44 p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -520,6 +581,12 @@ export default function TransferRequests() {
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Ítem
+                      </th>
+                      <th className="w-56 p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Bodega origen
+                      </th>
+                      <th className="w-56 p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Bodega destino
                       </th>
                       <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Cant. solicitada
@@ -560,6 +627,10 @@ export default function TransferRequests() {
                         requestedQuantity - transferQuantity,
                         0
                       );
+                      const destinationWarehouseLabel =
+                        detail.transferRequest.destinationType === "bodega_central"
+                          ? "Se define en recepción"
+                          : getWarehouseLabel(detail.destinationWarehouse);
 
                       return (
                         <tr key={item.id} className="border-b border-border last:border-0">
@@ -567,6 +638,16 @@ export default function TransferRequests() {
                             {item.sapItemCode || "-"}
                           </td>
                           <td className="p-3">{item.itemName}</td>
+                          <td className="p-3">
+                            <p className="max-w-[220px] truncate text-xs font-medium">
+                              {getWarehouseLabel(item.sourceWarehouse)}
+                            </p>
+                          </td>
+                          <td className="p-3">
+                            <p className="max-w-[220px] truncate text-xs font-medium">
+                              {destinationWarehouseLabel}
+                            </p>
+                          </td>
                           <td className="p-3 text-right">
                             {item.quantity} {item.unit || ""}
                           </td>

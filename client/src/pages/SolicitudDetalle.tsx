@@ -48,6 +48,7 @@ import {
   AlertCircle,
   Pencil,
   XCircle,
+  Send,
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { useLocation, useParams } from "wouter";
@@ -435,10 +436,12 @@ function SapSearchBox({
   if (currentCode && !isEditing) {
     return (
       <div className="space-y-1">
-        <div className="flex items-center gap-1">
-          <span className="font-mono text-xs font-bold text-primary">{currentCode}</span>
+        <div className="flex min-w-0 items-start gap-2">
+          <span className="shrink-0 font-mono text-xs font-bold text-primary">
+            {currentCode}
+          </span>
           {currentDescription && (
-            <span className="text-xs text-muted-foreground truncate max-w-[150px]">
+            <span className="min-w-0 flex-1 whitespace-normal break-words text-xs leading-5 text-muted-foreground">
               {currentDescription}
             </span>
           )}
@@ -629,6 +632,12 @@ export default function SolicitudDetalle() {
         delete next[variables.id];
         return next;
       });
+      setPendingFlowByItemId((current) => {
+        if (!(variables.id in current)) return current;
+        const next = { ...current };
+        delete next[variables.id];
+        return next;
+      });
       invalidateAll();
     },
     onError: (e) => toast.error(e.message),
@@ -648,6 +657,12 @@ export default function SolicitudDetalle() {
           return next;
         });
       }
+      setPendingFlowByItemId((current) => {
+        if (!(variables.id in current)) return current;
+        const next = { ...current };
+        delete next[variables.id];
+        return next;
+      });
       invalidateAll();
     },
     onError: (e) => toast.error(e.message),
@@ -713,6 +728,9 @@ export default function SolicitudDetalle() {
   const [assigningFlowItemId, setAssigningFlowItemId] = useState<number | null>(null);
   const [selectedWarehouseByItemId, setSelectedWarehouseByItemId] = useState<
     Record<number, string>
+  >({});
+  const [pendingFlowByItemId, setPendingFlowByItemId] = useState<
+    Record<number, QueueFlowType>
   >({});
   const [warehousePopoverItemId, setWarehousePopoverItemId] = useState<number | null>(
     null
@@ -1252,16 +1270,9 @@ export default function SolicitudDetalle() {
                             [item.id]: String(warehouse.id),
                           }));
                           setWarehousePopoverItemId(null);
-                          if (
-                            item.assignedFlow === "despacho_bodega" ||
-                            warehousePromptItemId === item.id
-                          ) {
-                            void handleQueuedFlowSelection(
-                              item,
-                              "despacho_bodega",
-                              warehouseId
-                            );
-                          }
+                          setWarehousePromptItemId((current) =>
+                            current === item.id ? null : current
+                          );
                         }}
                       >
                         <Check
@@ -1740,7 +1751,19 @@ export default function SolicitudDetalle() {
                 {itemRows.map((row) => {
                   const item = row.baseItem;
                   const editableItem = row.editableItem;
-                  const queuedFlow = editableItem?.assignedFlow ?? undefined;
+                  const queuedFlow = editableItem?.assignedFlow as
+                    | QueueFlowType
+                    | undefined;
+                  const pendingFlow = editableItem
+                    ? pendingFlowByItemId[editableItem.id]
+                    : undefined;
+                  const selectedQueueFlow = pendingFlow ?? queuedFlow;
+                  const hasPendingFlowDraft = editableItem
+                    ? Object.prototype.hasOwnProperty.call(
+                        pendingFlowByItemId,
+                        editableItem.id
+                      )
+                    : false;
                   const queueOptions = getVisibleQueueOptionsForItem();
                   const approvalBadge = getRowApprovalBadge(row);
                   const approvalEventLabel = getApprovalEventLabel(row);
@@ -1827,11 +1850,20 @@ export default function SolicitudDetalle() {
                   const selectedDispatchWarehouseId = editableItem
                     ? getSelectedWarehouseId(editableItem)
                     : null;
+                  const hasPendingWarehouseChange =
+                    selectedQueueFlow === "despacho_bodega" &&
+                    selectedDispatchWarehouseId !== null &&
+                    selectedDispatchWarehouseId !== Number(editableItem?.warehouseId ?? 0);
+                  const canSubmitQueuedFlow =
+                    Boolean(editableItem && selectedQueueFlow) &&
+                    (hasPendingFlowDraft || hasPendingWarehouseChange) &&
+                    selectedQueueFlow !== undefined &&
+                    (selectedQueueFlow !== queuedFlow || hasPendingWarehouseChange);
                   const shouldShowDispatchWarehouseCombobox =
                     Boolean(editableItem) &&
                     request.requestType === "bienes" &&
                     queueOptions.includes("despacho_bodega") &&
-                    (queuedFlow === "despacho_bodega" ||
+                    (selectedQueueFlow === "despacho_bodega" ||
                       warehousePromptItemId === editableItem?.id ||
                       Boolean(selectedDispatchWarehouseId));
 
@@ -2050,24 +2082,33 @@ export default function SolicitudDetalle() {
                                 </p>
                               ) : null}
                               <Select
-                                value={queuedFlow}
+                                value={selectedQueueFlow}
                                 onValueChange={(value) => {
                                   if (!editableItem) return;
-                                  void handleQueuedFlowSelection(
-                                    editableItem,
-                                    value,
-                                    selectedDispatchWarehouseId
+                                  const nextFlow = value as QueueFlowType;
+                                  setPendingFlowByItemId((current) => {
+                                    const next = { ...current };
+                                    if (nextFlow === queuedFlow) {
+                                      delete next[editableItem.id];
+                                    } else {
+                                      next[editableItem.id] = nextFlow;
+                                    }
+                                    return next;
+                                  });
+                                  setWarehousePromptItemId((current) =>
+                                    nextFlow === "despacho_bodega"
+                                      ? editableItem.id
+                                      : current === editableItem.id
+                                        ? null
+                                        : current
                                   );
                                 }}
-                                disabled={isFlowSelectionLocked}
+                                disabled={isFlowSelectionLocked || anyQueueProcessing}
                               >
                                 <SelectTrigger className="h-8 w-full min-w-0 text-xs">
-                                  <SelectValue placeholder="Enviar al flujo" />
+                                  <SelectValue placeholder="Seleccionar flujo" />
                                 </SelectTrigger>
                                 <SelectContent align="start">
-                                  {queuedFlow ? (
-                                    <SelectItem value="__clear__">Quitar flujo</SelectItem>
-                                  ) : null}
                                   {queueOptions.map((flowType) => {
                                     const disabledReason = editableItem
                                       ? getQueueDisabledReason(
@@ -2087,7 +2128,7 @@ export default function SolicitudDetalle() {
                                         value={flowType}
                                         disabled={
                                           Boolean(disabledReason) &&
-                                          queuedFlow !== flowType &&
+                                          selectedQueueFlow !== flowType &&
                                           !isMissingWarehousePrompt
                                         }
                                       >
@@ -2109,6 +2150,27 @@ export default function SolicitudDetalle() {
                                     : null
                                 )
                               ) : null}
+                              <Button
+                                variant="default"
+                                size="sm"
+                                className="h-8 w-full px-2 text-xs"
+                                onClick={() => {
+                                  if (!editableItem || !selectedQueueFlow) return;
+                                  void handleQueuedFlowSelection(
+                                    editableItem,
+                                    selectedQueueFlow,
+                                    selectedDispatchWarehouseId
+                                  );
+                                }}
+                                disabled={
+                                  !canSubmitQueuedFlow ||
+                                  isFlowSelectionLocked ||
+                                  anyQueueProcessing
+                                }
+                              >
+                                <Send className="mr-1.5 h-3.5 w-3.5" />
+                                Enviar a flujo
+                              </Button>
                               {queuedFlow && editableItem ? (
                                 <Button
                                   variant="ghost"

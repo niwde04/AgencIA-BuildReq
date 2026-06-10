@@ -814,6 +814,7 @@ export const transferRequests = pgTable(
     projectId: integer("projectId").notNull(),
     destinationType: transferDestinationTypeEnum("destinationType").notNull(),
     destinationProjectId: integer("destinationProjectId"),
+    reverseLogisticId: integer("reverseLogisticId"),
     createdById: integer("createdById").notNull(),
     status: transferRequestStatusEnum("status").default("pendiente").notNull(),
     neededBy: timestamp("neededBy"),
@@ -826,6 +827,9 @@ export const transferRequests = pgTable(
     projectIdx: index("tr_project_idx").on(table.projectId),
     materialRequestIdx: index("tr_material_request_idx").on(
       table.materialRequestId
+    ),
+    reverseLogisticIdx: index("tr_reverse_logistic_idx").on(
+      table.reverseLogisticId
     ),
     statusIdx: index("tr_status_idx").on(table.status),
   })
@@ -891,6 +895,8 @@ export const transfers = pgTable(
     status: transferStatusEnum("status").default("pendiente").notNull(),
     remissionGuideNumber: varchar("remissionGuideNumber", { length: 64 }),
     sapCorrelative: varchar("sapCorrelative", { length: 80 }),
+    preparedByName: varchar("preparedByName", { length: 160 }),
+    deliveredToName: varchar("deliveredToName", { length: 160 }),
     confirmedById: integer("confirmedById"),
     confirmedAt: timestamp("confirmedAt"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -1460,9 +1466,16 @@ export const reverseLogistics = pgTable(
     justification: text("justification").notNull(),
     sourceProjectId: integer("sourceProjectId").notNull(),
     destinationProjectId: integer("destinationProjectId"),
+    destinationWarehouseId: integer("destinationWarehouseId").references(
+      () => warehouses.id,
+      {
+        onDelete: "set null",
+      }
+    ),
     sourceWarehouseExitId: integer("sourceWarehouseExitId"),
     sourceReceiptId: integer("sourceReceiptId"),
     supplierName: varchar("supplierName", { length: 255 }),
+    receivedByName: varchar("receivedByName", { length: 255 }),
     originalRequestId: integer("originalRequestId"),
     status: returnStatusEnum("status").default("pendiente").notNull(),
     sapDocumentType: varchar("sapDocumentType", { length: 50 }),
@@ -1476,6 +1489,9 @@ export const reverseLogistics = pgTable(
   },
   table => ({
     sourceProjectIdx: index("rl_source_project_idx").on(table.sourceProjectId),
+    destinationWarehouseIdx: index("rl_destination_warehouse_idx").on(
+      table.destinationWarehouseId
+    ),
     sourceReceiptIdx: index("rl_source_receipt_idx").on(table.sourceReceiptId),
     returnTypeIdx: index("rl_return_type_idx").on(table.returnType),
     statusIdx: index("rl_status_idx").on(table.status),

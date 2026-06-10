@@ -77,6 +77,7 @@ const EMPTY_WAREHOUSE_FORM: WarehouseFormState = {
 };
 
 const WAREHOUSE_USER_ROLE_LABELS: Record<string, string> = {
+  administracion_central: "Administración Central",
   jefe_bodega_central: "Bodega Central",
   bodeguero_proyecto: "Bodega Proyecto",
 };

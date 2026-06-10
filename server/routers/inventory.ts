@@ -26,6 +26,27 @@ function canReadGlobalAvailability(user: {
   );
 }
 
+const WAREHOUSE_VIEWER_ROLES = new Set([
+  "jefe_bodega_central",
+  "bodeguero_proyecto",
+]);
+
+function canManageWarehousesGlobally(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "administracion_central"
+  );
+}
+
+function isWarehouseAssignedViewer(user: { buildreqRole?: string | null }) {
+  return Boolean(
+    user.buildreqRole && WAREHOUSE_VIEWER_ROLES.has(user.buildreqRole)
+  );
+}
+
 export const inventoryRouter = router({
   projectStockForItems: protectedProcedure
     .input(
@@ -64,6 +85,60 @@ export const inventoryRouter = router({
       }
 
       return db.listProjectStockForItems(input);
+    }),
+
+  visibleWarehouseStockForItems: protectedProcedure
+    .input(
+      z.object({
+        items: z
+          .array(
+            z.object({
+              id: z.number().int().positive(),
+              sapItemCode: z.string().nullable().optional(),
+              itemName: z.string().min(1),
+            })
+          )
+          .max(200),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const canReadTransferOriginStock =
+        ctx.user.role === "admin" ||
+        ctx.user.buildreqRole === "jefe_bodega_central" ||
+        ctx.user.buildreqRole === "administracion_central" ||
+        ctx.user.buildreqRole === "administrador_proyecto" ||
+        ctx.user.buildreqRole === "bodeguero_proyecto";
+
+      if (!canReadTransferOriginStock) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a existencias de traslado",
+        });
+      }
+
+      const baseFilters: {
+        isActive: boolean;
+        projectId?: number | null;
+        projectIds?: number[] | null;
+      } = { isActive: true };
+      const scopedWarehouseFilters = applyProjectScope(baseFilters, ctx.user);
+      const visibleWarehouses = canManageWarehousesGlobally(ctx.user)
+        ? await db.listWarehouses({ isActive: true })
+        : isWarehouseAssignedViewer(ctx.user)
+          ? await db.listWarehouses({
+              isActive: true,
+              assignedUserId: ctx.user.id,
+            })
+          : await db.listWarehouses({
+              isActive: scopedWarehouseFilters.isActive,
+              projectId: scopedWarehouseFilters.projectId ?? undefined,
+              projectIds: scopedWarehouseFilters.projectIds ?? undefined,
+            });
+
+      return db.listVisibleWarehouseStockForItems({
+        warehouseIds: visibleWarehouses.map(warehouse => Number(warehouse.id)),
+        items: input.items,
+      });
     }),
 
   list: protectedProcedure

@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -17,7 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Eye, Printer, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 
@@ -88,15 +89,77 @@ function getDestinationLabel(row: any) {
       : "";
 }
 
+function getWarehouseLabel(warehouse: any) {
+  if (!warehouse) return "-";
+  return (
+    warehouse.displayName ||
+    [warehouse.code || warehouse.localCode, warehouse.name]
+      .filter(Boolean)
+      .join(" - ") ||
+    `Bodega ${warehouse.id ?? ""}`.trim()
+  );
+}
+
+function getTransferSourceWarehouseSummary(detail: any) {
+  const labels = Array.from(
+    new Set<string>(
+      (detail?.items || [])
+        .map((item: any) => getWarehouseLabel(item.sourceWarehouse))
+        .filter((label: string) => label && label !== "-")
+    )
+  );
+
+  if (labels.length === 1) return labels[0];
+  if (labels.length > 1) return "Ver origen por línea";
+  return getWarehouseLabel(detail?.originWarehouse);
+}
+
+function getTransferItemTargetLabel(item: any) {
+  return item?.targetLabel || item?.target?.label || "-";
+}
+
 export default function Transfers() {
+  const utils = trpc.useUtils();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [preparedByName, setPreparedByName] = useState("");
+  const [deliveredToName, setDeliveredToName] = useState("");
   const { data: transfers, isLoading } = trpc.transfers.list.useQuery();
   const { data: detail } = trpc.transfers.getById.useQuery(
     { id: selectedId ?? 0 },
     { enabled: Boolean(selectedId) }
   );
+  const updatePrintFieldsMutation = trpc.transfers.updatePrintFields.useMutation({
+    onSuccess: (transfer) => {
+      if (!transfer) return;
+      utils.transfers.getById.setData({ id: transfer.id }, (current: any) =>
+        current
+          ? {
+              ...current,
+              transfer: {
+                ...current.transfer,
+                preparedByName: transfer.preparedByName,
+                deliveredToName: transfer.deliveredToName,
+              },
+            }
+          : current
+      );
+      void utils.transfers.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  useEffect(() => {
+    if (!detail?.transfer?.id) return;
+    setPreparedByName(detail.transfer.preparedByName || detail.createdBy?.name || "");
+    setDeliveredToName(detail.transfer.deliveredToName || "");
+  }, [
+    detail?.transfer?.id,
+    detail?.transfer?.preparedByName,
+    detail?.transfer?.deliveredToName,
+    detail?.createdBy?.name,
+  ]);
 
   const filteredTransfers = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
@@ -127,8 +190,51 @@ export default function Transfers() {
     });
   }, [searchTerm, statusFilter, transfers]);
 
-  const handlePrintTransferExit = () => {
+  const savePrintFields = async (options?: { silent?: boolean }) => {
+    if (!detail?.transfer?.id) return false;
+
+    const preparedByLabel = preparedByName.trim();
+    const deliveredToLabel = deliveredToName.trim();
+    const currentPreparedBy = String(detail.transfer.preparedByName || "").trim();
+    const currentDeliveredTo = String(detail.transfer.deliveredToName || "").trim();
+
+    if (
+      preparedByLabel === currentPreparedBy &&
+      deliveredToLabel === currentDeliveredTo
+    ) {
+      return true;
+    }
+
+    try {
+      await updatePrintFieldsMutation.mutateAsync({
+        id: detail.transfer.id,
+        preparedByName: preparedByLabel || null,
+        deliveredToName: deliveredToLabel || null,
+      });
+      if (!options?.silent) {
+        toast.success("Datos de egreso guardados");
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const handlePrintTransferExit = async () => {
     if (!detail) return;
+    const preparedByLabel = preparedByName.trim();
+    const deliveredToLabel = deliveredToName.trim();
+
+    if (!preparedByLabel) {
+      toast.error("Ingrese el nombre en Elaborado por");
+      return;
+    }
+    if (!deliveredToLabel) {
+      toast.error("Ingrese el nombre en Entregado a");
+      return;
+    }
+    const saved = await savePrintFields({ silent: true });
+    if (!saved) return;
 
     const transfer = detail.transfer;
     const transferRequest = detail.transferRequest;
@@ -137,17 +243,18 @@ export default function Transfers() {
       : transferRequest?.projectId
         ? `Proyecto ${transferRequest.projectId}`
         : "-";
-    const originWarehouseLabel =
-      detail.originWarehouse?.displayName ||
-      detail.project?.name ||
-      originProjectLabel;
+    const originWarehouseLabel = getTransferSourceWarehouseSummary(detail);
     const destinationLabel = getDestinationLabel(detail) || "-";
     const destinationWarehouseLabel =
       transferRequest?.destinationType === "bodega_central"
         ? "Bodega Central"
-        : detail.destinationWarehouse?.displayName ||
-          detail.destinationProject?.name ||
-          destinationLabel;
+        : detail.destinationWarehouse
+          ? getWarehouseLabel(detail.destinationWarehouse)
+          : detail.destinationProject?.name || destinationLabel;
+    const printDestinationWarehouseLabel =
+      destinationWarehouseLabel === originWarehouseLabel
+        ? "-"
+        : destinationWarehouseLabel;
     const requestedByLabel =
       detail.createdBy?.name ||
       (transferRequest?.createdById
@@ -175,6 +282,7 @@ export default function Transfers() {
           <tr>
             <td>${escapeHtml(item.sapItemCode || "-")}</td>
             <td>${escapeHtml(item.itemName || "-")}</td>
+            <td>${escapeHtml(getTransferItemTargetLabel(item))}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantity))}</td>
             <td class="center">${escapeHtml(item.unit || "-")}</td>
             <td>${escapeHtml(referenceLabel)}</td>
@@ -197,8 +305,12 @@ export default function Transfers() {
           <meta charset="utf-8" />
           <title>${escapeHtml(transfer.transferNumber)}</title>
           <style>
-            @page { size: A4 landscape; margin: 9mm; }
+            @page { size: Letter portrait; margin: 9mm; }
+            @media print { @page { size: Letter portrait; margin: 9mm; } }
             * { box-sizing: border-box; }
+            html {
+              width: 216mm;
+            }
             body {
               background: #fff;
               color: #000;
@@ -208,20 +320,20 @@ export default function Transfers() {
             }
             .sheet {
               margin: 0 auto;
-              max-width: 279mm;
-              padding: 4mm 4mm 8mm;
+              max-width: 216mm;
+              padding: 2mm 4mm 4mm;
             }
             .header {
               align-items: start;
               display: grid;
-              gap: 18px;
-              grid-template-columns: 112px 1fr 120px;
+              gap: 12px;
+              grid-template-columns: 86px 1fr 100px;
             }
             .logo {
               display: block;
-              height: 52px;
+              height: 46px;
               object-fit: contain;
-              width: 70px;
+              width: 64px;
             }
             .title {
               color: #000;
@@ -233,13 +345,13 @@ export default function Transfers() {
             }
             .company {
               color: #000;
-              font-size: 15px;
+              font-size: 14px;
               margin-bottom: 2px;
             }
             .document-number {
               border: 5px double #222;
               color: #000;
-              font-size: 14px;
+              font-size: 13px;
               font-weight: 900;
               margin-top: 0;
               padding: 4px 8px;
@@ -247,9 +359,9 @@ export default function Transfers() {
             }
             .meta {
               display: grid;
-              gap: 34px;
+              gap: 18px;
               grid-template-columns: 1fr 1fr;
-              margin-top: 8mm;
+              margin-top: 6mm;
             }
             .meta-column {
               display: grid;
@@ -257,8 +369,8 @@ export default function Transfers() {
             }
             .field {
               display: grid;
-              gap: 8px;
-              grid-template-columns: 120px 1fr;
+              gap: 6px;
+              grid-template-columns: 95px 1fr;
               min-height: 14px;
             }
             .label {
@@ -269,7 +381,7 @@ export default function Transfers() {
             }
             table {
               border-collapse: collapse;
-              margin-top: 5mm;
+              margin-top: 4mm;
               width: 100%;
             }
             th {
@@ -299,17 +411,25 @@ export default function Transfers() {
               gap: 58px;
               grid-template-columns: repeat(3, 180px);
               justify-content: center;
-              margin-top: 14mm;
+              margin-top: 10mm;
+            }
+            .signature-name {
+              font-size: 12px;
+              font-weight: 700;
+              min-height: 17px;
+              text-align: center;
             }
             .signature-line {
               border-top: 2px solid #111;
               font-size: 13px;
               font-weight: 700;
+              margin-top: 12px;
               padding-top: 4px;
               text-align: center;
             }
             @media print {
-              .sheet { max-width: none; padding: 0; }
+              html, body { height: auto; overflow: hidden; }
+              .sheet { max-width: none; padding: 0; page-break-after: avoid; }
             }
           </style>
         </head>
@@ -350,16 +470,12 @@ export default function Transfers() {
                   <div class="value">${escapeHtml(originProjectLabel)}</div>
                 </div>
                 <div class="field">
-                  <div class="label">Destino:</div>
-                  <div class="value">${escapeHtml(destinationLabel)}</div>
-                </div>
-                <div class="field">
                   <div class="label">Referencia:</div>
                   <div class="value">${escapeHtml(referenceLabel)}</div>
                 </div>
                 <div class="field">
                   <div class="label">A Bodega:</div>
-                  <div class="value">${escapeHtml(destinationWarehouseLabel)}</div>
+                  <div class="value">${escapeHtml(printDestinationWarehouseLabel)}</div>
                 </div>
               </div>
             </section>
@@ -367,27 +483,37 @@ export default function Transfers() {
             <table>
               <thead>
                 <tr>
-                  <th style="width: 20%;">Código/No. Serie</th>
+                  <th style="width: 14%;">Código/No. Serie</th>
                   <th>Identificador</th>
+                  <th style="width: 20%;">Subproyecto / activo fijo</th>
                   <th style="width: 10%;" class="numeric">Cantidad</th>
-                  <th style="width: 10%;" class="center">U Medida</th>
-                  <th style="width: 20%;">Referencia</th>
-                  <th style="width: 10%;" class="numeric">Total</th>
+                  <th style="width: 9%;" class="center">U Medida</th>
+                  <th style="width: 16%;">Referencia</th>
+                  <th style="width: 9%;" class="numeric">Total</th>
                 </tr>
               </thead>
               <tbody>
-                ${itemRows || `<tr><td colspan="6">Sin ítems</td></tr>`}
+                ${itemRows || `<tr><td colspan="7">Sin ítems</td></tr>`}
                 <tr class="total-row">
-                  <td colspan="5">Total general</td>
+                  <td colspan="6">Total general</td>
                   <td class="numeric">${escapeHtml(formatPrintNumber(totalQuantity))}</td>
                 </tr>
               </tbody>
             </table>
 
             <section class="signatures">
-              <div class="signature-line">Elaborado por:</div>
-              <div class="signature-line">Entregado a:</div>
-              <div class="signature-line">Autorizado por:</div>
+              <div>
+                <div class="signature-name">${escapeHtml(preparedByLabel)}</div>
+                <div class="signature-line">Elaborado por:</div>
+              </div>
+              <div>
+                <div class="signature-name">${escapeHtml(deliveredToLabel)}</div>
+                <div class="signature-line">Entregado a:</div>
+              </div>
+              <div>
+                <div class="signature-name">&nbsp;</div>
+                <div class="signature-line">Autorizado por:</div>
+              </div>
             </section>
           </main>
         </body>
@@ -510,14 +636,14 @@ export default function Transfers() {
       </Card>
 
       <Dialog open={Boolean(selectedId)} onOpenChange={(open) => !open && setSelectedId(null)}>
-        <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1200px] sm:p-6 lg:p-7">
+        <DialogContent className="scrollbar-none max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1500px] sm:p-6 lg:p-7 xl:max-w-[1600px]">
           <DialogHeader>
             <DialogTitle>{detail?.transfer.transferNumber || "Traslado"}</DialogTitle>
           </DialogHeader>
 
           {detail ? (
             <div className="space-y-5">
-              <div className="grid gap-3 md:grid-cols-3">
+              <div className="grid gap-3 md:grid-cols-4">
                 <div className="rounded-lg border border-border p-4">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Solicitud
@@ -536,12 +662,20 @@ export default function Transfers() {
                 </div>
                 <div className="rounded-lg border border-border p-4">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Destino
+                    Bodega origen
                   </p>
-                  <p className="mt-2 text-sm font-medium">
+                  <p className="mt-2 truncate text-sm font-medium">
+                    {getTransferSourceWarehouseSummary(detail)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Bodega destino
+                  </p>
+                  <p className="mt-2 truncate text-sm font-medium">
                     {detail.transferRequest?.destinationType === "bodega_central"
                       ? "Bodega Central"
-                      : `Proyecto ${detail.transferRequest?.destinationProjectId ?? "-"}`}
+                      : getWarehouseLabel(detail.destinationWarehouse)}
                   </p>
                 </div>
               </div>
@@ -590,8 +724,8 @@ export default function Transfers() {
                 </div>
               </div>
 
-              <div className="overflow-hidden rounded-lg border border-border">
-                <table className="w-full text-sm">
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <table className="w-full min-w-[1280px] text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
                       <th className="w-44 p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -599,6 +733,12 @@ export default function Transfers() {
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Ítem
+                      </th>
+                      <th className="w-56 p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Bodega origen
+                      </th>
+                      <th className="w-56 p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Subproyecto / activo fijo
                       </th>
                       <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Cantidad
@@ -612,44 +752,91 @@ export default function Transfers() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(detail.items || []).map((item: any) => (
-                      <tr key={item.id} className="border-b border-border last:border-0">
-                        <td className="p-3 font-mono text-xs text-muted-foreground">
-                          {item.sapItemCode || "-"}
-                        </td>
-                        <td className="p-3">{item.itemName}</td>
-                        <td className="p-3 text-right">
-                          {item.quantity} {item.unit || ""}
-                        </td>
-                        <td className="p-3 text-right">
-                          {item.receivedQuantity || "0.00"} {item.unit || ""}
-                        </td>
-                        <td className="p-3 text-right">
-                          <div>
-                            {item.returnedToOriginQuantity || "0.00"}{" "}
-                            {item.unit || ""}
-                          </div>
-                          {item.receiptCloseReason || item.receiptCloseNote ? (
-                            <div className="mt-1 text-xs text-muted-foreground">
-                              {[item.receiptCloseReason, item.receiptCloseNote]
-                                .filter(Boolean)
-                                .join(" — ")}
+                    {(detail.items || []).map((item: any) => {
+                      const lineTargetLabel = getTransferItemTargetLabel(item);
+
+                      return (
+                        <tr key={item.id} className="border-b border-border last:border-0">
+                          <td className="p-3 font-mono text-xs text-muted-foreground">
+                            {item.sapItemCode || "-"}
+                          </td>
+                          <td className="p-3">{item.itemName}</td>
+                          <td className="p-3">
+                            <p className="max-w-[220px] truncate text-xs font-medium">
+                              {getWarehouseLabel(item.sourceWarehouse)}
+                            </p>
+                          </td>
+                          <td className="p-3">
+                            <p className="max-w-[220px] truncate text-xs font-medium">
+                              {lineTargetLabel}
+                            </p>
+                          </td>
+                          <td className="p-3 text-right">
+                            {item.quantity} {item.unit || ""}
+                          </td>
+                          <td className="p-3 text-right">
+                            {item.receivedQuantity || "0.00"} {item.unit || ""}
+                          </td>
+                          <td className="p-3 text-right">
+                            <div>
+                              {item.returnedToOriginQuantity || "0.00"}{" "}
+                              {item.unit || ""}
                             </div>
-                          ) : null}
-                        </td>
-                      </tr>
-                    ))}
+                            {item.receiptCloseReason || item.receiptCloseNote ? (
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                {[item.receiptCloseReason, item.receiptCloseNote]
+                                  .filter(Boolean)
+                                  .join(" — ")}
+                              </div>
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
 
-              <div className="flex flex-wrap justify-end gap-3 border-t border-border/70 pt-1">
+              <div className="grid gap-3 border-t border-border/70 pt-4 md:grid-cols-2">
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Elaborado por *
+                  </Label>
+                  <Input
+                    value={preparedByName}
+                    onChange={(event) => setPreparedByName(event.target.value)}
+                    onBlur={() => void savePrintFields({ silent: true })}
+                    placeholder="Nombre de quien elabora"
+                    maxLength={160}
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Entregado a *
+                  </Label>
+                  <Input
+                    value={deliveredToName}
+                    onChange={(event) => setDeliveredToName(event.target.value)}
+                    onBlur={() => void savePrintFields({ silent: true })}
+                    placeholder="Nombre de quien recibe"
+                    maxLength={160}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-3">
                 <Button
                   variant="outline"
                   size="lg"
                   className="h-10 min-w-[210px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
                   onClick={handlePrintTransferExit}
-                  disabled={(detail.items || []).length === 0}
+                  disabled={
+                    (detail.items || []).length === 0 ||
+                    !preparedByName.trim() ||
+                    !deliveredToName.trim()
+                  }
                 >
                   <Printer className="mr-2 h-4 w-4" />
                   Imprimir egreso

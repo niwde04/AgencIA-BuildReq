@@ -78,6 +78,15 @@ const blankReturnItem = (): ReturnItem => ({
   notes: "",
 });
 
+const REQUIRED_FIELD_ERROR_CLASS =
+  "border-destructive ring-1 ring-destructive/40 focus-visible:ring-destructive";
+
+function fieldErrorClass(hasError: boolean, className = "") {
+  return [className, hasError ? REQUIRED_FIELD_ERROR_CLASS : ""]
+    .filter(Boolean)
+    .join(" ");
+}
+
 function formatReceiptSupplier(supplier?: any | null) {
   if (!supplier) return "";
   return [supplier.supplierCode, supplier.name].filter(Boolean).join(" — ");
@@ -114,6 +123,16 @@ function compareProjectsByCode(left: any, right: any) {
 function formatProjectLabel(project?: any | null) {
   if (!project) return "Seleccione proyecto";
   return `${project.code} - ${project.name}`;
+}
+
+function formatWarehouseLabel(warehouse: any) {
+  return (
+    warehouse?.displayName ||
+    [warehouse?.localCode || warehouse?.code, warehouse?.name]
+      .filter(Boolean)
+      .join(" - ") ||
+    "Almacén"
+  );
 }
 
 function SapItemSearchInput({
@@ -301,22 +320,41 @@ export default function NuevaDevolucion() {
   const [returnType, setReturnType] = useState("");
   const [reasonCategory, setReasonCategory] = useState("");
   const [justification, setJustification] = useState("");
+  const [receivedByName, setReceivedByName] = useState("");
   const [sourceProjectId, setSourceProjectId] = useState("");
+  const [sourceWarehouseId, setSourceWarehouseId] = useState("");
   const [destinationProjectId, setDestinationProjectId] = useState("");
+  const [destinationWarehouseId, setDestinationWarehouseId] = useState("");
   const [supplierName, setSupplierName] = useState("");
   const [sourceReceiptId, setSourceReceiptId] = useState("");
-  const [sourceProjectPopoverOpen, setSourceProjectPopoverOpen] = useState(false);
+  const [sourceWarehousePopoverOpen, setSourceWarehousePopoverOpen] =
+    useState(false);
+  const [sourceWarehouseProjectPopoverOpen, setSourceWarehouseProjectPopoverOpen] =
+    useState(false);
   const [destinationProjectPopoverOpen, setDestinationProjectPopoverOpen] =
     useState(false);
   const [receiptPopoverOpen, setReceiptPopoverOpen] = useState(false);
   const [resolvingSapIndex, setResolvingSapIndex] = useState<number | null>(null);
   const [unitPopoverOpen, setUnitPopoverOpen] = useState<number | null>(null);
   const [items, setItems] = useState<ReturnItem[]>([blankReturnItem()]);
+  const [missingFields, setMissingFields] = useState<Record<string, string>>({});
   const sourceProjectNumericId = sourceProjectId ? Number(sourceProjectId) : 0;
+  const destinationProjectNumericId = destinationProjectId
+    ? Number(destinationProjectId)
+    : 0;
   const { data: sourceProjectWarehouses } = trpc.warehouses.list.useQuery(
     { projectId: sourceProjectNumericId, isActive: true },
     { enabled: sourceProjectNumericId > 0 }
   );
+  const { data: destinationProjectWarehouses } =
+    trpc.warehouses.list.useQuery(
+      { projectId: destinationProjectNumericId, isActive: true },
+      {
+        enabled:
+          returnType === "devolucion_entre_proyectos" &&
+          destinationProjectNumericId > 0,
+      }
+    );
   const { data: completedPurchaseReceipts } = trpc.receipts.list.useQuery(
     { sourceType: "purchase_order", status: "completa" },
     { enabled: returnType === "devolucion_proveedor" }
@@ -328,6 +366,69 @@ export default function NuevaDevolucion() {
   const projectOptions = useMemo(
     () => [...(projects || [])].sort(compareProjectsByCode),
     [projects]
+  );
+  const sourceWarehouseOptionsFromProjects = useMemo(() => {
+    const byWarehouseId = new Map<number, any>();
+
+    for (const project of projectOptions) {
+      for (const warehouse of project.warehouses || []) {
+        if (warehouse?.isActive === false) continue;
+
+        const warehouseId = Number(warehouse.id);
+        const current =
+          byWarehouseId.get(warehouseId) ?? {
+            warehouse,
+            warehouseId,
+            projects: [],
+          };
+
+        if (
+          !current.projects.some(
+            (assignedProject: any) => Number(assignedProject.id) === Number(project.id)
+          )
+        ) {
+          current.projects.push(project);
+        }
+
+        byWarehouseId.set(warehouseId, current);
+      }
+    }
+
+    return Array.from(byWarehouseId.values())
+      .map((option: any) => ({
+        ...option,
+        projects: [...option.projects].sort(compareProjectsByCode),
+        searchValue: [
+          option.warehouse.code,
+          option.warehouse.localCode,
+          option.warehouse.name,
+          option.warehouse.displayName,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      }))
+      .sort((left: any, right: any) => {
+        const warehouseCompare = projectCodeCollator.compare(
+          left.warehouse?.code ?? left.warehouse?.localCode ?? "",
+          right.warehouse?.code ?? right.warehouse?.localCode ?? ""
+        );
+        if (warehouseCompare !== 0) return warehouseCompare;
+        return projectCodeCollator.compare(
+          left.warehouse?.name ?? "",
+          right.warehouse?.name ?? ""
+        );
+      });
+  }, [projectOptions]);
+  const selectedSourceWarehouseOption = useMemo(
+    () =>
+      sourceWarehouseOptionsFromProjects.find(
+        (option: any) => String(option.warehouseId) === sourceWarehouseId
+      ),
+    [sourceWarehouseOptionsFromProjects, sourceWarehouseId]
+  );
+  const sourceProjectOptionsForSelectedWarehouse = useMemo(
+    () => selectedSourceWarehouseOption?.projects ?? [],
+    [selectedSourceWarehouseOption]
   );
 
   const selectedSourceProject = useMemo(
@@ -341,6 +442,13 @@ export default function NuevaDevolucion() {
       ),
     [projects, destinationProjectId]
   );
+  const selectedDestinationWarehouse = useMemo(
+    () =>
+      (destinationProjectWarehouses || []).find(
+        (warehouse: any) => String(warehouse.id) === destinationWarehouseId
+      ),
+    [destinationProjectWarehouses, destinationWarehouseId]
+  );
   const selectedReceiptRow = useMemo(
     () =>
       completedSupplierReceipts.find(
@@ -349,8 +457,17 @@ export default function NuevaDevolucion() {
     [completedSupplierReceipts, sourceReceiptId]
   );
   const sourceWarehouseOptions = useMemo(
-    () => sourceProjectWarehouses || [],
-    [sourceProjectWarehouses]
+    () => {
+      if (
+        returnType !== "devolucion_proveedor" &&
+        selectedSourceWarehouseOption?.warehouse
+      ) {
+        return [selectedSourceWarehouseOption.warehouse];
+      }
+
+      return sourceProjectWarehouses || [];
+    },
+    [returnType, selectedSourceWarehouseOption, sourceProjectWarehouses]
   );
   const defaultSourceWarehouse = useMemo(
     () => sourceWarehouseOptions[0],
@@ -385,8 +502,57 @@ export default function NuevaDevolucion() {
       setSourceReceiptId("");
       setReceiptPopoverOpen(false);
       setSupplierName("");
+      return;
+    }
+
+    setSourceWarehouseId("");
+    setSourceProjectId("");
+    setDestinationProjectId("");
+    setDestinationWarehouseId("");
+    setSourceWarehousePopoverOpen(false);
+    setSourceWarehouseProjectPopoverOpen(false);
+    setDestinationProjectPopoverOpen(false);
+    setItems([blankReturnItem()]);
+  }, [returnType]);
+
+  useEffect(() => {
+    if (returnType !== "devolucion_entre_proyectos") {
+      setDestinationProjectId("");
+      setDestinationWarehouseId("");
+      setDestinationProjectPopoverOpen(false);
     }
   }, [returnType]);
+
+  useEffect(() => {
+    if (returnType !== "devolucion_entre_proyectos") return;
+    if (!destinationProjectId) {
+      setDestinationWarehouseId("");
+      return;
+    }
+
+    const activeDestinationWarehouseIds = new Set(
+      (destinationProjectWarehouses || []).map((warehouse: any) =>
+        String(warehouse.id)
+      )
+    );
+    if (
+      destinationWarehouseId &&
+      activeDestinationWarehouseIds.has(destinationWarehouseId)
+    ) {
+      return;
+    }
+
+    setDestinationWarehouseId(
+      destinationProjectWarehouses?.[0]?.id
+        ? String(destinationProjectWarehouses[0].id)
+        : ""
+    );
+  }, [
+    returnType,
+    destinationProjectId,
+    destinationWarehouseId,
+    destinationProjectWarehouses,
+  ]);
 
   useEffect(() => {
     if (returnType !== "devolucion_proveedor" || !selectedReceiptRow) return;
@@ -466,13 +632,6 @@ export default function NuevaDevolucion() {
     );
   };
 
-  const formatWarehouseLabel = (warehouse: any) =>
-    warehouse?.displayName ||
-    [warehouse?.localCode || warehouse?.code, warehouse?.name]
-      .filter(Boolean)
-      .join(" - ") ||
-    "Almacén";
-
   const getWarehouseOptionsForItem = (item: ReturnItem) => {
     if (
       item.warehouseId &&
@@ -506,12 +665,19 @@ export default function NuevaDevolucion() {
   });
 
   const addItem = () => {
-    setItems([...items, blankReturnItem()]);
+    setItems([
+      ...items,
+      {
+        ...blankReturnItem(),
+        warehouseId: selectedSourceWarehouseOption?.warehouseId,
+      },
+    ]);
   };
 
   const removeItem = (index: number) => {
     if (items.length === 1) return;
     setItems(items.filter((_, i) => i !== index));
+    setMissingFields({});
   };
 
   const updateItem = (
@@ -522,7 +688,49 @@ export default function NuevaDevolucion() {
     const updated = [...items];
     updated[index] = { ...updated[index], [field]: value };
     setItems(updated);
+    const shouldClear =
+      (field === "itemName" && String(value).trim()) ||
+      (field === "quantity" && String(value).trim()) ||
+      (field === "condition" && String(value).trim()) ||
+      (field === "warehouseId" && Boolean(value));
+    if (shouldClear) {
+      setMissingFields((current) => {
+        const key = `item:${index}:${field}`;
+        if (!(key in current)) return current;
+        const { [key]: _removed, ...next } = current;
+        return next;
+      });
+    }
   };
+
+  const clearMissingField = (key: string) => {
+    setMissingFields((current) => {
+      if (!(key in current)) return current;
+      const { [key]: _removed, ...next } = current;
+      return next;
+    });
+  };
+
+  const clearMissingFields = (keys: string[]) => {
+    setMissingFields((current) => {
+      let changed = false;
+      const next = { ...current };
+      keys.forEach((key) => {
+        if (key in next) {
+          delete next[key];
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+  };
+
+  const hasMissingField = (key: string) => key in missingFields;
+
+  const getItemMissingLabels = (index: number) =>
+    Object.entries(missingFields)
+      .filter(([key]) => key.startsWith(`item:${index}:`))
+      .map(([, label]) => label.replace(`Ítem ${index + 1}: `, ""));
 
   const resolveSapItem = async (index: number) => {
     const row = items[index];
@@ -572,38 +780,12 @@ export default function NuevaDevolucion() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!returnType || !reasonCategory) {
-      toast.error("Complete todos los campos obligatorios");
-      return;
-    }
-
-    if (returnType === "devolucion_proveedor" && !sourceReceiptId) {
-      toast.error("Seleccione una recepción completada para generar la nota de crédito");
-      return;
-    }
-
-    if (!sourceProjectId) {
-      toast.error("Complete todos los campos obligatorios");
-      return;
-    }
-
-    if (justification.length < 10) {
-      toast.error(
-        "La justificación debe tener al menos 10 caracteres"
-      );
-      return;
-    }
+    const normalizedReceivedByName = receivedByName.trim();
 
     const validItems = items.filter(
-      (item) => item.itemName && item.quantity && item.condition
+      (item) =>
+        item.itemName.trim() && item.quantity.trim() && item.condition.trim()
     );
-    if (validItems.length === 0) {
-      toast.error(
-        "Debe agregar al menos un ítem con nombre, cantidad y condición"
-      );
-      return;
-    }
-
     const requiresWarehouse = [
       "devolucion_bodega_central",
       "devolucion_bodega_proyecto",
@@ -611,18 +793,91 @@ export default function NuevaDevolucion() {
       "devolucion_proveedor",
     ].includes(returnType);
     const itemWithoutWarehouse = validItems.find((item) => !item.warehouseId);
+
+    const missing: Record<string, string> = {};
+    if (!returnType) missing.returnType = "Tipo de devolución";
+    if (!reasonCategory) missing.reasonCategory = "Categoría del motivo";
+    if (!normalizedReceivedByName) missing.receivedByName = "Recibido por";
+    if (returnType === "devolucion_proveedor" && !sourceReceiptId) {
+      missing.sourceReceiptId = "Recepción completada";
+    }
+    if (returnType === "devolucion_entre_proyectos") {
+      if (!destinationProjectId) {
+        missing.destinationProjectId = "Proyecto destino";
+      }
+      if (!destinationWarehouseId) {
+        missing.destinationWarehouseId = "Bodega destino";
+      }
+    }
+    if (returnType && returnType !== "devolucion_proveedor" && !sourceWarehouseId) {
+      missing.sourceWarehouseId = "Bodega origen";
+    }
+    if (returnType && returnType !== "devolucion_proveedor" && !sourceProjectId) {
+      missing.sourceProjectId = "Proyecto de la bodega";
+    }
+    if (justification.trim().length < 10) {
+      missing.justification = "Justificación (mínimo 10 caracteres)";
+    }
+
+    if (validItems.length === 0) {
+      items.forEach((item, index) => {
+        if (!item.itemName.trim()) {
+          missing[`item:${index}:itemName`] = `Ítem ${index + 1}: nombre`;
+        }
+        if (!item.quantity.trim()) {
+          missing[`item:${index}:quantity`] = `Ítem ${index + 1}: cantidad`;
+        }
+        if (!item.condition.trim()) {
+          missing[`item:${index}:condition`] = `Ítem ${index + 1}: condición`;
+        }
+        if (requiresWarehouse && !item.warehouseId) {
+          missing[`item:${index}:warehouseId`] = `Ítem ${index + 1}: almacén`;
+        }
+      });
+    }
+
     if (requiresWarehouse && itemWithoutWarehouse) {
-      toast.error(`Seleccione almacén para ${itemWithoutWarehouse.itemName}`);
+      items.forEach((item, index) => {
+        if (
+          item.itemName.trim() &&
+          item.quantity.trim() &&
+          item.condition.trim() &&
+          !item.warehouseId
+        ) {
+          missing[`item:${index}:warehouseId`] = `Ítem ${index + 1}: almacén`;
+        }
+      });
+    }
+
+    if (Object.keys(missing).length > 0) {
+      setMissingFields(missing);
+      const labels = Object.values(missing);
+      toast.error(
+        `Faltan: ${labels.slice(0, 4).join(", ")}${
+          labels.length > 4 ? ` y ${labels.length - 4} más` : ""
+        }`
+      );
+      window.requestAnimationFrame(() => {
+        document
+          .querySelector("[data-required-error='true']")
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
       return;
     }
+
+    setMissingFields({});
 
     createMutation.mutate({
       returnType: returnType as any,
       reasonCategory: reasonCategory as any,
       justification,
+      receivedByName: normalizedReceivedByName,
       sourceProjectId: parseInt(sourceProjectId),
       destinationProjectId: destinationProjectId
         ? parseInt(destinationProjectId)
+        : undefined,
+      destinationWarehouseId: destinationWarehouseId
+        ? parseInt(destinationWarehouseId)
         : undefined,
       sourceReceiptId: sourceReceiptId ? parseInt(sourceReceiptId) : undefined,
       supplierName: supplierName || undefined,
@@ -652,6 +907,15 @@ export default function NuevaDevolucion() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        {Object.keys(missingFields).length > 0 ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+            <p className="font-semibold">Complete los campos marcados.</p>
+            <p className="mt-1">
+              Faltan: {Object.values(missingFields).join(", ")}.
+            </p>
+          </div>
+        ) : null}
+
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
@@ -660,10 +924,24 @@ export default function NuevaDevolucion() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
+              <div
+                className="space-y-2"
+                data-required-error={hasMissingField("returnType") || undefined}
+              >
                 <Label>Tipo de devolución *</Label>
-                <Select value={returnType} onValueChange={setReturnType}>
-                  <SelectTrigger className="w-full">
+                <Select
+                  value={returnType}
+                  onValueChange={(value) => {
+                    setReturnType(value);
+                    clearMissingFields(["returnType"]);
+                  }}
+                >
+                  <SelectTrigger
+                    className={fieldErrorClass(
+                      hasMissingField("returnType"),
+                      "w-full"
+                    )}
+                  >
                     <SelectValue placeholder="Seleccione tipo" />
                   </SelectTrigger>
                   <SelectContent>
@@ -680,13 +958,24 @@ export default function NuevaDevolucion() {
                 </Select>
               </div>
 
-              <div className="space-y-2">
+              <div
+                className="space-y-2"
+                data-required-error={hasMissingField("reasonCategory") || undefined}
+              >
                 <Label>Categoría del motivo *</Label>
                 <Select
                   value={reasonCategory}
-                  onValueChange={setReasonCategory}
+                  onValueChange={(value) => {
+                    setReasonCategory(value);
+                    clearMissingField("reasonCategory");
+                  }}
                 >
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger
+                    className={fieldErrorClass(
+                      hasMissingField("reasonCategory"),
+                      "w-full"
+                    )}
+                  >
                     <SelectValue placeholder="Seleccione motivo" />
                   </SelectTrigger>
                   <SelectContent>
@@ -704,36 +993,63 @@ export default function NuevaDevolucion() {
                   </SelectContent>
                 </Select>
               </div>
+
+              <div
+                className="space-y-2"
+                data-required-error={hasMissingField("receivedByName") || undefined}
+              >
+                <Label>Recibido por *</Label>
+                <Input
+                  value={receivedByName}
+                  onChange={(event) => {
+                    setReceivedByName(event.target.value);
+                    if (event.target.value.trim()) {
+                      clearMissingField("receivedByName");
+                    }
+                  }}
+                  placeholder="Nombre de quien recibe"
+                  maxLength={255}
+                  className={fieldErrorClass(hasMissingField("receivedByName"))}
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>
-                  {returnType === "devolucion_bodega_proyecto"
-                    ? "Proyecto que recibe la devolución *"
-                    : "Proyecto origen *"}
-                </Label>
+              <div
+                className="space-y-2"
+                data-required-error={hasMissingField("sourceWarehouseId") || undefined}
+              >
+                <Label>Bodega origen *</Label>
                 <Popover
-                  open={sourceProjectPopoverOpen}
-                  onOpenChange={setSourceProjectPopoverOpen}
+                  open={sourceWarehousePopoverOpen}
+                  onOpenChange={setSourceWarehousePopoverOpen}
                 >
                   <PopoverTrigger asChild>
                     <Button
                       type="button"
                       variant="outline"
                       role="combobox"
-                      aria-expanded={sourceProjectPopoverOpen}
+                      aria-expanded={sourceWarehousePopoverOpen}
                       disabled={returnType === "devolucion_proveedor"}
-                      className="h-10 w-full justify-between overflow-hidden px-3 font-normal"
+                      className={fieldErrorClass(
+                        hasMissingField("sourceWarehouseId"),
+                        "h-10 w-full justify-between overflow-hidden px-3 font-normal"
+                      )}
                     >
                       <span
                         className={`truncate ${
-                          sourceProjectId ? "" : "text-muted-foreground"
+                          sourceWarehouseId ? "" : "text-muted-foreground"
                         }`}
                       >
                         {returnType === "devolucion_proveedor" && !sourceProjectId
                           ? "Seleccione una recepción"
-                          : formatProjectLabel(selectedSourceProject)}
+                          : returnType === "devolucion_proveedor"
+                            ? "Según recepción seleccionada"
+                            : selectedSourceWarehouseOption
+                              ? formatWarehouseLabel(
+                                  selectedSourceWarehouseOption.warehouse
+                                )
+                              : "Seleccione bodega"}
                       </span>
                       <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                     </Button>
@@ -743,35 +1059,52 @@ export default function NuevaDevolucion() {
                     className="w-[var(--radix-popover-trigger-width)] p-0"
                   >
                     <Command>
-                      <CommandInput placeholder="Buscar proyecto por código o nombre..." />
+                      <CommandInput placeholder="Buscar bodega por código o nombre..." />
                       <CommandList>
-                        <CommandEmpty>No se encontraron proyectos.</CommandEmpty>
+                        <CommandEmpty>No se encontraron bodegas.</CommandEmpty>
                         <CommandGroup>
-                          {projectOptions.map((project: any) => (
+                          {sourceWarehouseOptionsFromProjects.map((option: any) => (
                             <CommandItem
-                              key={project.id}
-                              value={[
-                                project.code,
-                                project.name,
-                                project.sapProjectCode,
-                              ]
-                                .filter(Boolean)
-                                .join(" ")}
+                              key={option.warehouseId}
+                              value={option.searchValue}
                               onSelect={() => {
-                                setSourceProjectId(String(project.id));
-                                setSourceProjectPopoverOpen(false);
+                                const nextProjectId =
+                                  option.projects.length === 1
+                                    ? String(option.projects[0].id)
+                                    : "";
+                                setSourceWarehouseId(String(option.warehouseId));
+                                setSourceProjectId(nextProjectId);
+                                clearMissingFields([
+                                  "sourceWarehouseId",
+                                  ...(nextProjectId ? ["sourceProjectId"] : []),
+                                ]);
+                                setSourceWarehousePopoverOpen(false);
+                                setSourceWarehouseProjectPopoverOpen(false);
+                                setItems((current) =>
+                                  current.map((item) => ({
+                                    ...item,
+                                    warehouseId: option.warehouseId,
+                                  }))
+                                );
                               }}
                             >
                               <Check
                                 className={`h-4 w-4 ${
-                                  sourceProjectId === String(project.id)
+                                  sourceWarehouseId === String(option.warehouseId)
                                     ? "opacity-100"
                                     : "opacity-0"
                                 }`}
                               />
-                              <span className="truncate">
-                                {formatProjectLabel(project)}
-                              </span>
+                              <div className="min-w-0">
+                                <p className="truncate">
+                                  {formatWarehouseLabel(option.warehouse)}
+                                </p>
+                                <p className="truncate text-xs text-muted-foreground">
+                                  {option.projects.length === 1
+                                    ? formatProjectLabel(option.projects[0])
+                                    : `${option.projects.length} proyectos asignados`}
+                                </p>
+                              </div>
                             </CommandItem>
                           ))}
                         </CommandGroup>
@@ -781,8 +1114,94 @@ export default function NuevaDevolucion() {
                 </Popover>
               </div>
 
+              {returnType !== "devolucion_proveedor" && (
+                <div
+                  className="space-y-2"
+                  data-required-error={hasMissingField("sourceProjectId") || undefined}
+                >
+                  <Label>Proyecto de la bodega *</Label>
+                  <Popover
+                    open={sourceWarehouseProjectPopoverOpen}
+                    onOpenChange={setSourceWarehouseProjectPopoverOpen}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={sourceWarehouseProjectPopoverOpen}
+                        disabled={!sourceWarehouseId}
+                        className={fieldErrorClass(
+                          hasMissingField("sourceProjectId"),
+                          "h-10 w-full justify-between overflow-hidden px-3 font-normal"
+                        )}
+                      >
+                        <span
+                          className={`truncate ${
+                            sourceProjectId ? "" : "text-muted-foreground"
+                          }`}
+                        >
+                          {sourceProjectId
+                            ? formatProjectLabel(selectedSourceProject)
+                            : sourceWarehouseId
+                              ? "Seleccione proyecto"
+                              : "Seleccione bodega primero"}
+                        </span>
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="start"
+                      className="w-[var(--radix-popover-trigger-width)] p-0"
+                    >
+                      <Command>
+                        <CommandInput placeholder="Buscar proyecto por código o nombre..." />
+                        <CommandList>
+                          <CommandEmpty>No se encontraron proyectos.</CommandEmpty>
+                          <CommandGroup>
+                            {sourceProjectOptionsForSelectedWarehouse.map(
+                              (project: any) => (
+                                <CommandItem
+                                  key={project.id}
+                                  value={[
+                                    project.code,
+                                    project.name,
+                                    project.sapProjectCode,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" ")}
+                                  onSelect={() => {
+                                    setSourceProjectId(String(project.id));
+                                    clearMissingField("sourceProjectId");
+                                    setSourceWarehouseProjectPopoverOpen(false);
+                                  }}
+                                >
+                                  <Check
+                                    className={`h-4 w-4 ${
+                                      sourceProjectId === String(project.id)
+                                        ? "opacity-100"
+                                        : "opacity-0"
+                                    }`}
+                                  />
+                                  <span className="truncate">
+                                    {formatProjectLabel(project)}
+                                  </span>
+                                </CommandItem>
+                              )
+                            )}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              )}
+
               {returnType === "devolucion_entre_proyectos" && (
-                <div className="space-y-2">
+                <div
+                  className="space-y-2"
+                  data-required-error={hasMissingField("destinationProjectId") || undefined}
+                >
                   <Label>Proyecto destino *</Label>
                   <Popover
                     open={destinationProjectPopoverOpen}
@@ -794,7 +1213,10 @@ export default function NuevaDevolucion() {
                         variant="outline"
                         role="combobox"
                         aria-expanded={destinationProjectPopoverOpen}
-                        className="h-10 w-full justify-between overflow-hidden px-3 font-normal"
+                        className={fieldErrorClass(
+                          hasMissingField("destinationProjectId"),
+                          "h-10 w-full justify-between overflow-hidden px-3 font-normal"
+                        )}
                       >
                         <span
                           className={`truncate ${
@@ -827,6 +1249,8 @@ export default function NuevaDevolucion() {
                                   .join(" ")}
                                 onSelect={() => {
                                   setDestinationProjectId(String(project.id));
+                                  clearMissingField("destinationProjectId");
+                                  setDestinationWarehouseId("");
                                   setDestinationProjectPopoverOpen(false);
                                 }}
                               >
@@ -850,8 +1274,64 @@ export default function NuevaDevolucion() {
                 </div>
               )}
 
+              {returnType === "devolucion_entre_proyectos" && (
+                <div
+                  className="space-y-2"
+                  data-required-error={hasMissingField("destinationWarehouseId") || undefined}
+                >
+                  <Label>Bodega destino *</Label>
+                  <Select
+                    value={destinationWarehouseId}
+                    onValueChange={(value) => {
+                      setDestinationWarehouseId(value);
+                      clearMissingField("destinationWarehouseId");
+                    }}
+                    disabled={
+                      !destinationProjectId ||
+                      !destinationProjectWarehouses?.length
+                    }
+                  >
+                    <SelectTrigger
+                      className={fieldErrorClass(
+                        hasMissingField("destinationWarehouseId"),
+                        "w-full"
+                      )}
+                    >
+                      <SelectValue
+                        placeholder={
+                          destinationProjectId
+                            ? "Seleccione bodega destino"
+                            : "Seleccione proyecto destino"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(destinationProjectWarehouses || []).map(
+                        (warehouse: any) => (
+                          <SelectItem
+                            key={warehouse.id}
+                            value={String(warehouse.id)}
+                          >
+                            {formatWarehouseLabel(warehouse)}
+                          </SelectItem>
+                        )
+                      )}
+                    </SelectContent>
+                  </Select>
+                  {destinationProjectId &&
+                  !destinationProjectWarehouses?.length ? (
+                    <p className="text-xs text-destructive">
+                      El proyecto destino no tiene bodegas activas.
+                    </p>
+                  ) : null}
+                </div>
+              )}
+
               {returnType === "devolucion_proveedor" && (
-                <div className="space-y-2">
+                <div
+                  className="space-y-2"
+                  data-required-error={hasMissingField("sourceReceiptId") || undefined}
+                >
                   <Label>Recepción completada *</Label>
                   <Popover
                     open={receiptPopoverOpen}
@@ -863,7 +1343,10 @@ export default function NuevaDevolucion() {
                         variant="outline"
                         role="combobox"
                         aria-expanded={receiptPopoverOpen}
-                        className="h-10 w-full justify-between overflow-hidden px-3 font-normal"
+                        className={fieldErrorClass(
+                          hasMissingField("sourceReceiptId"),
+                          "h-10 w-full justify-between overflow-hidden px-3 font-normal"
+                        )}
                       >
                         <span className="truncate">
                           {formatCompletedReceiptLabel(selectedReceiptRow)}
@@ -903,6 +1386,10 @@ export default function NuevaDevolucion() {
                                     setSourceReceiptId(receiptId);
                                     setSourceProjectId(String(row.receipt.projectId));
                                     setSupplierName(formatReceiptSupplier(row.supplier));
+                                    clearMissingFields([
+                                      "sourceReceiptId",
+                                      "sourceProjectId",
+                                    ]);
                                     setItems([blankReturnItem()]);
                                     setReceiptPopoverOpen(false);
                                   }}
@@ -944,16 +1431,18 @@ export default function NuevaDevolucion() {
               <div className="space-y-2 rounded-lg border border-primary/20 bg-primary/5 p-4">
                 <Label className="text-sm font-semibold text-foreground">
                   {returnType === "devolucion_bodega_proyecto"
-                    ? "Bodega que recibe la devolución"
-                    : "Bodega del proyecto origen"}
+                    ? "Proyecto que recibe la devolución"
+                    : "Proyecto asociado"}
                 </Label>
                 <p className="text-sm font-medium text-foreground">
-                  {getProjectWarehouseLabel(selectedSourceProject)}
+                  {selectedSourceProject
+                    ? formatProjectLabel(selectedSourceProject)
+                    : "Seleccione bodega origen"}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {returnType === "devolucion_bodega_proyecto"
-                    ? "Al crear esta devolución, el inventario se cargará a esta bodega."
-                    : "La devolución saldrá desde esta bodega operativa."}
+                    ? "Al crear esta devolución, el inventario se cargará a la bodega seleccionada."
+                    : "La devolución saldrá desde la bodega seleccionada."}
                 </p>
               </div>
 
@@ -963,7 +1452,11 @@ export default function NuevaDevolucion() {
                     Bodega del proyecto destino
                   </Label>
                   <p className="text-sm font-medium text-foreground">
-                    {getProjectWarehouseLabel(selectedDestinationProject)}
+                    {selectedDestinationWarehouse
+                      ? formatWarehouseLabel(selectedDestinationWarehouse)
+                      : selectedDestinationProject
+                        ? "Seleccione bodega destino"
+                        : getProjectWarehouseLabel(selectedDestinationProject)}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     El material quedará asociado a esta bodega al recibirse.
@@ -972,15 +1465,24 @@ export default function NuevaDevolucion() {
               )}
             </div>
 
-            <div className="space-y-2">
+            <div
+              className="space-y-2"
+              data-required-error={hasMissingField("justification") || undefined}
+            >
               <Label>
                 Justificación * <span className="text-xs text-muted-foreground">(mínimo 10 caracteres)</span>
               </Label>
               <Textarea
                 value={justification}
-                onChange={(e) => setJustification(e.target.value)}
+                onChange={(e) => {
+                  setJustification(e.target.value);
+                  if (e.target.value.trim().length >= 10) {
+                    clearMissingField("justification");
+                  }
+                }}
                 placeholder="Explique detalladamente el motivo de la devolución..."
                 rows={3}
+                className={fieldErrorClass(hasMissingField("justification"))}
               />
               <p className="text-xs text-muted-foreground text-right">
                 {justification.length} / 10 mín.
@@ -1004,7 +1506,13 @@ export default function NuevaDevolucion() {
               {items.map((item, index) => (
                 <div
                   key={index}
-                  className="p-3 border border-border rounded space-y-3"
+                  className={fieldErrorClass(
+                    getItemMissingLabels(index).length > 0,
+                    "p-3 border border-border rounded space-y-3"
+                  )}
+                  data-required-error={
+                    getItemMissingLabels(index).length > 0 || undefined
+                  }
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-semibold text-muted-foreground uppercase">
@@ -1044,6 +1552,7 @@ export default function NuevaDevolucion() {
                             };
                             return next;
                           });
+                          clearMissingField(`item:${index}:itemName`);
                         }}
                         onResolve={() => void resolveSapItem(index)}
                       />
@@ -1058,6 +1567,9 @@ export default function NuevaDevolucion() {
                         onChange={(e) =>
                           updateItem(index, "itemName", e.target.value)
                         }
+                        className={fieldErrorClass(
+                          hasMissingField(`item:${index}:itemName`)
+                        )}
                       />
                     </div>
                     <div className="space-y-1 md:col-span-2">
@@ -1071,15 +1583,21 @@ export default function NuevaDevolucion() {
                         }
                         disabled={
                           returnType === "devolucion_proveedor" ||
+                          Boolean(sourceWarehouseId) ||
                           sourceWarehouseOptions.length === 0
                         }
                       >
-                        <SelectTrigger className="w-full min-w-0">
+                        <SelectTrigger
+                          className={fieldErrorClass(
+                            hasMissingField(`item:${index}:warehouseId`),
+                            "w-full min-w-0"
+                          )}
+                        >
                           <SelectValue
                             placeholder={
                               sourceProjectId
                                 ? "Seleccione almacén"
-                                : "Seleccione proyecto"
+                                : "Seleccione bodega"
                             }
                           />
                         </SelectTrigger>
@@ -1106,6 +1624,9 @@ export default function NuevaDevolucion() {
                         onChange={(e) =>
                           updateItem(index, "quantity", e.target.value)
                         }
+                        className={fieldErrorClass(
+                          hasMissingField(`item:${index}:quantity`)
+                        )}
                       />
                     </div>
                     <div className="space-y-1 md:col-span-2">
@@ -1133,7 +1654,12 @@ export default function NuevaDevolucion() {
                           updateItem(index, "condition", val)
                         }
                       >
-                        <SelectTrigger className="w-full min-w-0">
+                        <SelectTrigger
+                          className={fieldErrorClass(
+                            hasMissingField(`item:${index}:condition`),
+                            "w-full min-w-0"
+                          )}
+                        >
                           <SelectValue placeholder="Condición" />
                         </SelectTrigger>
                         <SelectContent>
@@ -1149,6 +1675,11 @@ export default function NuevaDevolucion() {
                       </Select>
                     </div>
                   </div>
+                  {getItemMissingLabels(index).length > 0 ? (
+                    <p className="text-xs font-medium text-destructive">
+                      Falta: {getItemMissingLabels(index).join(", ")}.
+                    </p>
+                  ) : null}
                 </div>
               ))}
             </div>

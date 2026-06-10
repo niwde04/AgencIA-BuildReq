@@ -96,10 +96,10 @@ function compareUsersByName(a: any, b: any) {
   return nameCollator.compare(a.email ?? "", b.email ?? "");
 }
 
-function compareProjectsByName(a: any, b: any) {
-  const nameCompare = nameCollator.compare(a.name ?? "", b.name ?? "");
-  if (nameCompare !== 0) return nameCompare;
-  return nameCollator.compare(a.code ?? "", b.code ?? "");
+function compareProjectsByCode(a: any, b: any) {
+  const codeCompare = nameCollator.compare(a.code ?? "", b.code ?? "");
+  if (codeCompare !== 0) return codeCompare;
+  return nameCollator.compare(a.name ?? "", b.name ?? "");
 }
 
 function canAssignAllProjects(role?: string | null) {
@@ -188,7 +188,7 @@ function ProjectMultiSelect({
   compact?: boolean;
 }) {
   const sortedProjects = useMemo(
-    () => [...(projects || [])].sort(compareProjectsByName),
+    () => [...(projects || [])].sort(compareProjectsByCode),
     [projects]
   );
   const selectedSet = new Set(selectedProjectIds);
@@ -345,7 +345,7 @@ export default function Usuarios() {
     [users]
   );
   const sortedProjects = useMemo(
-    () => [...(projects || [])].sort(compareProjectsByName),
+    () => [...(projects || [])].sort(compareProjectsByCode),
     [projects]
   );
   const assignableRoleOptions = useMemo(

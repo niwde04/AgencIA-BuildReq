@@ -44,7 +44,7 @@ import {
   Send,
   XCircle,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 
@@ -313,6 +313,7 @@ export default function SalidasBodega() {
   const [returnPanelOpen, setReturnPanelOpen] = useState(false);
   const [returnReasonCategory, setReturnReasonCategory] = useState("error_pedido");
   const [returnJustification, setReturnJustification] = useState("");
+  const [returnReceivedByName, setReturnReceivedByName] = useState("");
   const [returnQuantityByItemId, setReturnQuantityByItemId] = useState<
     Record<number, string>
   >({});
@@ -436,6 +437,7 @@ export default function SalidasBodega() {
       toast.success(`Devolución ${result.returnNumber} registrada`);
       setReturnPanelOpen(false);
       setReturnJustification("");
+      setReturnReceivedByName("");
       setReturnQuantityByItemId({});
       setReturnConditionByItemId({});
       void Promise.all([
@@ -457,6 +459,7 @@ export default function SalidasBodega() {
     setReturnPanelOpen(false);
     setReturnReasonCategory("error_pedido");
     setReturnJustification("");
+    setReturnReceivedByName("");
     setReturnQuantityByItemId({});
     setReturnConditionByItemId({});
   };
@@ -475,8 +478,15 @@ export default function SalidasBodega() {
     for (const item of deliveryRequestDetail.items || []) {
       const suggestedQuantity = getSuggestedDeliveryQuantity(item);
       if (suggestedQuantity > 0) {
+        const itemWarehouseId = Number(item.warehouseId ?? 0);
+        const transferSourceWarehouseId = Number(
+          item.transferSourceWarehouseId ?? 0
+        );
         nextQuantities[item.id] = suggestedQuantity.toFixed(2);
-        nextWarehouses[item.id] = item.warehouseId ? String(item.warehouseId) : "";
+        nextWarehouses[item.id] =
+          itemWarehouseId > 0 && itemWarehouseId !== transferSourceWarehouseId
+            ? String(itemWarehouseId)
+            : "";
         nextTargets[item.id] = mapWarehouseExitLineTargetToSelection(
           item,
           deliveryRequestDetail.request.projectId
@@ -542,6 +552,120 @@ export default function SalidasBodega() {
       ),
     [deliveryStockRows]
   );
+  const getDeliveryBlockedWarehouseId = useCallback((item: any) => {
+    const warehouseId = Number(item.transferSourceWarehouseId ?? 0);
+    return Number.isFinite(warehouseId) && warehouseId > 0 ? warehouseId : null;
+  }, []);
+  const isDeliveryWarehouseBlocked = useCallback(
+    (item: any, warehouseId: number) => {
+      const blockedWarehouseId = getDeliveryBlockedWarehouseId(item);
+      return Boolean(
+        blockedWarehouseId && Number(warehouseId) === blockedWarehouseId
+      );
+    },
+    [getDeliveryBlockedWarehouseId]
+  );
+  const getDeliveryWarehouseAvailableQuantity = useCallback(
+    (item: any, warehouseId: number) => {
+      if (!warehouseId || isDeliveryWarehouseBlocked(item, warehouseId)) return 0;
+      return deliveryWarehouseStockByItemId.get(item.id)?.get(warehouseId) ?? 0;
+    },
+    [deliveryWarehouseStockByItemId, isDeliveryWarehouseBlocked]
+  );
+  const getSuggestedDeliveryWarehouseId = useCallback(
+    (item: any) => {
+      const warehouseStock = deliveryWarehouseStockByItemId.get(item.id);
+      if (!warehouseStock || !deliveryWarehouses?.length) return null;
+
+      const pendingQuantity = getDeliveryPendingQuantity(item);
+      const candidates = deliveryWarehouses
+        .map((warehouse: any) => {
+          const warehouseId = Number(warehouse.id);
+          return {
+            warehouseId,
+            quantity: getDeliveryWarehouseAvailableQuantity(item, warehouseId),
+          };
+        })
+        .filter(
+          candidate =>
+            candidate.warehouseId > 0 &&
+            candidate.quantity > 0 &&
+            !isDeliveryWarehouseBlocked(item, candidate.warehouseId)
+        );
+
+      const findCandidate = (warehouseId: number) =>
+        candidates.find(candidate => candidate.warehouseId === warehouseId);
+      const transferReceiptWarehouseId = Number(
+        item.transferReceiptWarehouseId ?? 0
+      );
+      const itemWarehouseId = Number(item.warehouseId ?? 0);
+      const preferredCandidate =
+        findCandidate(transferReceiptWarehouseId) ??
+        findCandidate(itemWarehouseId);
+      if (preferredCandidate) return preferredCandidate.warehouseId;
+
+      const enoughStockCandidate = [...candidates]
+        .filter(candidate => candidate.quantity + 0.000001 >= pendingQuantity)
+        .sort((left, right) => left.quantity - right.quantity)[0];
+      if (enoughStockCandidate) return enoughStockCandidate.warehouseId;
+
+      return [...candidates].sort(
+        (left, right) => right.quantity - left.quantity
+      )[0]?.warehouseId ?? null;
+    },
+    [
+      deliveryWarehouseStockByItemId,
+      deliveryWarehouses,
+      getDeliveryWarehouseAvailableQuantity,
+      isDeliveryWarehouseBlocked,
+    ]
+  );
+
+  useEffect(() => {
+    if (
+      !deliveryDialogOpen ||
+      !deliveryRequestDetail ||
+      !deliveryWarehouses?.length ||
+      deliveryStockRows === undefined
+    ) {
+      return;
+    }
+
+    setDeliveryWarehouseByItemId(current => {
+      let changed = false;
+      const nextWarehouses = { ...current };
+
+      for (const item of deliveryItems) {
+        const selectedWarehouseId = Number(nextWarehouses[item.id] ?? 0);
+        const selectedWarehouseIsValid =
+          selectedWarehouseId > 0 &&
+          getDeliveryWarehouseAvailableQuantity(item, selectedWarehouseId) > 0 &&
+          !isDeliveryWarehouseBlocked(item, selectedWarehouseId);
+
+        if (selectedWarehouseIsValid) continue;
+
+        const suggestedWarehouseId = getSuggestedDeliveryWarehouseId(item);
+        const nextValue = suggestedWarehouseId
+          ? String(suggestedWarehouseId)
+          : "";
+        if ((nextWarehouses[item.id] ?? "") !== nextValue) {
+          nextWarehouses[item.id] = nextValue;
+          changed = true;
+        }
+      }
+
+      return changed ? nextWarehouses : current;
+    });
+  }, [
+    deliveryDialogOpen,
+    deliveryItems,
+    deliveryRequestDetail,
+    deliveryStockRows,
+    deliveryWarehouses,
+    getDeliveryWarehouseAvailableQuantity,
+    getSuggestedDeliveryWarehouseId,
+    isDeliveryWarehouseBlocked,
+  ]);
 
   const filteredExits = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
@@ -754,8 +878,11 @@ export default function SalidasBodega() {
         const quantity = Number(deliveryQuantityByItemId[item.id] ?? 0);
         const warehouseId = Number(deliveryWarehouseByItemId[item.id] ?? 0);
         const targetSelection = deliveryTargetByItemId[item.id] ?? null;
-        const availableQuantity =
-          deliveryWarehouseStockByItemId.get(item.id)?.get(warehouseId) ?? 0;
+        const isBlockedWarehouse = isDeliveryWarehouseBlocked(item, warehouseId);
+        const availableQuantity = getDeliveryWarehouseAvailableQuantity(
+          item,
+          warehouseId
+        );
         const pendingQuantity = getDeliveryPendingQuantity(item);
 
         return {
@@ -764,6 +891,7 @@ export default function SalidasBodega() {
           pendingQuantity,
           availableQuantity,
           warehouseId,
+          isBlockedWarehouse,
           targetSelection,
         };
       })
@@ -775,14 +903,27 @@ export default function SalidasBodega() {
     }
 
     const invalidItem = selectedItems.find(
-      ({ quantity, pendingQuantity, availableQuantity, warehouseId }) =>
+      ({
+        quantity,
+        pendingQuantity,
+        availableQuantity,
+        warehouseId,
+        isBlockedWarehouse,
+      }) =>
         !Number.isFinite(quantity) ||
         quantity <= 0 ||
         !warehouseId ||
+        isBlockedWarehouse ||
         quantity - pendingQuantity > 0.000001 ||
         quantity - availableQuantity > 0.000001
     );
     if (invalidItem) {
+      if (invalidItem.isBlockedWarehouse) {
+        toast.error(
+          `${invalidItem.item.itemName}: no se puede despachar desde la bodega origen del traslado`
+        );
+        return;
+      }
       toast.error(
         `${invalidItem.item.itemName}: revise la cantidad, el pendiente y la existencia disponible`
       );
@@ -809,6 +950,7 @@ export default function SalidasBodega() {
     );
     setReturnReasonCategory("error_pedido");
     setReturnJustification("");
+    setReturnReceivedByName("");
     setReturnQuantityByItemId({});
     setReturnConditionByItemId(defaultConditions);
     setReturnPanelOpen(true);
@@ -816,6 +958,11 @@ export default function SalidasBodega() {
 
   const submitReturn = () => {
     if (!detail) return;
+    const normalizedReceivedByName = returnReceivedByName.trim();
+    if (!normalizedReceivedByName) {
+      toast.error("Recibido por es obligatorio");
+      return;
+    }
     if (returnJustification.trim().length < 10) {
       toast.error("La justificación debe tener al menos 10 caracteres");
       return;
@@ -849,6 +996,7 @@ export default function SalidasBodega() {
       returnType: "devolucion_bodega_proyecto",
       reasonCategory: returnReasonCategory as any,
       justification: returnJustification.trim(),
+      receivedByName: normalizedReceivedByName,
       sourceProjectId: detail.warehouseExit.projectId,
       sourceWarehouseExitId: detail.warehouseExit.id,
       originalRequestId: detail.warehouseExit.materialRequestId ?? undefined,
@@ -1450,7 +1598,7 @@ export default function SalidasBodega() {
                     </Badge>
                   </div>
 
-                  <div className="grid gap-3 md:grid-cols-2">
+                  <div className="grid gap-3 md:grid-cols-3">
                     <div className="space-y-2">
                       <Label>Motivo *</Label>
                       <Select
@@ -1468,6 +1616,19 @@ export default function SalidasBodega() {
                           ))}
                         </SelectContent>
                       </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Recibido por *</Label>
+                      <Input
+                        value={returnReceivedByName}
+                        onChange={(event) =>
+                          setReturnReceivedByName(event.target.value)
+                        }
+                        placeholder="Nombre de quien recibe"
+                        maxLength={255}
+                        disabled={createReturnMutation.isPending}
+                      />
                     </div>
 
                     <div className="space-y-2">
@@ -1740,10 +1901,13 @@ export default function SalidasBodega() {
                           const selectedWarehouseId = Number(
                             deliveryWarehouseByItemId[item.id] ?? 0
                           );
+                          const selectedWarehouseBlocked =
+                            isDeliveryWarehouseBlocked(item, selectedWarehouseId);
                           const availableQuantity =
-                            deliveryWarehouseStockByItemId
-                              .get(item.id)
-                              ?.get(selectedWarehouseId) ?? 0;
+                            getDeliveryWarehouseAvailableQuantity(
+                              item,
+                              selectedWarehouseId
+                            );
                           const pendingQuantity = getDeliveryPendingQuantity(item);
                           const quantity = Number(deliveryQuantityByItemId[item.id] ?? 0);
                           const balanceQuantity = Math.max(pendingQuantity - quantity, 0);
@@ -1753,6 +1917,7 @@ export default function SalidasBodega() {
                           const canDeliver =
                             pendingQuantity > 0 &&
                             availableQuantity > 0 &&
+                            !selectedWarehouseBlocked &&
                             Boolean(item.sapItemCode);
 
                           return (
@@ -1796,33 +1961,44 @@ export default function SalidasBodega() {
                                   }
                                   disabled={!deliveryWarehouses?.length}
                                 >
-                                  <SelectTrigger className="min-w-48">
+                                  <SelectTrigger className="min-w-[260px] text-left text-xs">
                                     <SelectValue placeholder="Seleccione almacén" />
                                   </SelectTrigger>
-                                  <SelectContent className="min-w-[280px]">
+                                  <SelectContent className="min-w-[360px]">
                                     {(deliveryWarehouses ?? []).map(
                                       (warehouse: any) => {
+                                        const warehouseId = Number(warehouse.id);
                                         const warehouseAvailableQuantity =
                                           deliveryWarehouseStockByItemId
                                             .get(item.id)
-                                            ?.get(Number(warehouse.id)) ?? 0;
+                                            ?.get(warehouseId) ?? 0;
+                                        const blockedWarehouse =
+                                          isDeliveryWarehouseBlocked(
+                                            item,
+                                            warehouseId
+                                          );
+                                        const withoutStock =
+                                          warehouseAvailableQuantity <= 0;
 
                                         return (
                                           <SelectItem
                                             key={warehouse.id}
                                             value={String(warehouse.id)}
                                             textValue={warehouse.displayName}
+                                            disabled={blockedWarehouse || withoutStock}
                                           >
                                             <span className="flex min-w-0 flex-col items-start gap-0.5">
                                               <span className="truncate font-medium">
                                                 {warehouse.displayName}
                                               </span>
                                               <span className="text-[11px] text-muted-foreground">
-                                                Disponible:{" "}
-                                                {formatQuantity(
-                                                  warehouseAvailableQuantity
-                                                )}{" "}
-                                                {item.unit || ""}
+                                                {blockedWarehouse
+                                                  ? "Origen del traslado"
+                                                  : withoutStock
+                                                    ? "Sin existencia"
+                                                    : `Disponible: ${formatQuantity(
+                                                        warehouseAvailableQuantity
+                                                      )} ${item.unit || ""}`}
                                               </span>
                                             </span>
                                           </SelectItem>

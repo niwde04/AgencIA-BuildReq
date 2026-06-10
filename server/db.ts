@@ -661,6 +661,7 @@ function normalizeProjectIds(projectIds?: Array<number | null | undefined> | nul
 }
 
 const WAREHOUSE_ASSIGNABLE_ROLES: BuildReqRole[] = [
+  "administracion_central",
   "jefe_bodega_central",
   "bodeguero_proyecto",
 ];
@@ -2039,6 +2040,131 @@ export async function listProjectStockForItems(params: {
   });
 }
 
+export async function listVisibleWarehouseStockForItems(params: {
+  warehouseIds: number[];
+  items: Array<{
+    id: number;
+    sapItemCode?: string | null;
+    itemName: string;
+  }>;
+}) {
+  const db = await getDb();
+  if (!db || params.warehouseIds.length === 0) {
+    return params.items.map(item => ({
+      itemId: item.id,
+      quantity: "0.00",
+      warehouses: [],
+    }));
+  }
+
+  const warehouseIds = Array.from(new Set(params.warehouseIds));
+  const stockByKey = new Map<string, string>();
+  const breakdownByKey = new Map<
+    string,
+    Array<{
+      warehouseId: number;
+      warehouseCode: string | null;
+      warehouseName: string | null;
+      displayName: string | null;
+      projectId: number;
+      projectCode: string | null;
+      projectName: string | null;
+      quantity: string;
+    }>
+  >();
+
+  for (const item of params.items) {
+    const sapItemCode = item.sapItemCode?.trim() || null;
+    const itemName = item.itemName.trim();
+    const key = sapItemCode
+      ? `sap:${sapItemCode}`
+      : `name:${itemName.toLowerCase()}`;
+    if (stockByKey.has(key)) continue;
+
+    const itemConditions = [
+      eq(inventoryItems.isActive, true),
+      isNotNull(inventoryItems.projectId),
+      inArray(inventoryItems.warehouseId, warehouseIds),
+      sql`${inventoryItems.currentStock}::numeric > 0`,
+    ];
+
+    if (sapItemCode) {
+      itemConditions.push(eq(inventoryItems.sapItemCode, sapItemCode));
+    } else {
+      itemConditions.push(sql`lower(${inventoryItems.name}) = lower(${itemName})`);
+    }
+
+    const rows = await db
+      .select({
+        warehouseId: inventoryItems.warehouseId,
+        warehouseLocation: inventoryItems.warehouseLocation,
+        warehouseCode: warehouses.code,
+        warehouseName: warehouses.name,
+        warehouseDisplayName: warehouses.displayName,
+        projectId: inventoryItems.projectId,
+        projectCode: projects.code,
+        projectName: projects.name,
+        quantity: sql<string>`coalesce(sum(${inventoryItems.currentStock}), 0)`,
+      })
+      .from(inventoryItems)
+      .leftJoin(warehouses, eq(inventoryItems.warehouseId, warehouses.id))
+      .leftJoin(projects, eq(inventoryItems.projectId, projects.id))
+      .where(and(...itemConditions))
+      .groupBy(
+        inventoryItems.warehouseId,
+        inventoryItems.warehouseLocation,
+        warehouses.code,
+        warehouses.name,
+        warehouses.displayName,
+        inventoryItems.projectId,
+        projects.code,
+        projects.name
+      )
+      .orderBy(asc(projects.code), asc(warehouses.displayName));
+
+    const options = rows.flatMap(row => {
+      if (
+        typeof row.warehouseId !== "number" ||
+        typeof row.projectId !== "number"
+      ) {
+        return [];
+      }
+
+      return [{
+        warehouseId: row.warehouseId,
+        warehouseCode: row.warehouseCode,
+        warehouseName: row.warehouseName,
+        displayName: row.warehouseDisplayName ?? row.warehouseLocation ?? null,
+        projectId: row.projectId,
+        projectCode: row.projectCode,
+        projectName: row.projectName,
+        quantity: toDecimalString(row.quantity),
+      }];
+    });
+    const total = options.reduce(
+      (sum, row) => sum + parseDecimal(row.quantity),
+      0
+    );
+
+    stockByKey.set(key, toDecimalString(total));
+    breakdownByKey.set(key, options);
+  }
+
+  return params.items.map(item => {
+    const sapItemCode = item.sapItemCode?.trim() || null;
+    const itemName = item.itemName.trim();
+    const key = sapItemCode
+      ? `sap:${sapItemCode}`
+      : `name:${itemName.toLowerCase()}`;
+
+    return {
+      itemId: item.id,
+      quantity: stockByKey.get(key) ?? "0.00",
+      warehouses: breakdownByKey.get(key) ?? [],
+    };
+  });
+}
+
 export async function getMaterialRequestById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
@@ -2077,10 +2203,98 @@ export async function getMaterialRequestById(id: number) {
   const itemSubprojectById = new Map(
     itemSubprojects.map(subproject => [subproject.id, subproject])
   );
+  const itemIds = items.map(item => item.id);
+  const transferWarehouseRows =
+    itemIds.length > 0
+      ? await db
+          .select({
+            materialRequestItemId: transferRequestItems.materialRequestItemId,
+            sourceWarehouseId: transferRequestItems.sourceWarehouseId,
+            receiptWarehouseId: receiptItems.warehouseId,
+            receivedQuantity: receiptItems.quantityReceived,
+            receiptItemId: receiptItems.id,
+          })
+          .from(transferRequestItems)
+          .innerJoin(
+            transferRequests,
+            eq(transferRequestItems.transferRequestId, transferRequests.id)
+          )
+          .leftJoin(
+            transfers,
+            eq(transfers.transferRequestId, transferRequests.id)
+          )
+          .leftJoin(
+            receipts,
+            and(
+              eq(receipts.sourceType, "transfer"),
+              eq(receipts.sourceId, transfers.id)
+            )
+          )
+          .leftJoin(
+            receiptItems,
+            and(
+              eq(receiptItems.receiptId, receipts.id),
+              eq(receiptItems.sourceItemId, transferRequestItems.id)
+            )
+          )
+          .where(
+            and(
+              inArray(transferRequestItems.materialRequestItemId, itemIds),
+              inArray(transferRequests.status, [
+                "pendiente",
+                "aprobada",
+                "convertida",
+              ])
+            )
+          )
+      : [];
+  const transferWarehouseByItemId = new Map<
+    number,
+    {
+      sourceWarehouseId: number | null;
+      receiptWarehouseId: number | null;
+      receiptItemId: number | null;
+    }
+  >();
+
+  for (const row of transferWarehouseRows) {
+    if (!row.materialRequestItemId) continue;
+    const current = transferWarehouseByItemId.get(row.materialRequestItemId);
+    const receivedQuantity = parseDecimal(row.receivedQuantity);
+    const hasReceiptWarehouse =
+      receivedQuantity > 0 && typeof row.receiptWarehouseId === "number";
+    const nextValue = {
+      sourceWarehouseId: row.sourceWarehouseId ?? null,
+      receiptWarehouseId: hasReceiptWarehouse ? row.receiptWarehouseId : null,
+      receiptItemId: hasReceiptWarehouse ? row.receiptItemId ?? null : null,
+    };
+
+    if (!current) {
+      transferWarehouseByItemId.set(row.materialRequestItemId, nextValue);
+      continue;
+    }
+
+    if (
+      nextValue.receiptWarehouseId &&
+      (!current.receiptWarehouseId ||
+        (nextValue.receiptItemId ?? 0) > (current.receiptItemId ?? 0))
+    ) {
+      transferWarehouseByItemId.set(row.materialRequestItemId, nextValue);
+      continue;
+    }
+
+    if (!current.sourceWarehouseId && nextValue.sourceWarehouseId) {
+      transferWarehouseByItemId.set(row.materialRequestItemId, {
+        ...current,
+        sourceWarehouseId: nextValue.sourceWarehouseId,
+      });
+    }
+  }
 
   const enrichedItems = await Promise.all(
     items.map(async item => {
       const sapItemCode = item.sapItemCode?.trim() || null;
+      const transferWarehouse = transferWarehouseByItemId.get(item.id);
       const committedQuantity = sapItemCode
         ? await getCommittedQuantityForItem(id, item)
         : null;
@@ -2112,6 +2326,9 @@ export async function getMaterialRequestById(id: number) {
         sapStock,
         projectStock: projectStock?.quantity ?? null,
         projectStockWarehouses: projectStock?.warehouses ?? [],
+        transferSourceWarehouseId: transferWarehouse?.sourceWarehouseId ?? null,
+        transferReceiptWarehouseId:
+          transferWarehouse?.receiptWarehouseId ?? null,
         physicalDispatchedQuantity: item.dispatchedQuantity ?? "0.00",
         dispatchedQuantity:
           item.dispatchedQuantity ?? item.deliveredQuantity ?? "0.00",
@@ -3160,6 +3377,45 @@ export async function recordWarehouseExitBatch(params: {
     .from(requestItems)
     .where(inArray(requestItems.id, uniqueRequestItemIds));
   const itemById = new Map(selectedItems.map(item => [item.id, item]));
+  const transferSourceWarehouseRows =
+    uniqueRequestItemIds.length > 0
+      ? await db
+          .select({
+            materialRequestItemId: transferRequestItems.materialRequestItemId,
+            sourceWarehouseId: transferRequestItems.sourceWarehouseId,
+          })
+          .from(transferRequestItems)
+          .innerJoin(
+            transferRequests,
+            eq(transferRequestItems.transferRequestId, transferRequests.id)
+          )
+          .where(
+            and(
+              inArray(
+                transferRequestItems.materialRequestItemId,
+                uniqueRequestItemIds
+              ),
+              isNotNull(transferRequestItems.sourceWarehouseId),
+              inArray(transferRequests.status, [
+                "pendiente",
+                "aprobada",
+                "convertida",
+              ])
+            )
+          )
+      : [];
+  const transferSourceWarehouseIdsByItemId = new Map<number, Set<number>>();
+  for (const row of transferSourceWarehouseRows) {
+    if (!row.materialRequestItemId || !row.sourceWarehouseId) continue;
+    const warehouseIds =
+      transferSourceWarehouseIdsByItemId.get(row.materialRequestItemId) ??
+      new Set<number>();
+    warehouseIds.add(row.sourceWarehouseId);
+    transferSourceWarehouseIdsByItemId.set(
+      row.materialRequestItemId,
+      warehouseIds
+    );
+  }
 
   for (const requestItemId of uniqueRequestItemIds) {
     const item = itemById.get(requestItemId);
@@ -3206,6 +3462,15 @@ export async function recordWarehouseExitBatch(params: {
     const item = itemById.get(entry.requestItemId)!;
     if (!entry.warehouseId) {
       throw new Error(`Seleccione almacén origen para ${item.itemName}`);
+    }
+    if (
+      transferSourceWarehouseIdsByItemId
+        .get(entry.requestItemId)
+        ?.has(entry.warehouseId)
+    ) {
+      throw new Error(
+        `${item.itemName}: no se puede despachar desde la bodega origen del traslado`
+      );
     }
     const assignment = await resolveProjectAssignment(
       request.projectId,
@@ -3603,19 +3868,26 @@ export async function listPendingFlowQueueItems(filters?: {
         row.item.sapItemDescription?.trim() || insight?.sapDescription || null;
       const currentProjectStock =
         row.item.assignedFlow === "despacho_bodega"
-          ? await getStockByItem({
+          ? await getProjectStockBreakdownByWarehouse({
               sapItemCode: sapCode,
               itemName: row.item.itemName,
               projectId: row.request.projectId,
             })
-          : row.item.projectStock;
+          : null;
 
       return {
         ...row,
         item: {
           ...row.item,
           sapItemDescription: resolvedSapDescription,
-          projectStock: currentProjectStock,
+          projectStock:
+            row.item.assignedFlow === "despacho_bodega"
+              ? currentProjectStock?.quantity ?? "0.00"
+              : row.item.projectStock,
+          projectStockWarehouses:
+            row.item.assignedFlow === "despacho_bodega"
+              ? currentProjectStock?.warehouses ?? []
+              : [],
         },
         purchaseInsight: {
           sapDescription: resolvedSapDescription,
@@ -5534,6 +5806,9 @@ export async function getTransferRequestById(id: number) {
 
   const enrichedItems = await Promise.all(
     items.map(async item => {
+      const sourceWarehouse = item.sourceWarehouseId
+        ? await getWarehouseById(item.sourceWarehouseId)
+        : undefined;
       const currentOriginStock = parseDecimal(
         await getStockByItem({
           sapItemCode: item.sapItemCode,
@@ -5553,13 +5828,32 @@ export async function getTransferRequestById(id: number) {
 
       return {
         ...item,
+        sourceWarehouse: sourceWarehouse ?? null,
         originStockQuantity: toDecimalString(originStockBeforeTransfer),
         stockAfterTransfer: toDecimalString(stockAfterTransfer),
       };
     })
   );
 
-  return { ...rows[0], items: enrichedItems };
+  const destinationProject =
+    rows[0].transferRequest.destinationType === "proyecto" &&
+    rows[0].transferRequest.destinationProjectId
+      ? await getProjectById(rows[0].transferRequest.destinationProjectId)
+      : null;
+  const reverseLogisticDestinationWarehouse =
+    rows[0].transferRequest.reverseLogisticId
+      ? (await getReverseLogisticById(
+          rows[0].transferRequest.reverseLogisticId
+        ))?.destinationWarehouse ?? null
+      : null;
+
+  return {
+    ...rows[0],
+    destinationProject,
+    destinationWarehouse:
+      reverseLogisticDestinationWarehouse ?? destinationProject?.warehouse ?? null,
+    items: enrichedItems,
+  };
 }
 
 export async function updateTransferRequest(
@@ -5796,6 +6090,13 @@ export async function createTransferFromRequest(
   });
 
   await updateTransferRequest(transferRequestId, { status: "convertida" });
+  if (detail.transferRequest.reverseLogisticId) {
+    await updateReverseLogisticStatus(
+      detail.transferRequest.reverseLogisticId,
+      "en_transito",
+      confirmedById
+    );
+  }
 
   for (const requestId of Array.from(affectedRequestIds)) {
     await updateMaterialRequestStatus(requestId, "en_proceso", confirmedById);
@@ -5924,10 +6225,16 @@ export async function getTransferById(id: number) {
     rows[0].transferRequest.destinationProjectId
       ? await getProjectById(rows[0].transferRequest.destinationProjectId)
       : null;
+  const reverseLogisticDestinationWarehouse =
+    rows[0].transferRequest?.reverseLogisticId
+      ? (await getReverseLogisticById(
+          rows[0].transferRequest.reverseLogisticId
+        ))?.destinationWarehouse ?? null
+      : null;
   const originProject = rows[0].transferRequest?.projectId
     ? await getProjectById(rows[0].transferRequest.projectId)
     : null;
-  const items = await db
+  const transferItems = await db
     .select()
     .from(transferRequestItems)
     .where(
@@ -5936,11 +6243,56 @@ export async function getTransferById(id: number) {
         rows[0].transferRequest?.id ?? 0
       )
     );
+  const items = await Promise.all(
+    transferItems.map(async item => {
+      const [requestItemTarget] = item.materialRequestItemId
+        ? await db
+            .select({
+              item: requestItems,
+              subproject: projectSubprojects,
+            })
+            .from(requestItems)
+            .leftJoin(
+              projectSubprojects,
+              eq(requestItems.subProjectId, projectSubprojects.id)
+            )
+            .where(eq(requestItems.id, item.materialRequestItemId))
+            .limit(1)
+        : [];
+      const target = requestItemTarget
+        ? mapMaterialRequestTarget(
+            requestItemTarget.item,
+            requestItemTarget.subproject
+          )
+        : null;
+
+      return {
+        ...item,
+        sourceWarehouse: item.sourceWarehouseId
+          ? (await getWarehouseById(item.sourceWarehouseId)) ?? null
+          : null,
+        target,
+        targetLabel:
+          requestItemTarget
+            ? buildWarehouseExitTargetLabel({
+                targetType: requestItemTarget.item.targetType,
+                subProjectId: requestItemTarget.item.subProjectId,
+                subproject: requestItemTarget.subproject,
+                fixedAssetSapItemCode:
+                  requestItemTarget.item.fixedAssetSapItemCode,
+                fixedAssetName: requestItemTarget.item.fixedAssetName,
+              })
+            : null,
+      };
+    })
+  );
+
   return {
     ...rows[0],
     originWarehouse: originProject?.warehouse ?? null,
     destinationProject,
-    destinationWarehouse: destinationProject?.warehouse ?? null,
+    destinationWarehouse:
+      reverseLogisticDestinationWarehouse ?? destinationProject?.warehouse ?? null,
     createdBy: rows[0].createdBy
       ? {
           id: rows[0].createdBy.id,
@@ -5950,6 +6302,29 @@ export async function getTransferById(id: number) {
       : null,
     items,
   };
+}
+
+export async function updateTransferPrintFields(
+  id: number,
+  data: {
+    preparedByName?: string | null;
+    deliveredToName?: string | null;
+  }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [transfer] = await db
+    .update(transfers)
+    .set({
+      preparedByName: data.preparedByName?.trim() || null,
+      deliveredToName: data.deliveredToName?.trim() || null,
+      updatedAt: new Date(),
+    })
+    .where(eq(transfers.id, id))
+    .returning();
+
+  return transfer;
 }
 
 function hasReceiptItemFinancialSnapshot(
@@ -6814,6 +7189,14 @@ export async function registerReceipt(
         })
         .where(eq(transfers.id, data.sourceId));
 
+      if (transferDetail.transferRequest?.reverseLogisticId) {
+        await updateReverseLogisticStatus(
+          transferDetail.transferRequest.reverseLogisticId,
+          transferStatus === "recibido" ? "recibida" : "en_transito",
+          data.receivedById
+        );
+      }
+
       for (const requestId of Array.from(affectedRequestIds)) {
         await syncMaterialRequestFulfillmentStatus(
           requestId,
@@ -7518,6 +7901,27 @@ export async function listInvoices(filters?: {
   const normalizedSearch = filters?.search?.trim();
   if (normalizedSearch) {
     const searchPattern = `%${normalizedSearch}%`;
+    const requestSearchRows = await db
+      .select({
+        invoiceId: invoiceItems.invoiceId,
+      })
+      .from(invoiceItems)
+      .leftJoin(
+        purchaseOrderItems,
+        eq(invoiceItems.purchaseOrderItemId, purchaseOrderItems.id)
+      )
+      .leftJoin(
+        requestItems,
+        eq(purchaseOrderItems.materialRequestItemId, requestItems.id)
+      )
+      .leftJoin(
+        materialRequests,
+        eq(requestItems.requestId, materialRequests.id)
+      )
+      .where(ilike(materialRequests.requestNumber, searchPattern));
+    const invoiceIdsMatchingRequestSearch = Array.from(
+      new Set(requestSearchRows.map(row => row.invoiceId))
+    );
     conditions.push(
       or(
         ilike(invoices.invoiceDocumentNumber, searchPattern),
@@ -7530,13 +7934,16 @@ export async function listInvoices(filters?: {
         ilike(suppliers.supplierCode, searchPattern),
         ilike(suppliers.name, searchPattern),
         ilike(projects.code, searchPattern),
-        ilike(projects.name, searchPattern)
+        ilike(projects.name, searchPattern),
+        invoiceIdsMatchingRequestSearch.length > 0
+          ? inArray(invoices.id, invoiceIdsMatchingRequestSearch)
+          : sql`false`
       )
     );
   }
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  return db
+  const rows = await db
     .select({
       invoice: invoices,
       receipt: receipts,
@@ -7551,6 +7958,59 @@ export async function listInvoices(filters?: {
     .leftJoin(suppliers, eq(invoices.supplierId, suppliers.id))
     .where(where)
     .orderBy(desc(invoices.createdAt));
+
+  const invoiceIds = rows.map(row => row.invoice.id);
+  if (invoiceIds.length === 0) return rows;
+
+  const requestRows = await db
+    .select({
+      invoiceId: invoiceItems.invoiceId,
+      requestId: materialRequests.id,
+      requestNumber: materialRequests.requestNumber,
+    })
+    .from(invoiceItems)
+    .leftJoin(
+      purchaseOrderItems,
+      eq(invoiceItems.purchaseOrderItemId, purchaseOrderItems.id)
+    )
+    .leftJoin(
+      requestItems,
+      eq(purchaseOrderItems.materialRequestItemId, requestItems.id)
+    )
+    .leftJoin(materialRequests, eq(requestItems.requestId, materialRequests.id))
+    .where(
+      and(
+        inArray(invoiceItems.invoiceId, invoiceIds),
+        isNotNull(materialRequests.id)
+      )
+    )
+    .orderBy(asc(materialRequests.requestNumber));
+
+  const requestsByInvoiceId = new Map<
+    number,
+    Array<{ id: number; requestNumber: string }>
+  >();
+  const seenRequestIdsByInvoiceId = new Map<number, Set<number>>();
+  requestRows.forEach(row => {
+    if (!row.requestId || !row.requestNumber) return;
+    const seenRequestIds =
+      seenRequestIdsByInvoiceId.get(row.invoiceId) ?? new Set<number>();
+    if (seenRequestIds.has(row.requestId)) return;
+    seenRequestIds.add(row.requestId);
+    seenRequestIdsByInvoiceId.set(row.invoiceId, seenRequestIds);
+
+    const currentRows = requestsByInvoiceId.get(row.invoiceId) ?? [];
+    currentRows.push({
+      id: row.requestId,
+      requestNumber: row.requestNumber,
+    });
+    requestsByInvoiceId.set(row.invoiceId, currentRows);
+  });
+
+  return rows.map(row => ({
+    ...row,
+    materialRequests: requestsByInvoiceId.get(row.invoice.id) ?? [],
+  }));
 }
 
 export async function getInvoiceById(id: number) {
@@ -9268,6 +9728,7 @@ export async function createWarehouseExitProjectReturn(params: {
     | "cambio_especificacion"
     | "otro";
   justification: string;
+  receivedByName: string;
   createdById: number;
   items: Array<{
     sourceWarehouseExitItemId: number;
@@ -9336,6 +9797,7 @@ export async function createWarehouseExitProjectReturn(params: {
       sourceProjectId: detail.warehouseExit.projectId,
       sourceWarehouseExitId: params.sourceWarehouseExitId,
       originalRequestId: detail.warehouseExit.materialRequestId,
+      receivedByName: params.receivedByName.trim(),
       status: "recibida",
       createdById: params.createdById,
       processedById: params.createdById,
@@ -9458,13 +9920,29 @@ export async function listReverseLogistics(filters?: {
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
+  const destinationProjects = alias(projects, "reverse_logistics_destination_projects");
+  const destinationWarehouses = alias(
+    warehouses,
+    "reverse_logistics_destination_warehouses"
+  );
+
   return db
     .select({
       return: reverseLogistics,
       sourceProject: projects,
+      destinationProject: destinationProjects,
+      destinationWarehouse: destinationWarehouses,
     })
     .from(reverseLogistics)
     .leftJoin(projects, eq(reverseLogistics.sourceProjectId, projects.id))
+    .leftJoin(
+      destinationProjects,
+      eq(reverseLogistics.destinationProjectId, destinationProjects.id)
+    )
+    .leftJoin(
+      destinationWarehouses,
+      eq(reverseLogistics.destinationWarehouseId, destinationWarehouses.id)
+    )
     .where(where)
     .orderBy(desc(reverseLogistics.createdAt));
 }
@@ -9474,17 +9952,34 @@ export async function getReverseLogisticById(id: number) {
   if (!db) return undefined;
 
   const itemWarehouses = alias(warehouses, "reverse_logistics_item_warehouses");
+  const destinationProjects = alias(projects, "reverse_logistics_destination_projects");
+  const destinationWarehouses = alias(
+    warehouses,
+    "reverse_logistics_destination_warehouses"
+  );
   const rows = await db
     .select({
       return: reverseLogistics,
       sourceProject: projects,
+      destinationProject: destinationProjects,
+      destinationWarehouse: destinationWarehouses,
       sourceWarehouseExit: warehouseExits,
       sourceReceipt: receipts,
       sourceWarehouse: warehouses,
+      createdBy: users,
     })
     .from(reverseLogistics)
     .leftJoin(projects, eq(reverseLogistics.sourceProjectId, projects.id))
+    .leftJoin(
+      destinationProjects,
+      eq(reverseLogistics.destinationProjectId, destinationProjects.id)
+    )
+    .leftJoin(
+      destinationWarehouses,
+      eq(reverseLogistics.destinationWarehouseId, destinationWarehouses.id)
+    )
     .leftJoin(warehouses, eq(projects.warehouseId, warehouses.id))
+    .leftJoin(users, eq(reverseLogistics.createdById, users.id))
     .leftJoin(
       warehouseExits,
       eq(reverseLogistics.sourceWarehouseExitId, warehouseExits.id)
@@ -9507,8 +10002,231 @@ export async function getReverseLogisticById(id: number) {
     )
     .where(eq(reverseLogisticsItems.reverseLogisticId, id));
   const items = itemRows.map(({ item, warehouse }) => ({ ...item, warehouse }));
+  const linkedTransfers = await db
+    .select({
+      transferRequest: transferRequests,
+      transfer: transfers,
+      receipt: receipts,
+    })
+    .from(transferRequests)
+    .leftJoin(transfers, eq(transfers.transferRequestId, transferRequests.id))
+    .leftJoin(
+      receipts,
+      and(
+        eq(receipts.sourceType, "transfer" as any),
+        eq(receipts.sourceId, transfers.id)
+      )
+    )
+    .where(eq(transferRequests.reverseLogisticId, id))
+    .orderBy(
+      desc(transferRequests.createdAt),
+      desc(transfers.createdAt),
+      desc(receipts.createdAt)
+    );
 
-  return { ...rows[0], items };
+  return { ...rows[0], items, linkedTransfers };
+}
+
+export async function createCentralWarehouseTransferFromReverseLogistic(
+  id: number,
+  createdById: number
+) {
+  return createTransferFromReverseLogistic(id, createdById);
+}
+
+export async function createTransferFromReverseLogistic(
+  id: number,
+  createdById: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const detail = await getReverseLogisticById(id);
+  if (!detail) {
+    throw new Error("Devolución no encontrada");
+  }
+
+  const isCentralWarehouseReturn =
+    detail.return.returnType === "devolucion_bodega_central";
+  const isProjectTransferReturn =
+    detail.return.returnType === "devolucion_entre_proyectos";
+
+  if (!isCentralWarehouseReturn && !isProjectTransferReturn) {
+    throw new Error(
+      "Solo las devoluciones a Bodega Central o entre proyectos pueden generar traslado"
+    );
+  }
+
+  if (detail.return.status !== "pendiente") {
+    throw new Error(
+      "Solo se puede crear traslado para devoluciones pendientes"
+    );
+  }
+
+  const [activeTransferRequest] = await db
+    .select({
+      id: transferRequests.id,
+      requestNumber: transferRequests.requestNumber,
+    })
+    .from(transferRequests)
+    .where(
+      and(
+        eq(transferRequests.reverseLogisticId, id),
+        inArray(
+          transferRequests.status,
+          ["pendiente", "aprobada", "convertida"] as any
+        )
+      )
+    )
+    .limit(1);
+
+  if (activeTransferRequest) {
+    throw new Error(
+      `Ya existe la solicitud de traslado ${activeTransferRequest.requestNumber} para esta devolución`
+    );
+  }
+
+  if (detail.items.length === 0) {
+    throw new Error("La devolución no tiene ítems para trasladar");
+  }
+
+  if (isProjectTransferReturn) {
+    if (!detail.return.destinationProjectId) {
+      throw new Error("La devolución no tiene proyecto destino");
+    }
+
+    if (!detail.return.destinationWarehouseId) {
+      throw new Error("La devolución no tiene bodega destino");
+    }
+
+    const destinationWarehouses = await listProjectWarehouses(
+      detail.return.destinationProjectId,
+      { isActive: true }
+    );
+    const validDestinationWarehouse = destinationWarehouses.some(
+      warehouse => warehouse.id === detail.return.destinationWarehouseId
+    );
+    if (!validDestinationWarehouse) {
+      throw new Error(
+        "La bodega destino ya no pertenece al proyecto destino o no está activa"
+      );
+    }
+  }
+
+  const activeWarehouses = await listProjectWarehouses(
+    detail.return.sourceProjectId,
+    { isActive: true }
+  );
+  const activeWarehouseIds = new Set(
+    activeWarehouses.map(warehouse => warehouse.id)
+  );
+
+  const quantityByItem = new Map<
+    string,
+    {
+      sapItemCode?: string | null;
+      itemName: string;
+      warehouseId: number;
+      quantity: number;
+    }
+  >();
+
+  for (const item of detail.items) {
+    const quantity = parseDecimal(item.quantity);
+    if (quantity <= 0) {
+      throw new Error(`La cantidad de ${item.itemName} debe ser mayor que cero`);
+    }
+
+    if (!item.warehouseId || !activeWarehouseIds.has(item.warehouseId)) {
+      throw new Error(
+        `El almacén origen de ${item.itemName} no pertenece al proyecto origen o no está activo`
+      );
+    }
+    if (
+      isProjectTransferReturn &&
+      detail.return.destinationWarehouseId &&
+      item.warehouseId === detail.return.destinationWarehouseId
+    ) {
+      throw new Error(
+        `${item.itemName}: la bodega destino no puede ser la misma bodega origen`
+      );
+    }
+
+    const key = item.sapItemCode?.trim()
+      ? `sap:${item.sapItemCode.trim()}::wh:${item.warehouseId}`
+      : `name:${item.itemName.trim().toLowerCase()}::wh:${item.warehouseId}`;
+    const current = quantityByItem.get(key);
+    quantityByItem.set(key, {
+      sapItemCode: item.sapItemCode,
+      itemName: item.itemName,
+      warehouseId: item.warehouseId,
+      quantity: (current?.quantity ?? 0) + quantity,
+    });
+  }
+
+  for (const groupedItem of Array.from(quantityByItem.values())) {
+    const rows = await listInventoryRowsForStock({
+      sapItemCode: groupedItem.sapItemCode,
+      itemName: groupedItem.itemName,
+      projectId: detail.return.sourceProjectId,
+      warehouseId: groupedItem.warehouseId,
+    });
+    const available = rows.reduce(
+      (total, row) => total + parseDecimal(row.currentStock),
+      0
+    );
+
+    if (available + 0.0001 < groupedItem.quantity) {
+      throw new Error(
+        `Stock insuficiente para ${groupedItem.itemName}. Disponible: ${toDecimalString(
+          available
+        )}, solicitado: ${toDecimalString(groupedItem.quantity)}.`
+      );
+    }
+  }
+
+  const transferRequest = await createTransferRequest(
+    {
+      materialRequestId: null,
+      projectId: detail.return.sourceProjectId,
+      destinationType: isCentralWarehouseReturn ? "bodega_central" : "proyecto",
+      destinationProjectId: isProjectTransferReturn
+        ? detail.return.destinationProjectId
+        : null,
+      reverseLogisticId: detail.return.id,
+      createdById,
+      status: "pendiente",
+      neededBy: null,
+      notes: [
+        `Devolución ${detail.return.returnNumber}`,
+        isProjectTransferReturn && detail.destinationWarehouse
+          ? `Bodega destino: ${
+              detail.destinationWarehouse.displayName ??
+              detail.destinationWarehouse.name ??
+              `#${detail.return.destinationWarehouseId}`
+            }`
+          : null,
+        detail.return.justification,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      rejectionReason: null,
+    },
+    detail.items.map(item => ({
+      materialRequestItemId: null,
+      sourceWarehouseId: item.warehouseId,
+      itemName: item.itemName,
+      sapItemCode: item.sapItemCode,
+      quantity: item.quantity,
+      receivedQuantity: "0.00",
+      unit: item.unit,
+      notes: item.notes,
+    }))
+  );
+
+  await updateReverseLogisticStatus(id, "aprobada", createdById);
+
+  return transferRequest;
 }
 
 export async function updateReverseLogisticStatus(
@@ -9537,7 +10255,7 @@ export async function updateReverseLogisticStatus(
     }
   }
 
-  const updateData: Record<string, unknown> = { status };
+  const updateData: Record<string, unknown> = { status, updatedAt: new Date() };
   if (processedById) {
     updateData.processedById = processedById;
     updateData.processedAt = new Date();
@@ -10924,7 +11642,7 @@ export async function assignUserToWarehouse(params: {
   if (!targetUser) throw new Error("Usuario no encontrado");
   if (!isWarehouseAssignableUser(targetUser)) {
     throw new Error(
-      "Solo usuarios de Bodega Central o Bodega Proyecto pueden asignarse a bodegas"
+      "Solo usuarios de Administración Central, Bodega Central o Bodega Proyecto pueden asignarse a bodegas"
     );
   }
 
@@ -11815,6 +12533,11 @@ export async function getInventoryKardex(params: {
     transferRequests.projectId,
     scopeProjectIds
   );
+  if (params.warehouseId) {
+    transferExitConditions.push(
+      eq(transferRequestItems.sourceWarehouseId, params.warehouseId)
+    );
+  }
 
   const [
     balanceRows,
@@ -11921,6 +12644,7 @@ export async function getInventoryKardex(params: {
         transferRequest: transferRequests,
         item: transferRequestItems,
         project: projects,
+        warehouse: warehouses,
       })
       .from(transferRequestItems)
       .innerJoin(
@@ -11932,6 +12656,7 @@ export async function getInventoryKardex(params: {
         eq(transfers.transferRequestId, transferRequests.id)
       )
       .leftJoin(projects, eq(transferRequests.projectId, projects.id))
+      .leftJoin(warehouses, eq(transferRequestItems.sourceWarehouseId, warehouses.id))
       .where(and(...transferExitConditions))
       .orderBy(desc(transfers.createdAt), desc(transferRequestItems.id))
       .limit(75),
@@ -12031,7 +12756,7 @@ export async function getInventoryKardex(params: {
       unit: item.unit,
       notes: item.notes ?? warehouseExit.notes,
     })),
-    ...transferExitRows.map(({ transfer, transferRequest, item, project }) => ({
+    ...transferExitRows.map(({ transfer, transferRequest, item, project, warehouse }) => ({
       id: `transfer-exit-${item.id}`,
       type: "salida_traslado" as const,
       direction: "salida" as const,
@@ -12039,7 +12764,7 @@ export async function getInventoryKardex(params: {
       sourceNumber: transferRequest.requestNumber,
       date: transfer.createdAt,
       project,
-      warehouse: null,
+      warehouse: warehouse ? mapWarehouseSummary(warehouse) : null,
       itemName: item.itemName,
       quantity: toDecimalString(item.quantity),
       unit: item.unit,

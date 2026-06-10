@@ -368,11 +368,14 @@ function canCloseTransferReceiptLine(
 
 async function assertReceiptWarehouses(
   projectId: number,
-  items: Array<{ warehouseId?: number; quantityReceived: string; itemName: string }>
+  items: Array<{ warehouseId?: number; quantityReceived: string; itemName: string }>,
+  options?: { allowAnyActiveWarehouse?: boolean }
 ) {
-  const activeWarehouses = await db.listProjectWarehouses(projectId, {
-    isActive: true,
-  });
+  const activeWarehouses = options?.allowAnyActiveWarehouse
+    ? await db.listWarehouses({ isActive: true })
+    : await db.listProjectWarehouses(projectId, {
+        isActive: true,
+      });
   const activeWarehouseIds = new Set(
     activeWarehouses.map(warehouse => warehouse.id)
   );
@@ -382,7 +385,9 @@ async function assertReceiptWarehouses(
     if (!item.warehouseId || !activeWarehouseIds.has(item.warehouseId)) {
       throw new TRPCError({
         code: "BAD_REQUEST",
-        message: `Seleccione un almacén activo del proyecto para ${item.itemName}`,
+        message: options?.allowAnyActiveWarehouse
+          ? `Seleccione un almacén activo para ${item.itemName}`
+          : `Seleccione un almacén activo del proyecto para ${item.itemName}`,
       });
     }
   }
@@ -830,6 +835,7 @@ export const receiptsRouter = router({
         });
       }
       let purchaseOrderItemsByIdForPayload = new Map<number, any>();
+      let allowAnyActiveReceiptWarehouse = false;
 
       if (input.sourceType === "purchase_order") {
         const detail = await db.getPurchaseOrderById(input.sourceId);
@@ -1021,9 +1027,14 @@ export const receiptsRouter = router({
           detail.transferRequest?.destinationType === "proyecto"
             ? detail.transferRequest.destinationProjectId
             : input.projectId;
+        allowAnyActiveReceiptWarehouse =
+          detail.transferRequest?.destinationType === "bodega_central";
         if (typeof destinationProjectId === "number") {
           assertProjectScopedAccess(ctx.user, destinationProjectId);
-          if (input.projectId !== destinationProjectId) {
+          if (
+            detail.transferRequest?.destinationType === "proyecto" &&
+            input.projectId !== destinationProjectId
+          ) {
             throw new TRPCError({
               code: "BAD_REQUEST",
               message:
@@ -1040,6 +1051,12 @@ export const receiptsRouter = router({
         }
 
         const itemsById = new Map((detail.items ?? []).map((item: any) => [item.id, item]));
+        const lockedReverseLogisticDestinationWarehouseId =
+          detail.transferRequest?.reverseLogisticId &&
+          detail.transferRequest.destinationType === "proyecto" &&
+          detail.destinationWarehouse?.id
+            ? Number(detail.destinationWarehouse.id)
+            : null;
         let hasPositiveReceipt = false;
         let hasTransferClosure = false;
 
@@ -1063,6 +1080,26 @@ export const receiptsRouter = router({
             throw new TRPCError({
               code: "BAD_REQUEST",
               message: `Seleccione almacén destino para ${sourceItem.itemName}`,
+            });
+          }
+          if (
+            requestedQuantity > 0 &&
+            sourceItem.sourceWarehouseId &&
+            item.warehouseId === Number(sourceItem.sourceWarehouseId)
+          ) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `${sourceItem.itemName}: no se puede ingresar a la misma bodega de origen`,
+            });
+          }
+          if (
+            requestedQuantity > 0 &&
+            lockedReverseLogisticDestinationWarehouseId &&
+            item.warehouseId !== lockedReverseLogisticDestinationWarehouseId
+          ) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `${sourceItem.itemName}: debe ingresar a la bodega destino de la devolución`,
             });
           }
 
@@ -1124,7 +1161,9 @@ export const receiptsRouter = router({
         input.sourceType === "purchase_order" &&
         input.isFiscalDocument !== false;
 
-      await assertReceiptWarehouses(input.projectId, input.items);
+      await assertReceiptWarehouses(input.projectId, input.items, {
+        allowAnyActiveWarehouse: allowAnyActiveReceiptWarehouse,
+      });
 
       const activeSalesTaxes =
         input.sourceType === "purchase_order"

@@ -90,4 +90,35 @@ export const transfersRouter = router({
       assertProjectScopedAccess(ctx.user, detail.transferRequest);
       return detail;
     }),
+
+  updatePrintFields: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        preparedByName: z.string().trim().max(160).nullable().optional(),
+        deliveredToName: z.string().trim().max(160).nullable().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canAccessTransfers(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a traslados",
+        });
+      }
+
+      const detail = await db.getTransferById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Traslado no encontrado",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.transferRequest);
+
+      return db.updateTransferPrintFields(input.id, {
+        preparedByName: input.preparedByName,
+        deliveredToName: input.deliveredToName,
+      });
+    }),
 });

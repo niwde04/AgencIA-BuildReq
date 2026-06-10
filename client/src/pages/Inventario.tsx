@@ -134,6 +134,33 @@ function formatProject(project: any | null | undefined) {
   return `${project.code} - ${project.name}`;
 }
 
+function compareProjectByCode(left: any, right: any) {
+  const leftCode = String(left?.code ?? "").trim();
+  const rightCode = String(right?.code ?? "").trim();
+  const leftNumber = Number(leftCode);
+  const rightNumber = Number(rightCode);
+  const bothNumeric =
+    leftCode !== "" &&
+    rightCode !== "" &&
+    Number.isFinite(leftNumber) &&
+    Number.isFinite(rightNumber);
+
+  if (bothNumeric && leftNumber !== rightNumber) {
+    return leftNumber - rightNumber;
+  }
+
+  const codeComparison = leftCode.localeCompare(rightCode, "es-HN", {
+    numeric: true,
+    sensitivity: "base",
+  });
+  if (codeComparison !== 0) return codeComparison;
+
+  return String(left?.name ?? "").localeCompare(String(right?.name ?? ""), "es-HN", {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
 function formatWarehouseOptionLabel(warehouse: any | null | undefined) {
   if (!warehouse) return "—";
   const localCode = warehouse.localCode || warehouse.code;
@@ -143,6 +170,40 @@ function formatWarehouseOptionLabel(warehouse: any | null | undefined) {
 
 function formatWarehouseProjectLabel(warehouse: any | null | undefined) {
   return warehouse?.displayName ?? "";
+}
+
+function getWarehouseSortCode(warehouse: any | null | undefined) {
+  return String(
+    warehouse?.localCode ?? warehouse?.code ?? warehouse?.displayName ?? ""
+  ).trim();
+}
+
+function compareWarehouseByCode(left: any, right: any) {
+  const leftCode = getWarehouseSortCode(left);
+  const rightCode = getWarehouseSortCode(right);
+  const leftNumber = Number(leftCode);
+  const rightNumber = Number(rightCode);
+  const bothNumeric =
+    leftCode !== "" &&
+    rightCode !== "" &&
+    Number.isFinite(leftNumber) &&
+    Number.isFinite(rightNumber);
+
+  if (bothNumeric && leftNumber !== rightNumber) {
+    return leftNumber - rightNumber;
+  }
+
+  const codeComparison = leftCode.localeCompare(rightCode, "es-HN", {
+    numeric: true,
+    sensitivity: "base",
+  });
+  if (codeComparison !== 0) return codeComparison;
+
+  return formatWarehouseOptionLabel(left).localeCompare(
+    formatWarehouseOptionLabel(right),
+    "es-HN",
+    { numeric: true, sensitivity: "base" }
+  );
 }
 
 function formatStatus(status: string | null | undefined) {
@@ -238,27 +299,35 @@ export default function Inventario() {
   const allowInventoryReassignment = false;
 
   const { data: projects } = trpc.projects.list.useQuery();
+  const projectOptions = useMemo(
+    () => [...(projects ?? [])].sort(compareProjectByCode),
+    [projects]
+  );
 
   const { data: warehouses, isLoading: warehousesLoading } =
     trpc.warehouses.list.useQuery(undefined, {
       enabled: canAccessWarehouses,
     });
   const warehouseOptions = useMemo(() => {
-    const allWarehouses = warehouses ?? [];
+    const sortWarehouses = (rows: any[]) =>
+      [...rows].sort(compareWarehouseByCode);
+    const allWarehouses = sortWarehouses(warehouses ?? []);
     if (projectFilter === "all") return allWarehouses;
-    const selectedProject = (projects ?? []).find(
+    const selectedProject = projectOptions.find(
       (project: any) => String(project.id) === projectFilter
     );
-    return selectedProject?.warehouse ? [selectedProject.warehouse] : [];
-  }, [projectFilter, projects, warehouses]);
+    return selectedProject?.warehouse
+      ? sortWarehouses([selectedProject.warehouse])
+      : [];
+  }, [projectFilter, projectOptions, warehouses]);
   const selectedFilterProject = useMemo(
     () =>
       projectFilter === "all"
         ? null
-        : (projects ?? []).find(
+        : projectOptions.find(
             (project: any) => String(project.id) === projectFilter
           ) ?? null,
-    [projectFilter, projects]
+    [projectFilter, projectOptions]
   );
   const selectedFilterWarehouse = useMemo(
     () =>
@@ -271,7 +340,7 @@ export default function Inventario() {
   );
   const selectedProjectFilterLabel = selectedFilterProject
     ? `${selectedFilterProject.code} - ${selectedFilterProject.name}`
-    : `Todos los proyectos (${(projects ?? []).length.toLocaleString("es-HN")})`;
+    : `Todos los proyectos (${projectOptions.length.toLocaleString("es-HN")})`;
   const allWarehouseFilterLabel = selectedFilterProject
     ? `Bodega asignada de ${selectedFilterProject.code}`
     : `Todos los almacenes (${warehouseOptions.length.toLocaleString("es-HN")})`;
@@ -1272,6 +1341,9 @@ export default function Inventario() {
                             <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                               Proyecto
                             </th>
+                            <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Bodega
+                            </th>
                             <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                               Entrada
                             </th>
@@ -1304,6 +1376,9 @@ export default function Inventario() {
                               </td>
                               <td className="p-3 text-xs">
                                 {formatProject(movement.project)}
+                              </td>
+                              <td className="p-3 text-xs">
+                                {formatWarehouseOptionLabel(movement.warehouse)}
                               </td>
                               <td className="p-3 text-right font-medium text-emerald-700">
                                 {movement.direction === "entrada"
@@ -1344,7 +1419,7 @@ export default function Inventario() {
 
         <div className="min-w-0">
           <Label className="mb-1 block text-xs font-medium text-muted-foreground">
-            Proyecto ({(projects ?? []).length.toLocaleString("es-HN")})
+            Proyecto ({projectOptions.length.toLocaleString("es-HN")})
           </Label>
           <Popover
             open={projectFilterOpen}
@@ -1384,10 +1459,10 @@ export default function Inventario() {
                         }`}
                       />
                       <span className="truncate">
-                        Todos los proyectos ({(projects ?? []).length.toLocaleString("es-HN")})
+                        Todos los proyectos ({projectOptions.length.toLocaleString("es-HN")})
                       </span>
                     </CommandItem>
-                    {(projects ?? []).map((project: any) => (
+                    {projectOptions.map((project: any) => (
                       <CommandItem
                         key={project.id}
                         value={`${project.code} ${project.name} ${project.sapProjectCode ?? ""}`}

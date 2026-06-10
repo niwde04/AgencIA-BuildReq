@@ -216,6 +216,24 @@ function formatCsvAmount(value: string | number | null | undefined) {
   return toNumber(value).toFixed(2);
 }
 
+function getInvoiceRequestNumbers(row: any) {
+  const requests = Array.isArray(row?.materialRequests)
+    ? row.materialRequests
+    : [];
+  return Array.from(
+    new Set(
+      requests
+        .map((request: any) => String(request?.requestNumber ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function formatInvoiceRequestNumbers(row: any) {
+  const requestNumbers = getInvoiceRequestNumbers(row);
+  return requestNumbers.length > 0 ? requestNumbers.join(", ") : "—";
+}
+
 function getRetentionAmount(draft: RetentionDraft) {
   return (
     Math.round(
@@ -1112,6 +1130,7 @@ export default function Facturas() {
           invoice.cai,
           row.purchaseOrder?.orderNumber,
           row.receipt?.receiptNumber,
+          formatInvoiceRequestNumbers(row),
           row.supplier?.name,
           row.supplier?.supplierCode,
           row.supplier?.rtn,
@@ -1157,6 +1176,10 @@ export default function Facturas() {
         {
           header: "Recepción",
           value: (row: any) => row.receipt?.receiptNumber || "Recepción",
+        },
+        {
+          header: "Requisición",
+          value: (row: any) => formatInvoiceRequestNumbers(row),
         },
         {
           header: "Fecha vencimiento (crédito)",
@@ -1885,7 +1908,7 @@ export default function Facturas() {
           <Input
             value={searchTerm}
             onChange={event => setSearchTerm(event.target.value)}
-            placeholder="Buscar por factura, OC, recepción, proveedor o proyecto..."
+            placeholder="Buscar por factura, OC, recepción, REQ, proveedor o proyecto..."
             className="h-10 pl-9"
           />
         </div>
@@ -1941,6 +1964,9 @@ export default function Facturas() {
                       Origen
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Req.
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Fechas
                     </th>
                     <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1993,6 +2019,9 @@ export default function Facturas() {
                         <div className="text-xs text-muted-foreground">
                           {row.receipt?.receiptNumber || "Recepción"}
                         </div>
+                      </td>
+                      <td className="p-3 font-medium">
+                        {formatInvoiceRequestNumbers(row)}
                       </td>
                       <td className="p-3">
                         <div>{formatDateLabel(row.invoice.documentDueDate)}</div>

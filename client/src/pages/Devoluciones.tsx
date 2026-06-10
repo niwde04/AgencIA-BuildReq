@@ -27,8 +27,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CreditCard, Eye, Plus, Printer, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+  ClipboardList,
+  CreditCard,
+  Eye,
+  FileText,
+  Package,
+  Plus,
+  Printer,
+  RotateCcw,
+  Search,
+  Truck,
+  Warehouse,
+} from "lucide-react";
+import { type ReactNode, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
@@ -72,6 +84,24 @@ const CONDITION_LABELS: Record<string, string> = {
   danado: "Dañado",
 };
 
+const TRANSFER_REQUEST_STATUS_LABELS: Record<string, string> = {
+  pendiente: "Pendiente",
+  aprobada: "Aprobada",
+  rechazada: "Rechazada",
+  convertida: "Convertida",
+  anulada: "Anulada",
+};
+
+const TRANSFER_STATUS_LABELS: Record<string, string> = {
+  pendiente: "Pendiente",
+  confirmado: "Confirmado",
+  en_transito: "En tránsito",
+  parcialmente_recibido: "Parcialmente recibido",
+  recibido: "Recibido",
+  cerrado_incompleto: "Cerrado incompleto",
+  anulado: "Anulado",
+};
+
 function formatDate(value: string | Date | null | undefined) {
   if (!value) return "-";
   const date = new Date(value);
@@ -89,6 +119,15 @@ function formatQuantity(value: string | number | null | undefined) {
   });
 }
 
+function formatPrintNumber(value: string | number | null | undefined) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return "0";
+  return parsed.toLocaleString("es-HN", {
+    minimumFractionDigits: Number.isInteger(parsed) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 function escapeHtml(value: unknown) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -96,6 +135,47 @@ function escapeHtml(value: unknown) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+function DetailField({
+  label,
+  value,
+}: {
+  label: string;
+  value: ReactNode;
+}) {
+  return (
+    <div className="min-w-0 border-l border-border/70 pl-4 first:border-l-0 first:pl-0">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {label}
+      </p>
+      <div className="mt-2 min-h-5 text-sm font-medium text-foreground">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function DetailSection({
+  icon: Icon,
+  title,
+  children,
+}: {
+  icon: any;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="overflow-hidden rounded-lg border border-border bg-background">
+      <div className="flex items-center gap-3 border-b border-border/70 bg-muted/20 px-4 py-3">
+        <span className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <Icon className="h-4 w-4" />
+        </span>
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      </div>
+      <div className="p-4">{children}</div>
+    </section>
+  );
 }
 
 export default function Devoluciones() {
@@ -128,19 +208,53 @@ export default function Devoluciones() {
 
   const selectedReturn = detail?.return;
   const sourceProject = detail?.sourceProject;
+  const destinationProject = (detail as any)?.destinationProject;
+  const destinationWarehouse = (detail as any)?.destinationWarehouse;
   const sourceWarehouse = detail?.sourceWarehouse;
   const sourceReceipt = detail?.sourceReceipt;
+  const createdBy = (detail as any)?.createdBy;
   const returnItems = detail?.items ?? [];
+  const linkedTransfers = (detail as any)?.linkedTransfers ?? [];
+  const hasActiveLinkedTransfer = linkedTransfers.some((row: any) =>
+    ["pendiente", "aprobada", "convertida"].includes(
+      row.transferRequest?.status
+    )
+  );
+  const itemSourceWarehouse = returnItems.find((item: any) => item.warehouse)
+    ?.warehouse;
   const sourceWarehouseLabel =
+    itemSourceWarehouse?.displayName ??
     sourceWarehouse?.displayName ??
     (sourceProject
       ? `Bodega del Proyecto - ${sourceProject.code} - ${sourceProject.name}`
       : "-");
+  const destinationProjectLabel = destinationProject
+    ? `${destinationProject.code} - ${destinationProject.name}`
+    : selectedReturn?.destinationProjectId
+      ? `Proyecto ${selectedReturn.destinationProjectId}`
+      : "-";
+  const destinationWarehouseLabel =
+    destinationWarehouse?.displayName ??
+    destinationWarehouse?.name ??
+    (selectedReturn?.destinationWarehouseId
+      ? `Bodega #${selectedReturn.destinationWarehouseId}`
+      : "-");
+  const createdByLabel =
+    createdBy?.name || createdBy?.email || `Usuario #${selectedReturn?.createdById ?? "-"}`;
+  const receivedByLabel = selectedReturn?.receivedByName?.trim() || "-";
   const canGenerateCreditNote =
     canCreateReturn &&
     selectedReturn?.returnType === "devolucion_proveedor" &&
     selectedReturn.status === "pendiente" &&
     !selectedReturn.sapDocumentNumber;
+  const canCreateReturnTransfer =
+    canCreateReturn &&
+    selectedReturn &&
+    ["devolucion_bodega_central", "devolucion_entre_proyectos"].includes(
+      selectedReturn.returnType
+    ) &&
+    selectedReturn.status === "pendiente" &&
+    !hasActiveLinkedTransfer;
 
   const filteredReturns = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
@@ -151,6 +265,13 @@ export default function Devoluciones() {
       const sourceProjectLabel = row.sourceProject
         ? `${row.sourceProject.code} ${row.sourceProject.name}`
         : "";
+      const destinationProjectLabel = row.destinationProject
+        ? `${row.destinationProject.code} ${row.destinationProject.name}`
+        : "";
+      const destinationWarehouseLabel =
+        row.destinationWarehouse?.displayName ||
+        row.destinationWarehouse?.name ||
+        "";
 
       return [
         returnRow.returnNumber,
@@ -159,6 +280,8 @@ export default function Devoluciones() {
         STATUS_LABELS[returnRow.status],
         returnRow.supplierName,
         sourceProjectLabel,
+        destinationProjectLabel,
+        destinationWarehouseLabel,
       ]
         .filter(Boolean)
         .some(value =>
@@ -180,41 +303,89 @@ export default function Devoluciones() {
       onError: error => toast.error(error.message),
     });
 
+  const createReturnTransferMutation =
+    trpc.reverseLogistics.createCentralWarehouseTransfer.useMutation({
+      onSuccess: result => {
+        toast.success(`Solicitud de traslado ${result.requestNumber} creada`);
+        void utils.reverseLogistics.list.invalidate();
+        void utils.transferRequests.list.invalidate();
+        void utils.transfers.list.invalidate();
+        if (selectedReturnId) {
+          void utils.reverseLogistics.getById.invalidate({ id: selectedReturnId });
+        }
+      },
+      onError: error => toast.error(error.message),
+    });
+
   const handlePrintReturn = () => {
     if (!selectedReturn) return;
 
     const sourceProjectLabel = sourceProject
       ? `${sourceProject.code} - ${sourceProject.name}`
       : "-";
-    const printedAt = new Date().toLocaleString("es-HN");
-    const documentLabel =
+    const documentTypeLabel =
       selectedReturn.returnType === "devolucion_proveedor"
-        ? selectedReturn.sapDocumentNumber || "Pendiente de generar"
-        : selectedReturn.sapDocumentNumber || "-";
-    const sourceDocumentNumber =
-      sourceReceipt?.invoiceNumber || selectedReturn.sapDocumentNumber || "-";
-    const subtitle =
-      selectedReturn.returnType === "devolucion_proveedor" &&
-      selectedReturn.sapDocumentNumber
-        ? "Nota de crédito interna / devolución a proveedor"
-        : "Comprobante de devolución / logística inversa";
+        ? "DEVOLUCION A PROVEEDOR"
+        : "DEVOLUCION BODEGA";
+    const printWarehouseTitle =
+      sourceWarehouseLabel !== "-" ? sourceWarehouseLabel : sourceProjectLabel;
+    const requestedByLabel = `${selectedReturn.returnNumber} - ${createdByLabel}`;
+    const isProviderReturn = selectedReturn.returnType === "devolucion_proveedor";
+    const isCentralReturn =
+      selectedReturn.returnType === "devolucion_bodega_central";
+    const isProjectWarehouseReturn =
+      selectedReturn.returnType === "devolucion_bodega_proyecto";
+    const isProjectTransferReturn =
+      selectedReturn.returnType === "devolucion_entre_proyectos";
+    const destinationLabel = isProjectTransferReturn
+      ? destinationProjectLabel
+      : isCentralReturn
+        ? "Bodega Central"
+        : isProviderReturn
+          ? selectedReturn.supplierName || "Proveedor"
+          : isProjectWarehouseReturn
+            ? sourceProjectLabel
+            : "-";
+    const destinationWarehousePrintLabel = isProjectTransferReturn
+      ? destinationWarehouseLabel
+      : isCentralReturn
+        ? "Bodega Central"
+        : isProjectWarehouseReturn
+          ? sourceWarehouseLabel
+          : "N/A";
+    const referenceLabel =
+      sourceReceipt?.receiptNumber ||
+      sourceReceipt?.invoiceNumber ||
+      selectedReturn.sapDocumentNumber ||
+      selectedReturn.returnNumber;
+    const reasonLabel =
+      REASON_LABELS[selectedReturn.reasonCategory] ||
+      selectedReturn.reasonCategory;
     const itemRows = returnItems
       .map(
         (item: any) => `
           <tr>
             <td>${escapeHtml(item.sapItemCode || "-")}</td>
-            <td>${escapeHtml(item.itemName)}</td>
-            <td class="numeric">${escapeHtml(formatQuantity(item.quantity))}</td>
-            <td>${escapeHtml(item.unit || "-")}</td>
-            <td>${escapeHtml(CONDITION_LABELS[item.condition] || item.condition)}</td>
-            <td>${escapeHtml(item.notes || "-")}</td>
+            <td>${escapeHtml(item.itemName || "-")}</td>
+            <td class="center"></td>
+            <td class="numeric">${escapeHtml(formatPrintNumber(item.quantity))}</td>
+            <td class="center">${escapeHtml(item.unit || "-")}</td>
+            <td>${escapeHtml(destinationLabel)}</td>
+            <td>
+              <div>${escapeHtml(item.notes || reasonLabel)}</div>
+            </td>
+            <td class="numeric">1</td>
           </tr>
         `
       )
       .join("");
+    const totalLines = returnItems.length;
 
-    const printWindow = window.open("", "_blank", "width=900,height=700");
-    if (!printWindow) return;
+    const printWindow = window.open("", "_blank", "width=840,height=1000");
+    if (!printWindow) {
+      toast.error("No se pudo abrir la ventana de impresión");
+      return;
+    }
 
     printWindow.document.write(`
       <!doctype html>
@@ -223,181 +394,232 @@ export default function Devoluciones() {
           <meta charset="utf-8" />
           <title>${escapeHtml(selectedReturn.returnNumber)}</title>
           <style>
+            @page { size: A4 portrait; margin: 7mm; }
             * { box-sizing: border-box; }
             body {
+              background: #fff;
               color: #000;
-              font-family: Arial, sans-serif;
-              font-size: 12px;
-              margin: 32px;
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 9.5px;
+              margin: 0;
             }
-            header {
-              align-items: flex-start;
-              border-bottom: 1px solid #111;
+            .sheet {
+              margin: 0 auto;
+              max-width: 196mm;
+              padding: 0 1mm 3mm;
+            }
+            .header {
+              align-items: start;
               display: grid;
-              gap: 18px;
-              grid-template-columns: 112px 1fr auto;
-              margin-bottom: 20px;
-              padding-bottom: 16px;
+              gap: 8px;
+              grid-template-columns: 82px 1fr 108px;
             }
             .logo {
               display: block;
-              height: 76px;
+              height: 44px;
+              margin-left: 2px;
               object-fit: contain;
-              width: 110px;
+              width: 64px;
             }
-            h1 { font-size: 26px; margin: 0 0 6px; }
-            h2 {
-              font-size: 13px;
-              letter-spacing: 0.06em;
-              margin: 22px 0 10px;
+            .title {
+              color: #000;
+              font-size: 11.5px;
+              font-weight: 800;
+              line-height: 1.25;
+              text-align: center;
               text-transform: uppercase;
             }
-            .muted { color: #000; }
-            .status {
-              border: 1px solid #111;
-              display: inline-block;
-              font-size: 11px;
-              margin-left: 8px;
-              padding: 3px 8px;
+            .company {
+              color: #000;
+              font-size: 13px;
+              margin-bottom: 2px;
             }
-            .grid {
+            .document-number {
+              border: 4px double #222;
+              color: #000;
+              font-size: 12px;
+              font-weight: 900;
+              margin-top: 1mm;
+              padding: 3px 6px;
+              text-align: center;
+            }
+            .meta {
               display: grid;
               gap: 10px;
-              grid-template-columns: repeat(4, 1fr);
+              grid-template-columns: 1fr 1fr;
+              margin-top: 6mm;
             }
-            .box {
-              border: 1px solid #111;
-              min-height: 70px;
-              padding: 12px;
+            .meta-column {
+              display: grid;
+              gap: 3px;
+            }
+            .field {
+              display: grid;
+              gap: 4px;
+              grid-template-columns: 104px 1fr;
+              min-height: 12px;
+            }
+            .meta-column.right .field {
+              grid-template-columns: 98px 1fr;
             }
             .label {
+              font-weight: 800;
+            }
+            .value {
+              font-weight: 700;
+              overflow-wrap: anywhere;
+            }
+            .section-title {
               color: #000;
               font-size: 10px;
-              font-weight: 700;
-              letter-spacing: 0.06em;
-              margin-bottom: 8px;
+              font-weight: 800;
+              letter-spacing: .04em;
+              margin: 6mm 0 2mm;
               text-transform: uppercase;
             }
-            .value { font-size: 13px; font-weight: 600; line-height: 1.35; }
             .justification {
               border: 1px solid #111;
               line-height: 1.5;
-              min-height: 72px;
-              padding: 12px;
+              min-height: 14mm;
+              padding: 3mm;
               white-space: pre-wrap;
             }
             table {
               border-collapse: collapse;
-              margin-top: 8px;
+              margin-top: 3mm;
+              table-layout: fixed;
               width: 100%;
             }
-            th, td {
-              border: 1px solid #111;
-              padding: 9px;
-              text-align: left;
-              vertical-align: top;
-            }
             th {
-              background: #f4f4f4;
+              border-bottom: 2px solid #111;
+              border-top: 2px solid #111;
               color: #000;
-              font-size: 10px;
-              letter-spacing: 0.06em;
+              font-size: 8.5px;
+              font-weight: 800;
+              padding: 3px 4px;
+              text-align: left;
               text-transform: uppercase;
             }
+            td {
+              border-bottom: 1px solid #111;
+              color: #000;
+              overflow-wrap: anywhere;
+              padding: 3px 4px;
+              vertical-align: top;
+            }
+            .code {
+              font-variant-numeric: tabular-nums;
+            }
+            .center { text-align: center; }
             .numeric {
-              font-family: Consolas, monospace;
+              font-variant-numeric: tabular-nums;
               text-align: right;
             }
+            .total-row td {
+              border-bottom: 2px solid #111;
+              font-weight: 800;
+            }
+            .signatures {
+              display: grid;
+              gap: 22px;
+              grid-template-columns: repeat(3, 150px);
+              justify-content: center;
+              margin-top: 10mm;
+            }
+            .signature-line {
+              border-top: 2px solid #111;
+              font-size: 10.5px;
+              font-weight: 700;
+              padding-top: 4px;
+              text-align: center;
+            }
             @media print {
-              body { margin: 18mm; }
+              .sheet { max-width: none; padding: 0; }
             }
           </style>
         </head>
         <body>
-          <header>
-            ${getPrintLogoMarkup()}
-            <div>
-              <h1>
-                ${escapeHtml(selectedReturn.returnNumber)}
-                <span class="status">${escapeHtml(STATUS_LABELS[selectedReturn.status])}</span>
-              </h1>
-              <div class="muted">${escapeHtml(subtitle)}</div>
-            </div>
-            <div class="muted">Impreso: ${escapeHtml(printedAt)}</div>
-          </header>
+          <main class="sheet">
+            <section class="header">
+              ${getPrintLogoMarkup()}
+              <div class="title">
+                <div class="company">HIDALGO E HIDALGO HONDURAS S.A. DE C.V.</div>
+                <div>${escapeHtml(printWarehouseTitle)}</div>
+                <div>${escapeHtml(documentTypeLabel)}</div>
+              </div>
+              <div class="document-number">${escapeHtml(selectedReturn.returnNumber)}</div>
+            </section>
 
-          <section class="grid">
-            <div class="box">
-              <div class="label">Tipo</div>
-              <div class="value">${escapeHtml(RETURN_TYPE_LABELS[selectedReturn.returnType])}</div>
-            </div>
-            <div class="box">
-              <div class="label">Motivo</div>
-              <div class="value">${escapeHtml(REASON_LABELS[selectedReturn.reasonCategory])}</div>
-            </div>
-            <div class="box">
-              <div class="label">Proyecto</div>
-              <div class="value">${escapeHtml(sourceProjectLabel)}</div>
-            </div>
-            <div class="box">
-              <div class="label">Fecha</div>
-              <div class="value">${escapeHtml(formatDate(selectedReturn.createdAt))}</div>
-            </div>
-            <div class="box">
-              <div class="label">Bodega origen</div>
-              <div class="value">${escapeHtml(sourceWarehouseLabel)}</div>
-            </div>
-            <div class="box">
-              <div class="label">Proveedor</div>
-              <div class="value">${escapeHtml(selectedReturn.supplierName || "-")}</div>
-            </div>
-            <div class="box">
-              <div class="label">Nota de crédito</div>
-              <div class="value">${escapeHtml(documentLabel)}</div>
-            </div>
-            <div class="box">
-              <div class="label">Procesada</div>
-              <div class="value">${escapeHtml(formatDate(selectedReturn.processedAt))}</div>
-            </div>
-            <div class="box">
-              <div class="label">Número documento</div>
-              <div class="value">${escapeHtml(sourceDocumentNumber)}</div>
-            </div>
-            <div class="box">
-              <div class="label">CAI</div>
-              <div class="value">${escapeHtml(sourceReceipt?.cai || "-")}</div>
-            </div>
-            <div class="box">
-              <div class="label">Fecha documento</div>
-              <div class="value">${escapeHtml(formatDate(sourceReceipt?.documentDate))}</div>
-            </div>
-            <div class="box">
-              <div class="label">Fecha vencimiento</div>
-              <div class="value">${escapeHtml(formatDate(sourceReceipt?.documentDueDate))}</div>
-            </div>
-            <div class="box">
-              <div class="label">Fecha recepción</div>
-              <div class="value">${escapeHtml(formatDate(sourceReceipt?.receiptDate))}</div>
-            </div>
-          </section>
+            <section class="meta">
+              <div class="meta-column">
+                <div class="field">
+                  <div class="label">Fecha:</div>
+                  <div class="value">${escapeHtml(formatDate(selectedReturn.createdAt))}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Solicitado por:</div>
+                  <div class="value">${escapeHtml(requestedByLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Recibido por:</div>
+                  <div class="value">${escapeHtml(receivedByLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Tipo Egreso:</div>
+                  <div class="value">${escapeHtml(documentTypeLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">De Bodega:</div>
+                  <div class="value">${escapeHtml(sourceWarehouseLabel)}</div>
+                </div>
+              </div>
+              <div class="meta-column">
+                <div class="field">
+                  <div class="label">Job:</div>
+                  <div class="value">${escapeHtml(sourceProjectLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Destino:</div>
+                  <div class="value">${escapeHtml(destinationLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Referencia:</div>
+                  <div class="value">${escapeHtml(referenceLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">A Bodega:</div>
+                  <div class="value">${escapeHtml(destinationWarehousePrintLabel)}</div>
+                </div>
+              </div>
+            </section>
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 16%;">Código/No. Serie</th>
+                  <th>Identificador</th>
+                  <th style="width: 8%;" class="center">Costo</th>
+                  <th style="width: 9%;" class="numeric">Cantidad</th>
+                  <th style="width: 9%;" class="center">U Medida</th>
+                  <th style="width: 19%;">Destino</th>
+                  <th style="width: 17%;">Referencia</th>
+                  <th style="width: 7%;" class="numeric">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemRows || `<tr><td colspan="8">Sin ítems</td></tr>`}
+                <tr class="total-row">
+                  <td colspan="7">Total general</td>
+                  <td class="numeric">${escapeHtml(formatPrintNumber(totalLines))}</td>
+                </tr>
+              </tbody>
+            </table>
 
-          <h2>Justificación</h2>
-          <div class="justification">${escapeHtml(selectedReturn.justification)}</div>
-
-          <h2>Ítems devueltos</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Código SAP</th>
-                <th>Ítem</th>
-                <th>Cant.</th>
-                <th>Unidad</th>
-                <th>Condición</th>
-                <th>Notas</th>
-              </tr>
-            </thead>
-            <tbody>${itemRows}</tbody>
-          </table>
+            <section class="signatures">
+              <div class="signature-line">Elaborado por:<br>${escapeHtml(createdByLabel)}</div>
+              <div class="signature-line">Entregado a:<br>${escapeHtml(receivedByLabel)}</div>
+              <div class="signature-line">Autorizado por:</div>
+            </section>
+          </main>
         </body>
       </html>
     `);
@@ -556,26 +778,31 @@ export default function Devoluciones() {
           if (!open) setSelectedReturnId(null);
         }}
       >
-        <DialogContent className="max-h-[92vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-2xl p-5 sm:w-[calc(100vw-3rem)] sm:max-w-5xl sm:p-6">
+        <DialogContent className="max-h-[92vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-xl p-5 sm:w-[calc(100vw-3rem)] sm:max-w-6xl sm:p-6">
           <DialogHeader className="border-b border-border/70 pb-4 pr-10">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="space-y-2">
-                <DialogTitle className="flex flex-wrap items-center gap-3 text-2xl font-bold tracking-tight">
-                  {selectedReturn?.returnNumber || "Devolución"}
-                  {selectedReturn && (
-                    <Badge
-                      variant="outline"
-                      className={`text-xs ${
-                        STATUS_COLORS[selectedReturn.status] || ""
-                      }`}
-                    >
-                      {STATUS_LABELS[selectedReturn.status]}
-                    </Badge>
-                  )}
-                </DialogTitle>
-                <DialogDescription>
-                  Detalle de logística inversa y sus ítems asociados.
-                </DialogDescription>
+              <div className="flex min-w-0 gap-4">
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-amber-50 text-amber-600">
+                  <RotateCcw className="h-6 w-6" />
+                </span>
+                <div className="min-w-0 space-y-2">
+                  <DialogTitle className="flex flex-wrap items-center gap-3 text-2xl font-bold tracking-tight">
+                    {selectedReturn?.returnNumber || "Devolución"}
+                    {selectedReturn && (
+                      <Badge
+                        variant="outline"
+                        className={`text-xs ${
+                          STATUS_COLORS[selectedReturn.status] || ""
+                        }`}
+                      >
+                        {STATUS_LABELS[selectedReturn.status]}
+                      </Badge>
+                    )}
+                  </DialogTitle>
+                  <DialogDescription>
+                    Detalle de logística inversa y sus ítems asociados.
+                  </DialogDescription>
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {canGenerateCreditNote ? (
@@ -587,6 +814,23 @@ export default function Devoluciones() {
                   >
                     <CreditCard className="mr-2 h-4 w-4" />
                     Generar nota de crédito
+                  </Button>
+                ) : null}
+                {canCreateReturnTransfer && selectedReturn ? (
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      createReturnTransferMutation.mutate({
+                        id: selectedReturn.id,
+                      })
+                    }
+                    disabled={createReturnTransferMutation.isPending}
+                    className="w-fit"
+                  >
+                    <Truck className="mr-2 h-4 w-4" />
+                    {createReturnTransferMutation.isPending
+                      ? "Creando..."
+                      : "Crear traslado"}
                   </Button>
                 ) : null}
                 <Button
@@ -612,185 +856,220 @@ export default function Devoluciones() {
               No se pudo cargar la devolución.
             </div>
           ) : (
-            <div className="space-y-5">
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-                <div className="rounded-lg border border-border p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Tipo
-                  </p>
-                  <p className="mt-2 text-sm font-medium">
-                    {RETURN_TYPE_LABELS[selectedReturn.returnType]}
-                  </p>
+            <div className="space-y-4 pt-1">
+              <DetailSection icon={ClipboardList} title="Resumen">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                  <DetailField
+                    label="Tipo"
+                    value={RETURN_TYPE_LABELS[selectedReturn.returnType]}
+                  />
+                  <DetailField
+                    label="Motivo"
+                    value={REASON_LABELS[selectedReturn.reasonCategory]}
+                  />
+                  <DetailField
+                    label="Proyecto"
+                    value={
+                      sourceProject
+                        ? `${sourceProject.code} - ${sourceProject.name}`
+                        : "-"
+                    }
+                  />
+                  <DetailField
+                    label="Fecha"
+                    value={formatDate(selectedReturn.createdAt)}
+                  />
                 </div>
-                <div className="rounded-lg border border-border p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Motivo
-                  </p>
-                  <p className="mt-2 text-sm font-medium">
-                    {REASON_LABELS[selectedReturn.reasonCategory]}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Proyecto
-                  </p>
-                  <p className="mt-2 text-sm font-medium">
-                    {sourceProject
-                      ? `${sourceProject.code} - ${sourceProject.name}`
-                      : "-"}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Fecha
-                  </p>
-                  <p className="mt-2 text-sm font-medium">
-                    {formatDate(selectedReturn.createdAt)}
-                  </p>
-                </div>
-              </div>
+              </DetailSection>
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                <div className="rounded-lg border border-border p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Bodega origen
-                  </p>
-                  <p className="mt-2 text-sm font-medium">
-                    {sourceWarehouseLabel}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Proveedor
-                  </p>
-                  <p className="mt-2 text-sm font-medium">
-                    {selectedReturn.supplierName || "-"}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Nota de crédito
-                  </p>
-                  <p className="mt-2 text-sm font-medium">
-                    {selectedReturn.returnType === "devolucion_proveedor"
-                      ? selectedReturn.sapDocumentNumber ||
-                        "Pendiente de generar"
-                      : selectedReturn.sapDocumentNumber || "-"}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Procesada
-                  </p>
-                  <p className="mt-2 text-sm font-medium">
-                    {formatDate(selectedReturn.processedAt)}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                <div className="rounded-lg border border-border p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Número documento
-                  </p>
-                  <p className="mt-2 text-sm font-medium">
-                    {sourceReceipt?.invoiceNumber ||
+              <DetailSection icon={Warehouse} title="Información general">
+                <div className="grid grid-cols-1 gap-5 md:grid-cols-4">
+                  <DetailField label="Bodega origen" value={sourceWarehouseLabel} />
+                  {selectedReturn.returnType === "devolucion_entre_proyectos" ? (
+                    <>
+                      <DetailField
+                        label="Proyecto destino"
+                        value={destinationProjectLabel}
+                      />
+                      <DetailField
+                        label="Bodega destino"
+                        value={destinationWarehouseLabel}
+                      />
+                    </>
+                  ) : null}
+                  <DetailField label="Elaborado por" value={createdByLabel} />
+                  <DetailField label="Recibido por" value={receivedByLabel} />
+                  <DetailField
+                    label="Proveedor"
+                    value={selectedReturn.supplierName || "-"}
+                  />
+                  <DetailField
+                    label="Nota de crédito"
+                    value={
+                      selectedReturn.returnType === "devolucion_proveedor"
+                        ? selectedReturn.sapDocumentNumber ||
+                          "Pendiente de generar"
+                        : selectedReturn.sapDocumentNumber || "-"
+                    }
+                  />
+                  <DetailField
+                    label="Procesada"
+                    value={formatDate(selectedReturn.processedAt)}
+                  />
+                  <DetailField
+                    label="Número documento"
+                    value={
+                      sourceReceipt?.invoiceNumber ||
                       selectedReturn.sapDocumentNumber ||
-                      "-"}
-                  </p>
+                      "-"
+                    }
+                  />
+                  <DetailField label="CAI" value={sourceReceipt?.cai || "-"} />
+                  <DetailField
+                    label="Fecha documento"
+                    value={formatDate(sourceReceipt?.documentDate)}
+                  />
+                  <DetailField
+                    label="Fecha vencimiento"
+                    value={formatDate(sourceReceipt?.documentDueDate)}
+                  />
+                  <DetailField
+                    label="Fecha recepción"
+                    value={formatDate(sourceReceipt?.receiptDate)}
+                  />
                 </div>
-                <div className="rounded-lg border border-border p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    CAI
-                  </p>
-                  <p className="mt-2 text-sm font-medium">
-                    {sourceReceipt?.cai || "-"}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Fecha documento
-                  </p>
-                  <p className="mt-2 text-sm font-medium">
-                    {formatDate(sourceReceipt?.documentDate)}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Fecha vencimiento
-                  </p>
-                  <p className="mt-2 text-sm font-medium">
-                    {formatDate(sourceReceipt?.documentDueDate)}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Fecha recepción
-                  </p>
-                  <p className="mt-2 text-sm font-medium">
-                    {formatDate(sourceReceipt?.receiptDate)}
-                  </p>
-                </div>
-              </div>
+              </DetailSection>
 
-              <div className="rounded-lg border border-border p-4">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Justificación
+              <DetailSection icon={FileText} title="Justificación">
+                <p className="whitespace-pre-wrap text-sm leading-6 text-foreground">
+                  {selectedReturn.justification || "-"}
                 </p>
-                <p className="mt-2 whitespace-pre-wrap text-sm leading-6">
-                  {selectedReturn.justification}
-                </p>
-              </div>
+              </DetailSection>
 
-              <div className="overflow-x-auto rounded-lg border border-border">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/30">
-                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Código SAP
-                      </th>
-                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Ítem
-                      </th>
-                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Cant.
-                      </th>
-                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Unidad
-                      </th>
-                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Condición
-                      </th>
-                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Notas
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {returnItems.map((item: any) => (
-                      <tr
-                        key={item.id}
-                        className="border-b border-border last:border-0"
-                      >
-                        <td className="p-3 font-mono text-xs">
-                          {item.sapItemCode || "-"}
-                        </td>
-                        <td className="p-3 font-medium">{item.itemName}</td>
-                        <td className="p-3 text-right font-mono">
-                          {formatQuantity(item.quantity)}
-                        </td>
-                        <td className="p-3 text-xs">{item.unit || "-"}</td>
-                        <td className="p-3 text-xs">
-                          {CONDITION_LABELS[item.condition] || item.condition}
-                        </td>
-                        <td className="p-3 text-xs text-muted-foreground">
-                          {item.notes || "-"}
-                        </td>
+              {[
+                "devolucion_bodega_central",
+                "devolucion_entre_proyectos",
+              ].includes(selectedReturn.returnType) && linkedTransfers.length > 0 ? (
+                <DetailSection icon={Truck} title="Traslado vinculado">
+                  <div className="overflow-x-auto rounded-md border border-border">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border bg-muted/30">
+                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Solicitud
+                          </th>
+                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Estatus ST
+                          </th>
+                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Traslado
+                          </th>
+                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Estatus TR
+                          </th>
+                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Recepción
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {linkedTransfers.map((row: any, index: number) => (
+                          <tr
+                            key={`${row.transferRequest?.id ?? "st"}-${
+                              row.transfer?.id ?? "tr"
+                            }-${row.receipt?.id ?? index}`}
+                            className="border-b border-border last:border-0"
+                          >
+                            <td className="p-3 font-medium">
+                              {row.transferRequest?.requestNumber || "-"}
+                            </td>
+                            <td className="p-3 text-xs">
+                              {TRANSFER_REQUEST_STATUS_LABELS[
+                                row.transferRequest?.status
+                              ] ||
+                                row.transferRequest?.status ||
+                                "-"}
+                            </td>
+                            <td className="p-3 font-medium">
+                              {row.transfer?.transferNumber || "-"}
+                            </td>
+                            <td className="p-3 text-xs">
+                              {TRANSFER_STATUS_LABELS[row.transfer?.status] ||
+                                row.transfer?.status ||
+                                "-"}
+                            </td>
+                            <td className="p-3 text-xs">
+                              {row.receipt?.receiptNumber || "-"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </DetailSection>
+              ) : null}
+
+              <DetailSection icon={Package} title="Ítems asociados">
+                <div className="overflow-x-auto rounded-md border border-border">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/30">
+                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Código SAP
+                        </th>
+                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Ítem
+                        </th>
+                        <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Cant.
+                        </th>
+                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Unidad
+                        </th>
+                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Condición
+                        </th>
+                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Notas
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {returnItems.map((item: any) => (
+                        <tr
+                          key={item.id}
+                          className="border-b border-border last:border-0"
+                        >
+                          <td className="p-3 font-mono text-xs">
+                            {item.sapItemCode || "-"}
+                          </td>
+                          <td className="p-3 font-medium">{item.itemName}</td>
+                          <td className="p-3 text-right font-mono">
+                            {formatQuantity(item.quantity)}
+                          </td>
+                          <td className="p-3 text-xs">{item.unit || "-"}</td>
+                          <td className="p-3 text-xs">
+                            <Badge
+                              variant="outline"
+                              className={
+                                item.condition === "defectuoso" ||
+                                item.condition === "danado"
+                                  ? "border-rose-200 bg-rose-50 text-rose-700"
+                                  : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              }
+                            >
+                              {CONDITION_LABELS[item.condition] || item.condition}
+                            </Badge>
+                          </td>
+                          <td className="p-3 text-xs text-muted-foreground">
+                            {item.notes || "-"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </DetailSection>
             </div>
           )}
         </DialogContent>

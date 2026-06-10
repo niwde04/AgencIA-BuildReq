@@ -4689,6 +4689,7 @@ describe("BuildReq - Reverse Logistics Validations", () => {
         returnType: "devolucion_bodega_central",
         reasonCategory: "material_defectuoso",
         justification: "corta", // Less than 10 chars
+        receivedByName: "Juan Perez",
         sourceProjectId: 1,
         items: [
           {
@@ -4711,6 +4712,7 @@ describe("BuildReq - Reverse Logistics Validations", () => {
         reasonCategory: "material_defectuoso",
         justification:
           "Material llegó defectuoso del proveedor, no cumple especificaciones",
+        receivedByName: "Juan Perez",
         sourceProjectId: 1,
         supplierName: "Proveedor de prueba",
         items: [
@@ -4737,6 +4739,7 @@ describe("BuildReq - Reverse Logistics Validations", () => {
         reasonCategory: "excedente",
         justification:
           "Material excedente que puede ser utilizado en otro proyecto",
+        receivedByName: "Juan Perez",
         sourceProjectId: 1,
         // Missing destinationProjectId
         items: [
@@ -4762,6 +4765,7 @@ describe("BuildReq - Reverse Logistics Validations", () => {
         reasonCategory: "excedente",
         justification:
           "Material sobrante del proyecto que debe retornarse a bodega",
+        receivedByName: "Juan Perez",
         sourceProjectId: 1,
         items: [], // Empty items
       })
@@ -4790,6 +4794,7 @@ describe("BuildReq - Reverse Logistics Validations", () => {
         reasonCategory: "excedente",
         justification:
           "Material devuelto al proyecto despues de una salida de bodega",
+        receivedByName: "Juan Perez",
         sourceProjectId: 1,
         items: [
           {
@@ -4811,6 +4816,7 @@ describe("BuildReq - Reverse Logistics Validations", () => {
       expect.objectContaining({
         returnType: "devolucion_bodega_proyecto",
         sourceProjectId: 1,
+        receivedByName: "Juan Perez",
         createdById: ctx.user?.id,
       }),
       [
@@ -4888,6 +4894,7 @@ describe("BuildReq - Reverse Logistics Validations", () => {
         justification:
           "Material recibido defectuoso y debe devolverse al proveedor",
         sourceProjectId: 1,
+        receivedByName: "Juan Perez",
         sourceReceiptId: 44,
         supplierName: "Proveedor escrito a mano",
         items: [
@@ -4913,6 +4920,7 @@ describe("BuildReq - Reverse Logistics Validations", () => {
         sourceProjectId: 1,
         supplierName: "PL-00005 — Proveedor Demo",
         sapDocumentType: "nota_credito",
+        receivedByName: "Juan Perez",
         createdById: ctx.user?.id,
       }),
       [
@@ -4979,6 +4987,69 @@ describe("BuildReq - Reverse Logistics Validations", () => {
     generateCreditNoteSpy.mockRestore();
     getReverseLogisticByIdSpy.mockRestore();
     createNotificationSpy.mockRestore();
+  });
+
+  it("Allows bodega users to create central warehouse transfer requests from returns", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const createCentralTransferSpy = vi
+      .spyOn(db, "createCentralWarehouseTransferFromReverseLogistic")
+      .mockResolvedValue({
+        id: 55,
+        requestNumber: "ST-001-00000055",
+      });
+    const getReverseLogisticByIdSpy = vi
+      .spyOn(db, "getReverseLogisticById")
+      .mockResolvedValue({
+        return: {
+          id: 88,
+          returnNumber: "DEV-001-00000088",
+          createdById: 7,
+        },
+        items: [],
+      } as any);
+    const createNotificationSpy = vi
+      .spyOn(db, "createNotification")
+      .mockResolvedValue({ id: 1 } as any);
+
+    await expect(
+      caller.reverseLogistics.createCentralWarehouseTransfer({ id: 88 })
+    ).resolves.toEqual({
+      id: 55,
+      requestNumber: "ST-001-00000055",
+    });
+
+    expect(createCentralTransferSpy).toHaveBeenCalledWith(88, ctx.user?.id);
+    expect(createNotificationSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 7,
+        title: "Traslado creado para devolución",
+        relatedEntityType: "reverse_logistic",
+        relatedEntityId: 88,
+      })
+    );
+
+    createCentralTransferSpy.mockRestore();
+    getReverseLogisticByIdSpy.mockRestore();
+    createNotificationSpy.mockRestore();
+  });
+
+  it("Only bodega users can create central warehouse transfer requests from returns", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const createCentralTransferSpy = vi.spyOn(
+      db,
+      "createCentralWarehouseTransferFromReverseLogistic"
+    );
+
+    await expect(
+      caller.reverseLogistics.createCentralWarehouseTransfer({ id: 88 })
+    ).rejects.toThrow(
+      "Solo el Jefe de Bodega Central puede crear traslados de devoluciones"
+    );
+
+    expect(createCentralTransferSpy).not.toHaveBeenCalled();
+    createCentralTransferSpy.mockRestore();
   });
 });
 
@@ -11156,6 +11227,42 @@ describe("BuildReq - Transfer Requests", () => {
     getRequestItemsByRequestIdSpy.mockRestore();
     updateMaterialRequestStatusSpy.mockRestore();
     updateTransferRequestSpy.mockRestore();
+  });
+
+  it("cancel returns linked reverse logistics to pending status", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getTransferRequestByIdSpy = vi
+      .spyOn(db, "getTransferRequestById")
+      .mockResolvedValue({
+        transferRequest: {
+          id: 6,
+          requestNumber: "ST-001-00000006",
+          status: "pendiente",
+          reverseLogisticId: 88,
+        },
+        items: [],
+      } as any);
+    const updateTransferRequestSpy = vi
+      .spyOn(db, "updateTransferRequest")
+      .mockResolvedValue({ success: true });
+    const updateReverseLogisticStatusSpy = vi
+      .spyOn(db, "updateReverseLogisticStatus")
+      .mockResolvedValue({ success: true });
+
+    await expect(caller.transferRequests.cancel({ id: 6 })).resolves.toEqual({
+      success: true,
+    });
+
+    expect(updateTransferRequestSpy).toHaveBeenCalledWith(6, {
+      status: "anulada",
+      rejectionReason: "Solicitud anulada manualmente",
+    });
+    expect(updateReverseLogisticStatusSpy).toHaveBeenCalledWith(88, "pendiente");
+
+    getTransferRequestByIdSpy.mockRestore();
+    updateTransferRequestSpy.mockRestore();
+    updateReverseLogisticStatusSpy.mockRestore();
   });
 
   it("cancel only allows pending transfer requests", async () => {

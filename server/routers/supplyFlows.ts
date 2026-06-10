@@ -279,7 +279,7 @@ async function assertTransferSourceStock(
     ) {
       throw new TRPCError({
         code: "BAD_REQUEST",
-        message: `El proyecto origen no tiene existencia suficiente para ${stock.itemName}. Disponible: ${formatQuantity(
+        message: `La bodega origen no tiene existencia suficiente para ${stock.itemName}. Disponible: ${formatQuantity(
           stock.availableQuantity
         )}, solicitado: ${formatQuantity(stock.requestedQuantity)}.`,
       });
@@ -935,13 +935,6 @@ export const supplyFlowsRouter = router({
         });
       }
       assertItemApprovedForProcessing(detail, item);
-      if (input.sourceProjectId === detail.request.projectId) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message:
-            "El proyecto origen debe ser distinto al proyecto solicitante",
-        });
-      }
 
       await assertTransferSourceStock(input.sourceProjectId, [
         { item, sourceWarehouseId: input.sourceWarehouseId },
@@ -1093,14 +1086,6 @@ export const supplyFlowsRouter = router({
       }
 
       const destinationProjectId = destinationProjectIds[0];
-      if (input.sourceProjectId === destinationProjectId) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message:
-            "El proyecto origen debe ser distinto al proyecto solicitante",
-        });
-      }
-
       await assertTransferSourceStock(input.sourceProjectId, preparedItems);
 
       let earliestNeededBy: Date | null = null;

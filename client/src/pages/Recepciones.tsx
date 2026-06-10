@@ -541,6 +541,17 @@ function formatProjectReference(project: any, fallback: string) {
   return project ? `${project.code} — ${project.name}` : fallback;
 }
 
+function formatWarehouseReference(warehouse: any, fallback = "—") {
+  if (!warehouse) return fallback;
+  return (
+    warehouse.displayName ||
+    [warehouse.code || warehouse.localCode, warehouse.name]
+      .filter(Boolean)
+      .join(" - ") ||
+    fallback
+  );
+}
+
 function formatUserReference(user: any, fallbackId?: number | null) {
   const name = String(user?.name ?? "").trim();
   if (name) return name;
@@ -580,6 +591,20 @@ function getTransferOriginLabel(transferDetail: any, fallback: string) {
     : transferDetail.transferRequest.projectId
       ? `Proyecto ${transferDetail.transferRequest.projectId}`
       : fallback;
+}
+
+function getTransferSourceWarehouseLabel(transferDetail: any, fallback = "—") {
+  const labels = Array.from(
+    new Set<string>(
+      (transferDetail?.items || [])
+        .map((item: any) => formatWarehouseReference(item.sourceWarehouse, ""))
+        .filter(Boolean)
+    )
+  );
+
+  if (labels.length === 1) return labels[0];
+  if (labels.length > 1) return "Ver origen por línea";
+  return formatWarehouseReference(transferDetail?.originWarehouse, fallback);
 }
 
 type PendingReceiptAttachment = PreparedDocumentAttachment & {
@@ -906,19 +931,32 @@ export default function Recepciones() {
     isContractPurchaseOrder
       ? Math.max(Number(item.quantity ?? item.quantityExpected ?? 0), 0)
       : getPendingQuantity(item);
+  const isCentralWarehouseTransfer =
+    sourceType === "transfer" &&
+    transferDetail?.transferRequest?.destinationType === "bodega_central";
   const sourceProjectId =
     sourceType === "purchase_order"
       ? purchaseOrderDetail?.purchaseOrder.projectId
       : transferDetail?.transferRequest?.destinationType === "proyecto"
         ? transferDetail.transferRequest.destinationProjectId
+        : transferDetail?.transferRequest?.destinationType === "bodega_central"
+          ? transferDetail.transferRequest.projectId
         : undefined;
+  const receiptWarehouseProjectId = isCentralWarehouseTransfer
+    ? undefined
+    : sourceProjectId;
   const { data: receiptWarehouses } = trpc.warehouses.list.useQuery(
     {
-      projectId: sourceProjectId || 0,
+      ...(receiptWarehouseProjectId
+        ? { projectId: receiptWarehouseProjectId }
+        : {}),
       isActive: true,
     },
     {
-      enabled: dialogOpen && Boolean(sourceProjectId),
+      enabled:
+        dialogOpen &&
+        Boolean(sourceId) &&
+        (isCentralWarehouseTransfer || Boolean(sourceProjectId)),
     }
   );
   const defaultReceiptWarehouseId = useMemo(() => {
@@ -927,6 +965,32 @@ export default function Recepciones() {
       warehouses.find((warehouse: any) => warehouse.isDefault) ?? warehouses[0];
     return defaultWarehouse?.id ? String(defaultWarehouse.id) : "";
   }, [receiptWarehouses]);
+  const getDefaultReceiptWarehouseIdForItem = (item: any) => {
+    if (sourceType !== "transfer") return defaultReceiptWarehouseId;
+
+    const sourceWarehouseId = item?.sourceWarehouseId
+      ? String(item.sourceWarehouseId)
+      : "";
+    const destinationWarehouseId = transferDetail?.destinationWarehouse?.id
+      ? String(transferDetail.destinationWarehouse.id)
+      : "";
+
+    if (destinationWarehouseId && destinationWarehouseId !== sourceWarehouseId) {
+      return destinationWarehouseId;
+    }
+
+    const fallbackWarehouse = (receiptWarehouses ?? []).find(
+      (warehouse: any) => String(warehouse.id) !== sourceWarehouseId
+    );
+    return fallbackWarehouse?.id ? String(fallbackWarehouse.id) : "";
+  };
+  const lockedReturnDestinationWarehouseId =
+    sourceType === "transfer" &&
+    transferDetail?.transferRequest?.reverseLogisticId &&
+    transferDetail.transferRequest.destinationType === "proyecto" &&
+    transferDetail.destinationWarehouse?.id
+      ? String(transferDetail.destinationWarehouse.id)
+      : "";
   const { data: targetOptions, isLoading: targetOptionsLoading } =
     trpc.materialRequests.targetOptions.useQuery(
       {
@@ -1100,9 +1164,17 @@ export default function Recepciones() {
         draftItem?.subtotal ??
           calculateReceiptSubtotalDraftValue(nextMap[item.id], nextPriceMap[item.id])
       );
-      nextWarehouseMap[item.id] = draftItem?.warehouseId
+      const draftWarehouseId = draftItem?.warehouseId
         ? String(draftItem.warehouseId)
-        : defaultReceiptWarehouseId;
+        : "";
+      const sourceWarehouseId =
+        sourceType === "transfer" && item.sourceWarehouseId
+          ? String(item.sourceWarehouseId)
+          : "";
+      nextWarehouseMap[item.id] =
+        draftWarehouseId && draftWarehouseId !== sourceWarehouseId
+          ? draftWarehouseId
+          : getDefaultReceiptWarehouseIdForItem(item);
       const taxCode = normalizePurchaseOrderTaxCode(
         draftItem?.taxCode ?? item.taxCode,
         activeSalesTaxes
@@ -1156,10 +1228,12 @@ export default function Recepciones() {
     activeSalesTaxes,
     defaultReceiptWarehouseId,
     editingDraftReceiptDetail,
+    receiptWarehouses,
     sourceProjectId,
     sourceId,
     sourceItems,
     sourceType,
+    transferDetail?.destinationWarehouse?.id,
   ]);
 
   const uploadPendingReceiptAttachmentMutation =
@@ -1474,6 +1548,10 @@ export default function Recepciones() {
       : transferDetail?.transferRequest
         ? `Origen: ${getTransferOriginLabel(transferDetail, "Proyecto origen")}`
         : "Seleccione documento";
+  const transferSourceWarehouseLabel =
+    sourceType === "transfer" && transferDetail?.transferRequest
+      ? getTransferSourceWarehouseLabel(transferDetail, "Bodega pendiente")
+      : null;
   const sourceSupplierRtnLabel =
     sourceType === "purchase_order" && purchaseOrderDetail?.supplier
       ? formatSupplierRtnLabel(purchaseOrderDetail.supplier)
@@ -1645,9 +1723,30 @@ export default function Recepciones() {
     });
 
   const renderReceiptWarehouseSelector = (item: any, compact = false) => {
+    const sourceWarehouseId =
+      sourceType === "transfer" && item.sourceWarehouseId
+        ? String(item.sourceWarehouseId)
+        : "";
+    const lockedDestinationWarehouseId = lockedReturnDestinationWarehouseId;
+    const hasSelectableWarehouses = (receiptWarehouses ?? []).some(
+      (warehouse: any) => {
+        const warehouseId = String(warehouse.id);
+        if (warehouseId === sourceWarehouseId) return false;
+        return (
+          !lockedDestinationWarehouseId ||
+          warehouseId === lockedDestinationWarehouseId
+        );
+      }
+    );
     const selectedWarehouse = (receiptWarehouses ?? []).find(
       (warehouse: any) => String(warehouse.id) === warehouseByItemId[item.id]
     );
+    const selectedIsSourceWarehouse =
+      Boolean(sourceWarehouseId) && warehouseByItemId[item.id] === sourceWarehouseId;
+    const selectedIsWrongReturnDestination =
+      Boolean(lockedDestinationWarehouseId) &&
+      Boolean(warehouseByItemId[item.id]) &&
+      warehouseByItemId[item.id] !== lockedDestinationWarehouseId;
 
     return (
       <div className="min-w-0 space-y-1.5">
@@ -1660,22 +1759,55 @@ export default function Recepciones() {
               [item.id]: value,
             }))
           }
-          disabled={!receiptWarehouses?.length || registerMutation.isPending}
+          disabled={
+            !receiptWarehouses?.length ||
+            !hasSelectableWarehouses ||
+            registerMutation.isPending
+          }
         >
           <SelectTrigger className={compact ? "min-w-52" : "w-full min-w-0"}>
             <SelectValue placeholder="Seleccione bodega" />
           </SelectTrigger>
           <SelectContent className="max-w-[min(680px,calc(100vw-2rem))]">
-            {(receiptWarehouses ?? []).map((warehouse: any) => (
-              <SelectItem key={warehouse.id} value={String(warehouse.id)}>
-                {warehouse.displayName}
-              </SelectItem>
-            ))}
+            {(receiptWarehouses ?? []).map((warehouse: any) => {
+              const warehouseId = String(warehouse.id);
+              const isSourceWarehouse =
+                Boolean(sourceWarehouseId) &&
+                warehouseId === sourceWarehouseId;
+              const isWrongReturnDestination =
+                Boolean(lockedDestinationWarehouseId) &&
+                warehouseId !== lockedDestinationWarehouseId;
+              return (
+                <SelectItem
+                  key={warehouse.id}
+                  value={warehouseId}
+                  disabled={isSourceWarehouse || isWrongReturnDestination}
+                >
+                  {warehouse.displayName}
+                  {isSourceWarehouse ? " - origen" : ""}
+                  {!isSourceWarehouse && isWrongReturnDestination
+                    ? " - no destino"
+                    : ""}
+                </SelectItem>
+              );
+            })}
           </SelectContent>
         </Select>
-        {selectedWarehouse ? (
+        {selectedIsSourceWarehouse ? (
+          <p className="text-[10px] font-medium text-destructive">
+            No se puede ingresar a la misma bodega de origen.
+          </p>
+        ) : selectedIsWrongReturnDestination ? (
+          <p className="text-[10px] font-medium text-destructive">
+            Este traslado debe ingresar a la bodega destino de la devolución.
+          </p>
+        ) : selectedWarehouse ? (
           <p className="truncate text-[10px] text-muted-foreground">
             Ingreso a {selectedWarehouse.displayName}
+          </p>
+        ) : !hasSelectableWarehouses && sourceType === "transfer" ? (
+          <p className="text-[10px] font-medium text-destructive">
+            No hay una bodega destino distinta a la de origen.
           </p>
         ) : (
           <p className="text-[10px] text-muted-foreground">
@@ -2374,6 +2506,43 @@ export default function Recepciones() {
     if (missingWarehouse) {
       toast.error(`Seleccione almacén para ${missingWarehouse.itemName}`);
       return;
+    }
+    if (sourceType === "transfer") {
+      const sourceItemById = new Map(
+        (sourceItems as any[]).map(item => [Number(item.id), item])
+      );
+      const sameOriginWarehouse = receiptItems.find(item => {
+        if (Number(item.quantityReceived || 0) <= 0 || !item.warehouseId) {
+          return false;
+        }
+        const sourceItem = sourceItemById.get(Number(item.sourceItemId));
+        return (
+          sourceItem?.sourceWarehouseId &&
+          Number(item.warehouseId) === Number(sourceItem.sourceWarehouseId)
+        );
+      });
+      if (sameOriginWarehouse) {
+        toast.error(
+          `${sameOriginWarehouse.itemName}: no se puede ingresar a la misma bodega de origen`
+        );
+        return;
+      }
+      const wrongReturnDestinationWarehouse = receiptItems.find(item => {
+        if (
+          Number(item.quantityReceived || 0) <= 0 ||
+          !item.warehouseId ||
+          !lockedReturnDestinationWarehouseId
+        ) {
+          return false;
+        }
+        return Number(item.warehouseId) !== Number(lockedReturnDestinationWarehouseId);
+      });
+      if (wrongReturnDestinationWarehouse) {
+        toast.error(
+          `${wrongReturnDestinationWarehouse.itemName}: debe ingresar a la bodega destino de la devolución`
+        );
+        return;
+      }
     }
     const hasTransferClosure = receiptItems.some(item => item.closeRemaining);
 
@@ -3360,7 +3529,11 @@ export default function Recepciones() {
               </div>
 
               <div className="grid gap-3 md:grid-cols-12">
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-4">
+                <div
+                  className={`space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 ${
+                    sourceType === "transfer" ? "md:col-span-3" : "md:col-span-4"
+                  }`}
+                >
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                     {sourceType === "purchase_order"
                       ? "Proveedor"
@@ -3375,7 +3548,21 @@ export default function Recepciones() {
                     </p>
                   ) : null}
                 </div>
-                <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
+                {sourceType === "transfer" ? (
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Bodega origen
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {transferSourceWarehouseLabel || "Bodega pendiente"}
+                    </p>
+                  </div>
+                ) : null}
+                <div
+                  className={`space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 ${
+                    sourceType === "transfer" ? "md:col-span-2" : "md:col-span-3"
+                  }`}
+                >
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                     Estado del origen
                   </Label>

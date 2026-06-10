@@ -250,6 +250,12 @@ export const transferRequestsRouter = router({
         status: "anulada",
         rejectionReason: "Solicitud anulada manualmente",
       });
+      if (detail.transferRequest.reverseLogisticId) {
+        await db.updateReverseLogisticStatus(
+          detail.transferRequest.reverseLogisticId,
+          "pendiente"
+        );
+      }
 
       return { success: true };
     }),

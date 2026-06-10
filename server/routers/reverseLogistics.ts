@@ -63,9 +63,15 @@ export const reverseLogisticsRouter = router({
           .min(10, "La justificación debe tener al menos 10 caracteres"),
         sourceProjectId: z.number(),
         destinationProjectId: z.number().optional(),
+        destinationWarehouseId: z.number().int().positive().optional(),
         sourceWarehouseExitId: z.number().optional(),
         sourceReceiptId: z.number().optional(),
         supplierName: z.string().optional(),
+        receivedByName: z
+          .string()
+          .trim()
+          .min(1, "Recibido por es obligatorio")
+          .max(255, "Recibido por no puede exceder 255 caracteres"),
         originalRequestId: z.number().optional(),
         items: z
           .array(returnItemSchema)
@@ -155,6 +161,36 @@ export const reverseLogisticsRouter = router({
             "Para devoluciones entre proyectos, debe indicar el proyecto destino",
         });
       }
+      if (
+        input.returnType === "devolucion_entre_proyectos" &&
+        !input.destinationWarehouseId
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Para devoluciones entre proyectos, debe indicar la bodega destino",
+        });
+      }
+      if (
+        input.returnType === "devolucion_entre_proyectos" &&
+        input.destinationProjectId &&
+        input.destinationWarehouseId
+      ) {
+        const destinationWarehouses = await db.listProjectWarehouses(
+          input.destinationProjectId,
+          { isActive: true }
+        );
+        const validDestinationWarehouse = destinationWarehouses.some(
+          warehouse => warehouse.id === input.destinationWarehouseId
+        );
+        if (!validDestinationWarehouse) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "La bodega destino seleccionada no pertenece al proyecto destino o no está activa",
+          });
+        }
+      }
 
       const { items, ...returnData } = input;
       if (
@@ -233,6 +269,7 @@ export const reverseLogisticsRouter = router({
               sourceWarehouseExitId: input.sourceWarehouseExitId,
               reasonCategory: input.reasonCategory,
               justification: input.justification,
+              receivedByName: input.receivedByName,
               createdById: ctx.user.id,
               items: input.items.map((item) => {
                 if (!item.sourceWarehouseExitItemId) {
@@ -317,6 +354,50 @@ export const reverseLogisticsRouter = router({
             error instanceof Error
               ? error.message
               : "No se pudo generar la nota de crédito",
+        });
+      }
+    }),
+
+  createCentralWarehouseTransfer: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (
+        ctx.user.buildreqRole !== "jefe_bodega_central" &&
+        ctx.user.role !== "admin"
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo el Jefe de Bodega Central puede crear traslados de devoluciones",
+        });
+      }
+
+      try {
+        const result = await db.createTransferFromReverseLogistic(
+          input.id,
+          ctx.user.id
+        );
+
+        const returnRecord = await db.getReverseLogisticById(input.id);
+        if (returnRecord) {
+          await db.createNotification({
+            userId: returnRecord.return.createdById,
+            title: "Traslado creado para devolución",
+            message: `Se generó la solicitud de traslado ${result.requestNumber} para la devolución ${returnRecord.return.returnNumber}.`,
+            type: "devolucion",
+            relatedEntityType: "reverse_logistic",
+            relatedEntityId: input.id,
+          });
+        }
+
+        return result;
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudo crear el traslado de la devolución",
         });
       }
     }),
