@@ -1668,6 +1668,9 @@ export const warehouseUserAssignments = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     isResponsible: boolean("isResponsible").default(false).notNull(),
+    assignmentSource: varchar("assignmentSource", { length: 30 })
+      .default("manual")
+      .notNull(),
     assignedById: integer("assignedById").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -1677,6 +1680,9 @@ export const warehouseUserAssignments = pgTable(
   table => ({
     warehouseIdx: index("wua_warehouse_idx").on(table.warehouseId),
     userIdx: index("wua_user_idx").on(table.userId),
+    assignmentSourceIdx: index("wua_assignment_source_idx").on(
+      table.assignmentSource
+    ),
     userWarehouseUnique: uniqueIndex("wua_user_warehouse_unique").on(
       table.userId,
       table.warehouseId

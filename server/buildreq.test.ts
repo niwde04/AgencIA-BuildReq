@@ -6400,6 +6400,109 @@ describe("BuildReq - User Management", () => {
 
     updateUserRoleSpy.mockRestore();
   });
+
+  it("plans automatic warehouse access for Project Administrators", () => {
+    expect(
+      db.calculateProjectScopedWarehouseAssignmentChanges({
+        buildreqRole: "administrador_proyecto",
+        projectWarehouseIds: [101, 102, 101],
+        existingAssignments: [],
+      })
+    ).toEqual({
+      warehouseIdsToInsert: [101, 102],
+      assignmentIdsToDelete: [],
+    });
+  });
+
+  it("removes only stale automatic warehouse access when project scope changes", () => {
+    expect(
+      db.calculateProjectScopedWarehouseAssignmentChanges({
+        buildreqRole: "administrador_proyecto",
+        projectWarehouseIds: [102, 103],
+        existingAssignments: [
+          {
+            id: 1,
+            warehouseId: 101,
+            assignmentSource: "project_scope",
+            isResponsible: false,
+          },
+          {
+            id: 2,
+            warehouseId: 102,
+            assignmentSource: "project_scope",
+            isResponsible: false,
+          },
+        ],
+      })
+    ).toEqual({
+      warehouseIdsToInsert: [103],
+      assignmentIdsToDelete: [1],
+    });
+  });
+
+  it("preserves manual and responsible warehouse access during automatic sync", () => {
+    expect(
+      db.calculateProjectScopedWarehouseAssignmentChanges({
+        buildreqRole: "administrador_proyecto",
+        projectWarehouseIds: [],
+        existingAssignments: [
+          {
+            id: 1,
+            warehouseId: 101,
+            assignmentSource: "manual",
+            isResponsible: false,
+          },
+          {
+            id: 2,
+            warehouseId: 102,
+            assignmentSource: "project_scope",
+            isResponsible: true,
+          },
+          {
+            id: 3,
+            warehouseId: 103,
+            assignmentSource: "project_scope",
+            isResponsible: false,
+          },
+        ],
+      })
+    ).toEqual({
+      warehouseIdsToInsert: [],
+      assignmentIdsToDelete: [3],
+    });
+  });
+
+  it("plans automatic warehouse access for Project Warehouse users", () => {
+    expect(
+      db.calculateProjectScopedWarehouseAssignmentChanges({
+        buildreqRole: "bodeguero_proyecto",
+        projectWarehouseIds: [201],
+        existingAssignments: [],
+      })
+    ).toEqual({
+      warehouseIdsToInsert: [201],
+      assignmentIdsToDelete: [],
+    });
+  });
+
+  it("does not create automatic warehouse access for other project roles", () => {
+    for (const buildreqRole of [
+      "ingeniero_residente",
+      "superintendente",
+      "contable",
+    ]) {
+      expect(
+        db.calculateProjectScopedWarehouseAssignmentChanges({
+          buildreqRole,
+          projectWarehouseIds: [301],
+          existingAssignments: [],
+        })
+      ).toEqual({
+        warehouseIdsToInsert: [],
+        assignmentIdsToDelete: [],
+      });
+    }
+  });
 });
 
 // ============================================================

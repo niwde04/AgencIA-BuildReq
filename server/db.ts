@@ -665,14 +665,68 @@ function normalizeProjectIds(
 const WAREHOUSE_ASSIGNABLE_ROLES: BuildReqRole[] = [
   "administracion_central",
   "jefe_bodega_central",
+  "administrador_proyecto",
   "bodeguero_proyecto",
 ];
+
+const PROJECT_SCOPED_WAREHOUSE_USER_ROLES: BuildReqRole[] = [
+  "administrador_proyecto",
+  "bodeguero_proyecto",
+];
+
+const WAREHOUSE_ASSIGNMENT_SOURCE_MANUAL = "manual";
+const WAREHOUSE_ASSIGNMENT_SOURCE_PROJECT_SCOPE = "project_scope";
 
 function isWarehouseAssignableUser(user?: Pick<User, "buildreqRole"> | null) {
   return Boolean(
     user?.buildreqRole &&
       WAREHOUSE_ASSIGNABLE_ROLES.includes(user.buildreqRole as BuildReqRole)
   );
+}
+
+function isProjectScopedWarehouseUserRole(role?: string | null) {
+  return Boolean(
+    role &&
+      PROJECT_SCOPED_WAREHOUSE_USER_ROLES.includes(role as BuildReqRole)
+  );
+}
+
+type ProjectScopedWarehouseAssignment = {
+  id: number;
+  warehouseId: number;
+  assignmentSource?: string | null;
+  isResponsible?: boolean | null;
+};
+
+export function calculateProjectScopedWarehouseAssignmentChanges(params: {
+  buildreqRole?: string | null;
+  projectWarehouseIds: number[];
+  existingAssignments: ProjectScopedWarehouseAssignment[];
+}) {
+  const desiredWarehouseIds = isProjectScopedWarehouseUserRole(
+    params.buildreqRole
+  )
+    ? normalizeProjectIds(params.projectWarehouseIds)
+    : [];
+  const desiredWarehouseIdSet = new Set(desiredWarehouseIds);
+  const existingWarehouseIds = new Set(
+    params.existingAssignments.map(assignment => Number(assignment.warehouseId))
+  );
+
+  return {
+    warehouseIdsToInsert: desiredWarehouseIds.filter(
+      warehouseId => !existingWarehouseIds.has(warehouseId)
+    ),
+    assignmentIdsToDelete: params.existingAssignments
+      .filter(
+        assignment =>
+          assignment.assignmentSource ===
+            WAREHOUSE_ASSIGNMENT_SOURCE_PROJECT_SCOPE &&
+          !assignment.isResponsible &&
+          !desiredWarehouseIdSet.has(Number(assignment.warehouseId))
+      )
+      .map(assignment => Number(assignment.id)),
+  };
 }
 
 function mapWarehouseAssignedUser(row: {
@@ -687,6 +741,7 @@ function mapWarehouseAssignedUser(row: {
     role: row.user.role,
     buildreqRole: row.user.buildreqRole,
     isResponsible: row.assignment.isResponsible,
+    assignmentSource: row.assignment.assignmentSource,
     assignedById: row.assignment.assignedById,
     assignedAt: row.assignment.createdAt,
   };
@@ -712,6 +767,92 @@ async function replaceUserProjectAssignmentsForUser(
       }))
     );
   }
+}
+
+export async function syncUserWarehouseAssignmentsFromProjects(params: {
+  userId: number;
+  buildreqRole?: string | null;
+  projectIds?: number[] | null;
+  assignedById?: number | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const normalizedProjectIds = normalizeProjectIds(params.projectIds);
+  const projectWarehouseRows =
+    isProjectScopedWarehouseUserRole(params.buildreqRole) &&
+    normalizedProjectIds.length > 0
+      ? await db
+          .select({ warehouseId: projectWarehouseAssignments.warehouseId })
+          .from(projectWarehouseAssignments)
+          .innerJoin(
+            warehouses,
+            eq(projectWarehouseAssignments.warehouseId, warehouses.id)
+          )
+          .where(
+            and(
+              inArray(projectWarehouseAssignments.projectId, normalizedProjectIds),
+              eq(warehouses.isActive, true)
+            )
+          )
+      : [];
+  const projectWarehouseIds = normalizeProjectIds(
+    projectWarehouseRows.map(row => row.warehouseId)
+  );
+
+  const existingAssignments = await db
+    .select({
+      id: warehouseUserAssignments.id,
+      warehouseId: warehouseUserAssignments.warehouseId,
+      assignmentSource: warehouseUserAssignments.assignmentSource,
+      isResponsible: warehouseUserAssignments.isResponsible,
+    })
+    .from(warehouseUserAssignments)
+    .where(eq(warehouseUserAssignments.userId, params.userId));
+
+  const { warehouseIdsToInsert, assignmentIdsToDelete } =
+    calculateProjectScopedWarehouseAssignmentChanges({
+      buildreqRole: params.buildreqRole,
+      projectWarehouseIds,
+      existingAssignments,
+    });
+
+  if (warehouseIdsToInsert.length === 0 && assignmentIdsToDelete.length === 0) {
+    return {
+      success: true,
+      insertedRows: 0,
+      deletedRows: 0,
+    };
+  }
+
+  await db.transaction(async tx => {
+    if (assignmentIdsToDelete.length > 0) {
+      await tx
+        .delete(warehouseUserAssignments)
+        .where(inArray(warehouseUserAssignments.id, assignmentIdsToDelete));
+    }
+
+    if (warehouseIdsToInsert.length > 0) {
+      await tx
+        .insert(warehouseUserAssignments)
+        .values(
+          warehouseIdsToInsert.map(warehouseId => ({
+            warehouseId,
+            userId: params.userId,
+            isResponsible: false,
+            assignmentSource: WAREHOUSE_ASSIGNMENT_SOURCE_PROJECT_SCOPE,
+            assignedById: params.assignedById ?? null,
+          }))
+        )
+        .onConflictDoNothing();
+    }
+  });
+
+  return {
+    success: true,
+    insertedRows: warehouseIdsToInsert.length,
+    deletedRows: assignmentIdsToDelete.length,
+  };
 }
 
 async function replaceInvitationProjectAssignmentsForInvitation(
@@ -897,7 +1038,7 @@ export async function upsertUser(
 
   if (user.assignedProjectIds !== undefined) {
     const [savedUser] = await db
-      .select({ id: users.id })
+      .select({ id: users.id, buildreqRole: users.buildreqRole })
       .from(users)
       .where(eq(users.openId, user.openId))
       .limit(1);
@@ -906,6 +1047,11 @@ export async function upsertUser(
         savedUser.id,
         user.assignedProjectIds
       );
+      await syncUserWarehouseAssignmentsFromProjects({
+        userId: savedUser.id,
+        buildreqRole: user.buildreqRole ?? savedUser.buildreqRole,
+        projectIds: user.assignedProjectIds,
+      });
     }
   }
 }
@@ -1009,6 +1155,11 @@ export async function updateUserRole(
 
   for (const row of targetUsers) {
     await replaceUserProjectAssignmentsForUser(row.id, normalizedProjectIds);
+    await syncUserWarehouseAssignmentsFromProjects({
+      userId: row.id,
+      buildreqRole,
+      projectIds: normalizedProjectIds,
+    });
   }
   return { success: true };
 }
@@ -1039,6 +1190,11 @@ export async function updateUserAdmin(
     .where(eq(users.id, userId));
 
   await replaceUserProjectAssignmentsForUser(userId, normalizedProjectIds);
+  await syncUserWarehouseAssignmentsFromProjects({
+    userId,
+    buildreqRole: data.buildreqRole,
+    projectIds: normalizedProjectIds,
+  });
 
   return { success: true };
 }
@@ -12659,7 +12815,7 @@ export async function assignUserToWarehouse(params: {
   if (!targetUser) throw new Error("Usuario no encontrado");
   if (!isWarehouseAssignableUser(targetUser)) {
     throw new Error(
-      "Solo usuarios de Administración Central, Bodega Central o Bodega Proyecto pueden asignarse a bodegas"
+      "Solo usuarios de Administración Central, Bodega Central, Administración Proyecto o Bodega Proyecto pueden asignarse a bodegas"
     );
   }
 
@@ -12687,6 +12843,7 @@ export async function assignUserToWarehouse(params: {
         .update(warehouseUserAssignments)
         .set({
           isResponsible: params.isResponsible ? true : existing.isResponsible,
+          assignmentSource: WAREHOUSE_ASSIGNMENT_SOURCE_MANUAL,
           assignedById: params.assignedById ?? existing.assignedById,
           updatedAt: new Date(),
         })
@@ -12698,6 +12855,7 @@ export async function assignUserToWarehouse(params: {
       warehouseId: params.warehouseId,
       userId: params.userId,
       isResponsible: Boolean(params.isResponsible),
+      assignmentSource: WAREHOUSE_ASSIGNMENT_SOURCE_MANUAL,
       assignedById: params.assignedById ?? null,
     });
   });

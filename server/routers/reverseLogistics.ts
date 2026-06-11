@@ -373,7 +373,7 @@ export const reverseLogisticsRouter = router({
       }
 
       try {
-        const result = await db.createTransferFromReverseLogistic(
+        const result = await db.createCentralWarehouseTransferFromReverseLogistic(
           input.id,
           ctx.user.id
         );

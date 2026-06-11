@@ -45,6 +45,10 @@ function isCentralWarehouseAssignableRole(role?: string | null) {
   return role === "administracion_central" || role === "jefe_bodega_central";
 }
 
+function isProjectScopedWarehouseAssignableRole(role?: string | null) {
+  return role === "administrador_proyecto" || role === "bodeguero_proyecto";
+}
+
 function canReadProjectWarehouses(user: {
   role: string;
   buildreqRole?: string | null;
@@ -162,11 +166,14 @@ async function assertCanAssignWarehouseUser(
   const hasSharedProject = targetProjectIds.some(projectId =>
     managerProjectIds.includes(projectId)
   );
-  if (targetUser.buildreqRole !== "bodeguero_proyecto" || !hasSharedProject) {
+  if (
+    !isProjectScopedWarehouseAssignableRole(targetUser.buildreqRole) ||
+    !hasSharedProject
+  ) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message:
-        "Solo puede asignar usuarios centrales o bodegueros de proyecto dentro de sus proyectos.",
+        "Solo puede asignar usuarios centrales, administradores de proyecto o bodegueros de proyecto dentro de sus proyectos.",
     });
   }
 }

@@ -1123,6 +1123,10 @@ export default function Facturas() {
         amount: String(retention.amount ?? "0.00"),
       }))
     );
+  }, [detail]);
+
+  useEffect(() => {
+    if (!detail?.invoice) return;
     setAccountingComment("");
     setRejectionComment("");
     setRejectDialogOpen(false);
