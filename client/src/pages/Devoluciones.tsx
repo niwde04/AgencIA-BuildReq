@@ -49,7 +49,7 @@ import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 const RETURN_TYPE_LABELS: Record<string, string> = {
   devolucion_bodega_proyecto: "Devolución a Bodega de Proyecto",
   devolucion_bodega_central: "Devolución a Bodega Central",
-  devolucion_entre_proyectos: "Devolución entre Proyectos",
+  devolucion_entre_proyectos: "Devolución entre Bodegas",
   devolucion_proveedor: "Devolución a Proveedor",
 };
 
@@ -663,7 +663,7 @@ export default function Devoluciones() {
               A Bodega Central
             </SelectItem>
             <SelectItem value="devolucion_entre_proyectos">
-              Entre Proyectos
+              Entre Bodegas
             </SelectItem>
             <SelectItem value="devolucion_proveedor">
               A Proveedor
