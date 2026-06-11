@@ -3515,6 +3515,80 @@ describe("BuildReq - Role-based Access Control", () => {
     emitWarehouseExitSpy.mockRestore();
   });
 
+  it("Bodeguero de Proyecto can update draft warehouse exits from their assigned project", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getWarehouseExitByIdSpy = vi
+      .spyOn(db, "getWarehouseExitById")
+      .mockResolvedValue({
+        warehouseExit: { id: 33, projectId: 1, status: "borrador" },
+        items: [],
+      } as any);
+    const updateWarehouseExitDraftSpy = vi
+      .spyOn(db, "updateWarehouseExitDraft")
+      .mockResolvedValue({
+        warehouseExit: {
+          id: 33,
+          projectId: 1,
+          status: "borrador",
+          receivedByName: "Maria Perez",
+          notes: "Entrega parcial",
+        },
+        items: [{ id: 501, quantity: "4.00", notes: "Línea revisada" }],
+      } as any);
+
+    await expect(
+      caller.warehouseExits.updateDraft({
+        id: 33,
+        receivedByName: "Maria Perez",
+        notes: "Entrega parcial",
+        items: [{ id: 501, quantity: "4.00", notes: "Línea revisada" }],
+      })
+    ).resolves.toEqual({
+      warehouseExit: {
+        id: 33,
+        projectId: 1,
+        status: "borrador",
+        receivedByName: "Maria Perez",
+        notes: "Entrega parcial",
+      },
+      items: [{ id: 501, quantity: "4.00", notes: "Línea revisada" }],
+    });
+    expect(getWarehouseExitByIdSpy).toHaveBeenCalledWith(33);
+    expect(updateWarehouseExitDraftSpy).toHaveBeenCalledWith(33, {
+      receivedByName: "Maria Perez",
+      notes: "Entrega parcial",
+      items: [{ id: 501, quantity: "4.00", notes: "Línea revisada" }],
+    });
+
+    getWarehouseExitByIdSpy.mockRestore();
+    updateWarehouseExitDraftSpy.mockRestore();
+  });
+
+  it("Bodeguero de Proyecto cannot update draft warehouse exits from another project", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getWarehouseExitByIdSpy = vi
+      .spyOn(db, "getWarehouseExitById")
+      .mockResolvedValue({
+        warehouseExit: { id: 34, projectId: 2, status: "borrador" },
+        items: [],
+      } as any);
+    const updateWarehouseExitDraftSpy = vi.spyOn(db, "updateWarehouseExitDraft");
+
+    await expect(
+      caller.warehouseExits.updateDraft({
+        id: 34,
+        receivedByName: "Maria Perez",
+        items: [{ id: 501, quantity: "4.00" }],
+      })
+    ).rejects.toThrow("No tiene acceso a salidas de bodega de otro proyecto");
+    expect(updateWarehouseExitDraftSpy).not.toHaveBeenCalled();
+
+    getWarehouseExitByIdSpy.mockRestore();
+    updateWarehouseExitDraftSpy.mockRestore();
+  });
+
   it("Bodeguero de Proyecto cannot emit warehouse exits from another project", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);

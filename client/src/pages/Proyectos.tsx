@@ -29,6 +29,7 @@ import {
   Plus,
   Save,
   Search,
+  Star,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -47,13 +48,19 @@ type ProjectRecord = {
   warehouseCount?: number;
   totalStock?: string | null;
   warehouse?: WarehouseRecord | null;
+  warehouses?: WarehouseRecord[];
 };
 
 type WarehouseRecord = {
   id: number;
   code: string;
+  localCode?: string | null;
   name: string;
   displayName: string;
+  description?: string | null;
+  isDefault?: boolean;
+  isActive?: boolean;
+  isPrimary?: boolean;
 };
 
 type SubprojectRecord = {
@@ -106,6 +113,20 @@ const EMPTY_SUBPROJECT_FORM: SubprojectFormState = {
   endDate: "",
   isActive: true,
 };
+
+function getProjectWarehouses(project?: ProjectRecord | null) {
+  if (!project) return [];
+  if (Array.isArray(project.warehouses) && project.warehouses.length > 0) {
+    return project.warehouses;
+  }
+  return project.warehouse ? [project.warehouse] : [];
+}
+
+function formatWarehouseSummary(warehouses: WarehouseRecord[]) {
+  if (warehouses.length === 0) return "";
+  if (warehouses.length === 1) return warehouses[0].displayName;
+  return warehouses.map((warehouse) => warehouse.displayName).join(", ");
+}
 
 function formatDateInput(value?: Date | string | null) {
   if (!value) return "";
@@ -191,6 +212,10 @@ export default function Proyectos() {
     canManageProjects ||
     buildreqRole === "administracion_central" ||
     buildreqRole === "administrador_proyecto";
+  const canManageProjectWarehouses =
+    isAdmin ||
+    buildreqRole === "administracion_central" ||
+    buildreqRole === "administrador_proyecto";
   const selectedProjectId = selectedProject?.id ?? 0;
 
   const {
@@ -215,14 +240,18 @@ export default function Proyectos() {
         projectStatusFilter === "all" || project.status === projectStatusFilter;
       if (!matchesStatus) return false;
       if (!normalizedSearch) return true;
+      const projectWarehouses = getProjectWarehouses(project);
 
       const searchableText = [
         project.code,
         project.name,
         project.sapProjectCode,
-        project.warehouse?.displayName,
-        project.warehouse?.code,
-        project.warehouse?.name,
+        ...projectWarehouses.flatMap((warehouse) => [
+          warehouse.displayName,
+          warehouse.code,
+          warehouse.localCode,
+          warehouse.name,
+        ]),
       ]
         .filter(Boolean)
         .join(" ")
@@ -231,6 +260,10 @@ export default function Proyectos() {
       return searchableText.includes(normalizedSearch);
     });
   }, [projectSearch, projectStatusFilter, projects]);
+  const selectedProjectWarehouses = useMemo(
+    () => getProjectWarehouses(selectedProject),
+    [selectedProject]
+  );
   const hasSubprojectDraft = useMemo(
     () =>
       Boolean(
@@ -283,6 +316,42 @@ export default function Proyectos() {
     },
     onError: (e) => toast.error(e.message),
   });
+
+  const setPrimaryWarehouseMutation =
+    trpc.warehouses.setProjectPrimary.useMutation({
+      onSuccess: (_result, variables) => {
+        toast.success("Bodega principal actualizada");
+        setSelectedProject((current) => {
+          if (!current || current.id !== variables.projectId) return current;
+
+          const updatedWarehouses = getProjectWarehouses(current)
+            .map((warehouse) => ({
+              ...warehouse,
+              isPrimary: warehouse.id === variables.warehouseId,
+            }))
+            .sort((left, right) => {
+              if (left.isPrimary && !right.isPrimary) return -1;
+              if (!left.isPrimary && right.isPrimary) return 1;
+              return (left.displayName || left.name).localeCompare(
+                right.displayName || right.name
+              );
+            });
+          const primaryWarehouse =
+            updatedWarehouses.find((warehouse) => warehouse.isPrimary) ??
+            current.warehouse ??
+            null;
+
+          return {
+            ...current,
+            warehouse: primaryWarehouse,
+            warehouses: updatedWarehouses,
+          };
+        });
+        utils.projects.list.invalidate();
+        utils.warehouses.list.invalidate();
+      },
+      onError: (e) => toast.error(e.message),
+    });
 
   const createSubprojectMutation = trpc.projects.createSubproject.useMutation({
     onSuccess: (createdSubproject) => {
@@ -628,6 +697,8 @@ export default function Proyectos() {
           {filteredProjects.map((project: ProjectRecord) => {
             const isProjectActive = project.status === "activo";
             const dateRange = formatDateRange(project.startDate, project.endDate);
+            const projectWarehouses = getProjectWarehouses(project);
+            const warehouseSummary = formatWarehouseSummary(projectWarehouses);
 
             return (
               <Card
@@ -688,9 +759,10 @@ export default function Proyectos() {
                       SAP: {project.sapProjectCode}
                     </p>
                   )}
-                  {project.warehouse && (
+                  {warehouseSummary && (
                     <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
-                      Bodega: {project.warehouse.displayName}
+                      {projectWarehouses.length > 1 ? "Bodegas" : "Bodega"}:{" "}
+                      {warehouseSummary}
                     </p>
                   )}
                   <p className="text-xs text-muted-foreground mt-2">
@@ -869,36 +941,69 @@ export default function Proyectos() {
               <div className="border-t pt-4 space-y-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-base font-semibold">Bodega asignada</h2>
+                    <h2 className="text-base font-semibold">Bodegas asignadas</h2>
                     <p className="text-xs text-muted-foreground">
-                      La asignación se administra desde el módulo de Almacenes.
+                      La asignación se administra desde Almacenes; aquí puedes definir la principal.
                     </p>
                   </div>
                   <Badge variant="outline">
-                    {selectedProject.warehouse ? "Asignada" : "Pendiente"}
+                    {selectedProjectWarehouses.length === 0
+                      ? "Pendiente"
+                      : selectedProjectWarehouses.length === 1
+                        ? "1 asignada"
+                        : `${selectedProjectWarehouses.length} asignadas`}
                   </Badge>
                 </div>
 
-                {selectedProject.warehouse ? (
-                  <div className="rounded-md border p-3">
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                      <DetailRow
-                        label="Código"
-                        value={selectedProject.warehouse.code}
-                      />
-                      <DetailRow
-                        label="Bodega"
-                        value={selectedProject.warehouse.name}
-                      />
-                      <DetailRow
-                        label="Etiqueta inventario"
-                        value={selectedProject.warehouse.displayName}
-                      />
-                    </div>
+                {selectedProjectWarehouses.length > 0 ? (
+                  <div className="space-y-2">
+                    {selectedProjectWarehouses.map((warehouse) => (
+                      <div key={warehouse.id} className="rounded-md border p-3">
+                        <div className="mb-3 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-mono text-xs text-muted-foreground">
+                              {warehouse.localCode || warehouse.code}
+                            </p>
+                            <p className="text-sm font-semibold truncate">
+                              {warehouse.displayName || warehouse.name}
+                            </p>
+                          </div>
+                          {warehouse.isPrimary ? (
+                            <Badge variant="outline" className="shrink-0 text-xs">
+                              Principal
+                            </Badge>
+                          ) : canManageProjectWarehouses ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="shrink-0"
+                              disabled={setPrimaryWarehouseMutation.isPending}
+                              onClick={() =>
+                                setPrimaryWarehouseMutation.mutate({
+                                  projectId: selectedProject.id,
+                                  warehouseId: warehouse.id,
+                                })
+                              }
+                            >
+                              <Star className="mr-2 h-4 w-4" />
+                              Hacer principal
+                            </Button>
+                          ) : null}
+                        </div>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                          <DetailRow label="Código" value={warehouse.code} />
+                          <DetailRow label="Bodega" value={warehouse.name} />
+                          <DetailRow
+                            label="Etiqueta inventario"
+                            value={warehouse.displayName}
+                          />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ) : (
                   <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                    Este proyecto todavía no tiene bodega asignada.
+                    Este proyecto todavía no tiene bodegas asignadas.
                   </div>
                 )}
               </div>

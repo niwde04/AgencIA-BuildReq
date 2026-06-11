@@ -2,6 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -160,6 +161,25 @@ function formatProjectLabel(project: any | null | undefined) {
   return `${project.code} - ${project.name}`;
 }
 
+function getProjectWarehouses(project: any | null | undefined) {
+  if (!project) return [];
+
+  const warehouses =
+    Array.isArray(project.warehouses) && project.warehouses.length > 0
+      ? project.warehouses
+      : project.warehouse
+        ? [project.warehouse]
+        : [];
+
+  return [...warehouses].sort((left: any, right: any) => {
+    if (left.isPrimary && !right.isPrimary) return -1;
+    if (!left.isPrimary && right.isPrimary) return 1;
+    return String(left.displayName || left.name || "").localeCompare(
+      String(right.displayName || right.name || "")
+    );
+  });
+}
+
 function normalizeItemName(value: string) {
   return value.toLocaleUpperCase("es-HN");
 }
@@ -254,6 +274,10 @@ export default function NuevaSolicitud() {
     () =>
       (projects || []).find((project: any) => String(project.id) === effectiveProjectId) ?? null,
     [effectiveProjectId, projects]
+  );
+  const selectedProjectWarehouses = useMemo(
+    () => getProjectWarehouses(selectedProject),
+    [selectedProject]
   );
   const selectedProjectLabel = formatProjectLabel(selectedProject);
   const effectiveProjectIdNumber = effectiveProjectId
@@ -878,18 +902,60 @@ export default function NuevaSolicitud() {
 
             {requestType === "bienes" && (
               <div className="space-y-2 rounded-lg border border-primary/20 bg-primary/5 p-4">
-                <Label className="text-sm font-semibold text-foreground">
-                  Bodega del proyecto
-                </Label>
-                <p className="text-sm font-medium text-foreground">
-                  {selectedProject
-                    ? selectedProject.warehouse?.displayName ??
-                      `Bodega del Proyecto — ${selectedProject.code} — ${selectedProject.name}`
-                    : "Seleccione un proyecto para identificar la bodega operativa"}
-                </p>
+                <div className="flex items-center justify-between gap-3">
+                  <Label className="text-sm font-semibold text-foreground">
+                    Bodegas del proyecto
+                  </Label>
+                  {selectedProjectWarehouses.length > 0 ? (
+                    <Badge variant="outline" className="bg-background/70">
+                      {selectedProjectWarehouses.length === 1
+                        ? "1 asignada"
+                        : `${selectedProjectWarehouses.length} asignadas`}
+                    </Badge>
+                  ) : null}
+                </div>
+                {selectedProject ? (
+                  selectedProjectWarehouses.length > 0 ? (
+                    <div className="space-y-2">
+                      {selectedProjectWarehouses.map((warehouse: any) => (
+                        <div
+                          key={warehouse.id ?? warehouse.displayName}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-background/60 px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="font-mono text-xs text-muted-foreground">
+                              {warehouse.localCode || warehouse.code || "Sin código"}
+                            </p>
+                            <p className="truncate text-sm font-medium text-foreground">
+                              {warehouse.displayName || warehouse.name}
+                            </p>
+                          </div>
+                          {warehouse.isPrimary ? (
+                            <Badge variant="secondary" className="shrink-0">
+                              Principal
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="shrink-0 bg-background/80">
+                              Asociada
+                            </Badge>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm font-medium text-foreground">
+                      Bodega del Proyecto - {selectedProject.code} -{" "}
+                      {selectedProject.name}
+                    </p>
+                  )
+                ) : (
+                  <p className="text-sm font-medium text-foreground">
+                    Seleccione un proyecto para identificar la bodega operativa
+                  </p>
+                )}
                 <p className="text-xs text-muted-foreground">
-                  La requisición se trabajará primero desde la bodega del proyecto
-                  seleccionado cuando aplique a materiales.
+                  La requisición se trabajará primero desde la bodega principal del
+                  proyecto seleccionado cuando aplique a materiales.
                 </p>
               </div>
             )}

@@ -307,6 +307,21 @@ export const warehousesRouter = router({
       return db.assignProjectToWarehouse(input);
     }),
 
+  setProjectPrimary: protectedProcedure
+    .input(
+      z.object({
+        warehouseId: z.number().int().positive(),
+        projectId: z.number().int().positive(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      assertCanManageWarehouses(ctx.user);
+      await assertCanManageProjectWarehouse(ctx.user, input.projectId);
+      await assertCanManageWarehouseId(ctx.user, input.warehouseId);
+
+      return db.setProjectPrimaryWarehouse(input);
+    }),
+
   unassignProject: protectedProcedure
     .input(
       z.object({

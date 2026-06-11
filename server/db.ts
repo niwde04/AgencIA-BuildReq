@@ -9288,6 +9288,188 @@ async function applyWarehouseExitToRequestItem(params: {
   return { status: nextStatus, requestId: item.requestId };
 }
 
+export async function updateWarehouseExitDraft(
+  id: number,
+  params: {
+    receivedByName: string;
+    notes?: string | null;
+    items: Array<{
+      id: number;
+      quantity: string | number;
+      notes?: string | null;
+    }>;
+  }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const detail = await getWarehouseExitById(id);
+  if (!detail) {
+    throw new Error("Salida de bodega no encontrada");
+  }
+  if (detail.warehouseExit.status !== "borrador") {
+    throw new Error("Solo se pueden editar salidas en borrador");
+  }
+  if (!params.receivedByName.trim()) {
+    throw new Error("Ingrese a quién se le entrega la salida");
+  }
+  if (params.items.length === 0) {
+    throw new Error("Debe registrar al menos un ítem");
+  }
+
+  const inputByItemId = new Map(params.items.map(item => [item.id, item]));
+  if (inputByItemId.size !== params.items.length) {
+    throw new Error("No se puede repetir un ítem en la edición");
+  }
+
+  const detailItemIds = new Set(detail.items.map(item => item.id));
+  const includesAllItems =
+    inputByItemId.size === detailItemIds.size &&
+    Array.from(inputByItemId.keys()).every(itemId => detailItemIds.has(itemId));
+  if (!includesAllItems) {
+    throw new Error("La edición debe incluir todos los ítems del borrador");
+  }
+
+  const requestItemIds = Array.from(
+    new Set(
+      detail.items
+        .map(item => item.materialRequestItemId)
+        .filter((itemId): itemId is number => typeof itemId === "number")
+    )
+  );
+  const requestItemRows =
+    requestItemIds.length > 0
+      ? await db
+          .select()
+          .from(requestItems)
+          .where(inArray(requestItems.id, requestItemIds))
+      : [];
+  const requestItemById = new Map(requestItemRows.map(item => [item.id, item]));
+
+  const requestedByStockKey = new Map<
+    string,
+    {
+      sapItemCode: string | null;
+      itemName: string;
+      warehouseId: number;
+      quantity: number;
+    }
+  >();
+  const normalizedItems = detail.items.map(item => {
+    const input = inputByItemId.get(item.id)!;
+    const quantity = parseDecimal(input.quantity);
+    const returnedQuantity = parseDecimal(item.returnedQuantity);
+    if (quantity <= 0) {
+      throw new Error(`La cantidad de ${item.itemName} debe ser mayor que cero`);
+    }
+    if (returnedQuantity - quantity > 0.000001) {
+      throw new Error(
+        `La cantidad de ${item.itemName} no puede ser menor a lo ya devuelto`
+      );
+    }
+
+    if (item.materialRequestItemId) {
+      const requestItem = requestItemById.get(item.materialRequestItemId);
+      if (!requestItem) {
+        throw new Error(`Ítem de requisición no encontrado para ${item.itemName}`);
+      }
+      const pendingQuantity = getWarehouseExitPendingQuantityForRequestItem(
+        requestItem
+      );
+      if (quantity - pendingQuantity > 0.000001) {
+        throw new Error(
+          `La cantidad de ${item.itemName} no puede exceder la cantidad pendiente para salida`
+        );
+      }
+    }
+
+    const warehouseId = item.warehouseId ?? detail.warehouseExit.warehouseId;
+    if (!warehouseId) {
+      throw new Error(`El ítem ${item.itemName} no tiene bodega asignada`);
+    }
+
+    const sapItemCode = item.sapItemCode?.trim() || null;
+    const stockKey = `${sapItemCode || item.itemName.trim().toLowerCase()}::${warehouseId}`;
+    const current = requestedByStockKey.get(stockKey) ?? {
+      sapItemCode,
+      itemName: item.itemName,
+      warehouseId,
+      quantity: 0,
+    };
+    current.quantity += quantity;
+    requestedByStockKey.set(stockKey, current);
+
+    return {
+      id: item.id,
+      quantity: toDecimalString(quantity),
+      notes: input.notes?.trim() || null,
+    };
+  });
+
+  for (const requested of Array.from(requestedByStockKey.values())) {
+    const availableQuantity = parseDecimal(
+      await getStockByItem({
+        sapItemCode: requested.sapItemCode,
+        itemName: requested.itemName,
+        projectId: detail.warehouseExit.projectId,
+        warehouseId: requested.warehouseId,
+      })
+    );
+    if (requested.quantity - availableQuantity > 0.000001) {
+      throw new Error(
+        `Stock insuficiente para ${requested.itemName}. Disponible: ${toDecimalString(
+          availableQuantity
+        )}, solicitado para salida: ${toDecimalString(requested.quantity)}.`
+      );
+    }
+  }
+
+  const normalizedNotes = params.notes?.trim() || null;
+  const normalizedReceivedByName = params.receivedByName.trim();
+  await db.transaction(async tx => {
+    await tx
+      .update(warehouseExits)
+      .set({
+        receivedByName: normalizedReceivedByName,
+        notes: normalizedNotes,
+        updatedAt: new Date(),
+      })
+      .where(eq(warehouseExits.id, id));
+
+    for (const item of normalizedItems) {
+      await tx
+        .update(warehouseExitItems)
+        .set({
+          quantity: item.quantity,
+          notes: item.notes,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(warehouseExitItems.id, item.id),
+            eq(warehouseExitItems.warehouseExitId, id)
+          )
+        );
+    }
+
+    await tx
+      .update(supplyFlowRecords)
+      .set({
+        notes: normalizedNotes,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(supplyFlowRecords.sapDocumentNumber, detail.warehouseExit.exitNumber),
+          eq(supplyFlowRecords.flowType, "despacho_bodega"),
+          eq(supplyFlowRecords.status, "pendiente")
+        )
+      );
+  });
+
+  return getWarehouseExitById(id);
+}
+
 export async function emitWarehouseExit(id: number, emittedById: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -11625,6 +11807,59 @@ export async function assignProjectToWarehouse(params: {
     : { linkedRows: 0 };
 
   return { success: true, linkedRows: syncResult.linkedRows };
+}
+
+export async function setProjectPrimaryWarehouse(params: {
+  projectId: number;
+  warehouseId: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const project = await getProjectById(params.projectId);
+  if (!project) throw new Error("Proyecto no encontrado");
+
+  const warehouse = await getWarehouseById(params.warehouseId);
+  if (!warehouse) throw new Error("Almacén no encontrado");
+  if (!warehouse.isActive) {
+    throw new Error("No se puede marcar como principal un almacén inactivo");
+  }
+
+  const [assignment] = await db
+    .select()
+    .from(projectWarehouseAssignments)
+    .where(
+      and(
+        eq(projectWarehouseAssignments.projectId, params.projectId),
+        eq(projectWarehouseAssignments.warehouseId, params.warehouseId)
+      )
+    )
+    .limit(1);
+
+  if (!assignment) {
+    throw new Error(
+      "La bodega debe estar asignada al proyecto antes de marcarla como principal"
+    );
+  }
+
+  await db.transaction(async tx => {
+    await tx
+      .update(projectWarehouseAssignments)
+      .set({ isPrimary: false, updatedAt: new Date() })
+      .where(eq(projectWarehouseAssignments.projectId, params.projectId));
+
+    await tx
+      .update(projectWarehouseAssignments)
+      .set({ isPrimary: true, updatedAt: new Date() })
+      .where(eq(projectWarehouseAssignments.id, assignment.id));
+
+    await tx
+      .update(projects)
+      .set({ warehouseId: params.warehouseId, updatedAt: new Date() })
+      .where(eq(projects.id, params.projectId));
+  });
+
+  return { success: true };
 }
 
 export async function unassignProjectFromWarehouse(params: {

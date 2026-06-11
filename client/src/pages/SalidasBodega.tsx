@@ -40,6 +40,7 @@ import {
   Plus,
   Printer,
   RotateCcw,
+  Save,
   Search,
   Send,
   XCircle,
@@ -279,6 +280,13 @@ function parseQuantity(value: string | number | null | undefined) {
   return Number.isFinite(numberValue) ? numberValue : 0;
 }
 
+function parseEditableQuantity(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return Number.NaN;
+  const normalized =
+    typeof value === "number" ? value : Number(value.replace(",", "."));
+  return Number.isFinite(normalized) ? normalized : Number.NaN;
+}
+
 function getPhysicalDispatchedQuantity(item: any) {
   return Math.max(
     parseQuantity(item.physicalDispatchedQuantity ?? item.dispatchedQuantity),
@@ -339,6 +347,11 @@ export default function SalidasBodega() {
     number | null
   >(null);
   const [deliveryTargetSearch, setDeliveryTargetSearch] = useState("");
+  const [draftReceivedByName, setDraftReceivedByName] = useState("");
+  const [draftNotes, setDraftNotes] = useState("");
+  const [draftItemEdits, setDraftItemEdits] = useState<
+    Record<number, { quantity: string; notes: string }>
+  >({});
 
   const { data: exits, isLoading } = trpc.warehouseExits.list.useQuery();
   const canCreateReturns =
@@ -432,6 +445,18 @@ export default function SalidasBodega() {
     },
     onError: (error) => toast.error(error.message),
   });
+  const updateDraftMutation = trpc.warehouseExits.updateDraft.useMutation({
+    onSuccess: () => {
+      toast.success("Borrador actualizado");
+      void Promise.all([
+        utils.warehouseExits.list.invalidate(),
+        selectedId
+          ? utils.warehouseExits.getById.invalidate({ id: selectedId })
+          : Promise.resolve(),
+      ]);
+    },
+    onError: (error) => toast.error(error.message),
+  });
   const createReturnMutation = trpc.reverseLogistics.create.useMutation({
     onSuccess: (result: any) => {
       toast.success(`Devolución ${result.returnNumber} registrada`);
@@ -463,6 +488,29 @@ export default function SalidasBodega() {
     setReturnQuantityByItemId({});
     setReturnConditionByItemId({});
   };
+
+  useEffect(() => {
+    if (!detail || detail.warehouseExit.status !== "borrador") {
+      setDraftReceivedByName("");
+      setDraftNotes("");
+      setDraftItemEdits({});
+      return;
+    }
+
+    setDraftReceivedByName(detail.warehouseExit.receivedByName ?? "");
+    setDraftNotes(detail.warehouseExit.notes ?? "");
+    setDraftItemEdits(
+      Object.fromEntries(
+        detail.items.map((item: any) => [
+          item.id,
+          {
+            quantity: Number(item.quantity ?? 0).toFixed(2),
+            notes: item.notes ?? "",
+          },
+        ])
+      )
+    );
+  }, [detail]);
 
   useEffect(() => {
     if (!deliveryRequestDetail) {
@@ -693,6 +741,8 @@ export default function SalidasBodega() {
       return matchesSearch && matchesStatus;
     });
   }, [exits, searchTerm, statusFilter]);
+
+  const detailIsDraft = detail?.warehouseExit.status === "borrador";
 
   const renderDeliveryTargetSelector = (item: any) => {
     const selectedTarget = deliveryTargetByItemId[item.id] ?? null;
@@ -940,6 +990,73 @@ export default function SalidasBodega() {
         warehouseId,
         ...getDeliveryTargetPayload(targetSelection),
       })),
+    });
+  };
+
+  const updateDraftItemEdit = (
+    itemId: number,
+    field: "quantity" | "notes",
+    value: string
+  ) => {
+    setDraftItemEdits((current) => ({
+      ...current,
+      [itemId]: {
+        quantity: current[itemId]?.quantity ?? "",
+        notes: current[itemId]?.notes ?? "",
+        [field]: value,
+      },
+    }));
+  };
+
+  const submitDraftUpdate = () => {
+    if (!detail || detail.warehouseExit.status !== "borrador") return;
+
+    const receivedByName = draftReceivedByName.trim();
+    if (!receivedByName) {
+      toast.error("Ingrese a quién se le entrega la salida");
+      return;
+    }
+
+    const items = [];
+    for (const item of detail.items as any[]) {
+      const edit = draftItemEdits[item.id] ?? {
+        quantity: String(item.quantity ?? ""),
+        notes: item.notes ?? "",
+      };
+      const quantity = parseEditableQuantity(edit.quantity);
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        toast.error(`${item.itemName}: ingrese una cantidad mayor que cero`);
+        return;
+      }
+
+      const returnedQuantity = parseQuantity(item.returnedQuantity);
+      if (returnedQuantity - quantity > 0.000001) {
+        toast.error(
+          `${item.itemName}: la cantidad no puede ser menor a lo ya devuelto`
+        );
+        return;
+      }
+
+      const availableQuantity = parseQuantity(item.availableQuantity);
+      if (quantity - availableQuantity > 0.000001) {
+        toast.error(
+          `${item.itemName}: la cantidad excede el disponible en bodega`
+        );
+        return;
+      }
+
+      items.push({
+        id: item.id,
+        quantity: quantity.toFixed(2),
+        notes: edit.notes.trim() || null,
+      });
+    }
+
+    updateDraftMutation.mutate({
+      id: detail.warehouseExit.id,
+      receivedByName,
+      notes: draftNotes.trim() || null,
+      items,
     });
   };
 
@@ -1484,13 +1601,35 @@ export default function SalidasBodega() {
                   <Label className="text-xs uppercase tracking-wider text-muted-foreground">
                     Recibido por
                   </Label>
-                  <p className="mt-2 font-semibold">
-                    {detail.warehouseExit.receivedByName || "-"}
-                  </p>
+                  {detailIsDraft ? (
+                    <Input
+                      className="mt-2 bg-background font-semibold"
+                      value={draftReceivedByName}
+                      onChange={(event) =>
+                        setDraftReceivedByName(event.target.value)
+                      }
+                      placeholder="Nombre de quien recibe"
+                    />
+                  ) : (
+                    <p className="mt-2 font-semibold">
+                      {detail.warehouseExit.receivedByName || "-"}
+                    </p>
+                  )}
                 </div>
               </div>
 
-              {detail.warehouseExit.notes ? (
+              {detailIsDraft ? (
+                <div className="space-y-2 rounded-xl border bg-muted/20 p-4">
+                  <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                    Notas generales
+                  </Label>
+                  <Textarea
+                    value={draftNotes}
+                    onChange={(event) => setDraftNotes(event.target.value)}
+                    placeholder="Notas de la salida"
+                  />
+                </div>
+              ) : detail.warehouseExit.notes ? (
                 <div className="rounded-xl border bg-muted/20 p-4 text-sm">
                   {detail.warehouseExit.notes}
                 </div>
@@ -1530,55 +1669,104 @@ export default function SalidasBodega() {
                     </tr>
                   </thead>
                   <tbody>
-                    {detail.items.map((item: any) => (
-                      <tr key={item.id} className="border-b last:border-0">
-                        <td className="p-3 font-mono text-xs">{item.sapItemCode}</td>
-                        <td className="p-3 font-medium">{item.itemName}</td>
-                        <td className="p-3 text-xs text-muted-foreground">
-                          {formatWarehouseExitTargetLabel(
-                            item,
-                            detail.warehouseExit.projectId
-                          ) || "-"}
-                        </td>
-                        <td className="p-3 text-right">
-                          {formatQuantity(item.quantity)}{" "}
-                          <span className="text-xs text-muted-foreground">
-                            {item.unit || ""}
-                          </span>
-                        </td>
-                        <td className="p-3 text-right">
-                          {formatQuantity(item.returnedQuantity)}{" "}
-                          <span className="text-xs text-muted-foreground">
-                            {item.unit || ""}
-                          </span>
-                        </td>
-                        <td className="p-3 text-right font-medium">
-                          {formatQuantity(item.returnableQuantity)}{" "}
-                          <span className="text-xs text-muted-foreground">
-                            {item.unit || ""}
-                          </span>
-                        </td>
-                        <td className="p-3 text-right font-medium">
-                          {formatQuantity(item.availableQuantity)}{" "}
-                          <span className="text-xs text-muted-foreground">
-                            {item.unit || ""}
-                          </span>
-                        </td>
-                        <td
-                          className={`p-3 text-right font-semibold ${
-                            Number(item.stockAfterExit) < 0 ? "text-destructive" : ""
-                          }`}
-                        >
-                          {formatQuantity(item.stockAfterExit)}{" "}
-                          <span className="text-xs text-muted-foreground">
-                            {item.unit || ""}
-                          </span>
-                        </td>
-                        <td className="p-3 text-xs text-muted-foreground">
-                          {item.notes || "-"}
-                        </td>
-                      </tr>
-                    ))}
+                    {detail.items.map((item: any) => {
+                      const editableQuantity = parseEditableQuantity(
+                        draftItemEdits[item.id]?.quantity ?? item.quantity
+                      );
+                      const draftStockAfterExit =
+                        detailIsDraft && Number.isFinite(editableQuantity)
+                          ? parseQuantity(item.availableQuantity) - editableQuantity
+                          : parseQuantity(item.stockAfterExit);
+
+                      return (
+                        <tr key={item.id} className="border-b last:border-0">
+                          <td className="p-3 font-mono text-xs">{item.sapItemCode}</td>
+                          <td className="p-3 font-medium">{item.itemName}</td>
+                          <td className="p-3 text-xs text-muted-foreground">
+                            {formatWarehouseExitTargetLabel(
+                              item,
+                              detail.warehouseExit.projectId
+                            ) || "-"}
+                          </td>
+                          <td className="p-3 text-right">
+                            {detailIsDraft ? (
+                              <div className="flex items-center justify-end gap-2">
+                                <Input
+                                  className="h-9 w-28 text-right"
+                                  inputMode="decimal"
+                                  min="0.01"
+                                  step="0.01"
+                                  value={draftItemEdits[item.id]?.quantity ?? ""}
+                                  onChange={(event) =>
+                                    updateDraftItemEdit(
+                                      item.id,
+                                      "quantity",
+                                      event.target.value
+                                    )
+                                  }
+                                />
+                                <span className="min-w-8 text-left text-xs text-muted-foreground">
+                                  {item.unit || ""}
+                                </span>
+                              </div>
+                            ) : (
+                              <>
+                                {formatQuantity(item.quantity)}{" "}
+                                <span className="text-xs text-muted-foreground">
+                                  {item.unit || ""}
+                                </span>
+                              </>
+                            )}
+                          </td>
+                          <td className="p-3 text-right">
+                            {formatQuantity(item.returnedQuantity)}{" "}
+                            <span className="text-xs text-muted-foreground">
+                              {item.unit || ""}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right font-medium">
+                            {formatQuantity(item.returnableQuantity)}{" "}
+                            <span className="text-xs text-muted-foreground">
+                              {item.unit || ""}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right font-medium">
+                            {formatQuantity(item.availableQuantity)}{" "}
+                            <span className="text-xs text-muted-foreground">
+                              {item.unit || ""}
+                            </span>
+                          </td>
+                          <td
+                            className={`p-3 text-right font-semibold ${
+                              draftStockAfterExit < 0 ? "text-destructive" : ""
+                            }`}
+                          >
+                            {formatQuantity(draftStockAfterExit)}{" "}
+                            <span className="text-xs text-muted-foreground">
+                              {item.unit || ""}
+                            </span>
+                          </td>
+                          <td className="p-3 text-xs text-muted-foreground">
+                            {detailIsDraft ? (
+                              <Textarea
+                                className="min-h-20 min-w-[220px] bg-background text-xs"
+                                value={draftItemEdits[item.id]?.notes ?? ""}
+                                onChange={(event) =>
+                                  updateDraftItemEdit(
+                                    item.id,
+                                    "notes",
+                                    event.target.value
+                                  )
+                                }
+                                placeholder="Notas de línea"
+                              />
+                            ) : (
+                              item.notes || "-"
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1768,17 +1956,35 @@ export default function SalidasBodega() {
                   <>
                     <Button
                       variant="outline"
+                      onClick={submitDraftUpdate}
+                      disabled={updateDraftMutation.isPending}
+                    >
+                      <Save className="mr-2 h-4 w-4" />
+                      {updateDraftMutation.isPending
+                        ? "Guardando..."
+                        : "Guardar cambios"}
+                    </Button>
+                    <Button
+                      variant="outline"
                       onClick={() =>
                         cancelMutation.mutate({ id: detail.warehouseExit.id })
                       }
-                      disabled={cancelMutation.isPending || emitMutation.isPending}
+                      disabled={
+                        cancelMutation.isPending ||
+                        emitMutation.isPending ||
+                        updateDraftMutation.isPending
+                      }
                     >
                       <XCircle className="mr-2 h-4 w-4" />
                       {cancelMutation.isPending ? "Anulando..." : "Anular borrador"}
                     </Button>
                     <Button
                       onClick={() => emitMutation.mutate({ id: detail.warehouseExit.id })}
-                      disabled={emitMutation.isPending || cancelMutation.isPending}
+                      disabled={
+                        emitMutation.isPending ||
+                        cancelMutation.isPending ||
+                        updateDraftMutation.isPending
+                      }
                     >
                       <Send className="mr-2 h-4 w-4" />
                       {emitMutation.isPending ? "Emitiendo..." : "Emitir salida"}

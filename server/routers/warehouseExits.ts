@@ -118,6 +118,39 @@ export const warehouseExitsRouter = router({
       return result;
     }),
 
+  updateDraft: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        receivedByName: z.string().trim().min(1).max(255),
+        notes: z.string().trim().max(1000).nullable().optional(),
+        items: z
+          .array(
+            z.object({
+              id: z.number().int().positive(),
+              quantity: z.string().trim().min(1),
+              notes: z.string().trim().max(1000).nullable().optional(),
+            })
+          )
+          .min(1),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canManageWarehouseExits(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para editar salidas de bodega",
+        });
+      }
+
+      await assertWarehouseExitAccessForMutation(ctx.user, input.id);
+      return db.updateWarehouseExitDraft(input.id, {
+        receivedByName: input.receivedByName,
+        notes: input.notes,
+        items: input.items,
+      });
+    }),
+
   cancelDraft: protectedProcedure
     .input(
       z.object({
