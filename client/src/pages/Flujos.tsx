@@ -219,26 +219,6 @@ const formatSupplierReferenceLabel = (reference: {
   return reference?.supplierName || reference?.supplierCode || "Proveedor pendiente";
 };
 
-const getTransferSourceOptionValue = (option: {
-  projectId: number;
-  warehouseId: number;
-}) => `${option.projectId}:${option.warehouseId}`;
-
-const parseTransferSourceOptionValue = (value?: string | null) => {
-  if (!value) return null;
-  const [projectId, warehouseId] = value.split(":").map(Number);
-  if (
-    !Number.isInteger(projectId) ||
-    projectId <= 0 ||
-    !Number.isInteger(warehouseId) ||
-    warehouseId <= 0
-  ) {
-    return null;
-  }
-
-  return { projectId, warehouseId };
-};
-
 export default function Flujos() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
@@ -278,9 +258,6 @@ export default function Flujos() {
   >({});
   const [transferCheckedByItemId, setTransferCheckedByItemId] = useState<
     Record<number, boolean>
-  >({});
-  const [transferWarehouseByItemId, setTransferWarehouseByItemId] = useState<
-    Record<number, string>
   >({});
   const [transferNotesByFlowType, setTransferNotesByFlowType] = useState<
     Partial<Record<QueueFlowType, string>>
@@ -408,47 +385,6 @@ export default function Flujos() {
     [pendingRowsByFlow]
   );
 
-  const transferStockItems = useMemo(
-    () =>
-      (pendingRowsByFlow.traslado_proyecto || []).map((row) => ({
-        id: row.item.id,
-        sapItemCode: row.item.sapItemCode || null,
-        itemName: row.item.itemName || "",
-      })),
-    [pendingRowsByFlow]
-  );
-  const { data: transferOriginStock, isFetching: transferOriginStockLoading } =
-    trpc.inventory.visibleWarehouseStockForItems.useQuery(
-      {
-        items: transferStockItems,
-      },
-      {
-        enabled:
-          canProcessAllFlows &&
-          transferStockItems.length > 0,
-      }
-    );
-  const transferOriginStockByItemId = useMemo(
-    () =>
-      new Map(
-        (transferOriginStock || []).map((entry: any) => [
-          Number(entry.itemId),
-          entry.quantity,
-        ])
-      ),
-    [transferOriginStock]
-  );
-  const transferOriginStockRowsByItemId = useMemo(
-    () =>
-      new Map(
-        (transferOriginStock || []).map((entry: any) => [
-          Number(entry.itemId),
-          entry,
-        ])
-      ),
-    [transferOriginStock]
-  );
-
   const visibleHistoryRows = useMemo(
     () =>
       (flowHistory || []).filter((row: any) =>
@@ -503,11 +439,6 @@ export default function Flujos() {
       return next;
     });
     setTransferCheckedByItemId((current) => {
-      const next = { ...current };
-      for (const itemId of itemIds) delete next[itemId];
-      return next;
-    });
-    setTransferWarehouseByItemId((current) => {
       const next = { ...current };
       for (const itemId of itemIds) delete next[itemId];
       return next;
@@ -836,101 +767,26 @@ export default function Flujos() {
       );
       return;
     }
-    if (transferOriginStockLoading) {
-      toast.error("Espere a que se cargue la existencia de las bodegas");
-      return;
-    }
-
     const preparedTransferRows: Array<{
       row: PendingQueueRow;
-      sourceProjectId: number;
-      sourceWarehouseId: number;
-    }> = [];
-    const requestedTransferStockByKey = new Map<
-      string,
-      { itemName: string; availableQuantity: number; requestedQuantity: number }
-    >();
-    for (const row of selectedRows) {
-      const sapItemCode = row.item.sapItemCode?.trim();
-      const source = parseTransferSourceOptionValue(
-        transferWarehouseByItemId[row.item.id]
-      );
-      if (!source) {
-        toast.error(`Seleccione almacén origen para ${row.item.itemName}`);
-        return;
-      }
-      const stockRow = transferOriginStockRowsByItemId.get(row.item.id) as any;
-      const warehouseStock = (stockRow?.warehouses ?? []).find(
-        (entry: any) =>
-          Number(entry.warehouseId) === source.warehouseId &&
-          Number(entry.projectId) === source.projectId
-      );
-      const availableQuantity = parseQuantityValue(warehouseStock?.quantity ?? 0);
-      const requestedQuantity = parseQuantityValue(row.item.quantity);
-      const key = `${
-        sapItemCode
-          ? `sap:${sapItemCode}`
-          : `name:${String(row.item.itemName || "").trim().toLowerCase()}`
-      }::${source.projectId}:${source.warehouseId}`;
-      const current = requestedTransferStockByKey.get(key) ?? {
-        itemName: row.item.itemName,
-        availableQuantity,
-        requestedQuantity: 0,
-      };
-      current.availableQuantity = availableQuantity;
-      current.requestedQuantity += requestedQuantity;
-      requestedTransferStockByKey.set(key, current);
-      preparedTransferRows.push({
-        row,
-        sourceProjectId: source.projectId,
-        sourceWarehouseId: source.warehouseId,
-      });
-    }
-    const invalidStockEntry = Array.from(
-      requestedTransferStockByKey.values()
-    ).find(
-      (entry) =>
-        entry.availableQuantity <= 0 ||
-        entry.availableQuantity + 0.000001 < entry.requestedQuantity
-    );
-    if (invalidStockEntry) {
-      toast.error(
-        `La bodega origen no tiene existencia suficiente para ${invalidStockEntry.itemName}. Disponible: ${formatQuantityValue(
-          invalidStockEntry.availableQuantity
-        )}.`
-      );
-      return;
-    }
+    }> = selectedRows.map((row) => ({ row }));
 
     setProcessingFlowType(flowType);
-    const rowsBySourceProjectId = new Map<number, typeof preparedTransferRows>();
-    for (const transferRow of preparedTransferRows) {
-      const current = rowsBySourceProjectId.get(transferRow.sourceProjectId) ?? [];
-      current.push(transferRow);
-      rowsBySourceProjectId.set(transferRow.sourceProjectId, current);
-    }
-
     const processedItemIds: number[] = [];
     const createdRequestNumbers: string[] = [];
     try {
-      for (const [sourceProjectId, projectRows] of Array.from(
-        rowsBySourceProjectId.entries()
-      )) {
-        const result = await projectTransferBatchMutation.mutateAsync({
-          sourceProjectId,
-          notes: transferNotesByFlowType[flowType] || undefined,
-          items: projectRows.map(({ row, sourceWarehouseId }) => ({
-            requestId: row.request.id,
-            requestItemId: row.item.id,
-            sourceWarehouseId,
-          })),
-        });
+      const result = await projectTransferBatchMutation.mutateAsync({
+        notes: transferNotesByFlowType[flowType] || undefined,
+        items: preparedTransferRows.map(({ row }) => ({
+          requestId: row.request.id,
+          requestItemId: row.item.id,
+        })),
+      });
 
-        if (result?.transferRequestNumber) {
-          createdRequestNumbers.push(result.transferRequestNumber);
-        }
-        processedItemIds.push(...projectRows.map(({ row }) => row.item.id));
+      if (result?.transferRequestNumber) {
+        createdRequestNumbers.push(result.transferRequestNumber);
       }
+      processedItemIds.push(...preparedTransferRows.map(({ row }) => row.item.id));
 
       resetProcessedItemDrafts(processedItemIds);
       await invalidateAll();
@@ -1268,16 +1124,6 @@ export default function Flujos() {
                           <th className="w-28 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                             Cant.
                           </th>
-                          {canProcessThisFlow && flowType === "traslado_proyecto" && (
-                            <th className="w-80 p-2 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                              Almacén origen
-                            </th>
-                          )}
-                          {canProcessThisFlow && flowType === "traslado_proyecto" && (
-                            <th className="w-28 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                              Exist. origen
-                            </th>
-                          )}
                           {flowType === "despacho_bodega" && (
                             <th className="w-32 p-2 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                               Disponible
@@ -1336,41 +1182,6 @@ export default function Flujos() {
                           );
                           const projectedStockQuantity =
                             availableDispatchQuantity - selectedDispatchQuantity;
-                          const transferStockRow =
-                            flowType === "traslado_proyecto"
-                              ? (transferOriginStockRowsByItemId.get(item.id) as any)
-                              : null;
-                          const transferWarehouseOptions =
-                            transferStockRow?.warehouses ?? [];
-                          const selectedTransferSourceValue =
-                            transferWarehouseByItemId[item.id] || "";
-                          const selectedTransferSource = parseTransferSourceOptionValue(
-                            selectedTransferSourceValue
-                          );
-                          const selectedTransferWarehouseStock =
-                            transferWarehouseOptions.find(
-                              (entry: any) =>
-                                selectedTransferSourceValue ===
-                                getTransferSourceOptionValue(entry)
-                            );
-                          const transferOriginQuantity =
-                            flowType === "traslado_proyecto" &&
-                            selectedTransferSource
-                              ? parseQuantityValue(
-                                  selectedTransferWarehouseStock?.quantity ?? 0
-                                )
-                              : null;
-                          const transferHasEnoughStock =
-                            transferOriginQuantity !== null &&
-                            transferOriginQuantity + 0.000001 >=
-                              parseQuantityValue(item.quantity);
-                          const transferSelectionDisabled =
-                            isProcessing ||
-                            isReturningQueued ||
-                            transferOriginStockLoading ||
-                            !selectedTransferSource ||
-                            !transferHasEnoughStock;
-
                           return (
                             <tr
                               key={`${flowType}:${row.request.id}:${item.id}`}
@@ -1417,7 +1228,7 @@ export default function Flujos() {
                                           [item.id]: checked === true,
                                         }));
                                       }}
-                                      disabled={transferSelectionDisabled}
+                                      disabled={isProcessing || isReturningQueued}
                                     />
                                   ) : (
                                     <Checkbox
@@ -1505,90 +1316,6 @@ export default function Flujos() {
                               <td className="p-2 text-right font-mono">
                                 {formatQuantityValue(item.quantity)}
                               </td>
-                              {canProcessThisFlow && flowType === "traslado_proyecto" && (
-                                <td className="p-2">
-                                  <Select
-                                    value={selectedTransferSourceValue || undefined}
-                                    onValueChange={(value) =>
-                                      setTransferWarehouseByItemId((current) => ({
-                                        ...current,
-                                        [item.id]: value,
-                                      }))
-                                    }
-                                    disabled={
-                                      transferOriginStockLoading ||
-                                      transferWarehouseOptions.length === 0
-                                    }
-                                  >
-                                    <SelectTrigger className="h-9 w-full min-w-0 overflow-hidden">
-                                      <SelectValue placeholder="Seleccione almacén" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {transferWarehouseOptions.map((warehouse: any) => {
-                                        const optionValue =
-                                          getTransferSourceOptionValue(warehouse);
-                                        const warehouseLabel =
-                                          warehouse.displayName ||
-                                          warehouse.warehouseName ||
-                                          `Almacén #${warehouse.warehouseId}`;
-
-                                        return (
-                                          <SelectItem
-                                            key={optionValue}
-                                            value={optionValue}
-                                          >
-                                            {warehouseLabel} - Disp.{" "}
-                                            {formatQuantityValue(warehouse.quantity)}
-                                            {warehouse.projectCode
-                                              ? ` (${warehouse.projectCode})`
-                                              : ""}
-                                          </SelectItem>
-                                        );
-                                      })}
-                                    </SelectContent>
-                                  </Select>
-                                </td>
-                              )}
-                              {canProcessThisFlow && flowType === "traslado_proyecto" && (
-                                <td className="p-2 text-right font-mono">
-                                  {transferOriginStockLoading ? (
-                                    <span className="font-sans text-xs text-muted-foreground">
-                                      Cargando...
-                                    </span>
-                                  ) : transferWarehouseOptions.length === 0 ? (
-                                    <span className="font-sans text-xs text-muted-foreground">
-                                      Sin existencia
-                                    </span>
-                                  ) : !selectedTransferSource ? (
-                                    <span className="font-sans text-xs text-muted-foreground">
-                                      Seleccione bodega
-                                    </span>
-                                  ) : (
-                                    <>
-                                      <span
-                                        className={
-                                          transferHasEnoughStock
-                                            ? "text-foreground"
-                                            : "font-semibold text-destructive"
-                                        }
-                                      >
-                                        {formatQuantityValue(transferOriginQuantity)}
-                                      </span>
-                                      {transferOriginQuantity !== null &&
-                                      transferOriginQuantity <= 0 ? (
-                                        <p className="font-sans text-[10px] font-medium text-destructive">
-                                          Sin existencia
-                                        </p>
-                                      ) : transferOriginQuantity !== null &&
-                                        !transferHasEnoughStock ? (
-                                        <p className="font-sans text-[10px] font-medium text-destructive">
-                                          Insuficiente
-                                        </p>
-                                      ) : null}
-                                    </>
-                                  )}
-                                </td>
-                              )}
                               {flowType === "despacho_bodega" && (
                                 <td className="p-2 text-right font-mono">
                                   <span
@@ -1874,7 +1601,7 @@ export default function Flujos() {
                   {canProcessThisFlow && flowType === "traslado_proyecto" && (
                     <div className="space-y-3">
                       <div className="rounded-lg border border-border/70 bg-muted/15 p-3 text-xs text-muted-foreground">
-                        Selecciona la bodega origen por línea. El destino se tomará automáticamente desde la requisición indicada en la columna `Req.`.
+                        Aquí solo se genera la solicitud. La bodega origen se seleccionará en Solicitudes de Traslado antes de convertirla a traslado.
                       </div>
 
                       <div className="space-y-2">

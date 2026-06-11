@@ -67,6 +67,31 @@ function getWarehouseLabel(warehouse: any): string {
   );
 }
 
+const getTransferSourceOptionValue = (option: {
+  projectId: number;
+  warehouseId: number;
+}) => `${option.projectId}:${option.warehouseId}`;
+
+const parseTransferSourceOptionValue = (value?: string | null) => {
+  if (!value) return null;
+  const [projectId, warehouseId] = value.split(":").map(Number);
+  if (
+    !Number.isInteger(projectId) ||
+    projectId <= 0 ||
+    !Number.isInteger(warehouseId) ||
+    warehouseId <= 0
+  ) {
+    return null;
+  }
+
+  return { projectId, warehouseId };
+};
+
+const formatQuantity = (value: unknown) => {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed.toFixed(2) : "0.00";
+};
+
 function getProjectLabel(project: any): string {
   if (!project) return "—";
   return `${project.code} — ${project.name}`;
@@ -100,7 +125,7 @@ function getSourceWarehouseSummary(detail: any): string {
 
   if (labels.length === 1) return labels[0];
   if (labels.length > 1) return "Ver origen por línea";
-  return "—";
+  return "Por definir";
 }
 
 function getDestinationWarehouseSummary(detail: any): string {
@@ -135,6 +160,9 @@ export default function TransferRequests() {
   const [transferQuantityByItemId, setTransferQuantityByItemId] = useState<
     Record<number, string>
   >({});
+  const [sourceWarehouseByItemId, setSourceWarehouseByItemId] = useState<
+    Record<number, string>
+  >({});
 
   const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
   const { data: transferRequests, isLoading } = trpc.transferRequests.list.useQuery();
@@ -145,6 +173,35 @@ export default function TransferRequests() {
   } = trpc.transferRequests.getById.useQuery(
     { id: detailId ?? 0 },
     { enabled: Boolean(detailId) }
+  );
+  const originStockItems = useMemo(
+    () =>
+      (detail?.items || []).map((item: any) => ({
+        id: item.id,
+        sapItemCode: item.sapItemCode || null,
+        itemName: item.itemName || "",
+      })),
+    [detail?.items]
+  );
+  const { data: originStockRows, isFetching: originStockLoading } =
+    trpc.inventory.visibleWarehouseStockForItems.useQuery(
+      { items: originStockItems },
+      {
+        enabled:
+          canProcessTransferRequests &&
+          detail?.transferRequest.status === "pendiente" &&
+          originStockItems.length > 0,
+      }
+    );
+  const originStockRowsByItemId = useMemo(
+    () =>
+      new Map(
+        (originStockRows || []).map((entry: any) => [
+          Number(entry.itemId),
+          entry,
+        ])
+      ),
+    [originStockRows]
   );
 
   const createMutation = trpc.transferRequests.create.useMutation({
@@ -193,6 +250,7 @@ export default function TransferRequests() {
     }
 
     const nextQuantities: Record<number, string> = {};
+    const nextSourceWarehouses: Record<number, string> = {};
     for (const item of detail.items || []) {
       const requestedQuantity = Number(item.quantity ?? 0);
       const availableQuantity = Number(item.originStockQuantity ?? 0);
@@ -201,9 +259,49 @@ export default function TransferRequests() {
         Math.max(availableQuantity, 0)
       );
       nextQuantities[item.id] = suggestedQuantity.toFixed(2);
+      if (item.sourceWarehouseId) {
+        nextSourceWarehouses[item.id] = getTransferSourceOptionValue({
+          projectId: detail.transferRequest.projectId,
+          warehouseId: Number(item.sourceWarehouseId),
+        });
+      }
     }
     setTransferQuantityByItemId(nextQuantities);
+    setSourceWarehouseByItemId(nextSourceWarehouses);
   }, [detail?.transferRequest.id, detail?.transferRequest.status]);
+
+  const getSelectedSourceValue = (item: any) =>
+    sourceWarehouseByItemId[item.id] ||
+    (item.sourceWarehouseId
+      ? getTransferSourceOptionValue({
+          projectId: detail?.transferRequest.projectId ?? 0,
+          warehouseId: Number(item.sourceWarehouseId),
+        })
+      : "");
+
+  const getOriginStockOptions = (item: any) =>
+    (originStockRowsByItemId.get(item.id) as any)?.warehouses ?? [];
+
+  const getSelectedOriginStock = (item: any) => {
+    const selectedValue = getSelectedSourceValue(item);
+    const selectedSource = parseTransferSourceOptionValue(selectedValue);
+    if (!selectedSource) return null;
+
+    const stockOption = getOriginStockOptions(item).find(
+      (entry: any) =>
+        getTransferSourceOptionValue(entry) === selectedValue
+    );
+    if (stockOption) return Number(stockOption.quantity ?? 0);
+
+    if (
+      item.sourceWarehouseId &&
+      Number(item.sourceWarehouseId) === selectedSource.warehouseId
+    ) {
+      return Number(item.originStockQuantity ?? 0);
+    }
+
+    return 0;
+  };
 
   const getTransferQuantity = (item: any) =>
     Number(
@@ -249,7 +347,10 @@ export default function TransferRequests() {
 
     const items = (detail.items || []).map((item: any) => {
       const requestedQuantity = Number(item.quantity ?? 0);
-      const availableQuantity = Number(item.originStockQuantity ?? 0);
+      const selectedSource = parseTransferSourceOptionValue(
+        getSelectedSourceValue(item)
+      );
+      const availableQuantity = getSelectedOriginStock(item) ?? 0;
       const transferQuantity = getTransferQuantity(item);
 
       if (!Number.isFinite(transferQuantity) || transferQuantity < 0) {
@@ -260,6 +361,10 @@ export default function TransferRequests() {
         toast.error(`La cantidad a enviar de ${item.itemName} no puede exceder lo solicitado`);
         return null;
       }
+      if (transferQuantity > 0 && !selectedSource) {
+        toast.error(`Seleccione bodega origen para ${item.itemName}`);
+        return null;
+      }
       if (transferQuantity - availableQuantity > 0.000001) {
         toast.error(`No hay suficiente existencia para enviar ${item.itemName}`);
         return null;
@@ -268,6 +373,8 @@ export default function TransferRequests() {
       return {
         transferRequestItemId: item.id,
         quantity: transferQuantity.toFixed(2),
+        sourceProjectId: selectedSource?.projectId,
+        sourceWarehouseId: selectedSource?.warehouseId,
       };
     });
 
@@ -278,6 +385,18 @@ export default function TransferRequests() {
 
     if (!validItems.some((item) => Number(item.quantity) > 0)) {
       toast.error("Debe enviar al menos una cantidad mayor que cero");
+      return;
+    }
+    const sourceProjectIds = Array.from(
+      new Set(
+        validItems
+          .filter((item) => Number(item.quantity) > 0)
+          .map((item) => item.sourceProjectId)
+          .filter((value): value is number => Boolean(value))
+      )
+    );
+    if (sourceProjectIds.length > 1) {
+      toast.error("Seleccione bodegas origen del mismo proyecto para convertir esta solicitud");
       return;
     }
 
@@ -614,7 +733,15 @@ export default function TransferRequests() {
                   <tbody>
                     {(detail.items || []).map((item: any) => {
                       const requestedQuantity = Number(item.quantity ?? 0);
-                      const originStockQuantity = Number(item.originStockQuantity ?? 0);
+                      const originOptions = getOriginStockOptions(item);
+                      const selectedSourceValue = getSelectedSourceValue(item);
+                      const selectedSource = parseTransferSourceOptionValue(
+                        selectedSourceValue
+                      );
+                      const originStockQuantity =
+                        detail.transferRequest.status === "pendiente"
+                          ? (getSelectedOriginStock(item) ?? 0)
+                          : Number(item.originStockQuantity ?? 0);
                       const transferQuantity =
                         detail.transferRequest.status === "pendiente"
                           ? getTransferQuantity(item)
@@ -639,9 +766,80 @@ export default function TransferRequests() {
                           </td>
                           <td className="p-3">{item.itemName}</td>
                           <td className="p-3">
-                            <p className="max-w-[220px] truncate text-xs font-medium">
-                              {getWarehouseLabel(item.sourceWarehouse)}
-                            </p>
+                            {canProcessTransferRequests &&
+                            detail.transferRequest.status === "pendiente" ? (
+                              <Select
+                                value={selectedSourceValue || undefined}
+                                onValueChange={(value) =>
+                                  setSourceWarehouseByItemId((current) => ({
+                                    ...current,
+                                    [item.id]: value,
+                                  }))
+                                }
+                                disabled={
+                                  convertMutation.isPending ||
+                                  originStockLoading ||
+                                  originOptions.length === 0
+                                }
+                              >
+                                <SelectTrigger className="h-9 w-full min-w-0 overflow-hidden px-2 text-xs">
+                                  <SelectValue
+                                    placeholder={
+                                      originStockLoading
+                                        ? "Cargando..."
+                                        : "Seleccione bodega"
+                                    }
+                                  />
+                                </SelectTrigger>
+                                <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
+                                  {originOptions.length === 0 ? (
+                                    <SelectItem value="sin-existencia" disabled>
+                                      Sin existencia disponible
+                                    </SelectItem>
+                                  ) : (
+                                    originOptions.map((warehouse: any) => {
+                                      const optionValue =
+                                        getTransferSourceOptionValue(warehouse);
+                                      const warehouseLabel =
+                                        warehouse.displayName ||
+                                        warehouse.warehouseName ||
+                                        `Bodega #${warehouse.warehouseId}`;
+                                      const projectLabel = [
+                                        warehouse.projectCode,
+                                        warehouse.projectName,
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" — ");
+
+                                      return (
+                                        <SelectItem
+                                          key={optionValue}
+                                          value={optionValue}
+                                          className="text-xs"
+                                        >
+                                          {warehouseLabel}
+                                          {projectLabel ? ` · ${projectLabel}` : ""}
+                                          {" · Disp. "}
+                                          {formatQuantity(warehouse.quantity)}
+                                        </SelectItem>
+                                      );
+                                    })
+                                  )}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <p className="max-w-[220px] truncate text-xs font-medium">
+                                {getWarehouseLabel(item.sourceWarehouse)}
+                              </p>
+                            )}
+                            {canProcessTransferRequests &&
+                            detail.transferRequest.status === "pendiente" &&
+                            !selectedSource &&
+                            originOptions.length > 0 ? (
+                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                Requerida para convertir
+                              </p>
+                            ) : null}
                           </td>
                           <td className="p-3">
                             <p className="max-w-[220px] truncate text-xs font-medium">
@@ -670,15 +868,41 @@ export default function TransferRequests() {
                                 }
                                 type="number"
                                 min="0"
-                                max={Math.min(requestedQuantity, originStockQuantity)}
+                                max={Math.min(
+                                  requestedQuantity,
+                                  originStockQuantity
+                                )}
                                 step="any"
                                 className="ml-auto h-9 w-28 text-right"
-                                disabled={convertMutation.isPending}
+                                disabled={
+                                  convertMutation.isPending ||
+                                  !selectedSource ||
+                                  originStockLoading
+                                }
                               />
+                              {!selectedSource ? (
+                                <p className="mt-1 text-right text-[10px] text-muted-foreground">
+                                  Seleccione origen
+                                </p>
+                              ) : null}
                             </td>
                           )}
                           <td className="p-3 text-right">
-                            {originStockQuantity.toFixed(2)} {item.unit || ""}
+                            {originStockLoading &&
+                            detail.transferRequest.status === "pendiente" ? (
+                              <span className="text-xs text-muted-foreground">
+                                Cargando...
+                              </span>
+                            ) : !selectedSource &&
+                              detail.transferRequest.status === "pendiente" ? (
+                              <span className="text-xs text-muted-foreground">
+                                Por definir
+                              </span>
+                            ) : (
+                              <>
+                                {originStockQuantity.toFixed(2)} {item.unit || ""}
+                              </>
+                            )}
                           </td>
                           <td
                             className={`p-3 text-right font-medium ${
@@ -723,7 +947,11 @@ export default function TransferRequests() {
                   ) : null}
                   <Button
                     onClick={handleConvertToTransfer}
-                    disabled={convertMutation.isPending || detail.transferRequest.status !== "pendiente"}
+                    disabled={
+                      convertMutation.isPending ||
+                      originStockLoading ||
+                      detail.transferRequest.status !== "pendiente"
+                    }
                   >
                     <Truck className="mr-2 h-4 w-4" />
                     {convertMutation.isPending ? "Generando..." : "Convertir a traslado"}

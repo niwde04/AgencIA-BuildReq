@@ -4589,18 +4589,15 @@ describe("BuildReq - Role-based Access Control", () => {
 
     await expect(
       caller.supplyFlows.createProjectTransferBatch({
-        sourceProjectId: 3,
         notes: "Traslado consolidado",
         items: [
           {
             requestId: 12,
             requestItemId: 51,
-            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
           },
           {
             requestId: 12,
             requestItemId: 52,
-            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
           },
         ],
       })
@@ -4616,12 +4613,18 @@ describe("BuildReq - Role-based Access Control", () => {
     expect(createTransferRequestSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         materialRequestId: 12,
-        projectId: 3,
+        projectId: 7,
         destinationProjectId: 7,
       }),
       expect.arrayContaining([
-        expect.objectContaining({ materialRequestItemId: 51 }),
-        expect.objectContaining({ materialRequestItemId: 52 }),
+        expect.objectContaining({
+          materialRequestItemId: 51,
+          sourceWarehouseId: null,
+        }),
+        expect.objectContaining({
+          materialRequestItemId: 52,
+          sourceWarehouseId: null,
+        }),
       ])
     );
     expect(createSupplyFlowRecordSpy).toHaveBeenCalledTimes(2);
@@ -4636,7 +4639,7 @@ describe("BuildReq - Role-based Access Control", () => {
     updateMaterialRequestStatusSpy.mockRestore();
   });
 
-  it("does not create project transfer when source project has insufficient stock", async () => {
+  it("creates project transfer requests without selecting source warehouse", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
     const getMaterialRequestByIdSpy = vi
@@ -4662,42 +4665,60 @@ describe("BuildReq - Role-based Access Control", () => {
     const getActiveSupplyFlowForRequestItemSpy = vi
       .spyOn(db, "getActiveSupplyFlowForRequestItem")
       .mockResolvedValue(undefined as any);
-    const listProjectStockForItemsSpy = vi
-      .spyOn(db, "listProjectStockForItems")
+    const updateRequestItemSpy = vi
+      .spyOn(db, "updateRequestItem")
+      .mockResolvedValue({ success: true } as any);
+    const createTransferRequestSpy = vi
+      .spyOn(db, "createTransferRequest")
+      .mockResolvedValue({ id: 88, requestNumber: "ST-2026-0088" } as any);
+    const createSupplyFlowRecordSpy = vi
+      .spyOn(db, "createSupplyFlowRecord")
+      .mockResolvedValue({ id: 701 } as any);
+    const getRequestItemsByRequestIdSpy = vi
+      .spyOn(db, "getRequestItemsByRequestId")
       .mockResolvedValue([
-        {
-          itemId: 51,
-          quantity: "0.00",
-          warehouses: [
-            { warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID, quantity: "0.00" },
-          ],
-        },
+        { id: 51, assignedFlow: "traslado_proyecto" },
       ] as any);
-    const updateRequestItemSpy = vi.spyOn(db, "updateRequestItem");
-    const createTransferRequestSpy = vi.spyOn(db, "createTransferRequest");
+    const updateMaterialRequestStatusSpy = vi
+      .spyOn(db, "updateMaterialRequestStatus")
+      .mockResolvedValue({ success: true } as any);
 
     await expect(
       caller.supplyFlows.createProjectTransferBatch({
-        sourceProjectId: 3,
         items: [
           {
             requestId: 12,
             requestItemId: 51,
-            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
           },
         ],
       })
-    ).rejects.toThrow(
-      "El proyecto origen no tiene existencia suficiente para Diesel"
+    ).resolves.toEqual({
+      success: true,
+      transferRequestId: 88,
+      transferRequestNumber: "ST-2026-0088",
+      processedItems: 1,
+      flowIds: [701],
+    });
+    expect(createTransferRequestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 7,
+        destinationProjectId: 7,
+      }),
+      expect.arrayContaining([
+        expect.objectContaining({
+          materialRequestItemId: 51,
+          sourceWarehouseId: null,
+        }),
+      ])
     );
-    expect(updateRequestItemSpy).not.toHaveBeenCalled();
-    expect(createTransferRequestSpy).not.toHaveBeenCalled();
 
     getMaterialRequestByIdSpy.mockRestore();
     getActiveSupplyFlowForRequestItemSpy.mockRestore();
-    listProjectStockForItemsSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     createTransferRequestSpy.mockRestore();
+    createSupplyFlowRecordSpy.mockRestore();
+    getRequestItemsByRequestIdSpy.mockRestore();
+    updateMaterialRequestStatusSpy.mockRestore();
   });
 
   it("Bodeguero de Proyecto can view transfer flow options but cannot process transfers", async () => {
@@ -11424,7 +11445,12 @@ describe("BuildReq - Transfer Requests", () => {
       caller.transferRequests.convertToTransfer({
         id: 6,
         items: [
-          { transferRequestItemId: 31, quantity: "6.00" },
+          {
+            transferRequestItemId: 31,
+            quantity: "6.00",
+            sourceProjectId: 3,
+            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          },
           { transferRequestItemId: 32, quantity: "0.00" },
         ],
       })
@@ -11436,7 +11462,12 @@ describe("BuildReq - Transfer Requests", () => {
     );
 
     expect(createTransferFromRequestSpy).toHaveBeenCalledWith(6, 3, [
-      { transferRequestItemId: 31, quantity: "6.00" },
+      {
+        transferRequestItemId: 31,
+        quantity: "6.00",
+        sourceProjectId: 3,
+        sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+      },
       { transferRequestItemId: 32, quantity: "0.00" },
     ]);
 

@@ -5889,14 +5889,16 @@ export async function getTransferRequestById(id: number) {
       const sourceWarehouse = item.sourceWarehouseId
         ? await getWarehouseById(item.sourceWarehouseId)
         : undefined;
-      const currentOriginStock = parseDecimal(
-        await getStockByItem({
-          sapItemCode: item.sapItemCode,
-          itemName: item.itemName,
-          projectId: rows[0].transferRequest.projectId,
-          warehouseId: item.sourceWarehouseId,
-        })
-      );
+      const currentOriginStock = item.sourceWarehouseId
+        ? parseDecimal(
+            await getStockByItem({
+              sapItemCode: item.sapItemCode,
+              itemName: item.itemName,
+              projectId: rows[0].transferRequest.projectId,
+              warehouseId: item.sourceWarehouseId,
+            })
+          )
+        : 0;
       const requestedQuantity = parseDecimal(item.quantity);
       const alreadyConverted = rows[0].transferRequest.status === "convertida";
       const originStockBeforeTransfer = alreadyConverted
@@ -5956,6 +5958,8 @@ export async function createTransferFromRequest(
   itemQuantities?: Array<{
     transferRequestItemId: number;
     quantity: string | number;
+    sourceProjectId?: number | null;
+    sourceWarehouseId?: number | null;
   }>
 ) {
   const db = await getDb();
@@ -5964,11 +5968,19 @@ export async function createTransferFromRequest(
   if (!detail) throw new Error("Solicitud de traslado no encontrada");
 
   const quantityByItemId = new Map<number, number>();
+  const sourceByItemId = new Map<
+    number,
+    { sourceProjectId?: number | null; sourceWarehouseId?: number | null }
+  >();
   for (const item of itemQuantities ?? []) {
     quantityByItemId.set(
       item.transferRequestItemId,
       parseDecimal(item.quantity)
     );
+    sourceByItemId.set(item.transferRequestItemId, {
+      sourceProjectId: item.sourceProjectId ?? null,
+      sourceWarehouseId: item.sourceWarehouseId ?? null,
+    });
   }
 
   const requestedItems = detail.items || [];
@@ -5978,6 +5990,11 @@ export async function createTransferFromRequest(
       ? (quantityByItemId.get(item.id) ?? 0)
       : requestedQuantity;
     const pendingQuantity = Math.max(requestedQuantity - transferQuantity, 0);
+    const selectedSource = sourceByItemId.get(item.id);
+    const sourceProjectId =
+      selectedSource?.sourceProjectId ?? detail.transferRequest.projectId;
+    const sourceWarehouseId =
+      selectedSource?.sourceWarehouseId ?? item.sourceWarehouseId ?? null;
 
     if (transferQuantity < 0) {
       throw new Error("La cantidad a trasladar no puede ser negativa");
@@ -5987,8 +6004,11 @@ export async function createTransferFromRequest(
         `La cantidad a trasladar de ${item.itemName} no puede exceder lo solicitado`
       );
     }
-    if (transferQuantity > 0 && !item.sourceWarehouseId) {
+    if (transferQuantity > 0 && !sourceWarehouseId) {
       throw new Error(`Seleccione almacén origen para ${item.itemName}`);
+    }
+    if (transferQuantity > 0 && !sourceProjectId) {
+      throw new Error(`Seleccione proyecto origen para ${item.itemName}`);
     }
 
     return {
@@ -5996,6 +6016,8 @@ export async function createTransferFromRequest(
       requestedQuantity,
       transferQuantity,
       pendingQuantity,
+      sourceProjectId,
+      sourceWarehouseId,
     };
   });
 
@@ -6003,14 +6025,29 @@ export async function createTransferFromRequest(
     throw new Error("Debe trasladar al menos una cantidad mayor que cero");
   }
 
+  const positiveSourceProjectIds = Array.from(
+    new Set(
+      transferItems
+        .filter(entry => entry.transferQuantity > 0)
+        .map(entry => entry.sourceProjectId)
+    )
+  );
+  if (positiveSourceProjectIds.length !== 1 || !positiveSourceProjectIds[0]) {
+    throw new Error(
+      "Seleccione bodegas origen del mismo proyecto para convertir esta solicitud"
+    );
+  }
+  const selectedSourceProjectId = positiveSourceProjectIds[0];
+  const sourceProject = await getProjectById(selectedSourceProjectId);
+
   for (const entry of transferItems) {
     if (entry.transferQuantity <= 0) continue;
 
     await consumeInventoryStock({
       sapItemCode: entry.item.sapItemCode,
       itemName: entry.item.itemName,
-      projectId: detail.transferRequest.projectId,
-      warehouseId: entry.item.sourceWarehouseId,
+      projectId: entry.sourceProjectId,
+      warehouseId: entry.sourceWarehouseId,
       quantity: toDecimalString(entry.transferQuantity),
     });
   }
@@ -6025,6 +6062,7 @@ export async function createTransferFromRequest(
         .update(transferRequestItems)
         .set({
           quantity: toDecimalString(entry.transferQuantity),
+          sourceWarehouseId: entry.sourceWarehouseId,
           updatedAt: new Date(),
         })
         .where(eq(transferRequestItems.id, item.id));
@@ -6126,19 +6164,17 @@ export async function createTransferFromRequest(
     }
   }
 
-  const transferNumber = await generateTransferNumber(
-    detail.transferRequest.projectId
-  );
-  const guideNumber = await generateRemissionGuideNumber(
-    detail.transferRequest.projectId
-  );
+  const transferNumber = await generateTransferNumber(selectedSourceProjectId);
+  const guideNumber = await generateRemissionGuideNumber(selectedSourceProjectId);
   const sapCorrelative = `SAP-${guideNumber}`;
   const documentContent = buildSimplePdfBase64(
     `Guía de Remisión ${guideNumber}`,
     [
       `Traslado: ${transferNumber}`,
       `Solicitud de traslado: ${detail.transferRequest.requestNumber}`,
-      `Proyecto origen: ${detail.project?.code ?? detail.transferRequest.projectId}`,
+      `Proyecto origen: ${
+        sourceProject?.code ?? selectedSourceProjectId
+      }`,
       `Destino: ${
         detail.transferRequest.destinationType === "bodega_central"
           ? "Bodega Central"
@@ -6170,7 +6206,10 @@ export async function createTransferFromRequest(
     documentContent,
   });
 
-  await updateTransferRequest(transferRequestId, { status: "convertida" });
+  await updateTransferRequest(transferRequestId, {
+    projectId: selectedSourceProjectId,
+    status: "convertida",
+  });
   if (detail.transferRequest.reverseLogisticId) {
     await updateReverseLogisticStatus(
       detail.transferRequest.reverseLogisticId,

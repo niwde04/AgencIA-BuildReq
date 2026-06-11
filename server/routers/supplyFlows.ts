@@ -903,7 +903,7 @@ export const supplyFlowsRouter = router({
       z.object({
         requestId: z.number(),
         requestItemId: z.number(),
-        sourceProjectId: z.number(),
+        sourceProjectId: z.number().optional(),
         destinationProjectId: z.number(),
         sourceWarehouseId: z.number().int().positive().optional(),
         notes: z.string().optional(),
@@ -917,13 +917,6 @@ export const supplyFlowsRouter = router({
             "Solo el Jefe de Bodega Central o Administración Central pueden gestionar traslados",
         });
       }
-      if (!input.sourceWarehouseId) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Seleccione almacén origen para el traslado",
-        });
-      }
-
       const { detail, item } = await getRequestAndItem(
         input.requestId,
         input.requestItemId
@@ -936,10 +929,6 @@ export const supplyFlowsRouter = router({
       }
       assertItemApprovedForProcessing(detail, item);
 
-      await assertTransferSourceStock(input.sourceProjectId, [
-        { item, sourceWarehouseId: input.sourceWarehouseId },
-      ]);
-
       await db.updateRequestItem(input.requestItemId, {
         assignedFlow: "traslado_proyecto",
         status: "pendiente",
@@ -948,7 +937,7 @@ export const supplyFlowsRouter = router({
       const transferRequest = await db.createTransferRequest(
         {
           materialRequestId: input.requestId,
-          projectId: input.sourceProjectId,
+          projectId: input.sourceProjectId ?? detail.request.projectId,
           destinationType: "proyecto",
           destinationProjectId: detail.request.projectId,
           createdById: ctx.user.id,
@@ -960,7 +949,7 @@ export const supplyFlowsRouter = router({
         [
           {
             materialRequestItemId: item.id,
-            sourceWarehouseId: input.sourceWarehouseId,
+            sourceWarehouseId: input.sourceWarehouseId ?? null,
             itemName: item.sapItemDescription || item.itemName,
             sapItemCode: item.sapItemCode,
             quantity: item.quantity,
@@ -975,7 +964,7 @@ export const supplyFlowsRouter = router({
         requestId: input.requestId,
         requestItemId: input.requestItemId,
         flowType: "traslado_proyecto",
-        sourceProjectId: input.sourceProjectId,
+        sourceProjectId: input.sourceProjectId ?? null,
         destinationProjectId: input.destinationProjectId,
         sapDocumentType: "transferencia_inventario",
         processedById: ctx.user.id,
@@ -995,7 +984,7 @@ export const supplyFlowsRouter = router({
   createProjectTransferBatch: protectedProcedure
     .input(
       z.object({
-        sourceProjectId: z.number(),
+        sourceProjectId: z.number().optional(),
         notes: z.string().optional(),
         items: z
           .array(
@@ -1016,13 +1005,6 @@ export const supplyFlowsRouter = router({
             "Solo el Jefe de Bodega Central o Administración Central pueden gestionar traslados",
         });
       }
-      if (input.items.some((item) => !item.sourceWarehouseId)) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Seleccione almacén origen para todos los ítems del traslado",
-        });
-      }
-
       const uniqueItems = Array.from(
         new Map(
           input.items.map(item => [
@@ -1034,7 +1016,6 @@ export const supplyFlowsRouter = router({
       const preparedItems: Array<{
         detail: any;
         item: any;
-        sourceWarehouseId: number;
       }> = [];
 
       for (const entry of uniqueItems) {
@@ -1068,9 +1049,8 @@ export const supplyFlowsRouter = router({
           detail,
           item: {
             ...item,
-            sourceWarehouseId: entry.sourceWarehouseId!,
+            sourceWarehouseId: entry.sourceWarehouseId ?? null,
           },
-          sourceWarehouseId: entry.sourceWarehouseId!,
         });
       }
 
@@ -1086,7 +1066,6 @@ export const supplyFlowsRouter = router({
       }
 
       const destinationProjectId = destinationProjectIds[0];
-      await assertTransferSourceStock(input.sourceProjectId, preparedItems);
 
       let earliestNeededBy: Date | null = null;
       for (const { detail, item } of preparedItems) {
@@ -1108,7 +1087,7 @@ export const supplyFlowsRouter = router({
         {
           materialRequestId:
             sourceRequestIds.length === 1 ? sourceRequestIds[0] : null,
-          projectId: input.sourceProjectId,
+          projectId: input.sourceProjectId ?? destinationProjectId,
           destinationType: "proyecto",
           destinationProjectId,
           createdById: ctx.user.id,
@@ -1135,7 +1114,7 @@ export const supplyFlowsRouter = router({
           requestId: detail.request.id,
           requestItemId: item.id,
           flowType: "traslado_proyecto",
-          sourceProjectId: input.sourceProjectId,
+          sourceProjectId: input.sourceProjectId ?? null,
           destinationProjectId,
           sapDocumentType: "transferencia_inventario",
           sapDocumentNumber: transferRequest.requestNumber,
