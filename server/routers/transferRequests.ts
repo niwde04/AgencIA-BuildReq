@@ -269,7 +269,7 @@ export const transferRequestsRouter = router({
             z.object({
               transferRequestItemId: z.number(),
               quantity: z.string().min(1),
-              sourceProjectId: z.number().int().positive().optional(),
+              sourceProjectId: z.number().int().positive().nullable().optional(),
               sourceWarehouseId: z.number().int().positive().optional(),
             })
           )

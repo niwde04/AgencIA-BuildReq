@@ -168,6 +168,22 @@ function getInventorySortValue(item: any, field: WarehouseInventorySortField) {
   }
 }
 
+function getInventoryServerSortField(field: WarehouseInventorySortField | null) {
+  switch (field) {
+    case "sap":
+      return "sapItemCode";
+    case "unit":
+      return "unit";
+    case "stock":
+      return "currentStock";
+    case "project":
+      return "projectName";
+    case "item":
+    default:
+      return "name";
+  }
+}
+
 function getWarehouseProjectSortValue(project: any, field: WarehouseProjectSortField) {
   switch (field) {
     case "code":
@@ -218,6 +234,7 @@ export default function Almacenes() {
   const [detailUserSearch, setDetailUserSearch] = useState("");
   const [detailUserSortField, setDetailUserSortField] =
     useState<WarehouseUserSortField | null>(null);
+  const trimmedDetailInventorySearch = detailInventorySearch.trim();
 
   const userRole = (user as any)?.buildreqRole || "";
   const isProjectWarehouseManager = userRole === "administrador_proyecto";
@@ -250,8 +267,9 @@ export default function Almacenes() {
   const { data: inventory } = trpc.inventory.list.useQuery(
     {
       warehouseId: selectedWarehouseId ?? undefined,
+      search: trimmedDetailInventorySearch || undefined,
       pageSize: 100,
-      sortBy: "name",
+      sortBy: getInventoryServerSortField(detailInventorySortField),
       sortDir: "asc",
     },
     { enabled: canView && detailDialogOpen && Boolean(selectedWarehouseId) }
@@ -339,21 +357,7 @@ export default function Almacenes() {
   }, [warehouseSearch, warehouseSortField, warehouses]);
 
   const visibleInventoryItems = useMemo(() => {
-    const search = normalizeSearchText(detailInventorySearch);
-    const filtered = (inventory?.items ?? []).filter((item: any) => {
-      if (!search) return true;
-
-      return normalizeSearchText(
-        [
-          item.sapItemCode,
-          item.name,
-          item.unit,
-          getInventoryProjectLabel(item),
-        ]
-          .filter(Boolean)
-          .join(" ")
-      ).includes(search);
-    });
+    const filtered = inventory?.items ?? [];
 
     if (!detailInventorySortField) return filtered;
 
@@ -363,7 +367,7 @@ export default function Almacenes() {
         getInventorySortValue(right, detailInventorySortField)
       )
     );
-  }, [detailInventorySearch, detailInventorySortField, inventory?.items]);
+  }, [detailInventorySortField, inventory?.items]);
 
   const visibleWarehouseProjects = useMemo(() => {
     const search = normalizeSearchText(detailProjectSearch);
@@ -943,7 +947,7 @@ export default function Almacenes() {
                   </div>
                   <p className="text-xs text-muted-foreground">
                     Mostrando {formatNumber(visibleInventoryItems.length)} de{" "}
-                    {formatNumber(inventory?.items?.length ?? 0)}
+                    {formatNumber(inventory?.total ?? 0)}
                   </p>
                 </div>
 
@@ -997,9 +1001,9 @@ export default function Almacenes() {
                               className="p-4 text-center text-sm text-muted-foreground"
                               colSpan={5}
                             >
-                              {(inventory?.items ?? []).length === 0
-                                ? "Esta bodega no tiene inventario registrado."
-                                : "No hay inventario que coincida con la búsqueda."}
+                              {trimmedDetailInventorySearch
+                                ? "No hay inventario que coincida con la búsqueda."
+                                : "Esta bodega no tiene inventario registrado."}
                             </td>
                           </tr>
                         ) : (

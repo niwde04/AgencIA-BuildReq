@@ -67,20 +67,32 @@ function getWarehouseLabel(warehouse: any): string {
   );
 }
 
+const CENTRAL_SOURCE_PROJECT_KEY = "central";
+
 const getTransferSourceOptionValue = (option: {
-  projectId: number;
+  projectId?: number | null;
   warehouseId: number;
-}) => `${option.projectId}:${option.warehouseId}`;
+}) =>
+  `${
+    typeof option.projectId === "number"
+      ? option.projectId
+      : CENTRAL_SOURCE_PROJECT_KEY
+  }:${option.warehouseId}`;
 
 const parseTransferSourceOptionValue = (value?: string | null) => {
   if (!value) return null;
-  const [projectId, warehouseId] = value.split(":").map(Number);
-  if (
-    !Number.isInteger(projectId) ||
-    projectId <= 0 ||
-    !Number.isInteger(warehouseId) ||
-    warehouseId <= 0
-  ) {
+  const [projectValue, warehouseValue] = value.split(":");
+  const warehouseId = Number(warehouseValue);
+  if (!Number.isInteger(warehouseId) || warehouseId <= 0) {
+    return null;
+  }
+
+  if (projectValue === CENTRAL_SOURCE_PROJECT_KEY) {
+    return { projectId: null, warehouseId };
+  }
+
+  const projectId = Number(projectValue);
+  if (!Number.isInteger(projectId) || projectId <= 0) {
     return null;
   }
 
@@ -373,7 +385,7 @@ export default function TransferRequests() {
       return {
         transferRequestItemId: item.id,
         quantity: transferQuantity.toFixed(2),
-        sourceProjectId: selectedSource?.projectId,
+        sourceProjectId: selectedSource ? selectedSource.projectId : undefined,
         sourceWarehouseId: selectedSource?.warehouseId,
       };
     });
@@ -387,15 +399,18 @@ export default function TransferRequests() {
       toast.error("Debe enviar al menos una cantidad mayor que cero");
       return;
     }
-    const sourceProjectIds = Array.from(
+    const sourceOriginKeys = Array.from(
       new Set(
         validItems
           .filter((item) => Number(item.quantity) > 0)
-          .map((item) => item.sourceProjectId)
-          .filter((value): value is number => Boolean(value))
+          .map((item) =>
+            typeof item.sourceProjectId === "number"
+              ? `project:${item.sourceProjectId}`
+              : CENTRAL_SOURCE_PROJECT_KEY
+          )
       )
     );
-    if (sourceProjectIds.length > 1) {
+    if (sourceOriginKeys.length > 1) {
       toast.error("Seleccione bodegas origen del mismo proyecto para convertir esta solicitud");
       return;
     }
@@ -770,12 +785,25 @@ export default function TransferRequests() {
                             detail.transferRequest.status === "pendiente" ? (
                               <Select
                                 value={selectedSourceValue || undefined}
-                                onValueChange={(value) =>
+                                onValueChange={(value) => {
+                                  const selectedWarehouse = originOptions.find(
+                                    (warehouse: any) =>
+                                      getTransferSourceOptionValue(warehouse) ===
+                                      value
+                                  );
+                                  const suggestedQuantity = Math.min(
+                                    requestedQuantity,
+                                    Number(selectedWarehouse?.quantity ?? 0)
+                                  );
                                   setSourceWarehouseByItemId((current) => ({
                                     ...current,
                                     [item.id]: value,
-                                  }))
-                                }
+                                  }));
+                                  setTransferQuantityByItemId((current) => ({
+                                    ...current,
+                                    [item.id]: suggestedQuantity.toFixed(2),
+                                  }));
+                                }}
                                 disabled={
                                   convertMutation.isPending ||
                                   originStockLoading ||

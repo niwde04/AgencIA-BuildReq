@@ -2109,6 +2109,76 @@ export async function listVisibleWarehouseStockForItems(params: {
   }
 
   const warehouseIds = Array.from(new Set(params.warehouseIds));
+  const [assignedProjectRows, legacyProjectRows] = await Promise.all([
+    db
+      .select({
+        warehouseId: warehouses.id,
+        warehouseCode: warehouses.code,
+        warehouseName: warehouses.name,
+        warehouseDisplayName: warehouses.displayName,
+        projectId: projects.id,
+        projectCode: projects.code,
+        projectName: projects.name,
+        isPrimary: projectWarehouseAssignments.isPrimary,
+      })
+      .from(warehouses)
+      .leftJoin(
+        projectWarehouseAssignments,
+        eq(projectWarehouseAssignments.warehouseId, warehouses.id)
+      )
+      .leftJoin(projects, eq(projectWarehouseAssignments.projectId, projects.id))
+      .where(inArray(warehouses.id, warehouseIds))
+      .orderBy(
+        asc(warehouses.displayName),
+        desc(projectWarehouseAssignments.isPrimary),
+        asc(projects.code)
+      ),
+    db
+      .select({
+        warehouseId: warehouses.id,
+        warehouseCode: warehouses.code,
+        warehouseName: warehouses.name,
+        warehouseDisplayName: warehouses.displayName,
+        projectId: projects.id,
+        projectCode: projects.code,
+        projectName: projects.name,
+        isPrimary: sql<boolean>`true`,
+      })
+      .from(projects)
+      .innerJoin(warehouses, eq(projects.warehouseId, warehouses.id))
+      .where(inArray(projects.warehouseId, warehouseIds)),
+  ]);
+  const visibleWarehouseOptionsByScope = new Map<
+    string,
+    {
+      warehouseId: number;
+      warehouseCode: string | null;
+      warehouseName: string | null;
+      displayName: string | null;
+      projectId: number | null;
+      projectCode: string | null;
+      projectName: string | null;
+      quantity: string;
+    }
+  >();
+  for (const row of [...assignedProjectRows, ...legacyProjectRows]) {
+    if (typeof row.warehouseId !== "number" || typeof row.projectId !== "number") {
+      continue;
+    }
+    const scopeKey = `${row.projectId}:${row.warehouseId}`;
+    if (visibleWarehouseOptionsByScope.has(scopeKey)) continue;
+    visibleWarehouseOptionsByScope.set(scopeKey, {
+      warehouseId: row.warehouseId,
+      warehouseCode: row.warehouseCode,
+      warehouseName: row.warehouseName,
+      displayName: row.warehouseDisplayName,
+      projectId: row.projectId,
+      projectCode: row.projectCode,
+      projectName: row.projectName,
+      quantity: "0.00",
+    });
+  }
+
   const stockByKey = new Map<string, string>();
   const breakdownByKey = new Map<
     string,
@@ -2117,7 +2187,7 @@ export async function listVisibleWarehouseStockForItems(params: {
       warehouseCode: string | null;
       warehouseName: string | null;
       displayName: string | null;
-      projectId: number;
+      projectId: number | null;
       projectCode: string | null;
       projectName: string | null;
       quantity: string;
@@ -2134,7 +2204,6 @@ export async function listVisibleWarehouseStockForItems(params: {
 
     const itemConditions = [
       eq(inventoryItems.isActive, true),
-      isNotNull(inventoryItems.projectId),
       inArray(inventoryItems.warehouseId, warehouseIds),
       sql`${inventoryItems.currentStock}::numeric > 0`,
     ];
@@ -2175,27 +2244,43 @@ export async function listVisibleWarehouseStockForItems(params: {
       )
       .orderBy(asc(projects.code), asc(warehouses.displayName));
 
-    const options = rows.flatMap(row => {
-      if (
-        typeof row.warehouseId !== "number" ||
-        typeof row.projectId !== "number"
-      ) {
-        return [];
+    const optionsByScope = new Map(
+      Array.from(visibleWarehouseOptionsByScope.entries()).map(
+        ([scopeKey, option]) => [scopeKey, { ...option, quantity: "0.00" }]
+      )
+    );
+
+    for (const row of rows) {
+      if (typeof row.warehouseId !== "number") {
+        continue;
       }
 
-      return [
-        {
-          warehouseId: row.warehouseId,
-          warehouseCode: row.warehouseCode,
-          warehouseName: row.warehouseName,
-          displayName:
-            row.warehouseDisplayName ?? row.warehouseLocation ?? null,
-          projectId: row.projectId,
-          projectCode: row.projectCode,
-          projectName: row.projectName,
-          quantity: toDecimalString(row.quantity),
-        },
-      ];
+      const isCentralInventory = typeof row.projectId !== "number";
+      const scopeKey = isCentralInventory
+        ? `central:${row.warehouseId}`
+        : `${row.projectId}:${row.warehouseId}`;
+      const existing = optionsByScope.get(scopeKey);
+      optionsByScope.set(scopeKey, {
+        warehouseId: row.warehouseId,
+        warehouseCode: row.warehouseCode,
+        warehouseName: row.warehouseName,
+        displayName:
+          existing?.displayName ?? row.warehouseDisplayName ?? row.warehouseLocation ?? null,
+        projectId: isCentralInventory ? null : row.projectId,
+        projectCode: isCentralInventory ? null : row.projectCode,
+        projectName: isCentralInventory ? "Inventario Central" : row.projectName,
+        quantity: toDecimalString(row.quantity),
+      });
+    }
+
+    const options = Array.from(optionsByScope.values()).sort((left, right) => {
+      const leftProject = left.projectCode ?? "";
+      const rightProject = right.projectCode ?? "";
+      return (
+        leftProject.localeCompare(rightProject) ||
+        (left.displayName ?? "").localeCompare(right.displayName ?? "") ||
+        left.warehouseId - right.warehouseId
+      );
     });
     const total = options.reduce(
       (sum, row) => sum + parseDecimal(row.quantity),
@@ -5991,8 +6076,9 @@ export async function createTransferFromRequest(
       : requestedQuantity;
     const pendingQuantity = Math.max(requestedQuantity - transferQuantity, 0);
     const selectedSource = sourceByItemId.get(item.id);
-    const sourceProjectId =
-      selectedSource?.sourceProjectId ?? detail.transferRequest.projectId;
+    const sourceProjectId = selectedSource
+      ? (selectedSource.sourceProjectId ?? null)
+      : detail.transferRequest.projectId;
     const sourceWarehouseId =
       selectedSource?.sourceWarehouseId ?? item.sourceWarehouseId ?? null;
 
@@ -6007,10 +6093,6 @@ export async function createTransferFromRequest(
     if (transferQuantity > 0 && !sourceWarehouseId) {
       throw new Error(`Seleccione almacén origen para ${item.itemName}`);
     }
-    if (transferQuantity > 0 && !sourceProjectId) {
-      throw new Error(`Seleccione proyecto origen para ${item.itemName}`);
-    }
-
     return {
       item,
       requestedQuantity,
@@ -6025,20 +6107,33 @@ export async function createTransferFromRequest(
     throw new Error("Debe trasladar al menos una cantidad mayor que cero");
   }
 
-  const positiveSourceProjectIds = Array.from(
+  const positiveSourceOrigins = Array.from(
     new Set(
       transferItems
         .filter(entry => entry.transferQuantity > 0)
-        .map(entry => entry.sourceProjectId)
+        .map(entry =>
+          typeof entry.sourceProjectId === "number"
+            ? `project:${entry.sourceProjectId}`
+            : "central"
+        )
     )
   );
-  if (positiveSourceProjectIds.length !== 1 || !positiveSourceProjectIds[0]) {
+  if (positiveSourceOrigins.length !== 1) {
     throw new Error(
       "Seleccione bodegas origen del mismo proyecto para convertir esta solicitud"
     );
   }
-  const selectedSourceProjectId = positiveSourceProjectIds[0];
-  const sourceProject = await getProjectById(selectedSourceProjectId);
+  const selectedSourceOrigin = positiveSourceOrigins[0];
+  const selectedSourceProjectId = selectedSourceOrigin.startsWith("project:")
+    ? Number(selectedSourceOrigin.replace("project:", ""))
+    : detail.transferRequest.projectId;
+  const sourceProject = selectedSourceOrigin.startsWith("project:")
+    ? await getProjectById(selectedSourceProjectId)
+    : null;
+  const sourceProjectLabel =
+    selectedSourceOrigin === "central"
+      ? "Inventario Central"
+      : (sourceProject?.code ?? selectedSourceProjectId);
 
   for (const entry of transferItems) {
     if (entry.transferQuantity <= 0) continue;
@@ -6172,9 +6267,7 @@ export async function createTransferFromRequest(
     [
       `Traslado: ${transferNumber}`,
       `Solicitud de traslado: ${detail.transferRequest.requestNumber}`,
-      `Proyecto origen: ${
-        sourceProject?.code ?? selectedSourceProjectId
-      }`,
+      `Proyecto origen: ${sourceProjectLabel}`,
       `Destino: ${
         detail.transferRequest.destinationType === "bodega_central"
           ? "Bodega Central"
