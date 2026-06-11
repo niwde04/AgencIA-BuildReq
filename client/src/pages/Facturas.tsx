@@ -28,6 +28,7 @@ import {
   CheckCircle2,
   Download,
   Printer,
+  RotateCcw,
   Search,
   Save,
   Send,
@@ -44,6 +45,7 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
+import { useLocation } from "wouter";
 import { formatPurchaseOrderCurrency } from "@shared/purchase-orders";
 import {
   CAI_FORMAT_EXAMPLE,
@@ -181,6 +183,16 @@ function formatSupplierRtnLabel(supplier?: any | null) {
   return rtn || "RTN no configurado";
 }
 
+function formatUserReference(user: any, fallbackId?: number | null) {
+  const name = String(user?.name ?? "").trim();
+  if (name) return name;
+
+  const email = String(user?.email ?? "").trim();
+  if (email) return email;
+
+  return fallbackId ? `Usuario #${fallbackId}` : "Usuario no identificado";
+}
+
 function dateInputValue(value: string | Date | null | undefined) {
   if (!value) return "";
   const date = new Date(value);
@@ -191,9 +203,7 @@ function dateInputValue(value: string | Date | null | undefined) {
 function formatDateLabel(value: string | Date | null | undefined) {
   if (!value) return "—";
   const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? "—"
-    : date.toLocaleDateString("es-HN");
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString("es-HN");
 }
 
 function formatDateTimeLabel(value: string | Date | null | undefined) {
@@ -316,6 +326,14 @@ function getInvoiceHistoryRows(invoice: any) {
     });
   }
 
+  if (invoice.voidedAt) {
+    rows.push({
+      label: "Factura anulada",
+      date: invoice.voidedAt,
+      state: "danger",
+    });
+  }
+
   return rows;
 }
 
@@ -358,7 +376,9 @@ function getFriendlyMutationError(message: string) {
       return "Ingresa un monto mayor que cero";
     }
     if (path.includes("cai")) {
-      return issueMessage || `El CAI debe tener el formato ${CAI_FORMAT_EXAMPLE}`;
+      return (
+        issueMessage || `El CAI debe tener el formato ${CAI_FORMAT_EXAMPLE}`
+      );
     }
     if (path.includes("invoiceNumber")) {
       return (
@@ -557,7 +577,13 @@ function InvoiceAssetDetailsEditor({
       lineObservation: item.lineObservation ?? "",
       assetDetails: parseFixedAssetDetails(item.assetDetails),
     });
-  }, [item.id, item.isFixedAsset, item.isLeasing, item.lineObservation, item.assetDetails]);
+  }, [
+    item.id,
+    item.isFixedAsset,
+    item.isLeasing,
+    item.lineObservation,
+    item.assetDetails,
+  ]);
 
   const assetUnitCount = getPositiveIntegerQuantity(item.quantity);
   const assetDetails = draft.isFixedAsset
@@ -596,7 +622,9 @@ function InvoiceAssetDetailsEditor({
         detail => !detail.serialNumber.trim() || !detail.condition
       );
       if (missingIndex >= 0) {
-        toast.error(`Complete serie y condición de la unidad ${missingIndex + 1}`);
+        toast.error(
+          `Complete serie y condición de la unidad ${missingIndex + 1}`
+        );
         return;
       }
     }
@@ -619,7 +647,8 @@ function InvoiceAssetDetailsEditor({
             checked={draft.isFixedAsset}
             disabled={
               !canEdit ||
-              (!draft.isFixedAsset && (assetUnitCount !== 1 || item.targetType !== "activo_fijo"))
+              (!draft.isFixedAsset &&
+                (assetUnitCount !== 1 || item.targetType !== "activo_fijo"))
             }
             onCheckedChange={checked =>
               setDraft(current => ({
@@ -638,7 +667,8 @@ function InvoiceAssetDetailsEditor({
           />
           Activo fijo
         </label>
-        {!draft.isFixedAsset && (assetUnitCount !== 1 || item.targetType !== "activo_fijo") ? (
+        {!draft.isFixedAsset &&
+        (assetUnitCount !== 1 || item.targetType !== "activo_fijo") ? (
           <span className="text-xs text-muted-foreground bg-muted/50 px-2 py-0.5 rounded border border-border/50">
             {item.targetType !== "activo_fijo"
               ? "Solo disponible para productos de tipo Activo Fijo"
@@ -750,7 +780,11 @@ function InvoiceAssetDetailsEditor({
                         value={String(detail[field.key] ?? "")}
                         disabled={!canEdit}
                         onChange={event =>
-                          updateAssetDetail(index, field.key, event.target.value)
+                          updateAssetDetail(
+                            index,
+                            field.key,
+                            event.target.value
+                          )
                         }
                         placeholder={field.placeholder}
                       />
@@ -780,6 +814,7 @@ function InvoiceAssetDetailsEditor({
 
 export default function Facturas() {
   const utils = trpc.useUtils();
+  const [, setLocation] = useLocation();
   const { user } = useAuth();
   const userRole = (user as any)?.buildreqRole;
   const isAccountant = userRole === "contable";
@@ -795,6 +830,8 @@ export default function Facturas() {
   const [accountingComment, setAccountingComment] = useState("");
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectionComment, setRejectionComment] = useState("");
+  const [correctionDialogOpen, setCorrectionDialogOpen] = useState(false);
+  const [correctionReason, setCorrectionReason] = useState("");
   const [invoiceDraft, setInvoiceDraft] = useState<InvoiceDraft>({
     isFiscalDocument: true,
     cai: "",
@@ -865,7 +902,8 @@ export default function Facturas() {
     [searchTerm, statusFilter]
   );
 
-  const { data: invoices, isLoading } = trpc.invoices.list.useQuery(listFilters);
+  const { data: invoices, isLoading } =
+    trpc.invoices.list.useQuery(listFilters);
   const { data: detail, isLoading: detailLoading } =
     trpc.invoices.getById.useQuery(
       { id: selectedId ?? 0 },
@@ -949,7 +987,9 @@ export default function Facturas() {
           ).forEach(field => {
             const canApply =
               !next[field].trim() ||
-              Boolean(previousAutofill && next[field] === previousAutofill[field]);
+              Boolean(
+                previousAutofill && next[field] === previousAutofill[field]
+              );
             if (canApply && next[field] !== nextAutofill[field]) {
               next[field] = nextAutofill[field];
               changed = true;
@@ -963,18 +1003,20 @@ export default function Facturas() {
         fiscalRangeAutofillRef.current = null;
       },
     });
-  const replaceRetentionsMutation = trpc.invoices.replaceRetentions.useMutation({
-    onSuccess: (_data, variables) => {
-      toast.success("Retenciones actualizadas");
-      setActionFeedback(current => ({
-        ...current,
-        retentionsSavedId: variables.id,
-      }));
-      void utils.invoices.list.invalidate();
-      void utils.invoices.getById.invalidate({ id: variables.id });
-    },
-    onError: error => toast.error(getFriendlyMutationError(error.message)),
-  });
+  const replaceRetentionsMutation = trpc.invoices.replaceRetentions.useMutation(
+    {
+      onSuccess: (_data, variables) => {
+        toast.success("Retenciones actualizadas");
+        setActionFeedback(current => ({
+          ...current,
+          retentionsSavedId: variables.id,
+        }));
+        void utils.invoices.list.invalidate();
+        void utils.invoices.getById.invalidate({ id: variables.id });
+      },
+      onError: error => toast.error(getFriendlyMutationError(error.message)),
+    }
+  );
   const reviewMutation = trpc.invoices.review.useMutation({
     onSuccess: (_data, variables) => {
       toast.success("Factura enviada a revisión");
@@ -992,7 +1034,8 @@ export default function Facturas() {
       toast.success("Factura contabilizada");
       setAccountingComment("");
       void utils.invoices.list.invalidate();
-      if (selectedId) void utils.invoices.getById.invalidate({ id: selectedId });
+      if (selectedId)
+        void utils.invoices.getById.invalidate({ id: selectedId });
       setSelectedId(null);
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
@@ -1003,13 +1046,42 @@ export default function Facturas() {
       setRejectDialogOpen(false);
       setRejectionComment("");
       void utils.invoices.list.invalidate();
-      if (selectedId) void utils.invoices.getById.invalidate({ id: selectedId });
+      if (selectedId)
+        void utils.invoices.getById.invalidate({ id: selectedId });
       setSelectedId(null);
+    },
+    onError: error => toast.error(getFriendlyMutationError(error.message)),
+  });
+  const correctReceiptMutation = trpc.invoices.correctReceipt.useMutation({
+    onSuccess: result => {
+      const replacementReceipt = (result as any).replacementReceipt;
+      toast.success(
+        replacementReceipt?.receiptNumber
+          ? `Recepción anulada. Borrador ${replacementReceipt.receiptNumber} listo para corregir.`
+          : "Recepción anulada y borrador creado para corregir."
+      );
+      setCorrectionDialogOpen(false);
+      setCorrectionReason("");
+      void Promise.all([
+        utils.invoices.list.invalidate(),
+        utils.receipts.list.invalidate(),
+        utils.purchaseOrders.list.invalidate(),
+        utils.materialRequests.list.invalidate(),
+        selectedId
+          ? utils.invoices.getById.invalidate({ id: selectedId })
+          : Promise.resolve(),
+      ]);
+      setSelectedId(null);
+      if (replacementReceipt?.id) {
+        setLocation(`/recepciones?editar=${replacementReceipt.id}`);
+      }
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
   });
   useEffect(() => {
     if (selectedId !== null) return;
+    setCorrectionDialogOpen(false);
+    setCorrectionReason("");
     setActionFeedback({
       invoiceSavedId: null,
       retentionsSavedId: null,
@@ -1054,6 +1126,8 @@ export default function Facturas() {
     setAccountingComment("");
     setRejectionComment("");
     setRejectDialogOpen(false);
+    setCorrectionReason("");
+    setCorrectionDialogOpen(false);
     setActionFeedback({
       invoiceSavedId: null,
       retentionsSavedId: null,
@@ -1212,11 +1286,11 @@ export default function Facturas() {
 
   const retentionOptions = useMemo(() => {
     const optionMap = new Map<number, RetentionOption>();
-    ((activeRetentionOptions ?? []) as RetentionOption[]).forEach((option) => {
+    ((activeRetentionOptions ?? []) as RetentionOption[]).forEach(option => {
       optionMap.set(option.id, option);
     });
 
-    retentionDrafts.forEach((draft) => {
+    retentionDrafts.forEach(draft => {
       if (draft.retentionCatalogId === "none") return;
       const id = Number(draft.retentionCatalogId);
       if (!Number.isFinite(id) || optionMap.has(id)) return;
@@ -1262,12 +1336,15 @@ export default function Facturas() {
   const isRejected = detail?.invoice.status === "rechazada";
   const isDraft = detail?.invoice.status === "borrador" || isRejected;
   const isReviewed = detail?.invoice.status === "revisada";
+  const isVoided = detail?.invoice.status === "anulada";
   const canEditSelectedInvoice = canEditInvoices && isDraft;
-  const canEditRetentions =
-    canEditSelectedInvoice && canRetainSelectedInvoice;
+  const canEditRetentions = canEditSelectedInvoice && canRetainSelectedInvoice;
   const canManageInvoiceAttachments = canReviewInvoices && isDraft;
   const canReviewSelectedInvoice = canReviewInvoices && isDraft;
   const canAccountSelectedInvoice = canAccountInvoices && isReviewed;
+  const canCorrectSelectedReceipt =
+    canEditInvoices && Boolean(detail?.receipt) && (isDraft || isReviewed);
+  const replacementReceiptId = detail?.receipt?.replacementReceiptId ?? null;
   const invoiceSaveConfirmed =
     selectedId !== null && actionFeedback.invoiceSavedId === selectedId;
   const retentionsSaveConfirmed =
@@ -1312,7 +1389,10 @@ export default function Facturas() {
       );
       return false;
     }
-    if (invoiceDraft.isFiscalDocument && !invoiceDraft.documentRangeStart.trim()) {
+    if (
+      invoiceDraft.isFiscalDocument &&
+      !invoiceDraft.documentRangeStart.trim()
+    ) {
       toast.error("Ingresa el rango autorizado inicial");
       return false;
     }
@@ -1325,7 +1405,10 @@ export default function Facturas() {
       );
       return false;
     }
-    if (invoiceDraft.isFiscalDocument && !invoiceDraft.documentRangeEnd.trim()) {
+    if (
+      invoiceDraft.isFiscalDocument &&
+      !invoiceDraft.documentRangeEnd.trim()
+    ) {
       toast.error("Ingresa el rango autorizado final");
       return false;
     }
@@ -1345,7 +1428,9 @@ export default function Facturas() {
         documentRangeEnd: invoiceDraft.documentRangeEnd,
       })
     ) {
-      toast.error("El rango autorizado final debe ser mayor o igual al inicial");
+      toast.error(
+        "El rango autorizado final debe ser mayor o igual al inicial"
+      );
       return false;
     }
     if (
@@ -1379,36 +1464,36 @@ export default function Facturas() {
   };
 
   const buildInvoiceUpdatePayload = (id: number) => ({
-      id,
-      isFiscalDocument: invoiceDraft.isFiscalDocument,
-      cai: invoiceDraft.cai.trim()
-        ? invoiceDraft.isFiscalDocument
-          ? formatCaiInput(invoiceDraft.cai)
-          : invoiceDraft.cai.trim()
-        : undefined,
-      invoiceNumber: invoiceDraft.invoiceNumber.trim()
-        ? invoiceDraft.isFiscalDocument
-          ? formatInvoiceNumberInput(invoiceDraft.invoiceNumber)
-          : invoiceDraft.invoiceNumber.trim()
-        : undefined,
-      documentRangeStart: invoiceDraft.documentRangeStart.trim()
-        ? invoiceDraft.isFiscalDocument
-          ? formatInvoiceNumberInput(invoiceDraft.documentRangeStart)
-          : invoiceDraft.documentRangeStart.trim()
-        : undefined,
-      documentRangeEnd: invoiceDraft.documentRangeEnd.trim()
-        ? invoiceDraft.isFiscalDocument
-          ? formatInvoiceNumberInput(invoiceDraft.documentRangeEnd)
-          : invoiceDraft.documentRangeEnd.trim()
-        : undefined,
-      documentDate: invoiceDraft.documentDate,
-      documentDueDate: invoiceDraft.documentDueDate,
-      postingDate: invoiceDraft.postingDate,
-      receiptDate: invoiceDraft.receiptDate,
-      emissionDeadline: invoiceDraft.emissionDeadline,
-      retentionReceiptNumber:
-        invoiceDraft.retentionReceiptNumber.trim() || undefined,
-      notes: invoiceDraft.notes,
+    id,
+    isFiscalDocument: invoiceDraft.isFiscalDocument,
+    cai: invoiceDraft.cai.trim()
+      ? invoiceDraft.isFiscalDocument
+        ? formatCaiInput(invoiceDraft.cai)
+        : invoiceDraft.cai.trim()
+      : undefined,
+    invoiceNumber: invoiceDraft.invoiceNumber.trim()
+      ? invoiceDraft.isFiscalDocument
+        ? formatInvoiceNumberInput(invoiceDraft.invoiceNumber)
+        : invoiceDraft.invoiceNumber.trim()
+      : undefined,
+    documentRangeStart: invoiceDraft.documentRangeStart.trim()
+      ? invoiceDraft.isFiscalDocument
+        ? formatInvoiceNumberInput(invoiceDraft.documentRangeStart)
+        : invoiceDraft.documentRangeStart.trim()
+      : undefined,
+    documentRangeEnd: invoiceDraft.documentRangeEnd.trim()
+      ? invoiceDraft.isFiscalDocument
+        ? formatInvoiceNumberInput(invoiceDraft.documentRangeEnd)
+        : invoiceDraft.documentRangeEnd.trim()
+      : undefined,
+    documentDate: invoiceDraft.documentDate,
+    documentDueDate: invoiceDraft.documentDueDate,
+    postingDate: invoiceDraft.postingDate,
+    receiptDate: invoiceDraft.receiptDate,
+    emissionDeadline: invoiceDraft.emissionDeadline,
+    retentionReceiptNumber:
+      invoiceDraft.retentionReceiptNumber.trim() || undefined,
+    notes: invoiceDraft.notes,
   });
 
   const handleSaveInvoice = () => {
@@ -1424,7 +1509,9 @@ export default function Facturas() {
 
   const getAvailableLineRetentionOptions = (itemId: number) => {
     const selectedRetentionIds = new Set(
-      getLineRetentionDrafts(itemId).map(retention => retention.retentionCatalogId)
+      getLineRetentionDrafts(itemId).map(
+        retention => retention.retentionCatalogId
+      )
     );
     return retentionOptions.filter(
       option => !selectedRetentionIds.has(String(option.id))
@@ -1489,7 +1576,9 @@ export default function Facturas() {
   const handleSaveRetentions = () => {
     if (!selectedId) return;
     if (retentionDrafts.length > 0 && !canRetainSelectedInvoice) {
-      toast.error(retentionDisabledReason || "La factura no permite retenciones");
+      toast.error(
+        retentionDisabledReason || "La factura no permite retenciones"
+      );
       return;
     }
     if (
@@ -1504,15 +1593,18 @@ export default function Facturas() {
     for (let index = 0; index < retentionDrafts.length; index += 1) {
       const retention = retentionDrafts[index];
       const lineItem = retention.invoiceItemId
-        ? detail?.items?.find((item: any) => item.id === retention.invoiceItemId)
+        ? detail?.items?.find(
+            (item: any) => item.id === retention.invoiceItemId
+          )
         : null;
-      const allowedBase = lineItem ? toNumber(lineItem.subtotal) : withholdingBase;
-      const retentionLabel =
-        lineItem?.itemName
-          ? ` de ${lineItem.itemName}`
-          : retentionDrafts.length > 1
-            ? ` #${index + 1}`
-            : "";
+      const allowedBase = lineItem
+        ? toNumber(lineItem.subtotal)
+        : withholdingBase;
+      const retentionLabel = lineItem?.itemName
+        ? ` de ${lineItem.itemName}`
+        : retentionDrafts.length > 1
+          ? ` #${index + 1}`
+          : "";
       if (retention.retentionCatalogId === "none") {
         toast.error(`Seleccione la retención${retentionLabel}`);
         return;
@@ -1882,6 +1974,18 @@ export default function Facturas() {
     });
   };
 
+  const handleCorrectReceipt = () => {
+    if (!selectedId) return;
+    if (correctionReason.trim().length < 5) {
+      toast.error("Escribe un motivo de corrección de al menos 5 caracteres");
+      return;
+    }
+    correctReceiptMutation.mutate({
+      id: selectedId,
+      reason: correctionReason.trim(),
+    });
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1912,10 +2016,7 @@ export default function Facturas() {
             className="h-10 pl-9"
           />
         </div>
-        <Select
-          value={statusFilter}
-          onValueChange={setStatusFilter}
-        >
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="h-10 w-full lg:w-56">
             <SelectValue />
           </SelectTrigger>
@@ -2024,7 +2125,9 @@ export default function Facturas() {
                         {formatInvoiceRequestNumbers(row)}
                       </td>
                       <td className="p-3">
-                        <div>{formatDateLabel(row.invoice.documentDueDate)}</div>
+                        <div>
+                          {formatDateLabel(row.invoice.documentDueDate)}
+                        </div>
                         <div className="text-xs text-muted-foreground">
                           Límite emisión:{" "}
                           {formatDateLabel(row.invoice.emissionDeadline)}
@@ -2091,6 +2194,17 @@ export default function Facturas() {
               </div>
               {detail ? (
                 <div className="flex max-w-full flex-wrap items-center justify-start gap-2 pr-1 sm:pr-3 lg:justify-end lg:pr-0">
+                  {canCorrectSelectedReceipt ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setCorrectionDialogOpen(true)}
+                      disabled={correctReceiptMutation.isPending}
+                    >
+                      <RotateCcw className="mr-2 h-4 w-4" />
+                      Corregir recepción
+                    </Button>
+                  ) : null}
                   {canReviewSelectedInvoice ? (
                     <Button
                       onClick={handleReviewInvoice}
@@ -2180,6 +2294,44 @@ export default function Facturas() {
                   </div>
                 ) : null}
 
+                {isVoided ? (
+                  <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-rose-300 bg-rose-50 p-4 text-sm text-rose-800">
+                    <div className="flex min-w-0 items-start gap-2">
+                      <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <div className="min-w-0">
+                        <p className="font-semibold">
+                          Factura anulada por corrección de recepción
+                        </p>
+                        <p className="whitespace-pre-wrap">
+                          {detail.invoice.voidReason || "Sin motivo registrado"}
+                        </p>
+                        <p className="mt-1 text-xs text-rose-700">
+                          {formatUserReference(
+                            (detail as any).voidedBy,
+                            detail.invoice.voidedById
+                          )}{" "}
+                          · {formatDateTimeLabel(detail.invoice.voidedAt)}
+                        </p>
+                      </div>
+                    </div>
+                    {replacementReceiptId ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="border-rose-300 bg-white text-rose-800 hover:bg-rose-100"
+                        onClick={() =>
+                          setLocation(
+                            `/recepciones?editar=${replacementReceiptId}`
+                          )
+                        }
+                      >
+                        Abrir recepción corregida
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 <div className="grid min-w-0 gap-3 md:grid-cols-12">
                   <div className="min-w-0 rounded-lg border border-border/70 bg-muted/20 p-4 md:col-span-4">
                     <Label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
@@ -2262,22 +2414,28 @@ export default function Facturas() {
                           updateInvoiceDraft(current => ({
                             ...current,
                             isFiscalDocument: checked === true,
-                            cai: checked === true
-                              ? formatCaiInput(current.cai)
-                              : current.cai,
-                            invoiceNumber: checked === true
-                              ? formatInvoiceNumberInput(current.invoiceNumber)
-                              : current.invoiceNumber,
-                            documentRangeStart: checked === true
-                              ? formatInvoiceNumberInput(
-                                  current.documentRangeStart
-                                )
-                              : current.documentRangeStart,
-                            documentRangeEnd: checked === true
-                              ? formatInvoiceNumberInput(
-                                  current.documentRangeEnd
-                                )
-                              : current.documentRangeEnd,
+                            cai:
+                              checked === true
+                                ? formatCaiInput(current.cai)
+                                : current.cai,
+                            invoiceNumber:
+                              checked === true
+                                ? formatInvoiceNumberInput(
+                                    current.invoiceNumber
+                                  )
+                                : current.invoiceNumber,
+                            documentRangeStart:
+                              checked === true
+                                ? formatInvoiceNumberInput(
+                                    current.documentRangeStart
+                                  )
+                                : current.documentRangeStart,
+                            documentRangeEnd:
+                              checked === true
+                                ? formatInvoiceNumberInput(
+                                    current.documentRangeEnd
+                                  )
+                                : current.documentRangeEnd,
                           }))
                         }
                       />
@@ -2565,7 +2723,9 @@ export default function Facturas() {
                       </thead>
                       <tbody>
                         {detail.items.map((item: any) => {
-                          const lineRetentions = getLineRetentionDrafts(item.id);
+                          const lineRetentions = getLineRetentionDrafts(
+                            item.id
+                          );
                           const availableRetentionOptions =
                             getAvailableLineRetentionOptions(item.id);
                           const canAddLineRetention =
@@ -2673,7 +2833,10 @@ export default function Facturas() {
                                               )
                                               .join("-")}`}
                                             onValueChange={value =>
-                                              handleAddLineRetention(item, value)
+                                              handleAddLineRetention(
+                                                item,
+                                                value
+                                              )
                                             }
                                           >
                                             <SelectTrigger className="h-9">
@@ -2761,7 +2924,8 @@ export default function Facturas() {
                       {formatPurchaseOrderCurrency(detail.invoice.subtotal)}
                     </span>
                     <span>
-                      ISV: {formatPurchaseOrderCurrency(detail.invoice.taxAmount)}
+                      ISV:{" "}
+                      {formatPurchaseOrderCurrency(detail.invoice.taxAmount)}
                     </span>
                     {invoiceOtherChargesTotal > 0 ? (
                       <span>
@@ -2833,8 +2997,7 @@ export default function Facturas() {
                                     {retention.itemName ||
                                       detail.items?.find(
                                         (item: any) =>
-                                          item.id ===
-                                          retention.invoiceItemId
+                                          item.id === retention.invoiceItemId
                                       )?.itemName ||
                                       "Retención general"}
                                   </span>
@@ -2996,7 +3159,9 @@ export default function Facturas() {
                       </div>
                     ) : null}
                     <div className="flex justify-between gap-3 border-b border-border pb-2 text-sm">
-                      <span className="text-muted-foreground">Total factura</span>
+                      <span className="text-muted-foreground">
+                        Total factura
+                      </span>
                       <span className="font-semibold">
                         {formatPurchaseOrderCurrency(detail.invoice.total)}
                       </span>
@@ -3044,8 +3209,7 @@ export default function Facturas() {
                           Comprobante
                         </span>
                         <span className="text-right font-medium">
-                          {invoiceDraft.retentionReceiptNumber ||
-                            "Pendiente"}
+                          {invoiceDraft.retentionReceiptNumber || "Pendiente"}
                         </span>
                       </div>
                       {retentionDrafts.map((retention, index) => (
@@ -3070,7 +3234,9 @@ export default function Facturas() {
                       ))}
                       <div className="flex justify-between border-t border-border pt-3 text-sm font-semibold">
                         <span>Total retenciones</span>
-                        <span>{formatPurchaseOrderCurrency(retentionTotal)}</span>
+                        <span>
+                          {formatPurchaseOrderCurrency(retentionTotal)}
+                        </span>
                       </div>
                     </div>
                   )}
@@ -3150,34 +3316,99 @@ export default function Facturas() {
                 <section className="rounded-lg border border-border/70 p-4">
                   <h3 className="font-semibold">Historial</h3>
                   <div className="mt-4 space-y-3">
-                    {getInvoiceHistoryRows(detail.invoice).map((entry, index) => (
-                      <div key={`${entry.label}-${index}`} className="flex gap-3">
-                        <span
-                          className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${
-                            entry.state === "danger"
-                              ? "bg-rose-500"
-                              : entry.state === "done"
-                                ? "bg-emerald-500"
-                                : "bg-muted-foreground/40"
-                          }`}
-                        />
-                        <span className="min-w-0 text-sm">
-                          <span className="block font-medium">
-                            {entry.label}
+                    {getInvoiceHistoryRows(detail.invoice).map(
+                      (entry, index) => (
+                        <div
+                          key={`${entry.label}-${index}`}
+                          className="flex gap-3"
+                        >
+                          <span
+                            className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${
+                              entry.state === "danger"
+                                ? "bg-rose-500"
+                                : entry.state === "done"
+                                  ? "bg-emerald-500"
+                                  : "bg-muted-foreground/40"
+                            }`}
+                          />
+                          <span className="min-w-0 text-sm">
+                            <span className="block font-medium">
+                              {entry.label}
+                            </span>
+                            <span className="text-muted-foreground">
+                              {entry.date
+                                ? formatDateTimeLabel(entry.date)
+                                : "Pendiente"}
+                            </span>
                           </span>
-                          <span className="text-muted-foreground">
-                            {entry.date
-                              ? formatDateTimeLabel(entry.date)
-                              : "Pendiente"}
-                          </span>
-                        </span>
-                      </div>
-                    ))}
+                        </div>
+                      )
+                    )}
                   </div>
                 </section>
               </aside>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={correctionDialogOpen}
+        onOpenChange={open => {
+          if (!open && !correctReceiptMutation.isPending) {
+            setCorrectionDialogOpen(false);
+            setCorrectionReason("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg rounded-2xl border-border/70">
+          <DialogHeader className="space-y-2">
+            <DialogTitle>Corregir recepción</DialogTitle>
+            <DialogDescription>
+              La factura y la recepción original quedarán anuladas. El sistema
+              devolverá las entradas de inventario, restará cantidades recibidas
+              y creará una nueva recepción en borrador.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+            Si algún ítem ya no tiene existencia suficiente en su bodega, la
+            corrección se bloqueará y no se hará ningún cambio.
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="invoice-correction-reason">
+              Motivo de corrección *
+            </Label>
+            <Textarea
+              id="invoice-correction-reason"
+              value={correctionReason}
+              onChange={event => setCorrectionReason(event.target.value)}
+              rows={4}
+              maxLength={2000}
+              disabled={correctReceiptMutation.isPending}
+              placeholder="Ej. Cantidad recibida incorrecta, se debe registrar nuevamente."
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setCorrectionDialogOpen(false);
+                setCorrectionReason("");
+              }}
+              disabled={correctReceiptMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleCorrectReceipt}
+              disabled={correctReceiptMutation.isPending}
+            >
+              {correctReceiptMutation.isPending
+                ? "Corrigiendo..."
+                : "Anular y crear borrador"}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 

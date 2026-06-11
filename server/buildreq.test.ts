@@ -3574,7 +3574,10 @@ describe("BuildReq - Role-based Access Control", () => {
         warehouseExit: { id: 34, projectId: 2, status: "borrador" },
         items: [],
       } as any);
-    const updateWarehouseExitDraftSpy = vi.spyOn(db, "updateWarehouseExitDraft");
+    const updateWarehouseExitDraftSpy = vi.spyOn(
+      db,
+      "updateWarehouseExitDraft"
+    );
 
     await expect(
       caller.warehouseExits.updateDraft({
@@ -10318,6 +10321,106 @@ describe("BuildReq - Invoices", () => {
 
     getInvoiceByIdSpy.mockRestore();
     rejectInvoiceSpy.mockRestore();
+  });
+
+  it("Administracion Central can correct a receipt from a reviewed invoice", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        status: "revisada",
+      },
+    } as any);
+    const correctReceiptSpy = vi
+      .spyOn(db, "correctInvoiceReceiptFromInvoice")
+      .mockResolvedValue({
+        invoice: { ...invoiceDetail.invoice, status: "anulada" },
+        receipt: { id: 6, receiptNumber: "RC-2026-0001", status: "anulada" },
+        replacementReceipt: {
+          id: 12,
+          receiptNumber: "RC-2026-0002",
+          status: "borrador",
+        },
+      } as any);
+
+    await expect(
+      caller.invoices.correctReceipt({
+        id: 10,
+        reason: "Cantidad recibida incorrecta",
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        replacementReceipt: expect.objectContaining({
+          status: "borrador",
+        }),
+      })
+    );
+    expect(correctReceiptSpy).toHaveBeenCalledWith({
+      invoiceId: 10,
+      correctedById: ctx.user!.id,
+      reason: "Cantidad recibida incorrecta",
+    });
+
+    getInvoiceByIdSpy.mockRestore();
+    correctReceiptSpy.mockRestore();
+  });
+
+  it("blocks receipt correction for accounted invoices", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        status: "registrada",
+      },
+    } as any);
+    const correctReceiptSpy = vi.spyOn(db, "correctInvoiceReceiptFromInvoice");
+
+    await expect(
+      caller.invoices.correctReceipt({
+        id: 10,
+        reason: "Cantidad recibida incorrecta",
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "No se puede corregir una factura contabilizada",
+    });
+    expect(correctReceiptSpy).not.toHaveBeenCalled();
+
+    getInvoiceByIdSpy.mockRestore();
+    correctReceiptSpy.mockRestore();
+  });
+
+  it("surfaces stock validation errors when correcting receipt invoices", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi
+      .spyOn(db, "getInvoiceById")
+      .mockResolvedValue(invoiceDetail);
+    const correctReceiptSpy = vi
+      .spyOn(db, "correctInvoiceReceiptFromInvoice")
+      .mockRejectedValue(
+        new Error(
+          "Stock insuficiente para CEMENTO. Disponible: 0.00, necesario para corregir: 10.00."
+        )
+      );
+
+    await expect(
+      caller.invoices.correctReceipt({
+        id: 10,
+        reason: "Cantidad recibida incorrecta",
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message:
+        "Stock insuficiente para CEMENTO. Disponible: 0.00, necesario para corregir: 10.00.",
+    });
+
+    getInvoiceByIdSpy.mockRestore();
+    correctReceiptSpy.mockRestore();
   });
 
   it("Contable cannot edit invoice metadata", async () => {

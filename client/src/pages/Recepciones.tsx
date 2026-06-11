@@ -85,6 +85,7 @@ import {
   type ChangeEvent,
 } from "react";
 import { toast } from "sonner";
+import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import {
@@ -127,6 +128,7 @@ const STATUS_LABELS: Record<string, string> = {
   parcial: "Parcial",
   completa: "Completa",
   cierre_incompleto: "Cierre incompleto",
+  anulada: "Anulada",
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -135,6 +137,7 @@ const STATUS_COLORS: Record<string, string> = {
   parcial: "border-cyan-300 bg-cyan-50 text-cyan-700",
   completa: "border-emerald-300 bg-emerald-50 text-emerald-700",
   cierre_incompleto: "border-yellow-300 bg-yellow-50 text-yellow-700",
+  anulada: "border-rose-300 bg-rose-50 text-rose-700",
 };
 const EMISSION_DEADLINE_ISSUE_COLOR =
   "border-rose-300 bg-rose-50 text-rose-700";
@@ -360,6 +363,17 @@ function todayDateValue() {
 function formatDateLabel(value: string | Date | null | undefined) {
   if (!value) return "—";
   return new Date(value).toLocaleDateString("es-HN");
+}
+
+function formatDateTimeLabel(value: string | Date | null | undefined) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "—"
+    : date.toLocaleString("es-HN", {
+        dateStyle: "short",
+        timeStyle: "short",
+      });
 }
 
 function toDateInputValue(value: string | Date | null | undefined) {
@@ -719,6 +733,7 @@ const ASSET_DETAIL_OPTIONAL_FIELDS: Array<{
 
 export default function Recepciones() {
   const utils = trpc.useUtils();
+  const [location, setLocation] = useLocation();
   const { user } = useAuth();
   const receiptAttachmentInputRef = useRef<HTMLInputElement>(null);
   const fiscalRangeAutofillRef = useRef<ReceiptFiscalRangeAutofill | null>(
@@ -934,6 +949,18 @@ export default function Recepciones() {
     setPendingReceiptAttachments([]);
     setPreparingReceiptAttachment(false);
   };
+
+  useEffect(() => {
+    const query = location.includes("?") ? location.split("?")[1] : "";
+    const editReceiptId = Number(new URLSearchParams(query).get("editar"));
+    if (!Number.isFinite(editReceiptId) || editReceiptId <= 0) return;
+
+    resetForm();
+    setViewReceiptId(null);
+    setEditingDraftReceiptId(editReceiptId);
+    setDialogOpen(true);
+    setLocation("/recepciones");
+  }, [location, setLocation]);
 
   const sourceItems = useMemo(
     () =>
@@ -5230,11 +5257,52 @@ export default function Recepciones() {
                   </p>
                 </div>
 
+                {receiptDetail.receipt.status === "anulada" ? (
+                  <div className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-800 sm:p-5">
+                    <div className="min-w-0">
+                      <p className="font-semibold">
+                        Recepción anulada por corrección
+                      </p>
+                      <p className="whitespace-pre-wrap">
+                        {receiptDetail.receipt.voidReason ||
+                          "Sin motivo registrado"}
+                      </p>
+                      {receiptDetail.receipt.voidedAt ? (
+                        <p className="mt-1 text-xs text-rose-700">
+                          {formatUserReference(
+                            (receiptDetail as any).voidedBy,
+                            receiptDetail.receipt.voidedById
+                          )}{" "}
+                          ·{" "}
+                          {formatDateTimeLabel(receiptDetail.receipt.voidedAt)}
+                        </p>
+                      ) : null}
+                    </div>
+                    {receiptDetail.receipt.replacementReceiptId ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="border-rose-300 bg-white text-rose-800 hover:bg-rose-100"
+                        onClick={() => {
+                          setViewReceiptId(null);
+                          setEditingDraftReceiptId(
+                            receiptDetail.receipt.replacementReceiptId
+                          );
+                          setDialogOpen(true);
+                        }}
+                      >
+                        Abrir recepción corregida
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 <div className="overflow-x-auto rounded-2xl border border-border/70">
                   <table
                     className={`w-full text-sm ${
                       receiptDetail?.receipt.sourceType === "purchase_order"
-                        ? "min-w-[980px]"
+                        ? "min-w-[1120px]"
                         : ""
                     }`}
                   >
@@ -5245,6 +5313,9 @@ export default function Recepciones() {
                         </th>
                         <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                           Código
+                        </th>
+                        <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Almacén
                         </th>
                         <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                           Esperado
@@ -5279,8 +5350,8 @@ export default function Recepciones() {
                             colSpan={
                               receiptDetail?.receipt.sourceType ===
                               "purchase_order"
-                                ? 8
-                                : 5
+                                ? 9
+                                : 6
                             }
                           >
                             Esta recepción no tiene ítems registrados.
@@ -5368,6 +5439,16 @@ export default function Recepciones() {
                               </td>
                               <td className="p-4 font-mono text-sm">
                                 {itemCode || "—"}
+                              </td>
+                              <td className="p-4 text-sm">
+                                <div className="font-medium">
+                                  {formatWarehouseReference(
+                                    item.warehouse,
+                                    item.warehouseId
+                                      ? `Almacén #${item.warehouseId}`
+                                      : "—"
+                                  )}
+                                </div>
                               </td>
                               <td className="p-4 text-right font-semibold">
                                 {formatQuantity(item.quantityExpected)}{" "}

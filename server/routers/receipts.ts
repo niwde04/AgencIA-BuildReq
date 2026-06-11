@@ -464,6 +464,7 @@ export const receiptsRouter = router({
               "parcial",
               "completa",
               "cierre_incompleto",
+              "anulada",
             ])
             .optional(),
         })

@@ -6796,6 +6796,58 @@ export async function registerReceipt(
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
+  let purchaseOrderDetailForReceipt: Awaited<
+    ReturnType<typeof getPurchaseOrderById>
+  > = undefined;
+  if (data.sourceType === "purchase_order") {
+    purchaseOrderDetailForReceipt = await getPurchaseOrderById(data.sourceId);
+    if (!purchaseOrderDetailForReceipt) {
+      throw new Error("Orden de compra no encontrada");
+    }
+
+    const purchaseOrderDetailItemsById = new Map(
+      (purchaseOrderDetailForReceipt.items ?? []).map((detailItem: any) => [
+        detailItem.id,
+        detailItem,
+      ])
+    );
+    const isServicePurchaseOrderItem = async (item: {
+      sourceItemId?: number | null;
+      sapItemCode?: string | null;
+    }) => {
+      if (item.sourceItemId) {
+        const detailItem = purchaseOrderDetailItemsById.get(item.sourceItemId);
+        return (
+          Number(
+            detailItem?.catalogItem?.tipoArticulo ??
+              detailItem?.tipoArticulo ??
+              0
+          ) === 2
+        );
+      }
+
+      const sapItemCode = item.sapItemCode?.trim();
+      if (!sapItemCode) return false;
+      const catalogItem = await lookupSapItemByCode(sapItemCode);
+      return Number(catalogItem?.tipoArticulo ?? 0) === 2;
+    };
+
+    for (const item of items) {
+      if (parseDecimal(item.quantityReceived) <= 0) continue;
+      if (await isServicePurchaseOrderItem(item)) continue;
+      if (!item.warehouseId) {
+        throw new Error(`Seleccione almacén destino para ${item.itemName}`);
+      }
+    }
+  } else if (data.sourceType === "transfer") {
+    for (const item of items) {
+      if (parseDecimal(item.quantityReceived) <= 0) continue;
+      if (!item.warehouseId) {
+        throw new Error(`Seleccione almacén destino para ${item.itemName}`);
+      }
+    }
+  }
+
   const receiptNumber = await generateReceiptNumber(data.projectId);
   const totalExpected = items.reduce(
     (sum, item) => sum + parseDecimal(item.quantityExpected),
@@ -6929,7 +6981,7 @@ export async function registerReceipt(
 
   let createdInvoice: { id: number; invoiceDocumentNumber: string } | undefined;
   if (data.sourceType === "purchase_order") {
-    const purchaseOrderDetail = await getPurchaseOrderById(data.sourceId);
+    const purchaseOrderDetail = purchaseOrderDetailForReceipt;
     if (!purchaseOrderDetail) {
       throw new Error("Orden de compra no encontrada");
     }
@@ -6944,7 +6996,7 @@ export async function registerReceipt(
   }
 
   if (data.sourceType === "purchase_order") {
-    const purchaseOrderDetail = await getPurchaseOrderById(data.sourceId);
+    const purchaseOrderDetail = purchaseOrderDetailForReceipt;
     if (!purchaseOrderDetail) {
       throw new Error("Orden de compra no encontrada");
     }
@@ -7452,6 +7504,7 @@ export async function listReceipts(filters?: {
 export async function getReceiptById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
+  const voidedByUsers = alias(users, "receipt_voided_by_users");
   const rows = await db
     .select({
       receipt: receipts,
@@ -7461,6 +7514,7 @@ export async function getReceiptById(id: number) {
       purchaseOrder: purchaseOrders,
       supplier: suppliers,
       receivedBy: users,
+      voidedBy: voidedByUsers,
     })
     .from(receipts)
     .leftJoin(projects, eq(receipts.projectId, projects.id))
@@ -7475,6 +7529,7 @@ export async function getReceiptById(id: number) {
     .leftJoin(invoices, eq(invoices.receiptId, receipts.id))
     .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
     .leftJoin(users, eq(receipts.receivedById, users.id))
+    .leftJoin(voidedByUsers, eq(receipts.voidedById, voidedByUsers.id))
     .where(eq(receipts.id, id))
     .limit(1);
   if (!rows[0]) return undefined;
@@ -8128,6 +8183,7 @@ export async function listInvoices(filters?: {
 export async function getInvoiceById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
+  const voidedByUsers = alias(users, "invoice_voided_by_users");
 
   const rows = await db
     .select({
@@ -8137,6 +8193,7 @@ export async function getInvoiceById(id: number) {
       project: projects,
       supplier: suppliers,
       supplierContact: supplierContacts,
+      voidedBy: voidedByUsers,
     })
     .from(invoices)
     .leftJoin(receipts, eq(invoices.receiptId, receipts.id))
@@ -8147,6 +8204,7 @@ export async function getInvoiceById(id: number) {
       supplierContacts,
       eq(purchaseOrders.supplierContactId, supplierContacts.id)
     )
+    .leftJoin(voidedByUsers, eq(invoices.voidedById, voidedByUsers.id))
     .where(eq(invoices.id, id))
     .limit(1);
   if (!rows[0]) return undefined;
@@ -8387,6 +8445,358 @@ export async function rejectInvoiceFromAccounting(params: {
     .returning();
 
   return updated;
+}
+
+export async function correctInvoiceReceiptFromInvoice(params: {
+  invoiceId: number;
+  correctedById: number;
+  reason: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const normalizedReason = params.reason.trim();
+  if (normalizedReason.length < 5) {
+    throw new Error("Ingrese un motivo de corrección de al menos 5 caracteres");
+  }
+
+  const [initialRow] = await db
+    .select({
+      invoice: invoices,
+      receipt: receipts,
+    })
+    .from(invoices)
+    .leftJoin(receipts, eq(invoices.receiptId, receipts.id))
+    .where(eq(invoices.id, params.invoiceId))
+    .limit(1);
+
+  if (!initialRow?.receipt) {
+    throw new Error("Factura o recepción no encontrada");
+  }
+
+  const replacementReceiptNumber = await generateReceiptNumber(
+    initialRow.receipt.projectId
+  );
+  const affectedRequestIds = new Set<number>();
+  let affectedPurchaseOrderId = initialRow.invoice.purchaseOrderId;
+
+  const result = await db.transaction(async tx => {
+    const [row] = await tx
+      .select({
+        invoice: invoices,
+        receipt: receipts,
+        purchaseOrder: purchaseOrders,
+      })
+      .from(invoices)
+      .leftJoin(receipts, eq(invoices.receiptId, receipts.id))
+      .leftJoin(purchaseOrders, eq(invoices.purchaseOrderId, purchaseOrders.id))
+      .where(eq(invoices.id, params.invoiceId))
+      .limit(1);
+
+    if (!row?.receipt) {
+      throw new Error("Factura o recepción no encontrada");
+    }
+    if (row.invoice.status === "registrada") {
+      throw new Error("No se puede corregir una factura contabilizada");
+    }
+    if (row.invoice.status === "anulada") {
+      throw new Error("La factura ya está anulada");
+    }
+    if (row.receipt.status === "anulada") {
+      throw new Error("La recepción ya está anulada");
+    }
+    if (row.receipt.sourceType !== "purchase_order") {
+      throw new Error(
+        "Solo se pueden corregir recepciones de órdenes de compra"
+      );
+    }
+
+    affectedPurchaseOrderId = row.invoice.purchaseOrderId;
+
+    const [existingDraft] = await tx
+      .select({
+        id: receipts.id,
+        receiptNumber: receipts.receiptNumber,
+      })
+      .from(receipts)
+      .where(
+        and(
+          eq(receipts.sourceType, row.receipt.sourceType),
+          eq(receipts.sourceId, row.receipt.sourceId),
+          eq(receipts.projectId, row.receipt.projectId),
+          eq(receipts.status, "borrador"),
+          sql`${receipts.id} <> ${row.receipt.id}`
+        )
+      )
+      .limit(1);
+    if (existingDraft) {
+      throw new Error(
+        `Ya existe la recepción borrador ${existingDraft.receiptNumber} para esta OC. Edite o registre ese borrador antes de corregir esta factura.`
+      );
+    }
+
+    const [items, otherCharges] = await Promise.all([
+      tx
+        .select()
+        .from(receiptItems)
+        .where(eq(receiptItems.receiptId, row.receipt.id))
+        .orderBy(asc(receiptItems.id)),
+      tx
+        .select()
+        .from(receiptOtherCharges)
+        .where(eq(receiptOtherCharges.receiptId, row.receipt.id))
+        .orderBy(asc(receiptOtherCharges.id)),
+    ]);
+
+    const sourceItemIds = Array.from(
+      new Set(
+        items
+          .map(item => item.sourceItemId)
+          .filter((value): value is number => typeof value === "number")
+      )
+    );
+    const sourceItems =
+      sourceItemIds.length > 0
+        ? await tx
+            .select()
+            .from(purchaseOrderItems)
+            .where(inArray(purchaseOrderItems.id, sourceItemIds))
+        : [];
+    const sourceItemById = new Map(sourceItems.map(item => [item.id, item]));
+    const catalogCodes = Array.from(
+      new Set(
+        items
+          .flatMap(item => {
+            const sourceItem = item.sourceItemId
+              ? sourceItemById.get(item.sourceItemId)
+              : null;
+            return [
+              sourceItem?.currentSapItemCode,
+              sourceItem?.originalSapItemCode,
+              item.sapItemCode,
+            ];
+          })
+          .map(code => code?.trim())
+          .filter((code): code is string => Boolean(code))
+      )
+    );
+    const catalogRows =
+      catalogCodes.length > 0
+        ? await tx
+            .select({
+              itemCode: sapCatalog.itemCode,
+              tipoArticulo: sapCatalog.tipoArticulo,
+            })
+            .from(sapCatalog)
+            .where(inArray(sapCatalog.itemCode, catalogCodes))
+        : [];
+    const catalogByCode = new Map(
+      catalogRows.map(catalog => [catalog.itemCode, catalog])
+    );
+
+    const now = new Date();
+
+    for (const item of items) {
+      const quantityReceived = parseDecimal(item.quantityReceived);
+      if (quantityReceived <= 0) continue;
+
+      const sourceItem = item.sourceItemId
+        ? sourceItemById.get(item.sourceItemId)
+        : null;
+      const sapItemCode =
+        sourceItem?.currentSapItemCode ??
+        sourceItem?.originalSapItemCode ??
+        item.sapItemCode ??
+        null;
+      const catalogItem =
+        catalogByCode.get(sapItemCode?.trim() ?? "") ??
+        catalogByCode.get(item.sapItemCode?.trim() ?? "");
+      const isServiceLine = Number(catalogItem?.tipoArticulo ?? 0) === 2;
+
+      if (!isServiceLine) {
+        await consumeInventoryStockWithClient(tx, {
+          sapItemCode,
+          itemName: item.itemName,
+          projectId: row.receipt.projectId,
+          warehouseId: item.warehouseId,
+          quantity: item.quantityReceived,
+        });
+      }
+
+      if (!sourceItem) continue;
+
+      const nextOrderReceived = Math.max(
+        parseDecimal(sourceItem.receivedQuantity) - quantityReceived,
+        0
+      );
+      await tx
+        .update(purchaseOrderItems)
+        .set({
+          receivedQuantity: toDecimalString(nextOrderReceived),
+          updatedAt: now,
+        })
+        .where(eq(purchaseOrderItems.id, sourceItem.id));
+      sourceItemById.set(sourceItem.id, {
+        ...sourceItem,
+        receivedQuantity: toDecimalString(nextOrderReceived),
+      });
+
+      if (sourceItem.purchaseRequestItemId) {
+        const [purchaseRequestItem] = await tx
+          .select()
+          .from(purchaseRequestItems)
+          .where(eq(purchaseRequestItems.id, sourceItem.purchaseRequestItemId))
+          .limit(1);
+        if (purchaseRequestItem) {
+          const nextPurchaseRequestReceived = Math.max(
+            parseDecimal(purchaseRequestItem.receivedQuantity) -
+              quantityReceived,
+            0
+          );
+          await tx
+            .update(purchaseRequestItems)
+            .set({
+              receivedQuantity: toDecimalString(nextPurchaseRequestReceived),
+              updatedAt: now,
+            })
+            .where(eq(purchaseRequestItems.id, purchaseRequestItem.id));
+        }
+      }
+
+      if (sourceItem.materialRequestItemId) {
+        const [requestItem] = await tx
+          .select()
+          .from(requestItems)
+          .where(eq(requestItems.id, sourceItem.materialRequestItemId))
+          .limit(1);
+        if (requestItem) {
+          const requestedQuantity = parseDecimal(requestItem.quantity);
+          const nextDelivered = Math.max(
+            parseDecimal(requestItem.deliveredQuantity) - quantityReceived,
+            0
+          );
+          const nextStatus =
+            nextDelivered <= 0
+              ? "pendiente"
+              : nextDelivered < requestedQuantity
+                ? "parcial"
+                : "completo";
+          affectedRequestIds.add(requestItem.requestId);
+
+          await tx
+            .update(requestItems)
+            .set({
+              deliveredQuantity: toDecimalString(nextDelivered),
+              status: nextStatus,
+              updatedAt: now,
+            })
+            .where(eq(requestItems.id, requestItem.id));
+        }
+      }
+    }
+
+    const [replacementReceipt] = await tx
+      .insert(receipts)
+      .values({
+        receiptNumber: replacementReceiptNumber,
+        sourceType: row.receipt.sourceType,
+        sourceId: row.receipt.sourceId,
+        projectId: row.receipt.projectId,
+        receivedById: params.correctedById,
+        status: "borrador",
+        isFiscalDocument: row.receipt.isFiscalDocument,
+        cai: row.receipt.cai,
+        invoiceNumber: row.receipt.invoiceNumber,
+        documentRangeStart: row.receipt.documentRangeStart,
+        documentRangeEnd: row.receipt.documentRangeEnd,
+        documentDate: row.receipt.documentDate,
+        documentDueDate: row.receipt.documentDueDate,
+        postingDate: row.receipt.postingDate,
+        receiptDate: row.receipt.receiptDate,
+        notes: row.receipt.notes,
+        correctsReceiptId: row.receipt.id,
+        updatedAt: now,
+      })
+      .returning();
+
+    if (items.length > 0) {
+      await tx.insert(receiptItems).values(
+        items.map(item => ({
+          receiptId: replacementReceipt.id,
+          sourceItemId: item.sourceItemId,
+          sapItemCode: item.sapItemCode,
+          warehouseId: item.warehouseId,
+          itemName: item.itemName,
+          quantityExpected: item.quantityExpected,
+          quantityReceived: item.quantityReceived,
+          unit: item.unit,
+          unitPrice: item.unitPrice,
+          taxCode: item.taxCode,
+          additionalTaxCodes: item.additionalTaxCodes,
+          taxBreakdown: item.taxBreakdown,
+          subtotal: item.subtotal,
+          taxAmount: item.taxAmount,
+          total: item.total,
+          targetType: item.targetType,
+          subProjectId: item.subProjectId,
+          fixedAssetSapItemCode: item.fixedAssetSapItemCode,
+          fixedAssetName: item.fixedAssetName,
+          isFixedAsset: item.isFixedAsset,
+          isLeasing: item.isLeasing,
+          assetDetails: item.assetDetails,
+          notes: item.notes,
+        }))
+      );
+    }
+
+    if (otherCharges.length > 0) {
+      await tx.insert(receiptOtherCharges).values(
+        otherCharges.map(charge => ({
+          receiptId: replacementReceipt.id,
+          concept: charge.concept,
+          amount: charge.amount,
+        }))
+      );
+    }
+
+    const [updatedReceipt] = await tx
+      .update(receipts)
+      .set({
+        status: "anulada",
+        voidedAt: now,
+        voidedById: params.correctedById,
+        voidReason: normalizedReason,
+        replacementReceiptId: replacementReceipt.id,
+        updatedAt: now,
+      })
+      .where(eq(receipts.id, row.receipt.id))
+      .returning();
+
+    const [updatedInvoice] = await tx
+      .update(invoices)
+      .set({
+        status: "anulada",
+        voidedAt: now,
+        voidedById: params.correctedById,
+        voidReason: normalizedReason,
+        updatedAt: now,
+      })
+      .where(eq(invoices.id, row.invoice.id))
+      .returning();
+
+    return {
+      invoice: updatedInvoice,
+      receipt: updatedReceipt,
+      replacementReceipt,
+    };
+  });
+
+  await syncPurchaseOrderReceiptStatus(affectedPurchaseOrderId);
+  for (const requestId of Array.from(affectedRequestIds)) {
+    await syncMaterialRequestFulfillmentStatus(requestId, params.correctedById);
+  }
+
+  return result;
 }
 
 export async function replaceInvoiceRetentions(
@@ -9360,7 +9770,9 @@ export async function updateWarehouseExitDraft(
     const quantity = parseDecimal(input.quantity);
     const returnedQuantity = parseDecimal(item.returnedQuantity);
     if (quantity <= 0) {
-      throw new Error(`La cantidad de ${item.itemName} debe ser mayor que cero`);
+      throw new Error(
+        `La cantidad de ${item.itemName} debe ser mayor que cero`
+      );
     }
     if (returnedQuantity - quantity > 0.000001) {
       throw new Error(
@@ -9371,11 +9783,12 @@ export async function updateWarehouseExitDraft(
     if (item.materialRequestItemId) {
       const requestItem = requestItemById.get(item.materialRequestItemId);
       if (!requestItem) {
-        throw new Error(`Ítem de requisición no encontrado para ${item.itemName}`);
+        throw new Error(
+          `Ítem de requisición no encontrado para ${item.itemName}`
+        );
       }
-      const pendingQuantity = getWarehouseExitPendingQuantityForRequestItem(
-        requestItem
-      );
+      const pendingQuantity =
+        getWarehouseExitPendingQuantityForRequestItem(requestItem);
       if (quantity - pendingQuantity > 0.000001) {
         throw new Error(
           `La cantidad de ${item.itemName} no puede exceder la cantidad pendiente para salida`
@@ -9460,7 +9873,10 @@ export async function updateWarehouseExitDraft(
       })
       .where(
         and(
-          eq(supplyFlowRecords.sapDocumentNumber, detail.warehouseExit.exitNumber),
+          eq(
+            supplyFlowRecords.sapDocumentNumber,
+            detail.warehouseExit.exitNumber
+          ),
           eq(supplyFlowRecords.flowType, "despacho_bodega"),
           eq(supplyFlowRecords.status, "pendiente")
         )
@@ -11109,6 +11525,92 @@ async function consumeInventoryStock(params: {
 
     const discount = Math.min(currentStock, pending);
     await db
+      .update(inventoryItems)
+      .set({
+        currentStock: toDecimalString(currentStock - discount),
+        updatedAt: new Date(),
+      })
+      .where(eq(inventoryItems.id, row.id));
+
+    pending -= discount;
+  }
+
+  return {
+    consumedQuantity: quantityToConsume,
+  };
+}
+
+async function consumeInventoryStockWithClient(
+  client: any,
+  params: {
+    sapItemCode?: string | null;
+    itemName: string;
+    projectId?: number | null;
+    quantity: string | number;
+    warehouseId?: number | null;
+    warehouseLocation?: string | null;
+  }
+) {
+  const quantityToConsume = parseDecimal(params.quantity);
+  if (quantityToConsume <= 0) {
+    return { consumedQuantity: 0 };
+  }
+
+  const conditions = [];
+  const normalizedSapItemCode = params.sapItemCode?.trim();
+
+  if (normalizedSapItemCode) {
+    conditions.push(eq(inventoryItems.sapItemCode, normalizedSapItemCode));
+  } else {
+    conditions.push(
+      sql`lower(${inventoryItems.name}) = lower(${params.itemName})`
+    );
+  }
+
+  if (params.projectId === null || params.projectId === undefined) {
+    conditions.push(sql`${inventoryItems.projectId} IS NULL`);
+  } else {
+    conditions.push(eq(inventoryItems.projectId, params.projectId));
+  }
+
+  if (params.warehouseId) {
+    conditions.push(eq(inventoryItems.warehouseId, params.warehouseId));
+  } else if (params.warehouseLocation?.trim()) {
+    conditions.push(
+      eq(inventoryItems.warehouseLocation, params.warehouseLocation.trim())
+    );
+  }
+
+  const rows = await client
+    .select()
+    .from(inventoryItems)
+    .where(and(...conditions))
+    .orderBy(asc(inventoryItems.id));
+
+  const available = rows.reduce(
+    (total: number, row: InventoryItem) =>
+      total + parseDecimal(row.currentStock),
+    0
+  );
+
+  if (available + 0.0001 < quantityToConsume) {
+    throw new Error(
+      `Stock insuficiente para ${params.itemName}. Disponible: ${toDecimalString(
+        available
+      )}, necesario para corregir: ${toDecimalString(quantityToConsume)}.`
+    );
+  }
+
+  let pending = quantityToConsume;
+
+  for (const row of rows as InventoryItem[]) {
+    if (pending <= 0) break;
+
+    const currentStock = parseDecimal(row.currentStock);
+    if (currentStock <= 0) continue;
+
+    const discount = Math.min(currentStock, pending);
+    await client
       .update(inventoryItems)
       .set({
         currentStock: toDecimalString(currentStock - discount),

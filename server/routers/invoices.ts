@@ -18,7 +18,10 @@ import {
 } from "@shared/fixed-assets";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 
-function canAccessInvoices(user: { role: string; buildreqRole?: string | null }) {
+function canAccessInvoices(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -37,11 +40,17 @@ function canEditInvoices(user: { role: string; buildreqRole?: string | null }) {
   );
 }
 
-function canReviewInvoices(user: { role: string; buildreqRole?: string | null }) {
+function canReviewInvoices(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
   return canEditInvoices(user);
 }
 
-function canAccountInvoices(user: { role: string; buildreqRole?: string | null }) {
+function canAccountInvoices(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
   return user.role === "admin" || user.buildreqRole === "contable";
 }
 
@@ -103,7 +112,9 @@ function assertAccountingAccess(
   }
 }
 
-function assertInvoiceDraft(detail: NonNullable<Awaited<ReturnType<typeof db.getInvoiceById>>>) {
+function assertInvoiceDraft(
+  detail: NonNullable<Awaited<ReturnType<typeof db.getInvoiceById>>>
+) {
   if (
     detail.invoice.status !== "borrador" &&
     detail.invoice.status !== "rechazada"
@@ -115,7 +126,9 @@ function assertInvoiceDraft(detail: NonNullable<Awaited<ReturnType<typeof db.get
   }
 }
 
-function assertInvoiceReviewed(detail: NonNullable<Awaited<ReturnType<typeof db.getInvoiceById>>>) {
+function assertInvoiceReviewed(
+  detail: NonNullable<Awaited<ReturnType<typeof db.getInvoiceById>>>
+) {
   if (detail.invoice.status !== "revisada") {
     throw new TRPCError({
       code: "BAD_REQUEST",
@@ -156,7 +169,8 @@ function assertInvoiceReadyForReview(
     if (!invoice.documentRangeStart?.trim()) {
       throw new TRPCError({
         code: "BAD_REQUEST",
-        message: "Ingrese el rango autorizado inicial antes de enviar a revisión",
+        message:
+          "Ingrese el rango autorizado inicial antes de enviar a revisión",
       });
     }
     if (!isValidInvoiceNumber(invoice.documentRangeStart)) {
@@ -210,7 +224,8 @@ function assertInvoiceReadyForReview(
     if (!invoice.emissionDeadline) {
       throw new TRPCError({
         code: "BAD_REQUEST",
-        message: "Seleccione la fecha límite de emisión antes de enviar a revisión",
+        message:
+          "Seleccione la fecha límite de emisión antes de enviar a revisión",
       });
     }
   }
@@ -277,7 +292,13 @@ export const invoicesRouter = router({
         .object({
           projectId: z.number().optional(),
           status: z
-            .enum(["borrador", "revisada", "rechazada", "registrada", "anulada"])
+            .enum([
+              "borrador",
+              "revisada",
+              "rechazada",
+              "registrada",
+              "anulada",
+            ])
             .optional(),
           supplierId: z.number().optional(),
           search: z.string().trim().optional(),
@@ -313,12 +334,17 @@ export const invoicesRouter = router({
         return [];
       }
 
-      return db.listInvoices(applyProjectScope({
-        ...input,
-        status,
-        statuses,
-        excludeStatus,
-      }, ctx.user));
+      return db.listInvoices(
+        applyProjectScope(
+          {
+            ...input,
+            status,
+            statuses,
+            excludeStatus,
+          },
+          ctx.user
+        )
+      );
     }),
 
   getById: protectedProcedure
@@ -622,7 +648,8 @@ export const invoicesRouter = router({
       if (!canAccountInvoices(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo Contabilidad o Superusuario puede contabilizar facturas",
+          message:
+            "Solo Contabilidad o Superusuario puede contabilizar facturas",
         });
       }
 
@@ -671,6 +698,67 @@ export const invoicesRouter = router({
         rejectedById: ctx.user.id,
         rejectionComment: input.rejectionComment,
       });
+    }),
+
+  correctReceipt: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        reason: z.string().trim().min(5).max(2000),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canEditInvoices(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para corregir recepciones",
+        });
+      }
+
+      const detail = await db.getInvoiceById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Factura no encontrada",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.invoice.projectId);
+      if (detail.invoice.status === "registrada") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "No se puede corregir una factura contabilizada",
+        });
+      }
+      if (detail.invoice.status === "anulada") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "La factura ya está anulada",
+        });
+      }
+      if (
+        !["borrador", "rechazada", "revisada"].includes(detail.invoice.status)
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Esta factura no permite corrección de recepción",
+        });
+      }
+
+      try {
+        return await db.correctInvoiceReceiptFromInvoice({
+          invoiceId: input.id,
+          correctedById: ctx.user.id,
+          reason: input.reason,
+        });
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudo corregir la recepción",
+        });
+      }
     }),
 
   replaceRetentions: protectedProcedure
@@ -777,10 +865,7 @@ export const invoicesRouter = router({
           });
         }
 
-        assetDetails = normalizeFixedAssetDetails(
-          input.assetDetails,
-          quantity
-        );
+        assetDetails = normalizeFixedAssetDetails(input.assetDetails, quantity);
         const missingRequiredIndex = assetDetails.findIndex(
           detail => !detail.serialNumber.trim() || !detail.condition
         );

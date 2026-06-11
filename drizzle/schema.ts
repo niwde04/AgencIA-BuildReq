@@ -198,6 +198,7 @@ export const receiptStatusEnum = pgEnum("receipt_status", [
   "parcial",
   "completa",
   "cierre_incompleto",
+  "anulada",
 ]);
 export const warehouseExitStatusEnum = pgEnum("warehouse_exit_status", [
   "borrador",
@@ -361,8 +362,7 @@ export const userProjectAssignments = pgTable(
   })
 );
 
-export type UserProjectAssignment =
-  typeof userProjectAssignments.$inferSelect;
+export type UserProjectAssignment = typeof userProjectAssignments.$inferSelect;
 export type InsertUserProjectAssignment =
   typeof userProjectAssignments.$inferInsert;
 
@@ -747,8 +747,7 @@ export const purchaseOrderAuditLogs = pgTable(
   })
 );
 
-export type PurchaseOrderAuditLog =
-  typeof purchaseOrderAuditLogs.$inferSelect;
+export type PurchaseOrderAuditLog = typeof purchaseOrderAuditLogs.$inferSelect;
 export type InsertPurchaseOrderAuditLog =
   typeof purchaseOrderAuditLogs.$inferInsert;
 
@@ -956,6 +955,11 @@ export const receipts = pgTable(
     postingDate: timestamp("postingDate").defaultNow().notNull(),
     receiptDate: timestamp("receiptDate").defaultNow().notNull(),
     notes: text("notes"),
+    voidedAt: timestamp("voidedAt"),
+    voidedById: integer("voidedById"),
+    voidReason: text("voidReason"),
+    replacementReceiptId: integer("replacementReceiptId"),
+    correctsReceiptId: integer("correctsReceiptId"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
@@ -1032,7 +1036,9 @@ export const receiptItems = pgTable(
     sapItemIdx: index("reci_sap_item_idx").on(table.sapItemCode),
     warehouseIdx: index("reci_warehouse_idx").on(table.warehouseId),
     subProjectIdx: index("reci_subproject_idx").on(table.subProjectId),
-    fixedAssetIdx: index("reci_fixed_asset_idx").on(table.fixedAssetSapItemCode),
+    fixedAssetIdx: index("reci_fixed_asset_idx").on(
+      table.fixedAssetSapItemCode
+    ),
   })
 );
 
@@ -1056,8 +1062,7 @@ export const receiptOtherCharges = pgTable(
 );
 
 export type ReceiptOtherCharge = typeof receiptOtherCharges.$inferSelect;
-export type InsertReceiptOtherCharge =
-  typeof receiptOtherCharges.$inferInsert;
+export type InsertReceiptOtherCharge = typeof receiptOtherCharges.$inferInsert;
 
 // ============================================================
 // INVOICES
@@ -1111,6 +1116,9 @@ export const invoices = pgTable(
     rejectionComment: text("rejectionComment"),
     rejectedById: integer("rejectedById"),
     rejectedAt: timestamp("rejectedAt"),
+    voidedAt: timestamp("voidedAt"),
+    voidedById: integer("voidedById"),
+    voidReason: text("voidReason"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
@@ -1189,7 +1197,9 @@ export const invoiceItems = pgTable(
       table.purchaseOrderItemId
     ),
     subProjectIdx: index("invi_subproject_idx").on(table.subProjectId),
-    fixedAssetIdx: index("invi_fixed_asset_idx").on(table.fixedAssetSapItemCode),
+    fixedAssetIdx: index("invi_fixed_asset_idx").on(
+      table.fixedAssetSapItemCode
+    ),
   })
 );
 
@@ -1217,8 +1227,7 @@ export const invoiceOtherCharges = pgTable(
 );
 
 export type InvoiceOtherCharge = typeof invoiceOtherCharges.$inferSelect;
-export type InsertInvoiceOtherCharge =
-  typeof invoiceOtherCharges.$inferInsert;
+export type InsertInvoiceOtherCharge = typeof invoiceOtherCharges.$inferInsert;
 
 export const salesTaxes = pgTable(
   "salesTaxes",
@@ -1821,9 +1830,7 @@ export const sapCatalog = pgTable(
     }),
     temporaryItemCode: varchar("temporaryItemCode", { length: 50 }),
     fixedAssetStatus: varchar("fixedAssetStatus", { length: 20 }),
-    fixedAssetSourcePurchaseOrderId: integer(
-      "fixedAssetSourcePurchaseOrderId"
-    ),
+    fixedAssetSourcePurchaseOrderId: integer("fixedAssetSourcePurchaseOrderId"),
     fixedAssetSourcePurchaseOrderItemId: integer(
       "fixedAssetSourcePurchaseOrderItemId"
     ),
