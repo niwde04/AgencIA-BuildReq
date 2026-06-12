@@ -224,6 +224,18 @@ function canAccessRequest(
   return true;
 }
 
+function hideWarehouseStockQuantities<T extends { items: any[] }>(detail: T): T {
+  return {
+    ...detail,
+    items: detail.items.map((item) => ({
+      ...item,
+      projectStock: null,
+      projectStockWarehouses: [],
+      sapStock: null,
+    })),
+  };
+}
+
 function assertNotSuperintendentReadOnly(user: { buildreqRole?: string | null }) {
   if (user.buildreqRole === "superintendente") {
     throw new TRPCError({
@@ -560,6 +572,9 @@ export const materialRequestsRouter = router({
       }
       if (!canAccessRequest(ctx.user, result.request)) {
         throw new TRPCError({ code: "FORBIDDEN", message: "No tiene acceso a esta solicitud" });
+      }
+      if (ctx.user.buildreqRole === "ingeniero_residente") {
+        return hideWarehouseStockQuantities(result);
       }
       return result;
     }),

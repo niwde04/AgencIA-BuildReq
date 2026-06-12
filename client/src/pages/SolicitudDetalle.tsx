@@ -250,10 +250,16 @@ const formatProjectStockWarehouseLabel = (warehouse: any) => {
 function ProjectStockBreakdown({
   item,
   hasSapTranslation,
+  canViewQuantities,
 }: {
   item: any;
   hasSapTranslation: boolean;
+  canViewQuantities: boolean;
 }) {
+  if (!canViewQuantities) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+
   if (!hasSapTranslation) return <span>—</span>;
 
   const warehouses = Array.isArray(item.projectStockWarehouses)
@@ -766,6 +772,7 @@ export default function SolicitudDetalle() {
   const userRole = (user as any)?.buildreqRole || "";
   const isAdmin = user?.role === "admin";
   const isSuperintendent = userRole === "superintendente";
+  const canViewWarehouseQuantities = userRole !== "ingeniero_residente";
   const canManageProcessing =
     userRole === "jefe_bodega_central" ||
     userRole === "administracion_central" ||
@@ -1723,7 +1730,7 @@ export default function SolicitudDetalle() {
                     Unidad
                   </th>
                   <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground min-w-[260px]">
-                    Exist. Proyecto
+                    EXIST. ALMACEN
                   </th>
                   <th className="text-right p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                     Comprometido
@@ -1890,6 +1897,7 @@ export default function SolicitudDetalle() {
                         <ProjectStockBreakdown
                           item={item}
                           hasSapTranslation={hasSapTranslation}
+                          canViewQuantities={canViewWarehouseQuantities}
                         />
                       </td>
                       <td className="p-3 text-right text-xs">
