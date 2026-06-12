@@ -6509,7 +6509,7 @@ describe("BuildReq - User Management", () => {
 // Tests: Purchase Requests
 // ============================================================
 describe("BuildReq - Purchase Requests", () => {
-  it("can update purchase request item quantities and prices", async () => {
+  it("can update purchase request item prices", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
     const getPurchaseRequestByIdSpy = vi
@@ -6548,7 +6548,7 @@ describe("BuildReq - Purchase Requests", () => {
         purchaseType: "local",
         neededBy: "2026-05-20",
         notes: "Cotización revisada",
-        items: [{ id: 501, quantity: "12.00", unitPrice: "125.50" }],
+        items: [{ id: 501, unitPrice: "125.50" }],
       })
     ).resolves.toEqual({ success: true });
 
@@ -6560,10 +6560,15 @@ describe("BuildReq - Purchase Requests", () => {
         notes: "Cotización revisada",
       })
     );
-    expect(updatePurchaseRequestItemSpy).toHaveBeenCalledWith(501, {
-      quantity: "12.00",
-      unitPrice: "125.50",
-    });
+    expect(updatePurchaseRequestItemSpy).toHaveBeenCalledWith(
+      501,
+      expect.objectContaining({
+        unitPrice: "125.50",
+      })
+    );
+    expect(updatePurchaseRequestItemSpy.mock.calls[0]?.[1]).not.toHaveProperty(
+      "quantity"
+    );
     expect(syncPurchaseRequestConversionStatusSpy).toHaveBeenCalledWith(33);
 
     getPurchaseRequestByIdSpy.mockRestore();
@@ -6609,7 +6614,6 @@ describe("BuildReq - Purchase Requests", () => {
         items: [
           {
             id: 504,
-            quantity: "12.00",
             targetType: "subproyecto",
             subProjectId: 10,
           },
@@ -6629,29 +6633,9 @@ describe("BuildReq - Purchase Requests", () => {
     updatePurchaseRequestItemSpy.mockRestore();
   });
 
-  it("does not allow reducing a purchase request item below the received quantity", async () => {
+  it("rejects purchase request item quantity updates", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
-    const getPurchaseRequestByIdSpy = vi
-      .spyOn(db, "getPurchaseRequestById")
-      .mockResolvedValue({
-        purchaseRequest: {
-          id: 34,
-          projectId: 1,
-          status: "pendiente",
-          purchaseType: "local",
-        },
-        items: [
-          {
-            id: 502,
-            itemName: "BLOQUE",
-            quantity: "20.00",
-            receivedQuantity: "8.00",
-            unitPrice: "10.00",
-            sourceProject: { id: 1 },
-          },
-        ],
-      } as any);
     const updatePurchaseRequestSpy = vi
       .spyOn(db, "updatePurchaseRequest")
       .mockResolvedValue({ success: true } as any);
@@ -6662,66 +6646,13 @@ describe("BuildReq - Purchase Requests", () => {
     await expect(
       caller.purchaseRequests.update({
         id: 34,
-        items: [{ id: 502, quantity: "7.00", unitPrice: "10.00" }],
+        items: [{ id: 502, quantity: "7.00" } as any],
       })
-    ).rejects.toMatchObject({
-      code: "BAD_REQUEST",
-      message: "La cantidad no puede ser menor a lo ya recibido",
-    });
+    ).rejects.toThrow(/quantity/i);
 
     expect(updatePurchaseRequestSpy).not.toHaveBeenCalled();
     expect(updatePurchaseRequestItemSpy).not.toHaveBeenCalled();
 
-    getPurchaseRequestByIdSpy.mockRestore();
-    updatePurchaseRequestSpy.mockRestore();
-    updatePurchaseRequestItemSpy.mockRestore();
-  });
-
-  it("does not allow reducing a purchase request item below the converted quantity", async () => {
-    const { ctx } = createAdminCentralContext();
-    const caller = appRouter.createCaller(ctx);
-    const getPurchaseRequestByIdSpy = vi
-      .spyOn(db, "getPurchaseRequestById")
-      .mockResolvedValue({
-        purchaseRequest: {
-          id: 35,
-          projectId: 1,
-          status: "parcialmente_convertida",
-          purchaseType: "local",
-        },
-        items: [
-          {
-            id: 503,
-            itemName: "CEMENTO",
-            quantity: "200.00",
-            convertedQuantity: "100.00",
-            receivedQuantity: "0.00",
-            unitPrice: "100.00",
-            sourceProject: { id: 1 },
-          },
-        ],
-      } as any);
-    const updatePurchaseRequestSpy = vi
-      .spyOn(db, "updatePurchaseRequest")
-      .mockResolvedValue({ success: true } as any);
-    const updatePurchaseRequestItemSpy = vi
-      .spyOn(db, "updatePurchaseRequestItem")
-      .mockResolvedValue({ success: true } as any);
-
-    await expect(
-      caller.purchaseRequests.update({
-        id: 35,
-        items: [{ id: 503, quantity: "99.00", unitPrice: "100.00" }],
-      })
-    ).rejects.toMatchObject({
-      code: "BAD_REQUEST",
-      message: "La cantidad no puede ser menor a lo ya convertido a OC",
-    });
-
-    expect(updatePurchaseRequestSpy).not.toHaveBeenCalled();
-    expect(updatePurchaseRequestItemSpy).not.toHaveBeenCalled();
-
-    getPurchaseRequestByIdSpy.mockRestore();
     updatePurchaseRequestSpy.mockRestore();
     updatePurchaseRequestItemSpy.mockRestore();
   });
@@ -11787,6 +11718,26 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
         ],
       })
     ).toBe("OC-004-00000011");
+  });
+
+  it("shares purchase order sequences between OC and CD by project", () => {
+    expect(
+      db.buildProjectScopedDocumentNumber({
+        prefix: "OC",
+        projectCode: "007",
+        existingNumbers: ["CD-007-00000001", "OC-007-00000002"],
+        sequencePrefixes: ["OC", "CD"],
+      })
+    ).toBe("OC-007-00000003");
+
+    expect(
+      db.buildProjectScopedDocumentNumber({
+        prefix: "CD",
+        projectCode: "007",
+        existingNumbers: ["OC-007-00000001", "CD-007-00000002"],
+        sequencePrefixes: ["OC", "CD"],
+      })
+    ).toBe("CD-007-00000003");
   });
 
   it("createDirectPurchase accepts optional supplierId", async () => {

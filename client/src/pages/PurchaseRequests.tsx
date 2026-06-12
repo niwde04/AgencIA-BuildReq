@@ -105,14 +105,12 @@ type RequestTargetSelection =
     };
 
 type PurchaseRequestItemDraft = {
-  quantity: string;
   brand: string;
   costResponsible: string;
   targetSelection: RequestTargetSelection | null;
 };
 
 type PurchaseRequestItemDraftTextField =
-  | "quantity"
   | "brand"
   | "costResponsible";
 
@@ -165,16 +163,10 @@ function buildFixedAssetTargetSelection(asset: any): RequestTargetSelection {
 }
 
 const getItemDraftFromDetail = (item: any): PurchaseRequestItemDraft => ({
-  quantity: String(item.quantity ?? ""),
   brand: item.brand ?? "",
   costResponsible: item.costResponsible ?? "",
   targetSelection: mapPurchaseRequestItemTargetToSelection(item),
 });
-
-const isPositiveNumberString = (value: string) => {
-  const numericValue = Number(value);
-  return Number.isFinite(numericValue) && numericValue > 0;
-};
 
 const formatQuantity = (value: string | number | null | undefined) =>
   Number(value ?? 0).toLocaleString("es-HN", {
@@ -184,11 +176,8 @@ const formatQuantity = (value: string | number | null | undefined) =>
 
 const getConvertedQuantity = (item: any) => Number(item.convertedQuantity ?? 0);
 
-const getPendingConversionQuantity = (item: any, quantityOverride?: string) =>
-  Math.max(
-    Number(quantityOverride ?? item.quantity ?? 0) - getConvertedQuantity(item),
-    0
-  );
+const getPendingConversionQuantity = (item: any) =>
+  Math.max(Number(item.quantity ?? 0) - getConvertedQuantity(item), 0);
 
 function escapeHtml(value: unknown) {
   return String(value ?? "")
@@ -494,32 +483,10 @@ export default function PurchaseRequests() {
   };
 
   const buildItemUpdatePayload = () => {
-    const invalidQuantityItem = selectedItems.find(
-      (item: any) => !isPositiveNumberString(getItemDraft(item).quantity)
-    );
-    if (invalidQuantityItem) {
-      toast.error(
-        `Ingrese una cantidad mayor que cero para ${invalidQuantityItem.itemName}`
-      );
-      return null;
-    }
-
-    const itemBelowConverted = selectedItems.find(
-      (item: any) =>
-        Number(getItemDraft(item).quantity || 0) < getConvertedQuantity(item)
-    );
-    if (itemBelowConverted) {
-      toast.error(
-        `La cantidad de ${itemBelowConverted.itemName} no puede ser menor a lo ya convertido`
-      );
-      return null;
-    }
-
     return selectedItems.map((item: any) => {
       const draft = getItemDraft(item);
       const payload: any = {
         id: item.id,
-        quantity: draft.quantity,
         brand: toNullablePrintText(draft.brand),
         costResponsible: toNullablePrintText(draft.costResponsible),
       };
@@ -550,11 +517,7 @@ export default function PurchaseRequests() {
     const itemsToConvert = selectedItems
       .filter((item: any) => selectedIds.includes(item.id))
       .map((item: any) => {
-        const draft = getItemDraft(item);
-        const pendingQuantity = getPendingConversionQuantity(
-          item,
-          draft.quantity
-        );
+        const pendingQuantity = getPendingConversionQuantity(item);
         const quantity = Number(getConvertQuantityDraft(item) || 0);
         return {
           item,
@@ -936,13 +899,13 @@ export default function PurchaseRequests() {
       "-";
     const observations = editNotes.trim() || "-";
     const totalQuantity = selectedItems.reduce((sum: number, item: any) => {
-      const quantity = Number(getItemDraft(item).quantity || 0);
+      const quantity = Number(item.quantity || 0);
       return sum + (Number.isFinite(quantity) ? quantity : 0);
     }, 0);
     const itemRows = selectedItems
       .map((item: any) => {
         const draft = getItemDraft(item);
-        const quantity = formatQuantity(draft.quantity);
+        const quantity = formatQuantity(item.quantity);
         const code = item.currentSapItemCode || item.originalSapItemCode || "-";
         return `
           <tr>
@@ -1721,7 +1684,7 @@ export default function PurchaseRequests() {
                           Pendiente
                         </th>
                         <th className="w-52 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          A convertir
+                          Cantidad a comprar
                         </th>
                       </tr>
                     </thead>
@@ -1729,10 +1692,7 @@ export default function PurchaseRequests() {
                       {selectedItems.map((item: any) => {
                         const draft = getItemDraft(item);
                         const convertedQuantity = getConvertedQuantity(item);
-                        const pendingQuantity = getPendingConversionQuantity(
-                          item,
-                          draft.quantity
-                        );
+                        const pendingQuantity = getPendingConversionQuantity(item);
                         const convertQuantity = getConvertQuantityDraft(item);
                         const canConvertItem =
                           canConvertSelectedPurchaseRequest &&
@@ -1819,21 +1779,9 @@ export default function PurchaseRequests() {
                             </td>
                             <td className="p-4 align-top">
                               <div className="flex items-center justify-end gap-2">
-                                <Input
-                                  className="h-9 w-36 text-right"
-                                  type="number"
-                                  min="0.01"
-                                  step="0.01"
-                                  value={draft.quantity}
-                                  onChange={event =>
-                                    updateItemDraft(
-                                      item,
-                                      "quantity",
-                                      event.target.value
-                                    )
-                                  }
-                                  disabled={!canEditSelectedPurchaseRequest}
-                                />
+                                <span className="h-9 w-36 rounded-md border border-transparent px-3 py-2 text-right font-mono">
+                                  {formatQuantity(item.quantity)}
+                                </span>
                                 <span className="min-w-12 text-left text-xs text-muted-foreground">
                                   {item.unit || ""}
                                 </span>

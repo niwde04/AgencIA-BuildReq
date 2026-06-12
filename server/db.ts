@@ -1671,6 +1671,7 @@ export function buildProjectScopedDocumentNumber(params: {
   prefix: string;
   projectCode: string;
   existingNumbers: Array<string | null | undefined>;
+  sequencePrefixes?: string[];
 }) {
   const projectCode = params.projectCode.trim();
   if (!projectCode) {
@@ -1678,8 +1679,15 @@ export function buildProjectScopedDocumentNumber(params: {
   }
 
   const documentPrefix = `${params.prefix}-${projectCode}-`;
+  const sequencePrefixes =
+    params.sequencePrefixes && params.sequencePrefixes.length > 0
+      ? Array.from(new Set(params.sequencePrefixes))
+      : [params.prefix];
+  const sequencePrefixPattern = `(?:${sequencePrefixes
+    .map((prefix) => escapeRegExp(`${prefix}-${projectCode}-`))
+    .join("|")})`;
   const sequencePattern = new RegExp(
-    `^${escapeRegExp(documentPrefix)}(\\d{${DOCUMENT_SEQUENCE_WIDTH}})$`
+    `^${sequencePrefixPattern}(\\d{${DOCUMENT_SEQUENCE_WIDTH}})$`
   );
   const maxSequence = params.existingNumbers.reduce((max, value) => {
     const match = String(value ?? "").match(sequencePattern);
@@ -4247,30 +4255,54 @@ export async function generatePurchaseOrderNumber(
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  return generateProjectScopedDocumentNumber({
-    prefix: classification === "cd" ? "CD" : "OC",
-    projectId,
-    selectExistingNumbers: async documentPrefix => {
-      const [legacyRows, orderRows] = await Promise.all([
-        db
-          .select({ documentNumber: supplyFlowRecords.purchaseOrderNumber })
-          .from(supplyFlowRecords)
-          .where(
-            and(
-              isNotNull(supplyFlowRecords.purchaseOrderNumber),
+  const project = await getProjectById(projectId);
+  if (!project) {
+    throw new Error("Proyecto no encontrado para correlativo");
+  }
+
+  const projectCode = project.code.trim();
+  if (!projectCode) {
+    throw new Error("El proyecto no tiene código para correlativo");
+  }
+
+  const sequencePrefixes = ["OC", "CD"];
+  const documentPrefixes = sequencePrefixes.map(
+    (prefix) => `${prefix}-${projectCode}-`
+  );
+  const [legacyRows, orderRows] = await Promise.all([
+    db
+      .select({ documentNumber: supplyFlowRecords.purchaseOrderNumber })
+      .from(supplyFlowRecords)
+      .where(
+        and(
+          isNotNull(supplyFlowRecords.purchaseOrderNumber),
+          or(
+            ...documentPrefixes.map((documentPrefix) =>
               ilike(supplyFlowRecords.purchaseOrderNumber, `${documentPrefix}%`)
             )
-          ),
-        db
-          .select({ documentNumber: purchaseOrders.orderNumber })
-          .from(purchaseOrders)
-          .where(ilike(purchaseOrders.orderNumber, `${documentPrefix}%`)),
-      ]);
-      return [
-        ...legacyRows.map(row => row.documentNumber),
-        ...orderRows.map(row => row.documentNumber),
-      ];
-    },
+          )
+        )
+      ),
+    db
+      .select({ documentNumber: purchaseOrders.orderNumber })
+      .from(purchaseOrders)
+      .where(
+        or(
+          ...documentPrefixes.map((documentPrefix) =>
+            ilike(purchaseOrders.orderNumber, `${documentPrefix}%`)
+          )
+        )
+      ),
+  ]);
+
+  return buildProjectScopedDocumentNumber({
+    prefix: classification === "cd" ? "CD" : "OC",
+    projectCode,
+    existingNumbers: [
+      ...legacyRows.map(row => row.documentNumber),
+      ...orderRows.map(row => row.documentNumber),
+    ],
+    sequencePrefixes,
   });
 }
 

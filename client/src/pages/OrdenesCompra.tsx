@@ -1878,6 +1878,7 @@ export default function OrdenesCompra() {
     if (!detail) return;
 
     const purchaseOrder = detail.purchaseOrder;
+    const shouldPrintDraftWatermark = purchaseOrder.status === "borrador";
     const supplierName = detail.supplier?.name ?? "Proveedor pendiente";
     const supplierRtn = detail.supplier?.rtn || "-";
     const projectLabel = detail.project
@@ -1982,10 +1983,28 @@ export default function OrdenesCompra() {
               margin: 0;
               background: #fff;
             }
+            .draft-watermark {
+              align-items: center;
+              color: rgba(120, 120, 120, 0.18);
+              display: flex;
+              font-size: 72px;
+              font-weight: 900;
+              inset: 0;
+              justify-content: center;
+              letter-spacing: 12px;
+              line-height: 1;
+              pointer-events: none;
+              position: fixed;
+              text-transform: uppercase;
+              transform: rotate(-32deg);
+              z-index: 0;
+            }
             .sheet {
               margin: 0 auto;
               max-width: 196mm;
               padding: 0 1mm 3mm;
+              position: relative;
+              z-index: 1;
             }
             .header {
               align-items: start;
@@ -2138,6 +2157,7 @@ export default function OrdenesCompra() {
           </style>
         </head>
         <body>
+          ${shouldPrintDraftWatermark ? '<div class="draft-watermark">BORRADOR</div>' : ""}
           <main class="sheet">
             <section class="header">
               ${getPrintLogoMarkup()}

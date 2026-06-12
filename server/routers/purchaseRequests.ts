@@ -97,17 +97,18 @@ const purchaseRequestItemSchema = z.object({
   fixedAssetName: z.string().nullable().optional(),
   notes: z.string().optional(),
 });
-const purchaseRequestItemUpdateSchema = z.object({
-  id: z.number(),
-  quantity: purchaseRequestQuantitySchema,
-  unitPrice: purchaseRequestUnitPriceSchema.optional(),
-  brand: z.string().trim().max(255).nullable().optional(),
-  costResponsible: z.string().trim().max(255).nullable().optional(),
-  targetType: z.enum(["subproyecto", "activo_fijo"]).nullable().optional(),
-  subProjectId: z.number().int().positive().nullable().optional(),
-  fixedAssetSapItemCode: z.string().nullable().optional(),
-  fixedAssetName: z.string().nullable().optional(),
-});
+const purchaseRequestItemUpdateSchema = z
+  .object({
+    id: z.number(),
+    unitPrice: purchaseRequestUnitPriceSchema.optional(),
+    brand: z.string().trim().max(255).nullable().optional(),
+    costResponsible: z.string().trim().max(255).nullable().optional(),
+    targetType: z.enum(["subproyecto", "activo_fijo"]).nullable().optional(),
+    subProjectId: z.number().int().positive().nullable().optional(),
+    fixedAssetSapItemCode: z.string().nullable().optional(),
+    fixedAssetName: z.string().nullable().optional(),
+  })
+  .strict();
 const purchaseTypeSchema = z.enum(["local", "extranjera", "compra_directa"]);
 
 async function resolvePurchaseRequestItemTarget(input: {
@@ -357,21 +358,6 @@ export const purchaseRequestsRouter = router({
           });
         }
 
-        const receivedQuantity = Number(existingItem.receivedQuantity ?? 0);
-        const convertedQuantity = Number(existingItem.convertedQuantity ?? 0);
-        const nextQuantity = Number(itemUpdate.quantity);
-        if (nextQuantity < receivedQuantity) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "La cantidad no puede ser menor a lo ya recibido",
-          });
-        }
-        if (nextQuantity < convertedQuantity) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "La cantidad no puede ser menor a lo ya convertido a OC",
-          });
-        }
       }
 
       await db.updatePurchaseRequest(input.id, {
@@ -399,8 +385,7 @@ export const purchaseRequestsRouter = router({
               })
             : {};
 
-          return db.updatePurchaseRequestItem(itemUpdate.id, {
-            quantity: itemUpdate.quantity,
+          const itemData: Parameters<typeof db.updatePurchaseRequestItem>[1] = {
             unitPrice:
               "unitPrice" in itemUpdate ? itemUpdate.unitPrice : undefined,
             brand:
@@ -410,7 +395,9 @@ export const purchaseRequestsRouter = router({
                 ? (itemUpdate.costResponsible ?? null)
                 : undefined,
             ...target,
-          });
+          };
+
+          return db.updatePurchaseRequestItem(itemUpdate.id, itemData);
         })
       );
 
