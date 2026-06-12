@@ -9950,7 +9950,7 @@ describe("BuildReq - Invoices", () => {
       postingDate: new Date("2026-05-02T12:00:00"),
       receiptDate: new Date("2026-05-02T12:00:00"),
       emissionDeadline: new Date("2026-05-31T12:00:00"),
-      retentionReceiptNumber: "CR-2026-0001",
+      retentionReceiptNumber: "001-001-11-00000999",
       total: "1000.00",
       retentionTotal: "0.00",
       netPayable: "1000.00",
@@ -10928,6 +10928,43 @@ describe("BuildReq - Invoices", () => {
     replaceInvoiceRetentionsSpy.mockRestore();
   });
 
+  it("requires fiscal format for retention receipt numbers", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        retentionReceiptNumber: null,
+      },
+    } as any);
+    const replaceInvoiceRetentionsSpy = vi.spyOn(
+      db,
+      "replaceInvoiceRetentions"
+    );
+
+    await expect(
+      caller.invoices.replaceRetentions({
+        id: 10,
+        retentionReceiptNumber: "CR-2026-0001",
+        retentions: [
+          {
+            retentionCatalogId: 1,
+            baseAmount: "1000.00",
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message:
+        "El comprobante de retención debe tener el formato 000-001-01-00010571",
+    });
+
+    expect(replaceInvoiceRetentionsSpy).not.toHaveBeenCalled();
+    getInvoiceByIdSpy.mockRestore();
+    replaceInvoiceRetentionsSpy.mockRestore();
+  });
+
   it("allows two different retentions on the same invoice line", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -11210,6 +11247,77 @@ describe("BuildReq - Document attachments", () => {
     );
 
     getPurchaseOrderByIdSpy.mockRestore();
+    storagePutSpy.mockRestore();
+    createAttachmentSpy.mockRestore();
+  });
+
+  it("mirrors receipt attachments to the generated draft invoice", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getReceiptByIdSpy = vi.spyOn(db, "getReceiptById").mockResolvedValue({
+      receipt: {
+        id: 81,
+        projectId: 1,
+      },
+      invoice: {
+        id: 910,
+        projectId: 1,
+        status: "borrador",
+      },
+    } as any);
+    const storagePutSpy = vi
+      .spyOn(storage, "storagePut")
+      .mockResolvedValueOnce({
+        key: "buildreq/receipt/81/comprobante.pdf",
+        url: "https://storage.local/comprobante.pdf",
+      })
+      .mockResolvedValueOnce({
+        key: "buildreq/invoice/910/comprobante.pdf",
+        url: "https://storage.local/factura-comprobante.pdf",
+      });
+    const createAttachmentSpy = vi
+      .spyOn(db, "createAttachment")
+      .mockResolvedValueOnce({ id: 701 })
+      .mockResolvedValueOnce({ id: 702 });
+
+    await expect(
+      caller.attachments.upload({
+        entityType: "receipt",
+        entityId: 81,
+        fileName: "comprobante.pdf",
+        fileData: pdfBuffer.toString("base64"),
+        mimeType: "application/pdf",
+        fileSize: pdfBuffer.byteLength,
+        category: "comprobante_entrega",
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 701,
+        url: "https://storage.local/comprobante.pdf",
+      })
+    );
+
+    expect(storagePutSpy).toHaveBeenCalledTimes(2);
+    expect(createAttachmentSpy).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        entityType: "receipt",
+        entityId: 81,
+        fileName: "comprobante.pdf",
+        category: "comprobante_entrega",
+      })
+    );
+    expect(createAttachmentSpy).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        entityType: "invoice",
+        entityId: 910,
+        fileName: "comprobante.pdf",
+        category: "factura",
+      })
+    );
+
+    getReceiptByIdSpy.mockRestore();
     storagePutSpy.mockRestore();
     createAttachmentSpy.mockRestore();
   });

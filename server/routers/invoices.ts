@@ -239,6 +239,16 @@ function assertInvoiceReadyForReview(
         "Ingrese el número de comprobante de retención antes de enviar a revisión",
     });
   }
+  if (
+    invoice.isFiscalDocument !== false &&
+    invoice.retentionReceiptNumber?.trim() &&
+    !isValidInvoiceNumber(invoice.retentionReceiptNumber)
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `El comprobante de retención debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+    });
+  }
 }
 
 function parseDateInput(value?: string | null) {
@@ -525,6 +535,16 @@ export const invoicesRouter = router({
                 "El número documento debe estar dentro del rango autorizado",
             });
           }
+          if (
+            value.retentionReceiptNumber?.trim() &&
+            !isValidInvoiceNumber(value.retentionReceiptNumber)
+          ) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["retentionReceiptNumber"],
+              message: `El comprobante de retención debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+            });
+          }
           if (!value.documentDueDate) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
@@ -600,7 +620,11 @@ export const invoicesRouter = router({
           parseDateInput(input.emissionDeadline) ??
           parseDateInput(input.postingDate) ??
           new Date(),
-        retentionReceiptNumber,
+        retentionReceiptNumber: retentionReceiptNumber
+          ? isFiscalDocument
+            ? formatInvoiceNumberInput(retentionReceiptNumber)
+            : retentionReceiptNumber
+          : null,
         notes: input.notes?.trim() || null,
       });
     }),
@@ -799,12 +823,30 @@ export const invoicesRouter = router({
             "Ingrese el número de comprobante de retención para guardar retenciones",
         });
       }
+      const effectiveRetentionReceiptNumber =
+        input.retentionReceiptNumber?.trim() ||
+        detail.invoice.retentionReceiptNumber?.trim() ||
+        "";
+      if (
+        detail.invoice.isFiscalDocument !== false &&
+        effectiveRetentionReceiptNumber &&
+        !isValidInvoiceNumber(effectiveRetentionReceiptNumber)
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `El comprobante de retención debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+        });
+      }
 
       try {
         return await db.replaceInvoiceRetentions(
           input.id,
           input.retentions,
           input.retentionReceiptNumber
+            ? detail.invoice.isFiscalDocument !== false
+              ? formatInvoiceNumberInput(input.retentionReceiptNumber)
+              : input.retentionReceiptNumber
+            : undefined
         );
       } catch (error) {
         throw new TRPCError({

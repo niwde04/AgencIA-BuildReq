@@ -386,6 +386,12 @@ function getFriendlyMutationError(message: string) {
         `El número documento debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`
       );
     }
+    if (path.includes("retentionReceiptNumber")) {
+      return (
+        issueMessage ||
+        `El comprobante de retención debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`
+      );
+    }
     if (path.includes("documentRangeStart")) {
       return (
         issueMessage ||
@@ -1340,6 +1346,7 @@ export default function Facturas() {
   const isRejected = detail?.invoice.status === "rechazada";
   const isDraft = detail?.invoice.status === "borrador" || isRejected;
   const isReviewed = detail?.invoice.status === "revisada";
+  const isAccounted = detail?.invoice.status === "registrada";
   const isVoided = detail?.invoice.status === "anulada";
   const canEditSelectedInvoice = canEditInvoices && isDraft;
   const canEditRetentions = canEditSelectedInvoice && canRetainSelectedInvoice;
@@ -1347,7 +1354,10 @@ export default function Facturas() {
   const canReviewSelectedInvoice = canReviewInvoices && isDraft;
   const canAccountSelectedInvoice = canAccountInvoices && isReviewed;
   const canCorrectSelectedReceipt =
-    canEditInvoices && Boolean(detail?.receipt) && (isDraft || isReviewed);
+    canEditInvoices &&
+    Boolean(detail?.receipt) &&
+    !isAccounted &&
+    (isDraft || isReviewed);
   const replacementReceiptId = detail?.receipt?.replacementReceiptId ?? null;
   const invoiceSaveConfirmed =
     selectedId !== null && actionFeedback.invoiceSavedId === selectedId;
@@ -2440,6 +2450,12 @@ export default function Facturas() {
                                     current.documentRangeEnd
                                   )
                                 : current.documentRangeEnd,
+                            retentionReceiptNumber:
+                              checked === true
+                                ? formatInvoiceNumberInput(
+                                    current.retentionReceiptNumber
+                                  )
+                                : current.retentionReceiptNumber,
                           }))
                         }
                       />
@@ -2643,11 +2659,24 @@ export default function Facturas() {
                           onChange={event =>
                             updateInvoiceDraft(current => ({
                               ...current,
-                              retentionReceiptNumber: event.target.value,
+                              retentionReceiptNumber: current.isFiscalDocument
+                                ? formatInvoiceNumberInput(event.target.value)
+                                : event.target.value,
                             }))
                           }
-                          placeholder="Comprobante de retención"
-                          maxLength={100}
+                          placeholder={
+                            invoiceDraft.isFiscalDocument
+                              ? INVOICE_NUMBER_FORMAT_EXAMPLE
+                              : "Comprobante de retención"
+                          }
+                          inputMode={
+                            invoiceDraft.isFiscalDocument ? "numeric" : "text"
+                          }
+                          maxLength={
+                            invoiceDraft.isFiscalDocument
+                              ? INVOICE_NUMBER_FORMAT_EXAMPLE.length
+                              : 100
+                          }
                         />
                       </div>
                     </div>

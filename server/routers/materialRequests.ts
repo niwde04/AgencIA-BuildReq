@@ -519,12 +519,19 @@ export const materialRequestsRouter = router({
       ) => {
         await Promise.all(
           rows.map(async (row) => {
-            const result = await db.syncMaterialRequestFulfillmentStatus(
-              row.request.id,
-              user.id
-            );
-            if (result.changed) {
-              row.request.status = result.status as any;
+            try {
+              const result = await db.syncMaterialRequestFulfillmentStatus(
+                row.request.id,
+                user.id
+              );
+              if (result.changed) {
+                row.request.status = result.status as any;
+              }
+            } catch (error) {
+              console.warn(
+                `No se pudo sincronizar la requisición ${row.request.id} al listar requisiciones`,
+                error
+              );
             }
           })
         );

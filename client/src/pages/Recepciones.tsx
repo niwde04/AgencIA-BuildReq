@@ -1481,15 +1481,24 @@ export default function Recepciones() {
               })
             )
           );
+          const uploadDestination = result.invoiceId
+            ? "a la recepción y a la factura"
+            : "a la recepción";
           toast.success(
             attachmentsToUpload.length === 1
-              ? "Adjunto subido a la recepción"
-              : `${attachmentsToUpload.length} adjuntos subidos a la recepción`
+              ? `Adjunto subido ${uploadDestination}`
+              : `${attachmentsToUpload.length} adjuntos subidos ${uploadDestination}`
           );
           void utils.attachments.getByEntity.invalidate({
             entityType: "receipt",
             entityId: result.id,
           });
+          if (result.invoiceId) {
+            void utils.attachments.getByEntity.invalidate({
+              entityType: "invoice",
+              entityId: result.invoiceId,
+            });
+          }
         } catch (error) {
           toast.error(
             error instanceof Error
@@ -2432,6 +2441,10 @@ export default function Recepciones() {
     const fixedAssetBlockReason = getFixedAssetReceiptBlockReason();
     if (fixedAssetBlockReason) {
       toast.error(fixedAssetBlockReason);
+      return;
+    }
+    if (pendingReceiptAttachments.length === 0) {
+      toast.error("Adjunta al menos un comprobante para procesar la recepción");
       return;
     }
 
@@ -4008,7 +4021,12 @@ export default function Recepciones() {
 
                 <section className="min-w-0 space-y-3 rounded-2xl border border-border/70 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <h3 className="text-lg font-semibold">Adjuntos</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-lg font-semibold">Adjuntos</h3>
+                      <Badge variant="outline" className="text-xs">
+                        Obligatorio
+                      </Badge>
+                    </div>
                     <div>
                       <input
                         ref={receiptAttachmentInputRef}
@@ -4040,7 +4058,7 @@ export default function Recepciones() {
 
                   {pendingReceiptAttachments.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-                      Sin archivos seleccionados.
+                      Adjunta el comprobante para procesar la recepción.
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -5006,6 +5024,7 @@ export default function Recepciones() {
                       registerMutation.isPending ||
                       !sourceId ||
                       activeSourceLoading ||
+                      pendingReceiptAttachments.length === 0 ||
                       Boolean(contractReceiptBlockReason) ||
                       Boolean(fixedAssetReceiptBlockReason)
                     }
@@ -5017,6 +5036,11 @@ export default function Recepciones() {
                   {fixedAssetReceiptBlockReason ? (
                     <p className="mt-2 max-w-md text-right text-xs text-amber-700">
                       {fixedAssetReceiptBlockReason}
+                    </p>
+                  ) : null}
+                  {pendingReceiptAttachments.length === 0 ? (
+                    <p className="mt-2 max-w-md text-right text-xs text-amber-700">
+                      Adjunta el comprobante antes de registrar la recepción.
                     </p>
                   ) : null}
                 </div>

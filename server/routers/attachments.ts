@@ -391,6 +391,34 @@ async function assertReceiptAttachmentAccess(
   }
 }
 
+async function mirrorReceiptAttachmentToInvoice(params: {
+  receiptId: number;
+  fileName: string;
+  buffer: Buffer;
+  mimeType: string;
+  fileSize: number;
+  uploadedById: number;
+}) {
+  const detail = await db.getReceiptById(params.receiptId);
+  const invoice = detail?.invoice;
+  if (!invoice || !["borrador", "rechazada"].includes(invoice.status)) return;
+
+  const fileKey = `buildreq/invoice/${invoice.id}/${nanoid()}-${params.fileName}`;
+  const { url } = await storagePut(fileKey, params.buffer, params.mimeType);
+
+  await db.createAttachment({
+    entityType: "invoice",
+    entityId: invoice.id,
+    fileName: params.fileName,
+    fileKey,
+    fileUrl: url,
+    mimeType: params.mimeType,
+    fileSize: params.fileSize,
+    category: "factura",
+    uploadedById: params.uploadedById,
+  });
+}
+
 function canAccessPurchaseRequests(user: BuildReqUser) {
   return (
     user.role === "admin" ||
@@ -670,6 +698,17 @@ export const attachmentsRouter = router({
         category: input.category,
         uploadedById: ctx.user.id,
       });
+
+      if (input.entityType === "receipt") {
+        await mirrorReceiptAttachmentToInvoice({
+          receiptId: input.entityId,
+          fileName: validated.fileName,
+          buffer,
+          mimeType: validated.mimeType,
+          fileSize: validated.fileSize,
+          uploadedById: ctx.user.id,
+        });
+      }
 
       return { id: result.id, url, fileKey };
     }),

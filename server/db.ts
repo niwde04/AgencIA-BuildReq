@@ -4709,13 +4709,75 @@ function getPurchaseTypeLabel(purchaseType?: string | null) {
   return "—";
 }
 
+type PurchaseRequestItemInsertInput = Omit<
+  InsertPurchaseRequestItem,
+  "purchaseRequestId"
+>;
+
+function normalizeOptionalText(value: string | null | undefined) {
+  return value?.trim() || null;
+}
+
+function getPurchaseRequestItemCatalogCodes(item: PurchaseRequestItemInsertInput) {
+  return [item.currentSapItemCode, item.originalSapItemCode]
+    .map(normalizeOptionalText)
+    .filter((value): value is string => Boolean(value));
+}
+
+async function resolvePurchaseRequestItemBrands(
+  database: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  items: PurchaseRequestItemInsertInput[]
+) {
+  if (items.length === 0) return items;
+
+  const catalogCodes = Array.from(
+    new Set(
+      items
+        .filter(item => !normalizeOptionalText(item.brand))
+        .flatMap(getPurchaseRequestItemCatalogCodes)
+    )
+  );
+  if (catalogCodes.length === 0) {
+    return items.map(item => ({
+      ...item,
+      brand: normalizeOptionalText(item.brand),
+    }));
+  }
+
+  const catalogRows = await database
+    .select({
+      itemCode: sapCatalog.itemCode,
+      brand: sapCatalog.brand,
+    })
+    .from(sapCatalog)
+    .where(inArray(sapCatalog.itemCode, catalogCodes));
+  const brandByItemCode = new Map(
+    catalogRows
+      .map(row => [row.itemCode, normalizeOptionalText(row.brand)] as const)
+      .filter((entry): entry is readonly [string, string] => Boolean(entry[1]))
+  );
+
+  return items.map(item => {
+    const existingBrand = normalizeOptionalText(item.brand);
+    if (existingBrand) return { ...item, brand: existingBrand };
+
+    const resolvedBrand =
+      getPurchaseRequestItemCatalogCodes(item)
+        .map(code => brandByItemCode.get(code))
+        .find((value): value is string => Boolean(value)) ?? null;
+
+    return resolvedBrand ? { ...item, brand: resolvedBrand } : item;
+  });
+}
+
 export async function createPurchaseRequest(
   data: Omit<InsertPurchaseRequest, "requestNumber">,
-  items: Omit<InsertPurchaseRequestItem, "purchaseRequestId">[]
+  items: PurchaseRequestItemInsertInput[]
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
+  const resolvedItems = await resolvePurchaseRequestItemBrands(db, items);
   const requestNumber = await generatePurchaseRequestNumber(data.projectId);
   const project = await getProjectById(data.projectId);
   const printedDocumentContent = buildPurchaseRequestDocument({
@@ -4726,7 +4788,7 @@ export async function createPurchaseRequest(
     purchaseType: getPurchaseTypeLabel(data.purchaseType),
     neededBy: data.neededBy,
     printedAt: new Date(),
-    items: items.map(item => ({
+    items: resolvedItems.map(item => ({
       itemName: item.itemName,
       quantity: item.quantity,
       unit: item.unit,
@@ -4746,9 +4808,9 @@ export async function createPurchaseRequest(
     })
     .returning({ id: purchaseRequests.id });
 
-  if (items.length > 0) {
+  if (resolvedItems.length > 0) {
     await db.insert(purchaseRequestItems).values(
-      items.map(item => ({
+      resolvedItems.map(item => ({
         ...item,
         purchaseRequestId: created.id,
       }))
@@ -4955,6 +5017,38 @@ export async function getPurchaseRequestById(id: number) {
     )
     .where(eq(purchaseRequestItems.purchaseRequestId, id));
 
+  const itemCatalogCodes = Array.from(
+    new Set(
+      itemRows.flatMap(row =>
+        [
+          row.item.currentSapItemCode,
+          row.item.originalSapItemCode,
+          row.sourceItem?.sapItemCode,
+        ]
+          .map(normalizeOptionalText)
+          .filter((value): value is string => Boolean(value))
+      )
+    )
+  );
+  const itemCatalogRows =
+    itemCatalogCodes.length > 0
+      ? await db
+          .select({
+            id: sapCatalog.id,
+            itemCode: sapCatalog.itemCode,
+            description: sapCatalog.description,
+            itemGroup: sapCatalog.itemGroup,
+            brand: sapCatalog.brand,
+            partNumber: sapCatalog.partNumber,
+            tipoArticulo: sapCatalog.tipoArticulo,
+          })
+          .from(sapCatalog)
+          .where(inArray(sapCatalog.itemCode, itemCatalogCodes))
+      : [];
+  const catalogByItemCode = new Map(
+    itemCatalogRows.map(catalog => [catalog.itemCode, catalog] as const)
+  );
+
   const userIds = Array.from(
     new Set(
       [
@@ -4970,22 +5064,33 @@ export async function getPurchaseRequestById(id: number) {
       : [];
   const usersById = new Map(userRows.map(user => [user.id, user]));
 
-  const items = itemRows.map(row => ({
-    ...row.item,
-    pendingConversionQuantity: toDecimalString(
-      getPendingConversionQuantity(row.item)
-    ),
-    sourceRequest: row.sourceRequest,
-    sourceProject: row.sourceProject,
-    target:
-      mapMaterialRequestTarget(row.item, row.itemSubproject) ??
-      (row.sourceItem
+  const items = itemRows.map(row => {
+    const catalog =
+      catalogByItemCode.get(row.item.currentSapItemCode?.trim() ?? "") ??
+      catalogByItemCode.get(row.item.originalSapItemCode?.trim() ?? "") ??
+      catalogByItemCode.get(row.sourceItem?.sapItemCode?.trim() ?? "") ??
+      null;
+    const savedBrand = normalizeOptionalText(row.item.brand);
+
+    return {
+      ...row.item,
+      brand: savedBrand ?? normalizeOptionalText(catalog?.brand),
+      catalogItem: catalog,
+      pendingConversionQuantity: toDecimalString(
+        getPendingConversionQuantity(row.item)
+      ),
+      sourceRequest: row.sourceRequest,
+      sourceProject: row.sourceProject,
+      target:
+        mapMaterialRequestTarget(row.item, row.itemSubproject) ??
+        (row.sourceItem
+          ? mapMaterialRequestTarget(row.sourceItem, row.sourceSubproject)
+          : null),
+      sourceTarget: row.sourceItem
         ? mapMaterialRequestTarget(row.sourceItem, row.sourceSubproject)
-        : null),
-    sourceTarget: row.sourceItem
-      ? mapMaterialRequestTarget(row.sourceItem, row.sourceSubproject)
-      : null,
-  }));
+        : null,
+    };
+  });
 
   const sourceProjects = itemRows.reduce<
     Array<{ id: number; code: string | null; name: string | null }>
@@ -5205,14 +5310,16 @@ export async function syncPurchaseRequestConversionStatus(id: number) {
 
 export async function addPurchaseRequestItems(
   purchaseRequestId: number,
-  items: Omit<InsertPurchaseRequestItem, "purchaseRequestId">[]
+  items: PurchaseRequestItemInsertInput[]
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  if (items.length > 0) {
+  const resolvedItems = await resolvePurchaseRequestItemBrands(db, items);
+
+  if (resolvedItems.length > 0) {
     await db.insert(purchaseRequestItems).values(
-      items.map(item => ({
+      resolvedItems.map(item => ({
         ...item,
         purchaseRequestId,
       }))
