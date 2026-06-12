@@ -532,7 +532,7 @@ function getDefaultOriginItemDraft(item: any): PurchaseOrderItemDraft {
   const quantity = formatQuantityPayload(
     getPurchaseRequestItemPendingConversionQuantity(item)
   );
-  const unitPrice = formatMoneyPayload(item.unitPrice ?? "0.00");
+  const unitPrice = formatMoneyDisplay(item.unitPrice ?? "0.00");
   return {
     quantity,
     unitPrice,
@@ -595,6 +595,8 @@ export default function OrdenesCompra() {
   const [replaceItemId, setReplaceItemId] = useState<number | null>(null);
   const [replacementSearch, setReplacementSearch] = useState("");
   const [selectedSupplierId, setSelectedSupplierId] = useState("");
+  const [selectedSupplierContactId, setSelectedSupplierContactId] =
+    useState("");
   const [supplierPopoverOpen, setSupplierPopoverOpen] = useState(false);
   const [contactPopoverOpen, setContactPopoverOpen] = useState(false);
   const [savingItemId, setSavingItemId] = useState<number | null>(null);
@@ -835,6 +837,7 @@ export default function OrdenesCompra() {
         setSelectedOriginId("");
         setOriginSearch("");
         setOriginPopoverOpen(false);
+        setSelectedSupplierContactId("");
         setOriginItemDrafts({});
         setContractDraft(DEFAULT_CONTRACT_DRAFT);
         void Promise.all([
@@ -1171,15 +1174,21 @@ export default function OrdenesCompra() {
     selectedOriginItems,
   ]);
   const selectedSupplierIdNumber = Number(selectedSupplierId || 0);
+  const selectedOriginProjectId =
+    selectedOriginDetail?.purchaseRequest.projectId ??
+    selectedOriginRow?.project?.id ??
+    0;
+  const supplierContactProjectId =
+    detail?.purchaseOrder.projectId ?? selectedOriginProjectId;
   const { data: supplierContactRows } = trpc.suppliers.listContacts.useQuery(
     {
       supplierId: selectedSupplierIdNumber,
-      projectId: detail?.purchaseOrder.projectId ?? 0,
+      projectId: supplierContactProjectId,
       includeInactive: false,
     },
     {
       enabled:
-        Boolean(detail?.purchaseOrder.projectId) &&
+        Boolean(supplierContactProjectId) &&
         selectedSupplierIdNumber > 0,
     }
   );
@@ -1187,23 +1196,37 @@ export default function OrdenesCompra() {
     () => (supplierContactRows ?? []).map((row: any) => row.contact),
     [supplierContactRows]
   );
+  useEffect(() => {
+    if (!newOrderDialogOpen || !selectedSupplierContactId) return;
+    if (
+      !supplierContacts.some(
+        (contact: any) => String(contact.id) === selectedSupplierContactId
+      )
+    ) {
+      setSelectedSupplierContactId("");
+    }
+  }, [newOrderDialogOpen, selectedSupplierContactId, supplierContacts]);
   const selectedSupplierContact = useMemo(() => {
     const selectedContactId = String(
-      detail?.preferredSupplierContact?.id ??
-        detail?.purchaseOrder.supplierContactId ??
-        ""
+      newOrderDialogOpen
+        ? selectedSupplierContactId
+        : detail?.preferredSupplierContact?.id ??
+            detail?.purchaseOrder.supplierContactId ??
+            ""
     );
 
     return (
       supplierContacts.find(
         (contact: any) => String(contact.id) === selectedContactId
       ) ??
-      detail?.preferredSupplierContact ??
+      (newOrderDialogOpen ? null : detail?.preferredSupplierContact) ??
       null
     );
   }, [
     detail?.preferredSupplierContact,
     detail?.purchaseOrder.supplierContactId,
+    newOrderDialogOpen,
+    selectedSupplierContactId,
     supplierContacts,
   ]);
   const selectedSupplierCreatePayload = useMemo(
@@ -1214,9 +1237,12 @@ export default function OrdenesCompra() {
             ...(selectedSupplier?.email
               ? { supplierEmail: selectedSupplier.email }
               : {}),
+            ...(selectedSupplierContactId
+              ? { supplierContactId: Number(selectedSupplierContactId) }
+              : {}),
           }
         : {},
-    [selectedSupplier?.email, selectedSupplierIdNumber]
+    [selectedSupplier?.email, selectedSupplierContactId, selectedSupplierIdNumber]
   );
   const selectedContractCreatePayload = useMemo(
     () =>
@@ -1353,7 +1379,7 @@ export default function OrdenesCompra() {
           item.id,
           (() => {
             const quantity = String(item.quantity ?? "0.00");
-            const unitPrice = String(item.unitPrice ?? "0.00");
+            const unitPrice = formatMoneyDisplay(item.unitPrice ?? "0.00");
             return {
               quantity,
               unitPrice,
@@ -1398,7 +1424,7 @@ export default function OrdenesCompra() {
 
       const currentDraft = itemDrafts[item.id] ?? {
         quantity: String(item.quantity ?? "0.00"),
-        unitPrice: String(item.unitPrice ?? "0.00"),
+        unitPrice: formatMoneyDisplay(item.unitPrice ?? "0.00"),
         subtotal: calculateSubtotalDraftValue(item.quantity, item.unitPrice),
         taxCode: normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes),
         additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
@@ -1444,7 +1470,7 @@ export default function OrdenesCompra() {
   const getItemDraft = (item: any): PurchaseOrderItemDraft =>
     itemDrafts[item.id] ?? {
       quantity: String(item.quantity ?? "0.00"),
-      unitPrice: String(item.unitPrice ?? "0.00"),
+      unitPrice: formatMoneyDisplay(item.unitPrice ?? "0.00"),
       subtotal: calculateSubtotalDraftValue(item.quantity, item.unitPrice),
       taxCode: normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes),
       additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
@@ -1952,7 +1978,7 @@ export default function OrdenesCompra() {
             body {
               color: #000;
               font-family: Arial, Helvetica, sans-serif;
-              font-size: 10.5px;
+              font-size: 9.8px;
               margin: 0;
               background: #fff;
             }
@@ -1985,25 +2011,29 @@ export default function OrdenesCompra() {
             }
             .rule {
               border-top: 4px double #111;
-              margin: 3px 0 10px;
+              margin: 3px 0 8px;
             }
             .meta {
               display: grid;
-              gap: 10px;
-              grid-template-columns: 1.08fr 0.92fr;
+              gap: 8px;
+              grid-template-columns: 1.08fr 0.78fr 1fr;
             }
             .meta-left,
+            .meta-mid,
             .meta-right {
               display: grid;
-              gap: 4px;
+              gap: 3px;
             }
             .field {
               display: grid;
-              gap: 5px;
-              grid-template-columns: 92px 1fr;
+              gap: 4px;
+              grid-template-columns: 86px 1fr;
+            }
+            .meta-mid .field {
+              grid-template-columns: 66px 1fr;
             }
             .meta-right .field {
-              grid-template-columns: 74px 1fr;
+              grid-template-columns: 86px 1fr;
             }
             .label {
               font-weight: 800;
@@ -2014,7 +2044,7 @@ export default function OrdenesCompra() {
               }
               table {
                 border-collapse: collapse;
-                margin-top: 10px;
+                margin-top: 8px;
                 table-layout: fixed;
                 width: 100%;
               }
@@ -2037,56 +2067,60 @@ export default function OrdenesCompra() {
             }
               .item-meta {
                 color: #000;
-                font-size: 9px;
+                font-size: 8.4px;
                 margin-top: 1px;
               }
-              .lower {
-                display: grid;
-                grid-template-columns: 1fr minmax(280px, 300px);
-                gap: 14px;
-                margin-top: 8px;
-            }
-            .delivery {
-              display: grid;
-              gap: 5px;
+            .summary-row {
+              display: flex;
+              justify-content: flex-end;
+              margin-top: 4px;
             }
             .summary {
               border-collapse: collapse;
+              display: inline-table;
+              font-size: 8px;
+              line-height: 0.95;
               margin-top: 0;
               table-layout: auto;
-              width: 100%;
+              width: auto;
             }
             .summary td {
               border-bottom: 1px solid #111;
               font-weight: 800;
-                padding: 3px 4px;
-                white-space: nowrap;
+              height: 11px;
+              padding: 0 3px;
+              white-space: nowrap;
             }
             .summary td:first-child {
-              min-width: 170px;
+              min-width: 0;
+              padding-right: 10px;
               text-align: left;
+            }
+            .summary td.numeric {
+              min-width: 54px;
             }
             .signatures {
               display: grid;
               gap: 48px;
               grid-template-columns: repeat(2, 150px);
               justify-content: center;
-              margin: 22px 0 16px;
+              margin: 16px 0 10px;
             }
             .signature {
               border-top: 2px solid #111;
+              font-size: 9.4px;
               font-weight: 700;
-              padding-top: 6px;
+              padding-top: 5px;
               text-align: center;
             }
             .note {
               border: 2px solid #111;
               border-radius: 10px;
-              font-size: 10.5px;
-              line-height: 1.3;
-              margin: 12px auto 0;
+              font-size: 9.2px;
+              line-height: 1.2;
+              margin: 8px auto 0;
               max-width: 100%;
-              padding: 8px 12px;
+              padding: 6px 10px;
               text-align: center;
             }
             .note-title {
@@ -2095,8 +2129,8 @@ export default function OrdenesCompra() {
               margin-bottom: 2px;
             }
             .footer-user {
-              font-size: 10px;
-              margin-top: 8px;
+              font-size: 9px;
+              margin-top: 6px;
             }
             @media print {
               .sheet { max-width: none; padding: 0; }
@@ -2136,7 +2170,7 @@ export default function OrdenesCompra() {
                   <div class="value">${escapeHtml(salesAdvisorLabel)}</div>
                 </div>
               </div>
-              <div class="meta-right">
+              <div class="meta-mid">
                 <div class="field">
                   <div class="label">Pedido:</div>
                   <div class="value">${escapeHtml(purchaseOrder.id)}</div>
@@ -2152,6 +2186,28 @@ export default function OrdenesCompra() {
                 <div class="field">
                   <div class="label">O Compra:</div>
                   <div class="value">${escapeHtml(purchaseOrder.orderNumber)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Entrega:</div>
+                  <div class="value">${escapeHtml(deliveryDate)}</div>
+                </div>
+              </div>
+              <div class="meta-right">
+                <div class="field">
+                  <div class="label">Solicitado:</div>
+                  <div class="value">${escapeHtml(requestedByLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Requisición:</div>
+                  <div class="value">${escapeHtml(originalRequestLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Observaciones:</div>
+                  <div class="value">${escapeHtml(observations)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Cotización:</div>
+                  <div class="value">${escapeHtml(quoteLabel)}</div>
                 </div>
               </div>
             </section>
@@ -2173,29 +2229,7 @@ export default function OrdenesCompra() {
               </tbody>
             </table>
 
-            <section class="lower">
-              <div class="delivery">
-                <div class="field">
-                  <div class="label">Fecha Entrega:</div>
-                  <div class="value">${escapeHtml(deliveryDate)}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Solicitado por:</div>
-                  <div class="value">${escapeHtml(requestedByLabel)}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Requisición:</div>
-                  <div class="value">${escapeHtml(originalRequestLabel)}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Observaciones:</div>
-                  <div class="value">${escapeHtml(observations)}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Cotización:</div>
-                  <div class="value">${escapeHtml(quoteLabel)}</div>
-                </div>
-              </div>
+            <section class="summary-row">
               <table class="summary">
                 <tbody>
                   ${fiscalSummaryRows}
@@ -2706,7 +2740,9 @@ export default function OrdenesCompra() {
             setReplaceItemId(null);
             setReplacementSearch("");
             setSelectedSupplierId("");
+            setSelectedSupplierContactId("");
             setSupplierPopoverOpen(false);
+            setContactPopoverOpen(false);
             setSavingItemId(null);
             setDeletingItemId(null);
             setItemDrafts({});
@@ -2811,6 +2847,7 @@ export default function OrdenesCompra() {
                                       value={getPurchaseRequestOriginLabel(row)}
                                       onSelect={() => {
                                         setSelectedOriginId(originId);
+                                        setSelectedSupplierContactId("");
                                         setOriginPopoverOpen(false);
                                         setOriginSearch("");
                                       }}
@@ -2871,6 +2908,7 @@ export default function OrdenesCompra() {
                         selectedSupplierId={selectedSupplierId}
                         onSelect={(supplierId) => {
                           setSelectedSupplierId(supplierId);
+                          setSelectedSupplierContactId("");
                           setSupplierPopoverOpen(false);
                         }}
                       />
@@ -2889,6 +2927,61 @@ export default function OrdenesCompra() {
                       Seleccione proveedor antes de crear la OC.
                     </p>
                   )}
+                  <div className="rounded-xl border border-border/70 bg-background/80 px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Contacto preferible
+                    </p>
+                    <Popover
+                      open={contactPopoverOpen}
+                      onOpenChange={setContactPopoverOpen}
+                    >
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={contactPopoverOpen}
+                          className="mt-2 h-10 w-full justify-between overflow-hidden px-3 text-left text-sm font-normal"
+                          disabled={
+                            !selectedSupplierIdNumber ||
+                            !selectedOriginProjectId ||
+                            supplierContacts.length === 0
+                          }
+                        >
+                          <span className="truncate">
+                            {!selectedSupplierIdNumber ||
+                            !selectedOriginProjectId
+                              ? "Seleccione origen y proveedor"
+                              : supplierContacts.length === 0 &&
+                                  !selectedSupplierContact
+                                ? "Sin contactos registrados"
+                                : formatSupplierContactOptionLabel(
+                                    selectedSupplierContact
+                                  )}
+                          </span>
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        className="w-[var(--radix-popover-trigger-width)] p-0"
+                      >
+                        <SupplierContactCommandList
+                          contacts={supplierContacts}
+                          selectedContactId={selectedSupplierContactId}
+                          onSelect={contactId => {
+                            setSelectedSupplierContactId(contactId);
+                            setContactPopoverOpen(false);
+                          }}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    {formatSupplierContactMeta(selectedSupplierContact) ? (
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        {formatSupplierContactMeta(selectedSupplierContact)}
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="min-w-0 space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
@@ -3064,7 +3157,12 @@ export default function OrdenesCompra() {
                       </div>
                     ) : null}
 
-                    {!newOrderDialogOpen && canEditContractTerms ? (
+                    {newOrderDialogOpen ? (
+                      <Button type="button" variant="outline" disabled>
+                        <Save className="mr-2 h-4 w-4" />
+                        Se guarda al crear OC
+                      </Button>
+                    ) : canEditContractTerms ? (
                       <Button
                         type="button"
                         variant="outline"
@@ -3428,6 +3526,7 @@ export default function OrdenesCompra() {
                     setOriginPopoverOpen(false);
                     setOriginSearch("");
                     setSelectedOriginId("");
+                    setSelectedSupplierContactId("");
                     setOriginItemDrafts({});
                     setPendingOrderAttachments([]);
                     setPreparingOrderAttachment(false);
@@ -3636,6 +3735,199 @@ export default function OrdenesCompra() {
                   </p>
                 </div>
               </div>
+
+              {canEditContractSetup ||
+              contractDraft.appliesContract ||
+              canEditContractTerms ? (
+                <div className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <Checkbox
+                        id="purchase-order-contract-detail"
+                        checked={contractDraft.appliesContract}
+                        disabled={!canEditContractSetup}
+                        onCheckedChange={checked =>
+                          setContractDraft(current => ({
+                            ...current,
+                            appliesContract: checked === true,
+                          }))
+                        }
+                      />
+                      <Label
+                        htmlFor="purchase-order-contract-detail"
+                        className="text-base font-semibold"
+                      >
+                        Aplica contrato
+                      </Label>
+                      {contractDraft.appliesContract ? (
+                        <Badge
+                          variant="outline"
+                          className={
+                            contractDraftSummary.isExpired
+                              ? "border-rose-300 text-rose-700"
+                              : contractDraftSummary.expiresSoon
+                                ? "border-amber-300 text-amber-700"
+                                : "border-emerald-300 text-emerald-700"
+                          }
+                        >
+                          {contractDraftSummary.statusLabel}
+                        </Badge>
+                      ) : null}
+                    </div>
+                    {contractDraft.appliesContract ? (
+                      <div className="text-sm text-muted-foreground">
+                        Facturas creadas:{" "}
+                        <span className="font-semibold text-foreground">
+                          {contractSummary.registeredInvoiceCount}
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {contractDraft.appliesContract ? (
+                    <>
+                      <div className="grid gap-3 md:grid-cols-4">
+                        <div className="space-y-2">
+                          <Label>Frecuencia de pago</Label>
+                          <Select
+                            value={contractDraft.contractPaymentFrequency}
+                            disabled={!canEditContractSetup}
+                            onValueChange={value =>
+                              setContractDraft(current => ({
+                                ...current,
+                                contractPaymentFrequency:
+                                  value as PurchaseOrderContractFrequency,
+                              }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {PURCHASE_ORDER_CONTRACT_FREQUENCIES.map(
+                                frequency => (
+                                  <SelectItem key={frequency} value={frequency}>
+                                    {
+                                      PURCHASE_ORDER_CONTRACT_FREQUENCY_LABELS[
+                                        frequency
+                                      ]
+                                    }
+                                  </SelectItem>
+                                )
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Primera fecha de pago</Label>
+                          <Input
+                            type="date"
+                            value={contractDraft.contractFirstPaymentDate}
+                            disabled={!canEditContractSetup}
+                            onChange={event =>
+                              setContractDraft(current => ({
+                                ...current,
+                                contractFirstPaymentDate: event.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Fecha de terminación</Label>
+                          <Input
+                            type="date"
+                            value={contractDraft.contractEndDate}
+                            disabled={!canEditContractEndDate}
+                            onChange={event =>
+                              setContractDraft(current => ({
+                                ...current,
+                                contractEndDate: event.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Nota de cambio</Label>
+                          <Input
+                            value={contractDraft.contractNote}
+                            disabled={!canEditContractEndDate}
+                            onChange={event =>
+                              setContractDraft(current => ({
+                                ...current,
+                                contractNote: event.target.value,
+                              }))
+                            }
+                            placeholder="Motivo del cambio"
+                          />
+                        </div>
+                      </div>
+
+                      {contractDraftSummary.isExpired ? (
+                        <div className="flex items-start gap-2 rounded-xl border border-rose-300 bg-rose-50 p-3 text-sm text-rose-700">
+                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                          <span>
+                            El contrato está vencido y no permitirá agregar
+                            nuevas facturas.
+                          </span>
+                        </div>
+                      ) : contractDraftSummary.expiresSoon ? (
+                        <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                          <span>
+                            El contrato vence en{" "}
+                            {contractDraftSummary.daysUntilEnd} día(s).
+                          </span>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+
+                  {canEditContractTerms ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleSaveContractTerms}
+                      disabled={updateContractTermsMutation.isPending}
+                    >
+                      <Save className="mr-2 h-4 w-4" />
+                      {updateContractTermsMutation.isPending
+                        ? "Guardando..."
+                        : "Guardar contrato"}
+                    </Button>
+                  ) : null}
+
+                  {(detail?.auditLogs ?? []).length > 0 ? (
+                    <div className="rounded-xl border border-border/70 bg-background p-3">
+                      <div className="mb-2 text-sm font-semibold">
+                        Bitácora del contrato
+                      </div>
+                      <div className="space-y-2">
+                        {(detail?.auditLogs ?? [])
+                          .slice(0, 6)
+                          .map((entry: any) => (
+                            <div
+                              key={entry.log.id}
+                              className="grid gap-2 text-xs text-muted-foreground md:grid-cols-[1fr_1fr_1fr]"
+                            >
+                              <span className="font-medium text-foreground">
+                                {entry.log.field}
+                              </span>
+                              <span>
+                                {entry.log.oldValue || "-"} →{" "}
+                                {entry.log.newValue || "-"}
+                              </span>
+                              <span className="md:text-right">
+                                {entry.changedBy?.name ||
+                                  entry.changedBy?.email ||
+                                  `Usuario #${entry.log.changedById}`}
+                              </span>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div className="overflow-x-auto rounded-2xl border border-border/70">
                 <table className="min-w-[1500px] table-auto text-sm lg:text-[15px]">

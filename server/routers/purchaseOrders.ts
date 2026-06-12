@@ -382,6 +382,7 @@ export const purchaseOrdersRouter = router({
           itemsToConvert: z.array(quantityToConvertSchema).optional(),
           classification: z.enum(["oc", "cd"]).default("oc"),
           supplierId: z.number().optional(),
+          supplierContactId: z.number().nullable().optional(),
           supplierEmail: z.string().email().optional(),
           notes: z.string().optional(),
         })
@@ -539,6 +540,16 @@ export const purchaseOrdersRouter = router({
         purchaseOrderId: number;
         purchaseOrderNumber: string;
       }> = [];
+      const selectedSupplierContact = input.supplierContactId
+        ? await db.getSupplierContactById(input.supplierContactId)
+        : null;
+
+      if (input.supplierContactId && !selectedSupplierContact) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "El contacto seleccionado no existe",
+        });
+      }
 
       for (const [projectId, projectItems] of Array.from(
         selectedItemsByProject.entries()
@@ -557,6 +568,26 @@ export const purchaseOrdersRouter = router({
           projectFlowItems[0]?.flow?.supplierId ??
           undefined;
 
+        if (
+          selectedSupplierContact &&
+          selectedSupplierContact.supplierId !== inferredSupplierId
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "El contacto seleccionado no pertenece al proveedor",
+          });
+        }
+
+        if (
+          selectedSupplierContact?.projectId &&
+          selectedSupplierContact.projectId !== projectId
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "El contacto seleccionado no pertenece al proyecto",
+          });
+        }
+
         const created = await db.createPurchaseOrder(
           {
             purchaseRequestId: detail.purchaseRequest.id,
@@ -564,6 +595,7 @@ export const purchaseOrdersRouter = router({
             classification: inferredClassification,
             purchaseType: detail.purchaseRequest.purchaseType,
             supplierId: inferredSupplierId,
+            supplierContactId: selectedSupplierContact?.id ?? null,
             supplierEmail: input.supplierEmail,
             status: "borrador",
             neededBy: detail.purchaseRequest.neededBy,

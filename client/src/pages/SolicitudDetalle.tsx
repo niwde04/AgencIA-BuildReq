@@ -1564,14 +1564,6 @@ export default function SolicitudDetalle() {
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Tipo de requisición
-              </p>
-              <p className="text-sm font-medium mt-1">
-                {REQUEST_TYPE_LABELS[request.requestType] || request.requestType}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Enrutada a
               </p>
               <p className="text-sm font-medium mt-1">{RECIPIENT_LABELS[request.recipient]}</p>

@@ -5241,10 +5241,15 @@ export async function createPurchaseOrder(
   const supplier = data.supplierId
     ? await getSupplierById(data.supplierId)
     : null;
-  const preferredSupplierContact = await getPreferredSupplierSalesContact({
-    supplierId: data.supplierId,
-    projectId: data.projectId,
-  });
+  const selectedSupplierContact = data.supplierContactId
+    ? await getSupplierContactById(data.supplierContactId)
+    : null;
+  const preferredSupplierContact =
+    selectedSupplierContact ??
+    (await getPreferredSupplierSalesContact({
+      supplierId: data.supplierId,
+      projectId: data.projectId,
+    }));
   const [sourcePurchaseRequest] = data.purchaseRequestId
     ? await db
         .select()

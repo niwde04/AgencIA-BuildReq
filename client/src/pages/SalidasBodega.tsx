@@ -1542,7 +1542,7 @@ export default function SalidasBodega() {
           }
         }}
       >
-        <DialogContent className="max-h-[92vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-2xl p-5 sm:w-[calc(100vw-3rem)] sm:max-w-6xl sm:p-8">
+        <DialogContent className="max-h-[92vh] !w-[calc(100vw-0.5rem)] !max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-5 sm:!w-[calc(100vw-1rem)] sm:!max-w-[calc(100vw-1rem)] sm:p-8 xl:!max-w-[1800px] 2xl:!max-w-[1900px]">
           <DialogHeader className="border-b border-border/70 pb-5">
             <DialogTitle className="flex flex-wrap items-center gap-3 text-2xl font-bold tracking-tight sm:text-3xl">
               {detail?.warehouseExit.exitNumber || "Salida de Inventario"}
@@ -1636,7 +1636,7 @@ export default function SalidasBodega() {
               ) : null}
 
               <div className="overflow-x-auto rounded-xl border">
-                <table className="w-full text-sm">
+                <table className="w-full min-w-[1420px] text-sm">
                   <thead>
                     <tr className="border-b bg-muted/30">
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1936,6 +1936,17 @@ export default function SalidasBodega() {
               ) : null}
 
               <div className="flex flex-wrap justify-end gap-3 border-t pt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setSelectedId(null);
+                    resetReturnPanel();
+                  }}
+                >
+                  Cerrar
+                </Button>
+
                 {canCreateReturns && detail.warehouseExit.status === "emitida" ? (
                   <Button
                     variant="outline"

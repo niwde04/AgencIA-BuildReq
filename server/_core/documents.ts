@@ -1177,12 +1177,17 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     label: string;
     value: string;
     maxLines?: number;
+    fontSize?: number;
+    leading?: number;
   }) {
+    const fontSize = params.fontSize ?? 9.6;
+    const leading = params.leading ?? 11.5;
+
     drawText(page, {
       x: params.x,
       top: params.top,
       text: params.label,
-      fontSize: 10.5,
+      fontSize,
       font: "F2",
       color: ink,
     });
@@ -1190,7 +1195,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     const valueLines = wrapText(
       params.value || "-",
       params.valueWidth,
-      10.5,
+      fontSize,
       "F2",
       params.maxLines ?? 2
     );
@@ -1198,16 +1203,16 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     valueLines.forEach((line, index) => {
       drawText(page, {
         x: params.x + params.labelWidth,
-        top: params.top + index * 13,
+        top: params.top + index * leading,
         width: params.valueWidth,
         text: line,
-        fontSize: 10.5,
+        fontSize,
         font: "F2",
         color: ink,
       });
     });
 
-    return Math.max(15, valueLines.length * 13);
+    return Math.max(13, valueLines.length * leading);
   }
 
   function drawLogo(top: number) {
@@ -1263,17 +1268,18 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     drawLine(page, marginX, 91, marginX + contentWidth, 91, ink, 1.1);
     drawLine(page, marginX, 95, marginX + contentWidth, 95, ink, 1.1);
 
-    let leftTop = 116;
-    let rightTop = 116;
-    const leftValueWidth = 236;
-    const rightX = marginX + 352;
+    let leftTop = 108;
+    let middleTop = 108;
+    let rightTop = 108;
+    const middleX = marginX + 266;
+    const rightX = marginX + 392;
 
     leftTop +=
       drawLabelValue({
         x: marginX,
         top: leftTop,
-        labelWidth: 96,
-        valueWidth: leftValueWidth,
+        labelWidth: 82,
+        valueWidth: 178,
         label: "Fecha:",
         value: params.createdDateLabel,
       }) + 3;
@@ -1281,8 +1287,8 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       drawLabelValue({
         x: marginX,
         top: leftTop,
-        labelWidth: 96,
-        valueWidth: leftValueWidth,
+        labelWidth: 82,
+        valueWidth: 178,
         label: "Proveedor:",
         value: params.supplierLabel,
         maxLines: 2,
@@ -1291,50 +1297,98 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       drawLabelValue({
         x: marginX,
         top: leftTop,
-        labelWidth: 96,
-        valueWidth: leftValueWidth,
+        labelWidth: 82,
+        valueWidth: 178,
         label: "Asesor Vta:",
         value: params.salesAdvisorLabel || "-",
+        maxLines: 2,
+      }) + 3;
+    leftTop +=
+      drawLabelValue({
+        x: marginX,
+        top: leftTop,
+        labelWidth: 82,
+        valueWidth: 178,
+        label: "Entrega:",
+        value: params.deliveryDateLabel,
+      }) + 3;
+    middleTop +=
+      drawLabelValue({
+        x: middleX,
+        top: middleTop,
+        labelWidth: 58,
+        valueWidth: 66,
+        label: "Pedido:",
+        value: params.orderId,
+      }) + 3;
+    middleTop +=
+      drawLabelValue({
+        x: middleX,
+        top: middleTop,
+        labelWidth: 58,
+        valueWidth: 66,
+        label: "F Pago:",
+        value: "CREDITO",
+      }) + 3;
+    middleTop +=
+      drawLabelValue({
+        x: middleX,
+        top: middleTop,
+        labelWidth: 58,
+        valueWidth: 66,
+        label: "Moneda:",
+        value: "LEMPIRA",
+      }) + 3;
+    middleTop +=
+      drawLabelValue({
+        x: middleX,
+        top: middleTop,
+        labelWidth: 58,
+        valueWidth: 66,
+        label: "O Compra:",
+        value: params.orderNumber,
+      }) + 3;
+    rightTop +=
+      drawLabelValue({
+        x: rightX,
+        top: rightTop,
+        labelWidth: 78,
+        valueWidth: 96,
+        label: "Solicitado:",
+        value: params.requestedByLabel,
         maxLines: 2,
       }) + 3;
     rightTop +=
       drawLabelValue({
         x: rightX,
         top: rightTop,
-        labelWidth: 72,
-        valueWidth: 112,
-        label: "Pedido:",
-        value: params.orderId,
+        labelWidth: 78,
+        valueWidth: 96,
+        label: "Requisición:",
+        value: params.originalRequestLabel,
+        maxLines: 2,
       }) + 3;
     rightTop +=
       drawLabelValue({
         x: rightX,
         top: rightTop,
-        labelWidth: 72,
-        valueWidth: 112,
-        label: "F Pago:",
-        value: "CREDITO",
+        labelWidth: 78,
+        valueWidth: 96,
+        label: "Observaciones:",
+        value: params.observations,
+        maxLines: 2,
       }) + 3;
     rightTop +=
       drawLabelValue({
         x: rightX,
         top: rightTop,
-        labelWidth: 72,
-        valueWidth: 112,
-        label: "Moneda:",
-        value: "LEMPIRA",
-      }) + 3;
-    rightTop +=
-      drawLabelValue({
-        x: rightX,
-        top: rightTop,
-        labelWidth: 72,
-        valueWidth: 112,
-        label: "O Compra:",
-        value: params.orderNumber,
+        labelWidth: 78,
+        valueWidth: 96,
+        label: "Cotización:",
+        value: params.quoteLabel,
       }) + 3;
 
-    return Math.max(198, leftTop, rightTop) + 12;
+    return Math.max(190, leftTop, middleTop, rightTop) + 8;
   }
 
   function drawContinuationHeader() {
@@ -1534,9 +1588,9 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   }
 
   function drawSummary(top: number) {
-    const summaryWidth = 260;
+    const summaryWidth = 164;
     const summaryX = marginX + contentWidth - summaryWidth;
-    const rowHeight = 18;
+    const rowHeight = 11.5;
     const height = params.summaryRows.length * rowHeight;
 
     drawRect(page, summaryX, top, summaryWidth, height, {
@@ -1558,19 +1612,19 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
         );
       }
       drawText(page, {
-        x: summaryX + 8,
-        top: rowTop + 5,
+        x: summaryX + 6,
+        top: rowTop + 2.4,
         text: row.label,
-        fontSize: row.emphasized ? 9.8 : 9.2,
+        fontSize: row.emphasized ? 7.8 : 7.3,
         font: row.emphasized ? "F2" : "F1",
         color: ink,
       });
       drawText(page, {
-        x: summaryX + 180,
-        top: rowTop + 5,
-        width: summaryWidth - 188,
+        x: summaryX + 102,
+        top: rowTop + 2.4,
+        width: summaryWidth - 108,
         text: row.value,
-        fontSize: row.emphasized ? 9.8 : 9.2,
+        fontSize: row.emphasized ? 7.8 : 7.3,
         font: "F2",
         color: ink,
         align: "right",
@@ -1582,58 +1636,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
 
   function drawLowerSection(top: number) {
     const summary = drawSummary(top);
-    const leftValueWidth = summary.summaryX - marginX - 118;
-    let leftTop = top + 2;
-
-    leftTop +=
-      drawLabelValue({
-        x: marginX,
-        top: leftTop,
-        labelWidth: 104,
-        valueWidth: leftValueWidth,
-        label: "Fecha Entrega:",
-        value: params.deliveryDateLabel,
-      }) + 3;
-    leftTop +=
-      drawLabelValue({
-        x: marginX,
-        top: leftTop,
-        labelWidth: 104,
-        valueWidth: leftValueWidth,
-        label: "Solicitado:",
-        value: params.requestedByLabel,
-      }) + 3;
-    leftTop +=
-      drawLabelValue({
-        x: marginX,
-        top: leftTop,
-        labelWidth: 104,
-        valueWidth: leftValueWidth,
-        label: "Requisición:",
-        value: params.originalRequestLabel,
-        maxLines: 2,
-      }) + 3;
-    leftTop +=
-      drawLabelValue({
-        x: marginX,
-        top: leftTop,
-        labelWidth: 104,
-        valueWidth: leftValueWidth,
-        label: "Observaciones:",
-        value: params.observations,
-        maxLines: 3,
-      }) + 3;
-    leftTop +=
-      drawLabelValue({
-        x: marginX,
-        top: leftTop,
-        labelWidth: 104,
-        valueWidth: leftValueWidth,
-        label: "Cotización:",
-        value: params.quoteLabel,
-      }) + 3;
-
-    const signaturesTop = Math.max(leftTop, top + summary.height) + 43;
+    const signaturesTop = top + summary.height + 30;
     const signatureWidth = 150;
     const firstSignatureX = marginX + 96;
     const secondSignatureX = firstSignatureX + 190;
@@ -1661,7 +1664,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       signaturesTop + 7,
       signatureWidth,
       "Elaborado por:",
-      10,
+      9.2,
       "F2"
     );
     drawCenteredText(
@@ -1669,35 +1672,35 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       signaturesTop + 7,
       signatureWidth,
       "Autorizado por:",
-      10,
+      9.2,
       "F2"
     );
 
-    const noteTop = signaturesTop + 40;
+    const noteTop = signaturesTop + 34;
     const noteX = marginX + 24;
     const noteWidth = contentWidth - 48;
-    const noteHeight = 64;
+    const noteHeight = 54;
     drawRect(page, noteX, noteTop, noteWidth, noteHeight, {
       stroke: ink,
       lineWidth: 1.2,
     });
-    drawCenteredText(noteX, noteTop + 9, noteWidth, "Tomar Nota:", 11.5, "F2");
+    drawCenteredText(noteX, noteTop + 8, noteWidth, "Tomar Nota:", 10, "F2");
     drawCenteredWrappedText(
       noteX + 18,
-      noteTop + 25,
+      noteTop + 22,
       noteWidth - 36,
       "Emitir factura a nombre de: HIDALGO e HIDALGO HONDURAS SA DE CV; RTN: 08019013549808; Dirección: Blvd. Suyapa, Edificio Metropolis, Torre 2, Piso 20, Ofi. 22004. Presentar con la factura su constancia de estar sujetos al RÉGIMEN DE PAGOS A CUENTA vigente, caso contrario se procederá con las retenciones correspondientes.",
-      9.5,
+      8.4,
       "F1",
-      11.5,
+      10,
       4
     );
 
     drawText(page, {
       x: marginX,
-      top: noteTop + noteHeight + 12,
+      top: noteTop + noteHeight + 9,
       text: params.requestedByLabel,
-      fontSize: 9,
+      fontSize: 8.6,
       color: ink,
     });
   }
@@ -1748,10 +1751,10 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     currentTop += drawItemRow(item, currentTop);
   });
 
-  if (currentTop + 14 + 270 > printableBottom) {
+  if (currentTop + 10 + 245 > printableBottom) {
     currentTop = startNewPage(false);
   } else {
-    currentTop += 14;
+    currentTop += 10;
   }
   drawLowerSection(currentTop);
 

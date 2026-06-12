@@ -951,7 +951,7 @@ export default function Articulos() {
           if (!open) setSelectedArticle(null);
         }}
       >
-        <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-4xl lg:max-w-5xl">
+        <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>
               {isResolvingSelectedArticle
@@ -961,8 +961,8 @@ export default function Articulos() {
           </DialogHeader>
 
           {selectedArticle ? (
-            <div className="space-y-5 pt-2">
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1fr_1.35fr]">
+            <div className="space-y-4 pt-2">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div className="space-y-1">
                   <Label className="text-xs">
                     {isResolvingSelectedArticle ? "Código real" : "Código"}
@@ -982,13 +982,14 @@ export default function Articulos() {
                   <Label className="text-xs">Grupo</Label>
                   <Input value={selectedArticle.itemGroup || ""} readOnly />
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-1 md:col-span-2">
                   <Label className="text-xs">Descripción</Label>
-                  <Input value={selectedArticle.description} readOnly />
+                  <Textarea
+                    rows={2}
+                    value={selectedArticle.description}
+                    readOnly
+                  />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div className="space-y-1">
                   <Label className="text-xs">Marca</Label>
                   <Input
@@ -1040,7 +1041,7 @@ export default function Articulos() {
                 </div>
               ) : null}
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-[180px_220px_220px]">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_180px_220px]">
                 <div className="space-y-1">
                   <Label className="text-xs">Tipo</Label>
                   <Select
@@ -1107,9 +1108,6 @@ export default function Articulos() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Se usará en las solicitudes de ese proyecto.
-                  </p>
                 </div>
               ) : null}
 
@@ -1269,15 +1267,27 @@ export default function Articulos() {
                 </div>
               ) : null}
 
-              <div className="flex justify-end border-t pt-4">
+              <div className="flex justify-end gap-2 border-t pt-4">
                 <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setSelectedArticle(null)}
+                  disabled={
+                    updateMutation.isPending ||
+                    resolveFixedAssetMutation.isPending ||
+                    updateFixedAssetDetailsMutation.isPending
+                  }
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="button"
                   onClick={submitUpdate}
                   disabled={
                     updateMutation.isPending ||
                     resolveFixedAssetMutation.isPending ||
                     updateFixedAssetDetailsMutation.isPending
                   }
-                  className="w-full sm:w-auto"
                 >
                   <Save className="mr-2 h-4 w-4" />
                   {updateMutation.isPending || resolveFixedAssetMutation.isPending
