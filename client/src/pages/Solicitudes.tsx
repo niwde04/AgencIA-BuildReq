@@ -213,7 +213,7 @@ export default function Solicitudes() {
                       Proyecto
                     </th>
                     <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
-                      Subproyecto
+                      Destino
                     </th>
                     <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                       Solicitado por
