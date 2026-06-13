@@ -414,7 +414,8 @@ function canApproveRequestAuthorization(
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administrador_proyecto" ||
-    user.buildreqRole === "administracion_central"
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "bodeguero_proyecto"
   );
 }
 
@@ -445,8 +446,8 @@ async function notifyMaterialRequestSubmitted(params: {
           : "Nueva requisición de servicios",
       message:
         params.requestType === "bienes"
-          ? `La requisición ${params.requestNumber} requiere autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega antes de traducir y asignar flujos. ${dueDateMessage}`
-          : `La requisición ${params.requestNumber} requiere aprobación del Administrador del Proyecto, Administración Central o Jefe de Bodega. ${dueDateMessage}`,
+          ? `La requisición ${params.requestNumber} requiere autorización del Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto antes de traducir y asignar flujos. ${dueDateMessage}`
+          : `La requisición ${params.requestNumber} requiere aprobación del Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto. ${dueDateMessage}`,
       type: "nueva_solicitud",
       relatedEntityType: "material_request",
       relatedEntityId: params.requestId,
@@ -462,8 +463,8 @@ async function notifyMaterialRequestSubmitted(params: {
           : "Nueva requisición de servicios",
       message:
         params.requestType === "bienes"
-          ? `La requisición ${params.requestNumber} requiere autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega antes de traducir y asignar flujos. ${dueDateMessage}`
-          : `La requisición ${params.requestNumber} requiere aprobación del Administrador del Proyecto, Administración Central o Jefe de Bodega. ${dueDateMessage}`,
+          ? `La requisición ${params.requestNumber} requiere autorización del Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto antes de traducir y asignar flujos. ${dueDateMessage}`
+          : `La requisición ${params.requestNumber} requiere aprobación del Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto. ${dueDateMessage}`,
       type: "nueva_solicitud",
       relatedEntityType: "material_request",
       relatedEntityId: params.requestId,
@@ -597,12 +598,6 @@ export const materialRequestsRouter = router({
         recipient: _recipient,
         ...requestData
       } = input;
-      if (ctx.user.buildreqRole === "bodeguero_proyecto") {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "El Bodeguero de Proyecto no puede crear requisiciones",
-        });
-      }
       assertProjectScopedCreation(ctx.user, input.projectId);
       const completeItems = getCompleteRequestItems(items);
       const resolvedItems = await resolveRequestItemTargets(
@@ -747,7 +742,7 @@ export const materialRequestsRouter = router({
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo el Administrador del Proyecto, Administración Central o Jefe de Bodega pueden autorizar los ítems",
+            "Solo el Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto pueden autorizar los ítems",
         });
       }
 
@@ -938,7 +933,7 @@ export const materialRequestsRouter = router({
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo el Administrador del Proyecto, Administración Central o Jefe de Bodega pueden aprobar servicios",
+            "Solo el Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto pueden aprobar servicios",
         });
       }
 
@@ -976,7 +971,7 @@ export const materialRequestsRouter = router({
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo el Administrador del Proyecto, Administración Central o Jefe de Bodega pueden rechazar servicios",
+            "Solo el Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto pueden rechazar servicios",
         });
       }
 
@@ -1048,7 +1043,7 @@ export const materialRequestsRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message:
-            "La requisición todavía está pendiente de autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega.",
+            "La requisición todavía está pendiente de autorización del Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto.",
         });
       }
       return db.assignFlow(input.requestId, input.flowType, ctx.user.id);
@@ -1080,7 +1075,7 @@ export const materialRequestsRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message:
-            "La requisición todavía tiene ítems pendientes de autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega.",
+            "La requisición todavía tiene ítems pendientes de autorización del Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto.",
         });
       }
 

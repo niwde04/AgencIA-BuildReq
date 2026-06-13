@@ -5193,6 +5193,44 @@ describe("BuildReq - Material Request Validations", () => {
     ).rejects.toThrow("No tiene acceso a requisiciones de otro proyecto");
   });
 
+  it("Bodeguero de Proyecto can create material requests for their assigned project", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const createMaterialRequestSpy = vi
+      .spyOn(db, "createMaterialRequest")
+      .mockResolvedValue({ id: 95, requestNumber: "REQ-2026-0095" });
+
+    await expect(
+      caller.materialRequests.create({
+        saveMode: "draft",
+        projectId: 1,
+        requestType: "bienes",
+        items: [{ itemName: "Cemento", quantity: "10", unit: "saco" }],
+      })
+    ).resolves.toEqual({
+      id: 95,
+      requestNumber: "REQ-2026-0095",
+      status: "borrador",
+    });
+
+    expect(createMaterialRequestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 1,
+        requestedById: 6,
+        status: "borrador",
+      }),
+      [
+        expect.objectContaining({
+          itemName: "Cemento",
+          quantity: "10",
+          unit: "saco",
+        }),
+      ]
+    );
+
+    createMaterialRequestSpy.mockRestore();
+  });
+
   it("Requires at least one item in request", async () => {
     const { ctx } = createIngenieroContext();
     const caller = appRouter.createCaller(ctx);
@@ -5909,6 +5947,137 @@ describe("BuildReq - Material Request Validations", () => {
     createNotificationSpy.mockRestore();
   });
 
+  it("Bodeguero de Proyecto can approve and reject request items in their assigned project", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValueOnce({
+        request: {
+          id: 59,
+          requestNumber: "REQ-2026-0059",
+          requestedById: 2,
+          projectId: 1,
+          requestType: "bienes",
+          status: "pendiente_aprobar",
+          approvalStatus: "pendiente",
+        },
+        items: [
+          {
+            id: 204,
+            itemName: "Bloque",
+            approvalStatus: "pendiente",
+            assignedFlow: null,
+            sapItemCode: null,
+            deliveredQuantity: "0.00",
+            dispatchedQuantity: "0.00",
+          },
+        ],
+      } as any)
+      .mockResolvedValueOnce({
+        request: {
+          id: 60,
+          requestNumber: "REQ-2026-0060",
+          requestedById: 2,
+          projectId: 1,
+          requestType: "bienes",
+          status: "pendiente_aprobar",
+          approvalStatus: "pendiente",
+        },
+        items: [
+          {
+            id: 205,
+            itemName: "Varilla",
+            approvalStatus: "pendiente",
+            assignedFlow: null,
+            sapItemCode: null,
+            deliveredQuantity: "0.00",
+            dispatchedQuantity: "0.00",
+          },
+        ],
+      } as any);
+    const reviewMaterialRequestItemsSpy = vi
+      .spyOn(db, "reviewMaterialRequestItems")
+      .mockResolvedValueOnce({
+        pendingCount: 0,
+        approvedCount: 1,
+        rejectedCount: 0,
+        requestStatus: "en_espera",
+        approvalStatus: "aprobada",
+        workflowStage: "bodega_proyecto",
+      } as any)
+      .mockResolvedValueOnce({
+        pendingCount: 0,
+        approvedCount: 0,
+        rejectedCount: 1,
+        requestStatus: "cerrada",
+        approvalStatus: "rechazada",
+        workflowStage: "administrador_proyecto",
+      } as any);
+    const getUsersByBuildreqRoleSpy = vi
+      .spyOn(db, "getUsersByBuildreqRole")
+      .mockResolvedValue([{ id: 3 }] as any);
+    const getUsersByBuildreqRoleAndProjectSpy = vi
+      .spyOn(db, "getUsersByBuildreqRoleAndProject")
+      .mockResolvedValue([{ id: 6 }] as any);
+    const createNotificationSpy = vi
+      .spyOn(db, "createNotification")
+      .mockResolvedValue({ id: 1 } as any);
+
+    await expect(
+      caller.materialRequests.reviewItems({
+        requestId: 59,
+        itemIds: [204],
+        decision: "aprobada",
+      })
+    ).resolves.toEqual({
+      pendingCount: 0,
+      approvedCount: 1,
+      rejectedCount: 0,
+      requestStatus: "en_espera",
+      approvalStatus: "aprobada",
+      workflowStage: "bodega_proyecto",
+    });
+
+    await expect(
+      caller.materialRequests.reviewItems({
+        requestId: 60,
+        itemIds: [205],
+        decision: "rechazada",
+        reason: "No aplica",
+      })
+    ).resolves.toEqual({
+      pendingCount: 0,
+      approvedCount: 0,
+      rejectedCount: 1,
+      requestStatus: "cerrada",
+      approvalStatus: "rechazada",
+      workflowStage: "administrador_proyecto",
+    });
+
+    expect(reviewMaterialRequestItemsSpy).toHaveBeenNthCalledWith(1, {
+      requestId: 59,
+      itemIds: [204],
+      approvalStatus: "aprobada",
+      approvedById: 6,
+      rejectionReason: undefined,
+    });
+    expect(reviewMaterialRequestItemsSpy).toHaveBeenNthCalledWith(2, {
+      requestId: 60,
+      itemIds: [205],
+      approvalStatus: "rechazada",
+      approvedById: 6,
+      rejectionReason: "No aplica",
+    });
+    expect(createNotificationSpy).toHaveBeenCalled();
+
+    getMaterialRequestByIdSpy.mockRestore();
+    reviewMaterialRequestItemsSpy.mockRestore();
+    getUsersByBuildreqRoleSpy.mockRestore();
+    getUsersByBuildreqRoleAndProjectSpy.mockRestore();
+    createNotificationSpy.mockRestore();
+  });
+
   it("Admin Central can approve service requests", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -5944,6 +6113,66 @@ describe("BuildReq - Material Request Validations", () => {
     createNotificationSpy.mockRestore();
   });
 
+  it("Bodeguero de Proyecto can approve and reject service requests in their assigned project", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValueOnce({
+        request: {
+          id: 61,
+          requestNumber: "REQ-2026-0061",
+          requestedById: 2,
+          projectId: 1,
+          requestType: "servicios",
+          status: "pendiente_aprobar",
+        },
+        items: [],
+      } as any)
+      .mockResolvedValueOnce({
+        request: {
+          id: 62,
+          requestNumber: "REQ-2026-0062",
+          requestedById: 2,
+          projectId: 1,
+          requestType: "servicios",
+          status: "pendiente_aprobar",
+        },
+        items: [],
+      } as any);
+    const approveMaterialRequestSpy = vi
+      .spyOn(db, "approveMaterialRequest")
+      .mockResolvedValue({ success: true });
+    const rejectMaterialRequestSpy = vi
+      .spyOn(db, "rejectMaterialRequest")
+      .mockResolvedValue({ success: true });
+    const createNotificationSpy = vi
+      .spyOn(db, "createNotification")
+      .mockResolvedValue({ id: 1 } as any);
+
+    await expect(caller.materialRequests.approve({ id: 61 })).resolves.toEqual({
+      success: true,
+    });
+    await expect(
+      caller.materialRequests.reject({ id: 62, reason: "No aplica" })
+    ).resolves.toEqual({
+      success: true,
+    });
+
+    expect(approveMaterialRequestSpy).toHaveBeenCalledWith(61, 6);
+    expect(rejectMaterialRequestSpy).toHaveBeenCalledWith(
+      62,
+      6,
+      "No aplica"
+    );
+    expect(createNotificationSpy).toHaveBeenCalled();
+
+    getMaterialRequestByIdSpy.mockRestore();
+    approveMaterialRequestSpy.mockRestore();
+    rejectMaterialRequestSpy.mockRestore();
+    createNotificationSpy.mockRestore();
+  });
+
   it("blocks SAP translation while a goods request is pending item authorization", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
@@ -5970,7 +6199,7 @@ describe("BuildReq - Material Request Validations", () => {
         sapItemCode: "05050200058",
       })
     ).rejects.toThrow(
-      "pendiente de autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega"
+      "pendiente de autorización del Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto"
     );
 
     getRequestItemByIdSpy.mockRestore();

@@ -789,6 +789,11 @@ export default function SolicitudDetalle() {
     userRole === "administrador_proyecto" ||
     userRole === "jefe_bodega_central" ||
     userRole === "administracion_central" ||
+    userRole === "bodeguero_proyecto" ||
+    isAdmin;
+  const canRejectApprovedItems =
+    userRole === "administrador_proyecto" ||
+    userRole === "administracion_central" ||
     isAdmin;
 
   const invalidateAll = () =>
@@ -1500,7 +1505,7 @@ export default function SolicitudDetalle() {
                 <div>
                   <p className="text-sm font-medium">Aprobación de servicio pendiente</p>
                   <p className="text-xs text-muted-foreground">
-                    El Administrador del Proyecto, Administración Central o Jefe de Bodega deben aprobar o rechazar antes de continuar a Oficina Central.
+                    El Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto deben aprobar o rechazar antes de continuar a Oficina Central.
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -1546,7 +1551,7 @@ export default function SolicitudDetalle() {
                 <p className="text-xs text-muted-foreground">
                   {canReviewGoodsItems
                     ? "Autoriza o rechaza cada producto desde la tabla inferior. Cuando termines la revisión, la requisición pasará a Bodega para traducir y asignar flujos."
-                    : "Esta requisición está esperando que el Administrador del Proyecto, Administración Central o Jefe de Bodega revisen cada ítem antes de habilitar SAP y los flujos."}
+                    : "Esta requisición está esperando que el Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto revisen cada ítem antes de habilitar SAP y los flujos."}
                 </p>
               </div>
               <Badge
@@ -1825,7 +1830,7 @@ export default function SolicitudDetalle() {
                     return !entry.assignedFlow && !hasActiveFlows && !hasMovement;
                   });
                   const canRejectApprovedItem =
-                    canApproveProjectRequests &&
+                    canRejectApprovedItems &&
                     request.requestType === "bienes" &&
                     request.status !== "borrador" &&
                     request.status !== "cerrada" &&
@@ -2235,7 +2240,7 @@ export default function SolicitudDetalle() {
                   <>
                     <AlertCircle className="h-4 w-4" />
                     <span>
-                      Esperando autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega para habilitar SAP y los flujos.
+                      Esperando autorización del Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto para habilitar SAP y los flujos.
                     </span>
                   </>
                 )}

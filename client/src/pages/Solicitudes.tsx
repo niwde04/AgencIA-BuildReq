@@ -115,8 +115,7 @@ export default function Solicitudes() {
   const [search, setSearch] = useState("");
   const userRole = (user as any)?.buildreqRole || "";
   const isSuperintendent = userRole === "superintendente";
-  const canCreateRequest =
-    userRole !== "bodeguero_proyecto" && !isSuperintendent;
+  const canCreateRequest = !isSuperintendent;
 
   const { data: requests, isLoading, error } = trpc.materialRequests.list.useQuery(
     statusFilter !== "all" ? { status: statusFilter } : undefined
