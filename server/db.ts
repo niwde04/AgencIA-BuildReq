@@ -8786,6 +8786,7 @@ export async function listInvoices(filters?: {
 }) {
   const db = await getDb();
   if (!db) return [];
+  const invoiceCreatedByUsers = alias(users, "invoice_list_created_by_users");
   const conditions = [];
   if (filters?.projectId)
     conditions.push(eq(invoices.projectId, filters.projectId));
@@ -8803,6 +8804,10 @@ export async function listInvoices(filters?: {
   const normalizedSearch = filters?.search?.trim();
   if (normalizedSearch) {
     const searchPattern = `%${normalizedSearch}%`;
+    const requestSearchRequestedByUsers = alias(
+      users,
+      "invoice_request_search_requested_by_users"
+    );
     const requestSearchRows = await db
       .select({
         invoiceId: invoiceItems.invoiceId,
@@ -8820,7 +8825,17 @@ export async function listInvoices(filters?: {
         materialRequests,
         eq(requestItems.requestId, materialRequests.id)
       )
-      .where(ilike(materialRequests.requestNumber, searchPattern));
+      .leftJoin(
+        requestSearchRequestedByUsers,
+        eq(materialRequests.requestedById, requestSearchRequestedByUsers.id)
+      )
+      .where(
+        or(
+          ilike(materialRequests.requestNumber, searchPattern),
+          ilike(requestSearchRequestedByUsers.name, searchPattern),
+          ilike(requestSearchRequestedByUsers.email, searchPattern)
+        )
+      );
     const invoiceIdsMatchingRequestSearch = Array.from(
       new Set(requestSearchRows.map(row => row.invoiceId))
     );
@@ -8837,6 +8852,8 @@ export async function listInvoices(filters?: {
         ilike(suppliers.name, searchPattern),
         ilike(projects.code, searchPattern),
         ilike(projects.name, searchPattern),
+        ilike(invoiceCreatedByUsers.name, searchPattern),
+        ilike(invoiceCreatedByUsers.email, searchPattern),
         invoiceIdsMatchingRequestSearch.length > 0
           ? inArray(invoices.id, invoiceIdsMatchingRequestSearch)
           : sql`false`
@@ -8852,12 +8869,17 @@ export async function listInvoices(filters?: {
       purchaseOrder: purchaseOrders,
       project: projects,
       supplier: suppliers,
+      createdBy: invoiceCreatedByUsers,
     })
     .from(invoices)
     .leftJoin(receipts, eq(invoices.receiptId, receipts.id))
     .leftJoin(purchaseOrders, eq(invoices.purchaseOrderId, purchaseOrders.id))
     .leftJoin(projects, eq(invoices.projectId, projects.id))
     .leftJoin(suppliers, eq(invoices.supplierId, suppliers.id))
+    .leftJoin(
+      invoiceCreatedByUsers,
+      eq(receipts.receivedById, invoiceCreatedByUsers.id)
+    )
     .where(where)
     .orderBy(desc(invoices.createdAt));
 
@@ -8869,6 +8891,7 @@ export async function listInvoices(filters?: {
       invoiceId: invoiceItems.invoiceId,
       requestId: materialRequests.id,
       requestNumber: materialRequests.requestNumber,
+      requestedById: materialRequests.requestedById,
     })
     .from(invoiceItems)
     .leftJoin(
@@ -8892,6 +8915,7 @@ export async function listInvoices(filters?: {
     number,
     Array<{ id: number; requestNumber: string }>
   >();
+  const requestedByIdsByInvoiceId = new Map<number, number[]>();
   const seenRequestIdsByInvoiceId = new Map<number, Set<number>>();
   requestRows.forEach(row => {
     if (!row.requestId || !row.requestNumber) return;
@@ -8907,12 +8931,47 @@ export async function listInvoices(filters?: {
       requestNumber: row.requestNumber,
     });
     requestsByInvoiceId.set(row.invoiceId, currentRows);
+
+    if (row.requestedById) {
+      const requestedByIds = requestedByIdsByInvoiceId.get(row.invoiceId) ?? [];
+      if (!requestedByIds.includes(row.requestedById)) {
+        requestedByIds.push(row.requestedById);
+      }
+      requestedByIdsByInvoiceId.set(row.invoiceId, requestedByIds);
+    }
   });
 
-  return rows.map(row => ({
-    ...row,
-    materialRequests: requestsByInvoiceId.get(row.invoice.id) ?? [],
-  }));
+  const requestedByUserIds = Array.from(
+    new Set(
+      Array.from(requestedByIdsByInvoiceId.values())
+        .flat()
+        .filter((value): value is number => typeof value === "number")
+    )
+  );
+  const requestedByUsers =
+    requestedByUserIds.length > 0
+      ? await db
+          .select()
+          .from(users)
+          .where(inArray(users.id, requestedByUserIds))
+      : [];
+  const requestedByUsersById = new Map(
+    requestedByUsers.map(user => [user.id, user])
+  );
+
+  return rows.map(row => {
+    const requestedByIds = requestedByIdsByInvoiceId.get(row.invoice.id) ?? [];
+    const requestedByUsers = requestedByIds
+      .map(id => requestedByUsersById.get(id))
+      .filter((user): user is User => Boolean(user));
+
+    return {
+      ...row,
+      materialRequests: requestsByInvoiceId.get(row.invoice.id) ?? [],
+      requestedBy: requestedByUsers[0] ?? null,
+      requestedByUsers,
+    };
+  });
 }
 
 export async function getInvoiceById(id: number) {

@@ -1155,7 +1155,6 @@ export default function SalidasBodega() {
           <tr>
             <td>${escapeHtml(item.sapItemCode || "-")}</td>
             <td>${escapeHtml(item.itemName || "-")}</td>
-            <td class="center"></td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantity))}</td>
             <td class="center">${escapeHtml(item.unit || "-")}</td>
             <td>${escapeHtml(targetLabel)}</td>
@@ -1361,8 +1360,7 @@ export default function SalidasBodega() {
               <thead>
                 <tr>
                   <th style="width: 16%;">Código/No. Serie</th>
-                  <th>Identificador</th>
-                  <th style="width: 8%;" class="center">Costo</th>
+                  <th style="width: 26%;">Identificador</th>
                   <th style="width: 9%;" class="numeric">Cantidad</th>
                   <th style="width: 9%;" class="center">U Medida</th>
                   <th style="width: 19%;">Destino</th>
@@ -1371,9 +1369,9 @@ export default function SalidasBodega() {
                 </tr>
               </thead>
               <tbody>
-                ${itemRows || `<tr><td colspan="8">Sin ítems</td></tr>`}
+                ${itemRows || `<tr><td colspan="7">Sin ítems</td></tr>`}
                 <tr class="total-row">
-                  <td colspan="7">Total general</td>
+                  <td colspan="6">Total general</td>
                   <td class="numeric">${escapeHtml(formatPrintNumber(totalLines))}</td>
                 </tr>
               </tbody>

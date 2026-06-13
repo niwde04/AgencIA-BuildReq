@@ -193,6 +193,10 @@ function formatUserReference(user: any, fallbackId?: number | null) {
   return fallbackId ? `Usuario #${fallbackId}` : "Usuario no identificado";
 }
 
+function getUserLabel(user: any, fallback = "—") {
+  return user?.name?.trim?.() || user?.email?.trim?.() || fallback;
+}
+
 function dateInputValue(value: string | Date | null | undefined) {
   if (!value) return "";
   const date = new Date(value);
@@ -242,6 +246,29 @@ function getInvoiceRequestNumbers(row: any) {
 function formatInvoiceRequestNumbers(row: any) {
   const requestNumbers = getInvoiceRequestNumbers(row);
   return requestNumbers.length > 0 ? requestNumbers.join(", ") : "—";
+}
+
+function formatInvoiceRequestedBy(row: any) {
+  const users = Array.isArray(row.requestedByUsers)
+    ? row.requestedByUsers
+    : row.requestedBy
+      ? [row.requestedBy]
+      : [];
+  const labels = Array.from(
+    new Set(
+      users
+        .map((user: any) => getUserLabel(user, ""))
+        .filter(Boolean)
+    )
+  );
+  return labels.length > 0 ? labels.join(", ") : "—";
+}
+
+function formatInvoiceCreatedBy(row: any) {
+  return getUserLabel(
+    row.createdBy,
+    row.receipt?.receivedById ? `Usuario #${row.receipt.receivedById}` : "—"
+  );
 }
 
 function getRetentionAmount(draft: RetentionDraft) {
@@ -1221,6 +1248,9 @@ export default function Facturas() {
       const invoice = row.invoice;
       const matchesStatus =
         statusFilter === "all" || invoice.status === statusFilter;
+      const requestNumbers = formatInvoiceRequestNumbers(row);
+      const requestedByLabel = formatInvoiceRequestedBy(row);
+      const createdByLabel = formatInvoiceCreatedBy(row);
       const matchesSearch =
         !normalizedSearch ||
         [
@@ -1231,7 +1261,9 @@ export default function Facturas() {
           invoice.cai,
           row.purchaseOrder?.orderNumber,
           row.receipt?.receiptNumber,
-          formatInvoiceRequestNumbers(row),
+          requestNumbers,
+          requestedByLabel,
+          createdByLabel,
           row.supplier?.name,
           row.supplier?.supplierCode,
           row.supplier?.rtn,
@@ -1281,6 +1313,14 @@ export default function Facturas() {
         {
           header: "Requisición",
           value: (row: any) => formatInvoiceRequestNumbers(row),
+        },
+        {
+          header: "Requiriente",
+          value: (row: any) => formatInvoiceRequestedBy(row),
+        },
+        {
+          header: "Creada por",
+          value: (row: any) => formatInvoiceCreatedBy(row),
         },
         {
           header: "Fecha vencimiento (crédito)",
@@ -2047,7 +2087,7 @@ export default function Facturas() {
           <Input
             value={searchTerm}
             onChange={event => setSearchTerm(event.target.value)}
-            placeholder="Buscar por factura, OC, recepción, REQ, proveedor o proyecto..."
+            placeholder="Buscar por factura, OC, recepción, REQ, requiriente, creador, proveedor o proyecto..."
             className="h-10 pl-9"
           />
         </div>
@@ -2087,7 +2127,7 @@ export default function Facturas() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[1750px] text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/30">
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -2101,6 +2141,12 @@ export default function Facturas() {
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Req.
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Requiriente
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Creada por
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Fechas
@@ -2163,6 +2209,12 @@ export default function Facturas() {
                         </td>
                         <td className="p-3 font-medium">
                           {formatInvoiceRequestNumbers(row)}
+                        </td>
+                        <td className="p-3 text-xs">
+                          {formatInvoiceRequestedBy(row)}
+                        </td>
+                        <td className="p-3 text-xs">
+                          {formatInvoiceCreatedBy(row)}
                         </td>
                         <td className="p-3">
                           <div>
