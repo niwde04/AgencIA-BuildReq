@@ -4,7 +4,20 @@ import * as db from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 
-function canAccessPurchaseRequests(user: {
+function canReadPurchaseRequests(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto"
+  );
+}
+
+function canManagePurchaseRequests(user: {
   role: string;
   buildreqRole?: string | null;
 }) {
@@ -38,7 +51,8 @@ function assertProjectScopedAccess(
 ) {
   if (user.role === "admin") return;
   if (
-    user.buildreqRole === "administrador_proyecto" &&
+    (user.buildreqRole === "administrador_proyecto" ||
+      user.buildreqRole === "bodeguero_proyecto") &&
     !canAccessProject(user, projectId)
   ) {
     throw new TRPCError({
@@ -194,7 +208,7 @@ export const purchaseRequestsRouter = router({
         .optional()
     )
     .query(async ({ ctx, input }) => {
-      if (!canAccessPurchaseRequests(ctx.user)) {
+      if (!canReadPurchaseRequests(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene acceso a las solicitudes de compra",
@@ -207,7 +221,7 @@ export const purchaseRequestsRouter = router({
   getById: protectedProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ ctx, input }) => {
-      if (!canAccessPurchaseRequests(ctx.user)) {
+      if (!canReadPurchaseRequests(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene acceso a las solicitudes de compra",
@@ -239,7 +253,7 @@ export const purchaseRequestsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (!canAccessPurchaseRequests(ctx.user)) {
+      if (!canManagePurchaseRequests(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para crear solicitudes de compra",
@@ -316,7 +330,7 @@ export const purchaseRequestsRouter = router({
           message: "Solicitud de compra no encontrada",
         });
       }
-      if (!canAccessPurchaseRequests(ctx.user)) {
+      if (!canManagePurchaseRequests(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para editar solicitudes de compra",
@@ -442,7 +456,7 @@ export const purchaseRequestsRouter = router({
           message: "Solicitud de compra no encontrada",
         });
       }
-      if (!canAccessPurchaseRequests(ctx.user)) {
+      if (!canManagePurchaseRequests(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para adjuntar cotizaciones",

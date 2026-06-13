@@ -156,6 +156,7 @@ const allMenuItems: MenuItem[] = [
       "jefe_bodega_central",
       "administracion_central",
       "administrador_proyecto",
+      "bodeguero_proyecto",
       "admin",
     ],
   },

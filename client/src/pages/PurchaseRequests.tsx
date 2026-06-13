@@ -320,6 +320,11 @@ export default function PurchaseRequests() {
     (user as any)?.buildreqRole === "administrador_proyecto";
   const buildreqRole = (user as any)?.buildreqRole;
   const isProjectAdmin = buildreqRole === "administrador_proyecto";
+  const canManagePurchaseRequests =
+    user?.role === "admin" ||
+    buildreqRole === "jefe_bodega_central" ||
+    buildreqRole === "administracion_central" ||
+    isProjectAdmin;
   const canConvert =
     user?.role === "admin" ||
     buildreqRole === "administracion_central" ||
@@ -698,7 +703,8 @@ export default function PurchaseRequests() {
   const isMixedProjectRequest = Boolean(detail?.projectSummary?.isMixed);
   const isConvertedPurchaseRequest =
     detail?.purchaseRequest.status === "convertida";
-  const canEditSelectedPurchaseRequest = !isConvertedPurchaseRequest;
+  const canEditSelectedPurchaseRequest =
+    canManagePurchaseRequests && !isConvertedPurchaseRequest;
   const canEditPurchaseRequestDestination =
     canEditSelectedPurchaseRequest &&
     (user?.role === "admin" ||

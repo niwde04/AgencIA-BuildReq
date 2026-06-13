@@ -6809,6 +6809,77 @@ describe("BuildReq - User Management", () => {
 // Tests: Purchase Requests
 // ============================================================
 describe("BuildReq - Purchase Requests", () => {
+  it("Bodeguero de Proyecto can view purchase requests but cannot manage them", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const detail = {
+      purchaseRequest: {
+        id: 33,
+        projectId: 1,
+        status: "pendiente",
+        purchaseType: "local",
+      },
+      items: [],
+    } as any;
+    const listPurchaseRequestsSpy = vi
+      .spyOn(db, "listPurchaseRequests")
+      .mockResolvedValue([] as any);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue(detail);
+    const createPurchaseRequestSpy = vi.spyOn(db, "createPurchaseRequest");
+    const updatePurchaseRequestSpy = vi.spyOn(db, "updatePurchaseRequest");
+
+    await expect(caller.purchaseRequests.list()).resolves.toEqual([]);
+    expect(listPurchaseRequestsSpy).toHaveBeenCalledWith({ projectIds: [1] });
+
+    await expect(caller.purchaseRequests.getById({ id: 33 })).resolves.toEqual(
+      detail
+    );
+
+    await expect(
+      caller.purchaseRequests.create({
+        projectId: 1,
+        purchaseType: "local",
+        items: [
+          {
+            itemName: "CEMENTO",
+            quantity: "1.00",
+            unitPrice: "0.00",
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para crear solicitudes de compra",
+    });
+
+    await expect(
+      caller.purchaseRequests.update({
+        id: 33,
+        notes: "Solo lectura",
+      })
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para editar solicitudes de compra",
+    });
+
+    await expect(
+      caller.purchaseRequests.attachQuote({ id: 33, attachmentId: 10 })
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para adjuntar cotizaciones",
+    });
+
+    expect(createPurchaseRequestSpy).not.toHaveBeenCalled();
+    expect(updatePurchaseRequestSpy).not.toHaveBeenCalled();
+
+    listPurchaseRequestsSpy.mockRestore();
+    getPurchaseRequestByIdSpy.mockRestore();
+    createPurchaseRequestSpy.mockRestore();
+    updatePurchaseRequestSpy.mockRestore();
+  });
+
   it("can update purchase request item prices", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);

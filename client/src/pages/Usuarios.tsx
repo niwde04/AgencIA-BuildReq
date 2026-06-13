@@ -386,6 +386,7 @@ export default function Usuarios() {
       void Promise.all([
         utils.userManagement.list.invalidate(),
         utils.auth.me.invalidate(),
+        utils.supplyFlows.availableFlows.invalidate(),
         utils.dashboard.sidebarCounts.invalidate(),
         utils.dashboard.stats.invalidate(),
       ]);
@@ -399,6 +400,7 @@ export default function Usuarios() {
       void Promise.all([
         utils.userManagement.list.invalidate(),
         utils.auth.me.invalidate(),
+        utils.supplyFlows.availableFlows.invalidate(),
         utils.dashboard.sidebarCounts.invalidate(),
         utils.dashboard.stats.invalidate(),
       ]);

@@ -591,6 +591,7 @@ export default function SolicitudDetalle() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
   const utils = trpc.useUtils();
+  const userRole = (user as any)?.buildreqRole || "";
 
   const requestId = parseInt(params.id || "0");
 
@@ -604,7 +605,10 @@ export default function SolicitudDetalle() {
     { enabled: requestId > 0 }
   );
 
-  const { data: availableFlows } = trpc.supplyFlows.availableFlows.useQuery();
+  const { data: availableFlows } = trpc.supplyFlows.availableFlows.useQuery(
+    undefined,
+    { refetchOnMount: "always", refetchOnWindowFocus: true }
+  );
   const { data: projectWarehouses } = trpc.warehouses.list.useQuery(
     {
       projectId: data?.request.projectId ?? 0,
@@ -614,6 +618,11 @@ export default function SolicitudDetalle() {
       enabled: Boolean(data?.request.projectId),
     }
   );
+
+  useEffect(() => {
+    if (!user) return;
+    void utils.supplyFlows.availableFlows.invalidate();
+  }, [user?.id, userRole]);
 
   const items = data?.items ?? [];
 
@@ -769,7 +778,6 @@ export default function SolicitudDetalle() {
   >(null);
   const [bulkRejectReason, setBulkRejectReason] = useState("");
 
-  const userRole = (user as any)?.buildreqRole || "";
   const isAdmin = user?.role === "admin";
   const isSuperintendent = userRole === "superintendente";
   const canViewWarehouseQuantities = userRole !== "ingeniero_residente";
@@ -1030,32 +1038,17 @@ export default function SolicitudDetalle() {
   };
 
   const getVisibleQueueOptionsForItem = () => {
-    const options: QueueFlowType[] = [];
     const isServiceRequest = data?.request?.requestType === "servicios";
+    const allowedFlows = new Set<QueueFlowType>(
+      ((availableFlows || []) as QueueFlowType[]).filter((flowType) =>
+        QUEUE_FLOW_ORDER.includes(flowType)
+      )
+    );
 
-    if (
-      !isServiceRequest &&
-      (user?.role === "admin" ||
-        userRole === "jefe_bodega_central" ||
-        userRole === "administracion_central" ||
-        userRole === "bodeguero_proyecto")
-    ) {
-      options.push("despacho_bodega");
-    }
-    if ((availableFlows || []).includes("compra_directa")) {
-      options.push("compra_directa");
-    }
-    if (
-      !isServiceRequest &&
-      (availableFlows || []).includes("traslado_proyecto")
-    ) {
-      options.push("traslado_proyecto");
-    }
-    if ((availableFlows || []).includes("solicitud_compra")) {
-      options.push("solicitud_compra");
-    }
-
-    return options.filter((value, index, array) => array.indexOf(value) === index);
+    return QUEUE_FLOW_ORDER.filter((flowType) => {
+      if (!allowedFlows.has(flowType)) return false;
+      return !isServiceRequest || SERVICE_QUEUE_FLOW_TYPES.has(flowType);
+    });
   };
 
   const getSelectedWarehouseValue = (item: any) =>

@@ -57,6 +57,8 @@ export const dashboardRouter = router({
       userRole === "jefe_bodega_central" ||
       userRole === "administracion_central" ||
       userRole === "administrador_proyecto";
+    const canAccessPurchaseRequests =
+      canAccessProcurement || userRole === "bodeguero_proyecto";
     const canAccessPurchaseOrders =
       canAccessProcurement || userRole === "bodeguero_proyecto";
     const canAccessInvoices =
@@ -111,7 +113,7 @@ export const dashboardRouter = router({
         ...scopedFilters,
       }),
       pendingFlowRowsPromise,
-      canAccessProcurement
+      canAccessPurchaseRequests
         ? db.listPurchaseRequests({
             status: "pendiente",
             ...purchaseFilters,
