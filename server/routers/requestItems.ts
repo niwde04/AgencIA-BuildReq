@@ -54,6 +54,7 @@ const BODEGUERO_PROJECT_FLOW_TYPES = new Set([
   "despacho_bodega",
   "compra_directa",
   "traslado_proyecto",
+  "solicitud_compra",
 ]);
 
 const PROJECT_ADMIN_FLOW_TYPES = new Set([
@@ -218,7 +219,7 @@ async function assertItemApprovedForProcessing(requestItemId: number) {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message:
-        "La requisición todavía está pendiente de autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega",
+        "La requisición todavía está pendiente de autorización del Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto",
     });
   }
 
@@ -508,7 +509,7 @@ export const requestItemsRouter = router({
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "El Bodeguero de Proyecto solo puede enviar ítems a Salida de bodega, Compra directa o Solicitud de traslado",
+            "El Bodeguero de Proyecto solo puede enviar ítems a flujos de su proyecto",
         });
       }
       if (

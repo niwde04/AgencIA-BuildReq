@@ -20,7 +20,8 @@ function canManageDirectPurchase(user: {
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administracion_central" ||
-    user.buildreqRole === "administrador_proyecto"
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto"
   );
 }
 
@@ -32,7 +33,8 @@ function canManagePurchaseRequestFlow(user: {
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administracion_central" ||
-    user.buildreqRole === "administrador_proyecto"
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto"
   );
 }
 
@@ -90,7 +92,8 @@ function canManageWarehouseOrTransfers(user: {
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
-    user.buildreqRole === "administracion_central"
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "bodeguero_proyecto"
   );
 }
 
@@ -191,7 +194,7 @@ function assertItemApprovedForProcessing(detail: any, item: any) {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message:
-        "La requisición todavía está pendiente de autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega",
+        "La requisición todavía está pendiente de autorización del Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto",
     });
   }
 
@@ -356,7 +359,12 @@ export const supplyFlowsRouter = router({
     }
 
     if (ctx.user.buildreqRole === "bodeguero_proyecto") {
-      return ["compra_directa", "traslado_proyecto"];
+      return [
+        "despacho_bodega",
+        "compra_directa",
+        "traslado_proyecto",
+        "solicitud_compra",
+      ];
     }
 
     if (!canManageSupply(ctx.user)) return [];
@@ -577,7 +585,7 @@ export const supplyFlowsRouter = router({
           throw new TRPCError({
             code: "BAD_REQUEST",
             message:
-              "La requisición todavía está pendiente de autorización del Administrador del Proyecto, Administración Central o Jefe de Bodega",
+              "La requisición todavía está pendiente de autorización del Administrador del Proyecto, Administración Central, Jefe de Bodega o Bodeguero de Proyecto",
           });
         }
         if (!canViewSupplyFlowRequest(ctx.user, detail.request)) {
@@ -914,7 +922,7 @@ export const supplyFlowsRouter = router({
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo el Jefe de Bodega Central o Administración Central pueden gestionar traslados",
+            "Solo el Jefe de Bodega Central, Administración Central o Bodeguero de Proyecto pueden gestionar traslados",
         });
       }
       const { detail, item } = await getRequestAndItem(
@@ -1002,7 +1010,7 @@ export const supplyFlowsRouter = router({
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo el Jefe de Bodega Central o Administración Central pueden gestionar traslados",
+            "Solo el Jefe de Bodega Central, Administración Central o Bodeguero de Proyecto pueden gestionar traslados",
         });
       }
       const uniqueItems = Array.from(

@@ -1027,13 +1027,17 @@ export const materialRequestsRouter = router({
       }
       if (
         ctx.user.buildreqRole === "bodeguero_proyecto" &&
-        input.flowType !== "despacho_bodega" &&
-        input.flowType !== "compra_directa"
+        ![
+          "compra_directa",
+          "despacho_bodega",
+          "traslado_proyecto",
+          "solicitud_compra",
+        ].includes(input.flowType)
       ) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "El Bodeguero de Proyecto solo puede enviar requisiciones a Salida de bodega o Compra directa",
+            "El Bodeguero de Proyecto solo puede enviar requisiciones a flujos de su proyecto",
         });
       }
       if (

@@ -2414,7 +2414,7 @@ describe("BuildReq - Role-based Access Control", () => {
         destinationProjectId: 2,
       })
     ).rejects.toThrow(
-      "Solo el Jefe de Bodega Central o Administración Central pueden gestionar traslados"
+      "Solo el Jefe de Bodega Central, Administración Central o Bodeguero de Proyecto pueden gestionar traslados"
     );
   });
 
@@ -2569,7 +2569,7 @@ describe("BuildReq - Role-based Access Control", () => {
     ]);
   });
 
-  it("Bodeguero de Proyecto sees only project-scoped requisitions and project warehouse flow options", async () => {
+  it("Bodeguero de Proyecto sees project-scoped requisitions and all project flow options", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
     const listMaterialRequestsSpy = vi
@@ -2584,8 +2584,10 @@ describe("BuildReq - Role-based Access Control", () => {
       caller.supplyFlows.pendingQueue({ flowType: "despacho_bodega" })
     ).resolves.toEqual([]);
     await expect(caller.supplyFlows.availableFlows()).resolves.toEqual([
+      "despacho_bodega",
       "compra_directa",
       "traslado_proyecto",
+      "solicitud_compra",
     ]);
 
     expect(listMaterialRequestsSpy).toHaveBeenCalledWith({ projectIds: [1] });
@@ -2686,7 +2688,7 @@ describe("BuildReq - Role-based Access Control", () => {
     updatePurchaseOrderSpy.mockRestore();
   });
 
-  it("Bodeguero de Proyecto can assign warehouse dispatch, direct purchase or transfer in their project", async () => {
+  it("Bodeguero de Proyecto can assign all flows in their project", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
     const getRequestItemByIdSpy = vi
@@ -2745,11 +2747,14 @@ describe("BuildReq - Role-based Access Control", () => {
         id: 41,
         flowType: "solicitud_compra",
       })
-    ).rejects.toThrow(
-      "El Bodeguero de Proyecto solo puede enviar ítems a Salida de bodega, Compra directa o Solicitud de traslado"
-    );
+    ).resolves.toEqual({ success: true });
     expect(updateRequestItemSpy).toHaveBeenCalledWith(41, {
       assignedFlow: "traslado_proyecto",
+      warehouseId: null,
+      status: "pendiente",
+    });
+    expect(updateRequestItemSpy).toHaveBeenCalledWith(41, {
+      assignedFlow: "solicitud_compra",
       warehouseId: null,
       status: "pendiente",
     });
@@ -3612,19 +3617,8 @@ describe("BuildReq - Role-based Access Control", () => {
     emitWarehouseExitSpy.mockRestore();
   });
 
-  it("Direct purchase processing belongs to the project administrator, not the Bodeguero de Proyecto", async () => {
-    const { ctx: bodegueroCtx } = createProjectBodegueroContext();
-    const bodegueroCaller = appRouter.createCaller(bodegueroCtx);
-
-    await expect(
-      bodegueroCaller.supplyFlows.createDirectPurchaseBatch({
-        supplierId: 7,
-        paymentMethod: "caja_chica",
-        items: [{ requestId: 9, requestItemId: 41, quantity: "5.00" }],
-      })
-    ).rejects.toThrow("No tiene permisos para registrar compras directas");
-
-    const { ctx } = createProjectAdminContext();
+  it("Bodeguero de Proyecto can process direct-purchase flows in their project", async () => {
+    const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
     const getMaterialRequestByIdSpy = vi
       .spyOn(db, "getMaterialRequestById")
@@ -3688,7 +3682,7 @@ describe("BuildReq - Role-based Access Control", () => {
     expect(createPurchaseRequestSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: 1,
-        createdById: 5,
+        createdById: 6,
       }),
       expect.arrayContaining([
         expect.objectContaining({
@@ -3704,7 +3698,7 @@ describe("BuildReq - Role-based Access Control", () => {
         requestItemId: 41,
         flowType: "compra_directa",
         supplierId: null,
-        processedById: 5,
+        processedById: 6,
         status: "pendiente",
       })
     );
@@ -3717,8 +3711,8 @@ describe("BuildReq - Role-based Access Control", () => {
     syncMaterialRequestFulfillmentStatusSpy.mockRestore();
   });
 
-  it("Administrador de Proyecto can process purchase-request flows in their project", async () => {
-    const { ctx } = createProjectAdminContext();
+  it("Bodeguero de Proyecto can process purchase-request flows in their project", async () => {
+    const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
     const getMaterialRequestByIdSpy = vi
       .spyOn(db, "getMaterialRequestById")
@@ -3792,7 +3786,7 @@ describe("BuildReq - Role-based Access Control", () => {
     expect(createPurchaseRequestSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: 1,
-        createdById: 5,
+        createdById: 6,
         purchaseType: "compra_directa",
       }),
       expect.arrayContaining([
@@ -3808,7 +3802,7 @@ describe("BuildReq - Role-based Access Control", () => {
         requestId: 9,
         requestItemId: 41,
         flowType: "solicitud_compra",
-        processedById: 5,
+        processedById: 6,
         status: "pendiente",
       })
     );
@@ -4721,39 +4715,117 @@ describe("BuildReq - Role-based Access Control", () => {
     updateMaterialRequestStatusSpy.mockRestore();
   });
 
-  it("Bodeguero de Proyecto can view transfer flow options but cannot process transfers", async () => {
+  it("Bodeguero de Proyecto can process transfer flows in their project", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
-    const createTransferRequestSpy = vi.spyOn(db, "createTransferRequest");
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 12,
+          projectId: 1,
+          requestType: "bienes",
+          approvalStatus: "aprobada",
+        },
+        items: [
+          {
+            id: 51,
+            itemName: "Diesel",
+            sapItemCode: "01010100001",
+            quantity: "1000.00",
+            unit: "und",
+            approvalStatus: "aprobada",
+          },
+        ],
+      } as any);
+    const getActiveSupplyFlowForRequestItemSpy = vi
+      .spyOn(db, "getActiveSupplyFlowForRequestItem")
+      .mockResolvedValue(undefined as any);
+    const updateRequestItemSpy = vi
+      .spyOn(db, "updateRequestItem")
+      .mockResolvedValue({ success: true } as any);
+    const createTransferRequestSpy = vi
+      .spyOn(db, "createTransferRequest")
+      .mockResolvedValue({ id: 88, requestNumber: "ST-2026-0088" } as any);
+    const createSupplyFlowRecordSpy = vi
+      .spyOn(db, "createSupplyFlowRecord")
+      .mockResolvedValue({ id: 701 } as any);
+    const getRequestItemsByRequestIdSpy = vi
+      .spyOn(db, "getRequestItemsByRequestId")
+      .mockResolvedValue([{ id: 51, assignedFlow: "traslado_proyecto" }] as any);
+    const updateMaterialRequestStatusSpy = vi
+      .spyOn(db, "updateMaterialRequestStatus")
+      .mockResolvedValue({ success: true } as any);
 
     await expect(caller.supplyFlows.availableFlows()).resolves.toEqual([
+      "despacho_bodega",
       "compra_directa",
       "traslado_proyecto",
+      "solicitud_compra",
     ]);
 
     await expect(
       caller.supplyFlows.createProjectTransferBatch({
-        sourceProjectId: 3,
-        notes: "Traslado visible para seguimiento",
+        notes: "Traslado desde bodega proyecto",
         items: [
           {
             requestId: 12,
             requestItemId: 51,
-            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
           },
         ],
       })
-    ).rejects.toThrow(
-      "Solo el Jefe de Bodega Central o Administración Central pueden gestionar traslados"
+    ).resolves.toEqual({
+      success: true,
+      transferRequestId: 88,
+      transferRequestNumber: "ST-2026-0088",
+      processedItems: 1,
+      flowIds: [701],
+    });
+    expect(createTransferRequestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 1,
+        destinationProjectId: 1,
+        createdById: 6,
+      }),
+      expect.arrayContaining([
+        expect.objectContaining({ materialRequestItemId: 51 }),
+      ])
     );
-    expect(createTransferRequestSpy).not.toHaveBeenCalled();
 
+    getMaterialRequestByIdSpy.mockRestore();
+    getActiveSupplyFlowForRequestItemSpy.mockRestore();
+    updateRequestItemSpy.mockRestore();
     createTransferRequestSpy.mockRestore();
+    createSupplyFlowRecordSpy.mockRestore();
+    getRequestItemsByRequestIdSpy.mockRestore();
+    updateMaterialRequestStatusSpy.mockRestore();
   });
 
   it("Bodeguero de Proyecto cannot create transfer requests for another project", async () => {
     const { ctx } = createProjectBodegueroContext({ assignedProjectId: 1 });
     const caller = appRouter.createCaller(ctx);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 12,
+          requestedById: 2,
+          projectId: 2,
+          requestType: "bienes",
+          approvalStatus: "aprobada",
+        },
+        items: [
+          {
+            id: 51,
+            requestId: 12,
+            itemName: "Diesel",
+            sapItemCode: "01010100001",
+            quantity: "1000.00",
+            unit: "und",
+            approvalStatus: "aprobada",
+          },
+        ],
+      } as any);
     const createTransferRequestSpy = vi.spyOn(db, "createTransferRequest");
 
     await expect(
@@ -4767,11 +4839,10 @@ describe("BuildReq - Role-based Access Control", () => {
           },
         ],
       })
-    ).rejects.toThrow(
-      "Solo el Jefe de Bodega Central o Administración Central pueden gestionar traslados"
-    );
+    ).rejects.toThrow("No tiene acceso a esta solicitud");
     expect(createTransferRequestSpy).not.toHaveBeenCalled();
 
+    getMaterialRequestByIdSpy.mockRestore();
     createTransferRequestSpy.mockRestore();
   });
 

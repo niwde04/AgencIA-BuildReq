@@ -286,8 +286,7 @@ export default function Flujos() {
     canProcessAllFlows ||
     (userRole === "administrador_proyecto" &&
       (flowType === "compra_directa" || flowType === "solicitud_compra")) ||
-    (userRole === "bodeguero_proyecto" &&
-      flowType === "despacho_bodega");
+    userRole === "bodeguero_proyecto";
   const isReadOnlyFlowViewer = !canProcessAnyFlow;
   const readOnlyScopeLabel =
     userRole === "ingeniero_residente" ? "tus requisiciones" : "tu proyecto";
@@ -302,11 +301,7 @@ export default function Flujos() {
     }
 
     if (userRole === "bodeguero_proyecto") {
-      return [
-        "despacho_bodega",
-        "compra_directa",
-        "traslado_proyecto",
-      ] as QueueFlowType[];
+      return FLOW_ORDER;
     }
 
     return [] as QueueFlowType[];

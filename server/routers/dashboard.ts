@@ -73,7 +73,12 @@ export const dashboardRouter = router({
         : scopedFilters;
     const visibleFlowTypes =
       userRole === "bodeguero_proyecto"
-        ? ["despacho_bodega", "compra_directa"]
+        ? [
+            "despacho_bodega",
+            "compra_directa",
+            "traslado_proyecto",
+            "solicitud_compra",
+          ]
         : userRole === "administrador_proyecto"
           ? ["compra_directa", "solicitud_compra"]
           : null;
