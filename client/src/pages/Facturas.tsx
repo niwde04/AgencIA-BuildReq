@@ -277,6 +277,23 @@ function getInvoiceStatusColor(invoice: any) {
     : STATUS_COLORS[invoice.status] || "";
 }
 
+function getInvoiceStatusNote(invoice: any) {
+  if (invoice?.status === "rechazada") {
+    const note = String(invoice.rejectionComment ?? "").trim();
+    return note ? { label: "Motivo", text: note } : null;
+  }
+
+  if (invoice?.status === "anulada") {
+    const note = String(invoice.voidReason ?? "").trim();
+    return {
+      label: "Motivo",
+      text: note || "Sin motivo registrado",
+    };
+  }
+
+  return null;
+}
+
 function getInvoiceHistoryRows(invoice: any) {
   if (!invoice) return [];
 
@@ -1289,6 +1306,10 @@ export default function Facturas() {
           header: "Estado",
           value: (row: any) => getInvoiceStatusLabel(row.invoice),
         },
+        {
+          header: "Motivo estado",
+          value: (row: any) => getInvoiceStatusNote(row.invoice)?.text ?? "",
+        },
       ],
       filteredInvoices
     );
@@ -2102,81 +2123,97 @@ export default function Facturas() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredInvoices.map((row: any) => (
-                    <tr
-                      key={row.invoice.id}
-                      className="border-b border-border last:border-0"
-                    >
-                      <td className="p-3">
-                        <div className="font-semibold">
-                          {row.invoice.invoiceDocumentNumber}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {row.invoice.invoiceNumber || "Documento sin número"}
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        {row.supplier ? (
-                          <div className="space-y-1">
-                            <div className="font-medium">
-                              {row.supplier.supplierCode} — {row.supplier.name}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              RTN: {formatSupplierRtnLabel(row.supplier)}
-                            </div>
+                  {filteredInvoices.map((row: any) => {
+                    const statusNote = getInvoiceStatusNote(row.invoice);
+
+                    return (
+                      <tr
+                        key={row.invoice.id}
+                        className="border-b border-border last:border-0"
+                      >
+                        <td className="p-3">
+                          <div className="font-semibold">
+                            {row.invoice.invoiceDocumentNumber}
                           </div>
-                        ) : (
-                          "Proveedor pendiente"
-                        )}
-                      </td>
-                      <td className="p-3">
-                        <div>{row.purchaseOrder?.orderNumber || "OC"}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {row.receipt?.receiptNumber || "Recepción"}
-                        </div>
-                      </td>
-                      <td className="p-3 font-medium">
-                        {formatInvoiceRequestNumbers(row)}
-                      </td>
-                      <td className="p-3">
-                        <div>
-                          {formatDateLabel(row.invoice.documentDueDate)}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          Límite emisión:{" "}
-                          {formatDateLabel(row.invoice.emissionDeadline)}
-                        </div>
-                      </td>
-                      <td className="p-3 text-right font-medium">
-                        {formatPurchaseOrderCurrency(row.invoice.total)}
-                      </td>
-                      <td className="p-3 text-right font-medium">
-                        {formatPurchaseOrderCurrency(
-                          row.invoice.retentionTotal
-                        )}
-                      </td>
-                      <td className="p-3 text-right font-semibold">
-                        {formatPurchaseOrderCurrency(row.invoice.netPayable)}
-                      </td>
-                      <td className="p-3">
-                        <Badge
-                          variant="outline"
-                          className={`text-xs ${getInvoiceStatusColor(row.invoice)}`}
-                        >
-                          {getInvoiceStatusLabel(row.invoice)}
-                        </Badge>
-                      </td>
-                      <td className="p-3 text-right">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setSelectedId(row.invoice.id)}
-                        >
-                          Ver
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
+                          <div className="text-xs text-muted-foreground">
+                            {row.invoice.invoiceNumber ||
+                              "Documento sin número"}
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          {row.supplier ? (
+                            <div className="space-y-1">
+                              <div className="font-medium">
+                                {row.supplier.supplierCode} —{" "}
+                                {row.supplier.name}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                RTN: {formatSupplierRtnLabel(row.supplier)}
+                              </div>
+                            </div>
+                          ) : (
+                            "Proveedor pendiente"
+                          )}
+                        </td>
+                        <td className="p-3">
+                          <div>{row.purchaseOrder?.orderNumber || "OC"}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {row.receipt?.receiptNumber || "Recepción"}
+                          </div>
+                        </td>
+                        <td className="p-3 font-medium">
+                          {formatInvoiceRequestNumbers(row)}
+                        </td>
+                        <td className="p-3">
+                          <div>
+                            {formatDateLabel(row.invoice.documentDueDate)}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Límite emisión:{" "}
+                            {formatDateLabel(row.invoice.emissionDeadline)}
+                          </div>
+                        </td>
+                        <td className="p-3 text-right font-medium">
+                          {formatPurchaseOrderCurrency(row.invoice.total)}
+                        </td>
+                        <td className="p-3 text-right font-medium">
+                          {formatPurchaseOrderCurrency(
+                            row.invoice.retentionTotal
+                          )}
+                        </td>
+                        <td className="p-3 text-right font-semibold">
+                          {formatPurchaseOrderCurrency(row.invoice.netPayable)}
+                        </td>
+                        <td className="p-3">
+                          <div className="max-w-56">
+                            <Badge
+                              variant="outline"
+                              className={`text-xs ${getInvoiceStatusColor(row.invoice)}`}
+                            >
+                              {getInvoiceStatusLabel(row.invoice)}
+                            </Badge>
+                            {statusNote ? (
+                              <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-snug text-muted-foreground">
+                                <span className="font-medium text-foreground/70">
+                                  {statusNote.label}:
+                                </span>{" "}
+                                {statusNote.text}
+                              </p>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="p-3 text-right">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setSelectedId(row.invoice.id)}
+                          >
+                            Ver
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
