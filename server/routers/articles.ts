@@ -24,6 +24,9 @@ function canReadArticles(user: {
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto" ||
+    user.buildreqRole === "superintendente" ||
     user.buildreqRole === "contable"
   );
 }
@@ -33,6 +36,17 @@ function canManageArticles(user: {
   buildreqRole?: string | null;
 }) {
   return user.role === "admin" || user.buildreqRole === "jefe_bodega_central";
+}
+
+function canCreateArticles(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto"
+  );
 }
 
 function canResolveFixedAssetArticles(user: {
@@ -66,6 +80,18 @@ function assertCanManageArticles(user: {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene permisos para modificar artículos",
+    });
+  }
+}
+
+function assertCanCreateArticles(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  if (!canCreateArticles(user)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para crear artículos",
     });
   }
 }
@@ -162,7 +188,7 @@ export const articlesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      assertCanManageArticles(ctx.user);
+      assertCanCreateArticles(ctx.user);
       const projectId = input.tipoArticulo === 3 ? input.projectId ?? null : null;
 
       if (projectId) {

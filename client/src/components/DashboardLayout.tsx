@@ -112,7 +112,15 @@ const allMenuItems: MenuItem[] = [
     icon: Tags,
     label: "Artículos",
     path: "/articulos",
-    roles: ["jefe_bodega_central", "administracion_central", "contable", "admin"],
+    roles: [
+      "jefe_bodega_central",
+      "administracion_central",
+      "administrador_proyecto",
+      "bodeguero_proyecto",
+      "superintendente",
+      "contable",
+      "admin",
+    ],
   },
   {
     icon: Building2,

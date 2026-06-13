@@ -700,6 +700,134 @@ describe("BuildReq - Articles catalog", () => {
     listArticlesSpy.mockRestore();
   });
 
+  it("Project and supervisory roles can list articles but cannot modify them", async () => {
+    const listArticlesSpy = vi.spyOn(db, "listArticles").mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          itemCode: "MAT-001",
+          description: "Material de prueba",
+          tipoArticulo: 1,
+          isActive: true,
+        },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 25,
+      totalPages: 1,
+    } as any);
+    const updateArticleSpy = vi.spyOn(db, "updateArticle");
+
+    for (const { ctx } of [
+      createProjectAdminContext(),
+      createProjectBodegueroContext(),
+      createSuperintendentContext(),
+    ]) {
+      const caller = appRouter.createCaller(ctx);
+
+      await expect(caller.articles.list()).resolves.toEqual(
+        expect.objectContaining({
+          items: [expect.objectContaining({ itemCode: "MAT-001" })],
+        })
+      );
+
+      await expect(
+        caller.articles.update({
+          id: 1,
+          tipoArticulo: 1,
+          isActive: true,
+          allowsTaxWithholding: true,
+        })
+      ).rejects.toThrow("No tiene permisos para modificar artículos");
+    }
+
+    expect(listArticlesSpy).toHaveBeenCalledTimes(3);
+    expect(listArticlesSpy).toHaveBeenNthCalledWith(1, {});
+    expect(listArticlesSpy).toHaveBeenNthCalledWith(2, {});
+    expect(listArticlesSpy).toHaveBeenNthCalledWith(3, {});
+    expect(updateArticleSpy).not.toHaveBeenCalled();
+
+    listArticlesSpy.mockRestore();
+    updateArticleSpy.mockRestore();
+  });
+
+  it("Admin, Administración Central and Project Admin can create articles", async () => {
+    const createArticleSpy = vi.spyOn(db, "createArticle").mockImplementation(
+      async (data: Parameters<typeof db.createArticle>[0]) =>
+        ({
+          id: 100,
+          itemCode: data.itemCode,
+          description: data.description,
+          tipoArticulo: data.tipoArticulo,
+          isActive: data.isActive ?? true,
+        }) as any
+    );
+
+    for (const { ctx, itemCode } of [
+      {
+        ctx: createUserContext({ role: "admin", buildreqRole: null }).ctx,
+        itemCode: "ADM-001",
+      },
+      { ctx: createAdminCentralContext().ctx, itemCode: "AC-001" },
+      { ctx: createProjectAdminContext().ctx, itemCode: "AP-001" },
+    ]) {
+      const caller = appRouter.createCaller(ctx);
+
+      await expect(
+        caller.articles.create({
+          itemCode,
+          description: "Artículo nuevo",
+          tipoArticulo: 1,
+          allowsTaxWithholding: true,
+          isActive: true,
+        })
+      ).resolves.toEqual(expect.objectContaining({ itemCode }));
+    }
+
+    expect(createArticleSpy).toHaveBeenCalledTimes(3);
+    expect(createArticleSpy).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ itemCode: "ADM-001" })
+    );
+    expect(createArticleSpy).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ itemCode: "AC-001" })
+    );
+    expect(createArticleSpy).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ itemCode: "AP-001" })
+    );
+
+    createArticleSpy.mockRestore();
+  });
+
+  it("Blocks article creation for roles without creation permission", async () => {
+    const createArticleSpy = vi.spyOn(db, "createArticle");
+
+    for (const { ctx } of [
+      createBodegaContext(),
+      createProjectBodegueroContext(),
+      createSuperintendentContext(),
+      createContableContext(),
+      createIngenieroContext(),
+    ]) {
+      const caller = appRouter.createCaller(ctx);
+
+      await expect(
+        caller.articles.create({
+          itemCode: "NO-CREATE",
+          description: "Artículo bloqueado",
+          tipoArticulo: 1,
+          allowsTaxWithholding: true,
+          isActive: true,
+        })
+      ).rejects.toThrow("No tiene permisos para crear artículos");
+    }
+
+    expect(createArticleSpy).not.toHaveBeenCalled();
+    createArticleSpy.mockRestore();
+  });
+
   it("Contable can resolve a temporary fixed asset code", async () => {
     const { ctx } = createContableContext();
     const caller = appRouter.createCaller(ctx);

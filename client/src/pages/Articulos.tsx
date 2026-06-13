@@ -194,6 +194,10 @@ export default function Articulos() {
   const isContable = buildreqRole === "contable";
   const canManage =
     user?.role === "admin" || buildreqRole === "jefe_bodega_central";
+  const canCreate =
+    user?.role === "admin" ||
+    buildreqRole === "administracion_central" ||
+    buildreqRole === "administrador_proyecto";
   const canResolveFixedAssets =
     user?.role === "admin" ||
     buildreqRole === "jefe_bodega_central" ||
@@ -362,7 +366,7 @@ export default function Articulos() {
   };
 
   const submitCreate = () => {
-    if (!canManage) {
+    if (!canCreate) {
       toast.error("No tiene permisos para crear artículos");
       return;
     }
@@ -481,7 +485,7 @@ export default function Articulos() {
               : `${total.toLocaleString("es-HN")} registros encontrados`}
           </p>
         </div>
-        {canManage ? (
+        {canCreate ? (
           <Button onClick={() => setCreateDialogOpen(true)} className="gap-2">
             <Plus className="h-4 w-4" />
             Crear artículo
