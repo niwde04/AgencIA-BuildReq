@@ -89,6 +89,51 @@ const PURCHASE_TYPE_LABELS: Record<PurchaseType, string> = {
 const getPurchaseTypeLabel = (value?: string | null) =>
   PURCHASE_TYPE_LABELS[value as PurchaseType] ?? "—";
 
+function getUserLabel(user: any, fallback = "—") {
+  return user?.name?.trim?.() || user?.email?.trim?.() || fallback;
+}
+
+function getPurchaseRequestRequestNumbers(row: any) {
+  const requestNumbers = Array.isArray(row.requestNumbers)
+    ? row.requestNumbers
+    : [];
+  return Array.from(
+    new Set(
+      [
+        row.materialRequest?.requestNumber,
+        ...requestNumbers,
+      ]
+        .map(value => String(value ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function formatPurchaseRequestRequestNumbers(row: any) {
+  const requestNumbers = getPurchaseRequestRequestNumbers(row);
+  return requestNumbers.length > 0 ? requestNumbers.join(", ") : "—";
+}
+
+function formatPurchaseRequestRequestedBy(row: any) {
+  const users = Array.isArray(row.requestedByUsers)
+    ? row.requestedByUsers
+    : row.requestedBy
+      ? [row.requestedBy]
+      : [];
+  const labels = Array.from(
+    new Set(
+      users
+        .map((user: any) => getUserLabel(user, ""))
+        .filter(Boolean)
+    )
+  );
+  return labels.length > 0 ? labels.join(", ") : "—";
+}
+
+function formatPurchaseRequestFlowSender(row: any) {
+  return getUserLabel(row.createdBy, "—");
+}
+
 type RequestTargetSelection =
   | {
       targetType: "subproyecto";
@@ -281,12 +326,18 @@ export default function PurchaseRequests() {
       const projectLabel =
         row.projectSummary?.label ||
         (row.project ? `${row.project.code} ${row.project.name}` : "");
+      const requestNumbers = formatPurchaseRequestRequestNumbers(row);
+      const requestedByLabel = formatPurchaseRequestRequestedBy(row);
+      const flowSenderLabel = formatPurchaseRequestFlowSender(row);
       const matchesSearch =
         !normalizedSearch ||
         [
           purchaseRequest.requestNumber,
+          requestNumbers,
           purchaseRequest.sapDocumentNumber,
           projectLabel,
+          requestedByLabel,
+          flowSenderLabel,
         ]
           .filter(Boolean)
           .some(value =>
@@ -1134,10 +1185,22 @@ export default function PurchaseRequests() {
           value: (row: any) => row.purchaseRequest.requestNumber,
         },
         {
+          header: "No. Req.",
+          value: (row: any) => formatPurchaseRequestRequestNumbers(row),
+        },
+        {
           header: "Proyecto",
           value: (row: any) =>
             row.projectSummary?.label ||
             (row.project ? `${row.project.code} — ${row.project.name}` : "—"),
+        },
+        {
+          header: "Requiriente",
+          value: (row: any) => formatPurchaseRequestRequestedBy(row),
+        },
+        {
+          header: "Enviado por",
+          value: (row: any) => formatPurchaseRequestFlowSender(row),
         },
         {
           header: "Tipo de Compra",
@@ -1222,7 +1285,7 @@ export default function PurchaseRequests() {
           <Input
             value={searchTerm}
             onChange={event => setSearchTerm(event.target.value)}
-            placeholder="Buscar por número de SC, proyecto o documento..."
+            placeholder="Buscar por SC, REQ, proyecto, requiriente, flujo o documento..."
             className="h-10 pl-9"
           />
         </div>
@@ -1278,7 +1341,7 @@ export default function PurchaseRequests() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[1580px] text-sm">
                 <thead>
                   <tr className="border-b border-border">
                     {canConvert ? (
@@ -1303,7 +1366,16 @@ export default function PurchaseRequests() {
                       No. Solicitud
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      No. Req.
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Proyecto
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Requiriente
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Enviado por
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Tipo de Compra
@@ -1358,11 +1430,20 @@ export default function PurchaseRequests() {
                         <td className="p-3 font-medium">
                           {row.purchaseRequest.requestNumber}
                         </td>
+                        <td className="p-3 text-xs font-medium">
+                          {formatPurchaseRequestRequestNumbers(row)}
+                        </td>
                         <td className="p-3 text-xs">
                           {row.projectSummary?.label ||
                             (row.project
                               ? `${row.project.code} — ${row.project.name}`
                               : "—")}
+                        </td>
+                        <td className="p-3 text-xs">
+                          {formatPurchaseRequestRequestedBy(row)}
+                        </td>
+                        <td className="p-3 text-xs">
+                          {formatPurchaseRequestFlowSender(row)}
                         </td>
                         <td className="p-3 text-xs">
                           {getPurchaseTypeLabel(

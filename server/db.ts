@@ -4827,6 +4827,14 @@ export async function listPurchaseRequests(filters?: {
 }) {
   const db = await getDb();
   if (!db) return [];
+  const purchaseRequestCreatedByUsers = alias(
+    users,
+    "purchase_request_created_by_users"
+  );
+  const materialRequestRequestedByUsers = alias(
+    users,
+    "purchase_request_material_request_requested_by_users"
+  );
   const conditions = [];
   if (filters?.projectId)
     conditions.push(eq(purchaseRequests.projectId, filters.projectId));
@@ -4846,12 +4854,22 @@ export async function listPurchaseRequests(filters?: {
       purchaseRequest: purchaseRequests,
       project: projects,
       materialRequest: materialRequests,
+      requestedBy: materialRequestRequestedByUsers,
+      createdBy: purchaseRequestCreatedByUsers,
     })
     .from(purchaseRequests)
     .leftJoin(projects, eq(purchaseRequests.projectId, projects.id))
     .leftJoin(
       materialRequests,
       eq(purchaseRequests.materialRequestId, materialRequests.id)
+    )
+    .leftJoin(
+      materialRequestRequestedByUsers,
+      eq(materialRequests.requestedById, materialRequestRequestedByUsers.id)
+    )
+    .leftJoin(
+      purchaseRequestCreatedByUsers,
+      eq(purchaseRequests.createdById, purchaseRequestCreatedByUsers.id)
     )
     .where(where)
     .orderBy(desc(purchaseRequests.createdAt));
@@ -4869,6 +4887,9 @@ export async function listPurchaseRequests(filters?: {
       purchaseRequestId: purchaseRequestItems.purchaseRequestId,
       requestedQuantity: purchaseRequestItems.quantity,
       convertedQuantity: purchaseRequestItems.convertedQuantity,
+      requestId: materialRequests.id,
+      requestNumber: materialRequests.requestNumber,
+      requestedById: materialRequests.requestedById,
       projectId: materialRequests.projectId,
       projectCode: projects.code,
       projectName: projects.name,
@@ -4886,6 +4907,8 @@ export async function listPurchaseRequests(filters?: {
     number,
     Array<{ id: number; code: string | null; name: string | null }>
   >();
+  const requestNumbersByPurchaseRequestId = new Map<number, string[]>();
+  const requestedByIdsByPurchaseRequestId = new Map<number, number[]>();
   const pendingConversionByPurchaseRequestId = new Map<
     number,
     { itemCount: number; quantity: number }
@@ -4893,6 +4916,24 @@ export async function listPurchaseRequests(filters?: {
 
   for (const row of sourceRows) {
     if (!row.purchaseRequestId) continue;
+
+    if (row.requestNumber) {
+      const current =
+        requestNumbersByPurchaseRequestId.get(row.purchaseRequestId) ?? [];
+      if (!current.includes(row.requestNumber)) {
+        current.push(row.requestNumber);
+      }
+      requestNumbersByPurchaseRequestId.set(row.purchaseRequestId, current);
+    }
+
+    if (row.requestedById) {
+      const current =
+        requestedByIdsByPurchaseRequestId.get(row.purchaseRequestId) ?? [];
+      if (!current.includes(row.requestedById)) {
+        current.push(row.requestedById);
+      }
+      requestedByIdsByPurchaseRequestId.set(row.purchaseRequestId, current);
+    }
 
     const pendingConversionQuantity = getPendingConversionQuantity({
       quantity: row.requestedQuantity,
@@ -4927,6 +4968,43 @@ export async function listPurchaseRequests(filters?: {
     }
   }
 
+  for (const row of rows) {
+    if (row.materialRequest?.requestNumber) {
+      const current =
+        requestNumbersByPurchaseRequestId.get(row.purchaseRequest.id) ?? [];
+      if (!current.includes(row.materialRequest.requestNumber)) {
+        current.unshift(row.materialRequest.requestNumber);
+      }
+      requestNumbersByPurchaseRequestId.set(row.purchaseRequest.id, current);
+    }
+    if (row.materialRequest?.requestedById) {
+      const current =
+        requestedByIdsByPurchaseRequestId.get(row.purchaseRequest.id) ?? [];
+      if (!current.includes(row.materialRequest.requestedById)) {
+        current.unshift(row.materialRequest.requestedById);
+      }
+      requestedByIdsByPurchaseRequestId.set(row.purchaseRequest.id, current);
+    }
+  }
+
+  const requestedByUserIds = Array.from(
+    new Set(
+      Array.from(requestedByIdsByPurchaseRequestId.values())
+        .flat()
+        .filter((value): value is number => typeof value === "number")
+    )
+  );
+  const requestedByUsers =
+    requestedByUserIds.length > 0
+      ? await db
+          .select()
+          .from(users)
+          .where(inArray(users.id, requestedByUserIds))
+      : [];
+  const requestedByUsersById = new Map(
+    requestedByUsers.map(user => [user.id, user])
+  );
+
   return rows.map(row => {
     const sourceProjects =
       sourceProjectsByPurchaseRequestId.get(row.purchaseRequest.id) ?? [];
@@ -4943,11 +5021,21 @@ export async function listPurchaseRequests(filters?: {
                 `${sourceProjects[0].code ?? ""} — ${sourceProjects[0].name ?? ""}`
                   .replace(/^ — /, "")
                   .trim(),
-            }
-          : null;
+          }
+        : null;
+    const requestedByIds =
+      requestedByIdsByPurchaseRequestId.get(row.purchaseRequest.id) ?? [];
+    const requestedByUsers = requestedByIds
+      .map(id => requestedByUsersById.get(id))
+      .filter((user): user is User => Boolean(user));
 
     return {
       ...row,
+      requestNumbers:
+        requestNumbersByPurchaseRequestId.get(row.purchaseRequest.id) ?? [],
+      requestedBy: row.requestedBy ?? requestedByUsers[0] ?? null,
+      requestedByUsers,
+      createdBy: row.createdBy,
       projectSummary,
       sourceProjects,
       pendingConversionItemCount:

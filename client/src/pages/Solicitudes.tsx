@@ -77,6 +77,15 @@ function getRequestTargetLabels(itemTargets: any[] = []) {
   );
 }
 
+function getRequestedByLabel(row: any) {
+  const requestedBy = row.requestedBy;
+  return (
+    requestedBy?.name?.trim?.() ||
+    requestedBy?.email?.trim?.() ||
+    `Usuario #${row.request.requestedById}`
+  );
+}
+
 function RequestTargetBadges({ labels }: { labels: string[] }) {
   if (labels.length === 0) {
     return <span className="text-xs text-muted-foreground">Sin subproyecto</span>;
@@ -128,6 +137,8 @@ export default function Solicitudes() {
       r.request.requestNumber.toLowerCase().includes(searchLower) ||
       r.project?.name?.toLowerCase().includes(searchLower) ||
       r.project?.code?.toLowerCase().includes(searchLower) ||
+      r.requestedBy?.name?.toLowerCase().includes(searchLower) ||
+      r.requestedBy?.email?.toLowerCase().includes(searchLower) ||
       (r.itemTargets ?? []).some((target: any) =>
         target.label?.toLowerCase().includes(searchLower)
       )
@@ -151,7 +162,7 @@ export default function Solicitudes() {
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Buscar por número o proyecto..."
+            placeholder="Buscar por número, proyecto o solicitante..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 h-9"
@@ -192,7 +203,7 @@ export default function Solicitudes() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1180px] text-sm">
+              <table className="w-full min-w-[1300px] text-sm">
                 <thead>
                   <tr className="border-b border-border">
                     <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
@@ -203,6 +214,9 @@ export default function Solicitudes() {
                     </th>
                     <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                       Subproyecto
+                    </th>
+                    <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                      Solicitado por
                     </th>
                     <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                       Dirigida a
@@ -233,6 +247,7 @@ export default function Solicitudes() {
                     );
                     const dueStatus = getDueDateStatus(neededByDate);
                     const targetLabels = getRequestTargetLabels(r.itemTargets ?? []);
+                    const requestedByLabel = getRequestedByLabel(r);
                     const targetPath =
                       r.request.status === "borrador" && !isSuperintendent
                         ? `/solicitudes/${r.request.id}/editar`
@@ -261,6 +276,17 @@ export default function Solicitudes() {
                         </td>
                         <td className="p-3">
                           <RequestTargetBadges labels={targetLabels} />
+                        </td>
+                        <td className="p-3">
+                          <div>
+                            <span className="font-medium text-xs">{requestedByLabel}</span>
+                            {r.requestedBy?.email &&
+                            r.requestedBy.email !== requestedByLabel ? (
+                              <p className="text-xs text-muted-foreground">
+                                {r.requestedBy.email}
+                              </p>
+                            ) : null}
+                          </div>
                         </td>
                         <td className="p-3 text-xs">
                           {RECIPIENT_LABELS[r.request.recipient] || r.request.recipient}
