@@ -694,6 +694,11 @@ function DashboardLayoutContent({
             </div>
           </div>
         )}
+        <div className="border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm text-amber-900">
+          <span className="font-semibold">Versión beta</span>
+          <span className="mx-2 text-amber-700">-</span>
+          <span>Queremos que pruebes BuildReq y nos compartas tus comentarios.</span>
+        </div>
         <main className="flex-1 p-6">{children}</main>
       </SidebarInset>
     </>
