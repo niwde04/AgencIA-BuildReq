@@ -170,6 +170,49 @@ function formatSupplierContactMeta(contact?: any | null) {
     .join(" · ");
 }
 
+function getUserLabel(user: any, fallback = "—") {
+  return user?.name?.trim?.() || user?.email?.trim?.() || fallback;
+}
+
+function formatPurchaseOrderRequestNumbers(row: any) {
+  const requestNumbers = Array.isArray(row.originalRequestNumbers)
+    ? row.originalRequestNumbers
+    : [];
+  const labels = Array.from(
+    new Set(
+      requestNumbers
+        .map((value: any) => String(value ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+  return labels.length > 0 ? labels.join(", ") : "—";
+}
+
+function formatPurchaseOrderRequestedBy(row: any) {
+  const users = Array.isArray(row.requestedByUsers)
+    ? row.requestedByUsers
+    : row.originalRequester
+      ? [row.originalRequester]
+      : [];
+  const labels = Array.from(
+    new Set(
+      users
+        .map((user: any) => getUserLabel(user, ""))
+        .filter(Boolean)
+    )
+  );
+  return labels.length > 0 ? labels.join(", ") : "—";
+}
+
+function formatPurchaseOrderCreatedBy(row: any) {
+  return getUserLabel(
+    row.createdBy,
+    row.purchaseOrder?.createdById
+      ? `Usuario #${row.purchaseOrder.createdById}`
+      : "—"
+  );
+}
+
 function formatPurchaseOrderItemTargetLabel(item: any) {
   const target = item?.target ?? item?.sourceTarget;
   if (target?.label) return String(target.label);
@@ -973,16 +1016,22 @@ export default function OrdenesCompra() {
       const projectLabel = row.project
         ? `${row.project.code} ${row.project.name}`
         : "";
+      const requestNumbers = formatPurchaseOrderRequestNumbers(row);
+      const requestedByLabel = formatPurchaseOrderRequestedBy(row);
+      const createdByLabel = formatPurchaseOrderCreatedBy(row);
       const matchesSearch =
         !normalizedSearch ||
         [
           purchaseOrder.orderNumber,
+          requestNumbers,
           purchaseOrder.classification,
           PURCHASE_TYPE_LABELS[purchaseOrder.purchaseType],
           row.supplier?.name,
           row.supplier?.supplierCode,
           row.supplier?.rtn,
           projectLabel,
+          requestedByLabel,
+          createdByLabel,
         ]
           .filter(Boolean)
           .some(value =>
@@ -2289,6 +2338,10 @@ export default function OrdenesCompra() {
           value: (row: any) => row.purchaseOrder.orderNumber,
         },
         {
+          header: "No. Req.",
+          value: (row: any) => formatPurchaseOrderRequestNumbers(row),
+        },
+        {
           header: "Clasificación",
           value: (row: any) => row.purchaseOrder.classification,
         },
@@ -2296,6 +2349,14 @@ export default function OrdenesCompra() {
           header: "Proyecto",
           value: (row: any) =>
             row.project ? `${row.project.code} — ${row.project.name}` : "—",
+        },
+        {
+          header: "Requiriente",
+          value: (row: any) => formatPurchaseOrderRequestedBy(row),
+        },
+        {
+          header: "Creada por",
+          value: (row: any) => formatPurchaseOrderCreatedBy(row),
         },
         {
           header: "Tipo Compra",
@@ -2357,7 +2418,7 @@ export default function OrdenesCompra() {
           <Input
             value={searchTerm}
             onChange={event => setSearchTerm(event.target.value)}
-            placeholder="Buscar por OC, proyecto, proveedor o clasificación..."
+            placeholder="Buscar por OC, REQ, proyecto, proveedor, requiriente o creador..."
             className="h-10 pl-9"
           />
         </div>
@@ -2403,17 +2464,26 @@ export default function OrdenesCompra() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[1500px] text-sm">
                 <thead>
                   <tr className="border-b border-border">
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       No. OC
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      No. Req.
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Clasificación
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Proyecto
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Requiriente
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Creada por
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Tipo Compra
@@ -2441,6 +2511,9 @@ export default function OrdenesCompra() {
                       <td className="p-3 font-medium">
                         {row.purchaseOrder.orderNumber}
                       </td>
+                      <td className="p-3 text-xs font-medium">
+                        {formatPurchaseOrderRequestNumbers(row)}
+                      </td>
                       <td className="p-3 text-xs uppercase">
                         {row.purchaseOrder.classification}
                       </td>
@@ -2448,6 +2521,12 @@ export default function OrdenesCompra() {
                         {row.project
                           ? `${row.project.code} — ${row.project.name}`
                           : "—"}
+                      </td>
+                      <td className="p-3 text-xs">
+                        {formatPurchaseOrderRequestedBy(row)}
+                      </td>
+                      <td className="p-3 text-xs">
+                        {formatPurchaseOrderCreatedBy(row)}
                       </td>
                       <td className="p-3 text-xs">
                         {PURCHASE_TYPE_LABELS[row.purchaseOrder.purchaseType] || "—"}

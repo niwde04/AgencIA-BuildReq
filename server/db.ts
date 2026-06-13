@@ -4890,6 +4890,8 @@ export async function listPurchaseRequests(filters?: {
       requestId: materialRequests.id,
       requestNumber: materialRequests.requestNumber,
       requestedById: materialRequests.requestedById,
+      requestApprovedById: materialRequests.approvedById,
+      itemApprovedById: requestItems.approvedById,
       projectId: materialRequests.projectId,
       projectCode: projects.code,
       projectName: projects.name,
@@ -4909,10 +4911,25 @@ export async function listPurchaseRequests(filters?: {
   >();
   const requestNumbersByPurchaseRequestId = new Map<number, string[]>();
   const requestedByIdsByPurchaseRequestId = new Map<number, number[]>();
+  const approvedByIdsByPurchaseRequestId = new Map<number, number[]>();
   const pendingConversionByPurchaseRequestId = new Map<
     number,
     { itemCount: number; quantity: number }
   >();
+  const addUserId = (
+    map: Map<number, number[]>,
+    purchaseRequestId: number,
+    userId: number | null | undefined,
+    prepend = false
+  ) => {
+    if (typeof userId !== "number") return;
+    const current = map.get(purchaseRequestId) ?? [];
+    if (!current.includes(userId)) {
+      if (prepend) current.unshift(userId);
+      else current.push(userId);
+    }
+    map.set(purchaseRequestId, current);
+  };
 
   for (const row of sourceRows) {
     if (!row.purchaseRequestId) continue;
@@ -4934,6 +4951,16 @@ export async function listPurchaseRequests(filters?: {
       }
       requestedByIdsByPurchaseRequestId.set(row.purchaseRequestId, current);
     }
+    addUserId(
+      approvedByIdsByPurchaseRequestId,
+      row.purchaseRequestId,
+      row.itemApprovedById
+    );
+    addUserId(
+      approvedByIdsByPurchaseRequestId,
+      row.purchaseRequestId,
+      row.requestApprovedById
+    );
 
     const pendingConversionQuantity = getPendingConversionQuantity({
       quantity: row.requestedQuantity,
@@ -4985,6 +5012,12 @@ export async function listPurchaseRequests(filters?: {
       }
       requestedByIdsByPurchaseRequestId.set(row.purchaseRequest.id, current);
     }
+    addUserId(
+      approvedByIdsByPurchaseRequestId,
+      row.purchaseRequest.id,
+      row.materialRequest?.approvedById,
+      true
+    );
   }
 
   const requestedByUserIds = Array.from(
@@ -5003,6 +5036,23 @@ export async function listPurchaseRequests(filters?: {
       : [];
   const requestedByUsersById = new Map(
     requestedByUsers.map(user => [user.id, user])
+  );
+  const approvedByUserIds = Array.from(
+    new Set(
+      Array.from(approvedByIdsByPurchaseRequestId.values())
+        .flat()
+        .filter((value): value is number => typeof value === "number")
+    )
+  );
+  const approverUsers =
+    approvedByUserIds.length > 0
+      ? await db
+          .select()
+          .from(users)
+          .where(inArray(users.id, approvedByUserIds))
+      : [];
+  const approvedByUsersById = new Map(
+    approverUsers.map(user => [user.id, user])
   );
 
   return rows.map(row => {
@@ -5028,6 +5078,11 @@ export async function listPurchaseRequests(filters?: {
     const requestedByUsers = requestedByIds
       .map(id => requestedByUsersById.get(id))
       .filter((user): user is User => Boolean(user));
+    const approvedByIds =
+      approvedByIdsByPurchaseRequestId.get(row.purchaseRequest.id) ?? [];
+    const approvedByUsers = approvedByIds
+      .map(id => approvedByUsersById.get(id))
+      .filter((user): user is User => Boolean(user));
 
     return {
       ...row,
@@ -5035,6 +5090,8 @@ export async function listPurchaseRequests(filters?: {
         requestNumbersByPurchaseRequestId.get(row.purchaseRequest.id) ?? [],
       requestedBy: row.requestedBy ?? requestedByUsers[0] ?? null,
       requestedByUsers,
+      approvedBy: approvedByUsers[0] ?? null,
+      approvedByUsers,
       createdBy: row.createdBy,
       projectSummary,
       sourceProjects,
@@ -5681,6 +5738,14 @@ export async function listPurchaseOrders(filters?: {
 }) {
   const db = await getDb();
   if (!db) return [];
+  const purchaseOrderCreatedByUsers = alias(
+    users,
+    "po_list_created_by_users"
+  );
+  const purchaseOrderMaterialRequests = alias(
+    materialRequests,
+    "po_list_material_requests"
+  );
   const conditions = [];
   if (filters?.projectId)
     conditions.push(eq(purchaseOrders.projectId, filters.projectId));
@@ -5700,30 +5765,180 @@ export async function listPurchaseOrders(filters?: {
     .select({
       purchaseOrder: purchaseOrders,
       purchaseRequest: purchaseRequests,
+      materialRequest: purchaseOrderMaterialRequests,
       project: projects,
       supplier: suppliers,
+      createdBy: purchaseOrderCreatedByUsers,
     })
     .from(purchaseOrders)
     .leftJoin(
       purchaseRequests,
       eq(purchaseOrders.purchaseRequestId, purchaseRequests.id)
     )
+    .leftJoin(
+      purchaseOrderMaterialRequests,
+      eq(purchaseRequests.materialRequestId, purchaseOrderMaterialRequests.id)
+    )
     .leftJoin(projects, eq(purchaseOrders.projectId, projects.id))
     .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
+    .leftJoin(
+      purchaseOrderCreatedByUsers,
+      eq(purchaseOrders.createdById, purchaseOrderCreatedByUsers.id)
+    )
     .where(where)
     .orderBy(desc(purchaseOrders.createdAt));
 
+  const purchaseOrderIds = rows
+    .map(row => row.purchaseOrder.id)
+    .filter((value): value is number => typeof value === "number");
+  const requestNumbersByOrderId = new Map<number, string[]>();
+  const requestedByIdsByOrderId = new Map<number, number[]>();
+  const addRequestNumber = (
+    purchaseOrderId: number,
+    requestNumber: string | null | undefined,
+    prepend = false
+  ) => {
+    const normalized = requestNumber?.trim();
+    if (!normalized) return;
+    const current = requestNumbersByOrderId.get(purchaseOrderId) ?? [];
+    if (!current.includes(normalized)) {
+      if (prepend) current.unshift(normalized);
+      else current.push(normalized);
+    }
+    requestNumbersByOrderId.set(purchaseOrderId, current);
+  };
+  const addRequestedById = (
+    purchaseOrderId: number,
+    userId: number | null | undefined,
+    prepend = false
+  ) => {
+    if (typeof userId !== "number") return;
+    const current = requestedByIdsByOrderId.get(purchaseOrderId) ?? [];
+    if (!current.includes(userId)) {
+      if (prepend) current.unshift(userId);
+      else current.push(userId);
+    }
+    requestedByIdsByOrderId.set(purchaseOrderId, current);
+  };
+
+  if (purchaseOrderIds.length > 0) {
+    const purchaseRequestSourceItems = alias(
+      requestItems,
+      "po_list_purchase_request_source_items"
+    );
+    const purchaseRequestSourceRequests = alias(
+      materialRequests,
+      "po_list_purchase_request_source_requests"
+    );
+    const directSourceItems = alias(
+      requestItems,
+      "po_list_direct_source_items"
+    );
+    const directSourceRequests = alias(
+      materialRequests,
+      "po_list_direct_source_requests"
+    );
+    const sourceRows = await db
+      .select({
+        purchaseOrderId: purchaseOrderItems.purchaseOrderId,
+        purchaseRequestRequestNumber:
+          purchaseRequestSourceRequests.requestNumber,
+        purchaseRequestRequestedById:
+          purchaseRequestSourceRequests.requestedById,
+        directRequestNumber: directSourceRequests.requestNumber,
+        directRequestedById: directSourceRequests.requestedById,
+      })
+      .from(purchaseOrderItems)
+      .leftJoin(
+        purchaseRequestItems,
+        eq(purchaseOrderItems.purchaseRequestItemId, purchaseRequestItems.id)
+      )
+      .leftJoin(
+        purchaseRequestSourceItems,
+        eq(
+          purchaseRequestItems.materialRequestItemId,
+          purchaseRequestSourceItems.id
+        )
+      )
+      .leftJoin(
+        purchaseRequestSourceRequests,
+        eq(purchaseRequestSourceItems.requestId, purchaseRequestSourceRequests.id)
+      )
+      .leftJoin(
+        directSourceItems,
+        eq(purchaseOrderItems.materialRequestItemId, directSourceItems.id)
+      )
+      .leftJoin(
+        directSourceRequests,
+        eq(directSourceItems.requestId, directSourceRequests.id)
+      )
+      .where(inArray(purchaseOrderItems.purchaseOrderId, purchaseOrderIds));
+
+    for (const row of sourceRows) {
+      if (!row.purchaseOrderId) continue;
+      addRequestNumber(row.purchaseOrderId, row.purchaseRequestRequestNumber);
+      addRequestNumber(row.purchaseOrderId, row.directRequestNumber);
+      addRequestedById(row.purchaseOrderId, row.purchaseRequestRequestedById);
+      addRequestedById(row.purchaseOrderId, row.directRequestedById);
+    }
+  }
+
+  for (const row of rows) {
+    addRequestNumber(
+      row.purchaseOrder.id,
+      row.materialRequest?.requestNumber,
+      true
+    );
+    addRequestedById(
+      row.purchaseOrder.id,
+      row.materialRequest?.requestedById,
+      true
+    );
+    if (!requestedByIdsByOrderId.has(row.purchaseOrder.id)) {
+      addRequestedById(row.purchaseOrder.id, row.purchaseRequest?.createdById);
+    }
+  }
+
+  const requestedByUserIds = Array.from(
+    new Set(
+      Array.from(requestedByIdsByOrderId.values())
+        .flat()
+        .filter((value): value is number => typeof value === "number")
+    )
+  );
+  const requestedByUsers =
+    requestedByUserIds.length > 0
+      ? await db
+          .select()
+          .from(users)
+          .where(inArray(users.id, requestedByUserIds))
+      : [];
+  const requestedByUsersById = new Map(
+    requestedByUsers.map(user => [user.id, user])
+  );
   const invoiceCountMap = await getPurchaseOrderInvoiceCountMap(
-    rows.map(row => row.purchaseOrder.id)
+    purchaseOrderIds
   );
 
-  return rows.map(row => ({
-    ...row,
-    contractSummary: buildPurchaseOrderContractSummary(
-      row.purchaseOrder,
-      invoiceCountMap.get(row.purchaseOrder.id) ?? 0
-    ),
-  }));
+  return rows.map(row => {
+    const requestedByIds =
+      requestedByIdsByOrderId.get(row.purchaseOrder.id) ?? [];
+    const requestedByUsers = requestedByIds
+      .map(id => requestedByUsersById.get(id))
+      .filter((user): user is User => Boolean(user));
+
+    return {
+      ...row,
+      originalRequestNumbers:
+        requestNumbersByOrderId.get(row.purchaseOrder.id) ?? [],
+      originalRequester: requestedByUsers[0] ?? null,
+      requestedByUsers,
+      contractSummary: buildPurchaseOrderContractSummary(
+        row.purchaseOrder,
+        invoiceCountMap.get(row.purchaseOrder.id) ?? 0
+      ),
+    };
+  });
 }
 
 export async function getPurchaseOrderById(id: number) {

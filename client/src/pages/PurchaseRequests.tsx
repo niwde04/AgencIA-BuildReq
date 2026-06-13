@@ -130,8 +130,20 @@ function formatPurchaseRequestRequestedBy(row: any) {
   return labels.length > 0 ? labels.join(", ") : "—";
 }
 
-function formatPurchaseRequestFlowSender(row: any) {
-  return getUserLabel(row.createdBy, "—");
+function formatPurchaseRequestApprovedBy(row: any) {
+  const users = Array.isArray(row.approvedByUsers)
+    ? row.approvedByUsers
+    : row.approvedBy
+      ? [row.approvedBy]
+      : [];
+  const labels = Array.from(
+    new Set(
+      users
+        .map((user: any) => getUserLabel(user, ""))
+        .filter(Boolean)
+    )
+  );
+  return labels.length > 0 ? labels.join(", ") : "—";
 }
 
 type RequestTargetSelection =
@@ -328,7 +340,7 @@ export default function PurchaseRequests() {
         (row.project ? `${row.project.code} ${row.project.name}` : "");
       const requestNumbers = formatPurchaseRequestRequestNumbers(row);
       const requestedByLabel = formatPurchaseRequestRequestedBy(row);
-      const flowSenderLabel = formatPurchaseRequestFlowSender(row);
+      const approvedByLabel = formatPurchaseRequestApprovedBy(row);
       const matchesSearch =
         !normalizedSearch ||
         [
@@ -337,7 +349,7 @@ export default function PurchaseRequests() {
           purchaseRequest.sapDocumentNumber,
           projectLabel,
           requestedByLabel,
-          flowSenderLabel,
+          approvedByLabel,
         ]
           .filter(Boolean)
           .some(value =>
@@ -1199,8 +1211,8 @@ export default function PurchaseRequests() {
           value: (row: any) => formatPurchaseRequestRequestedBy(row),
         },
         {
-          header: "Enviado por",
-          value: (row: any) => formatPurchaseRequestFlowSender(row),
+          header: "Aprobado por",
+          value: (row: any) => formatPurchaseRequestApprovedBy(row),
         },
         {
           header: "Tipo de Compra",
@@ -1285,7 +1297,7 @@ export default function PurchaseRequests() {
           <Input
             value={searchTerm}
             onChange={event => setSearchTerm(event.target.value)}
-            placeholder="Buscar por SC, REQ, proyecto, requiriente, flujo o documento..."
+            placeholder="Buscar por SC, REQ, proyecto, requiriente, aprobador o documento..."
             className="h-10 pl-9"
           />
         </div>
@@ -1375,7 +1387,7 @@ export default function PurchaseRequests() {
                       Requiriente
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Enviado por
+                      Aprobado por
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Tipo de Compra
@@ -1443,7 +1455,7 @@ export default function PurchaseRequests() {
                           {formatPurchaseRequestRequestedBy(row)}
                         </td>
                         <td className="p-3 text-xs">
-                          {formatPurchaseRequestFlowSender(row)}
+                          {formatPurchaseRequestApprovedBy(row)}
                         </td>
                         <td className="p-3 text-xs">
                           {getPurchaseTypeLabel(
