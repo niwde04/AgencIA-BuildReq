@@ -61,6 +61,8 @@ export const dashboardRouter = router({
       canAccessProcurement || userRole === "bodeguero_proyecto";
     const canAccessPurchaseOrders =
       canAccessProcurement || userRole === "bodeguero_proyecto";
+    const canAccessTransferRequests =
+      canAccessProcurement || userRole === "bodeguero_proyecto";
     const canAccessInvoices =
       isAdmin ||
       userRole === "jefe_bodega_central" ||
@@ -125,7 +127,7 @@ export const dashboardRouter = router({
             ...purchaseFilters,
           })
         : Promise.resolve([]),
-      canAccessProcurement
+      canAccessTransferRequests
         ? db.listTransferRequests({
             status: "pendiente",
             ...scopedFilters,

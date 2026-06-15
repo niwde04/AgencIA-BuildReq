@@ -23,6 +23,18 @@ function canManageWarehousesGlobally(user: {
   );
 }
 
+function assertCanManageCentralWarehouse(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  if (!canManageWarehousesGlobally(user)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Solo Administración Central puede marcar la bodega central",
+    });
+  }
+}
+
 function canManageWarehouses(user: {
   role: string;
   buildreqRole?: string | null;
@@ -250,10 +262,14 @@ export const warehousesRouter = router({
         name: z.string().trim().min(1).max(255),
         description: z.string().trim().max(1000).nullable().optional(),
         projectId: z.number().int().positive().optional(),
+        isCentralWarehouse: z.boolean().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       assertCanManageWarehouses(ctx.user);
+      if (input.isCentralWarehouse !== undefined) {
+        assertCanManageCentralWarehouse(ctx.user);
+      }
       if (ctx.user.buildreqRole === "administrador_proyecto" && !input.projectId) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -287,10 +303,14 @@ export const warehousesRouter = router({
         name: z.string().trim().min(1).max(255).optional(),
         description: z.string().trim().max(1000).nullable().optional(),
         isActive: z.boolean().optional(),
+        isCentralWarehouse: z.boolean().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       assertCanManageWarehouses(ctx.user);
+      if (input.isCentralWarehouse !== undefined) {
+        assertCanManageCentralWarehouse(ctx.user);
+      }
       await assertCanManageWarehouseId(ctx.user, input.id);
 
       const { id, ...data } = input;

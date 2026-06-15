@@ -122,7 +122,11 @@ export const inventoryRouter = router({
         projectIds?: number[] | null;
       } = { isActive: true };
       const scopedWarehouseFilters = applyProjectScope(baseFilters, ctx.user);
-      const visibleWarehouses = canManageWarehousesGlobally(ctx.user)
+      const hideQuantities =
+        ctx.user.role !== "admin" &&
+        ctx.user.buildreqRole === "bodeguero_proyecto";
+      const visibleWarehouses = canManageWarehousesGlobally(ctx.user) ||
+        hideQuantities
         ? await db.listWarehouses({ isActive: true })
         : isWarehouseAssignedViewer(ctx.user)
           ? await db.listWarehouses({
@@ -137,6 +141,7 @@ export const inventoryRouter = router({
 
       return db.listVisibleWarehouseStockForItems({
         warehouseIds: visibleWarehouses.map(warehouse => Number(warehouse.id)),
+        hideQuantities,
         items: input.items,
       });
     }),

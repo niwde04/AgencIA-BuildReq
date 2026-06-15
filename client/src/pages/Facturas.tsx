@@ -178,6 +178,298 @@ function getAssetDetailSummary(detail: FixedAssetDetail) {
     .join(" · ");
 }
 
+type InvoiceFixedAssetArticle = {
+  id?: number;
+  temporaryItemCode?: string | null;
+  itemCode?: string | null;
+  fixedAssetStatus?: string | null;
+  fixedAssetSerialNumber?: string | null;
+  fixedAssetCondition?: FixedAssetDetail["condition"] | null;
+  fixedAssetColor?: string | null;
+  fixedAssetModel?: string | null;
+  fixedAssetBrand?: string | null;
+  fixedAssetChassisSeries?: string | null;
+  fixedAssetMotorSeries?: string | null;
+  fixedAssetPlateOrCode?: string | null;
+};
+
+type InvoiceAssetBreakdownRow = FixedAssetDetail & {
+  temporaryItemCode?: string | null;
+  itemCode?: string | null;
+  fixedAssetStatus?: string | null;
+};
+
+function getInvoiceFixedAssetArticles(item: any): InvoiceFixedAssetArticle[] {
+  return Array.isArray(item?.fixedAssetArticles)
+    ? item.fixedAssetArticles
+    : [];
+}
+
+function getInvoiceAssetBreakdownRows(
+  item: any,
+  fallbackDetails: FixedAssetDetail[]
+): InvoiceAssetBreakdownRow[] {
+  const articles = getInvoiceFixedAssetArticles(item);
+  const quantity = Number(item?.quantity ?? 0);
+  const isSingleUnitLine =
+    Number.isFinite(quantity) && quantity <= 1 && fallbackDetails.length <= 1;
+  if (isSingleUnitLine) {
+    const currentCode = String(item?.currentSapItemCode ?? "").trim();
+    const fallbackDetail = fallbackDetails[0];
+    const matchingArticle =
+      articles.find(article => {
+        const articleCode = String(article.itemCode ?? "").trim();
+        const temporaryCode = String(article.temporaryItemCode ?? "").trim();
+        const serialNumber = String(
+          article.fixedAssetSerialNumber ?? ""
+        ).trim();
+        return (
+          (currentCode &&
+            (articleCode === currentCode || temporaryCode === currentCode)) ||
+          (fallbackDetail?.serialNumber &&
+            serialNumber === fallbackDetail.serialNumber)
+        );
+      }) ?? articles[0];
+
+    if (matchingArticle) {
+      return [
+        {
+          serialNumber:
+            matchingArticle.fixedAssetSerialNumber ??
+            fallbackDetail?.serialNumber ??
+            "",
+          condition:
+            matchingArticle.fixedAssetCondition ??
+            fallbackDetail?.condition ??
+            "nuevo",
+          color:
+            matchingArticle.fixedAssetColor ?? fallbackDetail?.color ?? "",
+          model:
+            matchingArticle.fixedAssetModel ?? fallbackDetail?.model ?? "",
+          brand:
+            matchingArticle.fixedAssetBrand ?? fallbackDetail?.brand ?? "",
+          chassisSeries:
+            matchingArticle.fixedAssetChassisSeries ??
+            fallbackDetail?.chassisSeries ??
+            "",
+          motorSeries:
+            matchingArticle.fixedAssetMotorSeries ??
+            fallbackDetail?.motorSeries ??
+            "",
+          plateOrCode:
+            matchingArticle.fixedAssetPlateOrCode ??
+            fallbackDetail?.plateOrCode ??
+            "",
+          temporaryItemCode: matchingArticle.temporaryItemCode ?? "",
+          itemCode: matchingArticle.itemCode ?? currentCode,
+          fixedAssetStatus: matchingArticle.fixedAssetStatus ?? "resuelto",
+        },
+      ];
+    }
+
+    return fallbackDetails.map(detail => ({
+      ...detail,
+      temporaryItemCode: "",
+      itemCode: currentCode,
+      fixedAssetStatus: item?.isFixedAsset ? "resuelto" : null,
+    }));
+  }
+
+  if (articles.length > 0) {
+    return articles.map(article => ({
+      serialNumber: article.fixedAssetSerialNumber ?? "",
+      condition: article.fixedAssetCondition ?? "nuevo",
+      color: article.fixedAssetColor ?? "",
+      model: article.fixedAssetModel ?? "",
+      brand: article.fixedAssetBrand ?? "",
+      chassisSeries: article.fixedAssetChassisSeries ?? "",
+      motorSeries: article.fixedAssetMotorSeries ?? "",
+      plateOrCode: article.fixedAssetPlateOrCode ?? "",
+      temporaryItemCode: article.temporaryItemCode ?? "",
+      itemCode: article.itemCode ?? "",
+      fixedAssetStatus: article.fixedAssetStatus ?? "pendiente",
+    }));
+  }
+
+  return fallbackDetails.map(detail => ({
+    ...detail,
+    temporaryItemCode: "",
+    itemCode: "",
+    fixedAssetStatus: item?.isFixedAsset ? "pendiente" : null,
+  }));
+}
+
+function getFixedAssetStatusLabel(status: string | null | undefined) {
+  const normalized = String(status ?? "").trim().toLowerCase();
+  if (normalized === "resuelto") return "Resuelto";
+  if (normalized === "pendiente") return "Pendiente";
+  return normalized || "Pendiente";
+}
+
+function getFixedAssetStatusBadgeClass(status: string | null | undefined) {
+  return String(status ?? "").trim().toLowerCase() === "resuelto"
+    ? "border-emerald-300 text-emerald-700"
+    : "border-amber-300 text-amber-700";
+}
+
+function getInvoiceAssetDisplayCode(
+  asset: InvoiceAssetBreakdownRow,
+  item: any
+) {
+  return (
+    String(asset.itemCode ?? "").trim() ||
+    String(asset.temporaryItemCode ?? "").trim() ||
+    String(item.currentSapItemCode ?? "").trim() ||
+    String(item.originalSapItemCode ?? "").trim() ||
+    "—"
+  );
+}
+
+function getInvoiceUnitAmount(
+  value: string | number | null | undefined,
+  unitCount: number
+) {
+  const count = Math.max(unitCount, 1);
+  return toNumber(value) / count;
+}
+
+function InvoiceAssetUnitDetailsPanel({
+  asset,
+  unitNumber,
+}: {
+  asset: InvoiceAssetBreakdownRow;
+  unitNumber: number;
+}) {
+  return (
+    <div className="rounded-md border border-border/70 bg-background p-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm font-semibold">Unidad {unitNumber}</span>
+        <Badge
+          variant="outline"
+          className={getFixedAssetStatusBadgeClass(asset.fixedAssetStatus)}
+        >
+          {getFixedAssetStatusLabel(asset.fixedAssetStatus)}
+        </Badge>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="space-y-1.5">
+          <Label>Número de serie</Label>
+          <Input
+            value={asset.serialNumber}
+            disabled
+            placeholder="Serie"
+            className="disabled:cursor-default disabled:opacity-100"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Condición</Label>
+          <Select value={asset.condition} disabled>
+            <SelectTrigger className="disabled:cursor-default disabled:opacity-100">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ASSET_CONDITION_VALUES.map(condition => (
+                <SelectItem key={condition} value={condition}>
+                  {ASSET_CONDITION_LABELS[condition]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {ASSET_DETAIL_OPTIONAL_FIELDS.map(field => (
+          <div key={field.key} className="space-y-1.5">
+            <Label>{field.label}</Label>
+            <Input
+              value={String(asset[field.key] ?? "")}
+              disabled
+              placeholder={field.placeholder}
+              className="disabled:cursor-default disabled:opacity-100"
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function InvoiceLineRetentionCell({
+  item,
+  lineRetentions,
+  availableRetentionOptions,
+  canEditRetentions,
+  canAddLineRetention,
+  onAddLineRetention,
+}: {
+  item: any;
+  lineRetentions: RetentionDraft[];
+  availableRetentionOptions: RetentionOption[];
+  canEditRetentions: boolean;
+  canAddLineRetention: boolean;
+  onAddLineRetention: (item: any, retentionCatalogId: string) => void;
+}) {
+  return (
+    <td className="min-w-[300px] p-3">
+      {item.allowsTaxWithholding !== false ? (
+        <div className="space-y-2">
+          {lineRetentions.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {lineRetentions.map(retention => (
+                <Badge
+                  key={`${retention.invoiceItemId}-${retention.retentionCatalogId}`}
+                  variant="outline"
+                  className="border-emerald-300 text-emerald-700"
+                >
+                  {retention.retentionCode} - {retention.description}
+                </Badge>
+              ))}
+            </div>
+          ) : canEditRetentions ? null : (
+            <Badge variant="outline" className="border-amber-300 text-amber-700">
+              Sin retención
+            </Badge>
+          )}
+
+          {canEditRetentions ? (
+            canAddLineRetention ? (
+              <Select
+                key={`${item.id}-${lineRetentions
+                  .map(retention => retention.retentionCatalogId)
+                  .join("-")}`}
+                onValueChange={value => onAddLineRetention(item, value)}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="Agregar retención" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableRetentionOptions.map(option => (
+                    <SelectItem key={option.id} value={String(option.id)}>
+                      {option.taxCode} — {option.description} (
+                      {Number(option.ratePercent).toLocaleString("es-HN", {
+                        maximumFractionDigits: 4,
+                      })}
+                      %)
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {lineRetentions.length >= 2
+                  ? "Máximo 2 retenciones"
+                  : "Sin retenciones disponibles"}
+              </p>
+            )
+          ) : null}
+        </div>
+      ) : (
+        <Badge variant="outline" className="border-slate-300 text-slate-600">
+          No aplica
+        </Badge>
+      )}
+    </td>
+  );
+}
+
 function formatSupplierRtnLabel(supplier?: any | null) {
   const rtn = String(supplier?.rtn ?? "").trim();
   return rtn || "RTN no configurado";
@@ -698,7 +990,7 @@ function InvoiceAssetDetailsEditor({
             disabled={
               !canEdit ||
               (!draft.isFixedAsset &&
-                (assetUnitCount !== 1 || item.targetType !== "activo_fijo"))
+                (assetUnitCount === 0 || item.targetType !== "activo_fijo"))
             }
             onCheckedChange={checked =>
               setDraft(current => ({
@@ -718,11 +1010,11 @@ function InvoiceAssetDetailsEditor({
           Activo fijo
         </label>
         {!draft.isFixedAsset &&
-        (assetUnitCount !== 1 || item.targetType !== "activo_fijo") ? (
+        (assetUnitCount === 0 || item.targetType !== "activo_fijo") ? (
           <span className="text-xs text-muted-foreground bg-muted/50 px-2 py-0.5 rounded border border-border/50">
             {item.targetType !== "activo_fijo"
               ? "Solo disponible para productos de tipo Activo Fijo"
-              : "Solo disponible cuando la cantidad es exactamente 1"}
+              : "Solo disponible con cantidad entera mayor que cero"}
           </span>
         ) : null}
         {draft.isFixedAsset ? (
@@ -2163,7 +2455,7 @@ export default function Facturas() {
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Estado
                     </th>
-                    <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <th className="sticky right-0 z-10 bg-muted/30 p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
                       Acciones
                     </th>
                   </tr>
@@ -2254,7 +2546,7 @@ export default function Facturas() {
                             ) : null}
                           </div>
                         </td>
-                        <td className="p-3 text-right">
+                        <td className="sticky right-0 bg-background p-3 text-right shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
                           <Button
                             variant="outline"
                             size="sm"
@@ -2857,10 +3149,159 @@ export default function Facturas() {
                           const itemAssetDetails = parseFixedAssetDetails(
                             item.assetDetails
                           );
+                          const assetBreakdownRows =
+                            getInvoiceAssetBreakdownRows(
+                              item,
+                              itemAssetDetails
+                            );
+                          const shouldSplitFixedAssetLine =
+                            item.isFixedAsset &&
+                            Number(item.quantity ?? 0) > 1 &&
+                            assetBreakdownRows.length > 1;
                           const showAssetDetails =
                             canEditSelectedInvoice ||
                             item.isFixedAsset ||
                             Boolean(item.lineObservation?.trim());
+
+                          if (shouldSplitFixedAssetLine) {
+                            const assetUnitCount = assetBreakdownRows.length;
+                            const unitPrice =
+                              toNumber(item.unitPrice) ||
+                              getInvoiceUnitAmount(item.subtotal, assetUnitCount);
+                            const unitSubtotal = getInvoiceUnitAmount(
+                              item.subtotal,
+                              assetUnitCount
+                            );
+                            const unitTaxAmount = getInvoiceUnitAmount(
+                              item.taxAmount,
+                              assetUnitCount
+                            );
+                            const unitTotal = getInvoiceUnitAmount(
+                              item.total,
+                              assetUnitCount
+                            );
+
+                            return (
+                              <Fragment key={item.id}>
+                                {assetBreakdownRows.map((asset, index) => {
+                                  const displayCode =
+                                    getInvoiceAssetDisplayCode(asset, item);
+                                  const temporaryCode = String(
+                                    asset.temporaryItemCode ?? ""
+                                  ).trim();
+                                  const showTemporaryCode =
+                                    temporaryCode &&
+                                    temporaryCode !== displayCode;
+
+                                  return (
+                                    <Fragment
+                                      key={`${item.id}-asset-line-${index}`}
+                                    >
+                                      <tr className="border-b border-border">
+                                        <td className="p-3 font-medium">
+                                          <div>{item.itemName}</div>
+                                          <div className="mt-2 flex flex-wrap gap-1.5">
+                                            <Badge
+                                              variant="outline"
+                                              className="border-blue-300 text-blue-700"
+                                            >
+                                              Activo fijo
+                                            </Badge>
+                                            {item.isLeasing ? (
+                                              <Badge
+                                                variant="outline"
+                                                className="border-violet-300 text-violet-700"
+                                              >
+                                                Leasing
+                                              </Badge>
+                                            ) : null}
+                                            <Badge variant="outline">
+                                              Unidad {index + 1} de{" "}
+                                              {assetUnitCount}
+                                            </Badge>
+                                            <Badge
+                                              variant="outline"
+                                              className={getFixedAssetStatusBadgeClass(
+                                                asset.fixedAssetStatus
+                                              )}
+                                            >
+                                              {getFixedAssetStatusLabel(
+                                                asset.fixedAssetStatus
+                                              )}
+                                            </Badge>
+                                          </div>
+                                          {item.lineObservation ? (
+                                            <div className="mt-1 text-xs text-muted-foreground">
+                                              {item.lineObservation}
+                                            </div>
+                                          ) : null}
+                                        </td>
+                                        <td className="p-3 font-mono text-xs">
+                                          <div>{displayCode}</div>
+                                          {showTemporaryCode ? (
+                                            <div className="mt-1 font-sans text-[11px] text-muted-foreground">
+                                              Temp: {temporaryCode}
+                                            </div>
+                                          ) : null}
+                                        </td>
+                                        <td className="p-3 text-right">
+                                          1.00 {item.unit || ""}
+                                        </td>
+                                        <td className="p-3 text-right">
+                                          {formatPurchaseOrderCurrency(unitPrice)}
+                                        </td>
+                                        <td className="p-3 text-right">
+                                          {formatPurchaseOrderCurrency(
+                                            unitSubtotal
+                                          )}
+                                        </td>
+                                        <td className="p-3 text-right">
+                                          {formatPurchaseOrderCurrency(
+                                            unitTaxAmount
+                                          )}
+                                        </td>
+                                        <td className="p-3 text-right font-semibold">
+                                          {formatPurchaseOrderCurrency(unitTotal)}
+                                        </td>
+                                        {index === 0 ? (
+                                          <InvoiceLineRetentionCell
+                                            item={item}
+                                            lineRetentions={lineRetentions}
+                                            availableRetentionOptions={
+                                              availableRetentionOptions
+                                            }
+                                            canEditRetentions={
+                                              canEditRetentions
+                                            }
+                                            canAddLineRetention={
+                                              canAddLineRetention
+                                            }
+                                            onAddLineRetention={
+                                              handleAddLineRetention
+                                            }
+                                          />
+                                        ) : (
+                                          <td className="min-w-[300px] p-3">
+                                            <span className="text-xs text-muted-foreground">
+                                              Retención compartida de la línea
+                                            </span>
+                                          </td>
+                                        )}
+                                      </tr>
+                                      <tr className="border-b border-border bg-muted/10 last:border-0">
+                                        <td colSpan={8} className="p-3 pt-0">
+                                          <InvoiceAssetUnitDetailsPanel
+                                            asset={asset}
+                                            unitNumber={index + 1}
+                                          />
+                                        </td>
+                                      </tr>
+                                    </Fragment>
+                                  );
+                                })}
+                              </Fragment>
+                            );
+                          }
 
                           return (
                             <Fragment key={item.id}>
@@ -2887,9 +3328,9 @@ export default function Facturas() {
                                           Leasing
                                         </Badge>
                                       ) : null}
-                                      {itemAssetDetails.length > 0 ? (
+                                      {assetBreakdownRows.length > 0 ? (
                                         <Badge variant="outline">
-                                          {itemAssetDetails.length} unidad(es)
+                                          {assetBreakdownRows.length} unidad(es)
                                         </Badge>
                                       ) : null}
                                     </div>
@@ -2901,9 +3342,16 @@ export default function Facturas() {
                                   ) : null}
                                 </td>
                                 <td className="p-3 font-mono text-xs">
-                                  {item.currentSapItemCode ||
-                                    item.originalSapItemCode ||
-                                    "—"}
+                                  <div>
+                                    {item.currentSapItemCode ||
+                                      item.originalSapItemCode ||
+                                      "—"}
+                                  </div>
+                                  {assetBreakdownRows.length > 1 ? (
+                                    <div className="mt-1 font-sans text-[11px] text-muted-foreground">
+                                      Ver códigos por unidad
+                                    </div>
+                                  ) : null}
                                 </td>
                                 <td className="p-3 text-right">
                                   {item.quantity} {item.unit || ""}
@@ -2920,88 +3368,16 @@ export default function Facturas() {
                                 <td className="p-3 text-right font-semibold">
                                   {formatPurchaseOrderCurrency(item.total)}
                                 </td>
-                                <td className="min-w-[300px] p-3">
-                                  {item.allowsTaxWithholding !== false ? (
-                                    <div className="space-y-2">
-                                      {lineRetentions.length > 0 ? (
-                                        <div className="flex flex-wrap gap-1.5">
-                                          {lineRetentions.map(retention => (
-                                            <Badge
-                                              key={`${retention.invoiceItemId}-${retention.retentionCatalogId}`}
-                                              variant="outline"
-                                              className="border-emerald-300 text-emerald-700"
-                                            >
-                                              {retention.retentionCode} -{" "}
-                                              {retention.description}
-                                            </Badge>
-                                          ))}
-                                        </div>
-                                      ) : canEditRetentions ? null : (
-                                        <Badge
-                                          variant="outline"
-                                          className="border-amber-300 text-amber-700"
-                                        >
-                                          Sin retención
-                                        </Badge>
-                                      )}
-
-                                      {canEditRetentions ? (
-                                        canAddLineRetention ? (
-                                          <Select
-                                            key={`${item.id}-${lineRetentions
-                                              .map(
-                                                retention =>
-                                                  retention.retentionCatalogId
-                                              )
-                                              .join("-")}`}
-                                            onValueChange={value =>
-                                              handleAddLineRetention(
-                                                item,
-                                                value
-                                              )
-                                            }
-                                          >
-                                            <SelectTrigger className="h-9">
-                                              <SelectValue placeholder="Agregar retención" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                              {availableRetentionOptions.map(
-                                                option => (
-                                                  <SelectItem
-                                                    key={option.id}
-                                                    value={String(option.id)}
-                                                  >
-                                                    {option.taxCode} —{" "}
-                                                    {option.description} (
-                                                    {Number(
-                                                      option.ratePercent
-                                                    ).toLocaleString("es-HN", {
-                                                      maximumFractionDigits: 4,
-                                                    })}
-                                                    %)
-                                                  </SelectItem>
-                                                )
-                                              )}
-                                            </SelectContent>
-                                          </Select>
-                                        ) : (
-                                          <p className="text-xs text-muted-foreground">
-                                            {lineRetentions.length >= 2
-                                              ? "Máximo 2 retenciones"
-                                              : "Sin retenciones disponibles"}
-                                          </p>
-                                        )
-                                      ) : null}
-                                    </div>
-                                  ) : (
-                                    <Badge
-                                      variant="outline"
-                                      className="border-slate-300 text-slate-600"
-                                    >
-                                      No aplica
-                                    </Badge>
-                                  )}
-                                </td>
+                                <InvoiceLineRetentionCell
+                                  item={item}
+                                  lineRetentions={lineRetentions}
+                                  availableRetentionOptions={
+                                    availableRetentionOptions
+                                  }
+                                  canEditRetentions={canEditRetentions}
+                                  canAddLineRetention={canAddLineRetention}
+                                  onAddLineRetention={handleAddLineRetention}
+                                />
                               </tr>
                               {showAssetDetails ? (
                                 <tr className="border-b border-border bg-muted/10 last:border-0">

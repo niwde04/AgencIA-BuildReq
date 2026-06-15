@@ -1446,6 +1446,13 @@ export default function SolicitudDetalle() {
     request.requestType === "bienes" ||
     request.approvalStatus === "aprobada" ||
     request.approvalStatus === "no_requiere";
+  const canManageMaterialRequestAttachments = ![
+    "anulada",
+    "cerrada",
+    "cerrada_incompleta",
+    "flujo_completado",
+    "rechazada",
+  ].includes(String(request.status ?? ""));
 
   return (
     <div className="w-full max-w-none space-y-6">
@@ -2320,7 +2327,7 @@ export default function SolicitudDetalle() {
         entityType="material_request"
         entityId={requestId}
         title="Archivos Adjuntos"
-        canManage={canEditCurrentRequest}
+        canManage={canManageMaterialRequestAttachments}
       />
 
       <Dialog

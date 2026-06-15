@@ -890,13 +890,15 @@ export const invoicesRouter = router({
       }
 
       const quantity = Number(invoiceItem.quantity);
+      const isValidFixedAssetQuantity =
+        Number.isFinite(quantity) && quantity > 0 && Number.isInteger(quantity);
       let assetDetails: ReturnType<typeof normalizeFixedAssetDetails> = [];
       if (input.isFixedAsset) {
-        if (quantity !== 1) {
+        if (!isValidFixedAssetQuantity) {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message:
-              "Activo fijo requiere que la cantidad de la línea sea exactamente 1",
+              "Activo fijo requiere cantidad entera mayor que cero",
           });
         }
         if (invoiceItem.targetType !== "activo_fijo") {

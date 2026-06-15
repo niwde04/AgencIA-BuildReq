@@ -231,6 +231,32 @@ const formatQuantity = (value: string | number | null | undefined) =>
     maximumFractionDigits: 2,
   });
 
+const TEMPORARY_FIXED_ASSET_ITEM_NAME = "ACTIVO FIJO TEMPORAL";
+
+function normalizeItemText(value: unknown) {
+  return String(value ?? "").trim().toLocaleUpperCase("es-HN");
+}
+
+function isTemporaryFixedAssetItem(item: any) {
+  return (
+    normalizeItemText(item.itemName) === TEMPORARY_FIXED_ASSET_ITEM_NAME ||
+    normalizeItemText(item.catalogItem?.description) ===
+      TEMPORARY_FIXED_ASSET_ITEM_NAME
+  );
+}
+
+function getRequesterItemNameForTemporaryFixedAsset(item: any) {
+  if (!isTemporaryFixedAssetItem(item)) return null;
+
+  const requestedItemName = String(item.requestedItemName ?? "").trim();
+  if (!requestedItemName) return null;
+  if (normalizeItemText(requestedItemName) === normalizeItemText(item.itemName)) {
+    return null;
+  }
+
+  return requestedItemName;
+}
+
 const getConvertedQuantity = (item: any) => Number(item.convertedQuantity ?? 0);
 
 const getPendingConversionQuantity = (item: any) =>
@@ -976,11 +1002,16 @@ export default function PurchaseRequests() {
         const draft = getItemDraft(item);
         const quantity = formatQuantity(item.quantity);
         const code = item.currentSapItemCode || item.originalSapItemCode || "-";
+        const requesterItemName =
+          getRequesterItemNameForTemporaryFixedAsset(item);
+        const itemDescriptionMarkup = requesterItemName
+          ? `${escapeHtml(item.itemName)}<br><span class="muted">Solicitado: ${escapeHtml(requesterItemName)}</span>`
+          : escapeHtml(item.itemName);
         return `
           <tr>
             <td>${escapeHtml(code)}</td>
             <td class="numeric">${escapeHtml(quantity)}</td>
-            <td>${escapeHtml(item.itemName)}</td>
+            <td>${itemDescriptionMarkup}</td>
             <td>${escapeHtml(getItemTargetLabel(item))}</td>
             <td>${escapeHtml(draft.brand || "-")}</td>
             <td>${escapeHtml(item.unit || "-")}</td>
@@ -1092,6 +1123,11 @@ export default function PurchaseRequests() {
             .numeric {
               font-weight: 800;
               text-align: right;
+            }
+            .muted {
+              color: #444;
+              font-size: 9px;
+              font-weight: 700;
             }
             .summary td {
               border-top: 2px solid #111;
@@ -1797,6 +1833,8 @@ export default function PurchaseRequests() {
                           canConvertSelectedPurchaseRequest &&
                           convertibleItemIdSet.has(item.id) &&
                           pendingQuantity > 0;
+                        const requesterItemName =
+                          getRequesterItemNameForTemporaryFixedAsset(item);
 
                         return (
                           <tr
@@ -1835,6 +1873,14 @@ export default function PurchaseRequests() {
                             </td>
                             <td className="p-4 align-top">
                               <p className="font-medium">{item.itemName}</p>
+                              {requesterItemName ? (
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  Solicitado:{" "}
+                                  <span className="font-medium text-foreground">
+                                    {requesterItemName}
+                                  </span>
+                                </p>
+                              ) : null}
                               {item.notes && (
                                 <p className="mt-1 text-xs text-muted-foreground">
                                   {item.notes}

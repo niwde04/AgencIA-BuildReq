@@ -813,6 +813,10 @@ export const transferRequests = pgTable(
     projectId: integer("projectId").notNull(),
     destinationType: transferDestinationTypeEnum("destinationType").notNull(),
     destinationProjectId: integer("destinationProjectId"),
+    destinationWarehouseId: integer("destinationWarehouseId").references(
+      () => warehouses.id,
+      { onDelete: "set null" }
+    ),
     reverseLogisticId: integer("reverseLogisticId"),
     createdById: integer("createdById").notNull(),
     status: transferRequestStatusEnum("status").default("pendiente").notNull(),
@@ -829,6 +833,9 @@ export const transferRequests = pgTable(
     ),
     reverseLogisticIdx: index("tr_reverse_logistic_idx").on(
       table.reverseLogisticId
+    ),
+    destinationWarehouseIdx: index("tr_destination_warehouse_idx").on(
+      table.destinationWarehouseId
     ),
     statusIdx: index("tr_status_idx").on(table.status),
   })
@@ -1609,6 +1616,7 @@ export const warehouses = pgTable(
     displayName: varchar("displayName", { length: 300 }).notNull().unique(),
     description: text("description"),
     isDefault: boolean("isDefault").default(false).notNull(),
+    isCentralWarehouse: boolean("isCentralWarehouse").default(false).notNull(),
     isActive: boolean("isActive").default(true).notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
@@ -1616,6 +1624,9 @@ export const warehouses = pgTable(
   table => ({
     codeIdx: index("wh_code_idx").on(table.code),
     displayNameIdx: index("wh_display_name_idx").on(table.displayName),
+    centralWarehouseUnique: uniqueIndex("wh_central_warehouse_unique")
+      .on(table.isCentralWarehouse)
+      .where(sql`${table.isCentralWarehouse} = true`),
   })
 );
 

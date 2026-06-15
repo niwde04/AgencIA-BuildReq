@@ -2240,6 +2240,53 @@ describe("BuildReq - Role-based Access Control", () => {
     listTransfersSpy.mockRestore();
   });
 
+  it("Bodeguero de Proyecto can only view transfer requests for their project", async () => {
+    const { ctx } = createProjectBodegueroContext({ assignedProjectId: 6 });
+    const caller = appRouter.createCaller(ctx);
+    const listTransferRequestsSpy = vi
+      .spyOn(db, "listTransferRequests")
+      .mockResolvedValue([] as any);
+    const getTransferRequestByIdSpy = vi
+      .spyOn(db, "getTransferRequestById")
+      .mockResolvedValueOnce({
+        transferRequest: {
+          id: 10,
+          requestNumber: "ST-2026-0010",
+          projectId: 6,
+          destinationProjectId: 9,
+          status: "pendiente",
+        },
+        items: [],
+      } as any)
+      .mockResolvedValueOnce({
+        transferRequest: {
+          id: 11,
+          requestNumber: "ST-2026-0011",
+          projectId: 8,
+          destinationProjectId: 9,
+          status: "pendiente",
+        },
+        items: [],
+      } as any);
+
+    await expect(caller.transferRequests.list()).resolves.toEqual([]);
+    await expect(caller.transferRequests.getById({ id: 10 })).resolves.toEqual(
+      expect.objectContaining({
+        transferRequest: expect.objectContaining({ id: 10 }),
+      })
+    );
+    await expect(caller.transferRequests.getById({ id: 11 })).rejects.toThrow(
+      "No tiene acceso a solicitudes de traslado de otro proyecto"
+    );
+
+    expect(listTransferRequestsSpy).toHaveBeenCalledWith({
+      projectIds: [6],
+    });
+
+    listTransferRequestsSpy.mockRestore();
+    getTransferRequestByIdSpy.mockRestore();
+  });
+
   it("Project Administrator with multiple assigned projects lists all assigned project data", async () => {
     const { ctx } = createProjectAdminContext({
       assignedProjectId: 1,
@@ -2491,6 +2538,115 @@ describe("BuildReq - Role-based Access Control", () => {
     const result = await caller.warehouses.list();
 
     expect(Array.isArray(result)).toBe(true);
+  });
+
+  it("Bodeguero de Proyecto sees transfer origin options without stock quantities", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const listWarehousesSpy = vi
+      .spyOn(db, "listWarehouses")
+      .mockResolvedValue([
+        { id: 101, displayName: "001 - HEH LA BARCA" },
+        { id: 102, displayName: "002 - HEH COMAYAGUA" },
+      ] as any);
+    const listVisibleWarehouseStockForItemsSpy = vi
+      .spyOn(db, "listVisibleWarehouseStockForItems")
+      .mockResolvedValue([
+        {
+          itemId: 31,
+          quantity: null,
+          quantityHidden: true,
+          warehouses: [
+            {
+              warehouseId: 101,
+              displayName: "001 - HEH LA BARCA",
+              quantity: null,
+              quantityHidden: true,
+            },
+          ],
+        },
+      ] as any);
+
+    await expect(
+      caller.inventory.visibleWarehouseStockForItems({
+        items: [
+          {
+            id: 31,
+            sapItemCode: "050200154",
+            itemName: "VARILLA CORRUGADA 1/2X9M",
+          },
+        ],
+      })
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          itemId: 31,
+          quantity: null,
+          quantityHidden: true,
+        }),
+      ])
+    );
+
+    expect(listWarehousesSpy).toHaveBeenCalledWith({ isActive: true });
+    expect(listVisibleWarehouseStockForItemsSpy).toHaveBeenCalledWith({
+      warehouseIds: [101, 102],
+      hideQuantities: true,
+      items: [
+        {
+          id: 31,
+          sapItemCode: "050200154",
+          itemName: "VARILLA CORRUGADA 1/2X9M",
+        },
+      ],
+    });
+
+    listWarehousesSpy.mockRestore();
+    listVisibleWarehouseStockForItemsSpy.mockRestore();
+  });
+
+  it("Administracion Central can mark a warehouse as central", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getWarehouseDetailByIdSpy = vi
+      .spyOn(db, "getWarehouseDetailById")
+      .mockResolvedValue({
+        id: 101,
+        projects: [],
+        assignedUsers: [],
+      } as any);
+    const updateWarehouseSpy = vi
+      .spyOn(db, "updateWarehouse")
+      .mockResolvedValue({ success: true });
+
+    await expect(
+      caller.warehouses.update({
+        id: 101,
+        isCentralWarehouse: true,
+      })
+    ).resolves.toEqual({ success: true });
+
+    expect(updateWarehouseSpy).toHaveBeenCalledWith(101, {
+      isCentralWarehouse: true,
+    });
+
+    getWarehouseDetailByIdSpy.mockRestore();
+    updateWarehouseSpy.mockRestore();
+  });
+
+  it("Project Administrators cannot mark central warehouses", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const updateWarehouseSpy = vi.spyOn(db, "updateWarehouse");
+
+    await expect(
+      caller.warehouses.update({
+        id: 101,
+        isCentralWarehouse: true,
+      })
+    ).rejects.toThrow("Solo Administración Central puede marcar la bodega central");
+
+    expect(updateWarehouseSpy).not.toHaveBeenCalled();
+    updateWarehouseSpy.mockRestore();
   });
 
   it("Ingeniero Residente cannot access warehouses", async () => {
@@ -2850,6 +3006,9 @@ describe("BuildReq - Role-based Access Control", () => {
     const syncMaterialRequestFulfillmentStatusSpy = vi
       .spyOn(db, "syncMaterialRequestFulfillmentStatus")
       .mockResolvedValue({ changed: false, status: "en_proceso" } as any);
+    const getAttachmentsByEntitySpy = vi
+      .spyOn(db, "getAttachmentsByEntity")
+      .mockResolvedValue([{ id: 900 }] as any);
 
     await expect(
       caller.requestItems.assignFlow({
@@ -2892,6 +3051,7 @@ describe("BuildReq - Role-based Access Control", () => {
     getSupplyFlowByRequestIdSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     syncMaterialRequestFulfillmentStatusSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
   });
 
   it("Rejects warehouse dispatch assignment without warehouseId", async () => {
@@ -3118,6 +3278,9 @@ describe("BuildReq - Role-based Access Control", () => {
     const syncMaterialRequestFulfillmentStatusSpy = vi
       .spyOn(db, "syncMaterialRequestFulfillmentStatus")
       .mockResolvedValue({ changed: false, status: "en_proceso" } as any);
+    const getAttachmentsByEntitySpy = vi
+      .spyOn(db, "getAttachmentsByEntity")
+      .mockResolvedValue([{ id: 901 }] as any);
 
     await expect(
       caller.requestItems.assignFlow({
@@ -3139,6 +3302,7 @@ describe("BuildReq - Role-based Access Control", () => {
     listProjectStockForItemsSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     syncMaterialRequestFulfillmentStatusSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
   });
 
   it("Clears warehouseId when removing or changing warehouse dispatch flow", async () => {
@@ -3179,6 +3343,9 @@ describe("BuildReq - Role-based Access Control", () => {
     const syncMaterialRequestFulfillmentStatusSpy = vi
       .spyOn(db, "syncMaterialRequestFulfillmentStatus")
       .mockResolvedValue({ changed: false, status: "en_proceso" } as any);
+    const getAttachmentsByEntitySpy = vi
+      .spyOn(db, "getAttachmentsByEntity")
+      .mockResolvedValue([{ id: 902 }] as any);
 
     await expect(
       caller.requestItems.assignFlow({
@@ -3209,6 +3376,7 @@ describe("BuildReq - Role-based Access Control", () => {
     getSupplyFlowByRequestIdSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     syncMaterialRequestFulfillmentStatusSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
   });
 
   it("Services can only be assigned to direct purchase or purchase request", async () => {
@@ -3248,6 +3416,9 @@ describe("BuildReq - Role-based Access Control", () => {
     const syncMaterialRequestFulfillmentStatusSpy = vi
       .spyOn(db, "syncMaterialRequestFulfillmentStatus")
       .mockResolvedValue({ changed: false, status: "en_proceso" } as any);
+    const getAttachmentsByEntitySpy = vi
+      .spyOn(db, "getAttachmentsByEntity")
+      .mockResolvedValue([{ id: 903 }] as any);
 
     await expect(
       caller.requestItems.assignFlow({
@@ -3299,6 +3470,7 @@ describe("BuildReq - Role-based Access Control", () => {
     getActivePurchaseRequestByMaterialRequestItemIdSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     syncMaterialRequestFulfillmentStatusSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
   });
 
   it("Administrador de Proyecto can assign direct purchase or purchase request in their project", async () => {
@@ -3338,6 +3510,9 @@ describe("BuildReq - Role-based Access Control", () => {
     const syncMaterialRequestFulfillmentStatusSpy = vi
       .spyOn(db, "syncMaterialRequestFulfillmentStatus")
       .mockResolvedValue({ changed: false, status: "en_proceso" } as any);
+    const getAttachmentsByEntitySpy = vi
+      .spyOn(db, "getAttachmentsByEntity")
+      .mockResolvedValue([{ id: 904 }] as any);
 
     await expect(
       caller.requestItems.assignFlow({
@@ -3379,6 +3554,7 @@ describe("BuildReq - Role-based Access Control", () => {
     getActivePurchaseRequestByMaterialRequestItemIdSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     syncMaterialRequestFulfillmentStatusSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
   });
 
   it("Project Administrator can return selected direct-purchase items to requisition", async () => {
@@ -7475,16 +7651,18 @@ describe("BuildReq - Purchase Orders", () => {
         purchaseOrderItemId: 15,
         isLeasing: true,
         lineObservation: "Equipo asignado a gerencia",
-        assetDetail: {
-          serialNumber: "SN-001",
-          condition: "nuevo",
-          color: "Negro",
-          model: "OptiPlex",
-          brand: "Dell",
-          chassisSeries: "",
-          motorSeries: "",
-          plateOrCode: "PLACA-001",
-        },
+        assetDetails: [
+          {
+            serialNumber: "SN-001",
+            condition: "nuevo",
+            color: "Negro",
+            model: "OptiPlex",
+            brand: "Dell",
+            chassisSeries: "",
+            motorSeries: "",
+            plateOrCode: "PLACA-001",
+          },
+        ],
       })
     ).resolves.toEqual(
       expect.objectContaining({
@@ -7499,10 +7677,12 @@ describe("BuildReq - Purchase Orders", () => {
       purchaseOrderItemId: 15,
       isLeasing: true,
       lineObservation: "Equipo asignado a gerencia",
-      assetDetail: expect.objectContaining({
-        serialNumber: "SN-001",
-        condition: "nuevo",
-      }),
+      assetDetails: [
+        expect.objectContaining({
+          serialNumber: "SN-001",
+          condition: "nuevo",
+        }),
+      ],
     });
 
     getPurchaseOrderItemSpy.mockRestore();
@@ -8297,6 +8477,7 @@ describe("BuildReq - Receipts", () => {
         items: [
           {
             sourceItemId: 15,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
             itemName: "COMPUTADORA ESCRITORIO",
             quantityExpected: "1.00",
             quantityReceived: "1",
@@ -8871,7 +9052,7 @@ describe("BuildReq - Receipts", () => {
       expect.arrayContaining([
         expect.objectContaining({
           sourceItemId: 15,
-          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          warehouseId: undefined,
           notes: "Equipo recibido con caja sellada",
           isFixedAsset: true,
           isLeasing: true,
@@ -8913,6 +9094,91 @@ describe("BuildReq - Receipts", () => {
             isFixedAsset: true,
             fixedAssetArticleId: 80,
             fixedAssetStatus: "pendiente",
+            assetDetails: [{ serialNumber: "SN-001", condition: "nuevo" }],
+            fixedAssetArticles: [
+              {
+                id: 80,
+                itemCode: "OC-006-0001",
+                temporaryItemCode: "OC-006-0001",
+                fixedAssetStatus: "pendiente",
+                fixedAssetSerialNumber: "SN-001",
+              },
+            ],
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi.spyOn(db, "registerReceipt");
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+            itemName: "COMPUTADORA ESCRITORIO",
+            quantityExpected: "1.00",
+            quantityReceived: "1",
+            unit: "und",
+          },
+        ],
+      })
+    ).rejects.toThrow(
+      "Contabilidad debe resolver 1 activo(s) fijo(s) de COMPUTADORA ESCRITORIO"
+    );
+
+    expect(registerReceiptSpy).not.toHaveBeenCalled();
+    getPurchaseOrderByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("blocks receipt until every fixed asset article is resolved", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const assetDetails = Array.from({ length: 10 }, (_, index) => ({
+      serialNumber: `SN-${String(index + 1).padStart(3, "0")}`,
+      condition: "nuevo" as const,
+    }));
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "emitida",
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "COMPUTADORA ESCRITORIO",
+            quantity: "10.00",
+            receivedQuantity: "0.00",
+            isFixedAsset: true,
+            fixedAssetArticleId: 80,
+            fixedAssetStatus: "pendiente",
+            assetDetails,
+            fixedAssetArticles: assetDetails.map((detail, index) => ({
+              id: 80 + index,
+              itemCode:
+                index === 9
+                  ? `OC-006-${String(index + 1).padStart(4, "0")}`
+                  : `121201000${index}`,
+              temporaryItemCode: `OC-006-${String(index + 1).padStart(4, "0")}`,
+              fixedAssetStatus: index === 9 ? "pendiente" : "resuelto",
+              fixedAssetSerialNumber: detail.serialNumber,
+            })),
           },
         ],
       } as any);
@@ -8936,15 +9202,119 @@ describe("BuildReq - Receipts", () => {
           {
             sourceItemId: 15,
             itemName: "COMPUTADORA ESCRITORIO",
-            quantityExpected: "1.00",
-            quantityReceived: "1",
+            quantityExpected: "10.00",
+            quantityReceived: "10",
             unit: "und",
           },
         ],
       })
-    ).rejects.toThrow("pendiente de código real");
+    ).rejects.toThrow(
+      "Contabilidad debe resolver 1 activo(s) fijo(s) de COMPUTADORA ESCRITORIO"
+    );
 
     expect(registerReceiptSpy).not.toHaveBeenCalled();
+    getPurchaseOrderByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("allows receipt when every fixed asset article is resolved", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const assetDetails = Array.from({ length: 10 }, (_, index) => ({
+      serialNumber: `SN-${String(index + 1).padStart(3, "0")}`,
+      condition: "nuevo" as const,
+    }));
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "emitida",
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "COMPUTADORA ESCRITORIO",
+            quantity: "10.00",
+            receivedQuantity: "0.00",
+            isFixedAsset: true,
+            isLeasing: false,
+            fixedAssetArticleId: 80,
+            fixedAssetStatus: "resuelto",
+            assetDetails,
+            fixedAssetArticles: assetDetails.map((detail, index) => ({
+              id: 80 + index,
+              itemCode: `121201000${index}`,
+              temporaryItemCode: `OC-006-${String(index + 1).padStart(4, "0")}`,
+              fixedAssetStatus: "resuelto",
+              fixedAssetSerialNumber: detail.serialNumber,
+            })),
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({
+        id: 6,
+        receiptNumber: "RC-2026-0001",
+        status: "completa",
+      } as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            itemName: "COMPUTADORA ESCRITORIO",
+            quantityExpected: "10.00",
+            quantityReceived: "10",
+            unit: "und",
+          },
+        ],
+      })
+    ).resolves.toEqual(expect.objectContaining({ id: 6 }));
+
+    const registeredItems = registerReceiptSpy.mock.calls[0]?.[1] as any[];
+    expect(registeredItems).toHaveLength(10);
+    expect(registeredItems.every(item => item.warehouseId === undefined)).toBe(
+      true
+    );
+    expect(registeredItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceItemId: 15,
+          sapItemCode: "1212010000",
+          quantityExpected: "1.00",
+          quantityReceived: "1",
+          isFixedAsset: true,
+          fixedAssetSapItemCode: "1212010000",
+          assetDetails: [expect.objectContaining({ serialNumber: "SN-001" })],
+        }),
+        expect.objectContaining({
+          sourceItemId: 15,
+          sapItemCode: "1212010009",
+          quantityExpected: "1.00",
+          quantityReceived: "1",
+          isFixedAsset: true,
+          fixedAssetSapItemCode: "1212010009",
+          assetDetails: [expect.objectContaining({ serialNumber: "SN-010" })],
+        }),
+      ])
+    );
     getPurchaseOrderByIdSpy.mockRestore();
     registerReceiptSpy.mockRestore();
   });
@@ -8984,7 +9354,7 @@ describe("BuildReq - Receipts", () => {
         ],
       })
     ).rejects.toThrow(
-      "Activo fijo requiere que la cantidad recibida sea exactamente 1"
+      "Activo fijo requiere una cantidad recibida entera mayor que cero"
     );
 
     expect(registerReceiptSpy).not.toHaveBeenCalled();
@@ -11278,6 +11648,67 @@ describe("BuildReq - Invoices", () => {
     updateInvoiceItemAssetDetailsSpy.mockRestore();
   });
 
+  it("Administracion Central can update multi-unit draft invoice fixed asset details", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const assetDetails = Array.from({ length: 10 }, (_, index) => ({
+      serialNumber: `NS${index + 1}`,
+      condition: "nuevo" as const,
+      color: "NEGRO",
+      model: "INSPIRON",
+      brand: "DELL",
+    }));
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      items: [
+        {
+          id: 77,
+          invoiceId: 10,
+          itemName: "COMPUTADORA DELL LAPTOP",
+          quantity: "10.00",
+          targetType: "activo_fijo",
+        },
+      ],
+    } as any);
+    const updateInvoiceItemAssetDetailsSpy = vi
+      .spyOn(db, "updateInvoiceItemAssetDetails")
+      .mockResolvedValue({
+        id: 77,
+        isFixedAsset: true,
+        isLeasing: false,
+      } as any);
+
+    await expect(
+      caller.invoices.updateItemAssetDetails({
+        id: 10,
+        invoiceItemId: 77,
+        isFixedAsset: true,
+        isLeasing: false,
+        assetDetails,
+      })
+    ).resolves.toEqual(expect.objectContaining({ id: 77 }));
+
+    expect(updateInvoiceItemAssetDetailsSpy).toHaveBeenCalledWith(
+      77,
+      expect.objectContaining({
+        isFixedAsset: true,
+        assetDetails: expect.arrayContaining([
+          expect.objectContaining({
+            serialNumber: "NS1",
+            brand: "DELL",
+          }),
+          expect.objectContaining({
+            serialNumber: "NS10",
+            model: "INSPIRON",
+          }),
+        ]),
+      })
+    );
+
+    getInvoiceByIdSpy.mockRestore();
+    updateInvoiceItemAssetDetailsSpy.mockRestore();
+  });
+
   it("blocks fixed asset invoice updates outside draft statuses", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -11329,9 +11760,7 @@ describe("BuildReq - Invoices", () => {
         isFixedAsset: true,
         assetDetails: [{ serialNumber: "SN-001", condition: "nuevo" }],
       })
-    ).rejects.toThrow(
-      "Activo fijo requiere que la cantidad de la línea sea exactamente 1"
-    );
+    ).rejects.toThrow("Activo fijo requiere cantidad entera mayor que cero");
 
     expect(updateInvoiceItemAssetDetailsSpy).not.toHaveBeenCalled();
     getInvoiceByIdSpy.mockRestore();
@@ -11924,7 +12353,7 @@ describe("BuildReq - Document attachments", () => {
     storagePutSpy.mockRestore();
   });
 
-  it("lets Superintendente view assigned requisition attachments but not upload them", async () => {
+  it("lets Superintendente view and upload assigned requisition attachments", async () => {
     const { ctx } = createSuperintendentContext({
       assignedProjectId: 1,
       assignedProjectIds: [1],
@@ -11952,7 +12381,13 @@ describe("BuildReq - Document attachments", () => {
       key: "buildreq/material_request/55/soporte.pdf",
       url: "https://storage.local/soporte.pdf",
     });
-    const storagePutSpy = vi.spyOn(storage, "storagePut");
+    const storagePutSpy = vi.spyOn(storage, "storagePut").mockResolvedValue({
+      key: "buildreq/material_request/55/soporte-nuevo.pdf",
+      url: "https://storage.local/soporte-nuevo.pdf",
+    });
+    const createAttachmentSpy = vi
+      .spyOn(db, "createAttachment")
+      .mockResolvedValue({ id: 100 });
 
     await expect(
       caller.attachments.getByEntity({
@@ -11971,17 +12406,27 @@ describe("BuildReq - Document attachments", () => {
         fileSize: pdfBuffer.byteLength,
         category: "otro",
       })
-    ).rejects.toMatchObject({
-      code: "FORBIDDEN",
-      message:
-        "No tiene permisos para administrar adjuntos de esta requisicion",
-    });
-    expect(storagePutSpy).not.toHaveBeenCalled();
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 100,
+        url: "https://storage.local/soporte-nuevo.pdf",
+      })
+    );
+    expect(storagePutSpy).toHaveBeenCalled();
+    expect(createAttachmentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: "material_request",
+        entityId: 55,
+        fileName: "soporte.pdf",
+        fileSize: pdfBuffer.byteLength,
+      })
+    );
 
     getMaterialRequestByIdSpy.mockRestore();
     getAttachmentsByEntitySpy.mockRestore();
     storageGetSpy.mockRestore();
     storagePutSpy.mockRestore();
+    createAttachmentSpy.mockRestore();
   });
 
   it("blocks Contable from viewing draft invoice attachments", async () => {
@@ -12057,6 +12502,248 @@ describe("BuildReq - Document attachments", () => {
 // Tests: Transfer Requests
 // ============================================================
 describe("BuildReq - Transfer Requests", () => {
+  it("Bodeguero de Proyecto can convert transfer requests for their project", async () => {
+    const { ctx } = createProjectBodegueroContext({ assignedProjectId: 1 });
+    const caller = appRouter.createCaller(ctx);
+    const getTransferRequestByIdSpy = vi
+      .spyOn(db, "getTransferRequestById")
+      .mockResolvedValue({
+        transferRequest: {
+          id: 6,
+          requestNumber: "ST-2026-0001",
+          projectId: 1,
+          destinationProjectId: 14,
+          status: "pendiente",
+        },
+        items: [
+          { id: 31, materialRequestItemId: 21, quantity: "1.00" },
+        ],
+      } as any);
+    const createTransferFromRequestSpy = vi.spyOn(
+      db,
+      "createTransferFromRequest"
+    ).mockResolvedValue({
+      id: 44,
+      transferNumber: "TR-2026-0001",
+      guideNumber: "GR-2026-0001",
+      sapCorrelative: "SAP-GR-2026-0001",
+    } as any);
+
+    await expect(
+      caller.transferRequests.convertToTransfer({
+        id: 6,
+        items: [
+          {
+            transferRequestItemId: 31,
+            quantity: "1.00",
+            sourceProjectId: 1,
+            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          },
+        ],
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 44,
+        transferNumber: "TR-2026-0001",
+      })
+    );
+
+    expect(createTransferFromRequestSpy).toHaveBeenCalledWith(6, 6, [
+      {
+        transferRequestItemId: 31,
+        quantity: "1.00",
+        sourceProjectId: 1,
+        sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+      },
+    ]);
+
+    getTransferRequestByIdSpy.mockRestore();
+    createTransferFromRequestSpy.mockRestore();
+  });
+
+  it("Bodeguero de Proyecto cannot convert transfer requests from another project", async () => {
+    const { ctx } = createProjectBodegueroContext({ assignedProjectId: 1 });
+    const caller = appRouter.createCaller(ctx);
+    const getTransferRequestByIdSpy = vi
+      .spyOn(db, "getTransferRequestById")
+      .mockResolvedValue({
+        transferRequest: {
+          id: 6,
+          requestNumber: "ST-2026-0001",
+          projectId: 7,
+          destinationProjectId: 8,
+          status: "pendiente",
+        },
+        items: [
+          { id: 31, materialRequestItemId: 21, quantity: "1.00" },
+        ],
+      } as any);
+    const createTransferFromRequestSpy = vi.spyOn(
+      db,
+      "createTransferFromRequest"
+    );
+
+    await expect(
+      caller.transferRequests.convertToTransfer({
+        id: 6,
+        items: [
+          {
+            transferRequestItemId: 31,
+            quantity: "1.00",
+            sourceProjectId: 7,
+            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          },
+        ],
+      })
+    ).rejects.toThrow("No tiene acceso a solicitudes de traslado de otro proyecto");
+
+    expect(createTransferFromRequestSpy).not.toHaveBeenCalled();
+    getTransferRequestByIdSpy.mockRestore();
+    createTransferFromRequestSpy.mockRestore();
+  });
+
+  it("Bodeguero de Proyecto can update destination warehouse only to an assigned warehouse", async () => {
+    const { ctx } = createProjectBodegueroContext({ assignedProjectId: 1 });
+    const caller = appRouter.createCaller(ctx);
+    const getTransferRequestByIdSpy = vi
+      .spyOn(db, "getTransferRequestById")
+      .mockResolvedValue({
+        transferRequest: {
+          id: 6,
+          requestNumber: "ST-2026-0001",
+          projectId: 1,
+          destinationType: "proyecto",
+          destinationProjectId: 1,
+          status: "pendiente",
+        },
+        items: [],
+      } as any);
+    const listProjectWarehousesSpy = vi
+      .spyOn(db, "listProjectWarehouses")
+      .mockResolvedValue([
+        { id: 101, displayName: "001 - HEH LA BARCA" },
+        { id: 102, displayName: "002 - HEH COMAYAGUA" },
+      ] as any);
+    const listWarehousesSpy = vi
+      .spyOn(db, "listWarehouses")
+      .mockResolvedValue([
+        { id: 102, displayName: "002 - HEH COMAYAGUA" },
+      ] as any);
+    const updateTransferRequestSpy = vi
+      .spyOn(db, "updateTransferRequest")
+      .mockResolvedValue({ success: true });
+
+    await expect(
+      caller.transferRequests.updateDestinationWarehouse({
+        id: 6,
+        warehouseId: 102,
+      })
+    ).resolves.toEqual({ success: true });
+
+    expect(listProjectWarehousesSpy).toHaveBeenCalledWith(1, {
+      isActive: true,
+    });
+    expect(listWarehousesSpy).toHaveBeenCalledWith({
+      isActive: true,
+      assignedUserId: 6,
+    });
+    expect(updateTransferRequestSpy).toHaveBeenCalledWith(6, {
+      destinationWarehouseId: 102,
+    });
+
+    getTransferRequestByIdSpy.mockRestore();
+    listProjectWarehousesSpy.mockRestore();
+    listWarehousesSpy.mockRestore();
+    updateTransferRequestSpy.mockRestore();
+  });
+
+  it("Bodeguero de Proyecto cannot update destination warehouse to an unassigned warehouse", async () => {
+    const { ctx } = createProjectBodegueroContext({ assignedProjectId: 1 });
+    const caller = appRouter.createCaller(ctx);
+    const getTransferRequestByIdSpy = vi
+      .spyOn(db, "getTransferRequestById")
+      .mockResolvedValue({
+        transferRequest: {
+          id: 6,
+          requestNumber: "ST-2026-0001",
+          projectId: 1,
+          destinationType: "proyecto",
+          destinationProjectId: 1,
+          status: "pendiente",
+        },
+        items: [],
+      } as any);
+    const listProjectWarehousesSpy = vi
+      .spyOn(db, "listProjectWarehouses")
+      .mockResolvedValue([
+        { id: 102, displayName: "002 - HEH COMAYAGUA" },
+      ] as any);
+    const listWarehousesSpy = vi
+      .spyOn(db, "listWarehouses")
+      .mockResolvedValue([
+        { id: 101, displayName: "001 - HEH LA BARCA" },
+      ] as any);
+    const updateTransferRequestSpy = vi.spyOn(db, "updateTransferRequest");
+
+    await expect(
+      caller.transferRequests.updateDestinationWarehouse({
+        id: 6,
+        warehouseId: 102,
+      })
+    ).rejects.toThrow(
+      "Solo puede elegir una bodega destino asignada a su usuario"
+    );
+
+    expect(updateTransferRequestSpy).not.toHaveBeenCalled();
+    getTransferRequestByIdSpy.mockRestore();
+    listProjectWarehousesSpy.mockRestore();
+    listWarehousesSpy.mockRestore();
+    updateTransferRequestSpy.mockRestore();
+  });
+
+  it("Bodeguero de Proyecto gets a generic stock error when converting without enough stock", async () => {
+    const { ctx } = createProjectBodegueroContext({ assignedProjectId: 1 });
+    const caller = appRouter.createCaller(ctx);
+    const getTransferRequestByIdSpy = vi
+      .spyOn(db, "getTransferRequestById")
+      .mockResolvedValue({
+        transferRequest: {
+          id: 6,
+          requestNumber: "ST-2026-0001",
+          projectId: 1,
+          destinationProjectId: 1,
+          status: "pendiente",
+        },
+        items: [
+          { id: 31, materialRequestItemId: 21, quantity: "10.00" },
+        ],
+      } as any);
+    const createTransferFromRequestSpy = vi
+      .spyOn(db, "createTransferFromRequest")
+      .mockRejectedValue(
+        new Error(
+          "Stock insuficiente para VARILLA. Disponible: 0.00, solicitado: 10.00."
+        )
+      );
+
+    await expect(
+      caller.transferRequests.convertToTransfer({
+        id: 6,
+        items: [
+          {
+            transferRequestItemId: 31,
+            quantity: "10.00",
+            sourceProjectId: 1,
+            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          },
+        ],
+      })
+    ).rejects.toThrow("Stock insuficiente para completar el traslado");
+
+    getTransferRequestByIdSpy.mockRestore();
+    createTransferFromRequestSpy.mockRestore();
+  });
+
   it("convertToTransfer accepts partial and zero quantities for open-flow remainders", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);

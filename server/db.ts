@@ -137,7 +137,10 @@ import {
   type PurchaseOrderTaxBreakdownEntry,
   type SalesTaxCatalogItem,
 } from "@shared/purchase-orders";
-import type { FixedAssetDetail } from "@shared/fixed-assets";
+import {
+  normalizeFixedAssetDetails,
+  type FixedAssetDetail,
+} from "@shared/fixed-assets";
 import {
   getDemoImportWorkload,
   type ParsedDemoImportPayload,
@@ -1238,6 +1241,7 @@ function mapWarehouseSummary(
     displayName: row.displayName,
     description: row.description,
     isDefault: row.isDefault,
+    isCentralWarehouse: row.isCentralWarehouse,
     isActive: row.isActive,
     isPrimary: Boolean(options?.isPrimary),
   };
@@ -2257,6 +2261,7 @@ export async function listProjectStockForItems(params: {
 
 export async function listVisibleWarehouseStockForItems(params: {
   warehouseIds: number[];
+  hideQuantities?: boolean;
   items: Array<{
     id: number;
     sapItemCode?: string | null;
@@ -2273,7 +2278,8 @@ export async function listVisibleWarehouseStockForItems(params: {
   }
 
   const warehouseIds = Array.from(new Set(params.warehouseIds));
-  const [assignedProjectRows, legacyProjectRows] = await Promise.all([
+  const [assignedProjectRows, legacyProjectRows, centralWarehouseRows] =
+    await Promise.all([
     db
       .select({
         warehouseId: warehouses.id,
@@ -2311,6 +2317,20 @@ export async function listVisibleWarehouseStockForItems(params: {
       .from(projects)
       .innerJoin(warehouses, eq(projects.warehouseId, warehouses.id))
       .where(inArray(projects.warehouseId, warehouseIds)),
+    db
+      .select({
+        warehouseId: warehouses.id,
+        warehouseCode: warehouses.code,
+        warehouseName: warehouses.name,
+        warehouseDisplayName: warehouses.displayName,
+      })
+      .from(warehouses)
+      .where(
+        and(
+          inArray(warehouses.id, warehouseIds),
+          eq(warehouses.isCentralWarehouse, true)
+        )
+      ),
   ]);
   const visibleWarehouseOptionsByScope = new Map<
     string,
@@ -2341,6 +2361,46 @@ export async function listVisibleWarehouseStockForItems(params: {
       projectName: row.projectName,
       quantity: "0.00",
     });
+  }
+  for (const row of centralWarehouseRows) {
+    if (typeof row.warehouseId !== "number") continue;
+    const scopeKey = `central:${row.warehouseId}`;
+    if (visibleWarehouseOptionsByScope.has(scopeKey)) continue;
+    visibleWarehouseOptionsByScope.set(scopeKey, {
+      warehouseId: row.warehouseId,
+      warehouseCode: row.warehouseCode,
+      warehouseName: row.warehouseName,
+      displayName: row.warehouseDisplayName,
+      projectId: null,
+      projectCode: null,
+      projectName: "Bodega Central",
+      quantity: "0.00",
+    });
+  }
+
+  if (params.hideQuantities) {
+    const options = Array.from(visibleWarehouseOptionsByScope.values()).sort(
+      (left, right) => {
+        const leftProject = left.projectCode ?? "";
+        const rightProject = right.projectCode ?? "";
+        return (
+          leftProject.localeCompare(rightProject) ||
+          (left.displayName ?? "").localeCompare(right.displayName ?? "") ||
+          left.warehouseId - right.warehouseId
+        );
+      }
+    );
+
+    return params.items.map(item => ({
+      itemId: item.id,
+      quantity: null,
+      quantityHidden: true,
+      warehouses: options.map(option => ({
+        ...option,
+        quantity: null,
+        quantityHidden: true,
+      })),
+    }));
   }
 
   const stockByKey = new Map<string, string>();
@@ -5221,6 +5281,7 @@ export async function getPurchaseRequestById(id: number) {
       ...row.item,
       brand: savedBrand ?? normalizeOptionalText(catalog?.brand),
       catalogItem: catalog,
+      requestedItemName: normalizeOptionalText(row.sourceItem?.itemName),
       pendingConversionQuantity: toDecimalString(
         getPendingConversionQuantity(row.item)
       ),
@@ -5987,7 +6048,10 @@ export async function getPurchaseOrderById(id: number) {
     )
     .leftJoin(
       requestItems,
-      eq(purchaseOrderItems.materialRequestItemId, requestItems.id)
+      or(
+        eq(purchaseOrderItems.materialRequestItemId, requestItems.id),
+        eq(purchaseRequestItems.materialRequestItemId, requestItems.id)
+      )
     )
     .leftJoin(
       purchaseRequestItemSubprojects,
@@ -6028,11 +6092,70 @@ export async function getPurchaseOrderById(id: number) {
   const catalogByItemCode = new Map(
     itemCatalogRows.map(catalog => [catalog.itemCode, catalog] as const)
   );
+  const itemIds = itemRows.map(row => row.item.id);
+  const fixedAssetArticleIds = itemRows
+    .map(row => row.item.fixedAssetArticleId)
+    .filter((value): value is number => typeof value === "number");
+  const fixedAssetArticleRows =
+    itemIds.length > 0 || fixedAssetArticleIds.length > 0
+      ? await db
+          .select()
+          .from(sapCatalog)
+          .where(
+            and(
+              eq(sapCatalog.isActive, true),
+              or(
+                itemIds.length > 0
+                  ? inArray(
+                      sapCatalog.fixedAssetSourcePurchaseOrderItemId,
+                      itemIds
+                    )
+                  : undefined,
+                fixedAssetArticleIds.length > 0
+                  ? inArray(sapCatalog.id, fixedAssetArticleIds)
+                  : undefined
+              )
+            )
+          )
+          .orderBy(
+            asc(sapCatalog.fixedAssetSourcePurchaseOrderItemId),
+            asc(sapCatalog.itemCode)
+          )
+      : [];
+  const itemIdByPrimaryArticleId = new Map(
+    itemRows
+      .filter(row => typeof row.item.fixedAssetArticleId === "number")
+      .map(row => [row.item.fixedAssetArticleId as number, row.item.id])
+  );
+  const fixedAssetArticlesByItemId = fixedAssetArticleRows.reduce(
+    (map, article) => {
+      const itemId =
+        article.fixedAssetSourcePurchaseOrderItemId ??
+        itemIdByPrimaryArticleId.get(article.id);
+      if (!itemId) return map;
+
+      const articles = map.get(itemId) ?? [];
+      articles.push(article);
+      map.set(itemId, articles);
+      return map;
+    },
+    new Map<number, typeof fixedAssetArticleRows>()
+  );
   const items = itemRows.map(row => {
     const catalog =
       catalogByItemCode.get(row.item.currentSapItemCode?.trim() ?? "") ??
       catalogByItemCode.get(row.item.originalSapItemCode?.trim() ?? "") ??
       null;
+    const fixedAssetArticles =
+      fixedAssetArticlesByItemId.get(row.item.id) ?? [];
+    const computedFixedAssetStatus =
+      fixedAssetArticles.length > 0
+        ? fixedAssetArticles.every(
+            article => article.fixedAssetStatus === "resuelto"
+          )
+          ? "resuelto"
+          : "pendiente"
+        : row.item.fixedAssetStatus;
     const target =
       (row.purchaseRequestItem
         ? mapMaterialRequestTarget(
@@ -6046,6 +6169,10 @@ export async function getPurchaseOrderById(id: number) {
 
     return {
       ...row.item,
+      fixedAssetArticleId:
+        row.item.fixedAssetArticleId ?? fixedAssetArticles[0]?.id ?? null,
+      fixedAssetStatus: computedFixedAssetStatus,
+      fixedAssetArticles,
       targetType: target?.type ?? null,
       subProjectId: target?.type === "subproyecto" ? target.subProjectId : null,
       fixedAssetSapItemCode:
@@ -6053,6 +6180,7 @@ export async function getPurchaseOrderById(id: number) {
       fixedAssetName:
         target?.type === "activo_fijo" ? target.fixedAssetName : null,
       target,
+      requestedItemName: normalizeOptionalText(row.sourceItem?.itemName),
       brand: catalog?.brand ?? null,
       partNumber: catalog?.partNumber ?? null,
       catalogItem: catalog,
@@ -6615,12 +6743,18 @@ export async function getTransferRequestById(id: number) {
     ? ((await getReverseLogisticById(rows[0].transferRequest.reverseLogisticId))
         ?.destinationWarehouse ?? null)
     : null;
+  const selectedDestinationWarehouse = rows[0].transferRequest
+    .destinationWarehouseId
+    ? ((await getWarehouseById(rows[0].transferRequest.destinationWarehouseId)) ??
+      null)
+    : null;
 
   return {
     ...rows[0],
     destinationProject,
     destinationWarehouse:
       reverseLogisticDestinationWarehouse ??
+      selectedDestinationWarehouse ??
       destinationProject?.warehouse ??
       null,
     items: enrichedItems,
@@ -7046,6 +7180,11 @@ export async function getTransferById(id: number) {
     ? ((await getReverseLogisticById(rows[0].transferRequest.reverseLogisticId))
         ?.destinationWarehouse ?? null)
     : null;
+  const selectedDestinationWarehouse = rows[0].transferRequest
+    ?.destinationWarehouseId
+    ? ((await getWarehouseById(rows[0].transferRequest.destinationWarehouseId)) ??
+      null)
+    : null;
   const originProject = rows[0].transferRequest?.projectId
     ? await getProjectById(rows[0].transferRequest.projectId)
     : null;
@@ -7107,6 +7246,7 @@ export async function getTransferById(id: number) {
     destinationProject,
     destinationWarehouse:
       reverseLogisticDestinationWarehouse ??
+      selectedDestinationWarehouse ??
       destinationProject?.warehouse ??
       null,
     createdBy: rows[0].createdBy
@@ -7438,7 +7578,7 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
     await db.insert(invoiceItems).values(
       invoiceLines.map(({ receiptItem, sourceItem, amounts }) => {
         const currentSapItemCode =
-          sourceItem?.currentSapItemCode ?? receiptItem.sapItemCode ?? null;
+          receiptItem.sapItemCode ?? sourceItem?.currentSapItemCode ?? null;
         const originalSapItemCode =
           sourceItem?.originalSapItemCode ?? receiptItem.sapItemCode ?? null;
         const catalogItem =
@@ -7546,30 +7686,47 @@ export async function registerReceipt(
         detailItem,
       ])
     );
-    const isServicePurchaseOrderItem = async (item: {
+    const isNonInventoryPurchaseOrderItem = async (item: {
       sourceItemId?: number | null;
       sapItemCode?: string | null;
+      isFixedAsset?: boolean | null;
     }) => {
       if (item.sourceItemId) {
         const detailItem = purchaseOrderDetailItemsById.get(item.sourceItemId);
+        const tipoArticulo = Number(
+          detailItem?.catalogItem?.tipoArticulo ??
+            detailItem?.tipoArticulo ??
+            0
+        );
+        const sourceCode = String(
+          detailItem?.currentSapItemCode ?? detailItem?.originalSapItemCode ?? ""
+        )
+          .trim()
+          .toUpperCase();
         return (
-          Number(
-            detailItem?.catalogItem?.tipoArticulo ??
-              detailItem?.tipoArticulo ??
-              0
-          ) === 2
+          tipoArticulo === 2 ||
+          tipoArticulo === 3 ||
+          detailItem?.isFixedAsset === true ||
+          Boolean(detailItem?.fixedAssetArticleId) ||
+          sourceCode.startsWith("AFT")
         );
       }
 
+      if (item.isFixedAsset === true) return true;
       const sapItemCode = item.sapItemCode?.trim();
       if (!sapItemCode) return false;
       const catalogItem = await lookupSapItemByCode(sapItemCode);
-      return Number(catalogItem?.tipoArticulo ?? 0) === 2;
+      const tipoArticulo = Number(catalogItem?.tipoArticulo ?? 0);
+      return (
+        tipoArticulo === 2 ||
+        tipoArticulo === 3 ||
+        sapItemCode.toUpperCase().startsWith("AFT")
+      );
     };
 
     for (const item of items) {
       if (parseDecimal(item.quantityReceived) <= 0) continue;
-      if (await isServicePurchaseOrderItem(item)) continue;
+      if (await isNonInventoryPurchaseOrderItem(item)) continue;
       if (!item.warehouseId) {
         throw new Error(`Seleccione almacén destino para ${item.itemName}`);
       }
@@ -7741,30 +7898,47 @@ export async function registerReceipt(
         detailItem,
       ])
     );
-    const isServicePurchaseOrderItem = async (item: {
+    const isNonInventoryPurchaseOrderItem = async (item: {
       sourceItemId?: number | null;
       sapItemCode?: string | null;
+      isFixedAsset?: boolean | null;
     }) => {
       if (item.sourceItemId) {
         const detailItem = purchaseOrderDetailItemsById.get(item.sourceItemId);
+        const tipoArticulo = Number(
+          detailItem?.catalogItem?.tipoArticulo ??
+            detailItem?.tipoArticulo ??
+            0
+        );
+        const sourceCode = String(
+          detailItem?.currentSapItemCode ?? detailItem?.originalSapItemCode ?? ""
+        )
+          .trim()
+          .toUpperCase();
         return (
-          Number(
-            detailItem?.catalogItem?.tipoArticulo ??
-              detailItem?.tipoArticulo ??
-              0
-          ) === 2
+          tipoArticulo === 2 ||
+          tipoArticulo === 3 ||
+          detailItem?.isFixedAsset === true ||
+          Boolean(detailItem?.fixedAssetArticleId) ||
+          sourceCode.startsWith("AFT")
         );
       }
 
+      if (item.isFixedAsset === true) return true;
       const sapItemCode = item.sapItemCode?.trim();
       if (!sapItemCode) return false;
       const catalogItem = await lookupSapItemByCode(sapItemCode);
-      return Number(catalogItem?.tipoArticulo ?? 0) === 2;
+      const tipoArticulo = Number(catalogItem?.tipoArticulo ?? 0);
+      return (
+        tipoArticulo === 2 ||
+        tipoArticulo === 3 ||
+        sapItemCode.toUpperCase().startsWith("AFT")
+      );
     };
 
     for (const item of items) {
       if (!item.sourceItemId) {
-        if (await isServicePurchaseOrderItem(item)) {
+        if (await isNonInventoryPurchaseOrderItem(item)) {
           continue;
         }
         await addInventoryStock({
@@ -7784,7 +7958,7 @@ export async function registerReceipt(
         .where(eq(purchaseOrderItems.id, item.sourceItemId))
         .limit(1);
       if (!existingItem) continue;
-      const isServiceLine = await isServicePurchaseOrderItem(item);
+      const isNonInventoryLine = await isNonInventoryPurchaseOrderItem(item);
       const nextReceived =
         parseDecimal(existingItem.receivedQuantity) +
         parseDecimal(item.quantityReceived);
@@ -7844,10 +8018,12 @@ export async function registerReceipt(
         }
       }
 
-      if (!isServiceLine) {
+      if (!isNonInventoryLine) {
         await addInventoryStock({
           sapItemCode:
-            existingItem.currentSapItemCode ?? existingItem.originalSapItemCode,
+            item.sapItemCode ??
+            existingItem.currentSapItemCode ??
+            existingItem.originalSapItemCode,
           itemName: existingItem.itemName,
           unit: existingItem.unit,
           projectId: purchaseOrderDetail.purchaseOrder.projectId,
@@ -9021,7 +9197,57 @@ export async function getInvoiceById(id: number) {
       .orderBy(asc(invoiceOtherCharges.id)),
   ]);
 
-  return { ...rows[0], items, retentions, otherCharges };
+  const purchaseOrderItemIds = Array.from(
+    new Set(
+      items
+        .map(item => item.purchaseOrderItemId)
+        .filter((value): value is number => typeof value === "number")
+    )
+  );
+  const fixedAssetArticleRows =
+    purchaseOrderItemIds.length > 0
+      ? await db
+          .select()
+          .from(sapCatalog)
+          .where(
+            and(
+              inArray(
+                sapCatalog.fixedAssetSourcePurchaseOrderItemId,
+                purchaseOrderItemIds
+              ),
+              eq(sapCatalog.isActive, true)
+            )
+          )
+          .orderBy(
+            asc(sapCatalog.fixedAssetSourcePurchaseOrderItemId),
+            asc(sapCatalog.temporaryItemCode),
+            asc(sapCatalog.id)
+          )
+      : [];
+  const fixedAssetArticlesByItemId = fixedAssetArticleRows.reduce(
+    (map, article) => {
+      const sourceItemId = article.fixedAssetSourcePurchaseOrderItemId;
+      if (!sourceItemId) return map;
+      const list = map.get(sourceItemId) ?? [];
+      list.push(article);
+      map.set(sourceItemId, list);
+      return map;
+    },
+    new Map<number, typeof fixedAssetArticleRows>()
+  );
+  const itemsWithFixedAssetArticles = items.map(item => ({
+    ...item,
+    fixedAssetArticles: item.purchaseOrderItemId
+      ? (fixedAssetArticlesByItemId.get(item.purchaseOrderItemId) ?? [])
+      : [],
+  }));
+
+  return {
+    ...rows[0],
+    items: itemsWithFixedAssetArticles,
+    retentions,
+    otherCharges,
+  };
 }
 
 export async function lookupSupplierFiscalDocumentRange(params: {
@@ -9405,9 +9631,18 @@ export async function correctInvoiceReceiptFromInvoice(params: {
       const catalogItem =
         catalogByCode.get(sapItemCode?.trim() ?? "") ??
         catalogByCode.get(item.sapItemCode?.trim() ?? "");
-      const isServiceLine = Number(catalogItem?.tipoArticulo ?? 0) === 2;
+      const tipoArticulo = Number(catalogItem?.tipoArticulo ?? 0);
+      const isNonInventoryLine =
+        tipoArticulo === 2 ||
+        tipoArticulo === 3 ||
+        Boolean(sourceItem?.fixedAssetArticleId) ||
+        Boolean(item.fixedAssetSapItemCode) ||
+        String(sapItemCode ?? "")
+          .trim()
+          .toUpperCase()
+          .startsWith("AFT");
 
-      if (!isServiceLine) {
+      if (!isNonInventoryLine) {
         await consumeInventoryStockWithClient(tx, {
           sapItemCode,
           itemName: item.itemName,
@@ -9989,6 +10224,7 @@ export async function listWarehouseExits(filters?: {
       warehouses.displayName,
       warehouses.description,
       warehouses.isDefault,
+      warehouses.isCentralWarehouse,
       warehouses.isActive,
       warehouses.createdAt,
       warehouses.updatedAt,
@@ -10872,6 +11108,7 @@ export async function listOpeningBalances(filters?: {
       warehouses.displayName,
       warehouses.description,
       warehouses.isDefault,
+      warehouses.isCentralWarehouse,
       warehouses.isActive,
       warehouses.createdAt,
       warehouses.updatedAt,
@@ -12806,6 +13043,7 @@ export async function listWarehouses(filters?: {
       warehouses.displayName,
       warehouses.description,
       warehouses.isDefault,
+      warehouses.isCentralWarehouse,
       warehouses.isActive,
       warehouses.createdAt,
       warehouses.updatedAt
@@ -12841,6 +13079,7 @@ export async function createWarehouse(data: {
   localCode?: string | null;
   name: string;
   description?: string | null;
+  isCentralWarehouse?: boolean;
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -12875,13 +13114,27 @@ export async function createWarehouse(data: {
     displayName: buildWarehouseDisplayName(code, name),
     description: data.description?.trim() || null,
     isDefault: false,
+    isCentralWarehouse: Boolean(data.isCentralWarehouse),
     isActive: true,
   } satisfies InsertWarehouse;
 
-  const [warehouse] = await db
-    .insert(warehouses)
-    .values(warehousePayload)
-    .returning();
+  const warehouse = warehousePayload.isCentralWarehouse
+    ? await db.transaction(async tx => {
+        await tx
+          .update(warehouses)
+          .set({ isCentralWarehouse: false, updatedAt: new Date() })
+          .where(eq(warehouses.isCentralWarehouse, true));
+        const [createdWarehouse] = await tx
+          .insert(warehouses)
+          .values(warehousePayload)
+          .returning();
+        return createdWarehouse;
+      })
+    : await db
+        .insert(warehouses)
+        .values(warehousePayload)
+        .returning()
+        .then(rows => rows[0]);
 
   return {
     warehouse,
@@ -12915,6 +13168,7 @@ export async function getWarehouseDetailById(id: number) {
       warehouses.displayName,
       warehouses.description,
       warehouses.isDefault,
+      warehouses.isCentralWarehouse,
       warehouses.isActive,
       warehouses.createdAt,
       warehouses.updatedAt
@@ -12965,6 +13219,7 @@ export async function updateWarehouse(
     name?: string | null;
     description?: string | null;
     isActive?: boolean;
+    isCentralWarehouse?: boolean;
   }
 ) {
   const db = await getDb();
@@ -12988,6 +13243,8 @@ export async function updateWarehouse(
       ? normalizeWarehouseName(data.name)
       : warehouse.name;
   const nextIsActive = data.isActive ?? warehouse.isActive;
+  const nextIsCentralWarehouse =
+    data.isCentralWarehouse ?? warehouse.isCentralWarehouse;
   const nextDisplayName = buildWarehouseDisplayName(nextCode, nextName);
 
   if (
@@ -13012,28 +13269,44 @@ export async function updateWarehouse(
     }
   }
 
-  await db
-    .update(warehouses)
-    .set({
-      code: nextCode,
-      localCode: nextLocalCode,
-      name: nextName,
-      displayName: nextDisplayName,
-      description:
-        data.description !== undefined
-          ? data.description?.trim() || null
-          : warehouse.description,
-      isActive: nextIsActive,
-      updatedAt: new Date(),
-    })
-    .where(eq(warehouses.id, id));
+  const now = new Date();
+  await db.transaction(async tx => {
+    if (data.isCentralWarehouse === true) {
+      await tx
+        .update(warehouses)
+        .set({ isCentralWarehouse: false, updatedAt: now })
+        .where(
+          and(
+            eq(warehouses.isCentralWarehouse, true),
+            sql`${warehouses.id} <> ${id}`
+          )
+        );
+    }
 
-  if (nextDisplayName !== warehouse.displayName) {
-    await db
-      .update(inventoryItems)
-      .set({ warehouseLocation: nextDisplayName, updatedAt: new Date() })
-      .where(eq(inventoryItems.warehouseId, id));
-  }
+    await tx
+      .update(warehouses)
+      .set({
+        code: nextCode,
+        localCode: nextLocalCode,
+        name: nextName,
+        displayName: nextDisplayName,
+        description:
+          data.description !== undefined
+            ? data.description?.trim() || null
+            : warehouse.description,
+        isActive: nextIsActive,
+        isCentralWarehouse: nextIsCentralWarehouse,
+        updatedAt: now,
+      })
+      .where(eq(warehouses.id, id));
+
+    if (nextDisplayName !== warehouse.displayName) {
+      await tx
+        .update(inventoryItems)
+        .set({ warehouseLocation: nextDisplayName, updatedAt: now })
+        .where(eq(inventoryItems.warehouseId, id));
+    }
+  });
 
   return { success: true };
 }
@@ -15330,12 +15603,15 @@ export function buildTemporaryFixedAssetItemCode(params: {
   return `${prefix}${String(maxSequence + 1).padStart(4, "0")}`;
 }
 
-async function generateTemporaryFixedAssetCode(params: {
+async function generateTemporaryFixedAssetCodes(params: {
   projectId: number;
+  count: number;
   tx?: Awaited<ReturnType<typeof getDb>>;
 }) {
   const database = params.tx ?? (await getDb());
   if (!database) throw new Error("DB not available");
+  const countToGenerate = Math.max(Math.trunc(params.count), 0);
+  if (countToGenerate === 0) return [];
 
   const project = await getProjectById(params.projectId);
   if (!project) {
@@ -15361,17 +15637,45 @@ async function generateTemporaryFixedAssetCode(params: {
     row.temporaryItemCode,
   ]);
 
-  return buildTemporaryFixedAssetItemCode({
-    projectCode,
-    existingCodes: existingNumbers,
-  });
+  const nextCodes: string[] = [];
+  for (let index = 0; index < countToGenerate; index += 1) {
+    const nextCode = buildTemporaryFixedAssetItemCode({
+      projectCode,
+      existingCodes: [...existingNumbers, ...nextCodes],
+    });
+    nextCodes.push(nextCode);
+  }
+
+  return nextCodes;
+}
+
+function getFixedAssetDetailFromArticle(article: {
+  fixedAssetSerialNumber: string | null;
+  fixedAssetCondition: FixedAssetDetail["condition"] | null;
+  fixedAssetColor: string | null;
+  fixedAssetModel: string | null;
+  fixedAssetBrand: string | null;
+  fixedAssetChassisSeries: string | null;
+  fixedAssetMotorSeries: string | null;
+  fixedAssetPlateOrCode: string | null;
+}): FixedAssetDetail {
+  return {
+    serialNumber: article.fixedAssetSerialNumber ?? "",
+    condition: article.fixedAssetCondition ?? "nuevo",
+    color: article.fixedAssetColor ?? "",
+    model: article.fixedAssetModel ?? "",
+    brand: article.fixedAssetBrand ?? "",
+    chassisSeries: article.fixedAssetChassisSeries ?? "",
+    motorSeries: article.fixedAssetMotorSeries ?? "",
+    plateOrCode: article.fixedAssetPlateOrCode ?? "",
+  };
 }
 
 export async function savePurchaseOrderFixedAssetDraftLine(params: {
   purchaseOrderItemId: number;
   isLeasing?: boolean;
   lineObservation?: string | null;
-  assetDetail: FixedAssetDetail;
+  assetDetails: FixedAssetDetail[];
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -15396,91 +15700,123 @@ export async function savePurchaseOrderFixedAssetDraftLine(params: {
       throw new Error("Línea de OC no encontrada");
     }
 
-    const pendingQuantity = Math.max(
-      parseDecimal(itemDetail.item.quantity) -
-        parseDecimal(itemDetail.item.receivedQuantity),
-      0
+    const normalizedDetails = normalizeFixedAssetDetails(
+      params.assetDetails,
+      params.assetDetails.length
     );
-    if (pendingQuantity !== 1) {
+    if (normalizedDetails.length === 0) {
+      throw new Error("Registre al menos una unidad del activo fijo");
+    }
+    const missingIndex = normalizedDetails.findIndex(
+      detail => !detail.serialNumber.trim() || !detail.condition
+    );
+    if (missingIndex >= 0) {
       throw new Error(
-        "El activo fijo debe guardarse desde una línea con cantidad pendiente 1"
+        `Complete serie y condición de la unidad ${missingIndex + 1}`
       );
     }
-    if (!params.assetDetail.serialNumber.trim()) {
-      throw new Error("Ingrese el número de serie del activo");
+
+    const sourceArticles = await tx
+      .select()
+      .from(sapCatalog)
+      .where(eq(sapCatalog.fixedAssetSourcePurchaseOrderItemId, itemDetail.item.id))
+      .orderBy(asc(sapCatalog.itemCode));
+    const existingArticles = [...sourceArticles];
+    if (
+      itemDetail.item.fixedAssetArticleId &&
+      !existingArticles.some(
+        article => article.id === itemDetail.item.fixedAssetArticleId
+      )
+    ) {
+      const [legacyArticle] = await tx
+        .select()
+        .from(sapCatalog)
+        .where(eq(sapCatalog.id, itemDetail.item.fixedAssetArticleId))
+        .limit(1);
+      if (legacyArticle) {
+        existingArticles.unshift(legacyArticle);
+      }
     }
-    if (!params.assetDetail.condition) {
-      throw new Error("Seleccione la condición del activo");
-    }
-    if (itemDetail.item.fixedAssetStatus === "resuelto") {
+
+    if (
+      existingArticles.some(article => article.fixedAssetStatus === "resuelto") ||
+      (existingArticles.length === 0 &&
+        itemDetail.item.fixedAssetStatus === "resuelto")
+    ) {
       throw new Error("El activo fijo ya fue resuelto por Contabilidad");
     }
 
-    const normalizedDetail: FixedAssetDetail = {
-      serialNumber: params.assetDetail.serialNumber.trim(),
-      condition: params.assetDetail.condition,
-      color: params.assetDetail.color?.trim() || "",
-      model: params.assetDetail.model?.trim() || "",
-      brand: params.assetDetail.brand?.trim() || "",
-      chassisSeries: params.assetDetail.chassisSeries?.trim() || "",
-      motorSeries: params.assetDetail.motorSeries?.trim() || "",
-      plateOrCode: params.assetDetail.plateOrCode?.trim() || "",
-    };
-
-    const existingArticle = itemDetail.item.fixedAssetArticleId
-      ? (
-          await tx
-            .select()
-            .from(sapCatalog)
-            .where(eq(sapCatalog.id, itemDetail.item.fixedAssetArticleId))
-            .limit(1)
-        )[0]
-      : undefined;
-    const temporaryCode =
-      existingArticle?.temporaryItemCode ??
-      existingArticle?.itemCode ??
-      (await generateTemporaryFixedAssetCode({
-        projectId: itemDetail.purchaseOrder.projectId,
-        tx: tx as any,
-      }));
-
-    let article = existingArticle;
-    const articleValues = {
-      itemCode: temporaryCode,
-      temporaryItemCode: temporaryCode,
-      description: itemDetail.item.itemName,
-      itemGroup: "Activo fijo temporal",
-      tipoArticulo: 3 as const,
+    const newTemporaryCodes = await generateTemporaryFixedAssetCodes({
       projectId: itemDetail.purchaseOrder.projectId,
-      fixedAssetStatus: "pendiente",
-      fixedAssetSourcePurchaseOrderId: itemDetail.purchaseOrder.id,
-      fixedAssetSourcePurchaseOrderItemId: itemDetail.item.id,
-      fixedAssetSerialNumber: normalizedDetail.serialNumber,
-      fixedAssetCondition: normalizedDetail.condition,
-      fixedAssetColor: normalizedDetail.color || null,
-      fixedAssetModel: normalizedDetail.model || null,
-      fixedAssetBrand: normalizedDetail.brand || null,
-      fixedAssetChassisSeries: normalizedDetail.chassisSeries || null,
-      fixedAssetMotorSeries: normalizedDetail.motorSeries || null,
-      fixedAssetPlateOrCode: normalizedDetail.plateOrCode || null,
-      fixedAssetIsLeasing: params.isLeasing === true,
-      fixedAssetObservation: params.lineObservation?.trim() || null,
-      allowsTaxWithholding: true,
-      isActive: true,
-      updatedAt: new Date(),
-    };
+      count: Math.max(normalizedDetails.length - existingArticles.length, 0),
+      tx: tx as any,
+    });
+    let newTemporaryCodeIndex = 0;
+    const articles = [];
+    const now = new Date();
 
-    if (article) {
-      [article] = await tx
-        .update(sapCatalog)
-        .set(articleValues)
-        .where(eq(sapCatalog.id, article.id))
-        .returning();
-    } else {
-      [article] = await tx.insert(sapCatalog).values(articleValues).returning();
+    for (let index = 0; index < normalizedDetails.length; index += 1) {
+      const detail = normalizedDetails[index];
+      const existingArticle = existingArticles[index];
+      const temporaryCode =
+        existingArticle?.temporaryItemCode ??
+        existingArticle?.itemCode ??
+        newTemporaryCodes[newTemporaryCodeIndex++];
+      if (!temporaryCode) {
+        throw new Error("No se pudo generar el código temporal del activo");
+      }
+
+      const articleValues = {
+        itemCode: temporaryCode,
+        temporaryItemCode: temporaryCode,
+        description: itemDetail.item.itemName,
+        itemGroup: "Activo fijo temporal",
+        tipoArticulo: 3 as const,
+        projectId: itemDetail.purchaseOrder.projectId,
+        fixedAssetStatus: "pendiente",
+        fixedAssetSourcePurchaseOrderId: itemDetail.purchaseOrder.id,
+        fixedAssetSourcePurchaseOrderItemId: itemDetail.item.id,
+        fixedAssetSerialNumber: detail.serialNumber,
+        fixedAssetCondition: detail.condition,
+        fixedAssetColor: detail.color || null,
+        fixedAssetModel: detail.model || null,
+        fixedAssetBrand: detail.brand || null,
+        fixedAssetChassisSeries: detail.chassisSeries || null,
+        fixedAssetMotorSeries: detail.motorSeries || null,
+        fixedAssetPlateOrCode: detail.plateOrCode || null,
+        fixedAssetIsLeasing: params.isLeasing === true,
+        fixedAssetObservation: params.lineObservation?.trim() || null,
+        allowsTaxWithholding: true,
+        isActive: true,
+        updatedAt: now,
+      };
+
+      const [article] = existingArticle
+        ? await tx
+            .update(sapCatalog)
+            .set(articleValues)
+            .where(eq(sapCatalog.id, existingArticle.id))
+            .returning()
+        : await tx.insert(sapCatalog).values(articleValues).returning();
+      if (!article) {
+        throw new Error("No se pudo crear el artículo temporal");
+      }
+      articles.push(article);
     }
 
-    if (!article) {
+    const extraArticleIds = existingArticles
+      .slice(normalizedDetails.length)
+      .filter(article => article.fixedAssetStatus !== "resuelto")
+      .map(article => article.id);
+    if (extraArticleIds.length > 0) {
+      await tx
+        .update(sapCatalog)
+        .set({ isActive: false, updatedAt: now })
+        .where(inArray(sapCatalog.id, extraArticleIds));
+    }
+
+    const primaryArticle = articles[0];
+    if (!primaryArticle) {
       throw new Error("No se pudo crear el artículo temporal");
     }
 
@@ -15489,17 +15825,17 @@ export async function savePurchaseOrderFixedAssetDraftLine(params: {
       .set({
         isFixedAsset: true,
         isLeasing: params.isLeasing === true,
-        assetDetails: [normalizedDetail],
+        assetDetails: normalizedDetails,
         lineObservation: params.lineObservation?.trim() || null,
-        fixedAssetArticleId: article.id,
+        fixedAssetArticleId: primaryArticle.id,
         fixedAssetStatus: "pendiente",
-        currentSapItemCode: article.itemCode,
-        updatedAt: new Date(),
+        currentSapItemCode: primaryArticle.itemCode,
+        updatedAt: now,
       })
       .where(eq(purchaseOrderItems.id, itemDetail.item.id))
       .returning();
 
-    return { article, item: updatedItem };
+    return { article: primaryArticle, articles, item: updatedItem };
   });
 }
 
@@ -15554,14 +15890,58 @@ export async function resolveFixedAssetArticleCode(params: {
       .where(eq(sapCatalog.id, article.id))
       .returning();
 
-    await tx
-      .update(purchaseOrderItems)
-      .set({
-        currentSapItemCode: nextItemCode,
-        fixedAssetStatus: "resuelto",
-        updatedAt: new Date(),
-      })
-      .where(eq(purchaseOrderItems.fixedAssetArticleId, article.id));
+    if (article.fixedAssetSourcePurchaseOrderItemId) {
+      const [sourceItem] = await tx
+        .select({
+          fixedAssetArticleId: purchaseOrderItems.fixedAssetArticleId,
+        })
+        .from(purchaseOrderItems)
+        .where(
+          eq(
+            purchaseOrderItems.id,
+            article.fixedAssetSourcePurchaseOrderItemId
+          )
+        )
+        .limit(1);
+      const [pendingSibling] = await tx
+        .select({ id: sapCatalog.id })
+        .from(sapCatalog)
+        .where(
+          and(
+            eq(
+              sapCatalog.fixedAssetSourcePurchaseOrderItemId,
+              article.fixedAssetSourcePurchaseOrderItemId
+            ),
+            eq(sapCatalog.fixedAssetStatus, "pendiente"),
+            eq(sapCatalog.isActive, true)
+          )
+        )
+        .limit(1);
+      await tx
+        .update(purchaseOrderItems)
+        .set({
+          ...(sourceItem?.fixedAssetArticleId === article.id
+            ? { currentSapItemCode: nextItemCode }
+            : {}),
+          fixedAssetStatus: pendingSibling ? "pendiente" : "resuelto",
+          updatedAt: new Date(),
+        })
+        .where(
+          eq(
+            purchaseOrderItems.id,
+            article.fixedAssetSourcePurchaseOrderItemId
+          )
+        );
+    } else {
+      await tx
+        .update(purchaseOrderItems)
+        .set({
+          currentSapItemCode: nextItemCode,
+          fixedAssetStatus: "resuelto",
+          updatedAt: new Date(),
+        })
+        .where(eq(purchaseOrderItems.fixedAssetArticleId, article.id));
+    }
 
     return updatedArticle;
   });
@@ -15627,16 +16007,47 @@ export async function updateFixedAssetArticleDetails(params: {
       .where(eq(sapCatalog.id, article.id))
       .returning();
 
-    await tx
-      .update(purchaseOrderItems)
-      .set({
-        isFixedAsset: true,
-        isLeasing,
-        assetDetails: [normalizedDetail],
-        lineObservation: observation,
-        updatedAt: new Date(),
-      })
-      .where(eq(purchaseOrderItems.fixedAssetArticleId, article.id));
+    if (article.fixedAssetSourcePurchaseOrderItemId) {
+      const siblingArticles = await tx
+        .select()
+        .from(sapCatalog)
+        .where(
+          and(
+            eq(
+              sapCatalog.fixedAssetSourcePurchaseOrderItemId,
+              article.fixedAssetSourcePurchaseOrderItemId
+            ),
+            eq(sapCatalog.isActive, true)
+          )
+        )
+        .orderBy(asc(sapCatalog.itemCode));
+      await tx
+        .update(purchaseOrderItems)
+        .set({
+          isFixedAsset: true,
+          isLeasing,
+          assetDetails: siblingArticles.map(getFixedAssetDetailFromArticle),
+          lineObservation: observation,
+          updatedAt: new Date(),
+        })
+        .where(
+          eq(
+            purchaseOrderItems.id,
+            article.fixedAssetSourcePurchaseOrderItemId
+          )
+        );
+    } else {
+      await tx
+        .update(purchaseOrderItems)
+        .set({
+          isFixedAsset: true,
+          isLeasing,
+          assetDetails: [normalizedDetail],
+          lineObservation: observation,
+          updatedAt: new Date(),
+        })
+        .where(eq(purchaseOrderItems.fixedAssetArticleId, article.id));
+    }
 
     return updatedArticle;
   });

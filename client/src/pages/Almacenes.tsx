@@ -2,6 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Card,
   CardContent,
@@ -47,12 +48,14 @@ type WarehouseFormState = {
   name: string;
   description: string;
   projectId: string;
+  isCentralWarehouse: boolean;
 };
 
 type WarehouseSortField =
   | "code"
   | "name"
   | "responsible"
+  | "central"
   | "projectCount"
   | "inventoryRows"
   | "uniqueItems"
@@ -74,6 +77,7 @@ const EMPTY_WAREHOUSE_FORM: WarehouseFormState = {
   name: "",
   description: "",
   projectId: "",
+  isCentralWarehouse: false,
 };
 
 const WAREHOUSE_USER_ROLE_LABELS: Record<string, string> = {
@@ -113,6 +117,8 @@ function getWarehouseSortValue(warehouse: any, field: WarehouseSortField) {
       return warehouse.responsibleUser
         ? formatWarehouseUser(warehouse.responsibleUser)
         : "Sin responsable";
+    case "central":
+      return warehouse.isCentralWarehouse ? 0 : 1;
     case "projectCount":
       return Number(warehouse.projectCount ?? 0);
     case "inventoryRows":
@@ -239,6 +245,8 @@ export default function Almacenes() {
 
   const userRole = (user as any)?.buildreqRole || "";
   const isProjectWarehouseManager = userRole === "administrador_proyecto";
+  const canManageCentralWarehouse =
+    user?.role === "admin" || userRole === "administracion_central";
   const canManage =
     user?.role === "admin" ||
     userRole === "administracion_central" ||
@@ -429,6 +437,19 @@ export default function Almacenes() {
     onError: (error) => toast.error(error.message),
   });
 
+  const setCentralWarehouseMutation = trpc.warehouses.update.useMutation({
+    onSuccess: () => {
+      toast.success("Bodega central actualizada");
+      void Promise.all([
+        utils.warehouses.list.invalidate(),
+        selectedWarehouseId
+          ? utils.warehouses.getById.invalidate({ id: selectedWarehouseId })
+          : Promise.resolve(),
+      ]);
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const assignMutation = trpc.warehouses.assignProject.useMutation({
     onSuccess: (result) => {
       toast.success(
@@ -530,9 +551,21 @@ export default function Almacenes() {
       code: warehouseForm.code.trim(),
       name: warehouseForm.name.trim(),
       description: warehouseForm.description.trim() || null,
+      isCentralWarehouse: canManageCentralWarehouse
+        ? warehouseForm.isCentralWarehouse
+        : undefined,
       projectId: warehouseForm.projectId
         ? Number(warehouseForm.projectId)
         : undefined,
+    });
+  };
+
+  const updateCentralWarehouse = (warehouse: any, checked: boolean) => {
+    if (!canManageCentralWarehouse) return;
+    if (Boolean(warehouse.isCentralWarehouse) === checked) return;
+    setCentralWarehouseMutation.mutate({
+      id: Number(warehouse.id),
+      isCentralWarehouse: checked,
     });
   };
 
@@ -656,6 +689,32 @@ export default function Almacenes() {
                     rows={2}
                   />
                 </div>
+                {canManageCentralWarehouse ? (
+                  <div className="flex items-start gap-3 rounded-md border p-3">
+                    <Checkbox
+                      id="warehouse-is-central"
+                      checked={warehouseForm.isCentralWarehouse}
+                      onCheckedChange={(checked) =>
+                        setWarehouseForm((form) => ({
+                          ...form,
+                          isCentralWarehouse: checked === true,
+                        }))
+                      }
+                    />
+                    <div className="space-y-1">
+                      <Label
+                        htmlFor="warehouse-is-central"
+                        className="text-sm font-medium"
+                      >
+                        Bodega central
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Al marcar esta bodega, cualquier otra bodega central se
+                        desmarcará automáticamente.
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="space-y-1">
                   <Label className="text-xs">
                     Proyecto inicial{isProjectWarehouseManager ? " *" : ""}
@@ -796,6 +855,9 @@ export default function Almacenes() {
                       <th className="p-3 text-left">
                         {renderSortableHeader("responsible", "Responsable")}
                       </th>
+                      <th className="p-3 text-left">
+                        {renderSortableHeader("central", "Central")}
+                      </th>
                       <th className="p-3 text-right">
                         {renderSortableHeader(
                           "projectCount",
@@ -819,7 +881,7 @@ export default function Almacenes() {
                       <tr>
                         <td
                           className="p-8 text-center text-sm text-muted-foreground"
-                          colSpan={7}
+                          colSpan={8}
                         >
                           No hay bodegas que coincidan con la búsqueda.
                         </td>
@@ -859,6 +921,34 @@ export default function Almacenes() {
                                 Sin responsable
                               </span>
                             )}
+                          </td>
+                          <td
+                            className="p-3"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <div className="flex items-center gap-2">
+                              <Checkbox
+                                checked={Boolean(warehouse.isCentralWarehouse)}
+                                disabled={
+                                  !canManageCentralWarehouse ||
+                                  setCentralWarehouseMutation.isPending
+                                }
+                                aria-label={`Marcar ${warehouse.name} como bodega central`}
+                                onCheckedChange={(checked) =>
+                                  updateCentralWarehouse(
+                                    warehouse,
+                                    checked === true
+                                  )
+                                }
+                              />
+                              {warehouse.isCentralWarehouse ? (
+                                <Badge variant="outline">Central</Badge>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">
+                                  No
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="p-3 text-right">
                             {formatNumber(warehouse.projectCount)}

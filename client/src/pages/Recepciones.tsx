@@ -534,6 +534,121 @@ function getSourceItemCode(item: any) {
   );
 }
 
+function isReceiptFixedAssetProduct(item: any) {
+  const tipoArticulo = Number(
+    item?.tipoArticulo ??
+      item?.catalogItem?.tipoArticulo ??
+      item?.catalog?.tipoArticulo ??
+      0
+  );
+  const sourceCode = String(getSourceItemCode(item) ?? "")
+    .trim()
+    .toUpperCase();
+
+  return (
+    item?.isFixedAsset === true ||
+    Boolean(item?.fixedAssetArticleId) ||
+    tipoArticulo === 3 ||
+    sourceCode.startsWith("AFT")
+  );
+}
+
+function getFixedAssetDetailCount(
+  value: FixedAssetDetail[] | string | null | undefined
+) {
+  return parseFixedAssetDetails(value).length;
+}
+
+function getReceiptFixedAssetArticles(item: any) {
+  return Array.isArray(item?.fixedAssetArticles)
+    ? item.fixedAssetArticles
+    : [];
+}
+
+function getReceiptFixedAssetProgress(item: any, fallbackCount = 0) {
+  const fixedAssetArticles = getReceiptFixedAssetArticles(item);
+  const expected = Math.max(
+    fixedAssetArticles.length,
+    getFixedAssetDetailCount(item?.assetDetails),
+    fallbackCount
+  );
+  const resolved = fixedAssetArticles.filter(
+    (article: any) => article?.fixedAssetStatus === "resuelto"
+  ).length;
+  const pending =
+    fixedAssetArticles.length > 0
+      ? Math.max(expected - resolved, 0)
+      : item?.fixedAssetStatus === "resuelto"
+        ? 0
+        : expected;
+
+  return { expected, resolved, pending };
+}
+
+function getReceiptFixedAssetArticleRows(
+  item: any,
+  assetDetails: FixedAssetDetail[],
+  expectedCount: number
+) {
+  const fixedAssetArticles = getReceiptFixedAssetArticles(item);
+  return Array.from(
+    {
+      length: Math.max(
+        expectedCount,
+        fixedAssetArticles.length,
+        assetDetails.length
+      ),
+    },
+    (_, index) => ({
+      article: fixedAssetArticles[index],
+      detail: assetDetails[index],
+    })
+  );
+}
+
+function getReceiptFixedAssetArticleDetail(
+  article: any,
+  detail?: FixedAssetDetail | null
+): FixedAssetDetail {
+  const condition = article?.fixedAssetCondition ?? detail?.condition;
+  return {
+    serialNumber: String(
+      article?.fixedAssetSerialNumber ?? detail?.serialNumber ?? ""
+    ).trim(),
+    condition: ASSET_CONDITION_VALUES.includes(condition)
+      ? condition
+      : "nuevo",
+    color: String(article?.fixedAssetColor ?? detail?.color ?? "").trim(),
+    model: String(article?.fixedAssetModel ?? detail?.model ?? "").trim(),
+    brand: String(article?.fixedAssetBrand ?? detail?.brand ?? "").trim(),
+    chassisSeries: String(
+      article?.fixedAssetChassisSeries ?? detail?.chassisSeries ?? ""
+    ).trim(),
+    motorSeries: String(
+      article?.fixedAssetMotorSeries ?? detail?.motorSeries ?? ""
+    ).trim(),
+    plateOrCode: String(
+      article?.fixedAssetPlateOrCode ?? detail?.plateOrCode ?? ""
+    ).trim(),
+  };
+}
+
+function getReceiptFixedAssetArticleDisplayCode(
+  article: any,
+  fallbackCode?: string | null
+) {
+  const isResolved = article?.fixedAssetStatus === "resuelto";
+  const realCode = String(article?.itemCode ?? "").trim();
+  const temporaryCode = String(article?.temporaryItemCode ?? "").trim();
+  return (
+    (isResolved ? realCode : "") ||
+    temporaryCode ||
+    realCode ||
+    String(fallbackCode ?? "").trim() ||
+    "—"
+  );
+}
+
 function isReceiptServiceItem(item: any) {
   return (
     Number(
@@ -542,6 +657,25 @@ function isReceiptServiceItem(item: any) {
         item?.catalog?.tipoArticulo ??
         0
     ) === 2
+  );
+}
+
+function isReceiptNonInventoryItem(item: any) {
+  const tipoArticulo = Number(
+    item?.tipoArticulo ??
+      item?.catalogItem?.tipoArticulo ??
+      item?.catalog?.tipoArticulo ??
+      0
+  );
+  const sourceCode = String(getSourceItemCode(item) ?? "")
+    .trim()
+    .toUpperCase();
+  return (
+    tipoArticulo === 2 ||
+    tipoArticulo === 3 ||
+    item?.isFixedAsset === true ||
+    Boolean(item?.fixedAssetArticleId) ||
+    sourceCode.startsWith("AFT")
   );
 }
 
@@ -800,6 +934,12 @@ export default function Recepciones() {
   const [assetDrafts, setAssetDrafts] = useState<
     Record<number, ReceiptAssetDraft>
   >({});
+  const [
+    selectedReceiptFixedAssetArticle,
+    setSelectedReceiptFixedAssetArticle,
+  ] = useState<any | null>(null);
+  const [receiptFixedAssetRealCode, setReceiptFixedAssetRealCode] =
+    useState("");
   const [closeReceiptLineItem, setCloseReceiptLineItem] = useState<any | null>(
     null
   );
@@ -851,14 +991,18 @@ export default function Recepciones() {
         : DEFAULT_SALES_TAXES) as SalesTaxCatalogItem[],
     [salesTaxes]
   );
-  const { data: purchaseOrderDetail, isLoading: purchaseOrderDetailLoading } =
-    trpc.purchaseOrders.getById.useQuery(
-      { id: Number(sourceId) },
-      {
-        enabled:
-          dialogOpen && sourceType === "purchase_order" && Boolean(sourceId),
-      }
-    );
+  const {
+    data: purchaseOrderDetail,
+    isLoading: purchaseOrderDetailLoading,
+    isFetching: purchaseOrderDetailFetching,
+    refetch: refetchPurchaseOrderDetail,
+  } = trpc.purchaseOrders.getById.useQuery(
+    { id: Number(sourceId) },
+    {
+      enabled:
+        dialogOpen && sourceType === "purchase_order" && Boolean(sourceId),
+    }
+  );
   const { data: transferDetail, isLoading: transferDetailLoading } =
     trpc.transfers.getById.useQuery(
       { id: Number(sourceId) },
@@ -1167,7 +1311,7 @@ export default function Recepciones() {
         ...Object.fromEntries(
           manualDraftItems.map((item: any) => [
             -Number(item.id),
-            isReceiptServiceItem(item)
+            isReceiptNonInventoryItem(item)
               ? ""
               : item.warehouseId
                 ? String(item.warehouseId)
@@ -1223,11 +1367,29 @@ export default function Recepciones() {
       const draftItem = draftItemsBySourceId.get(item.id) as any | undefined;
       const isSavedFixedAsset =
         sourceType === "purchase_order" && item.isFixedAsset === true;
-      nextMap[item.id] = draftItem
-        ? String(draftItem.quantityReceived ?? "0")
-        : isSavedFixedAsset
-          ? "1"
+      const savedAssetDetailCount = getFixedAssetDetailCount(
+        item.assetDetails
+      );
+      const savedFixedAssetQuantity =
+        savedAssetDetailCount ||
+        getPositiveIntegerQuantity(getReceivableQuantity(item));
+      if (draftItem) {
+        const draftAssetDetailCount = getFixedAssetDetailCount(
+          draftItem.assetDetails
+        );
+        const draftFixedAssetQuantity =
+          getPositiveIntegerQuantity(draftItem.quantityReceived) ||
+          draftAssetDetailCount ||
+          (isSavedFixedAsset ? savedFixedAssetQuantity : 0);
+        nextMap[item.id] =
+          draftItem.isFixedAsset === true
+            ? String(draftFixedAssetQuantity)
+            : String(draftItem.quantityReceived ?? "0");
+      } else {
+        nextMap[item.id] = isSavedFixedAsset
+          ? String(savedFixedAssetQuantity)
           : String(getReceivableQuantity(item));
+      }
       nextPriceMap[item.id] = String(
         draftItem?.unitPrice ?? (item as any).unitPrice ?? "0.00"
       );
@@ -1245,7 +1407,10 @@ export default function Recepciones() {
         sourceType === "transfer" && item.sourceWarehouseId
           ? String(item.sourceWarehouseId)
           : "";
-      if (sourceType === "purchase_order" && isReceiptServiceItem(item)) {
+      if (
+        sourceType === "purchase_order" &&
+        isReceiptNonInventoryItem(item)
+      ) {
         nextWarehouseMap[item.id] = "";
       } else {
         nextWarehouseMap[item.id] =
@@ -1281,24 +1446,35 @@ export default function Recepciones() {
       for (const item of sourceItems as any[]) {
         const draftItem = draftItemsBySourceId.get(item.id) as any | undefined;
         if (draftItem) {
+          const draftAssetCount =
+            draftItem.isFixedAsset === true
+              ? getPositiveIntegerQuantity(nextMap[item.id]) ||
+                getFixedAssetDetailCount(draftItem.assetDetails)
+              : 0;
           nextDrafts[item.id] = {
             isFixedAsset: draftItem.isFixedAsset === true,
             isLeasing: draftItem.isLeasing === true,
             notes: String(draftItem.notes ?? ""),
             assetDetails: normalizeFixedAssetDetails(
               draftItem.assetDetails,
-              draftItem.isFixedAsset === true ? 1 : 0
+              draftAssetCount
             ),
           };
         } else if (
           sourceType === "purchase_order" &&
           item.isFixedAsset === true
         ) {
+          const itemAssetCount =
+            getPositiveIntegerQuantity(nextMap[item.id]) ||
+            getFixedAssetDetailCount(item.assetDetails);
           nextDrafts[item.id] = {
             isFixedAsset: true,
             isLeasing: item.isLeasing === true,
             notes: String(item.lineObservation ?? ""),
-            assetDetails: normalizeFixedAssetDetails(item.assetDetails, 1),
+            assetDetails: normalizeFixedAssetDetails(
+              item.assetDetails,
+              itemAssetCount
+            ),
           };
         } else {
           nextDrafts[item.id] = current[item.id] ?? emptyReceiptAssetDraft();
@@ -1537,6 +1713,7 @@ export default function Recepciones() {
           ? `Recepción borrador actualizada: ${result.receiptNumber}`
           : `Recepción borrador creada: ${result.receiptNumber}`
       );
+      void utils.receipts.getById.invalidate({ id: result.id });
       void utils.receipts.list.invalidate();
       void utils.purchaseOrders.list.invalidate();
       if (sourceType === "purchase_order" && sourceId) {
@@ -1545,6 +1722,22 @@ export default function Recepciones() {
     },
     onError: error => toast.error(error.message),
   });
+
+  const resolveReceiptFixedAssetMutation =
+    trpc.articles.resolveFixedAssetCode.useMutation({
+      onSuccess: article => {
+        toast.success(`Código real actualizado: ${article.itemCode}`);
+        setSelectedReceiptFixedAssetArticle(null);
+        setReceiptFixedAssetRealCode("");
+        void utils.articles.list.invalidate();
+        void utils.purchaseOrders.list.invalidate();
+        if (sourceType === "purchase_order" && sourceId) {
+          void utils.purchaseOrders.getById.invalidate({ id: Number(sourceId) });
+          void refetchPurchaseOrderDetail();
+        }
+      },
+      onError: error => toast.error(error.message),
+    });
 
   const closeReceiptLineMutation =
     trpc.purchaseOrders.closeReceiptLine.useMutation({
@@ -1739,7 +1932,7 @@ export default function Recepciones() {
       }));
       setWarehouseByItemId(current => ({
         ...current,
-        [nextId]: isReceiptServiceItem(manualItem)
+        [nextId]: isReceiptNonInventoryItem(manualItem)
           ? ""
           : defaultReceiptWarehouseId,
       }));
@@ -1802,12 +1995,12 @@ export default function Recepciones() {
       const taxDraft = getReceiptLineTaxDraft(item);
       const quantityReceived =
         receivedMap[item.id] || item.receivedQuantity || "0";
-      const isServiceLine = isReceiptServiceItem(item);
+      const isNonInventoryLine = isReceiptNonInventoryItem(item);
       return {
-        requiresWarehouse: !isServiceLine,
+        requiresWarehouse: !isNonInventoryLine,
         sourceItemId: null,
         sapItemCode: item.sapItemCode,
-        warehouseId: isServiceLine
+        warehouseId: isNonInventoryLine
           ? undefined
           : warehouseByItemId[item.id]
             ? Number(warehouseByItemId[item.id])
@@ -1827,16 +2020,27 @@ export default function Recepciones() {
       };
     });
 
-  const renderReceiptWarehouseSelector = (item: any, compact = false) => {
-    if (sourceType === "purchase_order" && isReceiptServiceItem(item)) {
+  const renderReceiptWarehouseSelector = (
+    item: any,
+    compact = false,
+    warehouseValue?: string,
+    onWarehouseChange?: (value: string) => void
+  ) => {
+    if (sourceType === "purchase_order" && isReceiptNonInventoryItem(item)) {
+      const noInventoryLabel = isReceiptServiceItem(item)
+        ? "No aplica - Servicio"
+        : "No aplica - Activo fijo";
+      const noInventoryHint = isReceiptServiceItem(item)
+        ? "No ingresa a inventario."
+        : "Se registra como activo fijo, sin entrada a bodega.";
       return (
         <div className="min-w-0 space-y-1.5">
           {!compact ? <Label>Bodega ingreso</Label> : null}
           <div className="flex min-h-10 min-w-52 items-center rounded-md border border-dashed border-border bg-muted/20 px-3 text-sm font-medium text-muted-foreground">
-            No aplica - Servicio
+            {noInventoryLabel}
           </div>
           <p className="text-[10px] text-muted-foreground">
-            No ingresa a inventario.
+            {noInventoryHint}
           </p>
         </div>
       );
@@ -1857,28 +2061,32 @@ export default function Recepciones() {
         );
       }
     );
+    const selectedWarehouseValue = warehouseValue ?? warehouseByItemId[item.id];
     const selectedWarehouse = (receiptWarehouses ?? []).find(
-      (warehouse: any) => String(warehouse.id) === warehouseByItemId[item.id]
+      (warehouse: any) => String(warehouse.id) === selectedWarehouseValue
     );
     const selectedIsSourceWarehouse =
-      Boolean(sourceWarehouseId) &&
-      warehouseByItemId[item.id] === sourceWarehouseId;
+      Boolean(sourceWarehouseId) && selectedWarehouseValue === sourceWarehouseId;
     const selectedIsWrongReturnDestination =
       Boolean(lockedDestinationWarehouseId) &&
-      Boolean(warehouseByItemId[item.id]) &&
-      warehouseByItemId[item.id] !== lockedDestinationWarehouseId;
+      Boolean(selectedWarehouseValue) &&
+      selectedWarehouseValue !== lockedDestinationWarehouseId;
 
     return (
       <div className="min-w-0 space-y-1.5">
         {!compact ? <Label>Bodega ingreso</Label> : null}
         <Select
-          value={warehouseByItemId[item.id] || undefined}
-          onValueChange={value =>
+          value={selectedWarehouseValue || undefined}
+          onValueChange={value => {
+            if (onWarehouseChange) {
+              onWarehouseChange(value);
+              return;
+            }
             setWarehouseByItemId(current => ({
               ...current,
               [item.id]: value,
-            }))
-          }
+            }));
+          }}
           disabled={
             !receiptWarehouses?.length ||
             !hasSelectableWarehouses ||
@@ -2177,6 +2385,35 @@ export default function Recepciones() {
   const getReceiptAssetDraft = (itemId: number) =>
     assetDrafts[itemId] ?? emptyReceiptAssetDraft();
 
+  const openReceiptFixedAssetArticleDialog = (article: any) => {
+    if (!article?.id) {
+      toast.error("Este activo fijo aún no tiene artículo temporal");
+      return;
+    }
+    setSelectedReceiptFixedAssetArticle(article);
+    setReceiptFixedAssetRealCode(
+      article.fixedAssetStatus === "pendiente" ? "" : article.itemCode || ""
+    );
+  };
+
+  const submitReceiptFixedAssetCode = () => {
+    if (!selectedReceiptFixedAssetArticle) return;
+    if (selectedReceiptFixedAssetArticle.fixedAssetStatus !== "pendiente") {
+      setSelectedReceiptFixedAssetArticle(null);
+      return;
+    }
+    const nextCode = receiptFixedAssetRealCode.trim();
+    if (!nextCode) {
+      toast.error("Ingrese el código real del activo fijo");
+      return;
+    }
+
+    resolveReceiptFixedAssetMutation.mutate({
+      id: selectedReceiptFixedAssetArticle.id,
+      itemCode: nextCode,
+    });
+  };
+
   const updateReceiptAssetDraft = (
     itemId: number,
     updater: (draft: ReceiptAssetDraft) => ReceiptAssetDraft
@@ -2192,8 +2429,7 @@ export default function Recepciones() {
 
   const handleReceivedQuantityChange = (item: any, value: string) => {
     const itemId = item.id;
-    const draft = getReceiptAssetDraft(itemId);
-    const nextValue = draft.isFixedAsset ? "1" : value;
+    const nextValue = value;
     setReceivedMap(current => ({
       ...current,
       [itemId]: nextValue,
@@ -2215,7 +2451,10 @@ export default function Recepciones() {
         ...current,
         [itemId]: {
           ...draft,
-          assetDetails: normalizeFixedAssetDetails(draft.assetDetails, 1),
+          assetDetails: normalizeFixedAssetDetails(
+            draft.assetDetails,
+            getPositiveIntegerQuantity(nextValue)
+          ),
         },
       };
     });
@@ -2233,33 +2472,38 @@ export default function Recepciones() {
       return;
     }
     if (checked) {
-      const pendingQuantity = getReceivableQuantity(item);
-      if (pendingQuantity !== 1) {
+      if (!isReceiptFixedAssetProduct(item)) {
         toast.error(
-          "Para activo fijo la línea debe tener cantidad pendiente exactamente 1"
+          "Solo se puede activar Activo fijo para productos clasificados como Activo Fijo"
         );
         return;
       }
+      const receivedQuantity =
+        getPositiveIntegerQuantity(receivedMap[item.id]) ||
+        getPositiveIntegerQuantity(getReceivableQuantity(item));
       setReceivedMap(current => ({
         ...current,
-        [item.id]: "1",
+        [item.id]: String(receivedQuantity),
       }));
       setSubtotalMap(current => ({
         ...current,
         [item.id]: calculateReceiptSubtotalDraftValue(
-          "1",
+          receivedQuantity,
           priceMap[item.id] ?? String(item.unitPrice ?? "0.00")
         ),
       }));
     }
 
     const itemId = item.id;
+    const assetCount =
+      getPositiveIntegerQuantity(receivedMap[itemId]) ||
+      getPositiveIntegerQuantity(getReceivableQuantity(item));
     updateReceiptAssetDraft(itemId, draft => ({
       ...draft,
       isFixedAsset: checked,
       isLeasing: checked ? draft.isLeasing : false,
       assetDetails: checked
-        ? normalizeFixedAssetDetails(draft.assetDetails, 1)
+        ? normalizeFixedAssetDetails(draft.assetDetails, assetCount)
         : [],
     }));
   };
@@ -2271,9 +2515,7 @@ export default function Recepciones() {
     value: string
   ) => {
     updateReceiptAssetDraft(itemId, draft => {
-      const count = draft.isFixedAsset
-        ? 1
-        : getPositiveIntegerQuantity(receivedMap[itemId]);
+      const count = getPositiveIntegerQuantity(receivedMap[itemId]);
       const assetDetails = normalizeFixedAssetDetails(
         draft.assetDetails,
         count
@@ -2297,8 +2539,12 @@ export default function Recepciones() {
       if (draft.isFixedAsset && !item.fixedAssetArticleId) {
         return `Guarde como borrador el activo fijo de ${item.itemName}`;
       }
-      if (item.isFixedAsset === true && item.fixedAssetStatus !== "resuelto") {
-        return `Contabilidad debe asignar el código real del activo fijo ${item.itemName}`;
+      const progress = getReceiptFixedAssetProgress(
+        item,
+        getPositiveIntegerQuantity(receivedMap[item.id])
+      );
+      if (item.isFixedAsset === true && progress.pending > 0) {
+        return `Contabilidad debe resolver ${progress.pending} activo(s) fijo(s) de ${item.itemName}`;
       }
     }
 
@@ -2314,10 +2560,9 @@ export default function Recepciones() {
       toast.error("Este activo fijo ya tiene código real asignado");
       return;
     }
-    const pendingQuantity = getReceivableQuantity(item);
-    if (pendingQuantity !== 1) {
+    if (!isReceiptFixedAssetProduct(item)) {
       toast.error(
-        "Para activo fijo la línea debe tener cantidad pendiente exactamente 1"
+        "Solo se puede activar Activo fijo para productos clasificados como Activo Fijo"
       );
       return;
     }
@@ -2326,13 +2571,24 @@ export default function Recepciones() {
       toast.error("Marque la línea como activo fijo");
       return;
     }
-    const [assetDetail] = normalizeFixedAssetDetails(draft.assetDetails, 1);
-    if (!assetDetail?.serialNumber.trim()) {
-      toast.error("Ingrese el número de serie del activo");
+    const assetCount = getPositiveIntegerQuantity(receivedMap[item.id]);
+    if (assetCount <= 0) {
+      toast.error("Ingrese una cantidad entera mayor que cero");
       return;
     }
-    if (!assetDetail.condition) {
-      toast.error("Seleccione la condición del activo");
+    const assetDetails = normalizeFixedAssetDetails(
+      draft.assetDetails,
+      assetCount
+    );
+    const missingIndex = assetDetails.findIndex(
+      detail => !detail.serialNumber.trim() || !detail.condition
+    );
+    if (missingIndex >= 0) {
+      toast.error(
+        `Completa serie y condición de ${item.itemName}, unidad ${
+          missingIndex + 1
+        }`
+      );
       return;
     }
 
@@ -2341,7 +2597,7 @@ export default function Recepciones() {
         purchaseOrderItemId: item.id,
         isLeasing: draft.isLeasing,
         lineObservation: draft.notes.trim() || undefined,
-        assetDetail,
+        assetDetails,
       });
 
       const projectId =
@@ -2375,18 +2631,22 @@ export default function Recepciones() {
               sourceItem.isFixedAsset === true ||
               isCurrentSavedItem;
             const details = isCurrentSavedItem
-              ? [assetDetail]
-              : normalizeFixedAssetDetails(sourceItemDraft.assetDetails, 1);
+              ? assetDetails
+              : normalizeFixedAssetDetails(
+                  sourceItemDraft.assetDetails,
+                  getPositiveIntegerQuantity(receivedMap[sourceItem.id])
+                );
             const updatedPoItem = isCurrentSavedItem
               ? (result as any).item
               : sourceItem;
             const taxDraft = getReceiptLineTaxDraft(sourceItem);
-            const isServiceLine = isReceiptServiceItem(sourceItem);
+            const isNonInventoryLine =
+              isFixedAsset || isReceiptNonInventoryItem(sourceItem);
 
             return {
               sourceItemId: sourceItem.id,
               sapItemCode: getSourceItemCode(sourceItem),
-              warehouseId: isServiceLine
+              warehouseId: isNonInventoryLine
                 ? undefined
                 : warehouseByItemId[sourceItem.id]
                   ? Number(warehouseByItemId[sourceItem.id])
@@ -2394,7 +2654,7 @@ export default function Recepciones() {
               itemName: sourceItem.itemName,
               quantityExpected: String(getReceivableQuantity(sourceItem)),
               quantityReceived: isFixedAsset
-                ? "1"
+                ? String(getPositiveIntegerQuantity(receivedMap[sourceItem.id]))
                 : receivedMap[sourceItem.id] || "0",
               unit: sourceItem.unit || undefined,
               unitPrice: formatMoneyPayload(
@@ -2533,15 +2793,16 @@ export default function Recepciones() {
 
       const receivedQuantity = Number(receivedMap[item.id] ?? 0);
       if (sourceType === "purchase_order") {
-        if (getReceivableQuantity(item) !== 1) {
+        if (!item.fixedAssetArticleId) {
           toast.error(
-            `Activo fijo en ${item.itemName} debe venir como línea individual de cantidad 1`
+            `Guarde como borrador el activo fijo de ${item.itemName}`
           );
           return;
         }
-        if (!item.fixedAssetArticleId || item.fixedAssetStatus !== "resuelto") {
+        const progress = getReceiptFixedAssetProgress(item, receivedQuantity);
+        if (progress.pending > 0) {
           toast.error(
-            `Contabilidad debe resolver el código real del activo fijo ${item.itemName}`
+            `Contabilidad debe resolver ${progress.pending} activo(s) fijo(s) de ${item.itemName}`
           );
           return;
         }
@@ -2575,7 +2836,7 @@ export default function Recepciones() {
     }
 
     const receiptItems: any[] = [
-      ...sourceItems.map((item: any) => {
+      ...(sourceItems as any[]).flatMap((item: any): any[] => {
         const closureDraft = transferClosureDrafts[item.id];
         const closeQuantity =
           sourceType === "transfer" && closureDraft
@@ -2583,19 +2844,17 @@ export default function Recepciones() {
             : 0;
         const assetDraft = getReceiptAssetDraft(item.id);
         const isFixedAsset = assetDraft.isFixedAsset === true;
-        const isServiceLine =
-          sourceType === "purchase_order" && isReceiptServiceItem(item);
+        const isNonInventoryLine =
+          sourceType === "purchase_order" && isReceiptNonInventoryItem(item);
         const receivedQuantity = getPositiveIntegerQuantity(
           receivedMap[item.id]
         );
         const taxDraft =
           sourceType === "purchase_order" ? getReceiptLineTaxDraft(item) : null;
-
-        return {
-          requiresWarehouse: !isServiceLine,
+        const basePayload = {
+          requiresWarehouse: !isNonInventoryLine,
           sourceItemId: item.id,
-          sapItemCode: getSourceItemCode(item),
-          warehouseId: isServiceLine
+          warehouseId: isNonInventoryLine
             ? undefined
             : warehouseByItemId[item.id]
               ? Number(warehouseByItemId[item.id])
@@ -2620,12 +2879,6 @@ export default function Recepciones() {
           notes: assetDraft.notes.trim() || undefined,
           isFixedAsset,
           isLeasing: isFixedAsset ? assetDraft.isLeasing : false,
-          assetDetails: isFixedAsset
-            ? normalizeFixedAssetDetails(
-                assetDraft.assetDetails,
-                receivedQuantity
-              )
-            : [],
           closeRemaining: closeQuantity > 0,
           closeReason:
             closeQuantity > 0
@@ -2635,6 +2888,70 @@ export default function Recepciones() {
               : undefined,
           closeNote: closeQuantity > 0 ? closureDraft?.note : undefined,
         };
+
+        if (
+          sourceType === "purchase_order" &&
+          isFixedAsset &&
+          receivedQuantity > 1
+        ) {
+          const fullAssetDetails = normalizeFixedAssetDetails(
+            assetDraft.assetDetails,
+            receivedQuantity
+          );
+          const receivedOffset = Math.max(
+            Math.trunc(Number(item.receivedQuantity ?? 0)),
+            0
+          );
+          const articleRows = getReceiptFixedAssetArticleRows(
+            item,
+            fullAssetDetails,
+            Math.max(receivedQuantity, fullAssetDetails.length)
+          ).slice(receivedOffset, receivedOffset + receivedQuantity);
+
+          if (articleRows.length > 1) {
+            return articleRows.map(({ article, detail }: any, index) => {
+              const absoluteIndex = receivedOffset + index;
+              const articleCode =
+                getReceiptFixedAssetArticleDisplayCode(
+                  article,
+                  getSourceItemCode(item)
+                );
+              const unitDetail = getReceiptFixedAssetArticleDetail(
+                article,
+                detail
+              );
+
+              return {
+                ...basePayload,
+                sapItemCode:
+                  articleCode === "—" ? getSourceItemCode(item) : articleCode,
+                warehouseId: undefined,
+                requiresWarehouse: false,
+                itemName: article?.description || item.itemName,
+                quantityExpected: "1.00",
+                quantityReceived: "1",
+                fixedAssetSapItemCode:
+                  articleCode === "—" ? getSourceItemCode(item) : articleCode,
+                fixedAssetName: article?.description || item.itemName,
+                assetDetails: [unitDetail],
+                notes:
+                  assetDraft.notes.trim() ||
+                  `Activo fijo unidad ${absoluteIndex + 1}`,
+              };
+            });
+          }
+        }
+
+        return [{
+          ...basePayload,
+          sapItemCode: getSourceItemCode(item),
+          assetDetails: isFixedAsset
+            ? normalizeFixedAssetDetails(
+                assetDraft.assetDetails,
+                receivedQuantity
+              )
+            : [],
+        }];
       }),
       ...(sourceType === "purchase_order"
         ? buildManualReceiptItemPayload()
@@ -4294,24 +4611,48 @@ export default function Recepciones() {
                             item.isFixedAsset === true;
                           const isLineFixedAsset =
                             assetDraft.isFixedAsset || isSavedFixedAsset;
-                          const assetUnitCount = isLineFixedAsset
-                            ? 1
-                            : getPositiveIntegerQuantity(receivedMap[item.id]);
+                          const isFixedAssetProduct =
+                            isReceiptFixedAssetProduct(item);
+                          const fixedAssetUnavailableReason =
+                            !isFixedAssetProduct
+                              ? "Solo disponible para productos de tipo Activo Fijo"
+                              : "";
+                          const assetUnitCount = getPositiveIntegerQuantity(
+                            receivedMap[item.id]
+                          );
                           const assetDetails = isLineFixedAsset
                             ? normalizeFixedAssetDetails(
                                 assetDraft.assetDetails,
-                                1
+                                assetUnitCount
                               )
                             : [];
-                          const fixedAssetQuantityLocked =
-                            sourceType === "purchase_order" && isLineFixedAsset;
+                          const fixedAssetArticles =
+                            getReceiptFixedAssetArticles(item);
+                          const fixedAssetProgress =
+                            getReceiptFixedAssetProgress(
+                              item,
+                              Math.max(assetUnitCount, assetDetails.length)
+                            );
+                          const fixedAssetArticleRows =
+                            getReceiptFixedAssetArticleRows(
+                              item,
+                              assetDetails,
+                              fixedAssetProgress.expected
+                            );
+                          const hasResolvedFixedAssetArticle =
+                            fixedAssetArticles.some(
+                              (article: any) =>
+                                article?.fixedAssetStatus === "resuelto"
+                            );
                           const assetInputsDisabled =
-                            item.fixedAssetStatus === "resuelto";
+                            item.fixedAssetStatus === "resuelto" ||
+                            hasResolvedFixedAssetArticle;
                           const fixedAssetDraftSaved =
                             Boolean(item.fixedAssetArticleId) &&
-                            item.fixedAssetStatus === "pendiente";
+                            fixedAssetProgress.pending > 0;
                           const fixedAssetResolved =
-                            item.fixedAssetStatus === "resuelto";
+                            fixedAssetProgress.expected > 0 &&
+                            fixedAssetProgress.pending === 0;
                           const taxDraft =
                             sourceType === "purchase_order"
                               ? getReceiptLineTaxDraft(item)
@@ -4330,9 +4671,159 @@ export default function Recepciones() {
                                 taxes: activeSalesTaxes,
                               })
                             : null;
+                          const fixedAssetReceivedOffset = Math.max(
+                            Math.trunc(Number(item.receivedQuantity ?? 0)),
+                            0
+                          );
+                          const fixedAssetReceiptRows =
+                            sourceType === "purchase_order" &&
+                            isLineFixedAsset &&
+                            fixedAssetArticleRows.length > 1 &&
+                            assetUnitCount > 0
+                              ? fixedAssetArticleRows.slice(
+                                  fixedAssetReceivedOffset,
+                                  fixedAssetReceivedOffset + assetUnitCount
+                                )
+                              : [];
+                          const shouldRenderFixedAssetReceiptRows =
+                            sourceType === "purchase_order" &&
+                            hasResolvedFixedAssetArticle &&
+                            fixedAssetReceiptRows.length > 1;
+                          const fixedAssetUnitLineAmounts = taxDraft
+                            ? calculatePurchaseOrderLineAmounts({
+                                quantity: "1",
+                                unitPrice: taxDraft.unitPrice,
+                                taxCode: taxDraft.taxCode,
+                                additionalTaxCodes: taxDraft.additionalTaxCodes,
+                                taxes: activeSalesTaxes,
+                              })
+                            : null;
                           return (
                             <Fragment key={item.id}>
-                              <tr className="border-b border-border/70">
+                              {shouldRenderFixedAssetReceiptRows
+                                ? fixedAssetReceiptRows.map(
+                                    ({ article, detail }: any, index) => {
+                                      const articleDetail =
+                                        getReceiptFixedAssetArticleDetail(
+                                          article,
+                                          detail
+                                        );
+                                      const isResolved =
+                                        article?.fixedAssetStatus ===
+                                        "resuelto";
+                                      const displayCode =
+                                        getReceiptFixedAssetArticleDisplayCode(
+                                          article,
+                                          sourceCode
+                                        );
+                                      const temporaryCode = String(
+                                        article?.temporaryItemCode ?? ""
+                                      ).trim();
+
+                                      return (
+                                        <tr
+                                          key={`${item.id}-receipt-unit-${fixedAssetReceivedOffset + index}`}
+                                          className="border-b border-border/70 bg-background"
+                                        >
+                                          <td className="p-4">
+                                            <div className="font-semibold">
+                                              {article?.description ||
+                                                item.itemName}
+                                            </div>
+                                            <div className="mt-2 flex flex-wrap gap-1.5">
+                                              <Badge
+                                                variant="outline"
+                                                className="border-blue-300 text-blue-700"
+                                              >
+                                                Activo fijo
+                                              </Badge>
+                                              <Badge variant="outline">
+                                                Unidad{" "}
+                                                {fixedAssetReceivedOffset +
+                                                  index +
+                                                  1}
+                                              </Badge>
+                                              <Badge
+                                                variant="outline"
+                                                className={
+                                                  isResolved
+                                                    ? "border-emerald-300 text-emerald-700"
+                                                    : "border-amber-300 text-amber-700"
+                                                }
+                                              >
+                                                {isResolved
+                                                  ? "Resuelto"
+                                                  : "Pendiente"}
+                                              </Badge>
+                                            </div>
+                                            {articleDetail.serialNumber ? (
+                                              <div className="mt-1 text-xs text-muted-foreground">
+                                                Serie:{" "}
+                                                {articleDetail.serialNumber}
+                                              </div>
+                                            ) : null}
+                                          </td>
+                                          <td className="p-4 font-mono text-sm">
+                                            <div>{displayCode}</div>
+                                            {temporaryCode &&
+                                            temporaryCode !== displayCode ? (
+                                              <div className="mt-1 font-sans text-xs text-muted-foreground">
+                                                Temp: {temporaryCode}
+                                              </div>
+                                            ) : null}
+                                          </td>
+                                          <td className="p-4 text-right font-semibold">
+                                            1.00 {item.unit || ""}
+                                          </td>
+                                          <td className="p-4 text-right text-muted-foreground">
+                                            0.00 {item.unit || ""}
+                                          </td>
+                                          <td className="p-4 text-right font-semibold">
+                                            {formatPurchaseOrderCurrency(
+                                              receiptUnitPriceDraft
+                                            )}
+                                          </td>
+                                          {taxDraft &&
+                                          fixedAssetUnitLineAmounts ? (
+                                            <>
+                                              <td className="p-4">
+                                                <Badge variant="outline">
+                                                  {taxDraft.taxCode.toUpperCase()}
+                                                </Badge>
+                                              </td>
+                                              <td className="p-4 text-right font-semibold">
+                                                {formatPurchaseOrderCurrency(
+                                                  fixedAssetUnitLineAmounts.subtotal
+                                                )}
+                                              </td>
+                                              <td className="p-4 text-right font-semibold">
+                                                {formatPurchaseOrderCurrency(
+                                                  fixedAssetUnitLineAmounts.taxAmount
+                                                )}
+                                              </td>
+                                              <td className="p-4 text-right font-semibold">
+                                                {formatPurchaseOrderCurrency(
+                                                  fixedAssetUnitLineAmounts.total
+                                                )}
+                                              </td>
+                                            </>
+                                          ) : null}
+                                          <td className="p-4 text-right font-semibold">
+                                            1.00 {item.unit || ""}
+                                          </td>
+                                          <td className="p-4">
+                                            {renderReceiptWarehouseSelector(
+                                              item,
+                                              true
+                                            )}
+                                          </td>
+                                        </tr>
+                                      );
+                                    }
+                                  )
+                                : null}
+                              {!shouldRenderFixedAssetReceiptRows ? (
+                                <tr className="border-b border-border/70">
                                 <td className="p-4">
                                   <div className="font-semibold">
                                     {item.itemName}
@@ -4513,8 +5004,7 @@ export default function Recepciones() {
                                       )
                                     }
                                     disabled={
-                                      (!isManualItem && pendingQuantity <= 0) ||
-                                      fixedAssetQuantityLocked
+                                      !isManualItem && pendingQuantity <= 0
                                     }
                                   />
                                   {!isManualItem && excessQuantity > 0 ? (
@@ -4591,7 +5081,8 @@ export default function Recepciones() {
                                     </div>
                                   </td>
                                 ) : null}
-                              </tr>
+                                </tr>
+                              ) : null}
                               <tr
                                 key={`${item.id}-asset`}
                                 className="border-b border-border/70 bg-muted/10 last:border-0"
@@ -4664,9 +5155,7 @@ export default function Recepciones() {
                                             isManualItem ||
                                             Boolean(item.fixedAssetArticleId) ||
                                             (!isLineFixedAsset &&
-                                              (receivingQuantity !== 1 ||
-                                                item.targetType !==
-                                                  "activo_fijo"))
+                                              Boolean(fixedAssetUnavailableReason))
                                           }
                                           onCheckedChange={checked =>
                                             handleFixedAssetToggle(
@@ -4678,12 +5167,9 @@ export default function Recepciones() {
                                         Activo fijo
                                       </label>
                                       {!isLineFixedAsset &&
-                                      (receivingQuantity !== 1 ||
-                                        item.targetType !== "activo_fijo") ? (
+                                      fixedAssetUnavailableReason ? (
                                         <span className="text-xs text-muted-foreground bg-muted/50 px-2 py-0.5 rounded border border-border/50">
-                                          {item.targetType !== "activo_fijo"
-                                            ? "Solo disponible para productos de tipo Activo Fijo"
-                                            : "Solo disponible cuando la cantidad a recibir es exactamente 1"}
+                                          {fixedAssetUnavailableReason}
                                         </span>
                                       ) : null}
                                       {isLineFixedAsset ? (
@@ -4710,6 +5196,21 @@ export default function Recepciones() {
                                           className="border-blue-300 text-blue-700"
                                         >
                                           {assetUnitCount} unidad(es) con serie
+                                        </Badge>
+                                      ) : null}
+                                      {isLineFixedAsset &&
+                                      fixedAssetArticles.length > 0 ? (
+                                        <Badge
+                                          variant="outline"
+                                          className={
+                                            fixedAssetResolved
+                                              ? "border-emerald-300 text-emerald-700"
+                                              : "border-amber-300 text-amber-700"
+                                          }
+                                        >
+                                          {fixedAssetProgress.resolved}/
+                                          {fixedAssetProgress.expected}{" "}
+                                          resueltos
                                         </Badge>
                                       ) : null}
                                       {fixedAssetDraftSaved ? (
@@ -4857,6 +5358,160 @@ export default function Recepciones() {
                                               </div>
                                             </div>
                                           ))}
+                                          {fixedAssetArticles.length > 0 ? (
+                                            <div className="rounded-lg border border-border/70">
+                                              <div className="flex flex-col gap-2 border-b border-border/70 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                                                <div>
+                                                  <div className="text-sm font-semibold">
+                                                    Estado de Contabilidad
+                                                  </div>
+                                                  <div className="text-xs text-muted-foreground">
+                                                    {
+                                                      fixedAssetProgress.resolved
+                                                    }
+                                                    /
+                                                    {
+                                                      fixedAssetProgress.expected
+                                                    }{" "}
+                                                    activo(s) con código real
+                                                  </div>
+                                                </div>
+                                                <Button
+                                                  type="button"
+                                                  variant="outline"
+                                                  size="sm"
+                                                  className="gap-2 self-start sm:self-auto"
+                                                  disabled={
+                                                    purchaseOrderDetailFetching
+                                                  }
+                                                  onClick={() => {
+                                                    void refetchPurchaseOrderDetail();
+                                                  }}
+                                                >
+                                                  <RotateCcw className="h-4 w-4" />
+                                                  Actualizar estado
+                                                </Button>
+                                              </div>
+                                              <div className="overflow-x-auto">
+                                                <table className="w-full min-w-[720px] text-sm">
+                                                  <thead className="bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+                                                    <tr>
+                                                      <th className="p-2 text-left">
+                                                        Unidad
+                                                      </th>
+                                                      <th className="p-2 text-left">
+                                                        Serie
+                                                      </th>
+                                                      <th className="p-2 text-left">
+                                                        Código temporal
+                                                      </th>
+                                                      <th className="p-2 text-left">
+                                                        Código real
+                                                      </th>
+                                                      <th className="p-2 text-left">
+                                                        Estado
+                                                      </th>
+                                                      <th className="p-2 text-right">
+                                                        Acciones
+                                                      </th>
+                                                    </tr>
+                                                  </thead>
+                                                  <tbody>
+                                                    {fixedAssetArticleRows.map(
+                                                      (
+                                                        {
+                                                          article,
+                                                          detail,
+                                                        }: any,
+                                                        index
+                                                      ) => {
+                                                        const isResolved =
+                                                          article?.fixedAssetStatus ===
+                                                          "resuelto";
+                                                        const temporaryCode =
+                                                          article?.temporaryItemCode ||
+                                                          (!isResolved
+                                                            ? article?.itemCode
+                                                            : "");
+                                                        const realCode =
+                                                          isResolved
+                                                            ? article?.itemCode
+                                                            : "";
+                                                        const serialNumber =
+                                                          article?.fixedAssetSerialNumber ||
+                                                          detail?.serialNumber ||
+                                                          "";
+
+                                                        return (
+                                                          <tr
+                                                            key={`${item.id}-article-${index}`}
+                                                            className="border-t border-border/60"
+                                                          >
+                                                            <td className="p-2 font-medium">
+                                                              {index + 1}
+                                                            </td>
+                                                            <td className="p-2">
+                                                              {serialNumber ||
+                                                                "—"}
+                                                            </td>
+                                                            <td className="p-2 font-mono text-xs">
+                                                              {temporaryCode ||
+                                                                "—"}
+                                                            </td>
+                                                            <td className="p-2 font-mono text-xs">
+                                                              {realCode || "—"}
+                                                            </td>
+                                                            <td className="p-2">
+                                                              <Badge
+                                                                variant="outline"
+                                                                className={
+                                                                  isResolved
+                                                                    ? "border-emerald-300 text-emerald-700"
+                                                                    : article
+                                                                      ? "border-amber-300 text-amber-700"
+                                                                      : "border-muted-foreground/30 text-muted-foreground"
+                                                                }
+                                                              >
+                                                                {isResolved
+                                                                  ? "Resuelto"
+                                                                  : article
+                                                                    ? "Pendiente"
+                                                                  : "Sin crear"}
+                                                              </Badge>
+                                                            </td>
+                                                            <td className="p-2 text-right">
+                                                              {article ? (
+                                                                <Button
+                                                                  type="button"
+                                                                  variant="outline"
+                                                                  size="sm"
+                                                                  className="gap-2"
+                                                                  onClick={() =>
+                                                                    openReceiptFixedAssetArticleDialog(
+                                                                      article
+                                                                    )
+                                                                  }
+                                                                >
+                                                                  <Pencil className="h-3.5 w-3.5" />
+                                                                  {isResolved
+                                                                    ? "Ver"
+                                                                    : "Resolver"}
+                                                                </Button>
+                                                              ) : (
+                                                                <span className="text-xs text-muted-foreground">
+                                                                  —
+                                                                </span>
+                                                              )}
+                                                            </td>
+                                                          </tr>
+                                                        );
+                                                      }
+                                                    )}
+                                                  </tbody>
+                                                </table>
+                                              </div>
+                                            </div>
+                                          ) : null}
                                           <div className="flex flex-col items-start gap-2 border-t border-border/70 pt-3 sm:flex-row sm:items-center sm:justify-between">
                                             <p className="text-xs text-muted-foreground">
                                               {fixedAssetResolved
@@ -5048,6 +5703,126 @@ export default function Recepciones() {
             </DialogContent>
           </Dialog>
         </div>
+
+        <Dialog
+          open={Boolean(selectedReceiptFixedAssetArticle)}
+          onOpenChange={open => {
+            if (!open) {
+              setSelectedReceiptFixedAssetArticle(null);
+              setReceiptFixedAssetRealCode("");
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-[560px]">
+            <DialogHeader>
+              <DialogTitle>Resolver código de activo fijo</DialogTitle>
+              <DialogDescription>
+                Actualiza el código real del artículo temporal sin salir de la
+                recepción.
+              </DialogDescription>
+            </DialogHeader>
+
+            {selectedReceiptFixedAssetArticle ? (
+              <div className="space-y-4">
+                <div className="grid gap-3 rounded-md border border-border p-3 text-sm sm:grid-cols-2">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Código temporal
+                    </p>
+                    <p className="font-mono">
+                      {selectedReceiptFixedAssetArticle.temporaryItemCode ||
+                        selectedReceiptFixedAssetArticle.itemCode ||
+                        "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Serie
+                    </p>
+                    <p>
+                      {selectedReceiptFixedAssetArticle.fixedAssetSerialNumber ||
+                        "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Estado
+                    </p>
+                    <Badge
+                      variant="outline"
+                      className={
+                        selectedReceiptFixedAssetArticle.fixedAssetStatus ===
+                        "resuelto"
+                          ? "border-emerald-300 text-emerald-700"
+                          : "border-amber-300 text-amber-700"
+                      }
+                    >
+                      {selectedReceiptFixedAssetArticle.fixedAssetStatus ===
+                      "resuelto"
+                        ? "Resuelto"
+                        : "Pendiente"}
+                    </Badge>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Código actual
+                    </p>
+                    <p className="font-mono">
+                      {selectedReceiptFixedAssetArticle.itemCode || "—"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Código real</Label>
+                  <Input
+                    value={receiptFixedAssetRealCode}
+                    onChange={event =>
+                      setReceiptFixedAssetRealCode(event.target.value)
+                    }
+                    readOnly={
+                      selectedReceiptFixedAssetArticle.fixedAssetStatus ===
+                      "resuelto"
+                    }
+                    placeholder="Ingrese el código real"
+                    onKeyDown={event => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        submitReceiptFixedAssetCode();
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setSelectedReceiptFixedAssetArticle(null);
+                  setReceiptFixedAssetRealCode("");
+                }}
+                disabled={resolveReceiptFixedAssetMutation.isPending}
+              >
+                Cerrar
+              </Button>
+              {selectedReceiptFixedAssetArticle?.fixedAssetStatus ===
+              "pendiente" ? (
+                <Button
+                  type="button"
+                  onClick={submitReceiptFixedAssetCode}
+                  disabled={resolveReceiptFixedAssetMutation.isPending}
+                >
+                  {resolveReceiptFixedAssetMutation.isPending
+                    ? "Guardando..."
+                    : "Guardar código"}
+                </Button>
+              ) : null}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog
           open={viewReceiptId !== null}

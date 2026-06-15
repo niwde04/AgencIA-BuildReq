@@ -2,14 +2,19 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
-import { applyProjectScope, canAccessProject } from "../projectAccess";
+import {
+  applyProjectScope,
+  canAccessProject,
+  isProjectAssignableRole,
+} from "../projectAccess";
 
 function canAccessTransfers(user: { role: string; buildreqRole?: string | null }) {
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administracion_central" ||
-    user.buildreqRole === "administrador_proyecto"
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto"
   );
 }
 
@@ -24,6 +29,35 @@ function canCreateTransferRequests(user: {
   );
 }
 
+function canConvertTransferRequests(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "bodeguero_proyecto"
+  );
+}
+
+function shouldHideTransferOriginQuantities(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return user.role !== "admin" && user.buildreqRole === "bodeguero_proyecto";
+}
+
+function redactTransferOriginQuantities(detail: any) {
+  return {
+    ...detail,
+    items: (detail.items ?? []).map((item: any) => ({
+      ...item,
+      originStockQuantity: null,
+      stockAfterTransfer: null,
+    })),
+  };
+}
+
 function assertProjectScopedAccess(
   user: {
     role: string;
@@ -34,7 +68,7 @@ function assertProjectScopedAccess(
   transferRequest: { projectId: number; destinationProjectId?: number | null }
 ) {
   if (user.role === "admin") return;
-  if (user.buildreqRole !== "administrador_proyecto") return;
+  if (!isProjectAssignableRole(user.buildreqRole)) return;
   if (
     !canAccessProject(user, transferRequest.projectId) &&
     !canAccessProject(user, transferRequest.destinationProjectId)
@@ -146,7 +180,9 @@ export const transferRequestsRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.transferRequest);
-      return detail;
+      return shouldHideTransferOriginQuantities(ctx.user)
+        ? redactTransferOriginQuantities(detail)
+        : detail;
     }),
 
   create: protectedProcedure
@@ -260,6 +296,94 @@ export const transferRequestsRouter = router({
       return { success: true };
     }),
 
+  updateDestinationWarehouse: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        warehouseId: z.number().int().positive(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canConvertTransferRequests(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo Bodega Central o Bodega de Proyecto puede cambiar la bodega destino",
+        });
+      }
+
+      const detail = await db.getTransferRequestById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Solicitud de traslado no encontrada",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.transferRequest);
+
+      if (detail.transferRequest.status !== "pendiente") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Solo se puede cambiar la bodega destino de una solicitud pendiente",
+        });
+      }
+      if (
+        detail.transferRequest.destinationType !== "proyecto" ||
+        !detail.transferRequest.destinationProjectId
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Esta solicitud no tiene proyecto destino editable",
+        });
+      }
+      if (detail.transferRequest.reverseLogisticId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "La bodega destino de una devolución se define desde la devolución",
+        });
+      }
+
+      const projectWarehouses = await db.listProjectWarehouses(
+        detail.transferRequest.destinationProjectId,
+        { isActive: true }
+      );
+      const projectWarehouseIds = new Set(
+        projectWarehouses.map(warehouse => Number(warehouse.id))
+      );
+      if (!projectWarehouseIds.has(input.warehouseId)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Seleccione una bodega asignada al proyecto destino",
+        });
+      }
+
+      if (
+        ctx.user.role !== "admin" &&
+        ctx.user.buildreqRole === "bodeguero_proyecto"
+      ) {
+        const assignedWarehouses = await db.listWarehouses({
+          isActive: true,
+          assignedUserId: ctx.user.id,
+        });
+        const assignedWarehouseIds = new Set(
+          assignedWarehouses.map(warehouse => Number(warehouse.id))
+        );
+        if (!assignedWarehouseIds.has(input.warehouseId)) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message:
+              "Solo puede elegir una bodega destino asignada a su usuario",
+          });
+        }
+      }
+
+      return db.updateTransferRequest(input.id, {
+        destinationWarehouseId: input.warehouseId,
+      });
+    }),
+
   convertToTransfer: protectedProcedure
     .input(
       z.object({
@@ -277,13 +401,11 @@ export const transferRequestsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (
-        ctx.user.role !== "admin" &&
-        ctx.user.buildreqRole !== "jefe_bodega_central"
-      ) {
+      if (!canConvertTransferRequests(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo Bodega puede convertir solicitudes de traslado",
+          message:
+            "Solo Bodega Central o Bodega de Proyecto puede convertir solicitudes de traslado",
         });
       }
 
@@ -294,6 +416,7 @@ export const transferRequestsRouter = router({
           message: "Solicitud de traslado no encontrada",
         });
       }
+      assertProjectScopedAccess(ctx.user, detail.transferRequest);
 
       if (detail.transferRequest.status !== "pendiente") {
         throw new TRPCError({
@@ -302,6 +425,24 @@ export const transferRequestsRouter = router({
         });
       }
 
-      return db.createTransferFromRequest(input.id, ctx.user.id, input.items);
+      try {
+        return await db.createTransferFromRequest(
+          input.id,
+          ctx.user.id,
+          input.items
+        );
+      } catch (error) {
+        if (
+          shouldHideTransferOriginQuantities(ctx.user) &&
+          error instanceof Error &&
+          error.message.includes("Stock insuficiente")
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Stock insuficiente para completar el traslado",
+          });
+        }
+        throw error;
+      }
     }),
 });

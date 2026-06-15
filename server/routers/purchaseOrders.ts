@@ -21,6 +21,40 @@ const UNIFIED_PURCHASE_REQUEST_STATUSES = new Set([
   "parcialmente_convertida",
 ]);
 
+const TEMPORARY_FIXED_ASSET_ITEM_NAME = "ACTIVO FIJO TEMPORAL";
+
+function normalizeItemText(value: unknown) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+function isTemporaryFixedAssetItem(item: {
+  itemName?: string | null;
+  catalogItem?: { description?: string | null } | null;
+}) {
+  return (
+    normalizeItemText(item.itemName) === TEMPORARY_FIXED_ASSET_ITEM_NAME ||
+    normalizeItemText(item.catalogItem?.description) ===
+      TEMPORARY_FIXED_ASSET_ITEM_NAME
+  );
+}
+
+function getPurchaseOrderItemName(item: {
+  itemName?: string | null;
+  requestedItemName?: string | null;
+  catalogItem?: { description?: string | null } | null;
+}) {
+  const requestedItemName = item.requestedItemName?.trim();
+  if (
+    isTemporaryFixedAssetItem(item) &&
+    requestedItemName &&
+    normalizeItemText(requestedItemName) !== TEMPORARY_FIXED_ASSET_ITEM_NAME
+  ) {
+    return requestedItemName;
+  }
+
+  return item.itemName?.trim() || TEMPORARY_FIXED_ASSET_ITEM_NAME;
+}
+
 const quantityToConvertSchema = z.object({
   purchaseRequestItemId: z.number(),
   quantity: z
@@ -626,7 +660,7 @@ export const purchaseOrdersRouter = router({
             materialRequestItemId: item.materialRequestItemId,
             originalSapItemCode: item.originalSapItemCode,
             currentSapItemCode: item.currentSapItemCode,
-            itemName: item.itemName,
+            itemName: getPurchaseOrderItemName(item),
             quantity: quantityToConvert,
             receivedQuantity: "0.00",
             unit: item.unit,
@@ -862,7 +896,7 @@ export const purchaseOrdersRouter = router({
           materialRequestItemId: item.materialRequestItemId,
           originalSapItemCode: item.originalSapItemCode,
           currentSapItemCode: item.currentSapItemCode,
-          itemName: item.itemName,
+          itemName: getPurchaseOrderItemName(item),
           quantity: quantityToConvert,
           receivedQuantity: "0.00",
           unit: item.unit,
@@ -1152,6 +1186,7 @@ export const purchaseOrdersRouter = router({
           ),
         taxCode: z.string().trim().min(1),
         additionalTaxCodes: z.array(z.string().trim().min(1)).optional(),
+        itemName: z.string().trim().min(1).max(500).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -1217,6 +1252,7 @@ export const purchaseOrdersRouter = router({
       await db.updatePurchaseOrderItem(input.purchaseOrderItemId, {
         quantity: input.quantity,
         unitPrice: input.unitPrice,
+        itemName: input.itemName?.trim(),
         ...taxData,
       });
 
@@ -1244,7 +1280,7 @@ export const purchaseOrdersRouter = router({
         purchaseOrderItemId: z.number().int().positive(),
         isLeasing: z.boolean().optional(),
         lineObservation: z.string().trim().max(1000).optional(),
-        assetDetail: fixedAssetDetailSchema,
+        assetDetails: z.array(fixedAssetDetailSchema).min(1),
       })
     )
     .mutation(async ({ ctx, input }) => {

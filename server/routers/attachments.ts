@@ -487,14 +487,14 @@ function canAccessMaterialRequest(user: BuildReqUser, request: any) {
 }
 
 function canManageMaterialRequestAttachment(user: BuildReqUser, request: any) {
-  if (
-    user.buildreqRole === "administrador_proyecto" &&
-    canAccessProject(user, request.projectId)
-  ) {
-    return true;
-  }
-  if (request.status !== "borrador") return false;
-  return user.role === "admin" || request.requestedById === user.id;
+  if (!canAccessMaterialRequest(user, request)) return false;
+  return ![
+    "anulada",
+    "cerrada",
+    "cerrada_incompleta",
+    "flujo_completado",
+    "rechazada",
+  ].includes(String(request.status ?? ""));
 }
 
 async function assertMaterialRequestAttachmentAccess(

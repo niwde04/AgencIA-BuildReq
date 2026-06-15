@@ -447,6 +447,45 @@ function escapeHtml(value: unknown) {
     .replace(/'/g, "&#039;");
 }
 
+const TEMPORARY_FIXED_ASSET_ITEM_NAME = "ACTIVO FIJO TEMPORAL";
+
+function normalizeItemText(value: unknown) {
+  return String(value ?? "").trim().toLocaleUpperCase("es-HN");
+}
+
+function isTemporaryFixedAssetItem(item: any) {
+  return (
+    normalizeItemText(item?.itemName) === TEMPORARY_FIXED_ASSET_ITEM_NAME ||
+    normalizeItemText(item?.catalogItem?.description) ===
+      TEMPORARY_FIXED_ASSET_ITEM_NAME
+  );
+}
+
+function getTemporaryFixedAssetDisplayName(item: any) {
+  return isTemporaryFixedAssetItem(item)
+    ? TEMPORARY_FIXED_ASSET_ITEM_NAME
+    : String(item?.itemName ?? "");
+}
+
+function getTemporaryFixedAssetRequestedName(item: any) {
+  if (!isTemporaryFixedAssetItem(item)) return null;
+
+  const itemName = String(item?.itemName ?? "").trim();
+  if (itemName && normalizeItemText(itemName) !== TEMPORARY_FIXED_ASSET_ITEM_NAME) {
+    return itemName;
+  }
+
+  const requestedItemName = String(item?.requestedItemName ?? "").trim();
+  if (
+    requestedItemName &&
+    normalizeItemText(requestedItemName) !== TEMPORARY_FIXED_ASSET_ITEM_NAME
+  ) {
+    return requestedItemName;
+  }
+
+  return "";
+}
+
 function formatQuantityPayload(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed.toFixed(2) : "0.00";
@@ -546,6 +585,7 @@ type PurchaseOrderItemDraft = {
   subtotal: string;
   taxCode: PurchaseOrderTaxCode;
   additionalTaxCodes: string[];
+  itemName?: string;
 };
 
 type ContractDraft = {
@@ -1442,6 +1482,9 @@ export default function OrdenesCompra() {
                 item.taxCode,
                 activeSalesTaxes
               ),
+              itemName:
+                getTemporaryFixedAssetRequestedName(item) ??
+                String(item.itemName ?? ""),
             };
           })(),
         ])
@@ -1481,6 +1524,8 @@ export default function OrdenesCompra() {
           item.taxCode,
           activeSalesTaxes
         ),
+        itemName:
+          getTemporaryFixedAssetRequestedName(item) ?? String(item.itemName ?? ""),
       };
 
       if (Number(item.unitPrice ?? 0) > 0) continue;
@@ -1527,6 +1572,8 @@ export default function OrdenesCompra() {
         item.taxCode,
         activeSalesTaxes
       ),
+      itemName:
+        getTemporaryFixedAssetRequestedName(item) ?? String(item.itemName ?? ""),
     };
 
   const pricingSummary = useMemo(
@@ -1683,6 +1730,19 @@ export default function OrdenesCompra() {
     }
 
     const rawDraft = draftOverride ?? getItemDraft(item);
+    const isTemporaryFixedAsset = isTemporaryFixedAssetItem(item);
+    const itemNameDraft = isTemporaryFixedAsset
+      ? String(rawDraft.itemName ?? "").trim()
+      : null;
+    const itemNameChanged =
+      isTemporaryFixedAsset &&
+      Boolean(itemNameDraft) &&
+      itemNameDraft !== String(item.itemName ?? "").trim();
+
+    if (isTemporaryFixedAsset && !itemNameDraft) {
+      toast.error("Ingrese lo solicitado por el usuario");
+      return;
+    }
     if (!rawDraft.quantity.trim()) {
       toast.error("Ingrese la cantidad");
       return;
@@ -1693,6 +1753,7 @@ export default function OrdenesCompra() {
       Number(draft.unitPrice || 0) === Number(item.unitPrice ?? 0) &&
       draft.taxCode === normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes) &&
       areTaxCodeArraysEqual(draft.additionalTaxCodes, item.additionalTaxCodes)
+      && !itemNameChanged
     ) {
       return;
     }
@@ -1710,6 +1771,9 @@ export default function OrdenesCompra() {
         unitPrice: draft.unitPrice,
         taxCode: draft.taxCode,
         additionalTaxCodes: draft.additionalTaxCodes,
+        ...(isTemporaryFixedAsset && itemNameDraft
+          ? { itemName: itemNameDraft }
+          : {}),
       },
       {
         onSettled: () => {
@@ -1979,6 +2043,11 @@ export default function OrdenesCompra() {
                 item.brand || item.catalogItem?.brand
               )}</div>`
             : "";
+        const printItemName = isTemporaryFixedAssetItem(item)
+          ? draft.itemName?.trim() ||
+            getTemporaryFixedAssetRequestedName(item) ||
+            item.itemName
+          : item.itemName;
         const amounts = calculatePurchaseOrderLineAmounts({
           quantity: draft.quantity,
           unitPrice: draft.unitPrice,
@@ -1989,7 +2058,7 @@ export default function OrdenesCompra() {
         return `
           <tr>
             <td class="center">${index + 1}</td>
-            <td>${escapeHtml(item.itemName)}${brandLine}</td>
+            <td>${escapeHtml(printItemName)}${brandLine}</td>
             <td>${escapeHtml(targetLabel)}</td>
             <td class="center">${escapeHtml(partNumberLabel)}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(draft.quantity))}</td>
@@ -2751,7 +2820,17 @@ export default function OrdenesCompra() {
                             className="border-b border-border/70 last:border-0"
                           >
                             <td className="p-3">
-                              <p className="font-medium">{item.itemName}</p>
+                              <p className="font-medium">
+                                {getTemporaryFixedAssetDisplayName(item)}
+                              </p>
+                              {getTemporaryFixedAssetRequestedName(item) ? (
+                                <p className="mt-0.5 text-xs text-muted-foreground">
+                                  Solicitado:{" "}
+                                  <span className="font-medium text-foreground">
+                                    {getTemporaryFixedAssetRequestedName(item)}
+                                  </span>
+                                </p>
+                              ) : null}
                               {item.sourceRequest?.requestNumber ? (
                                 <p className="mt-0.5 text-xs text-muted-foreground">
                                   {item.sourceRequest.requestNumber}
@@ -3364,6 +3443,8 @@ export default function OrdenesCompra() {
                         const draft = getOriginItemDraft(item);
                         const pendingQuantity =
                           getPurchaseRequestItemPendingConversionQuantity(item);
+                        const requestedItemName =
+                          getTemporaryFixedAssetRequestedName(item);
                         const lineAmounts = calculatePurchaseOrderLineAmounts({
                           quantity: draft.quantity,
                           unitPrice: draft.unitPrice,
@@ -3379,8 +3460,16 @@ export default function OrdenesCompra() {
                           >
                             <td className="p-3 align-middle sm:p-4">
                               <div className="text-base font-semibold leading-snug sm:text-lg">
-                                {item.itemName}
+                                {getTemporaryFixedAssetDisplayName(item)}
                               </div>
+                              {requestedItemName ? (
+                                <div className="mt-1.5 text-sm text-muted-foreground">
+                                  Solicitado:{" "}
+                                  <span className="font-medium text-foreground">
+                                    {requestedItemName}
+                                  </span>
+                                </div>
+                              ) : null}
                               {(item.currentSapItemCode ||
                                 item.originalSapItemCode) && (
                                 <div className="mt-1.5 text-sm text-muted-foreground">
@@ -4092,6 +4181,12 @@ export default function OrdenesCompra() {
                       const shouldShowLineActions =
                         canEditOrderStructure || canCloseThisReceiptLine;
                       const isSavingThisLine = savingItemId === item.id;
+                      const isTemporaryFixedAsset =
+                        isTemporaryFixedAssetItem(item);
+                      const requestedItemName =
+                        draft.itemName ??
+                        getTemporaryFixedAssetRequestedName(item) ??
+                        "";
                       const lineAmounts = calculatePurchaseOrderLineAmounts({
                         quantity: draft.quantity,
                         unitPrice: draft.unitPrice,
@@ -4107,8 +4202,39 @@ export default function OrdenesCompra() {
                         >
                           <td className="p-3 align-middle sm:p-4">
                             <div className="text-base font-semibold leading-snug sm:text-lg">
-                              {item.itemName}
+                              {getTemporaryFixedAssetDisplayName(item)}
                             </div>
+                            {isTemporaryFixedAsset ? (
+                              <div className="mt-2 max-w-[280px]">
+                                <div className="mb-1 text-xs font-medium text-muted-foreground">
+                                  Solicitado
+                                </div>
+                                {canEditOrderStructure ? (
+                                  <Input
+                                    value={requestedItemName}
+                                    onChange={event => {
+                                      const nextItemName = event.target.value;
+                                      setItemDrafts(current => ({
+                                        ...current,
+                                        [item.id]: {
+                                          ...(current[item.id] ??
+                                            getItemDraft(item)),
+                                          itemName: nextItemName,
+                                        },
+                                      }));
+                                    }}
+                                    onBlur={() => handleSaveItemLine(item)}
+                                    disabled={isSavingThisLine}
+                                    className="h-9 text-sm"
+                                    placeholder="Detalle solicitado"
+                                  />
+                                ) : requestedItemName ? (
+                                  <div className="text-sm font-medium">
+                                    {requestedItemName}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
                             {item.originalSapItemCode && (
                               <div className="mt-1.5 text-sm text-muted-foreground">
                                 Original: {item.originalSapItemCode}

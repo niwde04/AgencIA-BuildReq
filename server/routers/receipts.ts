@@ -58,6 +58,51 @@ function canReceivePurchaseOrder(purchaseOrder: any, contractSummary?: any) {
   );
 }
 
+function getFixedAssetResolutionProgress(item: any) {
+  if (item?.isFixedAsset !== true) {
+    return { expected: 0, resolved: 0, pending: 0 };
+  }
+
+  const fixedAssetArticles = Array.isArray(item.fixedAssetArticles)
+    ? item.fixedAssetArticles
+    : [];
+  const assetDetails = Array.isArray(item.assetDetails)
+    ? item.assetDetails
+    : [];
+  const quantity = Number(item.quantity ?? 0);
+  const expected = Math.max(
+    fixedAssetArticles.length,
+    assetDetails.length,
+    Number.isFinite(quantity) && quantity > 0 ? Math.trunc(quantity) : 0
+  );
+  const resolved = fixedAssetArticles.filter(
+    (article: any) => article?.fixedAssetStatus === "resuelto"
+  ).length;
+  const pending =
+    fixedAssetArticles.length > 0
+      ? Math.max(expected - resolved, 0)
+      : item.fixedAssetStatus === "resuelto"
+        ? 0
+        : Math.max(expected, 1);
+
+  return { expected, resolved, pending };
+}
+
+function getFixedAssetDetailFromArticle(article: any) {
+  return {
+    serialNumber: String(article?.fixedAssetSerialNumber ?? "").trim(),
+    condition: ASSET_CONDITION_VALUES.includes(article?.fixedAssetCondition)
+      ? article.fixedAssetCondition
+      : "nuevo",
+    color: String(article?.fixedAssetColor ?? "").trim(),
+    model: String(article?.fixedAssetModel ?? "").trim(),
+    brand: String(article?.fixedAssetBrand ?? "").trim(),
+    chassisSeries: String(article?.fixedAssetChassisSeries ?? "").trim(),
+    motorSeries: String(article?.fixedAssetMotorSeries ?? "").trim(),
+    plateOrCode: String(article?.fixedAssetPlateOrCode ?? "").trim(),
+  };
+}
+
 function assertProjectScopedAccess(
   user: {
     role: string;
@@ -281,23 +326,18 @@ const receiptItemSchema = z
     if (value.isFixedAsset !== true) return;
 
     const quantityReceived = Number(value.quantityReceived);
-    if (quantityReceived !== 1) {
+    if (
+      !Number.isFinite(quantityReceived) ||
+      quantityReceived <= 0 ||
+      !Number.isInteger(quantityReceived)
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["quantityReceived"],
         message:
-          "Activo fijo requiere que la cantidad recibida sea exactamente 1",
+          "Activo fijo requiere una cantidad recibida entera mayor que cero",
       });
       return;
-    }
-
-    if (value.targetType !== "activo_fijo") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["targetType"],
-        message:
-          "Solo se puede activar Activo fijo para productos clasificados como Activo Fijo",
-      });
     }
 
     const assetDetails = value.assetDetails ?? [];
@@ -315,6 +355,13 @@ const receiptItemSchema = z
           code: z.ZodIssueCode.custom,
           path: ["assetDetails", index, "serialNumber"],
           message: "Ingrese el número de serie del activo",
+        });
+      }
+      if (!detail.condition) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["assetDetails", index, "condition"],
+          message: "Seleccione la condición del activo",
         });
       }
     });
@@ -368,17 +415,35 @@ function canCloseTransferReceiptLine(
   );
 }
 
-function isPurchaseOrderServiceLine(params: {
+function isPurchaseOrderNonInventoryLine(params: {
+  item?: { isFixedAsset?: boolean | null };
   sourceItem?: any;
-  catalogItem?: { tipoArticulo?: number | null } | null;
+  catalogItem?: {
+    tipoArticulo?: number | null;
+    itemCode?: string | null;
+  } | null;
 }) {
+  const tipoArticulo = Number(
+    params.sourceItem?.catalogItem?.tipoArticulo ??
+      params.sourceItem?.tipoArticulo ??
+      params.catalogItem?.tipoArticulo ??
+      0
+  );
+  const sourceCode = String(
+    params.sourceItem?.currentSapItemCode ??
+      params.sourceItem?.originalSapItemCode ??
+      params.catalogItem?.itemCode ??
+      ""
+  )
+    .trim()
+    .toUpperCase();
   return (
-    Number(
-      params.sourceItem?.catalogItem?.tipoArticulo ??
-        params.sourceItem?.tipoArticulo ??
-        params.catalogItem?.tipoArticulo ??
-        0
-    ) === 2
+    tipoArticulo === 2 ||
+    tipoArticulo === 3 ||
+    params.item?.isFixedAsset === true ||
+    params.sourceItem?.isFixedAsset === true ||
+    Boolean(params.sourceItem?.fixedAssetArticleId) ||
+    sourceCode.startsWith("AFT")
   );
 }
 
@@ -589,7 +654,7 @@ export const receiptsRouter = router({
       const itemsById = new Map(
         (detail.items ?? []).map((item: any) => [item.id, item])
       );
-      const serviceReceiptLineIndexes = new Set<number>();
+      const nonInventoryReceiptLineIndexes = new Set<number>();
       for (let itemIndex = 0; itemIndex < input.items.length; itemIndex += 1) {
         const item = input.items[itemIndex];
         let catalogItem: Awaited<
@@ -619,8 +684,8 @@ export const receiptsRouter = router({
         const sourceItem = item.sourceItemId
           ? itemsById.get(item.sourceItemId)
           : undefined;
-        if (isPurchaseOrderServiceLine({ sourceItem, catalogItem })) {
-          serviceReceiptLineIndexes.add(itemIndex);
+        if (isPurchaseOrderNonInventoryLine({ item, sourceItem, catalogItem })) {
+          nonInventoryReceiptLineIndexes.add(itemIndex);
         }
       }
 
@@ -672,7 +737,8 @@ export const receiptsRouter = router({
           const sourceItem = item.sourceItemId
             ? itemsById.get(item.sourceItemId)
             : undefined;
-          const isServiceLine = serviceReceiptLineIndexes.has(index);
+          const isNonInventoryLine =
+            nonInventoryReceiptLineIndexes.has(index);
           const targetFields = await resolveReceiptLineTarget({
             item,
             sourceItem,
@@ -698,7 +764,7 @@ export const receiptsRouter = router({
               sourceItem?.originalSapItemCode ??
               item.sapItemCode?.trim() ??
               null,
-            warehouseId: isServiceLine ? undefined : item.warehouseId,
+            warehouseId: isNonInventoryLine ? undefined : item.warehouseId,
             itemName: item.itemName,
             quantityExpected: item.quantityExpected,
             quantityReceived: item.quantityReceived,
@@ -873,7 +939,7 @@ export const receiptsRouter = router({
       }
       let purchaseOrderItemsByIdForPayload = new Map<number, any>();
       let allowAnyActiveReceiptWarehouse = false;
-      const serviceReceiptLineIndexes = new Set<number>();
+      const nonInventoryReceiptLineIndexes = new Set<number>();
 
       if (input.sourceType === "purchase_order") {
         const detail = await db.getPurchaseOrderById(input.sourceId);
@@ -937,13 +1003,15 @@ export const receiptsRouter = router({
         );
         purchaseOrderItemsByIdForPayload = itemsById;
         const unresolvedFixedAsset = (detail.items ?? []).find(
-          (item: any) =>
-            item.isFixedAsset === true && item.fixedAssetStatus !== "resuelto"
+          (item: any) => getFixedAssetResolutionProgress(item).pending > 0
         );
         if (unresolvedFixedAsset) {
+          const progress = getFixedAssetResolutionProgress(
+            unresolvedFixedAsset
+          );
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message: `La línea ${unresolvedFixedAsset.itemName} tiene un activo fijo pendiente de código real`,
+            message: `Contabilidad debe resolver ${progress.pending} activo(s) fijo(s) de ${unresolvedFixedAsset.itemName}`,
           });
         }
         let hasPositiveReceipt = false;
@@ -984,14 +1052,19 @@ export const receiptsRouter = router({
           }
 
           const requestedQuantity = Number(item.quantityReceived ?? 0);
-          const isServiceLine = isPurchaseOrderServiceLine({
+          const isNonInventoryLine = isPurchaseOrderNonInventoryLine({
+            item,
             sourceItem,
             catalogItem,
           });
-          if (isServiceLine) {
-            serviceReceiptLineIndexes.add(itemIndex);
+          if (isNonInventoryLine) {
+            nonInventoryReceiptLineIndexes.add(itemIndex);
           }
-          if (requestedQuantity > 0 && !isServiceLine && !item.warehouseId) {
+          if (
+            requestedQuantity > 0 &&
+            !isNonInventoryLine &&
+            !item.warehouseId
+          ) {
             throw new TRPCError({
               code: "BAD_REQUEST",
               message: `Seleccione almacén destino para ${
@@ -1029,19 +1102,26 @@ export const receiptsRouter = router({
           }
 
           if (sourceItem?.isFixedAsset === true) {
-            if (requestedQuantity !== 1) {
+            if (
+              !Number.isFinite(requestedQuantity) ||
+              requestedQuantity <= 0 ||
+              !Number.isInteger(requestedQuantity)
+            ) {
               throw new TRPCError({
                 code: "BAD_REQUEST",
-                message: `La recepción del activo fijo ${sourceItem.itemName} debe ser exactamente 1`,
+                message: `La recepción del activo fijo ${sourceItem.itemName} debe ser una cantidad entera mayor que cero`,
               });
             }
             const sourceAssetDetails = normalizeFixedAssetDetails(
               sourceItem.assetDetails,
-              1
+              requestedQuantity
+            );
+            const missingIndex = sourceAssetDetails.findIndex(
+              detail => !detail.serialNumber.trim() || !detail.condition
             );
             if (
-              sourceAssetDetails.length !== 1 ||
-              !sourceAssetDetails[0]?.serialNumber.trim()
+              sourceAssetDetails.length !== requestedQuantity ||
+              missingIndex >= 0
             ) {
               throw new TRPCError({
                 code: "BAD_REQUEST",
@@ -1222,7 +1302,7 @@ export const receiptsRouter = router({
       const warehouseRequiredItems =
         input.sourceType === "purchase_order"
           ? input.items.filter(
-              (_item, index) => !serviceReceiptLineIndexes.has(index)
+              (_item, index) => !nonInventoryReceiptLineIndexes.has(index)
             )
           : input.items;
       await assertReceiptWarehouses(input.projectId, warehouseRequiredItems, {
@@ -1282,14 +1362,14 @@ export const receiptsRouter = router({
           : null,
         notes: input.notes,
       };
-      const receiptItems = await Promise.all(
+      const receiptItemGroups = await Promise.all(
         input.items.map(async (item, index) => {
           const sourceItem = item.sourceItemId
             ? purchaseOrderItemsByIdForPayload.get(item.sourceItemId)
             : undefined;
-          const isServiceLine =
+          const isNonInventoryLine =
             input.sourceType === "purchase_order" &&
-            serviceReceiptLineIndexes.has(index);
+            nonInventoryReceiptLineIndexes.has(index);
           const targetFields =
             input.sourceType === "purchase_order"
               ? await resolveReceiptLineTarget({
@@ -1310,7 +1390,12 @@ export const receiptsRouter = router({
           const quantityReceived = Number(item.quantityReceived);
           const sourceIsFixedAsset = sourceItem?.isFixedAsset === true;
           const fixedAssetDetails = sourceIsFixedAsset
-            ? normalizeFixedAssetDetails(sourceItem.assetDetails, 1)
+            ? item.assetDetails && item.assetDetails.length > 0
+              ? normalizeFixedAssetDetails(item.assetDetails, quantityReceived)
+              : normalizeFixedAssetDetails(
+                  sourceItem.assetDetails,
+                  quantityReceived
+                )
             : normalizeFixedAssetDetails(item.assetDetails, quantityReceived);
           const closeNote =
             input.sourceType === "transfer" && item.closeRemaining
@@ -1323,14 +1408,15 @@ export const receiptsRouter = router({
                   .join(" ")
               : undefined;
 
-          return {
+          const baseReceiptItem = {
             sourceItemId: item.sourceItemId ?? null,
             sapItemCode:
+              (sourceIsFixedAsset ? item.sapItemCode?.trim() : null) ??
               sourceItem?.currentSapItemCode ??
               sourceItem?.originalSapItemCode ??
               item.sapItemCode?.trim() ??
               null,
-            warehouseId: isServiceLine ? undefined : item.warehouseId,
+            warehouseId: isNonInventoryLine ? undefined : item.warehouseId,
             itemName: item.itemName,
             quantityExpected: item.quantityExpected,
             quantityReceived: item.quantityReceived,
@@ -1364,8 +1450,75 @@ export const receiptsRouter = router({
                 ? ctx.user.id
                 : undefined,
           };
+
+          if (
+            input.sourceType === "purchase_order" &&
+            sourceIsFixedAsset &&
+            Number.isFinite(quantityReceived) &&
+            Number.isInteger(quantityReceived) &&
+            quantityReceived > 1
+          ) {
+            const fixedAssetArticles = Array.isArray(
+              sourceItem.fixedAssetArticles
+            )
+              ? sourceItem.fixedAssetArticles
+              : [];
+            const alreadyReceived = Math.max(
+              Math.trunc(Number(sourceItem.receivedQuantity ?? 0)),
+              0
+            );
+            const articlesToReceive = fixedAssetArticles.slice(
+              alreadyReceived,
+              alreadyReceived + quantityReceived
+            );
+            if (articlesToReceive.length !== quantityReceived) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: `No se encontraron ${quantityReceived} activo(s) fijo(s) resuelto(s) para ${item.itemName}`,
+              });
+            }
+
+            return articlesToReceive.map((article: any, articleIndex: number) => {
+              const unitInput = {
+                ...item,
+                quantityExpected: "1.00",
+                quantityReceived: "1",
+              };
+              const unitFinancialData =
+                preparePurchaseOrderReceiptItemFinancialData({
+                  item: unitInput,
+                  sourceItem,
+                  taxes: activeSalesTaxes,
+                });
+              const articleCode = String(article.itemCode ?? "").trim();
+              const temporaryCode = String(
+                article.temporaryItemCode ?? ""
+              ).trim();
+              const articleDetail = getFixedAssetDetailFromArticle(article);
+
+              return {
+                ...baseReceiptItem,
+                sapItemCode: articleCode || temporaryCode,
+                itemName: article.description || item.itemName,
+                quantityExpected: "1.00",
+                quantityReceived: "1",
+                ...unitFinancialData,
+                targetType: "activo_fijo" as const,
+                subProjectId: null,
+                fixedAssetSapItemCode: articleCode || temporaryCode,
+                fixedAssetName: article.description || item.itemName,
+                assetDetails: [articleDetail],
+                notes:
+                  baseReceiptItem.notes ??
+                  `Activo fijo unidad ${alreadyReceived + articleIndex + 1}`,
+              };
+            });
+          }
+
+          return [baseReceiptItem];
         })
       );
+      const receiptItems = receiptItemGroups.flat();
 
       return otherCharges.length > 0
         ? db.registerReceipt(receiptData, receiptItems, otherCharges)
