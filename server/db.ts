@@ -5571,6 +5571,16 @@ export async function rejectPurchaseRequest(
   });
 }
 
+export async function cancelPurchaseRequest(
+  id: number,
+  cancellationReason: string
+) {
+  return updatePurchaseRequest(id, {
+    status: "anulada",
+    rejectionReason: cancellationReason,
+  });
+}
+
 export async function createPurchaseOrder(
   data: Omit<InsertPurchaseOrder, "orderNumber">,
   items: Omit<InsertPurchaseOrderItem, "purchaseOrderId">[]

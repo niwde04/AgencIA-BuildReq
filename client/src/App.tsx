@@ -175,6 +175,7 @@ function DashboardRoutes() {
       <Route path="/devoluciones/nueva" component={NuevaDevolucion} />
       <Route path="/inventario" component={Inventario} />
       <Route path="/articulos" component={Articulos} />
+      <Route path="/activos-fijos-pendientes" component={Articulos} />
       <Route path="/proveedores" component={Proveedores} />
       <Route path="/almacenes" component={Almacenes} />
       <Route path="/solicitudes-compra" component={PurchaseRequests} />

@@ -33,13 +33,24 @@ export const dashboardRouter = router({
     const user = ctx.user;
     const userRole = user.buildreqRole;
     if (userRole === "contable") {
-      const reviewedInvoices = await db.listInvoices({ status: "revisada" });
+      const [reviewedInvoices, pendingFixedAssets] = await Promise.all([
+        db.listInvoices({ status: "revisada" }),
+        db.listArticles({
+          tipoArticulo: 3,
+          fixedAssetStatus: "pendiente",
+          temporaryOnly: true,
+          isActive: true,
+          page: 1,
+          pageSize: 10,
+        }),
+      ]);
       return {
         materialRequestsPendingApproval: 0,
         supplyFlowsPending: 0,
         purchaseRequestsPending: 0,
         purchaseOrdersEmitted: 0,
         transferRequestsPending: 0,
+        fixedAssetsPending: pendingFixedAssets.total,
         invoicesPendingAttention: 0,
         invoicesReviewed: reviewedInvoices.length,
       };
@@ -103,6 +114,7 @@ export const dashboardRouter = router({
       pendingPurchaseRequests,
       emittedPurchaseOrders,
       pendingTransferRequests,
+      pendingFixedAssets,
       draftInvoices,
       rejectedInvoices,
       reviewedInvoices,
@@ -133,6 +145,16 @@ export const dashboardRouter = router({
             ...scopedFilters,
           })
         : Promise.resolve([]),
+      isAdmin
+        ? db.listArticles({
+            tipoArticulo: 3,
+            fixedAssetStatus: "pendiente",
+            temporaryOnly: true,
+            isActive: true,
+            page: 1,
+            pageSize: 10,
+          })
+        : Promise.resolve({ total: 0 }),
       canAccessInvoices
         ? db.listInvoices({
             status: "borrador",
@@ -160,6 +182,7 @@ export const dashboardRouter = router({
       purchaseRequestsPending: pendingPurchaseRequests.length,
       purchaseOrdersEmitted: emittedPurchaseOrders.length,
       transferRequestsPending: pendingTransferRequests.length,
+      fixedAssetsPending: pendingFixedAssets.total,
       invoicesPendingAttention: draftInvoices.length + rejectedInvoices.length,
       invoicesReviewed: reviewedInvoices.length,
     };

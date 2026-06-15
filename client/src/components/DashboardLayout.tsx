@@ -69,6 +69,7 @@ type SidebarCountKey =
   | "purchaseRequestsPending"
   | "purchaseOrdersEmitted"
   | "transferRequestsPending"
+  | "fixedAssetsPending"
   | "invoicesPendingAttention"
   | "invoicesReviewed";
 
@@ -78,6 +79,7 @@ const MENU_COUNT_KEYS: Partial<Record<string, SidebarCountKey>> = {
   "/solicitudes-compra": "purchaseRequestsPending",
   "/ordenes-compra": "purchaseOrdersEmitted",
   "/solicitudes-traslado": "transferRequestsPending",
+  "/activos-fijos-pendientes": "fixedAssetsPending",
 };
 const MENU_ALWAYS_SHOW_COUNT_PATHS = new Set(["/solicitudes"]);
 
@@ -121,6 +123,12 @@ const allMenuItems: MenuItem[] = [
       "contable",
       "admin",
     ],
+  },
+  {
+    icon: KeyRound,
+    label: "Activos fijos pendientes",
+    path: "/activos-fijos-pendientes",
+    roles: ["contable", "admin"],
   },
   {
     icon: Building2,
@@ -393,6 +401,8 @@ function DashboardLayoutContent({
       }
       if (userRole === "contable") {
         return (
+          item.path === "/articulos" ||
+          item.path === "/activos-fijos-pendientes" ||
           item.path === "/facturas" ||
           item.path === "/impuestos" ||
           item.path === "/retenciones"
@@ -410,6 +420,8 @@ function DashboardLayoutContent({
   });
   const shouldRedirectContable =
     userRole === "contable" &&
+    location !== "/articulos" &&
+    location !== "/activos-fijos-pendientes" &&
     location !== "/facturas" &&
     location !== "/impuestos" &&
     location !== "/retenciones";

@@ -441,11 +441,17 @@ export const purchaseOrdersRouter = router({
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseRequest.projectId);
 
-      if (detail.purchaseRequest.status === "convertida") {
+      if (
+        ["convertida", "anulada", "rechazada"].includes(
+          detail.purchaseRequest.status
+        )
+      ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message:
-            "La solicitud de compra ya fue convertida y solo está disponible en modo lectura",
+            detail.purchaseRequest.status === "convertida"
+              ? "La solicitud de compra ya fue convertida y solo está disponible en modo lectura"
+              : "La solicitud de compra está anulada y no puede convertirse a orden de compra",
         });
       }
 

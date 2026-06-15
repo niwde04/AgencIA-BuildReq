@@ -45,7 +45,8 @@ function canCreateArticles(user: {
   return (
     user.role === "admin" ||
     user.buildreqRole === "administracion_central" ||
-    user.buildreqRole === "administrador_proyecto"
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "contable"
   );
 }
 
@@ -115,18 +116,7 @@ export const articlesRouter = router({
     )
     .query(async ({ ctx, input }) => {
       assertCanReadArticles(ctx.user);
-      const isContableOnly =
-        ctx.user.buildreqRole === "contable" && ctx.user.role !== "admin";
-      return db.listArticles({
-        ...(input ?? {}),
-        ...(isContableOnly
-          ? {
-              tipoArticulo: 3 as const,
-              fixedAssetStatus: input?.fixedAssetStatus ?? "pendiente",
-              temporaryOnly: true,
-            }
-          : {}),
-      });
+      return db.listArticles(input ?? {});
     }),
 
   update: protectedProcedure

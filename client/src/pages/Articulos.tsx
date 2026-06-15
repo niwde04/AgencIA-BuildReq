@@ -27,6 +27,7 @@ import {
 } from "@shared/fixed-assets";
 import { PackageSearch, Pencil, Plus, Save, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useLocation } from "wouter";
 import { toast } from "sonner";
 
 type ArticleType = 1 | 2 | 3;
@@ -161,6 +162,7 @@ function buildFixedAssetDraft(article?: ArticleRecord | null): FixedAssetDetailD
 
 export default function Articulos() {
   const { user } = useAuth();
+  const [location] = useLocation();
   const utils = trpc.useUtils();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -191,13 +193,16 @@ export default function Articulos() {
     useState(false);
 
   const buildreqRole = (user as any)?.buildreqRole || "";
-  const isContable = buildreqRole === "contable";
+  const isPendingFixedAssetsView = location.startsWith(
+    "/activos-fijos-pendientes"
+  );
   const canManage =
     user?.role === "admin" || buildreqRole === "jefe_bodega_central";
   const canCreate =
     user?.role === "admin" ||
     buildreqRole === "administracion_central" ||
-    buildreqRole === "administrador_proyecto";
+    buildreqRole === "administrador_proyecto" ||
+    buildreqRole === "contable";
   const canResolveFixedAssets =
     user?.role === "admin" ||
     buildreqRole === "jefe_bodega_central" ||
@@ -225,13 +230,19 @@ export default function Articulos() {
   }, [search]);
 
   useEffect(() => {
-    if (!isContable) return;
-    setTypeFilter("3");
+    if (isPendingFixedAssetsView) {
+      setTypeFilter("3");
+      setActiveFilter("active");
+      setWithholdingFilter("all");
+      setFixedAssetStatusFilter("pendiente");
+      return;
+    }
+
+    setTypeFilter("all");
+    setActiveFilter("active");
     setWithholdingFilter("all");
-    setFixedAssetStatusFilter(current =>
-      current === "all" ? "pendiente" : current
-    );
-  }, [isContable]);
+    setFixedAssetStatusFilter("all");
+  }, [isPendingFixedAssetsView]);
 
   useEffect(() => {
     setPage(1);
@@ -247,23 +258,29 @@ export default function Articulos() {
     () => ({
       search: debouncedSearch || undefined,
       tipoArticulo:
-        isContable || fixedAssetStatusFilter !== "all"
+        isPendingFixedAssetsView || fixedAssetStatusFilter !== "all"
           ? 3
           : parseArticleType(typeFilter),
       isActive:
-        activeFilter === "all" ? undefined : activeFilter === "active",
+        isPendingFixedAssetsView
+          ? true
+          : activeFilter === "all"
+            ? undefined
+            : activeFilter === "active",
       allowsTaxWithholding:
         withholdingFilter === "all"
           ? undefined
           : withholdingFilter === "withholding",
       fixedAssetStatus:
-        fixedAssetStatusFilter === "all"
-          ? isContable
-            ? "pendiente"
-            : undefined
-          : (fixedAssetStatusFilter as "pendiente" | "resuelto"),
+        isPendingFixedAssetsView
+          ? "pendiente"
+          : fixedAssetStatusFilter === "all"
+            ? undefined
+            : (fixedAssetStatusFilter as "pendiente" | "resuelto"),
       temporaryOnly:
-        isContable || fixedAssetStatusFilter !== "all" ? true : undefined,
+        isPendingFixedAssetsView || fixedAssetStatusFilter !== "all"
+          ? true
+          : undefined,
       page,
       pageSize: PAGE_SIZE,
     }),
@@ -271,7 +288,7 @@ export default function Articulos() {
       activeFilter,
       debouncedSearch,
       fixedAssetStatusFilter,
-      isContable,
+      isPendingFixedAssetsView,
       page,
       typeFilter,
       withholdingFilter,
@@ -476,13 +493,17 @@ export default function Articulos() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1>Artículos</h1>
+          <h1>
+            {isPendingFixedAssetsView ? "Activos fijos pendientes" : "Artículos"}
+          </h1>
           <p className="text-sm text-muted-foreground">
             {error
               ? "No fue posible cargar los artículos"
               : isFetching && !isLoading
                 ? "Actualizando resultados..."
-              : `${total.toLocaleString("es-HN")} registros encontrados`}
+              : isPendingFixedAssetsView
+                ? `${total.toLocaleString("es-HN")} activo(s) fijo(s) pendiente(s) de código real`
+                : `${total.toLocaleString("es-HN")} registros encontrados`}
           </p>
         </div>
         {canCreate ? (
@@ -493,34 +514,46 @@ export default function Articulos() {
         ) : null}
       </div>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(240px,1fr)_180px_160px_190px_210px]">
+      <div
+        className={
+          isPendingFixedAssetsView
+            ? "grid grid-cols-1 gap-3 md:grid-cols-[minmax(240px,1fr)_160px]"
+            : "grid grid-cols-1 gap-3 md:grid-cols-[minmax(240px,1fr)_180px_160px_190px_210px]"
+        }
+      >
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Buscar por código, descripción, marca o número de parte"
+            placeholder={
+              isPendingFixedAssetsView
+                ? "Buscar por código, serie, descripción o marca"
+                : "Buscar por código, descripción, marca o número de parte"
+            }
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
           />
         </div>
 
-        <Select
-          value={isContable ? "3" : typeFilter}
-          onValueChange={setTypeFilter}
-          disabled={isContable}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Tipo de artículo" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos los tipos</SelectItem>
-            <SelectItem value="1">Artículo</SelectItem>
-            <SelectItem value="2">Servicio</SelectItem>
-            <SelectItem value="3">Activo fijo</SelectItem>
-          </SelectContent>
-        </Select>
+        {!isPendingFixedAssetsView ? (
+          <Select value={typeFilter} onValueChange={setTypeFilter}>
+            <SelectTrigger>
+              <SelectValue placeholder="Tipo de artículo" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos los tipos</SelectItem>
+              <SelectItem value="1">Artículo</SelectItem>
+              <SelectItem value="2">Servicio</SelectItem>
+              <SelectItem value="3">Activo fijo</SelectItem>
+            </SelectContent>
+          </Select>
+        ) : null}
 
-        <Select value={activeFilter} onValueChange={setActiveFilter}>
+        <Select
+          value={isPendingFixedAssetsView ? "active" : activeFilter}
+          onValueChange={setActiveFilter}
+          disabled={isPendingFixedAssetsView}
+        >
           <SelectTrigger>
             <SelectValue placeholder="Estado" />
           </SelectTrigger>
@@ -531,30 +564,34 @@ export default function Articulos() {
           </SelectContent>
         </Select>
 
-        <Select value={withholdingFilter} onValueChange={setWithholdingFilter}>
-          <SelectTrigger>
-            <SelectValue placeholder="Retención" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos</SelectItem>
-            <SelectItem value="withholding">Permiten retención</SelectItem>
-            <SelectItem value="no-withholding">No permiten retención</SelectItem>
-          </SelectContent>
-        </Select>
+        {!isPendingFixedAssetsView ? (
+          <>
+            <Select value={withholdingFilter} onValueChange={setWithholdingFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder="Retención" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="withholding">Permiten retención</SelectItem>
+                <SelectItem value="no-withholding">No permiten retención</SelectItem>
+              </SelectContent>
+            </Select>
 
-        <Select
-          value={fixedAssetStatusFilter}
-          onValueChange={setFixedAssetStatusFilter}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Activos fijos" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos los estados</SelectItem>
-            <SelectItem value="pendiente">Pendiente código real</SelectItem>
-            <SelectItem value="resuelto">Código resuelto</SelectItem>
-          </SelectContent>
-        </Select>
+            <Select
+              value={fixedAssetStatusFilter}
+              onValueChange={setFixedAssetStatusFilter}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Activos fijos" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los estados</SelectItem>
+                <SelectItem value="pendiente">Pendiente código real</SelectItem>
+                <SelectItem value="resuelto">Código resuelto</SelectItem>
+              </SelectContent>
+            </Select>
+          </>
+        ) : null}
       </div>
 
       <Card>
@@ -580,7 +617,9 @@ export default function Articulos() {
             <div className="p-8 text-center">
               <PackageSearch className="mx-auto mb-3 h-12 w-12 text-muted-foreground/30" />
               <p className="text-muted-foreground">
-                No se encontraron artículos
+                {isPendingFixedAssetsView
+                  ? "No hay activos fijos pendientes"
+                  : "No se encontraron artículos"}
               </p>
             </div>
           ) : (

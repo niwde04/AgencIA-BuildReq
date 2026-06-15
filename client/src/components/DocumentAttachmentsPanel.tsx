@@ -13,6 +13,7 @@ type DocumentAttachmentEntityType =
   | "purchase_order"
   | "receipt"
   | "purchase_request"
+  | "transfer_request"
   | "material_request";
 
 type AttachmentCategory =
@@ -43,6 +44,7 @@ type DocumentAttachmentsPanelProps = {
   category?: AttachmentCategory;
   title?: string;
   canManage?: boolean;
+  canDelete?: boolean;
   className?: string;
   disabled?: boolean;
   onUploadSuccess?: (result: UploadResult) => void;
@@ -62,6 +64,7 @@ export function DocumentAttachmentsPanel({
   category = "otro",
   title = "Adjuntos",
   canManage = false,
+  canDelete = canManage,
   className = "",
   disabled = false,
   onUploadSuccess,
@@ -204,7 +207,7 @@ export function DocumentAttachmentsPanel({
                     </p>
                   </div>
                 </div>
-                {canManage ? (
+                {canDelete ? (
                   <Button
                     type="button"
                     variant="outline"

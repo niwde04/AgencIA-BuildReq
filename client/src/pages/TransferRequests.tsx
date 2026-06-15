@@ -2,6 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import {
   Dialog,
   DialogContent,
@@ -1169,6 +1170,14 @@ export default function TransferRequests() {
                   </tbody>
                 </table>
               </div>
+
+              <DocumentAttachmentsPanel
+                entityType="transfer_request"
+                entityId={detail.transferRequest.id}
+                title="Archivos adjuntos"
+                canManage
+                canDelete={false}
+              />
 
               {canConvertTransferRequests || canCancelTransferRequests ? (
                 <div className="flex justify-end">

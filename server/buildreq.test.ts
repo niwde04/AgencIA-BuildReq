@@ -660,7 +660,54 @@ describe("BuildReq - Articles catalog", () => {
     listArticlesSpy.mockRestore();
   });
 
-  it("Contable lists pending temporary fixed assets by default", async () => {
+  it("Contable can list all articles without forced pending filters", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const listArticlesSpy = vi.spyOn(db, "listArticles").mockResolvedValue({
+      items: [
+        {
+          id: 10,
+          itemCode: "OC-006-0001",
+          temporaryItemCode: "OC-006-0001",
+          description: "COMPUTADORA ESCRITORIO",
+          tipoArticulo: 3,
+          fixedAssetStatus: "pendiente",
+          isActive: true,
+        },
+        {
+          id: 11,
+          itemCode: "SERV-001",
+          description: "SERVICIO CONTABLE",
+          tipoArticulo: 2,
+          isActive: true,
+        },
+      ],
+      total: 2,
+      page: 1,
+      pageSize: 25,
+      totalPages: 1,
+    } as any);
+
+    await expect(
+      caller.articles.list({ page: 1, pageSize: 25 })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        items: [
+          expect.objectContaining({ fixedAssetStatus: "pendiente" }),
+          expect.objectContaining({ tipoArticulo: 2 }),
+        ],
+      })
+    );
+
+    expect(listArticlesSpy).toHaveBeenCalledWith({
+      page: 1,
+      pageSize: 25,
+    });
+
+    listArticlesSpy.mockRestore();
+  });
+
+  it("Contable can request the pending fixed asset quick filter", async () => {
     const { ctx } = createContableContext();
     const caller = appRouter.createCaller(ctx);
     const listArticlesSpy = vi.spyOn(db, "listArticles").mockResolvedValue({
@@ -682,7 +729,14 @@ describe("BuildReq - Articles catalog", () => {
     } as any);
 
     await expect(
-      caller.articles.list({ page: 1, pageSize: 25 })
+      caller.articles.list({
+        page: 1,
+        pageSize: 25,
+        tipoArticulo: 3,
+        fixedAssetStatus: "pendiente",
+        temporaryOnly: true,
+        isActive: true,
+      })
     ).resolves.toEqual(
       expect.objectContaining({
         items: [expect.objectContaining({ fixedAssetStatus: "pendiente" })],
@@ -695,6 +749,7 @@ describe("BuildReq - Articles catalog", () => {
       tipoArticulo: 3,
       fixedAssetStatus: "pendiente",
       temporaryOnly: true,
+      isActive: true,
     });
 
     listArticlesSpy.mockRestore();
@@ -751,7 +806,7 @@ describe("BuildReq - Articles catalog", () => {
     updateArticleSpy.mockRestore();
   });
 
-  it("Admin, Administración Central and Project Admin can create articles", async () => {
+  it("Admin, Administración Central, Project Admin and Contable can create articles", async () => {
     const createArticleSpy = vi.spyOn(db, "createArticle").mockImplementation(
       async (data: Parameters<typeof db.createArticle>[0]) =>
         ({
@@ -770,6 +825,7 @@ describe("BuildReq - Articles catalog", () => {
       },
       { ctx: createAdminCentralContext().ctx, itemCode: "AC-001" },
       { ctx: createProjectAdminContext().ctx, itemCode: "AP-001" },
+      { ctx: createContableContext().ctx, itemCode: "CT-001" },
     ]) {
       const caller = appRouter.createCaller(ctx);
 
@@ -784,7 +840,7 @@ describe("BuildReq - Articles catalog", () => {
       ).resolves.toEqual(expect.objectContaining({ itemCode }));
     }
 
-    expect(createArticleSpy).toHaveBeenCalledTimes(3);
+    expect(createArticleSpy).toHaveBeenCalledTimes(4);
     expect(createArticleSpy).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ itemCode: "ADM-001" })
@@ -797,6 +853,10 @@ describe("BuildReq - Articles catalog", () => {
       3,
       expect.objectContaining({ itemCode: "AP-001" })
     );
+    expect(createArticleSpy).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({ itemCode: "CT-001" })
+    );
 
     createArticleSpy.mockRestore();
   });
@@ -808,7 +868,6 @@ describe("BuildReq - Articles catalog", () => {
       createBodegaContext(),
       createProjectBodegueroContext(),
       createSuperintendentContext(),
-      createContableContext(),
       createIngenieroContext(),
     ]) {
       const caller = appRouter.createCaller(ctx);
@@ -2021,6 +2080,13 @@ describe("BuildReq - Role-based Access Control", () => {
     const listTransferRequestsSpy = vi
       .spyOn(db, "listTransferRequests")
       .mockResolvedValue([] as any);
+    const listArticlesSpy = vi.spyOn(db, "listArticles").mockResolvedValue({
+      items: [],
+      total: 4,
+      page: 1,
+      pageSize: 10,
+      totalPages: 1,
+    } as any);
     const listInvoicesSpy = vi
       .spyOn(db, "listInvoices")
       .mockImplementation(async (filters?: any) => {
@@ -2034,8 +2100,17 @@ describe("BuildReq - Role-based Access Control", () => {
       expect.objectContaining({
         invoicesPendingAttention: 3,
         invoicesReviewed: 2,
+        fixedAssetsPending: 4,
       })
     );
+    expect(listArticlesSpy).toHaveBeenCalledWith({
+      tipoArticulo: 3,
+      fixedAssetStatus: "pendiente",
+      temporaryOnly: true,
+      isActive: true,
+      page: 1,
+      pageSize: 10,
+    });
     expect(listInvoicesSpy).toHaveBeenCalledWith({ status: "borrador" });
     expect(listInvoicesSpy).toHaveBeenCalledWith({ status: "rechazada" });
     expect(listInvoicesSpy).toHaveBeenCalledWith({ status: "revisada" });
@@ -2045,6 +2120,7 @@ describe("BuildReq - Role-based Access Control", () => {
     listPurchaseRequestsSpy.mockRestore();
     listPurchaseOrdersSpy.mockRestore();
     listTransferRequestsSpy.mockRestore();
+    listArticlesSpy.mockRestore();
     listInvoicesSpy.mockRestore();
   });
 
@@ -2087,6 +2163,40 @@ describe("BuildReq - Role-based Access Control", () => {
     listPurchaseOrdersSpy.mockRestore();
     listTransferRequestsSpy.mockRestore();
     listInvoicesSpy.mockRestore();
+  });
+
+  it("Contable sees reviewed invoices and pending fixed asset counts", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const listInvoicesSpy = vi
+      .spyOn(db, "listInvoices")
+      .mockResolvedValue([{}, {}] as any);
+    const listArticlesSpy = vi.spyOn(db, "listArticles").mockResolvedValue({
+      items: [],
+      total: 7,
+      page: 1,
+      pageSize: 10,
+      totalPages: 1,
+    } as any);
+
+    await expect(caller.dashboard.sidebarCounts()).resolves.toEqual(
+      expect.objectContaining({
+        invoicesReviewed: 2,
+        fixedAssetsPending: 7,
+      })
+    );
+    expect(listInvoicesSpy).toHaveBeenCalledWith({ status: "revisada" });
+    expect(listArticlesSpy).toHaveBeenCalledWith({
+      tipoArticulo: 3,
+      fixedAssetStatus: "pendiente",
+      temporaryOnly: true,
+      isActive: true,
+      page: 1,
+      pageSize: 10,
+    });
+
+    listInvoicesSpy.mockRestore();
+    listArticlesSpy.mockRestore();
   });
 
   it("Project Administrator without assigned project sees empty scoped purchase sidebar counts", async () => {
@@ -7252,6 +7362,88 @@ describe("BuildReq - Purchase Requests", () => {
     syncPurchaseRequestConversionStatusSpy.mockRestore();
   });
 
+  it("annuls a purchase request and returns its items to the flow", async () => {
+    const { ctx } = createProjectAdminContext({ assignedProjectId: 1 });
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 33,
+          projectId: 1,
+          status: "pendiente",
+          requestNumber: "SC-2026-0033",
+          purchaseType: "local",
+        },
+        items: [
+          {
+            id: 501,
+            materialRequestItemId: 21,
+            itemName: "VARILLA",
+          },
+        ],
+      } as any);
+    const getRequestItemByIdSpy = vi
+      .spyOn(db, "getRequestItemById")
+      .mockResolvedValue({
+        id: 21,
+        requestId: 9,
+        assignedFlow: "solicitud_compra",
+      } as any);
+    const updateRequestItemSpy = vi
+      .spyOn(db, "updateRequestItem")
+      .mockResolvedValue({ success: true });
+    const getActiveSupplyFlowForRequestItemSpy = vi
+      .spyOn(db, "getActiveSupplyFlowForRequestItem")
+      .mockResolvedValue({ id: 321 } as any);
+    const updateSupplyFlowRecordSpy = vi
+      .spyOn(db, "updateSupplyFlowRecord")
+      .mockResolvedValue({ success: true });
+    const syncMaterialRequestFulfillmentStatusSpy = vi
+      .spyOn(db, "syncMaterialRequestFulfillmentStatus")
+      .mockResolvedValue({ status: "en_espera" } as any);
+    const cancelPurchaseRequestSpy = vi
+      .spyOn(db, "cancelPurchaseRequest")
+      .mockResolvedValue({ success: true });
+
+    await expect(
+      caller.purchaseRequests.reject({
+        id: 33,
+        reason: "Solicitud anulada por el usuario",
+      })
+    ).resolves.toEqual({ success: true });
+
+    expect(updateRequestItemSpy).toHaveBeenCalledWith(21, {
+      assignedFlow: null,
+      status: "pendiente",
+    });
+    expect(getActiveSupplyFlowForRequestItemSpy).toHaveBeenCalledWith({
+      requestId: 9,
+      requestItemId: 21,
+      flowType: "solicitud_compra",
+    });
+    expect(updateSupplyFlowRecordSpy).toHaveBeenCalledWith(321, {
+      status: "cancelado",
+      notes: "Flujo cancelado por anular la solicitud SC-2026-0033",
+    });
+    expect(syncMaterialRequestFulfillmentStatusSpy).toHaveBeenCalledWith(
+      9,
+      ctx.user!.id
+    );
+    expect(cancelPurchaseRequestSpy).toHaveBeenCalledWith(
+      33,
+      "Solicitud anulada por el usuario"
+    );
+
+    getPurchaseRequestByIdSpy.mockRestore();
+    getRequestItemByIdSpy.mockRestore();
+    updateRequestItemSpy.mockRestore();
+    getActiveSupplyFlowForRequestItemSpy.mockRestore();
+    updateSupplyFlowRecordSpy.mockRestore();
+    syncMaterialRequestFulfillmentStatusSpy.mockRestore();
+    cancelPurchaseRequestSpy.mockRestore();
+  });
+
   it("allows only project or central admins to change purchase request item destination", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
@@ -7357,6 +7549,54 @@ describe("BuildReq - Purchase Orders", () => {
     ).rejects.toThrow("Seleccione la frecuencia de pago del contrato");
 
     expect(createPurchaseOrderSpy).not.toHaveBeenCalled();
+    createPurchaseOrderSpy.mockRestore();
+  });
+
+  it("does not convert annulled purchase requests", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 72,
+          projectId: 3,
+          requestNumber: "SC-2026-0072",
+          status: "anulada",
+          purchaseType: "local",
+        },
+        items: [
+          {
+            id: 7201,
+            itemName: "SERVICIO",
+            quantity: "1.00",
+            convertedQuantity: "0.00",
+            pendingConversionQuantity: "1.00",
+            unitPrice: "100.00",
+          },
+        ],
+      } as any);
+    const createPurchaseOrderSpy = vi.spyOn(db, "createPurchaseOrder");
+
+    await expect(
+      caller.purchaseOrders.createFromPurchaseRequest({
+        purchaseRequestId: 72,
+        itemsToConvert: [
+          {
+            purchaseRequestItemId: 7201,
+            quantity: "1.00",
+            unitPrice: "100.00",
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message:
+        "La solicitud de compra está anulada y no puede convertirse a orden de compra",
+    });
+    expect(createPurchaseOrderSpy).not.toHaveBeenCalled();
+
+    getPurchaseRequestByIdSpy.mockRestore();
     createPurchaseOrderSpy.mockRestore();
   });
 
@@ -12283,6 +12523,59 @@ describe("BuildReq - Document attachments", () => {
 
     getPurchaseOrderByIdSpy.mockRestore();
     storagePutSpy.mockRestore();
+  });
+
+  it("allows any authenticated role to upload transfer request attachments", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const getTransferRequestByIdSpy = vi
+      .spyOn(db, "getTransferRequestById")
+      .mockResolvedValue({
+        transferRequest: {
+          id: 66,
+          requestNumber: "ST-004-00000005",
+          projectId: 1,
+          status: "pendiente",
+        },
+        items: [],
+      } as any);
+    const storagePutSpy = vi.spyOn(storage, "storagePut").mockResolvedValue({
+      key: "buildreq/transfer_request/66/evidencia.pdf",
+      url: "https://storage.local/evidencia.pdf",
+    });
+    const createAttachmentSpy = vi
+      .spyOn(db, "createAttachment")
+      .mockResolvedValue({ id: 707 });
+
+    await expect(
+      caller.attachments.upload({
+        entityType: "transfer_request",
+        entityId: 66,
+        fileName: "evidencia.pdf",
+        fileData: pdfBuffer.toString("base64"),
+        mimeType: "application/pdf",
+        fileSize: pdfBuffer.byteLength,
+        category: "otro",
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 707,
+        url: "https://storage.local/evidencia.pdf",
+      })
+    );
+    expect(createAttachmentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: "transfer_request",
+        entityId: 66,
+        fileName: "evidencia.pdf",
+        fileSize: pdfBuffer.byteLength,
+        uploadedById: ctx.user!.id,
+      })
+    );
+
+    getTransferRequestByIdSpy.mockRestore();
+    storagePutSpy.mockRestore();
+    createAttachmentSpy.mockRestore();
   });
 
   it("lets Contable view reviewed and accounted invoice attachments but not upload them", async () => {

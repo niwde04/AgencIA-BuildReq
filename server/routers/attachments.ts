@@ -26,6 +26,7 @@ const documentAttachmentEntityTypeSchema = z.enum([
   "material_request",
   "purchase_request",
   "purchase_order",
+  "transfer_request",
   "receipt",
   "invoice",
   "supplier",
@@ -525,6 +526,16 @@ async function assertMaterialRequestAttachmentAccess(
   }
 }
 
+async function assertTransferRequestAttachmentAccess(id: number) {
+  const detail = await db.getTransferRequestById(id);
+  if (!detail) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Solicitud de traslado no encontrada",
+    });
+  }
+}
+
 async function assertSupplierAttachmentAccess(
   id: number,
   user: BuildReqUser,
@@ -570,6 +581,8 @@ async function assertDocumentAttachmentAccess(
       return assertPurchaseRequestAttachmentAccess(entityId, user, action);
     case "material_request":
       return assertMaterialRequestAttachmentAccess(entityId, user, action);
+    case "transfer_request":
+      return assertTransferRequestAttachmentAccess(entityId);
     case "supplier":
       return assertSupplierAttachmentAccess(entityId, user, action);
     default:
@@ -597,6 +610,17 @@ async function assertAttachmentRecordAccess(
       user,
       action
     );
+  }
+  if (
+    action === "manage" &&
+    attachment.entityType === "transfer_request" &&
+    user.role !== "admin" &&
+    attachment.uploadedById !== user.id
+  ) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Solo puede eliminar adjuntos de traslado subidos por su usuario",
+    });
   }
 
   return attachment;

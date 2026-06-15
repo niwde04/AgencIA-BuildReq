@@ -70,6 +70,71 @@ function assertPurchaseRequestMutable(status: string) {
         "La solicitud de compra ya fue convertida y solo está disponible en modo lectura",
     });
   }
+  if (status === "anulada" || status === "rechazada") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "La solicitud de compra está anulada y solo está disponible en modo lectura",
+    });
+  }
+}
+
+async function releasePurchaseRequestFlowItems(
+  materialRequestItemIds: Array<number | null | undefined>,
+  userId: number,
+  note: string
+) {
+  const affectedRequestIds = new Set<number>();
+
+  for (const materialRequestItemId of materialRequestItemIds) {
+    if (!materialRequestItemId) continue;
+
+    const requestItem = await db.getRequestItemById(materialRequestItemId);
+    if (!requestItem) continue;
+
+    const releaseFlowTypes = ["solicitud_compra", "compra_directa"] as const;
+    const activeFlowType = releaseFlowTypes.find(
+      flowType => requestItem.assignedFlow === flowType
+    );
+    if (!activeFlowType) continue;
+
+    affectedRequestIds.add(requestItem.requestId);
+    await db.updateRequestItem(requestItem.id, {
+      assignedFlow: null,
+      status: "pendiente",
+    });
+
+    const activeFlow = await db.getActiveSupplyFlowForRequestItem({
+      requestId: requestItem.requestId,
+      requestItemId: requestItem.id,
+      flowType: activeFlowType,
+    });
+
+    if (activeFlow) {
+      await db.updateSupplyFlowRecord(activeFlow.id, {
+        status: "cancelado",
+        notes: note,
+      });
+    }
+  }
+
+  for (const requestId of Array.from(affectedRequestIds)) {
+    try {
+      await db.syncMaterialRequestFulfillmentStatus(requestId, userId);
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "DB not available") {
+        throw error;
+      }
+
+      const requestItems = await db.getRequestItemsByRequestId(requestId);
+      const someAssigned = requestItems.some(item => item.assignedFlow !== null);
+      await db.updateMaterialRequestStatus(
+        requestId,
+        someAssigned ? "en_proceso" : "en_espera",
+        userId
+      );
+    }
+  }
 }
 
 const purchaseRequestQuantitySchema = z
@@ -442,7 +507,12 @@ export const purchaseRequestsRouter = router({
 
       assertProjectScopedAccess(ctx.user, detail.purchaseRequest.projectId);
       assertPurchaseRequestMutable(detail.purchaseRequest.status);
-      await db.rejectPurchaseRequest(input.id, input.reason);
+      await releasePurchaseRequestFlowItems(
+        (detail.items ?? []).map((item: any) => item.materialRequestItemId),
+        ctx.user.id,
+        `Flujo cancelado por anular la solicitud ${detail.purchaseRequest.requestNumber}`
+      );
+      await db.cancelPurchaseRequest(input.id, input.reason);
       return { success: true };
     }),
 

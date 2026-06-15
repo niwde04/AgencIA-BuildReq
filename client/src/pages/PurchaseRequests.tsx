@@ -58,7 +58,7 @@ const STATUS_LABELS: Record<string, string> = {
   pendiente: "Pendiente",
   en_revision: "En revisión",
   aprobada: "Aprobada",
-  rechazada: "Rechazada",
+  rechazada: "Anulada",
   parcialmente_convertida: "Parcialmente convertida",
   convertida: "Convertida",
   anulada: "Anulada",
@@ -68,11 +68,16 @@ const STATUS_COLORS: Record<string, string> = {
   pendiente: "border-amber-300 bg-amber-50 text-amber-700",
   en_revision: "border-blue-300 bg-blue-50 text-blue-700",
   aprobada: "border-emerald-300 bg-emerald-50 text-emerald-700",
-  rechazada: "border-rose-300 bg-rose-50 text-rose-700",
+  rechazada: "border-red-300 bg-red-50 text-red-700",
   parcialmente_convertida: "border-cyan-300 bg-cyan-50 text-cyan-700",
   convertida: "border-emerald-300 bg-emerald-50 text-emerald-700",
   anulada: "border-red-300 bg-red-50 text-red-700",
 };
+const STATUS_FILTER_OPTIONS = Object.entries(STATUS_LABELS).filter(
+  ([value]) => value !== "rechazada"
+);
+const getEffectivePurchaseRequestStatus = (status?: string | null) =>
+  status === "rechazada" ? "anulada" : (status ?? "");
 
 const UNIFIED_CONVERTIBLE_STATUSES = new Set([
   "pendiente",
@@ -364,8 +369,11 @@ export default function PurchaseRequests() {
       const matchesType =
         purchaseTypeFilter === "all" ||
         purchaseRequest.purchaseType === purchaseTypeFilter;
+      const effectiveStatus = getEffectivePurchaseRequestStatus(
+        purchaseRequest.status
+      );
       const matchesStatus =
-        statusFilter === "all" || purchaseRequest.status === statusFilter;
+        statusFilter === "all" || effectiveStatus === statusFilter;
       const projectLabel =
         row.projectSummary?.label ||
         (row.project ? `${row.project.code} ${row.project.name}` : "");
@@ -729,8 +737,13 @@ export default function PurchaseRequests() {
   const isMixedProjectRequest = Boolean(detail?.projectSummary?.isMixed);
   const isConvertedPurchaseRequest =
     detail?.purchaseRequest.status === "convertida";
+  const isCancelledPurchaseRequest =
+    detail?.purchaseRequest.status === "anulada" ||
+    detail?.purchaseRequest.status === "rechazada";
+  const isClosedPurchaseRequest =
+    isConvertedPurchaseRequest || isCancelledPurchaseRequest;
   const canEditSelectedPurchaseRequest =
-    canManagePurchaseRequests && !isConvertedPurchaseRequest;
+    canManagePurchaseRequests && !isClosedPurchaseRequest;
   const canEditPurchaseRequestDestination =
     canEditSelectedPurchaseRequest &&
     (user?.role === "admin" ||
@@ -1277,8 +1290,9 @@ export default function PurchaseRequests() {
         {
           header: "Estatus",
           value: (row: any) =>
-            STATUS_LABELS[row.purchaseRequest.status] ||
-            row.purchaseRequest.status,
+            STATUS_LABELS[
+              getEffectivePurchaseRequestStatus(row.purchaseRequest.status)
+            ] || row.purchaseRequest.status,
         },
         {
           header: "Fecha necesaria",
@@ -1365,7 +1379,7 @@ export default function PurchaseRequests() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos los estados</SelectItem>
-            {Object.entries(STATUS_LABELS).map(([value, label]) => (
+            {STATUS_FILTER_OPTIONS.map(([value, label]) => (
               <SelectItem key={value} value={value}>
                 {label}
               </SelectItem>
@@ -1518,11 +1532,18 @@ export default function PurchaseRequests() {
                           <Badge
                             variant="outline"
                             className={`text-xs ${
-                              STATUS_COLORS[row.purchaseRequest.status] || ""
+                              STATUS_COLORS[
+                                getEffectivePurchaseRequestStatus(
+                                  row.purchaseRequest.status
+                                )
+                              ] || ""
                             }`}
                           >
-                            {STATUS_LABELS[row.purchaseRequest.status] ||
-                              row.purchaseRequest.status}
+                            {STATUS_LABELS[
+                              getEffectivePurchaseRequestStatus(
+                                row.purchaseRequest.status
+                              )
+                            ] || row.purchaseRequest.status}
                           </Badge>
                         </td>
                         <td className="p-3 text-xs">
@@ -1572,7 +1593,9 @@ export default function PurchaseRequests() {
                     "Solicitud de Compra"}
                 </DialogTitle>
                 <p className="text-sm text-muted-foreground">
-                  {isConvertedPurchaseRequest
+                  {isCancelledPurchaseRequest
+                    ? "Esta solicitud fue anulada y se muestra en modo solo lectura."
+                    : isConvertedPurchaseRequest
                     ? "Esta solicitud ya fue convertida a orden de compra y se muestra en modo solo lectura."
                     : "Revisa la solicitud, adjunta cotización y convierte los ítems seleccionados a orden de compra cuando ya esté lista."}
                 </p>
@@ -1582,11 +1605,18 @@ export default function PurchaseRequests() {
                   <Badge
                     variant="outline"
                     className={`rounded-full px-3 py-1 text-xs uppercase ${
-                      STATUS_COLORS[detail.purchaseRequest.status] || ""
+                      STATUS_COLORS[
+                        getEffectivePurchaseRequestStatus(
+                          detail.purchaseRequest.status
+                        )
+                      ] || ""
                     }`}
                   >
-                    {STATUS_LABELS[detail.purchaseRequest.status] ||
-                      detail.purchaseRequest.status}
+                    {STATUS_LABELS[
+                      getEffectivePurchaseRequestStatus(
+                        detail.purchaseRequest.status
+                      )
+                    ] || detail.purchaseRequest.status}
                   </Badge>
                   <Badge
                     variant="secondary"
@@ -1690,15 +1720,24 @@ export default function PurchaseRequests() {
                     <Badge
                       variant="outline"
                       className={`rounded-full px-3 py-1 text-sm ${
-                        STATUS_COLORS[detail.purchaseRequest.status] || ""
+                        STATUS_COLORS[
+                          getEffectivePurchaseRequestStatus(
+                            detail.purchaseRequest.status
+                          )
+                        ] || ""
                       }`}
                     >
-                      {STATUS_LABELS[detail.purchaseRequest.status] ||
-                        detail.purchaseRequest.status}
+                      {STATUS_LABELS[
+                        getEffectivePurchaseRequestStatus(
+                          detail.purchaseRequest.status
+                        )
+                      ] || detail.purchaseRequest.status}
                     </Badge>
                   </div>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    {detail.purchaseRequest.quoteAttachmentId
+                    {isCancelledPurchaseRequest
+                      ? "La solicitud fue anulada y ya no permite cambios."
+                      : detail.purchaseRequest.quoteAttachmentId
                       ? "Cotización adjunta y lista para revisión."
                       : "Todavía no tiene cotización aprobada adjunta."}
                   </p>
@@ -1742,7 +1781,9 @@ export default function PurchaseRequests() {
                       Ítems de la solicitud
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      {isConvertedPurchaseRequest
+                      {isCancelledPurchaseRequest
+                        ? "La solicitud fue anulada y sus ítems quedaron cerrados para edición."
+                        : isConvertedPurchaseRequest
                         ? "Los ítems ya fueron convertidos y esta solicitud quedó cerrada para edición."
                         : canConvertSelectedPurchaseRequest
                           ? "Marca los renglones que deseas convertir a la próxima orden de compra."

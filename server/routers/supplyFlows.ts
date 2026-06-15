@@ -1478,6 +1478,19 @@ export const supplyFlowsRouter = router({
           ctx.user,
           detail.purchaseRequest.projectId
         );
+        if (
+          ["convertida", "anulada", "rechazada"].includes(
+            detail.purchaseRequest.status
+          )
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              detail.purchaseRequest.status === "convertida"
+                ? "La solicitud de compra ya fue convertida y solo está disponible en modo lectura"
+                : "La solicitud de compra está anulada y no puede convertirse a orden de compra",
+          });
+        }
         const directPurchaseRequestItemIds = detail.items
           .map((item: any) => item.materialRequestItemId)
           .filter(
