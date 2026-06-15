@@ -13702,6 +13702,7 @@ export type InventoryListFilters = {
   search?: string;
   isActive?: boolean;
   warehouseId?: number;
+  warehouseIds?: number[];
   projectId?: number;
   projectIds?: number[];
   page?: number;
@@ -13731,6 +13732,13 @@ function buildInventoryWhere(filters?: InventoryListFilters) {
     conditions.push(eq(inventoryItems.isActive, filters.isActive));
   if (filters?.warehouseId)
     conditions.push(eq(inventoryItems.warehouseId, filters.warehouseId));
+  if (filters?.warehouseIds) {
+    conditions.push(
+      filters.warehouseIds.length > 0
+        ? inArray(inventoryItems.warehouseId, filters.warehouseIds)
+        : sql`false`
+    );
+  }
   if (filters?.projectId)
     conditions.push(eq(inventoryItems.projectId, filters.projectId));
   if (filters?.projectIds) {
@@ -13830,7 +13838,10 @@ async function getPendingQuantitiesForInventoryItems(items: any[]) {
 
 export async function getInventoryPendingQuantitiesByItemIds(
   ids: number[],
-  filters?: Pick<InventoryListFilters, "projectId" | "projectIds">
+  filters?: Pick<
+    InventoryListFilters,
+    "projectId" | "projectIds" | "warehouseId" | "warehouseIds"
+  >
 ) {
   const db = await getDb();
   if (!db || ids.length === 0) return [];
@@ -13841,6 +13852,16 @@ export async function getInventoryPendingQuantitiesByItemIds(
   if (uniqueIds.length === 0) return [];
 
   const conditions = [inArray(inventoryItems.id, uniqueIds)];
+  if (filters?.warehouseId) {
+    conditions.push(eq(inventoryItems.warehouseId, filters.warehouseId));
+  }
+  if (filters?.warehouseIds !== undefined) {
+    conditions.push(
+      filters.warehouseIds.length > 0
+        ? inArray(inventoryItems.warehouseId, filters.warehouseIds)
+        : sql`false`
+    );
+  }
   if (filters?.projectId) {
     conditions.push(eq(inventoryItems.projectId, filters.projectId));
   }

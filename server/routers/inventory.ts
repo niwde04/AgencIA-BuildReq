@@ -4,6 +4,14 @@ import * as db from "../db";
 import { TRPCError } from "@trpc/server";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 
+type InventoryAccessUser = {
+  id: number;
+  role: string;
+  buildreqRole?: string | null;
+  assignedProjectId?: number | null;
+  assignedProjectIds?: number[] | null;
+};
+
 function assertCanReadInventory(ctx: { user: { buildreqRole?: string | null } }) {
   if (ctx.user.buildreqRole === "ingeniero_residente") {
     throw new TRPCError({
@@ -45,6 +53,36 @@ function isWarehouseAssignedViewer(user: { buildreqRole?: string | null }) {
   return Boolean(
     user.buildreqRole && WAREHOUSE_VIEWER_ROLES.has(user.buildreqRole)
   );
+}
+
+function shouldScopeInventoryByWarehouse(user: InventoryAccessUser) {
+  return (
+    user.buildreqRole === "administrador_proyecto" ||
+    isWarehouseAssignedViewer(user)
+  );
+}
+
+async function getReadableInventoryWarehouseIds(user: InventoryAccessUser) {
+  if (isWarehouseAssignedViewer(user)) {
+    const warehouses = await db.listWarehouses({
+      isActive: true,
+      assignedUserId: user.id,
+    });
+    return warehouses.map(warehouse => Number(warehouse.id));
+  }
+
+  const baseFilters: {
+    isActive: boolean;
+    projectId?: number | null;
+    projectIds?: number[] | null;
+  } = { isActive: true };
+  const scopedWarehouseFilters = applyProjectScope(baseFilters, user);
+  const warehouses = await db.listWarehouses({
+    isActive: scopedWarehouseFilters.isActive,
+    projectId: scopedWarehouseFilters.projectId ?? undefined,
+    projectIds: scopedWarehouseFilters.projectIds ?? undefined,
+  });
+  return warehouses.map(warehouse => Number(warehouse.id));
 }
 
 export const inventoryRouter = router({
@@ -178,6 +216,26 @@ export const inventoryRouter = router({
     )
     .query(async ({ ctx, input }) => {
       assertCanReadInventory(ctx);
+      if (shouldScopeInventoryByWarehouse(ctx.user)) {
+        const readableWarehouseIds =
+          await getReadableInventoryWarehouseIds(ctx.user);
+
+        if (
+          input?.warehouseId &&
+          !readableWarehouseIds.includes(input.warehouseId)
+        ) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "No tiene acceso a este almacén",
+          });
+        }
+
+        return db.listInventoryItems({
+          ...(input ?? {}),
+          warehouseIds: input?.warehouseId ? undefined : readableWarehouseIds,
+        });
+      }
+
       return db.listInventoryItems(applyProjectScope(input ?? {}, ctx.user));
     }),
 
@@ -189,6 +247,12 @@ export const inventoryRouter = router({
     )
     .query(async ({ ctx, input }) => {
       assertCanReadInventory(ctx);
+      if (shouldScopeInventoryByWarehouse(ctx.user)) {
+        return db.getInventoryPendingQuantitiesByItemIds(input.ids, {
+          warehouseIds: await getReadableInventoryWarehouseIds(ctx.user),
+        });
+      }
+
       return db.getInventoryPendingQuantitiesByItemIds(
         input.ids,
         applyProjectScope({}, ctx.user)
