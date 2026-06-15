@@ -157,6 +157,7 @@ export const inventoryRouter = router({
           projectId: z.number().int().positive().optional(),
           page: z.number().int().min(1).optional(),
           pageSize: z.number().int().min(10).max(200).optional(),
+          includePendingQuantities: z.boolean().optional(),
           sortBy: z
             .enum([
               "sapItemCode",
@@ -178,6 +179,20 @@ export const inventoryRouter = router({
     .query(async ({ ctx, input }) => {
       assertCanReadInventory(ctx);
       return db.listInventoryItems(applyProjectScope(input ?? {}, ctx.user));
+    }),
+
+  pendingQuantities: protectedProcedure
+    .input(
+      z.object({
+        ids: z.array(z.number().int().positive()).max(200),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      assertCanReadInventory(ctx);
+      return db.getInventoryPendingQuantitiesByItemIds(
+        input.ids,
+        applyProjectScope({}, ctx.user)
+      );
     }),
 
   globalAvailability: protectedProcedure

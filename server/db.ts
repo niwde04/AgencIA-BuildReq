@@ -13706,9 +13706,22 @@ export type InventoryListFilters = {
   projectIds?: number[];
   page?: number;
   pageSize?: number;
+  includePendingQuantities?: boolean;
   sortBy?: InventorySortField;
   sortDir?: "asc" | "desc";
 };
+
+function buildInventorySearchTerms(search: string) {
+  const trimmedSearch = search.trim();
+  const terms = new Set<string>();
+  if (trimmedSearch) terms.add(trimmedSearch);
+
+  if (trimmedSearch.length >= 5 && !/^\d+$/.test(trimmedSearch)) {
+    terms.add(trimmedSearch.slice(0, -1));
+  }
+
+  return Array.from(terms);
+}
 
 function buildInventoryWhere(filters?: InventoryListFilters) {
   const conditions = [];
@@ -13724,18 +13737,27 @@ function buildInventoryWhere(filters?: InventoryListFilters) {
     applyProjectScope(conditions, inventoryItems.projectId, filters.projectIds);
   }
   if (filters?.search) {
+    const searchConditions = buildInventorySearchTerms(filters.search).flatMap(
+      search => [
+        ilike(inventoryItems.name, `%${search}%`),
+        ilike(inventoryItems.sapItemCode, `%${search}%`),
+        ilike(inventoryItems.description, `%${search}%`),
+        ilike(inventoryItems.category, `%${search}%`),
+        ilike(inventoryItems.unit, `%${search}%`),
+        ilike(sapCatalog.description, `%${search}%`),
+        ilike(inventoryItems.warehouseLocation, `%${search}%`),
+        ilike(sapCatalog.brand, `%${search}%`),
+        ilike(sapCatalog.partNumber, `%${search}%`),
+        ilike(warehouses.code, `%${search}%`),
+        ilike(warehouses.name, `%${search}%`),
+        ilike(warehouses.displayName, `%${search}%`),
+        ilike(projects.code, `%${search}%`),
+        ilike(projects.name, `%${search}%`),
+      ]
+    );
+
     conditions.push(
-      or(
-        ilike(inventoryItems.name, `%${filters.search}%`),
-        ilike(inventoryItems.sapItemCode, `%${filters.search}%`),
-        ilike(inventoryItems.category, `%${filters.search}%`),
-        ilike(inventoryItems.warehouseLocation, `%${filters.search}%`),
-        ilike(sapCatalog.brand, `%${filters.search}%`),
-        ilike(sapCatalog.partNumber, `%${filters.search}%`),
-        ilike(warehouses.displayName, `%${filters.search}%`),
-        ilike(projects.code, `%${filters.search}%`),
-        ilike(projects.name, `%${filters.search}%`)
-      )!
+      or(...searchConditions)!
     );
   }
 
@@ -13757,10 +13779,129 @@ async function getInventoryIdsByFilters(filters?: InventoryListFilters) {
   return rows.map(row => row.id);
 }
 
+function getInventoryPendingScopeKey(item: any) {
+  return [
+    item.sapItemCode,
+    item.project?.id ?? "no-project",
+    item.warehouse?.id ??
+      item.warehouseId ??
+      item.warehouseLocation ??
+      "no-warehouse",
+  ].join("::");
+}
+
+async function getPendingQuantitiesForInventoryItems(items: any[]) {
+  const pendingQuantityByScope = new Map<
+    string,
+    { totalRequiredQuantity: string; pendingReceiptQuantity: string }
+  >();
+  const pendingQuantityParamsByScope = new Map<
+    string,
+    {
+      sapItemCode: string;
+      projectId: number | null;
+      warehouseId: number | null;
+      warehouseLocation: string | null;
+    }
+  >();
+
+  for (const item of items) {
+    const scopeKey = getInventoryPendingScopeKey(item);
+    if (pendingQuantityParamsByScope.has(scopeKey)) continue;
+    pendingQuantityParamsByScope.set(scopeKey, {
+      sapItemCode: item.sapItemCode,
+      projectId: item.project?.id ?? null,
+      warehouseId: item.warehouse?.id ?? item.warehouseId ?? null,
+      warehouseLocation: item.warehouseLocation ?? null,
+    });
+  }
+
+  for (const [scopeKey, params] of Array.from(
+    pendingQuantityParamsByScope.entries()
+  )) {
+    pendingQuantityByScope.set(
+      scopeKey,
+      await getInventoryPendingProcessQuantities(params)
+    );
+  }
+
+  return pendingQuantityByScope;
+}
+
+export async function getInventoryPendingQuantitiesByItemIds(
+  ids: number[],
+  filters?: Pick<InventoryListFilters, "projectId" | "projectIds">
+) {
+  const db = await getDb();
+  if (!db || ids.length === 0) return [];
+
+  const uniqueIds = Array.from(
+    new Set(ids.filter(id => Number.isInteger(id) && id > 0))
+  );
+  if (uniqueIds.length === 0) return [];
+
+  const conditions = [inArray(inventoryItems.id, uniqueIds)];
+  if (filters?.projectId) {
+    conditions.push(eq(inventoryItems.projectId, filters.projectId));
+  }
+  if (filters?.projectIds !== undefined) {
+    applyProjectScope(conditions, inventoryItems.projectId, filters.projectIds);
+  }
+
+  const rows = await db
+    .select({
+      item: inventoryItems,
+      warehouse: warehouses,
+      project: projects,
+    })
+    .from(inventoryItems)
+    .leftJoin(warehouses, eq(inventoryItems.warehouseId, warehouses.id))
+    .leftJoin(projects, eq(inventoryItems.projectId, projects.id))
+    .where(and(...conditions));
+
+  const items = rows.map(({ item, warehouse, project }) => ({
+    ...item,
+    warehouse: warehouse
+      ? {
+          id: warehouse.id,
+          code: warehouse.code,
+          name: warehouse.name,
+          displayName: warehouse.displayName,
+        }
+      : null,
+    project: project
+      ? {
+          id: project.id,
+          code: project.code,
+          name: project.name,
+          status: project.status,
+        }
+      : null,
+    warehouseLocation: warehouse?.displayName ?? item.warehouseLocation,
+  }));
+
+  const pendingQuantityByScope =
+    await getPendingQuantitiesForInventoryItems(items);
+
+  return items.map(item => {
+    const pendingQuantity = pendingQuantityByScope.get(
+      getInventoryPendingScopeKey(item)
+    );
+    return {
+      id: item.id,
+      totalRequiredQuantity:
+        pendingQuantity?.totalRequiredQuantity ?? "0.00",
+      pendingReceiptQuantity:
+        pendingQuantity?.pendingReceiptQuantity ?? "0.00",
+    };
+  });
+}
+
 export async function listInventoryItems(filters?: InventoryListFilters) {
   const db = await getDb();
   const requestedPage = Math.max(filters?.page ?? 1, 1);
   const pageSize = Math.min(Math.max(filters?.pageSize ?? 25, 10), 200);
+  const includePendingQuantities = filters?.includePendingQuantities ?? true;
   const sortBy = filters?.sortBy ?? "name";
   const sortDir = filters?.sortDir ?? "asc";
 
@@ -13871,66 +14012,23 @@ export async function listInventoryItems(filters?: InventoryListFilters) {
     warehouseLocation: warehouse?.displayName ?? item.warehouseLocation,
   }));
 
-  const pendingQuantityByScope = new Map<
-    string,
-    { totalRequiredQuantity: string; pendingReceiptQuantity: string }
-  >();
-  const pendingQuantityPromises = new Map<
-    string,
-    Promise<{ totalRequiredQuantity: string; pendingReceiptQuantity: string }>
-  >();
-  await Promise.all(
-    items.map(async item => {
-      const scopeKey = [
-        item.sapItemCode,
-        item.project?.id ?? "no-project",
-        item.warehouse?.id ??
-          item.warehouseId ??
-          item.warehouseLocation ??
-          "no-warehouse",
-      ].join("::");
-      if (!pendingQuantityPromises.has(scopeKey)) {
-        pendingQuantityPromises.set(
-          scopeKey,
-          getInventoryPendingProcessQuantities({
-            sapItemCode: item.sapItemCode,
-            projectId: item.project?.id ?? null,
-            warehouseId: item.warehouse?.id ?? item.warehouseId ?? null,
-            warehouseLocation: item.warehouseLocation ?? null,
-          })
-        );
-      }
-      pendingQuantityByScope.set(
-        scopeKey,
-        await pendingQuantityPromises.get(scopeKey)!
-      );
-    })
-  );
+  const pendingQuantityByScope = includePendingQuantities
+    ? await getPendingQuantitiesForInventoryItems(items)
+    : new Map<
+        string,
+        { totalRequiredQuantity: string; pendingReceiptQuantity: string }
+      >();
 
   return {
     items: items.map(item => ({
       ...item,
       totalRequiredQuantity:
         pendingQuantityByScope.get(
-          [
-            item.sapItemCode,
-            item.project?.id ?? "no-project",
-            item.warehouse?.id ??
-              item.warehouseId ??
-              item.warehouseLocation ??
-              "no-warehouse",
-          ].join("::")
+          getInventoryPendingScopeKey(item)
         )?.totalRequiredQuantity ?? "0.00",
       pendingReceiptQuantity:
         pendingQuantityByScope.get(
-          [
-            item.sapItemCode,
-            item.project?.id ?? "no-project",
-            item.warehouse?.id ??
-              item.warehouseId ??
-              item.warehouseLocation ??
-              "no-warehouse",
-          ].join("::")
+          getInventoryPendingScopeKey(item)
         )?.pendingReceiptQuantity ?? "0.00",
     })),
     total,

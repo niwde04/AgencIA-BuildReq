@@ -40,6 +40,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
+import { Spinner } from "@/components/ui/spinner";
 import {
   ArrowUpDown,
   ArrowRightLeft,
@@ -227,8 +228,6 @@ export default function Inventario() {
   const utils = trpc.useUtils();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [globalSearch, setGlobalSearch] = useState("");
-  const [debouncedGlobalSearch, setDebouncedGlobalSearch] = useState("");
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState<InventorySortField>("name");
   const [sortDir, setSortDir] = useState<SortDirection>("asc");
@@ -268,14 +267,6 @@ export default function Inventario() {
   }, [search]);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      setDebouncedGlobalSearch(globalSearch.trim());
-    }, 250);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [globalSearch]);
-
-  useEffect(() => {
     setPage(1);
   }, [debouncedSearch, warehouseFilter, projectFilter]);
 
@@ -294,8 +285,6 @@ export default function Inventario() {
     userRole === "administracion_central" ||
     userRole === "administrador_proyecto" ||
     userRole === "bodeguero_proyecto";
-  const canUseGlobalAvailability =
-    canAccessWarehouses || user?.role === "admin";
   const allowInventoryReassignment = false;
 
   const { data: projects } = trpc.projects.list.useQuery();
@@ -422,6 +411,7 @@ export default function Inventario() {
     ...queryInput,
     page,
     pageSize: PAGE_SIZE,
+    includePendingQuantities: false,
     sortBy,
     sortDir,
   };
@@ -434,19 +424,8 @@ export default function Inventario() {
     refetch,
   } = trpc.inventory.list.useQuery(listQueryInput, {
     placeholderData: (previousData) => previousData,
+    staleTime: 30_000,
   });
-  const globalAvailabilityQuery =
-    trpc.inventory.globalAvailability.useQuery(
-      {
-        search: debouncedGlobalSearch,
-        limit: 80,
-      },
-      {
-        enabled:
-          canUseGlobalAvailability && debouncedGlobalSearch.length >= 2,
-      }
-    );
-
   const trackingQuery = trpc.inventory.tracking.useQuery(
     {
       sapItemCode: trackingItem?.sapItemCode ?? "",
@@ -483,6 +462,7 @@ export default function Inventario() {
       toast.success("Ítem de inventario creado");
       void Promise.all([
         utils.inventory.list.invalidate(),
+        utils.inventory.pendingQuantities.invalidate(),
         utils.warehouses.list.invalidate(),
         utils.projects.list.invalidate(),
       ]);
@@ -497,6 +477,7 @@ export default function Inventario() {
       toast.success("Proyecto del inventario actualizado");
       void Promise.all([
         utils.inventory.list.invalidate(),
+        utils.inventory.pendingQuantities.invalidate(),
         utils.warehouses.list.invalidate(),
         utils.projects.list.invalidate(),
       ]);
@@ -514,6 +495,7 @@ export default function Inventario() {
       );
       void Promise.all([
         utils.inventory.list.invalidate(),
+        utils.inventory.pendingQuantities.invalidate(),
         utils.warehouses.list.invalidate(),
         utils.projects.list.invalidate(),
       ]);
@@ -532,6 +514,7 @@ export default function Inventario() {
         );
         void Promise.all([
           utils.inventory.list.invalidate(),
+          utils.inventory.pendingQuantities.invalidate(),
           utils.warehouses.list.invalidate(),
           utils.projects.list.invalidate(),
         ]);
@@ -555,6 +538,32 @@ export default function Inventario() {
   };
 
   const items = data?.items || [];
+  const visibleInventoryIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (items as any[])
+            .map((item) => Number(item.id))
+            .filter((id) => Number.isInteger(id) && id > 0)
+        )
+      ),
+    [items]
+  );
+  const pendingQuantitiesQuery = trpc.inventory.pendingQuantities.useQuery(
+    { ids: visibleInventoryIds },
+    {
+      enabled: visibleInventoryIds.length > 0,
+      staleTime: 30_000,
+    }
+  );
+  const pendingQuantitiesById = useMemo(() => {
+    return new Map(
+      (pendingQuantitiesQuery.data ?? []).map((entry: any) => [
+        Number(entry.id),
+        entry,
+      ])
+    );
+  }, [pendingQuantitiesQuery.data]);
   const groupedItems = useMemo(() => {
     const groups = new Map<string, any>();
 
@@ -586,19 +595,56 @@ export default function Inventario() {
       groups.set(groupKey, existing);
     }
 
-    return Array.from(groups.values()).map((item) => ({
-      ...item,
-      currentStock: item.currentStockTotal.toFixed(2),
-      warehouseSummaryLabel:
-        item.warehouseBreakdown.length === 1
-          ? item.warehouseBreakdown[0].warehouseLocation
-          : `${item.warehouseBreakdown.length} almacenes`,
-      warehouseLocation:
-        item.warehouseBreakdown.length === 1
-          ? item.warehouseBreakdown[0].warehouseLocation
-          : undefined,
-    }));
-  }, [items]);
+    return Array.from(groups.values()).map((item) => {
+      const pendingQuantitiesReady = item.sourceIds.every((id: number) =>
+        pendingQuantitiesById.has(id)
+      );
+      const totalRequiredQuantity = pendingQuantitiesReady
+        ? item.sourceIds.reduce(
+            (sum: number, id: number) =>
+              sum +
+              parseQuantity(
+                pendingQuantitiesById.get(id)?.totalRequiredQuantity
+              ),
+            0
+          )
+        : 0;
+      const pendingReceiptQuantity = pendingQuantitiesReady
+        ? item.sourceIds.reduce(
+            (sum: number, id: number) =>
+              sum +
+              parseQuantity(
+                pendingQuantitiesById.get(id)?.pendingReceiptQuantity
+              ),
+            0
+          )
+        : 0;
+
+      return {
+        ...item,
+        currentStock: item.currentStockTotal.toFixed(2),
+        pendingQuantitiesLoading:
+          visibleInventoryIds.length > 0 &&
+          !pendingQuantitiesReady &&
+          !pendingQuantitiesQuery.isError,
+        totalRequiredQuantity: totalRequiredQuantity.toFixed(2),
+        pendingReceiptQuantity: pendingReceiptQuantity.toFixed(2),
+        warehouseSummaryLabel:
+          item.warehouseBreakdown.length === 1
+            ? item.warehouseBreakdown[0].warehouseLocation
+            : `${item.warehouseBreakdown.length} almacenes`,
+        warehouseLocation:
+          item.warehouseBreakdown.length === 1
+            ? item.warehouseBreakdown[0].warehouseLocation
+            : undefined,
+      };
+    });
+  }, [
+    items,
+    pendingQuantitiesById,
+    pendingQuantitiesQuery.isError,
+    visibleInventoryIds.length,
+  ]);
   const total = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
   const pageItems = useMemo(
@@ -1410,7 +1456,7 @@ export default function Inventario() {
           </Label>
           <Search className="absolute left-3 top-[calc(50%+10px)] -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Buscar por nombre, código, categoría, proyecto o almacén..."
+            placeholder="Buscar por nombre, código, marca, parte, proyecto o almacén..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 h-9"
@@ -1585,108 +1631,6 @@ export default function Inventario() {
       <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-muted-foreground">
         Los movimientos entre bodegas o proyectos se registran desde requisiciones, traslados y recepciones. Desde inventario solo consultas existencias y haces altas controladas.
       </div>
-
-      {canUseGlobalAvailability ? (
-        <Card>
-          <CardContent className="space-y-3 p-4">
-            <div className="grid gap-3 lg:grid-cols-[minmax(260px,420px)_1fr] lg:items-end">
-              <div className="relative min-w-0">
-                <Label className="mb-1 block text-xs font-medium text-muted-foreground">
-                  Consulta global de existencias
-                </Label>
-                <Search className="absolute left-3 top-[calc(50%+10px)] h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Código, artículo, marca o número de parte"
-                  value={globalSearch}
-                  onChange={(event) => setGlobalSearch(event.target.value)}
-                  className="h-9 pl-9"
-                />
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {debouncedGlobalSearch.length >= 2
-                  ? `${(globalAvailabilityQuery.data ?? []).length.toLocaleString("es-HN")} coincidencias`
-                  : "Ingrese al menos 2 caracteres"}
-              </p>
-            </div>
-
-            {debouncedGlobalSearch.length >= 2 ? (
-              globalAvailabilityQuery.isLoading ? (
-                <div className="rounded-md border p-4 text-sm text-muted-foreground">
-                  Consultando existencias...
-                </div>
-              ) : (globalAvailabilityQuery.data ?? []).length === 0 ? (
-                <div className="rounded-md border p-4 text-sm text-muted-foreground">
-                  No hay existencias disponibles para esa búsqueda.
-                </div>
-              ) : (
-                <div className="overflow-x-auto rounded-md border">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/30">
-                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Código
-                        </th>
-                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Artículo
-                        </th>
-                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Bodega
-                        </th>
-                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Proyecto
-                        </th>
-                        <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Stock
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(globalAvailabilityQuery.data ?? []).map(
-                        (row: any, index: number) => (
-                          <tr
-                            key={`${row.sapItemCode}-${row.warehouse?.id ?? "central"}-${row.project?.id ?? "sin-proyecto"}-${index}`}
-                            className="border-b last:border-0"
-                          >
-                            <td className="p-3 font-mono text-xs">
-                              {row.sapItemCode}
-                            </td>
-                            <td className="max-w-[420px] p-3">
-                              <div className="font-medium">{row.itemName}</div>
-                              {row.brand || row.partNumber ? (
-                                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                                  {row.brand ? (
-                                    <span>Marca: {row.brand}</span>
-                                  ) : null}
-                                  {row.partNumber ? (
-                                    <span>No. parte: {row.partNumber}</span>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                            </td>
-                            <td className="p-3 text-xs">
-                              {row.warehouse
-                                ? formatWarehouseOptionLabel(row.warehouse)
-                                : "Sin bodega"}
-                            </td>
-                            <td className="p-3 text-xs">
-                              {row.project
-                                ? `${row.project.code} - ${row.project.name}`
-                                : "Inventario Central"}
-                            </td>
-                            <td className="p-3 text-right font-semibold">
-                              {formatQuantity(row.quantity)} {row.unit || ""}
-                            </td>
-                          </tr>
-                        )
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              )
-            ) : null}
-          </CardContent>
-        </Card>
-      ) : null}
 
       {canManage && allowInventoryReassignment && selectedItemIds.length > 0 ? (
         <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 px-4 py-3 md:flex-row md:items-center md:justify-between">
@@ -1867,10 +1811,22 @@ export default function Inventario() {
                               </span>
                             </td>
                             <td className="p-3 text-right font-semibold">
-                              {formatQuantity(item.totalRequiredQuantity)}
+                              {item.pendingQuantitiesLoading ? (
+                                <span className="inline-flex justify-end">
+                                  <Spinner className="size-4 text-muted-foreground" />
+                                </span>
+                              ) : (
+                                formatQuantity(item.totalRequiredQuantity)
+                              )}
                             </td>
                             <td className="p-3 text-right font-semibold">
-                              {formatQuantity(item.pendingReceiptQuantity)}
+                              {item.pendingQuantitiesLoading ? (
+                                <span className="inline-flex justify-end">
+                                  <Spinner className="size-4 text-muted-foreground" />
+                                </span>
+                              ) : (
+                                formatQuantity(item.pendingReceiptQuantity)
+                              )}
                             </td>
                             <td className="p-3 text-right text-muted-foreground">
                               {item.minimumStock || "—"}

@@ -20,6 +20,16 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+import { Spinner } from "@/components/ui/spinner";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -40,7 +50,7 @@ import {
   Unlink,
   UserPlus,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 type WarehouseFormState = {
@@ -79,6 +89,39 @@ const EMPTY_WAREHOUSE_FORM: WarehouseFormState = {
   projectId: "",
   isCentralWarehouse: false,
 };
+const DETAIL_INVENTORY_PAGE_SIZE = 100;
+
+function buildPageItems(currentPage: number, totalPages: number) {
+  if (totalPages <= 1) return [1];
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  if (currentPage <= 3) {
+    return [1, 2, 3, 4, "ellipsis", totalPages] as const;
+  }
+
+  if (currentPage >= totalPages - 2) {
+    return [
+      1,
+      "ellipsis",
+      totalPages - 3,
+      totalPages - 2,
+      totalPages - 1,
+      totalPages,
+    ] as const;
+  }
+
+  return [
+    1,
+    "ellipsis",
+    currentPage - 1,
+    currentPage,
+    currentPage + 1,
+    "ellipsis",
+    totalPages,
+  ] as const;
+}
 
 const WAREHOUSE_USER_ROLE_LABELS: Record<string, string> = {
   administracion_central: "Administración Central",
@@ -235,6 +278,7 @@ export default function Almacenes() {
   const [detailInventorySearch, setDetailInventorySearch] = useState("");
   const [detailInventorySortField, setDetailInventorySortField] =
     useState<WarehouseInventorySortField | null>(null);
+  const [detailInventoryPage, setDetailInventoryPage] = useState(1);
   const [detailProjectSearch, setDetailProjectSearch] = useState("");
   const [detailProjectSortField, setDetailProjectSortField] =
     useState<WarehouseProjectSortField | null>(null);
@@ -242,6 +286,8 @@ export default function Almacenes() {
   const [detailUserSortField, setDetailUserSortField] =
     useState<WarehouseUserSortField | null>(null);
   const trimmedDetailInventorySearch = detailInventorySearch.trim();
+  const [debouncedDetailInventorySearch, setDebouncedDetailInventorySearch] =
+    useState("");
 
   const userRole = (user as any)?.buildreqRole || "";
   const isProjectWarehouseManager = userRole === "administrador_proyecto";
@@ -273,16 +319,48 @@ export default function Almacenes() {
       { id: selectedWarehouseId ?? 0 },
       { enabled: canView && detailDialogOpen && Boolean(selectedWarehouseId) }
     );
-  const { data: inventory } = trpc.inventory.list.useQuery(
-    {
-      warehouseId: selectedWarehouseId ?? undefined,
-      search: trimmedDetailInventorySearch || undefined,
-      pageSize: 100,
-      sortBy: getInventoryServerSortField(detailInventorySortField),
-      sortDir: "asc",
-    },
-    { enabled: canView && detailDialogOpen && Boolean(selectedWarehouseId) }
-  );
+  const { data: inventory, isFetching: isInventoryFetching } =
+    trpc.inventory.list.useQuery(
+      {
+        warehouseId: selectedWarehouseId ?? undefined,
+        search: debouncedDetailInventorySearch || undefined,
+        page: detailInventoryPage,
+        pageSize: DETAIL_INVENTORY_PAGE_SIZE,
+        includePendingQuantities: false,
+        sortBy: getInventoryServerSortField(detailInventorySortField),
+        sortDir: "asc",
+      },
+      {
+        enabled: canView && detailDialogOpen && Boolean(selectedWarehouseId),
+        staleTime: 30_000,
+      }
+    );
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedDetailInventorySearch(trimmedDetailInventorySearch);
+    }, 300);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [trimmedDetailInventorySearch]);
+
+  useEffect(() => {
+    setDetailInventoryPage(1);
+  }, [
+    selectedWarehouseId,
+    debouncedDetailInventorySearch,
+    detailInventorySortField,
+  ]);
+
+  useEffect(() => {
+    if (inventory?.page && inventory.page !== detailInventoryPage) {
+      setDetailInventoryPage(inventory.page);
+    }
+  }, [detailInventoryPage, inventory?.page]);
+  const isDetailInventorySearchPending =
+    trimmedDetailInventorySearch !== debouncedDetailInventorySearch;
+  const isDetailInventoryLoading =
+    isDetailInventorySearchPending || (isInventoryFetching && !inventory);
 
   const availableProjects = useMemo(
     () => {
@@ -377,6 +455,24 @@ export default function Almacenes() {
       )
     );
   }, [detailInventorySortField, inventory?.items]);
+  const detailInventoryTotal = inventory?.total ?? 0;
+  const detailInventoryTotalPages = inventory?.totalPages ?? 1;
+  const detailInventoryCurrentPage = detailInventoryPage;
+  const detailInventoryRangeStart =
+    detailInventoryTotal === 0
+      ? 0
+      : (detailInventoryCurrentPage - 1) * DETAIL_INVENTORY_PAGE_SIZE + 1;
+  const detailInventoryRangeEnd =
+    detailInventoryTotal === 0
+      ? 0
+      : Math.min(
+          detailInventoryCurrentPage * DETAIL_INVENTORY_PAGE_SIZE,
+          detailInventoryTotal
+        );
+  const detailInventoryPageItems = useMemo(
+    () => buildPageItems(detailInventoryCurrentPage, detailInventoryTotalPages),
+    [detailInventoryCurrentPage, detailInventoryTotalPages]
+  );
 
   const visibleWarehouseProjects = useMemo(() => {
     const search = normalizeSearchText(detailProjectSearch);
@@ -988,7 +1084,12 @@ export default function Almacenes() {
           </DialogHeader>
 
           {isLoadingDetail ? (
-            <div className="h-32 animate-pulse rounded-md bg-muted" />
+            <div className="flex min-h-[280px] items-center justify-center">
+              <div className="flex flex-col items-center gap-3 text-sm text-muted-foreground">
+                <Spinner className="size-8 text-primary" />
+                <span>Cargando detalle de bodega...</span>
+              </div>
+            </div>
           ) : selectedWarehouse ? (
             <Tabs defaultValue="inventario" className="pt-2">
               <TabsList>
@@ -1028,17 +1129,23 @@ export default function Almacenes() {
                       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                       <Input
                         value={detailInventorySearch}
-                        onChange={(event) =>
-                          setDetailInventorySearch(event.target.value)
-                        }
+                        onChange={(event) => {
+                          setDetailInventorySearch(event.target.value);
+                          setDetailInventoryPage(1);
+                        }}
                         placeholder="SAP, artículo, unidad o proyecto"
-                        className="pl-9"
+                        className="pl-9 pr-9"
                       />
+                      {isDetailInventorySearchPending ||
+                      isInventoryFetching ? (
+                        <Spinner className="absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                      ) : null}
                     </div>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Mostrando {formatNumber(visibleInventoryItems.length)} de{" "}
-                    {formatNumber(inventory?.total ?? 0)}
+                    {isDetailInventoryLoading
+                      ? "Buscando inventario..."
+                      : `Mostrando ${formatNumber(detailInventoryRangeStart)} a ${formatNumber(detailInventoryRangeEnd)} de ${formatNumber(detailInventoryTotal)}`}
                   </p>
                 </div>
 
@@ -1086,7 +1193,19 @@ export default function Almacenes() {
                         </tr>
                       </thead>
                       <tbody>
-                        {visibleInventoryItems.length === 0 ? (
+                        {isDetailInventoryLoading ? (
+                          <tr>
+                            <td
+                              className="p-6 text-center text-sm text-muted-foreground"
+                              colSpan={5}
+                            >
+                              <div className="flex items-center justify-center gap-2">
+                                <Spinner className="size-4" />
+                                <span>Buscando inventario...</span>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : visibleInventoryItems.length === 0 ? (
                           <tr>
                             <td
                               className="p-4 text-center text-sm text-muted-foreground"
@@ -1117,6 +1236,83 @@ export default function Almacenes() {
                       </tbody>
                     </table>
                   </div>
+                  {!isDetailInventoryLoading && detailInventoryTotalPages > 1 ? (
+                    <div className="flex flex-col gap-3 border-t px-3 py-3 md:flex-row md:items-center md:justify-between">
+                      <p className="text-xs text-muted-foreground">
+                        Página {formatNumber(detailInventoryCurrentPage)} de{" "}
+                        {formatNumber(detailInventoryTotalPages)}
+                      </p>
+                      <Pagination className="mx-0 w-auto justify-end">
+                        <PaginationContent>
+                          <PaginationItem>
+                            <PaginationPrevious
+                              href="#"
+                              onClick={(event) => {
+                                event.preventDefault();
+                                if (detailInventoryCurrentPage <= 1) return;
+                                setDetailInventoryPage((current) =>
+                                  Math.max(current - 1, 1)
+                                );
+                              }}
+                              className={
+                                detailInventoryCurrentPage <= 1
+                                  ? "pointer-events-none opacity-50"
+                                  : ""
+                              }
+                            />
+                          </PaginationItem>
+
+                          {detailInventoryPageItems.map((pageItem, index) => (
+                            <PaginationItem key={`${pageItem}-${index}`}>
+                              {pageItem === "ellipsis" ? (
+                                <PaginationEllipsis />
+                              ) : (
+                                <PaginationLink
+                                  href="#"
+                                  isActive={
+                                    pageItem === detailInventoryCurrentPage
+                                  }
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    setDetailInventoryPage(pageItem);
+                                  }}
+                                >
+                                  {pageItem}
+                                </PaginationLink>
+                              )}
+                            </PaginationItem>
+                          ))}
+
+                          <PaginationItem>
+                            <PaginationNext
+                              href="#"
+                              onClick={(event) => {
+                                event.preventDefault();
+                                if (
+                                  detailInventoryCurrentPage >=
+                                  detailInventoryTotalPages
+                                ) {
+                                  return;
+                                }
+                                setDetailInventoryPage((current) =>
+                                  Math.min(
+                                    current + 1,
+                                    detailInventoryTotalPages
+                                  )
+                                );
+                              }}
+                              className={
+                                detailInventoryCurrentPage >=
+                                detailInventoryTotalPages
+                                  ? "pointer-events-none opacity-50"
+                                  : ""
+                              }
+                            />
+                          </PaginationItem>
+                        </PaginationContent>
+                      </Pagination>
+                    </div>
+                  ) : null}
                 </div>
               </TabsContent>
 

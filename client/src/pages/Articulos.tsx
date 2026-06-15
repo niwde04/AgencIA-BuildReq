@@ -11,6 +11,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -106,6 +115,38 @@ const EMPTY_CREATE_ARTICLE_FORM: ArticleCreateFormState = {
   allowsTaxWithholding: true,
   isActive: true,
 };
+
+function buildPageItems(currentPage: number, totalPages: number) {
+  if (totalPages <= 1) return [1];
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  if (currentPage <= 3) {
+    return [1, 2, 3, 4, "ellipsis", totalPages] as const;
+  }
+
+  if (currentPage >= totalPages - 2) {
+    return [
+      1,
+      "ellipsis",
+      totalPages - 3,
+      totalPages - 2,
+      totalPages - 1,
+      totalPages,
+    ] as const;
+  }
+
+  return [
+    1,
+    "ellipsis",
+    currentPage - 1,
+    currentPage,
+    currentPage + 1,
+    "ellipsis",
+    totalPages,
+  ] as const;
+}
 
 function parseArticleType(value: string): ArticleType | undefined {
   const numeric = Number(value);
@@ -295,18 +336,27 @@ export default function Articulos() {
     ]
   );
 
-  const { data, isLoading, isFetching, error, refetch } =
+  const {
+    data,
+    isLoading,
+    isFetching,
+    isPlaceholderData,
+    error,
+    refetch,
+  } =
     trpc.articles.list.useQuery(listInput, {
       placeholderData: (previousData) => previousData,
+      staleTime: 30_000,
     });
 
   const { data: projectsData } = trpc.projects.list.useQuery({});
 
   useEffect(() => {
+    if (isPlaceholderData) return;
     if (data?.page && data.page !== page) {
       setPage(data.page);
     }
-  }, [data?.page, page]);
+  }, [data?.page, isPlaceholderData, page]);
 
   const createMutation = trpc.articles.create.useMutation({
     onSuccess: () => {
@@ -365,8 +415,13 @@ export default function Articulos() {
   );
   const total = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
-  const rangeStart = total === 0 ? 0 : ((data?.page ?? page) - 1) * PAGE_SIZE + 1;
-  const rangeEnd = total === 0 ? 0 : Math.min((data?.page ?? page) * PAGE_SIZE, total);
+  const currentPage = page;
+  const rangeStart = total === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+  const rangeEnd = total === 0 ? 0 : Math.min(currentPage * PAGE_SIZE, total);
+  const pageItems = useMemo(
+    () => buildPageItems(currentPage, totalPages),
+    [currentPage, totalPages]
+  );
 
   const openEditDialog = (article: ArticleRecord) => {
     setSelectedArticle(article);
@@ -787,24 +842,58 @@ export default function Articulos() {
                   {rangeEnd.toLocaleString("es-HN")} de{" "}
                   {total.toLocaleString("es-HN")} registros
                 </p>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    disabled={(data?.page ?? page) <= 1}
-                    onClick={() => setPage((current) => Math.max(current - 1, 1))}
-                  >
-                    Anterior
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={(data?.page ?? page) >= totalPages}
-                    onClick={() =>
-                      setPage((current) => Math.min(current + 1, totalPages))
-                    }
-                  >
-                    Siguiente
-                  </Button>
-                </div>
+                <Pagination className="mx-0 w-auto justify-end">
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious
+                        href="#"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          if (currentPage <= 1) return;
+                          setPage((value) => Math.max(value - 1, 1));
+                        }}
+                        className={
+                          currentPage <= 1 ? "pointer-events-none opacity-50" : ""
+                        }
+                      />
+                    </PaginationItem>
+
+                    {pageItems.map((pageItem, index) => (
+                      <PaginationItem key={`${pageItem}-${index}`}>
+                        {pageItem === "ellipsis" ? (
+                          <PaginationEllipsis />
+                        ) : (
+                          <PaginationLink
+                            href="#"
+                            isActive={pageItem === currentPage}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              setPage(pageItem);
+                            }}
+                          >
+                            {pageItem}
+                          </PaginationLink>
+                        )}
+                      </PaginationItem>
+                    ))}
+
+                    <PaginationItem>
+                      <PaginationNext
+                        href="#"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          if (currentPage >= totalPages) return;
+                          setPage((value) => Math.min(value + 1, totalPages));
+                        }}
+                        className={
+                          currentPage >= totalPages
+                            ? "pointer-events-none opacity-50"
+                            : ""
+                        }
+                      />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
               </div>
             </>
           )}
