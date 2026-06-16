@@ -2641,44 +2641,58 @@ describe("BuildReq - Role-based Access Control", () => {
     expect(result.sortDir).toBe("desc");
   });
 
-  it("Warehouse filter takes precedence over project filter in inventory", async () => {
-    const { ctx } = createProjectBodegueroContext({ assignedProjectId: 17 });
-    const caller = appRouter.createCaller(ctx);
-    const listWarehousesSpy = vi
-      .spyOn(db, "listWarehouses")
-      .mockResolvedValue([{ id: 101, displayName: "017 - HEH OCOTEPEQUE" }] as any);
-    const listInventoryItemsSpy = vi
-      .spyOn(db, "listInventoryItems")
-      .mockResolvedValue({
-        items: [],
-        total: 0,
-        page: 1,
-        pageSize: 25,
-        totalPages: 1,
-        sortBy: "name",
-        sortDir: "asc",
-      } as any);
+  it.each([
+    [
+      "Bodeguero de Proyecto",
+      () => createProjectBodegueroContext({ assignedProjectId: 17 }),
+    ],
+    [
+      "Administrador de Proyecto",
+      () => createProjectAdminContext({ assignedProjectId: 17 }),
+    ],
+  ])(
+    "%s uses warehouse filter before project filter in inventory",
+    async (_label, createContext) => {
+      const { ctx } = createContext();
+      const caller = appRouter.createCaller(ctx);
+      const listWarehousesSpy = vi
+        .spyOn(db, "listWarehouses")
+        .mockResolvedValue([
+          { id: 101, displayName: "017 - HEH OCOTEPEQUE" },
+        ] as any);
+      const listInventoryItemsSpy = vi
+        .spyOn(db, "listInventoryItems")
+        .mockResolvedValue({
+          items: [],
+          total: 0,
+          page: 1,
+          pageSize: 25,
+          totalPages: 1,
+          sortBy: "name",
+          sortDir: "asc",
+        } as any);
 
-    await expect(
-      caller.inventory.list({
-        projectId: 17,
-        warehouseId: 101,
-        page: 1,
-        pageSize: 25,
-      })
-    ).resolves.toEqual(expect.objectContaining({ items: [] }));
+      await expect(
+        caller.inventory.list({
+          projectId: 17,
+          warehouseId: 101,
+          page: 1,
+          pageSize: 25,
+        })
+      ).resolves.toEqual(expect.objectContaining({ items: [] }));
 
-    expect(listInventoryItemsSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: undefined,
-        warehouseId: 101,
-        warehouseIds: undefined,
-      })
-    );
+      expect(listInventoryItemsSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: undefined,
+          warehouseId: 101,
+          warehouseIds: undefined,
+        })
+      );
 
-    listWarehousesSpy.mockRestore();
-    listInventoryItemsSpy.mockRestore();
-  });
+      listWarehousesSpy.mockRestore();
+      listInventoryItemsSpy.mockRestore();
+    }
+  );
 
   it("Bodega users can query warehouses", async () => {
     const { ctx } = createBodegaContext();
