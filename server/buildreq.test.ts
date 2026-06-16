@@ -11096,28 +11096,26 @@ describe("BuildReq - Invoices", () => {
     listInvoicesSpy.mockRestore();
   });
 
-  it("Contable can list reviewed and accounted invoices", async () => {
+  it("Contable can list invoices in any status", async () => {
     const { ctx } = createContableContext();
     const caller = appRouter.createCaller(ctx);
     const listInvoicesSpy = vi.spyOn(db, "listInvoices").mockResolvedValue([]);
 
     await expect(
-      caller.invoices.list({ status: "borrador" as any })
+      caller.invoices.list({ status: "rechazada" })
     ).resolves.toEqual([]);
-    expect(listInvoicesSpy).toHaveBeenCalledWith(
+    expect(listInvoicesSpy).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        status: undefined,
-        statuses: ["revisada", "registrada"],
+        status: "rechazada",
       })
     );
 
     await expect(
-      caller.invoices.list({ status: "registrada" })
+      caller.invoices.list({ status: "anulada" })
     ).resolves.toEqual([]);
-    expect(listInvoicesSpy).toHaveBeenCalledWith(
+    expect(listInvoicesSpy).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        status: "registrada",
-        statuses: undefined,
+        status: "anulada",
       })
     );
 
@@ -11188,18 +11186,26 @@ describe("BuildReq - Invoices", () => {
     getInvoiceByIdSpy.mockRestore();
   });
 
-  it("blocks Contable from consulting draft invoices", async () => {
+  it("Contable can consult draft, rejected and voided invoices", async () => {
     const { ctx } = createContableContext();
     const caller = appRouter.createCaller(ctx);
-    const getInvoiceByIdSpy = vi
-      .spyOn(db, "getInvoiceById")
-      .mockResolvedValue(invoiceDetail);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById");
 
-    await expect(caller.invoices.getById({ id: 10 })).rejects.toMatchObject({
-      code: "FORBIDDEN",
-      message:
-        "Contabilidad solo puede ver facturas revisadas o contabilizadas",
-    });
+    for (const status of ["borrador", "rechazada", "anulada"] as const) {
+      getInvoiceByIdSpy.mockResolvedValueOnce({
+        ...invoiceDetail,
+        invoice: {
+          ...invoiceDetail.invoice,
+          status,
+        },
+      } as any);
+
+      await expect(caller.invoices.getById({ id: 10 })).resolves.toEqual(
+        expect.objectContaining({
+          invoice: expect.objectContaining({ status }),
+        })
+      );
+    }
 
     getInvoiceByIdSpy.mockRestore();
   });
@@ -12722,32 +12728,44 @@ describe("BuildReq - Document attachments", () => {
     createAttachmentSpy.mockRestore();
   });
 
-  it("blocks Contable from viewing draft invoice attachments", async () => {
+  it("lets Contable view draft, rejected and voided invoice attachments", async () => {
     const { ctx } = createContableContext();
     const caller = appRouter.createCaller(ctx);
-    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
-      invoice: {
-        id: 10,
-        projectId: 1,
-        status: "borrador",
-      },
-    } as any);
-    const getAttachmentsByEntitySpy = vi.spyOn(db, "getAttachmentsByEntity");
-
-    await expect(
-      caller.attachments.getByEntity({
-        entityType: "invoice",
-        entityId: 10,
-      })
-    ).rejects.toMatchObject({
-      code: "FORBIDDEN",
-      message:
-        "Contabilidad solo puede ver adjuntos de facturas revisadas o contabilizadas",
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById");
+    const getAttachmentsByEntitySpy = vi
+      .spyOn(db, "getAttachmentsByEntity")
+      .mockResolvedValue([
+        {
+          id: 99,
+          fileName: "factura.pdf",
+          fileKey: "buildreq/invoice/10/factura.pdf",
+        },
+      ] as any);
+    const storageGetSpy = vi.spyOn(storage, "storageGet").mockResolvedValue({
+      key: "buildreq/invoice/10/factura.pdf",
+      url: "https://storage.local/factura.pdf",
     });
-    expect(getAttachmentsByEntitySpy).not.toHaveBeenCalled();
+
+    for (const status of ["borrador", "rechazada", "anulada"] as const) {
+      getInvoiceByIdSpy.mockResolvedValueOnce({
+        invoice: {
+          id: 10,
+          projectId: 1,
+          status,
+        },
+      } as any);
+
+      await expect(
+        caller.attachments.getByEntity({
+          entityType: "invoice",
+          entityId: 10,
+        })
+      ).resolves.toEqual([expect.objectContaining({ id: 99 })]);
+    }
 
     getInvoiceByIdSpy.mockRestore();
     getAttachmentsByEntitySpy.mockRestore();
+    storageGetSpy.mockRestore();
   });
 
   it("deletes attachment files from storage after authorization", async () => {

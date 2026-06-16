@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
+import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -516,10 +516,6 @@ function formatDateTimeLabel(value: string | Date | null | undefined) {
 function toNumber(value: string | number | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatCsvAmount(value: string | number | null | undefined) {
-  return toNumber(value).toFixed(2);
 }
 
 function getInvoiceRequestNumbers(row: any) {
@@ -1570,9 +1566,10 @@ export default function Facturas() {
     });
   }, [invoices, searchTerm, statusFilter]);
 
-  const exportInvoicesCsv = () => {
-    downloadCsv(
-      buildDatedCsvFileName("facturas"),
+  const exportInvoicesExcel = () => {
+    void downloadExcel(
+      buildDatedExcelFileName("facturas"),
+      "Facturas",
       [
         {
           header: "Documento",
@@ -1624,15 +1621,18 @@ export default function Facturas() {
         },
         {
           header: "Total",
-          value: (row: any) => formatCsvAmount(row.invoice.total),
+          value: (row: any) => toNumber(row.invoice.total),
+          numFmt: "#,##0.00",
         },
         {
           header: "Retenciones",
-          value: (row: any) => formatCsvAmount(row.invoice.retentionTotal),
+          value: (row: any) => toNumber(row.invoice.retentionTotal),
+          numFmt: "#,##0.00",
         },
         {
           header: "Neto",
-          value: (row: any) => formatCsvAmount(row.invoice.netPayable),
+          value: (row: any) => toNumber(row.invoice.netPayable),
+          numFmt: "#,##0.00",
         },
         {
           header: "Estado",
@@ -1644,7 +1644,9 @@ export default function Facturas() {
         },
       ],
       filteredInvoices
-    );
+    ).catch(() => {
+      toast.error("No se pudo exportar el archivo Excel");
+    });
   };
 
   const retentionOptions = useMemo(() => {
@@ -2365,11 +2367,11 @@ export default function Facturas() {
         <Button
           type="button"
           variant="outline"
-          onClick={exportInvoicesCsv}
+          onClick={exportInvoicesExcel}
           disabled={!filteredInvoices.length}
         >
           <Download className="mr-2 h-4 w-4" />
-          Exportar CSV
+          Exportar Excel
         </Button>
       </div>
 
@@ -2388,21 +2390,12 @@ export default function Facturas() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">
-              {isAccountant ? "Revisión y contabilizadas" : "Todos los estados"}
-            </SelectItem>
-            {Object.entries(STATUS_LABELS)
-              .filter(
-                ([value]) =>
-                  !isAccountant ||
-                  value === "revisada" ||
-                  value === "registrada"
-              )
-              .map(([value, label]) => (
-                <SelectItem key={value} value={value}>
-                  {label}
-                </SelectItem>
-              ))}
+            <SelectItem value="all">Todos los estados</SelectItem>
+            {Object.entries(STATUS_LABELS).map(([value, label]) => (
+              <SelectItem key={value} value={value}>
+                {label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -2452,10 +2445,10 @@ export default function Facturas() {
                     <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Neto
                     </th>
-                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <th className="min-w-[280px] p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Estado
                     </th>
-                    <th className="sticky right-0 z-10 bg-muted/30 p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
+                    <th className="sticky right-0 z-20 min-w-[104px] border-l border-border/60 bg-muted/30 p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
                       Acciones
                     </th>
                   </tr>
@@ -2528,11 +2521,11 @@ export default function Facturas() {
                         <td className="p-3 text-right font-semibold">
                           {formatPurchaseOrderCurrency(row.invoice.netPayable)}
                         </td>
-                        <td className="p-3">
-                          <div className="max-w-56">
+                        <td className="min-w-[280px] max-w-[320px] p-3 align-top">
+                          <div className="max-w-72">
                             <Badge
                               variant="outline"
-                              className={`text-xs ${getInvoiceStatusColor(row.invoice)}`}
+                              className={`max-w-full text-xs ${getInvoiceStatusColor(row.invoice)}`}
                             >
                               {getInvoiceStatusLabel(row.invoice)}
                             </Badge>
@@ -2546,7 +2539,7 @@ export default function Facturas() {
                             ) : null}
                           </div>
                         </td>
-                        <td className="sticky right-0 bg-background p-3 text-right shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
+                        <td className="sticky right-0 z-10 min-w-[104px] border-l border-border/60 bg-background p-3 text-right align-top shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
                           <Button
                             variant="outline"
                             size="sm"

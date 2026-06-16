@@ -94,15 +94,9 @@ function assertAccountingAccess(
   user: { role: string; buildreqRole?: string | null },
   detail: NonNullable<Awaited<ReturnType<typeof db.getInvoiceById>>>
 ) {
-  const accountingVisibleStatuses = ["revisada", "registrada"];
-  if (!accountingVisibleStatuses.includes(detail.invoice.status)) {
-    if (user.buildreqRole !== "contable") return;
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message:
-        "Contabilidad solo puede ver facturas revisadas o contabilizadas",
-    });
-  }
+  if (user.buildreqRole === "contable") return;
+  const restrictedStatuses = ["revisada", "registrada"];
+  if (!restrictedStatuses.includes(detail.invoice.status)) return;
   if (!canAccessReviewedInvoices(user)) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -323,19 +317,7 @@ export const invoicesRouter = router({
         });
       }
 
-      const accountantStatuses = ["revisada", "registrada"];
-      const status =
-        ctx.user.buildreqRole === "contable" &&
-        input?.status &&
-        accountantStatuses.includes(input.status)
-          ? input.status
-          : ctx.user.buildreqRole === "contable"
-            ? undefined
-            : input?.status;
-      const statuses =
-        ctx.user.buildreqRole === "contable" && !status
-          ? accountantStatuses
-          : undefined;
+      const status = input?.status;
       const excludeStatus =
         !canAccessReviewedInvoices(ctx.user) && status !== "revisada"
           ? "revisada"
@@ -349,7 +331,6 @@ export const invoicesRouter = router({
           {
             ...input,
             status,
-            statuses,
             excludeStatus,
           },
           ctx.user
