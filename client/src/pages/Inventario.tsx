@@ -271,13 +271,6 @@ export default function Inventario() {
   }, [debouncedSearch, warehouseFilter, projectFilter]);
 
   const userRole = (user as any)?.buildreqRole || "";
-  const assignedProjectIds = useMemo(() => {
-    const ids = (user as any)?.assignedProjectIds;
-    if (Array.isArray(ids) && ids.length > 0) {
-      return ids.map(Number).filter((id) => Number.isInteger(id) && id > 0);
-    }
-    return (user as any)?.assignedProjectId ? [(user as any).assignedProjectId] : [];
-  }, [user]);
   const canManage =
     userRole === "jefe_bodega_central" || user?.role === "admin";
   const canAccessWarehouses =
@@ -298,17 +291,8 @@ export default function Inventario() {
       enabled: canAccessWarehouses,
     });
   const warehouseOptions = useMemo(() => {
-    const sortWarehouses = (rows: any[]) =>
-      [...rows].sort(compareWarehouseByCode);
-    const allWarehouses = sortWarehouses(warehouses ?? []);
-    if (projectFilter === "all") return allWarehouses;
-    const selectedProject = projectOptions.find(
-      (project: any) => String(project.id) === projectFilter
-    );
-    return selectedProject?.warehouse
-      ? sortWarehouses([selectedProject.warehouse])
-      : [];
-  }, [projectFilter, projectOptions, warehouses]);
+    return [...(warehouses ?? [])].sort(compareWarehouseByCode);
+  }, [warehouses]);
   const selectedFilterProject = useMemo(
     () =>
       projectFilter === "all"
@@ -330,12 +314,11 @@ export default function Inventario() {
   const selectedProjectFilterLabel = selectedFilterProject
     ? `${selectedFilterProject.code} - ${selectedFilterProject.name}`
     : `Todos los proyectos (${projectOptions.length.toLocaleString("es-HN")})`;
-  const allWarehouseFilterLabel = selectedFilterProject
-    ? `Bodega asignada de ${selectedFilterProject.code}`
-    : `Todos los almacenes (${warehouseOptions.length.toLocaleString("es-HN")})`;
+  const allWarehouseFilterLabel = `Todos los almacenes (${warehouseOptions.length.toLocaleString("es-HN")})`;
   const selectedWarehouseFilterLabel = selectedFilterWarehouse
     ? formatWarehouseOptionLabel(selectedFilterWarehouse)
     : allWarehouseFilterLabel;
+  const projectFilterDisabled = warehouseFilter !== "all";
   const centralWarehouses = useMemo(
     () => warehouses ?? [],
     [warehouses]
@@ -374,17 +357,6 @@ export default function Inventario() {
   );
 
   useEffect(() => {
-    if (
-      (userRole === "administrador_proyecto" ||
-        userRole === "bodeguero_proyecto") &&
-      assignedProjectIds.length === 1 &&
-      projectFilter === "all"
-    ) {
-      setProjectFilter(String(assignedProjectIds[0]));
-    }
-  }, [assignedProjectIds, projectFilter, userRole]);
-
-  useEffect(() => {
     if (!projectId) return;
     setWarehouseId(defaultCreateWarehouse ? String(defaultCreateWarehouse.id) : "");
   }, [defaultCreateWarehouse, projectId]);
@@ -399,12 +371,17 @@ export default function Inventario() {
     }
   }, [warehouseFilter, warehouseOptions]);
 
+  const selectedWarehouseId =
+    warehouseFilter === "all" ? undefined : Number(warehouseFilter);
+  const selectedProjectId =
+    projectFilter === "all" || selectedWarehouseId
+      ? undefined
+      : Number(projectFilter);
+
   const queryInput = {
     search: debouncedSearch || undefined,
-    projectId:
-      projectFilter === "all" ? undefined : Number(projectFilter),
-    warehouseId:
-      warehouseFilter === "all" ? undefined : Number(warehouseFilter),
+    projectId: selectedProjectId,
+    warehouseId: selectedWarehouseId,
   };
 
   const listQueryInput = {
@@ -1449,7 +1426,7 @@ export default function Inventario() {
         </DialogContent>
       </Dialog>
 
-      <div className="grid gap-3 lg:grid-cols-[minmax(280px,1fr)_minmax(240px,384px)_minmax(240px,320px)] lg:items-end">
+      <div className="grid gap-3 lg:grid-cols-[minmax(280px,1fr)_minmax(240px,320px)_minmax(240px,384px)] lg:items-end">
         <div className="relative min-w-0">
           <Label className="mb-1 block text-xs font-medium text-muted-foreground">
             Búsqueda
@@ -1463,13 +1440,107 @@ export default function Inventario() {
           />
         </div>
 
+        {canAccessWarehouses ? (
+          <div className="min-w-0">
+            <Label className="mb-1 block text-xs font-medium text-muted-foreground">
+              Bodega / almacén ({warehouseOptions.length.toLocaleString("es-HN")})
+            </Label>
+            <Popover
+              open={warehouseFilterOpen}
+              onOpenChange={setWarehouseFilterOpen}
+            >
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={warehouseFilterOpen}
+                  className="h-9 w-full justify-between px-3 font-normal"
+                >
+                  <span className="truncate">{selectedWarehouseFilterLabel}</span>
+                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                className="w-[var(--radix-popover-trigger-width)] p-0"
+              >
+                <Command>
+                  <CommandInput placeholder="Buscar almacén..." />
+                  <CommandList>
+                    <CommandEmpty>No se encontraron almacenes.</CommandEmpty>
+                    <CommandGroup>
+                      <CommandItem
+                        value="todos los almacenes all"
+                        onSelect={() => {
+                          setWarehouseFilter("all");
+                          setWarehouseFilterOpen(false);
+                        }}
+                      >
+                        <Check
+                          className={`h-4 w-4 ${
+                            warehouseFilter === "all"
+                              ? "opacity-100"
+                              : "opacity-0"
+                          }`}
+                        />
+                        <span className="truncate">
+                          {allWarehouseFilterLabel}
+                        </span>
+                      </CommandItem>
+                      {warehouseOptions.map((warehouse: any) => (
+                        <CommandItem
+                          key={warehouse.id}
+                          value={[
+                            warehouse.code,
+                            warehouse.localCode,
+                            warehouse.name,
+                            warehouse.displayName,
+                            warehouse.project?.code,
+                            warehouse.project?.name,
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                          onSelect={() => {
+                            setWarehouseFilter(String(warehouse.id));
+                            setProjectFilter("all");
+                            setWarehouseFilterOpen(false);
+                          }}
+                        >
+                          <Check
+                            className={`h-4 w-4 ${
+                              warehouseFilter === String(warehouse.id)
+                                ? "opacity-100"
+                              : "opacity-0"
+                            }`}
+                          />
+                          <span className="min-w-0">
+                            <span className="block truncate">
+                              {formatWarehouseOptionLabel(warehouse)}
+                            </span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {formatWarehouseProjectLabel(warehouse)}
+                            </span>
+                          </span>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+          </div>
+        ) : null}
+
         <div className="min-w-0">
           <Label className="mb-1 block text-xs font-medium text-muted-foreground">
             Proyecto ({projectOptions.length.toLocaleString("es-HN")})
           </Label>
           <Popover
             open={projectFilterOpen}
-            onOpenChange={setProjectFilterOpen}
+            onOpenChange={(open) =>
+              setProjectFilterOpen(projectFilterDisabled ? false : open)
+            }
           >
             <PopoverTrigger asChild>
               <Button
@@ -1477,9 +1548,19 @@ export default function Inventario() {
                 variant="outline"
                 role="combobox"
                 aria-expanded={projectFilterOpen}
-                className="h-9 w-full justify-between px-3 font-normal"
+                disabled={projectFilterDisabled}
+                className="h-9 w-full justify-between px-3 font-normal disabled:opacity-70"
+                title={
+                  projectFilterDisabled
+                    ? "La bodega seleccionada manda el filtro de inventario"
+                    : undefined
+                }
               >
-                <span className="truncate">{selectedProjectFilterLabel}</span>
+                <span className="truncate">
+                  {projectFilterDisabled
+                    ? "Todos los proyectos de la bodega"
+                    : selectedProjectFilterLabel}
+                </span>
                 <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
               </Button>
             </PopoverTrigger>
@@ -1535,97 +1616,6 @@ export default function Inventario() {
             </PopoverContent>
           </Popover>
         </div>
-
-        {canAccessWarehouses ? (
-          <div className="min-w-0">
-            <Label className="mb-1 block text-xs font-medium text-muted-foreground">
-              Bodega / almacén ({warehouseOptions.length.toLocaleString("es-HN")})
-            </Label>
-            <Popover
-              open={warehouseFilterOpen}
-              onOpenChange={setWarehouseFilterOpen}
-            >
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={warehouseFilterOpen}
-                  className="h-9 w-full justify-between px-3 font-normal"
-                >
-                  <span className="truncate">{selectedWarehouseFilterLabel}</span>
-                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                align="start"
-                className="w-[var(--radix-popover-trigger-width)] p-0"
-              >
-                <Command>
-                  <CommandInput placeholder="Buscar almacén..." />
-                  <CommandList>
-                    <CommandEmpty>No se encontraron almacenes.</CommandEmpty>
-                    <CommandGroup>
-                        <CommandItem
-                          value={`todos los almacenes all ${selectedFilterProject?.code ?? ""} ${selectedFilterProject?.name ?? ""}`}
-                          onSelect={() => {
-                            setWarehouseFilter("all");
-                            setWarehouseFilterOpen(false);
-                          }}
-                        >
-                        <Check
-                          className={`h-4 w-4 ${
-                            warehouseFilter === "all"
-                              ? "opacity-100"
-                              : "opacity-0"
-                          }`}
-                          />
-                          <span className="truncate">
-                            {allWarehouseFilterLabel}
-                          </span>
-                        </CommandItem>
-                      {warehouseOptions.map((warehouse: any) => (
-                        <CommandItem
-                          key={warehouse.id}
-                          value={[
-                            warehouse.code,
-                            warehouse.localCode,
-                            warehouse.name,
-                            warehouse.displayName,
-                            warehouse.project?.code,
-                            warehouse.project?.name,
-                          ]
-                            .filter(Boolean)
-                            .join(" ")}
-                          onSelect={() => {
-                            setWarehouseFilter(String(warehouse.id));
-                            setWarehouseFilterOpen(false);
-                          }}
-                        >
-                          <Check
-                            className={`h-4 w-4 ${
-                              warehouseFilter === String(warehouse.id)
-                                ? "opacity-100"
-                              : "opacity-0"
-                            }`}
-                          />
-                          <span className="min-w-0">
-                            <span className="block truncate">
-                              {formatWarehouseOptionLabel(warehouse)}
-                            </span>
-                            <span className="block truncate text-xs text-muted-foreground">
-                              {formatWarehouseProjectLabel(warehouse)}
-                            </span>
-                          </span>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-          </div>
-        ) : null}
       </div>
 
       <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-muted-foreground">

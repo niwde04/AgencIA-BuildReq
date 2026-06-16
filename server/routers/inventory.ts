@@ -216,6 +216,10 @@ export const inventoryRouter = router({
     )
     .query(async ({ ctx, input }) => {
       assertCanReadInventory(ctx);
+      const normalizedInput = input?.warehouseId
+        ? { ...input, projectId: undefined }
+        : (input ?? {});
+
       if (shouldScopeInventoryByWarehouse(ctx.user)) {
         const readableWarehouseIds =
           await getReadableInventoryWarehouseIds(ctx.user);
@@ -231,12 +235,14 @@ export const inventoryRouter = router({
         }
 
         return db.listInventoryItems({
-          ...(input ?? {}),
-          warehouseIds: input?.warehouseId ? undefined : readableWarehouseIds,
+          ...normalizedInput,
+          warehouseIds: normalizedInput.warehouseId
+            ? undefined
+            : readableWarehouseIds,
         });
       }
 
-      return db.listInventoryItems(applyProjectScope(input ?? {}, ctx.user));
+      return db.listInventoryItems(applyProjectScope(normalizedInput, ctx.user));
     }),
 
   pendingQuantities: protectedProcedure
