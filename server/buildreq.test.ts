@@ -2706,12 +2706,10 @@ describe("BuildReq - Role-based Access Control", () => {
   it("Bodeguero de Proyecto sees transfer origin options without stock quantities", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
-    const listWarehousesSpy = vi
-      .spyOn(db, "listWarehouses")
-      .mockResolvedValue([
-        { id: 101, displayName: "001 - HEH LA BARCA" },
-        { id: 102, displayName: "002 - HEH COMAYAGUA" },
-      ] as any);
+    const listWarehousesSpy = vi.spyOn(db, "listWarehouses").mockResolvedValue([
+      { id: 101, displayName: "001 - HEH LA BARCA" },
+      { id: 102, displayName: "002 - HEH COMAYAGUA" },
+    ] as any);
     const listVisibleWarehouseStockForItemsSpy = vi
       .spyOn(db, "listVisibleWarehouseStockForItems")
       .mockResolvedValue([
@@ -2767,6 +2765,119 @@ describe("BuildReq - Role-based Access Control", () => {
     listVisibleWarehouseStockForItemsSpy.mockRestore();
   });
 
+  it("Administracion Central can list unclassified inventory", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const listInventoryItemsSpy = vi
+      .spyOn(db, "listInventoryItems")
+      .mockResolvedValue({
+        items: [],
+        total: 0,
+        page: 1,
+        pageSize: 25,
+        totalPages: 1,
+        sortBy: "name",
+        sortDir: "asc",
+      } as any);
+
+    await expect(
+      caller.inventory.list({ unclassifiedOnly: true })
+    ).resolves.toEqual(expect.objectContaining({ items: [] }));
+
+    expect(listInventoryItemsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        unclassifiedOnly: true,
+      })
+    );
+
+    listInventoryItemsSpy.mockRestore();
+  });
+
+  it("Jefe de Bodega cannot list unclassified inventory", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const listInventoryItemsSpy = vi.spyOn(db, "listInventoryItems");
+
+    await expect(
+      caller.inventory.list({ unclassifiedOnly: true })
+    ).rejects.toThrow(
+      "Solo Administración Central puede ver inventario por clasificar"
+    );
+
+    expect(listInventoryItemsSpy).not.toHaveBeenCalled();
+    listInventoryItemsSpy.mockRestore();
+  });
+
+  it("Inventory creation requires project and physical warehouse", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const createInventoryItemSpy = vi.spyOn(db, "createInventoryItem");
+
+    await expect(
+      caller.inventory.create({
+        sapItemCode: "MAT-001",
+        name: "Cemento",
+        currentStock: "10",
+      } as any)
+    ).rejects.toThrow();
+
+    expect(createInventoryItemSpy).not.toHaveBeenCalled();
+    createInventoryItemSpy.mockRestore();
+  });
+
+  it("Administracion Central classifies selected inventory into project warehouse", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const bulkAssignInventoryProjectSpy = vi
+      .spyOn(db, "bulkAssignInventoryProject")
+      .mockResolvedValue({ success: true, updatedCount: 2 });
+
+    await expect(
+      caller.inventory.bulkAssignProject({
+        ids: [11, 12],
+        projectId: 13,
+        warehouseId: 19,
+      })
+    ).resolves.toEqual({ success: true, updatedCount: 2 });
+
+    expect(bulkAssignInventoryProjectSpy).toHaveBeenCalledWith(
+      [11, 12],
+      13,
+      19
+    );
+
+    bulkAssignInventoryProjectSpy.mockRestore();
+  });
+
+  it("Administracion Central classifies filtered unclassified inventory", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const bulkAssignInventoryProjectByFiltersSpy = vi
+      .spyOn(db, "bulkAssignInventoryProjectByFilters")
+      .mockResolvedValue({ success: true, updatedCount: 5 });
+
+    await expect(
+      caller.inventory.bulkAssignProjectByFilters({
+        search: "cemento",
+        warehouseId: 19,
+        targetProjectId: 13,
+        targetWarehouseId: 19,
+      })
+    ).resolves.toEqual({ success: true, updatedCount: 5 });
+
+    expect(bulkAssignInventoryProjectByFiltersSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        search: "cemento",
+        warehouseId: 19,
+        unclassifiedOnly: true,
+      }),
+      13,
+      19
+    );
+
+    bulkAssignInventoryProjectByFiltersSpy.mockRestore();
+  });
+
   it("Administracion Central can mark a warehouse as central", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -2796,6 +2907,35 @@ describe("BuildReq - Role-based Access Control", () => {
     updateWarehouseSpy.mockRestore();
   });
 
+  it("Administracion Central can mark a warehouse as shared", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getWarehouseDetailByIdSpy = vi
+      .spyOn(db, "getWarehouseDetailById")
+      .mockResolvedValue({
+        id: 101,
+        projects: [],
+        assignedUsers: [],
+      } as any);
+    const updateWarehouseSpy = vi
+      .spyOn(db, "updateWarehouse")
+      .mockResolvedValue({ success: true });
+
+    await expect(
+      caller.warehouses.update({
+        id: 101,
+        isSharedWarehouse: true,
+      })
+    ).resolves.toEqual({ success: true });
+
+    expect(updateWarehouseSpy).toHaveBeenCalledWith(101, {
+      isSharedWarehouse: true,
+    });
+
+    getWarehouseDetailByIdSpy.mockRestore();
+    updateWarehouseSpy.mockRestore();
+  });
+
   it("Project Administrators cannot mark central warehouses", async () => {
     const { ctx } = createProjectAdminContext();
     const caller = appRouter.createCaller(ctx);
@@ -2806,7 +2946,27 @@ describe("BuildReq - Role-based Access Control", () => {
         id: 101,
         isCentralWarehouse: true,
       })
-    ).rejects.toThrow("Solo Administración Central puede marcar la bodega central");
+    ).rejects.toThrow(
+      "Solo Administración Central puede marcar la bodega central"
+    );
+
+    expect(updateWarehouseSpy).not.toHaveBeenCalled();
+    updateWarehouseSpy.mockRestore();
+  });
+
+  it("Project Administrators cannot mark shared warehouses", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const updateWarehouseSpy = vi.spyOn(db, "updateWarehouse");
+
+    await expect(
+      caller.warehouses.update({
+        id: 101,
+        isSharedWarehouse: true,
+      })
+    ).rejects.toThrow(
+      "Solo Administración Central puede marcar bodegas multiproyecto"
+    );
 
     expect(updateWarehouseSpy).not.toHaveBeenCalled();
     updateWarehouseSpy.mockRestore();
@@ -5219,7 +5379,9 @@ describe("BuildReq - Role-based Access Control", () => {
       .mockResolvedValue({ id: 701 } as any);
     const getRequestItemsByRequestIdSpy = vi
       .spyOn(db, "getRequestItemsByRequestId")
-      .mockResolvedValue([{ id: 51, assignedFlow: "traslado_proyecto" }] as any);
+      .mockResolvedValue([
+        { id: 51, assignedFlow: "traslado_proyecto" },
+      ] as any);
     const updateMaterialRequestStatusSpy = vi
       .spyOn(db, "updateMaterialRequestStatus")
       .mockResolvedValue({ success: true } as any);
@@ -6698,11 +6860,7 @@ describe("BuildReq - Material Request Validations", () => {
     });
 
     expect(approveMaterialRequestSpy).toHaveBeenCalledWith(61, 6);
-    expect(rejectMaterialRequestSpy).toHaveBeenCalledWith(
-      62,
-      6,
-      "No aplica"
-    );
+    expect(rejectMaterialRequestSpy).toHaveBeenCalledWith(62, 6, "No aplica");
     expect(createNotificationSpy).toHaveBeenCalled();
 
     getMaterialRequestByIdSpy.mockRestore();
@@ -9826,6 +9984,87 @@ describe("BuildReq - Receipts", () => {
     registerReceiptSpy.mockRestore();
   });
 
+  it("allows transfer receipts into the same physical warehouse when the destination project is different", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getTransferByIdSpy = vi
+      .spyOn(db, "getTransferById")
+      .mockResolvedValue({
+        transfer: {
+          id: 8,
+          transferNumber: "TR-2026-0003",
+          status: "confirmado",
+        },
+        transferRequest: {
+          id: 5,
+          requestNumber: "ST-2026-0005",
+          projectId: 2,
+          destinationType: "proyecto",
+          destinationProjectId: 1,
+        },
+        items: [
+          {
+            id: 31,
+            itemName: "VARILLA #4",
+            quantity: "10.00",
+            receivedQuantity: "0.00",
+            returnedToOriginQuantity: "0.00",
+            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+            sapItemCode: "01010100001",
+            unit: "und",
+          },
+        ],
+      } as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({
+        id: 7,
+        receiptNumber: "RC-2026-0002",
+        status: "completa",
+      } as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "transfer",
+        sourceId: 8,
+        projectId: 1,
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 31,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+            itemName: "VARILLA #4",
+            quantityExpected: "10.00",
+            quantityReceived: "10.00",
+            unit: "und",
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      id: 7,
+      receiptNumber: "RC-2026-0002",
+      status: "completa",
+    });
+    expect(registerReceiptSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceType: "transfer",
+        sourceId: 8,
+        projectId: 1,
+      }),
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceItemId: 31,
+          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          quantityReceived: "10.00",
+        }),
+      ])
+    );
+
+    getTransferByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
   it("Bodeguero de Proyecto cannot register transfer receipts for another destination project", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
@@ -11163,9 +11402,9 @@ describe("BuildReq - Invoices", () => {
       })
     );
 
-    await expect(
-      caller.invoices.list({ status: "anulada" })
-    ).resolves.toEqual([]);
+    await expect(caller.invoices.list({ status: "anulada" })).resolves.toEqual(
+      []
+    );
     expect(listInvoicesSpy).toHaveBeenLastCalledWith(
       expect.objectContaining({
         status: "anulada",
@@ -12879,19 +13118,16 @@ describe("BuildReq - Transfer Requests", () => {
           destinationProjectId: 14,
           status: "pendiente",
         },
-        items: [
-          { id: 31, materialRequestItemId: 21, quantity: "1.00" },
-        ],
+        items: [{ id: 31, materialRequestItemId: 21, quantity: "1.00" }],
       } as any);
-    const createTransferFromRequestSpy = vi.spyOn(
-      db,
-      "createTransferFromRequest"
-    ).mockResolvedValue({
-      id: 44,
-      transferNumber: "TR-2026-0001",
-      guideNumber: "GR-2026-0001",
-      sapCorrelative: "SAP-GR-2026-0001",
-    } as any);
+    const createTransferFromRequestSpy = vi
+      .spyOn(db, "createTransferFromRequest")
+      .mockResolvedValue({
+        id: 44,
+        transferNumber: "TR-2026-0001",
+        guideNumber: "GR-2026-0001",
+        sapCorrelative: "SAP-GR-2026-0001",
+      } as any);
 
     await expect(
       caller.transferRequests.convertToTransfer({
@@ -12938,9 +13174,7 @@ describe("BuildReq - Transfer Requests", () => {
           destinationProjectId: 8,
           status: "pendiente",
         },
-        items: [
-          { id: 31, materialRequestItemId: 21, quantity: "1.00" },
-        ],
+        items: [{ id: 31, materialRequestItemId: 21, quantity: "1.00" }],
       } as any);
     const createTransferFromRequestSpy = vi.spyOn(
       db,
@@ -12959,7 +13193,9 @@ describe("BuildReq - Transfer Requests", () => {
           },
         ],
       })
-    ).rejects.toThrow("No tiene acceso a solicitudes de traslado de otro proyecto");
+    ).rejects.toThrow(
+      "No tiene acceso a solicitudes de traslado de otro proyecto"
+    );
 
     expect(createTransferFromRequestSpy).not.toHaveBeenCalled();
     getTransferRequestByIdSpy.mockRestore();
@@ -13078,9 +13314,7 @@ describe("BuildReq - Transfer Requests", () => {
           destinationProjectId: 1,
           status: "pendiente",
         },
-        items: [
-          { id: 31, materialRequestItemId: 21, quantity: "10.00" },
-        ],
+        items: [{ id: 31, materialRequestItemId: 21, quantity: "10.00" }],
       } as any);
     const createTransferFromRequestSpy = vi
       .spyOn(db, "createTransferFromRequest")

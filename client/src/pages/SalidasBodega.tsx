@@ -217,6 +217,76 @@ function formatWarehouseExitWarehouseLabel(detail: any) {
   return "Bodega del proyecto";
 }
 
+function formatWarehouseExitDestinationProjectLabel(detail: any) {
+  if (detail?.destinationProject) {
+    return `${detail.destinationProject.code} - ${detail.destinationProject.name}`;
+  }
+
+  const itemProjectLabels = Array.from(
+    new Set(
+      (detail?.items || [])
+        .map((item: any) =>
+          item.destinationProject
+            ? `${item.destinationProject.code} - ${item.destinationProject.name}`
+            : null
+        )
+        .filter(Boolean)
+    )
+  );
+
+  if (itemProjectLabels.length === 1) return itemProjectLabels[0] as string;
+  if (itemProjectLabels.length > 1) return "Varios destinos";
+  if (detail?.warehouseExit?.destinationProjectId) {
+    return `Proyecto ${detail.warehouseExit.destinationProjectId}`;
+  }
+  return "-";
+}
+
+function formatWarehouseExitDestinationWarehouseLabel(detail: any) {
+  const directWarehouse =
+    detail?.destinationWarehouse?.displayName ||
+    detail?.destinationWarehouse?.name ||
+    null;
+  if (directWarehouse) return directWarehouse;
+
+  const itemWarehouseLabels = Array.from(
+    new Set(
+      (detail?.items || [])
+        .map(
+          (item: any) =>
+            item.destinationWarehouse?.displayName ||
+            item.destinationWarehouse?.name ||
+            null
+        )
+        .filter(Boolean)
+    )
+  );
+
+  if (itemWarehouseLabels.length === 1) return itemWarehouseLabels[0] as string;
+  if (itemWarehouseLabels.length > 1) return "Varios destinos";
+  if (detail?.warehouseExit?.destinationWarehouseId) {
+    return `Almacén ${detail.warehouseExit.destinationWarehouseId}`;
+  }
+  return "-";
+}
+
+function formatWarehouseExitItemDestinationLabel(item: any) {
+  const projectLabel = item.destinationProject
+    ? `${item.destinationProject.code} - ${item.destinationProject.name}`
+    : item.destinationProjectId
+      ? `Proyecto ${item.destinationProjectId}`
+      : "";
+  const warehouseLabel =
+    item.destinationWarehouse?.displayName ||
+    item.destinationWarehouse?.name ||
+    (item.destinationWarehouseId ? `Almacén ${item.destinationWarehouseId}` : "");
+
+  if (!projectLabel && !warehouseLabel) return "-";
+  return [projectLabel || "Bodega/proyecto", warehouseLabel || "Almacén"]
+    .filter(Boolean)
+    .join(" / ");
+}
+
 function formatWarehouseExitRequestLabel(detail: any) {
   const requestNumber =
     detail?.materialRequest?.requestNumber ||
@@ -254,6 +324,60 @@ function formatQuantity(value: string | number | null | undefined) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+function QuantityPill({
+  value,
+  unit,
+  label = "Disp.",
+  tone = "available",
+}: {
+  value: string | number | null | undefined;
+  unit?: string | null;
+  label?: string;
+  tone?: "available" | "neutral" | "danger";
+}) {
+  const toneClasses = {
+    available: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    neutral: "border-slate-200 bg-slate-50 text-slate-600",
+    danger: "border-rose-200 bg-rose-50 text-rose-700",
+  }[tone];
+
+  return (
+    <span
+      className={`inline-flex items-center rounded-md border px-1.5 py-0.5 font-mono text-[11px] font-semibold ${toneClasses}`}
+    >
+      {label} {formatQuantity(value)}
+      {unit ? ` ${unit}` : ""}
+    </span>
+  );
+}
+
+function getDeliveryScopeKey(projectId?: number | null, warehouseId?: number | null) {
+  return `${Number(projectId ?? 0)}:${Number(warehouseId ?? 0)}`;
+}
+
+function getStockWarehouseLabel(option: any): string {
+  return (
+    option?.displayName ||
+    option?.warehouseDisplayName ||
+    option?.warehouseName ||
+    `Almacén #${option?.warehouseId ?? ""}`.trim()
+  );
+}
+
+function getStockProjectLabel(option: any): string {
+  return (
+    [option?.projectCode, option?.projectName].filter(Boolean).join(" - ") ||
+    "Proyecto/bodega"
+  );
+}
+
+function getProjectOptionLabel(project: any): string {
+  return (
+    [project?.code, project?.name].filter(Boolean).join(" - ") ||
+    `Proyecto #${project?.id ?? ""}`.trim()
+  );
 }
 
 function formatPrintNumber(value: string | number | null | undefined) {
@@ -340,6 +464,21 @@ export default function SalidasBodega() {
   const [deliveryWarehouseByItemId, setDeliveryWarehouseByItemId] = useState<
     Record<number, string>
   >({});
+  const [deliveryProjectByItemId, setDeliveryProjectByItemId] = useState<
+    Record<number, string>
+  >({});
+  const [
+    deliveryDestinationWarehouseByItemId,
+    setDeliveryDestinationWarehouseByItemId,
+  ] = useState<Record<number, string>>({});
+  const [
+    deliveryDestinationProjectByItemId,
+    setDeliveryDestinationProjectByItemId,
+  ] = useState<Record<number, string>>({});
+  const [
+    deliveryDestinationWarehouseTouchedByItemId,
+    setDeliveryDestinationWarehouseTouchedByItemId,
+  ] = useState<Record<number, boolean>>({});
   const [deliveryTargetByItemId, setDeliveryTargetByItemId] = useState<
     Record<number, DeliveryTargetSelection | null>
   >({});
@@ -359,21 +498,15 @@ export default function SalidasBodega() {
   const { data: materialRequests } = trpc.materialRequests.list.useQuery({
     requestType: "bienes",
   });
+  const { data: deliveryDestinationProjects } = trpc.projects.list.useQuery(
+    { status: "activo" },
+    { enabled: deliveryDialogOpen }
+  );
   const { data: deliveryRequestDetail } =
     trpc.materialRequests.getById.useQuery(
       { id: Number(deliveryRequestId || 0) },
       { enabled: deliveryDialogOpen && Boolean(deliveryRequestId) }
     );
-  const { data: deliveryWarehouses } = trpc.warehouses.list.useQuery(
-    {
-      projectId: deliveryRequestDetail?.request.projectId ?? 0,
-      isActive: true,
-    },
-    {
-      enabled:
-        deliveryDialogOpen && Boolean(deliveryRequestDetail?.request.projectId),
-    }
-  );
   const { data: deliveryTargetOptions, isLoading: deliveryTargetOptionsLoading } =
     trpc.materialRequests.targetOptions.useQuery(
       {
@@ -415,6 +548,10 @@ export default function SalidasBodega() {
       setDeliveryReceivedByName("");
       setDeliveryQuantityByItemId({});
       setDeliveryWarehouseByItemId({});
+      setDeliveryProjectByItemId({});
+      setDeliveryDestinationWarehouseByItemId({});
+      setDeliveryDestinationProjectByItemId({});
+      setDeliveryDestinationWarehouseTouchedByItemId({});
       setDeliveryTargetByItemId({});
       setDeliveryTargetPopoverOpen(null);
       setDeliveryTargetSearch("");
@@ -480,6 +617,63 @@ export default function SalidasBodega() {
     onError: (error) => toast.error(error.message),
   });
 
+  const getDeliveryDestinationWarehouseOptions = useCallback(
+    (projectId?: number | null) => {
+      if (!projectId) return [];
+      const project = (deliveryDestinationProjects ?? []).find(
+        (entry: any) => Number(entry.id) === Number(projectId)
+      );
+      const assignedWarehouses = Array.isArray(project?.warehouses)
+        ? project.warehouses
+        : [];
+      const warehouses =
+        assignedWarehouses.length > 0
+          ? assignedWarehouses
+          : [project?.defaultWarehouse, project?.warehouse].filter(Boolean);
+      const byId = new Map<number, any>();
+      for (const warehouse of warehouses) {
+        if (!warehouse?.id || byId.has(Number(warehouse.id))) continue;
+        byId.set(Number(warehouse.id), warehouse);
+      }
+      return Array.from(byId.values());
+    },
+    [deliveryDestinationProjects]
+  );
+  const deliveryDestinationWarehouseOptions = useMemo(
+    () =>
+      Array.from(
+        (deliveryDestinationProjects ?? []).reduce((byId: Map<number, any>, project: any) => {
+          for (const warehouse of getDeliveryDestinationWarehouseOptions(
+            Number(project.id)
+          )) {
+            if (!warehouse?.id || byId.has(Number(warehouse.id))) continue;
+            byId.set(Number(warehouse.id), warehouse);
+          }
+          return byId;
+        }, new Map<number, any>())
+      )
+        .map(([, warehouse]) => warehouse)
+        .sort((left: any, right: any) =>
+          getStockWarehouseLabel(left).localeCompare(getStockWarehouseLabel(right))
+        ),
+    [deliveryDestinationProjects, getDeliveryDestinationWarehouseOptions]
+  );
+  const getDeliveryDestinationProjectOptions = useCallback(
+    (warehouseId?: number | null) => {
+      if (!warehouseId) return [];
+      return (deliveryDestinationProjects ?? [])
+        .filter((project: any) =>
+          getDeliveryDestinationWarehouseOptions(Number(project.id)).some(
+            (warehouse: any) => Number(warehouse.id) === Number(warehouseId)
+          )
+        )
+        .sort((left: any, right: any) =>
+          getProjectOptionLabel(left).localeCompare(getProjectOptionLabel(right))
+        );
+    },
+    [deliveryDestinationProjects, getDeliveryDestinationWarehouseOptions]
+  );
+
   const resetReturnPanel = () => {
     setReturnPanelOpen(false);
     setReturnReasonCategory("error_pedido");
@@ -488,6 +682,114 @@ export default function SalidasBodega() {
     setReturnQuantityByItemId({});
     setReturnConditionByItemId({});
   };
+
+  useEffect(() => {
+    if (!deliveryRequestDetail) {
+      setDeliveryDestinationWarehouseByItemId({});
+      setDeliveryDestinationProjectByItemId({});
+      setDeliveryDestinationWarehouseTouchedByItemId({});
+      return;
+    }
+  }, [deliveryRequestDetail?.request.id]);
+
+  useEffect(() => {
+    if (
+      !deliveryDialogOpen ||
+      !deliveryRequestDetail ||
+      !deliveryDestinationProjects
+    ) {
+      return;
+    }
+
+    let changed = false;
+    const nextDestinationWarehouses = {
+      ...deliveryDestinationWarehouseByItemId,
+    };
+    const nextDestinationProjects = {
+      ...deliveryDestinationProjectByItemId,
+    };
+    const requestProjectId = Number(deliveryRequestDetail.request.projectId ?? 0);
+    const pendingDeliveryItems = (deliveryRequestDetail.items ?? []).filter(
+      (item: any) => getDeliveryPendingQuantity(item) > 0
+    );
+
+    for (const item of pendingDeliveryItems) {
+      const currentProjectId = Number(
+        nextDestinationProjects[item.id] || requestProjectId || 0
+      );
+      const currentWarehouseId = Number(
+        nextDestinationWarehouses[item.id] || 0
+      );
+      const originWarehouseId = Number(deliveryWarehouseByItemId[item.id] ?? 0);
+      const projectOptionsForWarehouse =
+        getDeliveryDestinationProjectOptions(currentWarehouseId);
+      const currentWarehouseIsValid =
+        currentWarehouseId > 0 &&
+        projectOptionsForWarehouse.some(
+          (project: any) => Number(project.id) === currentProjectId
+        );
+      const warehouseOptions =
+        getDeliveryDestinationWarehouseOptions(currentProjectId);
+      const originWarehouseOption =
+        originWarehouseId > 0
+          ? warehouseOptions.find(
+              (warehouse: any) => Number(warehouse.id) === originWarehouseId
+            )
+          : null;
+      const destinationWarehouseWasTouched = Boolean(
+        deliveryDestinationWarehouseTouchedByItemId[item.id]
+      );
+
+      if (
+        currentProjectId &&
+        currentWarehouseIsValid &&
+        (destinationWarehouseWasTouched ||
+          !originWarehouseOption ||
+          currentWarehouseId === originWarehouseId)
+      ) {
+        if ((nextDestinationProjects[item.id] ?? "") !== String(currentProjectId)) {
+          nextDestinationProjects[item.id] = String(currentProjectId);
+          changed = true;
+        }
+        continue;
+      }
+
+      const preferredWarehouse =
+        originWarehouseOption ??
+        warehouseOptions.find((warehouse: any) => warehouse.isPrimary) ??
+        warehouseOptions[0] ??
+        null;
+      const nextProjectValue =
+        currentProjectId > 0 ? String(currentProjectId) : "";
+      const nextWarehouseValue = preferredWarehouse?.id
+        ? String(preferredWarehouse.id)
+        : "";
+
+      if (
+        (nextDestinationProjects[item.id] ?? "") !== nextProjectValue ||
+        (nextDestinationWarehouses[item.id] ?? "") !== nextWarehouseValue
+      ) {
+        nextDestinationProjects[item.id] = nextProjectValue;
+        nextDestinationWarehouses[item.id] = nextWarehouseValue;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      setDeliveryDestinationProjectByItemId(nextDestinationProjects);
+      setDeliveryDestinationWarehouseByItemId(nextDestinationWarehouses);
+    }
+  }, [
+    deliveryDestinationProjectByItemId,
+    deliveryDestinationProjects,
+    deliveryDestinationWarehouseTouchedByItemId,
+    deliveryDestinationWarehouseByItemId,
+    deliveryWarehouseByItemId,
+    deliveryDialogOpen,
+    deliveryRequestDetail,
+    getDeliveryDestinationProjectOptions,
+    getDeliveryDestinationWarehouseOptions,
+  ]);
 
   useEffect(() => {
     if (!detail || detail.warehouseExit.status !== "borrador") {
@@ -516,12 +818,19 @@ export default function SalidasBodega() {
     if (!deliveryRequestDetail) {
       setDeliveryQuantityByItemId({});
       setDeliveryWarehouseByItemId({});
+      setDeliveryProjectByItemId({});
+      setDeliveryDestinationWarehouseByItemId({});
+      setDeliveryDestinationProjectByItemId({});
+      setDeliveryDestinationWarehouseTouchedByItemId({});
       setDeliveryTargetByItemId({});
       return;
     }
 
     const nextQuantities: Record<number, string> = {};
     const nextWarehouses: Record<number, string> = {};
+    const nextProjects: Record<number, string> = {};
+    const nextDestinationWarehouses: Record<number, string> = {};
+    const nextDestinationProjects: Record<number, string> = {};
     const nextTargets: Record<number, DeliveryTargetSelection | null> = {};
     for (const item of deliveryRequestDetail.items || []) {
       const suggestedQuantity = getSuggestedDeliveryQuantity(item);
@@ -530,11 +839,39 @@ export default function SalidasBodega() {
         const transferSourceWarehouseId = Number(
           item.transferSourceWarehouseId ?? 0
         );
+        const transferSourceProjectId = Number(
+          item.transferSourceProjectId ?? 0
+        );
+        const requestProjectId = Number(
+          deliveryRequestDetail.request.projectId ?? 0
+        );
+        const transferReceiptProjectId = Number(
+          item.transferReceiptProjectId ?? 0
+        );
+        const transferReceiptWarehouseId = Number(
+          item.transferReceiptWarehouseId ?? 0
+        );
+        const isSameTransferOriginScope =
+          itemWarehouseId > 0 &&
+          itemWarehouseId === transferSourceWarehouseId &&
+          (!transferSourceProjectId ||
+            transferSourceProjectId === requestProjectId);
         nextQuantities[item.id] = suggestedQuantity.toFixed(2);
         nextWarehouses[item.id] =
-          itemWarehouseId > 0 && itemWarehouseId !== transferSourceWarehouseId
-            ? String(itemWarehouseId)
-            : "";
+          transferReceiptWarehouseId > 0
+            ? String(transferReceiptWarehouseId)
+            : itemWarehouseId > 0 && !isSameTransferOriginScope
+              ? String(itemWarehouseId)
+              : "";
+        nextProjects[item.id] =
+          transferReceiptProjectId > 0
+            ? String(transferReceiptProjectId)
+            : requestProjectId > 0
+              ? String(requestProjectId)
+              : "";
+        nextDestinationProjects[item.id] =
+          requestProjectId > 0 ? String(requestProjectId) : "";
+        nextDestinationWarehouses[item.id] = "";
         nextTargets[item.id] = mapWarehouseExitLineTargetToSelection(
           item,
           deliveryRequestDetail.request.projectId
@@ -543,6 +880,10 @@ export default function SalidasBodega() {
     }
     setDeliveryQuantityByItemId(nextQuantities);
     setDeliveryWarehouseByItemId(nextWarehouses);
+    setDeliveryProjectByItemId(nextProjects);
+    setDeliveryDestinationWarehouseByItemId(nextDestinationWarehouses);
+    setDeliveryDestinationProjectByItemId(nextDestinationProjects);
+    setDeliveryDestinationWarehouseTouchedByItemId({});
     setDeliveryTargetByItemId(nextTargets);
   }, [deliveryRequestDetail?.request.id]);
 
@@ -573,27 +914,27 @@ export default function SalidasBodega() {
       })),
     [deliveryItems]
   );
-  const { data: deliveryStockRows } = trpc.inventory.projectStockForItems.useQuery(
+  const { data: deliveryStockRows } =
+    trpc.inventory.visibleWarehouseStockForItems.useQuery(
     {
-      projectId: deliveryRequestDetail?.request.projectId ?? 0,
+      includeQuantities: true,
       items: deliveryStockItems,
     },
     {
       enabled:
         deliveryDialogOpen &&
-        Boolean(deliveryRequestDetail?.request.projectId) &&
         deliveryStockItems.length > 0,
     }
   );
-  const deliveryWarehouseStockByItemId = useMemo<Map<number, Map<number, number>>>(
+  const deliveryScopeStockByItemId = useMemo<Map<number, Map<string, any>>>(
     () =>
-      new Map<number, Map<number, number>>(
+      new Map<number, Map<string, any>>(
         (deliveryStockRows ?? []).map((row: any) => [
           Number(row.itemId),
-          new Map<number, number>(
+          new Map<string, any>(
             (row.warehouses ?? []).map((warehouse: any) => [
-              Number(warehouse.warehouseId),
-              Number(warehouse.quantity ?? 0),
+              getDeliveryScopeKey(warehouse.projectId, warehouse.warehouseId),
+              warehouse,
             ])
           ),
         ])
@@ -604,68 +945,392 @@ export default function SalidasBodega() {
     const warehouseId = Number(item.transferSourceWarehouseId ?? 0);
     return Number.isFinite(warehouseId) && warehouseId > 0 ? warehouseId : null;
   }, []);
-  const isDeliveryWarehouseBlocked = useCallback(
-    (item: any, warehouseId: number) => {
+  const getDeliveryStockOptions = useCallback(
+    (item: any) =>
+      Array.from(deliveryScopeStockByItemId.get(item.id)?.values() ?? [])
+        .filter(
+          (option: any) =>
+            Number(option.projectId) > 0 && Number(option.warehouseId) > 0
+        )
+        .sort(
+          (left: any, right: any) =>
+            getStockWarehouseLabel(left).localeCompare(
+              getStockWarehouseLabel(right)
+            ) ||
+            getStockProjectLabel(left).localeCompare(getStockProjectLabel(right))
+        ),
+    [deliveryScopeStockByItemId]
+  );
+  const isDeliveryScopeBlocked = useCallback(
+    (item: any, projectId: number, warehouseId: number) => {
       const blockedWarehouseId = getDeliveryBlockedWarehouseId(item);
+      const sourceProjectId = Number(item.transferSourceProjectId ?? 0);
       return Boolean(
-        blockedWarehouseId && Number(warehouseId) === blockedWarehouseId
+        blockedWarehouseId &&
+          Number(warehouseId) === blockedWarehouseId &&
+          (!sourceProjectId || sourceProjectId === Number(projectId))
       );
     },
     [getDeliveryBlockedWarehouseId]
   );
-  const getDeliveryWarehouseAvailableQuantity = useCallback(
-    (item: any, warehouseId: number) => {
-      if (!warehouseId || isDeliveryWarehouseBlocked(item, warehouseId)) return 0;
-      return deliveryWarehouseStockByItemId.get(item.id)?.get(warehouseId) ?? 0;
+  const getDeliveryScopeAvailableQuantity = useCallback(
+    (item: any, projectId: number, warehouseId: number) => {
+      if (
+        !projectId ||
+        !warehouseId ||
+        isDeliveryScopeBlocked(item, projectId, warehouseId)
+      ) {
+        return 0;
+      }
+      const scope = deliveryScopeStockByItemId
+        .get(item.id)
+        ?.get(getDeliveryScopeKey(projectId, warehouseId));
+      return Number(scope?.quantity ?? 0);
     },
-    [deliveryWarehouseStockByItemId, isDeliveryWarehouseBlocked]
+    [deliveryScopeStockByItemId, isDeliveryScopeBlocked]
   );
-  const getSuggestedDeliveryWarehouseId = useCallback(
+  const getDeliveryScopeStockQuantity = useCallback(
+    (item: any, projectId: number, warehouseId: number) => {
+      if (!projectId || !warehouseId) return 0;
+      const scope = deliveryScopeStockByItemId
+        .get(item.id)
+        ?.get(getDeliveryScopeKey(projectId, warehouseId));
+      return Number(scope?.quantity ?? 0);
+    },
+    [deliveryScopeStockByItemId]
+  );
+  const getDeliveryWarehouseOptions = useCallback(
     (item: any) => {
-      const warehouseStock = deliveryWarehouseStockByItemId.get(item.id);
-      if (!warehouseStock || !deliveryWarehouses?.length) return null;
+      const byWarehouse = new Map<number, any>();
+      for (const option of getDeliveryStockOptions(item)) {
+        const warehouseId = Number(option.warehouseId);
+        const projectId = Number(option.projectId);
+        if (!warehouseId || !projectId) continue;
+        const quantity = isDeliveryScopeBlocked(item, projectId, warehouseId)
+          ? 0
+          : Number(option.quantity ?? 0);
+        const current = byWarehouse.get(warehouseId);
+        if (!current) {
+          byWarehouse.set(warehouseId, {
+            ...option,
+            quantity,
+          });
+          continue;
+        }
+        byWarehouse.set(warehouseId, {
+          ...current,
+          quantity: Number(current.quantity ?? 0) + quantity,
+        });
+      }
 
+      return Array.from(byWarehouse.values()).sort((left, right) =>
+        getStockWarehouseLabel(left).localeCompare(getStockWarehouseLabel(right))
+      );
+    },
+    [getDeliveryStockOptions, isDeliveryScopeBlocked]
+  );
+  const getDeliveryProjectOptions = useCallback(
+    (item: any, warehouseId?: number | null) => {
+      if (!warehouseId) return [];
+      return getDeliveryStockOptions(item)
+        .filter((option: any) => Number(option.warehouseId) === warehouseId)
+        .sort((left: any, right: any) =>
+          getStockProjectLabel(left).localeCompare(getStockProjectLabel(right))
+        );
+    },
+    [getDeliveryStockOptions]
+  );
+  const setDeliverySourceForItem = useCallback(
+    (item: any, projectId: number, warehouseId: number) => {
+      const availableQuantity = getDeliveryScopeAvailableQuantity(
+        item,
+        projectId,
+        warehouseId
+      );
+      const nextQuantity = Math.min(
+        getDeliveryPendingQuantity(item),
+        Math.max(availableQuantity, 0)
+      );
+
+      setDeliveryWarehouseByItemId((current) => ({
+        ...current,
+        [item.id]: String(warehouseId),
+      }));
+      setDeliveryProjectByItemId((current) => ({
+        ...current,
+        [item.id]: String(projectId),
+      }));
+      setDeliveryQuantityByItemId((current) => ({
+        ...current,
+        [item.id]: nextQuantity > 0 ? nextQuantity.toFixed(2) : "0.00",
+      }));
+    },
+    [getDeliveryScopeAvailableQuantity]
+  );
+  const clearDeliveryProjectForItem = useCallback((item: any, warehouseId: number) => {
+    setDeliveryWarehouseByItemId((current) => ({
+      ...current,
+      [item.id]: String(warehouseId),
+    }));
+    setDeliveryProjectByItemId((current) => {
+      const next = { ...current };
+      delete next[item.id];
+      return next;
+    });
+    setDeliveryQuantityByItemId((current) => ({
+      ...current,
+      [item.id]: "0.00",
+    }));
+  }, []);
+  const handleDeliveryWarehouseChange = useCallback(
+    (item: any, value: string) => {
+      const warehouseId = Number(value);
+      const projectOptions = getDeliveryProjectOptions(item, warehouseId);
+      const selectedProjectId = Number(deliveryProjectByItemId[item.id] ?? 0);
+      const selectedProjectStillValid =
+        selectedProjectId > 0 &&
+        projectOptions.some(
+          (option: any) =>
+            Number(option.projectId) === selectedProjectId &&
+            !isDeliveryScopeBlocked(item, selectedProjectId, warehouseId)
+        );
+
+      if (selectedProjectStillValid) {
+        setDeliverySourceForItem(item, selectedProjectId, warehouseId);
+        return;
+      }
+
+      const bestProjectOption =
+        [...projectOptions]
+          .filter(
+            (option: any) =>
+              !isDeliveryScopeBlocked(
+                item,
+                Number(option.projectId),
+                warehouseId
+              ) && Number(option.quantity ?? 0) > 0
+          )
+          .sort(
+            (left: any, right: any) =>
+              Number(right.quantity ?? 0) - Number(left.quantity ?? 0)
+          )[0] ?? projectOptions[0];
+
+      if (bestProjectOption?.projectId) {
+        setDeliverySourceForItem(
+          item,
+          Number(bestProjectOption.projectId),
+          warehouseId
+        );
+        return;
+      }
+
+      clearDeliveryProjectForItem(item, warehouseId);
+    },
+    [
+      clearDeliveryProjectForItem,
+      deliveryProjectByItemId,
+      getDeliveryProjectOptions,
+      isDeliveryScopeBlocked,
+      setDeliverySourceForItem,
+    ]
+  );
+  const handleDeliveryProjectChange = useCallback(
+    (item: any, value: string) => {
+      const projectId = Number(value);
+      const warehouseId = Number(deliveryWarehouseByItemId[item.id] ?? 0);
+      if (!projectId || !warehouseId) return;
+      setDeliverySourceForItem(item, projectId, warehouseId);
+    },
+    [deliveryWarehouseByItemId, setDeliverySourceForItem]
+  );
+  const handleDeliveryDestinationWarehouseChange = useCallback(
+    (item: any, value: string) => {
+      const warehouseId = Number(value);
+      if (!warehouseId) return;
+
+      const projectOptions =
+        getDeliveryDestinationProjectOptions(warehouseId);
+      const selectedProjectId = Number(
+        deliveryDestinationProjectByItemId[item.id] ?? 0
+      );
+      const selectedProjectStillValid =
+        selectedProjectId > 0 &&
+        projectOptions.some(
+          (project: any) => Number(project.id) === selectedProjectId
+        );
+      const requestProjectId = Number(
+        deliveryRequestDetail?.request.projectId ?? 0
+      );
+      const preferredProject =
+        projectOptions.find(
+          (project: any) => Number(project.id) === requestProjectId
+        ) ??
+        projectOptions[0] ??
+        null;
+      const nextProjectId = selectedProjectStillValid
+        ? selectedProjectId
+        : Number(preferredProject?.id ?? 0);
+
+      setDeliveryDestinationWarehouseByItemId((current) => ({
+        ...current,
+        [item.id]: String(warehouseId),
+      }));
+      setDeliveryDestinationWarehouseTouchedByItemId((current) => ({
+        ...current,
+        [item.id]: true,
+      }));
+      setDeliveryDestinationProjectByItemId((current) => {
+        if (!nextProjectId) {
+          const next = { ...current };
+          delete next[item.id];
+          return next;
+        }
+        return {
+          ...current,
+          [item.id]: String(nextProjectId),
+        };
+      });
+    },
+    [
+      deliveryDestinationProjectByItemId,
+      deliveryRequestDetail?.request.projectId,
+      getDeliveryDestinationProjectOptions,
+    ]
+  );
+  const handleDeliveryDestinationProjectChange = useCallback(
+    (item: any, value: string) => {
+      const projectId = Number(value);
+      if (!projectId) return;
+
+      const warehouseOptions = getDeliveryDestinationWarehouseOptions(projectId);
+      const currentWarehouseId = Number(
+        deliveryDestinationWarehouseByItemId[item.id] ?? 0
+      );
+      const originWarehouseId = Number(deliveryWarehouseByItemId[item.id] ?? 0);
+      const currentWarehouseIsValid = warehouseOptions.some(
+        (warehouse: any) => Number(warehouse.id) === currentWarehouseId
+      );
+      const originWarehouseOption =
+        originWarehouseId > 0
+          ? warehouseOptions.find(
+              (warehouse: any) => Number(warehouse.id) === originWarehouseId
+            )
+          : null;
+      const currentWarehouseOption = warehouseOptions.find(
+        (warehouse: any) => Number(warehouse.id) === currentWarehouseId
+      );
+      const destinationWarehouseWasTouched = Boolean(
+        deliveryDestinationWarehouseTouchedByItemId[item.id]
+      );
+      const preferredWarehouse =
+        destinationWarehouseWasTouched && currentWarehouseIsValid
+          ? currentWarehouseOption
+          : originWarehouseOption ??
+            (currentWarehouseIsValid ? currentWarehouseOption : null) ??
+            warehouseOptions.find((warehouse: any) => warehouse.isPrimary) ??
+            warehouseOptions[0] ??
+            null;
+
+      setDeliveryDestinationProjectByItemId((current) => ({
+        ...current,
+        [item.id]: String(projectId),
+      }));
+      setDeliveryDestinationWarehouseByItemId((current) => {
+        if (!preferredWarehouse?.id) {
+          const next = { ...current };
+          delete next[item.id];
+          return next;
+        }
+        return {
+          ...current,
+          [item.id]: String(preferredWarehouse.id),
+        };
+      });
+    },
+    [
+      deliveryDestinationWarehouseByItemId,
+      deliveryDestinationWarehouseTouchedByItemId,
+      deliveryWarehouseByItemId,
+      getDeliveryDestinationWarehouseOptions,
+    ]
+  );
+  const getSuggestedDeliveryScope = useCallback(
+    (item: any) => {
       const pendingQuantity = getDeliveryPendingQuantity(item);
-      const candidates = deliveryWarehouses
-        .map((warehouse: any) => {
-          const warehouseId = Number(warehouse.id);
+      const candidates = getDeliveryStockOptions(item)
+        .map((option: any) => {
+          const projectId = Number(option.projectId);
+          const warehouseId = Number(option.warehouseId);
           return {
+            option,
+            projectId,
             warehouseId,
-            quantity: getDeliveryWarehouseAvailableQuantity(item, warehouseId),
+            quantity: getDeliveryScopeAvailableQuantity(
+              item,
+              projectId,
+              warehouseId
+            ),
           };
         })
         .filter(
           candidate =>
+            candidate.projectId > 0 &&
             candidate.warehouseId > 0 &&
             candidate.quantity > 0 &&
-            !isDeliveryWarehouseBlocked(item, candidate.warehouseId)
+            !isDeliveryScopeBlocked(
+              item,
+              candidate.projectId,
+              candidate.warehouseId
+            )
         );
 
-      const findCandidate = (warehouseId: number) =>
-        candidates.find(candidate => candidate.warehouseId === warehouseId);
+      const findCandidate = (projectId: number, warehouseId: number) =>
+        candidates.find(
+          candidate =>
+            candidate.projectId === projectId &&
+            candidate.warehouseId === warehouseId
+        );
+      const transferReceiptProjectId = Number(
+        item.transferReceiptProjectId ?? 0
+      );
       const transferReceiptWarehouseId = Number(
         item.transferReceiptWarehouseId ?? 0
       );
+      const requestProjectId = Number(
+        deliveryRequestDetail?.request.projectId ?? 0
+      );
       const itemWarehouseId = Number(item.warehouseId ?? 0);
       const preferredCandidate =
-        findCandidate(transferReceiptWarehouseId) ??
-        findCandidate(itemWarehouseId);
-      if (preferredCandidate) return preferredCandidate.warehouseId;
+        findCandidate(transferReceiptProjectId, transferReceiptWarehouseId) ??
+        findCandidate(requestProjectId, itemWarehouseId);
+      if (preferredCandidate) {
+        return {
+          projectId: preferredCandidate.projectId,
+          warehouseId: preferredCandidate.warehouseId,
+        };
+      }
 
       const enoughStockCandidate = [...candidates]
         .filter(candidate => candidate.quantity + 0.000001 >= pendingQuantity)
         .sort((left, right) => left.quantity - right.quantity)[0];
-      if (enoughStockCandidate) return enoughStockCandidate.warehouseId;
+      const bestCandidate =
+        enoughStockCandidate ??
+        [...candidates].sort(
+          (left, right) => right.quantity - left.quantity
+        )[0];
 
-      return [...candidates].sort(
-        (left, right) => right.quantity - left.quantity
-      )[0]?.warehouseId ?? null;
+      return bestCandidate
+        ? {
+            projectId: bestCandidate.projectId,
+            warehouseId: bestCandidate.warehouseId,
+          }
+        : null;
     },
     [
-      deliveryWarehouseStockByItemId,
-      deliveryWarehouses,
-      getDeliveryWarehouseAvailableQuantity,
-      isDeliveryWarehouseBlocked,
+      deliveryRequestDetail?.request.projectId,
+      getDeliveryScopeAvailableQuantity,
+      getDeliveryStockOptions,
+      isDeliveryScopeBlocked,
     ]
   );
 
@@ -673,46 +1338,61 @@ export default function SalidasBodega() {
     if (
       !deliveryDialogOpen ||
       !deliveryRequestDetail ||
-      !deliveryWarehouses?.length ||
       deliveryStockRows === undefined
     ) {
       return;
     }
 
-    setDeliveryWarehouseByItemId(current => {
-      let changed = false;
-      const nextWarehouses = { ...current };
+    let changed = false;
+    const nextWarehouses = { ...deliveryWarehouseByItemId };
+    const nextProjects = { ...deliveryProjectByItemId };
 
-      for (const item of deliveryItems) {
-        const selectedWarehouseId = Number(nextWarehouses[item.id] ?? 0);
-        const selectedWarehouseIsValid =
-          selectedWarehouseId > 0 &&
-          getDeliveryWarehouseAvailableQuantity(item, selectedWarehouseId) > 0 &&
-          !isDeliveryWarehouseBlocked(item, selectedWarehouseId);
+    for (const item of deliveryItems) {
+      const selectedWarehouseId = Number(nextWarehouses[item.id] ?? 0);
+      const selectedProjectId = Number(nextProjects[item.id] ?? 0);
+      const selectedWarehouseIsValid =
+        selectedWarehouseId > 0 &&
+        selectedProjectId > 0 &&
+        getDeliveryScopeAvailableQuantity(
+          item,
+          selectedProjectId,
+          selectedWarehouseId
+        ) > 0 &&
+        !isDeliveryScopeBlocked(item, selectedProjectId, selectedWarehouseId);
 
-        if (selectedWarehouseIsValid) continue;
+      if (selectedWarehouseIsValid) continue;
 
-        const suggestedWarehouseId = getSuggestedDeliveryWarehouseId(item);
-        const nextValue = suggestedWarehouseId
-          ? String(suggestedWarehouseId)
-          : "";
-        if ((nextWarehouses[item.id] ?? "") !== nextValue) {
-          nextWarehouses[item.id] = nextValue;
-          changed = true;
-        }
+      const suggestedScope = getSuggestedDeliveryScope(item);
+      const nextWarehouseValue = suggestedScope
+        ? String(suggestedScope.warehouseId)
+        : "";
+      const nextProjectValue = suggestedScope
+        ? String(suggestedScope.projectId)
+        : "";
+      if (
+        (nextWarehouses[item.id] ?? "") !== nextWarehouseValue ||
+        (nextProjects[item.id] ?? "") !== nextProjectValue
+      ) {
+        nextWarehouses[item.id] = nextWarehouseValue;
+        nextProjects[item.id] = nextProjectValue;
+        changed = true;
       }
+    }
 
-      return changed ? nextWarehouses : current;
-    });
+    if (changed) {
+      setDeliveryWarehouseByItemId(nextWarehouses);
+      setDeliveryProjectByItemId(nextProjects);
+    }
   }, [
     deliveryDialogOpen,
     deliveryItems,
+    deliveryProjectByItemId,
+    deliveryWarehouseByItemId,
     deliveryRequestDetail,
     deliveryStockRows,
-    deliveryWarehouses,
-    getDeliveryWarehouseAvailableQuantity,
-    getSuggestedDeliveryWarehouseId,
-    isDeliveryWarehouseBlocked,
+    getDeliveryScopeAvailableQuantity,
+    getSuggestedDeliveryScope,
+    isDeliveryScopeBlocked,
   ]);
 
   const filteredExits = useMemo(() => {
@@ -749,7 +1429,7 @@ export default function SalidasBodega() {
     const open = deliveryTargetPopoverOpen === item.id;
 
     return (
-      <div className="min-w-[260px]">
+      <div className="w-full min-w-0">
         <div className="flex min-w-0 gap-2">
           <Popover
             open={open}
@@ -922,15 +1602,26 @@ export default function SalidasBodega() {
       toast.error("Ingrese quién recibe la salida");
       return;
     }
-
     const selectedItems = deliveryItems
       .map((item: any) => {
         const quantity = Number(deliveryQuantityByItemId[item.id] ?? 0);
         const warehouseId = Number(deliveryWarehouseByItemId[item.id] ?? 0);
+        const sourceProjectId = Number(deliveryProjectByItemId[item.id] ?? 0);
+        const destinationWarehouseId = Number(
+          deliveryDestinationWarehouseByItemId[item.id] ?? 0
+        );
+        const destinationProjectId = Number(
+          deliveryDestinationProjectByItemId[item.id] ?? 0
+        );
         const targetSelection = deliveryTargetByItemId[item.id] ?? null;
-        const isBlockedWarehouse = isDeliveryWarehouseBlocked(item, warehouseId);
-        const availableQuantity = getDeliveryWarehouseAvailableQuantity(
+        const isBlockedWarehouse = isDeliveryScopeBlocked(
           item,
+          sourceProjectId,
+          warehouseId
+        );
+        const availableQuantity = getDeliveryScopeAvailableQuantity(
+          item,
+          sourceProjectId,
           warehouseId
         );
         const pendingQuantity = getDeliveryPendingQuantity(item);
@@ -940,7 +1631,10 @@ export default function SalidasBodega() {
           quantity,
           pendingQuantity,
           availableQuantity,
+          sourceProjectId,
           warehouseId,
+          destinationProjectId,
+          destinationWarehouseId,
           isBlockedWarehouse,
           targetSelection,
         };
@@ -957,12 +1651,18 @@ export default function SalidasBodega() {
         quantity,
         pendingQuantity,
         availableQuantity,
+        sourceProjectId,
         warehouseId,
+        destinationProjectId,
+        destinationWarehouseId,
         isBlockedWarehouse,
       }) =>
         !Number.isFinite(quantity) ||
         quantity <= 0 ||
+        !sourceProjectId ||
         !warehouseId ||
+        !destinationProjectId ||
+        !destinationWarehouseId ||
         isBlockedWarehouse ||
         quantity - pendingQuantity > 0.000001 ||
         quantity - availableQuantity > 0.000001
@@ -970,12 +1670,12 @@ export default function SalidasBodega() {
     if (invalidItem) {
       if (invalidItem.isBlockedWarehouse) {
         toast.error(
-          `${invalidItem.item.itemName}: no se puede despachar desde la bodega origen del traslado`
+          `${invalidItem.item.itemName}: no se puede despachar desde la misma bodega/proyecto de origen del traslado`
         );
         return;
       }
       toast.error(
-        `${invalidItem.item.itemName}: revise la cantidad, el pendiente y la existencia disponible`
+        `${invalidItem.item.itemName}: revise origen, destino, cantidad, pendiente y existencia disponible`
       );
       return;
     }
@@ -984,12 +1684,25 @@ export default function SalidasBodega() {
       requestId: deliveryRequestDetail.request.id,
       note: deliveryNotes.trim() || undefined,
       receivedByName,
-      items: selectedItems.map(({ item, quantity, warehouseId, targetSelection }) => ({
-        requestItemId: item.id,
-        dispatchedQuantity: quantity.toFixed(2),
-        warehouseId,
-        ...getDeliveryTargetPayload(targetSelection),
-      })),
+      items: selectedItems.map(
+        ({
+          item,
+          quantity,
+          sourceProjectId,
+          warehouseId,
+          destinationProjectId,
+          destinationWarehouseId,
+          targetSelection,
+        }) => ({
+          requestItemId: item.id,
+          dispatchedQuantity: quantity.toFixed(2),
+          sourceProjectId,
+          warehouseId,
+          destinationProjectId,
+          destinationWarehouseId,
+          ...getDeliveryTargetPayload(targetSelection),
+        })
+      ),
     });
   };
 
@@ -1137,6 +1850,10 @@ export default function SalidasBodega() {
       ? `${detail.project.code} ${detail.project.name}`
       : `Proyecto ${warehouseExit.projectId}`;
     const warehouseLabel = formatWarehouseExitWarehouseLabel(detail);
+    const destinationProjectLabel =
+      formatWarehouseExitDestinationProjectLabel(detail);
+    const destinationWarehouseLabel =
+      formatWarehouseExitDestinationWarehouseLabel(detail);
     const requestedByLabel = formatWarehouseExitRequestLabel(detail);
     const createdByLabel = detail.createdBy?.name || "-";
     const receivedByLabel = warehouseExit.receivedByName?.trim() || "-";
@@ -1151,13 +1868,21 @@ export default function SalidasBodega() {
         (item: any) => {
           const targetLabel =
             formatWarehouseExitTargetLabel(item, warehouseExit.projectId) || "-";
+          const logisticDestinationLabel =
+            formatWarehouseExitItemDestinationLabel(item);
+          const destinationLabel =
+            logisticDestinationLabel === "-"
+              ? targetLabel
+              : targetLabel === "-"
+                ? logisticDestinationLabel
+                : `${logisticDestinationLabel} | ${targetLabel}`;
           return `
           <tr>
             <td>${escapeHtml(item.sapItemCode || "-")}</td>
             <td>${escapeHtml(item.itemName || "-")}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantity))}</td>
             <td class="center">${escapeHtml(item.unit || "-")}</td>
-            <td>${escapeHtml(targetLabel)}</td>
+            <td>${escapeHtml(destinationLabel)}</td>
             <td>
               <div>${escapeHtml(item.notes || referenceLabel)}</div>
             </td>
@@ -1338,12 +2063,12 @@ export default function SalidasBodega() {
               </div>
               <div class="meta-column">
                 <div class="field">
-                  <div class="label">Job:</div>
+                  <div class="label">Job origen:</div>
                   <div class="value">${escapeHtml(projectLabel)}</div>
                 </div>
                 <div class="field">
-                  <div class="label">Destino:</div>
-                  <div class="value">Ver detalle por línea</div>
+                  <div class="label">Job destino:</div>
+                  <div class="value">${escapeHtml(destinationProjectLabel)}</div>
                 </div>
                 <div class="field">
                   <div class="label">Referencia:</div>
@@ -1351,7 +2076,7 @@ export default function SalidasBodega() {
                 </div>
                 <div class="field">
                   <div class="label">A Bodega:</div>
-                  <div class="value">N/A</div>
+                  <div class="value">${escapeHtml(destinationWarehouseLabel)}</div>
                 </div>
               </div>
             </section>
@@ -1540,7 +2265,7 @@ export default function SalidasBodega() {
           }
         }}
       >
-        <DialogContent className="max-h-[92vh] !w-[calc(100vw-0.5rem)] !max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-5 sm:!w-[calc(100vw-1rem)] sm:!max-w-[calc(100vw-1rem)] sm:p-8 xl:!max-w-[1800px] 2xl:!max-w-[1900px]">
+        <DialogContent className="max-h-[92vh] !w-[calc(100vw-0.5rem)] !max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:!w-[calc(100vw-1rem)] sm:!max-w-[calc(100vw-1rem)] sm:p-5 xl:!max-w-[calc(100vw-1rem)]">
           <DialogHeader className="border-b border-border/70 pb-5">
             <DialogTitle className="flex flex-wrap items-center gap-3 text-2xl font-bold tracking-tight sm:text-3xl">
               {detail?.warehouseExit.exitNumber || "Salida de Inventario"}
@@ -1563,7 +2288,7 @@ export default function SalidasBodega() {
               <div className="grid gap-3 md:grid-cols-5">
                 <div className="rounded-xl border bg-muted/20 p-4">
                   <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                    Proyecto
+                    Proyecto/bodega origen
                   </Label>
                   <p className="mt-2 font-semibold">
                     {detail.project
@@ -1573,7 +2298,7 @@ export default function SalidasBodega() {
                 </div>
                 <div className="rounded-xl border bg-muted/20 p-4">
                   <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                    Bodega
+                    Almacén origen
                   </Label>
                   <p className="mt-2 font-semibold">
                     {detail.warehouse?.displayName || "-"}
@@ -1616,6 +2341,25 @@ export default function SalidasBodega() {
                 </div>
               </div>
 
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-xl border bg-muted/20 p-4">
+                  <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                    Proyecto/bodega destino
+                  </Label>
+                  <p className="mt-2 font-semibold">
+                    {formatWarehouseExitDestinationProjectLabel(detail)}
+                  </p>
+                </div>
+                <div className="rounded-xl border bg-muted/20 p-4">
+                  <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                    Almacén destino
+                  </Label>
+                  <p className="mt-2 font-semibold">
+                    {formatWarehouseExitDestinationWarehouseLabel(detail)}
+                  </p>
+                </div>
+              </div>
+
               {detailIsDraft ? (
                 <div className="space-y-2 rounded-xl border bg-muted/20 p-4">
                   <Label className="text-xs uppercase tracking-wider text-muted-foreground">
@@ -1634,7 +2378,7 @@ export default function SalidasBodega() {
               ) : null}
 
               <div className="overflow-x-auto rounded-xl border">
-                <table className="w-full min-w-[1420px] text-sm">
+                <table className="w-full min-w-[1640px] text-sm">
                   <thead>
                     <tr className="border-b bg-muted/30">
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1644,7 +2388,10 @@ export default function SalidasBodega() {
                         Ítem
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Destino
+                        Destino interno
+                      </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Destino bodega
                       </th>
                       <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Cantidad
@@ -1685,6 +2432,9 @@ export default function SalidasBodega() {
                               item,
                               detail.warehouseExit.projectId
                             ) || "-"}
+                          </td>
+                          <td className="p-3 text-xs text-muted-foreground">
+                            {formatWarehouseExitItemDestinationLabel(item)}
                           </td>
                           <td className="p-3 text-right">
                             {detailIsDraft ? (
@@ -1860,7 +2610,7 @@ export default function SalidasBodega() {
                               <td className="p-3 text-right font-mono text-xs">
                                 {formatQuantity(item.returnableQuantity)} {item.unit || ""}
                               </td>
-                              <td className="p-3">
+                              <td className="p-3 align-top">
                                 <Input
                                   className="ml-auto w-28 text-right"
                                   type="number"
@@ -2031,13 +2781,17 @@ export default function SalidasBodega() {
             setDeliveryReceivedByName("");
             setDeliveryQuantityByItemId({});
             setDeliveryWarehouseByItemId({});
+            setDeliveryProjectByItemId({});
+            setDeliveryDestinationWarehouseByItemId({});
+            setDeliveryDestinationProjectByItemId({});
+            setDeliveryDestinationWarehouseTouchedByItemId({});
             setDeliveryTargetByItemId({});
             setDeliveryTargetPopoverOpen(null);
             setDeliveryTargetSearch("");
           }
         }}
       >
-        <DialogContent className="max-h-[92vh] !w-[calc(100vw-0.5rem)] !max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-5 sm:!w-[calc(100vw-1rem)] sm:!max-w-[calc(100vw-1rem)] sm:p-8 xl:!max-w-[1800px] 2xl:!max-w-[1900px]">
+        <DialogContent className="max-h-[92vh] !w-[calc(100vw-0.5rem)] !max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:!w-[calc(100vw-1rem)] sm:!max-w-[calc(100vw-1rem)] sm:p-5 xl:!max-w-[calc(100vw-1rem)]">
           <DialogHeader className="border-b border-border/70 pb-5">
             <DialogTitle className="text-2xl font-bold tracking-tight sm:text-3xl">
               Nueva salida de requisición
@@ -2077,34 +2831,37 @@ export default function SalidasBodega() {
               <>
                 {deliveryItems.length > 0 ? (
                   <div className="overflow-x-auto rounded-xl border">
-                    <table className="w-full min-w-[1420px] text-sm">
+                    <table className="w-full min-w-[1760px] table-fixed text-sm">
                       <thead>
                         <tr className="border-b bg-muted/30">
-                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          <th className="w-20 px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             Código SAP
                           </th>
-                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          <th className="w-60 px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             Ítem
                           </th>
-                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                            Destino
+                          <th className="w-60 px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Destino interno
                           </th>
-                          <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          <th className="w-[92px] px-2 py-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             Solicitado
                           </th>
-                          <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          <th className="w-[108px] px-2 py-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             Ya despachado
                           </th>
-                          <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          <th className="w-[104px] px-2 py-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             Disponible
                           </th>
-                          <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                            Almacén
+                          <th className="w-[350px] px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Origen
                           </th>
-                          <th className="w-36 p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          <th className="w-[350px] px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Destino
+                          </th>
+                          <th className="w-28 px-2 py-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             Despachar
                           </th>
-                          <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          <th className="w-[86px] px-2 py-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             Saldo
                           </th>
                         </tr>
@@ -2116,19 +2873,72 @@ export default function SalidasBodega() {
                           const selectedWarehouseId = Number(
                             deliveryWarehouseByItemId[item.id] ?? 0
                           );
+                          const selectedProjectId = Number(
+                            deliveryProjectByItemId[item.id] ?? 0
+                          );
                           const selectedWarehouseBlocked =
-                            isDeliveryWarehouseBlocked(item, selectedWarehouseId);
-                          const availableQuantity =
-                            getDeliveryWarehouseAvailableQuantity(
+                            isDeliveryScopeBlocked(
                               item,
+                              selectedProjectId,
+                              selectedWarehouseId
+                            );
+                          const availableQuantity =
+                            getDeliveryScopeAvailableQuantity(
+                              item,
+                              selectedProjectId,
                               selectedWarehouseId
                             );
                           const pendingQuantity = getDeliveryPendingQuantity(item);
                           const quantity = Number(deliveryQuantityByItemId[item.id] ?? 0);
                           const balanceQuantity = Math.max(pendingQuantity - quantity, 0);
-                          const projectStockQuantity = parseQuantity(
-                            (item as any).projectStock
+                          const warehouseOptions =
+                            getDeliveryWarehouseOptions(item);
+                          const projectOptions = getDeliveryProjectOptions(
+                            item,
+                            selectedWarehouseId
                           );
+                          const selectedWarehouseOption = warehouseOptions.find(
+                            (warehouse: any) =>
+                              Number(warehouse.warehouseId) ===
+                              selectedWarehouseId
+                          );
+                          const selectedProjectOption = projectOptions.find(
+                            (project: any) =>
+                              Number(project.projectId) === selectedProjectId
+                          );
+                          const selectedDestinationWarehouseId = Number(
+                            deliveryDestinationWarehouseByItemId[item.id] ?? 0
+                          );
+                          const selectedDestinationProjectId = Number(
+                            deliveryDestinationProjectByItemId[item.id] ?? 0
+                          );
+                          const destinationProjectOptions =
+                            getDeliveryDestinationProjectOptions(
+                              selectedDestinationWarehouseId
+                            );
+                          const selectedDestinationWarehouseOption =
+                            deliveryDestinationWarehouseOptions.find(
+                              (warehouse: any) =>
+                                Number(warehouse.id) ===
+                                selectedDestinationWarehouseId
+                            );
+                          const selectedDestinationProjectOption =
+                            destinationProjectOptions.find(
+                              (project: any) =>
+                                Number(project.id) ===
+                                selectedDestinationProjectId
+                            ) ??
+                            (deliveryDestinationProjects ?? []).find(
+                              (project: any) =>
+                                Number(project.id) ===
+                                selectedDestinationProjectId
+                            );
+                          const destinationStockQuantity =
+                            getDeliveryScopeStockQuantity(
+                              item,
+                              selectedDestinationProjectId,
+                              selectedDestinationWarehouseId
+                            );
                           const canDeliver =
                             pendingQuantity > 0 &&
                             availableQuantity > 0 &&
@@ -2137,10 +2947,10 @@ export default function SalidasBodega() {
 
                           return (
                             <tr key={item.id} className="border-b last:border-0">
-                              <td className="p-3 font-mono text-xs">
+                              <td className="px-2 py-3 align-top font-mono text-xs">
                                 {item.sapItemCode || "-"}
                               </td>
-                              <td className="p-3">
+                              <td className="px-2 py-3 align-top">
                                 <p className="font-medium">
                                   {item.sapItemDescription || item.itemName}
                                 </p>
@@ -2150,86 +2960,386 @@ export default function SalidasBodega() {
                                   </p>
                                 ) : null}
                               </td>
-                              <td className="p-3">
+                              <td className="px-2 py-3 align-top">
                                 {renderDeliveryTargetSelector(item)}
                               </td>
-                              <td className="p-3 text-right">
+                              <td className="px-2 py-3 text-right align-top">
                                 {formatQuantity(requestedQuantity)} {item.unit || ""}
                               </td>
-                              <td className="p-3 text-right">
+                              <td className="px-2 py-3 text-right align-top">
                                 {formatQuantity(alreadyDispatched)} {item.unit || ""}
                               </td>
-                              <td className="p-3 text-right font-medium">
+                              <td className="px-2 py-3 text-right align-top font-medium">
                                 {formatQuantity(availableQuantity)} {item.unit || ""}
                               </td>
-                              <td className="p-3">
-                                <Select
-                                  value={
-                                    deliveryWarehouseByItemId[item.id] ||
-                                    undefined
-                                  }
-                                  onValueChange={(value) =>
-                                    setDeliveryWarehouseByItemId((current) => ({
-                                      ...current,
-                                      [item.id]: value,
-                                    }))
-                                  }
-                                  disabled={!deliveryWarehouses?.length}
-                                >
-                                  <SelectTrigger className="min-w-[260px] text-left text-xs">
-                                    <SelectValue placeholder="Seleccione almacén" />
-                                  </SelectTrigger>
-                                  <SelectContent className="min-w-[360px]">
-                                    {(deliveryWarehouses ?? []).map(
-                                      (warehouse: any) => {
-                                        const warehouseId = Number(warehouse.id);
-                                        const warehouseAvailableQuantity =
-                                          deliveryWarehouseStockByItemId
-                                            .get(item.id)
-                                            ?.get(warehouseId) ?? 0;
-                                        const blockedWarehouse =
-                                          isDeliveryWarehouseBlocked(
-                                            item,
-                                            warehouseId
-                                          );
-                                        const withoutStock =
-                                          warehouseAvailableQuantity <= 0;
-
-                                        return (
-                                          <SelectItem
-                                            key={warehouse.id}
-                                            value={String(warehouse.id)}
-                                            textValue={warehouse.displayName}
-                                            disabled={blockedWarehouse || withoutStock}
-                                          >
-                                            <span className="flex min-w-0 flex-col items-start gap-0.5">
-                                              <span className="truncate font-medium">
-                                                {warehouse.displayName}
-                                              </span>
-                                              <span className="text-[11px] text-muted-foreground">
-                                                {blockedWarehouse
-                                                  ? "Origen del traslado"
-                                                  : withoutStock
-                                                    ? "Sin existencia"
-                                                    : `Disponible: ${formatQuantity(
-                                                        warehouseAvailableQuantity
-                                                      )} ${item.unit || ""}`}
-                                              </span>
-                                            </span>
-                                          </SelectItem>
-                                        );
+                              <td className="px-2 py-3 align-top">
+                                <div className="w-full max-w-[334px] space-y-2">
+                                  <div className="space-y-1">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                      Almacén origen
+                                    </p>
+                                    <Select
+                                      value={
+                                        selectedWarehouseId
+                                          ? String(selectedWarehouseId)
+                                          : undefined
                                       }
-                                    )}
-                                  </SelectContent>
-                                </Select>
-                                <p className="mt-1 text-[10px] text-muted-foreground">
-                                  Total proyecto: {formatQuantity(projectStockQuantity)}{" "}
-                                  {item.unit || ""}
+                                      onValueChange={(value) =>
+                                        handleDeliveryWarehouseChange(
+                                          item,
+                                          value
+                                        )
+                                      }
+                                      disabled={!warehouseOptions.length}
+                                    >
+                                      <SelectTrigger className="h-9 w-full min-w-0 overflow-hidden text-left text-xs [&>span]:truncate">
+                                        <SelectValue placeholder="Seleccione almacén" />
+                                      </SelectTrigger>
+                                      <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
+                                        {warehouseOptions.length === 0 ? (
+                                          <SelectItem value="sin-almacenes" disabled>
+                                            Sin almacenes disponibles
+                                          </SelectItem>
+                                        ) : (
+                                          warehouseOptions.map(
+                                            (warehouse: any) => (
+                                              <SelectItem
+                                                key={warehouse.warehouseId}
+                                                value={String(
+                                                  warehouse.warehouseId
+                                                )}
+                                                textValue={getStockWarehouseLabel(
+                                                  warehouse
+                                                )}
+                                                className="text-xs"
+                                              >
+                                                <span className="flex w-full min-w-0 items-center justify-between gap-3 pr-4">
+                                                  <span className="truncate">
+                                                    {getStockWarehouseLabel(
+                                                      warehouse
+                                                    )}
+                                                  </span>
+                                                  <QuantityPill
+                                                    value={warehouse.quantity}
+                                                    unit={item.unit}
+                                                    tone={
+                                                      Number(
+                                                        warehouse.quantity ?? 0
+                                                      ) > 0
+                                                        ? "available"
+                                                        : "neutral"
+                                                    }
+                                                  />
+                                                </span>
+                                              </SelectItem>
+                                            )
+                                          )
+                                        )}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div className="space-y-1">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                      Bodega/proyecto origen
+                                    </p>
+                                    <Select
+                                      value={
+                                        selectedProjectId
+                                          ? String(selectedProjectId)
+                                          : undefined
+                                      }
+                                      onValueChange={(value) =>
+                                        handleDeliveryProjectChange(item, value)
+                                      }
+                                      disabled={
+                                        !selectedWarehouseId ||
+                                        !projectOptions.length
+                                      }
+                                    >
+                                      <SelectTrigger className="h-9 w-full min-w-0 overflow-hidden text-left text-xs [&>span]:truncate">
+                                        <SelectValue
+                                          placeholder={
+                                            selectedWarehouseId
+                                              ? "Seleccione bodega"
+                                              : "Seleccione almacén"
+                                          }
+                                        />
+                                      </SelectTrigger>
+                                      <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
+                                        {projectOptions.length === 0 ? (
+                                          <SelectItem value="sin-bodegas" disabled>
+                                            Sin bodegas para este almacén
+                                          </SelectItem>
+                                        ) : (
+                                          projectOptions.map((project: any) => {
+                                            const projectId = Number(
+                                              project.projectId
+                                            );
+                                            const blockedScope =
+                                              isDeliveryScopeBlocked(
+                                                item,
+                                                projectId,
+                                                selectedWarehouseId
+                                              );
+                                            const quantityValue = Number(
+                                              project.quantity ?? 0
+                                            );
+
+                                            return (
+                                              <SelectItem
+                                                key={getDeliveryScopeKey(
+                                                  project.projectId,
+                                                  project.warehouseId
+                                                )}
+                                                value={String(project.projectId)}
+                                                textValue={getStockProjectLabel(
+                                                  project
+                                                )}
+                                                disabled={blockedScope}
+                                                className="text-xs"
+                                              >
+                                                <span className="flex w-full min-w-0 items-center justify-between gap-3 pr-4">
+                                                  <span className="truncate">
+                                                    {getStockProjectLabel(
+                                                      project
+                                                    )}
+                                                  </span>
+                                                  <QuantityPill
+                                                    value={
+                                                      blockedScope
+                                                        ? 0
+                                                        : project.quantity
+                                                    }
+                                                    unit={item.unit}
+                                                    label={
+                                                      blockedScope
+                                                        ? "Origen"
+                                                        : "Disp."
+                                                    }
+                                                    tone={
+                                                      blockedScope
+                                                        ? "danger"
+                                                        : quantityValue > 0
+                                                          ? "available"
+                                                          : "neutral"
+                                                    }
+                                                  />
+                                                </span>
+                                              </SelectItem>
+                                            );
+                                          })
+                                        )}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                </div>
+                                <p className="mt-1 max-w-[334px] truncate text-[10px] text-muted-foreground">
+                                  Origen:{" "}
+                                  {selectedProjectOption
+                                    ? getStockProjectLabel(
+                                        selectedProjectOption
+                                      )
+                                    : "bodega/proyecto"}{" "}
+                                  /{" "}
+                                  {selectedWarehouseOption
+                                    ? getStockWarehouseLabel(
+                                        selectedWarehouseOption
+                                      )
+                                    : "almacén físico"}{" "}
+                                  · Disponible:{" "}
+                                  <span className="font-semibold text-emerald-700">
+                                    {formatQuantity(availableQuantity)}{" "}
+                                    {item.unit || ""}
+                                  </span>
                                 </p>
                               </td>
-                              <td className="p-3">
+                              <td className="px-2 py-3 align-top">
+                                <div className="w-full max-w-[334px] space-y-2">
+                                  <div className="space-y-1">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                      Almacén destino
+                                    </p>
+                                    <Select
+                                      value={
+                                        selectedDestinationWarehouseId
+                                          ? String(selectedDestinationWarehouseId)
+                                          : undefined
+                                      }
+                                      onValueChange={(value) =>
+                                        handleDeliveryDestinationWarehouseChange(
+                                          item,
+                                          value
+                                        )
+                                      }
+                                      disabled={
+                                        deliveryDestinationWarehouseOptions.length === 0
+                                      }
+                                    >
+                                      <SelectTrigger className="h-9 w-full min-w-0 overflow-hidden text-left text-xs [&>span]:truncate">
+                                        <SelectValue placeholder="Seleccione almacén destino" />
+                                      </SelectTrigger>
+                                      <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
+                                        {deliveryDestinationWarehouseOptions.length ===
+                                        0 ? (
+                                          <SelectItem value="sin-almacenes" disabled>
+                                            Sin almacenes disponibles
+                                          </SelectItem>
+                                        ) : (
+                                          deliveryDestinationWarehouseOptions.map(
+                                            (warehouse: any) => {
+                                              const warehouseId = Number(
+                                                warehouse.id
+                                              );
+                                              const warehouseStock =
+                                                getDeliveryDestinationProjectOptions(
+                                                  warehouseId
+                                                ).reduce(
+                                                  (sum: number, project: any) =>
+                                                    sum +
+                                                    getDeliveryScopeStockQuantity(
+                                                      item,
+                                                      Number(project.id),
+                                                      warehouseId
+                                                    ),
+                                                  0
+                                                );
+
+                                              return (
+                                                <SelectItem
+                                                  key={warehouse.id}
+                                                  value={String(warehouse.id)}
+                                                  textValue={getStockWarehouseLabel(
+                                                    warehouse
+                                                  )}
+                                                  className="text-xs"
+                                                >
+                                                  <span className="flex w-full min-w-0 items-center justify-between gap-3 pr-4">
+                                                    <span className="truncate">
+                                                      {getStockWarehouseLabel(
+                                                        warehouse
+                                                      )}
+                                                    </span>
+                                                    <QuantityPill
+                                                      value={warehouseStock}
+                                                      unit={item.unit}
+                                                      label="Actual"
+                                                      tone={
+                                                        warehouseStock > 0
+                                                          ? "available"
+                                                          : "neutral"
+                                                      }
+                                                    />
+                                                  </span>
+                                                </SelectItem>
+                                              );
+                                            }
+                                          )
+                                        )}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div className="space-y-1">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                      Bodega/proyecto destino
+                                    </p>
+                                    <Select
+                                      value={
+                                        selectedDestinationProjectId
+                                          ? String(selectedDestinationProjectId)
+                                          : undefined
+                                      }
+                                      onValueChange={(value) =>
+                                        handleDeliveryDestinationProjectChange(
+                                          item,
+                                          value
+                                        )
+                                      }
+                                      disabled={
+                                        !selectedDestinationWarehouseId ||
+                                        !destinationProjectOptions.length
+                                      }
+                                    >
+                                      <SelectTrigger className="h-9 w-full min-w-0 overflow-hidden text-left text-xs [&>span]:truncate">
+                                        <SelectValue
+                                          placeholder={
+                                            selectedDestinationWarehouseId
+                                              ? "Seleccione bodega/proyecto"
+                                              : "Seleccione almacén destino"
+                                          }
+                                        />
+                                      </SelectTrigger>
+                                      <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
+                                        {destinationProjectOptions.length === 0 ? (
+                                          <SelectItem value="sin-bodegas" disabled>
+                                            Sin bodegas para este almacén
+                                          </SelectItem>
+                                        ) : (
+                                          destinationProjectOptions.map(
+                                            (project: any) => {
+                                              const projectId = Number(project.id);
+                                              const stockQuantity =
+                                                getDeliveryScopeStockQuantity(
+                                                  item,
+                                                  projectId,
+                                                  selectedDestinationWarehouseId
+                                                );
+
+                                              return (
+                                                <SelectItem
+                                                  key={project.id}
+                                                  value={String(project.id)}
+                                                  textValue={getProjectOptionLabel(
+                                                    project
+                                                  )}
+                                                  className="text-xs"
+                                                >
+                                                  <span className="flex w-full min-w-0 items-center justify-between gap-3 pr-4">
+                                                    <span className="truncate">
+                                                      {getProjectOptionLabel(project)}
+                                                    </span>
+                                                    <QuantityPill
+                                                      value={stockQuantity}
+                                                      unit={item.unit}
+                                                      label="Actual"
+                                                      tone={
+                                                        stockQuantity > 0
+                                                          ? "available"
+                                                          : "neutral"
+                                                      }
+                                                    />
+                                                  </span>
+                                                </SelectItem>
+                                              );
+                                            }
+                                          )
+                                        )}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                </div>
+                                <p className="mt-1 max-w-[334px] truncate text-[10px] text-muted-foreground">
+                                  Destino:{" "}
+                                  {selectedDestinationProjectOption
+                                    ? getProjectOptionLabel(
+                                        selectedDestinationProjectOption
+                                      )
+                                    : "bodega/proyecto"}{" "}
+                                  /{" "}
+                                  {selectedDestinationWarehouseOption
+                                    ? getStockWarehouseLabel(
+                                        selectedDestinationWarehouseOption
+                                      )
+                                    : "almacén físico"}{" "}
+                                  · Existencia actual:{" "}
+                                  <span className="font-semibold text-emerald-700">
+                                    {formatQuantity(destinationStockQuantity)}{" "}
+                                    {item.unit || ""}
+                                  </span>
+                                </p>
+                              </td>
+                              <td className="px-2 py-3">
                                 <Input
-                                  className="ml-auto w-28 text-right"
+                                  className="ml-auto w-24 text-right"
                                   type="number"
                                   min="0"
                                   max={Math.min(pendingQuantity, availableQuantity)}
@@ -2245,7 +3355,7 @@ export default function SalidasBodega() {
                                   placeholder="0.00"
                                 />
                               </td>
-                              <td className="p-3 text-right">
+                              <td className="px-2 py-3 text-right align-top">
                                 <p className="font-mono">
                                   {formatQuantity(balanceQuantity)} {item.unit || ""}
                                 </p>

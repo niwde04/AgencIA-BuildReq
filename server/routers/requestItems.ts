@@ -746,12 +746,17 @@ export const requestItemsRouter = router({
     .input(
       z.object({
         requestId: z.number(),
+        destinationProjectId: z.number().int().positive().optional(),
+        destinationWarehouseId: z.number().int().positive().optional(),
         items: z
           .array(
             z.object({
               requestItemId: z.number(),
               dispatchedQuantity: z.string(),
+              sourceProjectId: z.number().int().positive().optional(),
               warehouseId: z.number().int().positive().optional(),
+              destinationProjectId: z.number().int().positive().optional(),
+              destinationWarehouseId: z.number().int().positive().optional(),
               targetType: z
                 .enum(["subproyecto", "activo_fijo"])
                 .nullable()
@@ -790,6 +795,24 @@ export const requestItemsRouter = router({
           message: "Seleccione almacén origen para todos los ítems de la salida",
         });
       }
+      if (
+        (input.destinationProjectId && !input.destinationWarehouseId) ||
+        (!input.destinationProjectId && input.destinationWarehouseId)
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Seleccione almacén destino y proyecto/bodega destino",
+        });
+      }
+      if (
+        input.destinationProjectId &&
+        !canAccessProject(ctx.user, input.destinationProjectId)
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a la bodega/proyecto destino seleccionada",
+        });
+      }
 
       for (const entry of input.items) {
         const { item, detail } = await assertItemApprovedForProcessing(entry.requestItemId);
@@ -805,14 +828,55 @@ export const requestItemsRouter = router({
             message: "No tiene acceso a esta solicitud",
           });
         }
+        const sourceProjectId = entry.sourceProjectId ?? detail.request.projectId;
+        if (sourceProjectId && !canAccessProject(ctx.user, sourceProjectId)) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "No tiene acceso a la bodega/proyecto origen seleccionada",
+          });
+        }
+        const destinationProjectId =
+          entry.destinationProjectId ?? input.destinationProjectId;
+        const destinationWarehouseId =
+          entry.destinationWarehouseId ?? input.destinationWarehouseId;
+        if (
+          (destinationProjectId && !destinationWarehouseId) ||
+          (!destinationProjectId && destinationWarehouseId)
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "Seleccione almacén destino y bodega/proyecto destino para todos los ítems",
+          });
+        }
+        if (
+          destinationProjectId &&
+          !canAccessProject(ctx.user, destinationProjectId)
+        ) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "No tiene acceso a la bodega/proyecto destino seleccionada",
+          });
+        }
       }
 
       return db.recordWarehouseExitBatch({
         requestId: input.requestId,
+        destinationProjectId: input.destinationProjectId,
+        destinationWarehouseId: input.destinationWarehouseId,
         items: input.items.map((item) => ({
           requestItemId: item.requestItemId,
           quantity: item.dispatchedQuantity,
+          ...(item.sourceProjectId
+            ? { sourceProjectId: item.sourceProjectId }
+            : {}),
           warehouseId: item.warehouseId!,
+          ...(item.destinationProjectId
+            ? { destinationProjectId: item.destinationProjectId }
+            : {}),
+          ...(item.destinationWarehouseId
+            ? { destinationWarehouseId: item.destinationWarehouseId }
+            : {}),
           targetType: item.targetType,
           subProjectId: item.subProjectId,
           fixedAssetSapItemCode: item.fixedAssetSapItemCode,

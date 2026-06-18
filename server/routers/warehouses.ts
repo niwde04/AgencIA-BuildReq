@@ -18,8 +18,7 @@ function canManageWarehousesGlobally(user: {
   buildreqRole?: string | null;
 }) {
   return (
-    user.role === "admin" ||
-    user.buildreqRole === "administracion_central"
+    user.role === "admin" || user.buildreqRole === "administracion_central"
   );
 }
 
@@ -35,6 +34,18 @@ function assertCanManageCentralWarehouse(user: {
   }
 }
 
+function assertCanManageSharedWarehouse(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  if (!canManageWarehousesGlobally(user)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Solo Administración Central puede marcar bodegas multiproyecto",
+    });
+  }
+}
+
 function canManageWarehouses(user: {
   role: string;
   buildreqRole?: string | null;
@@ -45,9 +56,7 @@ function canManageWarehouses(user: {
   );
 }
 
-function isWarehouseAssignedViewer(user: {
-  buildreqRole?: string | null;
-}) {
+function isWarehouseAssignedViewer(user: { buildreqRole?: string | null }) {
   return Boolean(
     user.buildreqRole && WAREHOUSE_VIEWER_ROLES.has(user.buildreqRole)
   );
@@ -61,19 +70,24 @@ function isProjectScopedWarehouseAssignableRole(role?: string | null) {
   return role === "administrador_proyecto" || role === "bodeguero_proyecto";
 }
 
-function canReadProjectWarehouses(user: {
-  role: string;
-  buildreqRole?: string | null;
-  assignedProjectId?: number | null;
-  assignedProjectIds?: number[] | null;
-}, projectId?: number) {
+function canReadProjectWarehouses(
+  user: {
+    role: string;
+    buildreqRole?: string | null;
+    assignedProjectId?: number | null;
+    assignedProjectIds?: number[] | null;
+  },
+  projectId?: number
+) {
   if (canManageWarehousesGlobally(user)) return true;
   if (isWarehouseAssignedViewer(user)) return true;
   if (!projectId) {
     return user.buildreqRole === "administrador_proyecto";
   }
-  if (user.buildreqRole === "administrador_proyecto" &&
-    canAccessProject(user, projectId)) {
+  if (
+    user.buildreqRole === "administrador_proyecto" &&
+    canAccessProject(user, projectId)
+  ) {
     return true;
   }
   return false;
@@ -239,8 +253,8 @@ export const warehousesRouter = router({
       }
       const canReadDetail =
         canManageWarehousesGlobally(ctx.user) ||
-        detail.assignedUsers?.some((assignedUser: { id: number }) =>
-          assignedUser.id === ctx.user.id
+        detail.assignedUsers?.some(
+          (assignedUser: { id: number }) => assignedUser.id === ctx.user.id
         ) ||
         detail.projects?.some((project: { id: number }) =>
           canAccessProject(ctx.user, project.id)
@@ -263,6 +277,7 @@ export const warehousesRouter = router({
         description: z.string().trim().max(1000).nullable().optional(),
         projectId: z.number().int().positive().optional(),
         isCentralWarehouse: z.boolean().optional(),
+        isSharedWarehouse: z.boolean().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -270,7 +285,13 @@ export const warehousesRouter = router({
       if (input.isCentralWarehouse !== undefined) {
         assertCanManageCentralWarehouse(ctx.user);
       }
-      if (ctx.user.buildreqRole === "administrador_proyecto" && !input.projectId) {
+      if (input.isSharedWarehouse !== undefined) {
+        assertCanManageSharedWarehouse(ctx.user);
+      }
+      if (
+        ctx.user.buildreqRole === "administrador_proyecto" &&
+        !input.projectId
+      ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Seleccione el proyecto que usará la bodega",
@@ -304,12 +325,16 @@ export const warehousesRouter = router({
         description: z.string().trim().max(1000).nullable().optional(),
         isActive: z.boolean().optional(),
         isCentralWarehouse: z.boolean().optional(),
+        isSharedWarehouse: z.boolean().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       assertCanManageWarehouses(ctx.user);
       if (input.isCentralWarehouse !== undefined) {
         assertCanManageCentralWarehouse(ctx.user);
+      }
+      if (input.isSharedWarehouse !== undefined) {
+        assertCanManageSharedWarehouse(ctx.user);
       }
       await assertCanManageWarehouseId(ctx.user, input.id);
 

@@ -300,6 +300,7 @@ export const transferRequestsRouter = router({
     .input(
       z.object({
         id: z.number().int().positive(),
+        projectId: z.number().int().positive().optional(),
         warehouseId: z.number().int().positive(),
       })
     )
@@ -330,7 +331,10 @@ export const transferRequestsRouter = router({
       }
       if (
         detail.transferRequest.destinationType !== "proyecto" ||
-        !detail.transferRequest.destinationProjectId
+        !(
+          input.projectId ||
+          detail.transferRequest.destinationProjectId
+        )
       ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -345,8 +349,26 @@ export const transferRequestsRouter = router({
         });
       }
 
+      const destinationProjectId =
+        input.projectId ?? detail.transferRequest.destinationProjectId;
+      if (!destinationProjectId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Seleccione proyecto/bodega destino",
+        });
+      }
+      if (
+        input.projectId &&
+        !canAccessProject(ctx.user, destinationProjectId)
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a la bodega destino seleccionada",
+        });
+      }
+
       const projectWarehouses = await db.listProjectWarehouses(
-        detail.transferRequest.destinationProjectId,
+        destinationProjectId,
         { isActive: true }
       );
       const projectWarehouseIds = new Set(
@@ -379,9 +401,17 @@ export const transferRequestsRouter = router({
         }
       }
 
-      return db.updateTransferRequest(input.id, {
-        destinationWarehouseId: input.warehouseId,
-      });
+      return db.updateTransferRequest(
+        input.id,
+        input.projectId
+          ? {
+              destinationProjectId,
+              destinationWarehouseId: input.warehouseId,
+            }
+          : {
+              destinationWarehouseId: input.warehouseId,
+            }
+      );
     }),
 
   convertToTransfer: protectedProcedure

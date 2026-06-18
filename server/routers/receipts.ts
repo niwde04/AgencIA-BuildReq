@@ -1161,8 +1161,7 @@ export const receiptsRouter = router({
           detail.transferRequest?.destinationType === "proyecto"
             ? detail.transferRequest.destinationProjectId
             : input.projectId;
-        allowAnyActiveReceiptWarehouse =
-          detail.transferRequest?.destinationType === "bodega_central";
+        allowAnyActiveReceiptWarehouse = false;
         if (typeof destinationProjectId === "number") {
           assertProjectScopedAccess(ctx.user, destinationProjectId);
           if (
@@ -1223,11 +1222,15 @@ export const receiptsRouter = router({
           if (
             requestedQuantity > 0 &&
             sourceItem.sourceWarehouseId &&
-            item.warehouseId === Number(sourceItem.sourceWarehouseId)
+            item.warehouseId === Number(sourceItem.sourceWarehouseId) &&
+            (!detail.transferRequest?.projectId ||
+              !destinationProjectId ||
+              Number(detail.transferRequest.projectId) ===
+                Number(destinationProjectId))
           ) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `${sourceItem.itemName}: no se puede ingresar a la misma bodega de origen`,
+              message: `${sourceItem.itemName}: no se puede ingresar a la misma bodega/proyecto de origen`,
             });
           }
           if (

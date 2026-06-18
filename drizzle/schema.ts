@@ -1339,6 +1339,13 @@ export const warehouseExits = pgTable(
     warehouseId: integer("warehouseId").references(() => warehouses.id, {
       onDelete: "set null",
     }),
+    destinationProjectId: integer("destinationProjectId"),
+    destinationWarehouseId: integer("destinationWarehouseId").references(
+      () => warehouses.id,
+      {
+        onDelete: "set null",
+      }
+    ),
     materialRequestId: integer("materialRequestId"),
     createdById: integer("createdById").notNull(),
     emittedById: integer("emittedById"),
@@ -1362,6 +1369,12 @@ export const warehouseExits = pgTable(
   table => ({
     projectIdx: index("we_project_idx").on(table.projectId),
     warehouseIdx: index("we_warehouse_idx").on(table.warehouseId),
+    destinationProjectIdx: index("we_destination_project_idx").on(
+      table.destinationProjectId
+    ),
+    destinationWarehouseIdx: index("we_destination_warehouse_idx").on(
+      table.destinationWarehouseId
+    ),
     materialRequestIdx: index("we_material_request_idx").on(
       table.materialRequestId
     ),
@@ -1381,6 +1394,13 @@ export const warehouseExitItems = pgTable(
     warehouseId: integer("warehouseId").references(() => warehouses.id, {
       onDelete: "set null",
     }),
+    destinationProjectId: integer("destinationProjectId"),
+    destinationWarehouseId: integer("destinationWarehouseId").references(
+      () => warehouses.id,
+      {
+        onDelete: "set null",
+      }
+    ),
     materialRequestItemId: integer("materialRequestItemId"),
     sapItemCode: varchar("sapItemCode", { length: 50 }).notNull(),
     itemName: varchar("itemName", { length: 500 }).notNull(),
@@ -1402,6 +1422,12 @@ export const warehouseExitItems = pgTable(
   table => ({
     warehouseExitIdx: index("wei_warehouse_exit_idx").on(table.warehouseExitId),
     warehouseIdx: index("wei_warehouse_idx").on(table.warehouseId),
+    destinationProjectIdx: index("wei_destination_project_idx").on(
+      table.destinationProjectId
+    ),
+    destinationWarehouseIdx: index("wei_destination_warehouse_idx").on(
+      table.destinationWarehouseId
+    ),
     subProjectIdx: index("wei_sub_project_idx").on(table.subProjectId),
     requestItemIdx: index("wei_request_item_idx").on(
       table.materialRequestItemId
@@ -1617,6 +1643,7 @@ export const warehouses = pgTable(
     description: text("description"),
     isDefault: boolean("isDefault").default(false).notNull(),
     isCentralWarehouse: boolean("isCentralWarehouse").default(false).notNull(),
+    isSharedWarehouse: boolean("isSharedWarehouse").default(false).notNull(),
     isActive: boolean("isActive").default(true).notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),

@@ -262,10 +262,12 @@ function ProjectStockBreakdown({
 
   if (!hasSapTranslation) return <span>—</span>;
 
-  const warehouses = Array.isArray(item.projectStockWarehouses)
-    ? item.projectStockWarehouses
-    : [];
-  const total = item.projectStock || "0.00";
+  const warehouses = Array.isArray(item.warehouseStockWarehouses)
+    ? item.warehouseStockWarehouses
+    : Array.isArray(item.projectStockWarehouses)
+      ? item.projectStockWarehouses
+      : [];
+  const total = item.warehouseStock ?? item.projectStock ?? "0.00";
 
   if (warehouses.length === 0) {
     return <span className="font-mono">{formatQuantityValue(total)}</span>;
@@ -295,7 +297,7 @@ function ProjectStockBreakdown({
       })}
       <div className="flex items-center justify-between gap-3 border-t border-border/70 pt-1">
         <span className="text-[11px] font-semibold text-foreground">
-          Total proyecto
+          Total almacén
         </span>
         <span className="shrink-0 font-mono text-[11px] font-semibold text-foreground">
           {formatQuantityValue(total)}

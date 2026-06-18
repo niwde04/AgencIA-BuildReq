@@ -86,8 +86,8 @@ const columns: Array<{
   { key: "unit", label: "Unidad" },
   { key: "currentStock", label: "Stock", align: "right" },
   { key: "minimumStock", label: "Mínimo", align: "right" },
-  { key: "projectName", label: "Proyecto" },
-  { key: "warehouseLocation", label: "Almacén" },
+  { key: "projectName", label: "Proyecto / bodega" },
+  { key: "warehouseLocation", label: "Almacén físico" },
 ];
 
 function buildPageItems(currentPage: number, totalPages: number) {
@@ -131,7 +131,7 @@ function parseQuantity(value: string | number | null | undefined) {
 }
 
 function formatProject(project: any | null | undefined) {
-  if (!project) return "Inventario Central";
+  if (!project) return "Por clasificar";
   return `${project.code} - ${project.name}`;
 }
 
@@ -245,7 +245,9 @@ export default function Inventario() {
   const [kardexItem, setKardexItem] = useState<any | null>(null);
   const [expandedInventoryKeys, setExpandedInventoryKeys] = useState<string[]>([]);
   const [assignmentProjectId, setAssignmentProjectId] = useState("none");
+  const [assignmentWarehouseId, setAssignmentWarehouseId] = useState("");
   const [bulkAssignmentProjectId, setBulkAssignmentProjectId] = useState("none");
+  const [bulkAssignmentWarehouseId, setBulkAssignmentWarehouseId] = useState("");
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
 
   const [sapItemCode, setSapItemCode] = useState("");
@@ -273,12 +275,15 @@ export default function Inventario() {
   const userRole = (user as any)?.buildreqRole || "";
   const canManage =
     userRole === "jefe_bodega_central" || user?.role === "admin";
+  const canViewUnclassified =
+    user?.role === "admin" || userRole === "administracion_central";
   const canAccessWarehouses =
     canManage ||
     userRole === "administracion_central" ||
     userRole === "administrador_proyecto" ||
     userRole === "bodeguero_proyecto";
-  const allowInventoryReassignment = false;
+  const allowInventoryReassignment =
+    canViewUnclassified && projectFilter === "unclassified";
 
   const { data: projects } = trpc.projects.list.useQuery();
   const projectOptions = useMemo(
@@ -295,7 +300,7 @@ export default function Inventario() {
   }, [warehouses]);
   const selectedFilterProject = useMemo(
     () =>
-      projectFilter === "all"
+      projectFilter === "all" || projectFilter === "unclassified"
         ? null
         : projectOptions.find(
             (project: any) => String(project.id) === projectFilter
@@ -313,24 +318,27 @@ export default function Inventario() {
   );
   const selectedProjectFilterLabel = selectedFilterProject
     ? `${selectedFilterProject.code} - ${selectedFilterProject.name}`
-    : `Todos los proyectos (${projectOptions.length.toLocaleString("es-HN")})`;
-  const allWarehouseFilterLabel = `Todos los almacenes (${warehouseOptions.length.toLocaleString("es-HN")})`;
+    : projectFilter === "unclassified"
+      ? "Inventario por clasificar"
+      : `Todos los proyectos/bodegas (${projectOptions.length.toLocaleString("es-HN")})`;
+  const allWarehouseFilterLabel = `Todos los almacenes físicos (${warehouseOptions.length.toLocaleString("es-HN")})`;
   const selectedWarehouseFilterLabel = selectedFilterWarehouse
     ? formatWarehouseOptionLabel(selectedFilterWarehouse)
     : allWarehouseFilterLabel;
   const projectFilterDisabled = warehouseFilter !== "all";
-  const centralWarehouses = useMemo(
-    () => warehouses ?? [],
-    [warehouses]
-  );
   const selectedCreateProject = useMemo(
     () =>
       (projects ?? []).find((project: any) => String(project.id) === projectId) ?? null,
     [projectId, projects]
   );
   const createProjectWarehouses = useMemo(
-    () =>
-      selectedCreateProject?.warehouse ? [selectedCreateProject.warehouse] : [],
+    () => {
+      const assigned = selectedCreateProject?.warehouses;
+      if (Array.isArray(assigned) && assigned.length > 0) {
+        return [...assigned].sort(compareWarehouseByCode);
+      }
+      return selectedCreateProject?.warehouse ? [selectedCreateProject.warehouse] : [];
+    },
     [selectedCreateProject]
   );
   const defaultCreateWarehouse = useMemo(
@@ -346,6 +354,15 @@ export default function Inventario() {
           ) ?? null,
     [assignmentProjectId, projects]
   );
+  const assignmentProjectWarehouses = useMemo(() => {
+    const assigned = selectedAssignmentProject?.warehouses;
+    if (Array.isArray(assigned) && assigned.length > 0) {
+      return [...assigned].sort(compareWarehouseByCode);
+    }
+    return selectedAssignmentProject?.warehouse
+      ? [selectedAssignmentProject.warehouse]
+      : [];
+  }, [selectedAssignmentProject]);
   const selectedBulkProject = useMemo(
     () =>
       bulkAssignmentProjectId === "none"
@@ -355,11 +372,50 @@ export default function Inventario() {
           ) ?? null,
     [bulkAssignmentProjectId, projects]
   );
+  const bulkProjectWarehouses = useMemo(() => {
+    const assigned = selectedBulkProject?.warehouses;
+    if (Array.isArray(assigned) && assigned.length > 0) {
+      return [...assigned].sort(compareWarehouseByCode);
+    }
+    return selectedBulkProject?.warehouse ? [selectedBulkProject.warehouse] : [];
+  }, [selectedBulkProject]);
 
   useEffect(() => {
     if (!projectId) return;
     setWarehouseId(defaultCreateWarehouse ? String(defaultCreateWarehouse.id) : "");
   }, [defaultCreateWarehouse, projectId]);
+
+  useEffect(() => {
+    if (assignmentProjectId === "none") {
+      setAssignmentWarehouseId("");
+      return;
+    }
+    const stillValid = assignmentProjectWarehouses.some(
+      (warehouse: any) => String(warehouse.id) === assignmentWarehouseId
+    );
+    if (!stillValid) {
+      setAssignmentWarehouseId(
+        assignmentProjectWarehouses[0]
+          ? String(assignmentProjectWarehouses[0].id)
+          : ""
+      );
+    }
+  }, [assignmentProjectId, assignmentProjectWarehouses, assignmentWarehouseId]);
+
+  useEffect(() => {
+    if (bulkAssignmentProjectId === "none") {
+      setBulkAssignmentWarehouseId("");
+      return;
+    }
+    const stillValid = bulkProjectWarehouses.some(
+      (warehouse: any) => String(warehouse.id) === bulkAssignmentWarehouseId
+    );
+    if (!stillValid) {
+      setBulkAssignmentWarehouseId(
+        bulkProjectWarehouses[0] ? String(bulkProjectWarehouses[0].id) : ""
+      );
+    }
+  }, [bulkAssignmentProjectId, bulkProjectWarehouses, bulkAssignmentWarehouseId]);
 
   useEffect(() => {
     if (warehouseFilter === "all") return;
@@ -374,7 +430,7 @@ export default function Inventario() {
   const selectedWarehouseId =
     warehouseFilter === "all" ? undefined : Number(warehouseFilter);
   const selectedProjectId =
-    projectFilter === "all" || selectedWarehouseId
+    projectFilter === "all" || projectFilter === "unclassified" || selectedWarehouseId
       ? undefined
       : Number(projectFilter);
 
@@ -382,6 +438,7 @@ export default function Inventario() {
     search: debouncedSearch || undefined,
     projectId: selectedProjectId,
     warehouseId: selectedWarehouseId,
+    unclassifiedOnly: projectFilter === "unclassified" || undefined,
   };
 
   const listQueryInput = {
@@ -451,7 +508,7 @@ export default function Inventario() {
 
   const updateMutation = trpc.inventory.update.useMutation({
     onSuccess: () => {
-      toast.success("Proyecto del inventario actualizado");
+      toast.success("Inventario actualizado");
       void Promise.all([
         utils.inventory.list.invalidate(),
         utils.inventory.pendingQuantities.invalidate(),
@@ -468,7 +525,7 @@ export default function Inventario() {
   const bulkAssignMutation = trpc.inventory.bulkAssignProject.useMutation({
     onSuccess: (result: any) => {
       toast.success(
-        `${result.updatedCount.toLocaleString("es-HN")} ítems actualizados`
+        `${result.updatedCount.toLocaleString("es-HN")} ítems clasificados`
       );
       void Promise.all([
         utils.inventory.list.invalidate(),
@@ -477,7 +534,12 @@ export default function Inventario() {
         utils.projects.list.invalidate(),
       ]);
       setBulkAssignmentDialogOpen(false);
+      setAssignmentDialogOpen(false);
+      setSelectedItem(null);
+      setAssignmentProjectId("none");
+      setAssignmentWarehouseId("");
       setBulkAssignmentProjectId("none");
+      setBulkAssignmentWarehouseId("");
       setSelectedItemIds([]);
     },
     onError: (e) => toast.error(e.message),
@@ -487,7 +549,7 @@ export default function Inventario() {
     trpc.inventory.bulkAssignProjectByFilters.useMutation({
       onSuccess: (result: any) => {
         toast.success(
-          `${result.updatedCount.toLocaleString("es-HN")} ítems del resultado actual procesados`
+          `${result.updatedCount.toLocaleString("es-HN")} ítems del resultado actual clasificados`
         );
         void Promise.all([
           utils.inventory.list.invalidate(),
@@ -497,6 +559,7 @@ export default function Inventario() {
         ]);
         setBulkAssignmentDialogOpen(false);
         setBulkAssignmentProjectId("none");
+        setBulkAssignmentWarehouseId("");
         setSelectedItemIds([]);
       },
       onError: (e) => toast.error(e.message),
@@ -545,34 +608,66 @@ export default function Inventario() {
     const groups = new Map<string, any>();
 
     for (const item of items as any[]) {
-      const projectKey = item.project?.id ? `project:${item.project.id}` : "central";
       const itemKey = item.sapItemCode?.trim() || item.name?.trim().toLowerCase();
-      const groupKey = `${projectKey}:${itemKey}`;
+      const warehouseId = item.warehouse?.id ?? item.warehouseId ?? null;
+      const warehouseLocation =
+        item.warehouseLocation || item.warehouse?.displayName || "Sin almacén";
+      const warehouseKey =
+        typeof warehouseId === "number"
+          ? `warehouse:${warehouseId}`
+          : `location:${String(warehouseLocation).trim().toLowerCase()}`;
+      const groupKey = `${itemKey}:${warehouseKey}`;
       const existing =
         groups.get(groupKey) ??
         {
           ...item,
           id: groupKey,
           sourceIds: [],
-          warehouseBreakdown: [],
+          projectBreakdownByKey: new Map<string, any>(),
+          projectBreakdown: [],
           currentStockTotal: 0,
-          warehouse: null,
-          warehouseId: undefined,
+          minimumStockTotal: 0,
+          warehouse: item.warehouse ?? null,
+          warehouseId: warehouseId ?? undefined,
+          warehouseLocation,
+        };
+
+      const projectKey = item.project?.id
+        ? `project:${item.project.id}`
+        : "unclassified";
+      const projectLabel = item.project
+        ? `${item.project.code} - ${item.project.name}`
+        : "Por clasificar";
+      const projectBreakdownEntry =
+        existing.projectBreakdownByKey.get(projectKey) ??
+        {
+          id: projectKey,
+          project: item.project ?? null,
+          projectLabel,
+          sourceIds: [],
+          currentStockTotal: 0,
+          minimumStockTotal: 0,
         };
 
       existing.sourceIds.push(item.id);
       existing.currentStockTotal += parseQuantity(item.currentStock);
-      existing.warehouseBreakdown.push({
-        id: item.id,
-        warehouseId: item.warehouse?.id ?? item.warehouseId,
-        warehouseLocation: item.warehouseLocation || item.warehouse?.displayName || "—",
-        currentStock: item.currentStock,
-        minimumStock: item.minimumStock,
-      });
+      existing.minimumStockTotal += parseQuantity(item.minimumStock);
+      projectBreakdownEntry.sourceIds.push(item.id);
+      projectBreakdownEntry.currentStockTotal += parseQuantity(item.currentStock);
+      projectBreakdownEntry.minimumStockTotal += parseQuantity(item.minimumStock);
+      existing.projectBreakdownByKey.set(projectKey, projectBreakdownEntry);
       groups.set(groupKey, existing);
     }
 
     return Array.from(groups.values()).map((item) => {
+      const projectBreakdown = Array.from(
+        item.projectBreakdownByKey.values()
+      ) as any[];
+      projectBreakdown.sort((left: any, right: any) => {
+        if (!left.project && right.project) return 1;
+        if (left.project && !right.project) return -1;
+        return compareProjectByCode(left.project, right.project);
+      });
       const pendingQuantitiesReady = item.sourceIds.every((id: number) =>
         pendingQuantitiesById.has(id)
       );
@@ -596,24 +691,37 @@ export default function Inventario() {
             0
           )
         : 0;
+      const hasSingleProject = projectBreakdown.length === 1;
+      const singleProject = hasSingleProject
+        ? projectBreakdown[0]?.project ?? null
+        : null;
 
       return {
         ...item,
+        project: singleProject,
+        projectBreakdown: projectBreakdown.map((entry: any) => ({
+          ...entry,
+          currentStock: entry.currentStockTotal.toFixed(2),
+          minimumStock:
+            entry.minimumStockTotal > 0
+              ? entry.minimumStockTotal.toFixed(2)
+              : null,
+        })),
+        projectSummaryLabel: hasSingleProject
+          ? projectBreakdown[0]?.projectLabel
+          : `${projectBreakdown.length} proyectos/bodegas`,
         currentStock: item.currentStockTotal.toFixed(2),
+        minimumStock:
+          item.minimumStockTotal > 0
+            ? item.minimumStockTotal.toFixed(2)
+            : item.minimumStock,
         pendingQuantitiesLoading:
           visibleInventoryIds.length > 0 &&
           !pendingQuantitiesReady &&
           !pendingQuantitiesQuery.isError,
         totalRequiredQuantity: totalRequiredQuantity.toFixed(2),
         pendingReceiptQuantity: pendingReceiptQuantity.toFixed(2),
-        warehouseSummaryLabel:
-          item.warehouseBreakdown.length === 1
-            ? item.warehouseBreakdown[0].warehouseLocation
-            : `${item.warehouseBreakdown.length} almacenes`,
-        warehouseLocation:
-          item.warehouseBreakdown.length === 1
-            ? item.warehouseBreakdown[0].warehouseLocation
-            : undefined,
+        warehouseSummaryLabel: item.warehouseLocation || "Sin almacén",
       };
     });
   }, [
@@ -714,7 +822,7 @@ export default function Inventario() {
   };
 
   const getProjectWarehouseLabel = (project: any | null) => {
-    if (!project) return "Inventario central";
+    if (!project) return "Seleccione proyecto/bodega";
     return (
       project.warehouse?.displayName ??
       `${String(project.code).toUpperCase()} - ${String(project.name).toUpperCase()} - BODEGA`
@@ -738,7 +846,9 @@ export default function Inventario() {
               ? "No fue posible cargar el inventario"
               : isFetching && !isLoading
                 ? "Actualizando resultados..."
-                : `${total.toLocaleString("es-HN")} registros encontrados`}
+                : groupedItems.length !== items.length
+                  ? `${groupedItems.length.toLocaleString("es-HN")} grupos en esta página · ${total.toLocaleString("es-HN")} registros encontrados`
+                  : `${total.toLocaleString("es-HN")} registros encontrados`}
           </p>
         </div>
         {canManage && (
@@ -802,20 +912,17 @@ export default function Inventario() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs">Proyecto</Label>
+                    <Label className="text-xs">Proyecto / bodega *</Label>
                     <Select
-                      value={projectId || "none"}
+                      value={projectId || undefined}
                       onValueChange={(value) =>
-                        setProjectId(value === "none" ? "" : value)
+                        setProjectId(value)
                       }
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Inventario central" />
+                        <SelectValue placeholder="Seleccione proyecto/bodega" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="none">
-                          Inventario central / sin proyecto
-                        </SelectItem>
                         {(projects ?? []).map((project) => (
                           <SelectItem key={project.id} value={String(project.id)}>
                             {project.code} - {project.name}
@@ -828,7 +935,7 @@ export default function Inventario() {
                 {projectId ? (
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     <div className="space-y-1">
-                      <Label className="text-xs">Almacén del proyecto</Label>
+                      <Label className="text-xs">Almacén físico *</Label>
                       <Select
                         value={warehouseId || undefined}
                         onValueChange={setWarehouseId}
@@ -838,7 +945,7 @@ export default function Inventario() {
                             placeholder={
                               warehousesLoading
                                 ? "Cargando almacenes..."
-                                : "Seleccione almacén del proyecto"
+                                : "Seleccione almacén físico"
                             }
                           />
                         </SelectTrigger>
@@ -855,54 +962,21 @@ export default function Inventario() {
                       </Select>
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">Proyecto seleccionado</Label>
+                      <Label className="text-xs">Bodega seleccionada</Label>
                       <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
                         {getProjectWarehouseLabel(selectedCreateProject)}
                       </div>
                     </div>
                   </div>
-                ) : (
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                    <div className="space-y-1">
-                      <Label className="text-xs">Almacén central</Label>
-                      <Select
-                        value={warehouseId || undefined}
-                        onValueChange={setWarehouseId}
-                      >
-                        <SelectTrigger>
-                          <SelectValue
-                            placeholder={
-                              warehousesLoading
-                                ? "Cargando almacenes..."
-                                : "Seleccione un almacén central"
-                            }
-                          />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {centralWarehouses.map((warehouse: any) => (
-                            <SelectItem
-                              key={warehouse.id}
-                              value={String(warehouse.id)}
-                            >
-                              {warehouse.displayName}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Destino</Label>
-                      <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
-                        Este registro quedará como inventario central hasta que
-                        se asigne a un proyecto.
-                      </div>
-                    </div>
-                  </div>
-                )}
+                ) : null}
                 <Button
                   onClick={() => {
                     if (!sapItemCode || !name) {
                       toast.error("Código SAP y nombre son obligatorios");
+                      return;
+                    }
+                    if (!projectId || !warehouseId) {
+                      toast.error("Seleccione proyecto/bodega y almacén físico");
                       return;
                     }
                     createMutation.mutate({
@@ -913,8 +987,8 @@ export default function Inventario() {
                       category: category || undefined,
                       currentStock: currentStock || undefined,
                       minimumStock: minimumStock || undefined,
-                      projectId: projectId ? Number(projectId) : undefined,
-                      warehouseId: warehouseId ? Number(warehouseId) : undefined,
+                      projectId: Number(projectId),
+                      warehouseId: Number(warehouseId),
                     });
                   }}
                   disabled={createMutation.isPending}
@@ -937,12 +1011,13 @@ export default function Inventario() {
               if (!open) {
                 setSelectedItem(null);
                 setAssignmentProjectId("none");
+                setAssignmentWarehouseId("");
               }
             }}
           >
             <DialogContent className="sm:max-w-2xl">
               <DialogHeader>
-                <DialogTitle>Asignar Inventario a Proyecto</DialogTitle>
+                <DialogTitle>Clasificar Inventario</DialogTitle>
               </DialogHeader>
               <div className="space-y-4 pt-2">
                 <div className="rounded-lg border bg-muted/30 p-3 text-sm">
@@ -956,21 +1031,24 @@ export default function Inventario() {
                     Proyecto actual:{" "}
                     {selectedItem?.project
                       ? `${selectedItem.project.code} - ${selectedItem.project.name}`
-                      : "Inventario Central"}
+                      : "Por clasificar"}
                   </p>
                 </div>
 
                 <div className="space-y-1">
-                  <Label className="text-xs">Nuevo proyecto</Label>
+                  <Label className="text-xs">Proyecto / bodega destino</Label>
                   <Select
-                    value={assignmentProjectId}
+                    value={
+                      assignmentProjectId === "none"
+                        ? undefined
+                        : assignmentProjectId
+                    }
                     onValueChange={setAssignmentProjectId}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Seleccione un proyecto" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">Inventario central</SelectItem>
                       {(projects ?? []).map((project) => (
                         <SelectItem key={project.id} value={String(project.id)}>
                           {project.code} - {project.name}
@@ -980,37 +1058,58 @@ export default function Inventario() {
                   </Select>
                 </div>
 
+                <div className="space-y-1">
+                  <Label className="text-xs">Almacén físico destino</Label>
+                  <Select
+                    value={assignmentWarehouseId || undefined}
+                    onValueChange={setAssignmentWarehouseId}
+                    disabled={assignmentProjectId === "none"}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccione almacén físico" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {assignmentProjectWarehouses.map((warehouse: any) => (
+                        <SelectItem key={warehouse.id} value={String(warehouse.id)}>
+                          {formatWarehouseOptionLabel(warehouse)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
                   <p className="text-sm font-semibold text-foreground">
-                    Bodega destino
+                    Destino
                   </p>
                   <p className="mt-1 text-sm text-foreground">
-                    {assignmentProjectId === "none"
-                      ? "Inventario central"
-                      : getProjectWarehouseLabel(selectedAssignmentProject)}
+                    {getProjectWarehouseLabel(selectedAssignmentProject)}
                   </p>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    {assignmentProjectId === "none"
-                      ? "Al quitar el proyecto, el registro vuelve a inventario central."
-                      : "Al guardar, el ítem se moverá automáticamente a la bodega del proyecto seleccionado."}
+                    Al guardar, el inventario legado quedará operativo en el proyecto/bodega y almacén físico seleccionados.
                   </p>
                 </div>
 
                 <Button
                   className="w-full"
-                  disabled={!selectedItem || updateMutation.isPending}
+                  disabled={!selectedItem || bulkAssignMutation.isPending}
                   onClick={() => {
                     if (!selectedItem) return;
-                    updateMutation.mutate({
-                      id: selectedItem.id,
-                      projectId:
-                        assignmentProjectId === "none"
-                          ? null
-                          : Number(assignmentProjectId),
+                    if (
+                      assignmentProjectId === "none" ||
+                      !assignmentWarehouseId
+                    ) {
+                      toast.error("Seleccione proyecto/bodega y almacén físico");
+                      return;
+                    }
+                    bulkAssignMutation.mutate({
+                      ids: selectedItem.sourceIds ?? [selectedItem.id],
+                      projectId: Number(assignmentProjectId),
+                      warehouseId: Number(assignmentWarehouseId),
                     });
                   }}
                 >
-                  {updateMutation.isPending ? "Guardando..." : "Guardar asignación"}
+                  {bulkAssignMutation.isPending ? "Guardando..." : "Clasificar inventario"}
                 </Button>
               </div>
             </DialogContent>
@@ -1022,6 +1121,7 @@ export default function Inventario() {
               setBulkAssignmentDialogOpen(open);
               if (!open) {
                 setBulkAssignmentProjectId("none");
+                setBulkAssignmentWarehouseId("");
               }
             }}
           >
@@ -1029,8 +1129,8 @@ export default function Inventario() {
               <DialogHeader>
                 <DialogTitle>
                   {bulkAssignmentMode === "filtered"
-                    ? "Asignar Todo el Resultado Filtrado"
-                    : "Asignar Varios Ítems a Proyecto"}
+                    ? "Clasificar Todo el Resultado Filtrado"
+                    : "Clasificar Ítems Seleccionados"}
                 </DialogTitle>
               </DialogHeader>
               <div className="space-y-4 pt-2">
@@ -1044,22 +1144,25 @@ export default function Inventario() {
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
                     {bulkAssignmentMode === "filtered"
-                      ? "Esta acción moverá todos los registros que coincidan con los filtros actuales al proyecto elegido o los devolverá a inventario central."
-                      : "Esta acción moverá todos los registros seleccionados al proyecto elegido o los devolverá a inventario central."}
+                      ? "Esta acción clasificará todos los registros sin proyecto que coincidan con los filtros actuales."
+                      : "Esta acción clasificará los registros seleccionados sin proyecto."}
                   </p>
                 </div>
 
                 <div className="space-y-1">
-                  <Label className="text-xs">Proyecto destino</Label>
+                  <Label className="text-xs">Proyecto / bodega destino</Label>
                   <Select
-                    value={bulkAssignmentProjectId}
+                    value={
+                      bulkAssignmentProjectId === "none"
+                        ? undefined
+                        : bulkAssignmentProjectId
+                    }
                     onValueChange={setBulkAssignmentProjectId}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Seleccione un proyecto" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">Inventario central</SelectItem>
                       {(projects ?? []).map((project) => (
                         <SelectItem key={project.id} value={String(project.id)}>
                           {project.code} - {project.name}
@@ -1069,19 +1172,35 @@ export default function Inventario() {
                   </Select>
                 </div>
 
+                <div className="space-y-1">
+                  <Label className="text-xs">Almacén físico destino</Label>
+                  <Select
+                    value={bulkAssignmentWarehouseId || undefined}
+                    onValueChange={setBulkAssignmentWarehouseId}
+                    disabled={bulkAssignmentProjectId === "none"}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccione almacén físico" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {bulkProjectWarehouses.map((warehouse: any) => (
+                        <SelectItem key={warehouse.id} value={String(warehouse.id)}>
+                          {formatWarehouseOptionLabel(warehouse)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
                   <p className="text-sm font-semibold text-foreground">
-                    Bodega destino
+                    Destino
                   </p>
                   <p className="mt-1 text-sm text-foreground">
-                    {bulkAssignmentProjectId === "none"
-                      ? "Inventario central"
-                      : getProjectWarehouseLabel(selectedBulkProject)}
+                    {getProjectWarehouseLabel(selectedBulkProject)}
                   </p>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    {bulkAssignmentProjectId === "none"
-                      ? "Los registros quedarán sin proyecto y sin bodega de proyecto asignada."
-                      : "Todos los registros elegidos pasarán a la bodega operativa del proyecto seleccionado."}
+                    Los registros elegidos pasarán a la bodega operativa del proyecto seleccionado.
                   </p>
                 </div>
 
@@ -1095,31 +1214,34 @@ export default function Inventario() {
                     bulkAssignFilteredMutation.isPending
                   }
                   onClick={() => {
+                    if (
+                      bulkAssignmentProjectId === "none" ||
+                      !bulkAssignmentWarehouseId
+                    ) {
+                      toast.error("Seleccione proyecto/bodega y almacén físico");
+                      return;
+                    }
                     if (bulkAssignmentMode === "filtered") {
                       bulkAssignFilteredMutation.mutate({
                         ...queryInput,
-                        targetProjectId:
-                          bulkAssignmentProjectId === "none"
-                            ? null
-                            : Number(bulkAssignmentProjectId),
+                        targetProjectId: Number(bulkAssignmentProjectId),
+                        targetWarehouseId: Number(bulkAssignmentWarehouseId),
                       });
                       return;
                     }
 
                     bulkAssignMutation.mutate({
                       ids: selectedItemIds,
-                      projectId:
-                        bulkAssignmentProjectId === "none"
-                          ? null
-                          : Number(bulkAssignmentProjectId),
+                      projectId: Number(bulkAssignmentProjectId),
+                      warehouseId: Number(bulkAssignmentWarehouseId),
                     });
                   }}
                 >
                   {bulkAssignMutation.isPending || bulkAssignFilteredMutation.isPending
                     ? "Guardando..."
                     : bulkAssignmentMode === "filtered"
-                      ? "Aplicar a todo lo filtrado"
-                      : "Aplicar asignación masiva"}
+                      ? "Clasificar todo lo filtrado"
+                      : "Clasificar seleccionados"}
                 </Button>
               </div>
             </DialogContent>
@@ -1146,7 +1268,9 @@ export default function Inventario() {
                 {trackingItem?.name}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                {formatProject(trackingItem?.project)} ·{" "}
+                {trackingItem?.projectSummaryLabel ??
+                  formatProject(trackingItem?.project)}{" "}
+                ·{" "}
                 {trackingItem?.warehouseLocation || "Sin almacén"}
               </p>
             </div>
@@ -1275,7 +1399,9 @@ export default function Inventario() {
             <div className="rounded-lg border bg-muted/30 p-3">
               <p className="font-medium text-foreground">{kardexItem?.name}</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                {formatProject(kardexItem?.project)} ·{" "}
+                {kardexItem?.projectSummaryLabel ??
+                  formatProject(kardexItem?.project)}{" "}
+                ·{" "}
                 {kardexItem?.warehouseLocation || "Sin almacén"}
               </p>
             </div>
@@ -1433,7 +1559,7 @@ export default function Inventario() {
           </Label>
           <Search className="absolute left-3 top-[calc(50%+10px)] -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Buscar por nombre, código, marca, parte, proyecto o almacén..."
+            placeholder="Buscar por nombre, código, marca, parte, proyecto/bodega o almacén físico..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 h-9"
@@ -1443,7 +1569,7 @@ export default function Inventario() {
         {canAccessWarehouses ? (
           <div className="min-w-0">
             <Label className="mb-1 block text-xs font-medium text-muted-foreground">
-              Bodega / almacén ({warehouseOptions.length.toLocaleString("es-HN")})
+              Almacén físico ({warehouseOptions.length.toLocaleString("es-HN")})
             </Label>
             <Popover
               open={warehouseFilterOpen}
@@ -1466,7 +1592,7 @@ export default function Inventario() {
                 className="w-[var(--radix-popover-trigger-width)] p-0"
               >
                 <Command>
-                  <CommandInput placeholder="Buscar almacén..." />
+                  <CommandInput placeholder="Buscar almacén físico..." />
                   <CommandList>
                     <CommandEmpty>No se encontraron almacenes.</CommandEmpty>
                     <CommandGroup>
@@ -1534,7 +1660,7 @@ export default function Inventario() {
 
         <div className="min-w-0">
           <Label className="mb-1 block text-xs font-medium text-muted-foreground">
-            Proyecto ({projectOptions.length.toLocaleString("es-HN")})
+            Proyecto / bodega ({projectOptions.length.toLocaleString("es-HN")})
           </Label>
           <Popover
             open={projectFilterOpen}
@@ -1569,7 +1695,7 @@ export default function Inventario() {
               className="w-[var(--radix-popover-trigger-width)] p-0"
             >
               <Command>
-                <CommandInput placeholder="Buscar proyecto..." />
+                  <CommandInput placeholder="Buscar proyecto/bodega..." />
                 <CommandList>
                   <CommandEmpty>No se encontraron proyectos.</CommandEmpty>
                   <CommandGroup>
@@ -1586,9 +1712,29 @@ export default function Inventario() {
                         }`}
                       />
                       <span className="truncate">
-                        Todos los proyectos ({projectOptions.length.toLocaleString("es-HN")})
+                        Todos los proyectos/bodegas ({projectOptions.length.toLocaleString("es-HN")})
                       </span>
                     </CommandItem>
+                    {canViewUnclassified ? (
+                      <CommandItem
+                        value="inventario por clasificar sin proyecto"
+                        onSelect={() => {
+                          setProjectFilter("unclassified");
+                          setProjectFilterOpen(false);
+                        }}
+                      >
+                        <Check
+                          className={`h-4 w-4 ${
+                            projectFilter === "unclassified"
+                              ? "opacity-100"
+                              : "opacity-0"
+                          }`}
+                        />
+                        <span className="truncate">
+                          Inventario por clasificar
+                        </span>
+                      </CommandItem>
+                    ) : null}
                     {projectOptions.map((project: any) => (
                       <CommandItem
                         key={project.id}
@@ -1619,13 +1765,13 @@ export default function Inventario() {
       </div>
 
       <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-muted-foreground">
-        Los movimientos entre bodegas o proyectos se registran desde requisiciones, traslados y recepciones. Desde inventario solo consultas existencias y haces altas controladas.
+        Los movimientos entre bodegas de proyecto se registran desde requisiciones, traslados y recepciones. Desde inventario consultas existencias, haces altas controladas y clasificas inventario histórico sin proyecto.
       </div>
 
       {canManage && allowInventoryReassignment && selectedItemIds.length > 0 ? (
         <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 px-4 py-3 md:flex-row md:items-center md:justify-between">
           <p className="text-sm text-muted-foreground">
-            {selectedItemIds.length.toLocaleString("es-HN")} ítems seleccionados en esta vista
+            {selectedItemIds.length.toLocaleString("es-HN")} ítems por clasificar seleccionados
           </p>
           <div className="flex gap-2">
             <Button
@@ -1636,7 +1782,7 @@ export default function Inventario() {
             </Button>
             <Button onClick={() => openBulkAssignmentDialog("selected")}>
               <ArrowRightLeft className="h-4 w-4 mr-2" />
-              Pasar seleccionados
+              Clasificar seleccionados
             </Button>
           </div>
         </div>
@@ -1645,11 +1791,11 @@ export default function Inventario() {
       {canManage && allowInventoryReassignment && filteredItemCount > 0 ? (
         <div className="flex flex-col gap-3 rounded-lg border border-dashed px-4 py-3 md:flex-row md:items-center md:justify-between">
           <p className="text-sm text-muted-foreground">
-            {filteredItemCount.toLocaleString("es-HN")} ítems coinciden con los filtros actuales
+            {filteredItemCount.toLocaleString("es-HN")} ítems por clasificar coinciden con los filtros actuales
           </p>
           <Button variant="outline" onClick={() => openBulkAssignmentDialog("filtered")}>
             <ArrowRightLeft className="h-4 w-4 mr-2" />
-            Pasar todo lo filtrado
+            Clasificar todo lo filtrado
           </Button>
         </div>
       ) : null}
@@ -1680,7 +1826,9 @@ export default function Inventario() {
                 {debouncedSearch
                   ? "No se encontraron ítems"
                   : projectFilter !== "all"
-                    ? "No hay inventario asignado a este proyecto"
+                    ? projectFilter === "unclassified"
+                      ? "No hay inventario por clasificar"
+                      : "No hay inventario asignado a este proyecto/bodega"
                     : "El inventario está vacío"}
               </p>
             </div>
@@ -1751,7 +1899,7 @@ export default function Inventario() {
                         parseFloat(item.currentStock) <=
                           parseFloat(item.minimumStock);
                       const isExpanded = expandedInventoryKeys.includes(item.id);
-                      const hasBreakdown = item.warehouseBreakdown.length > 1;
+                      const hasBreakdown = item.projectBreakdown.length > 1;
 
                       return (
                         <Fragment key={item.id}>
@@ -1822,29 +1970,29 @@ export default function Inventario() {
                               {item.minimumStock || "—"}
                             </td>
                             <td className="p-3 text-xs">
-                              {item.project
-                                ? `${item.project.code} - ${item.project.name}`
-                                : "Inventario Central"}
-                            </td>
-                            <td className="p-3 text-xs">
                               {hasBreakdown ? (
                                 <Button
                                   type="button"
                                   variant="ghost"
                                   size="sm"
-                                  className="h-7 px-2"
+                                  className="h-7 max-w-[260px] px-2"
                                   onClick={() => toggleInventoryBreakdown(item.id)}
                                 >
                                   {isExpanded ? (
-                                    <ChevronUp className="mr-1 h-3.5 w-3.5" />
+                                    <ChevronUp className="mr-1 h-3.5 w-3.5 shrink-0" />
                                   ) : (
-                                    <ChevronDown className="mr-1 h-3.5 w-3.5" />
+                                    <ChevronDown className="mr-1 h-3.5 w-3.5 shrink-0" />
                                   )}
-                                  {item.warehouseSummaryLabel}
+                                  <span className="truncate">
+                                    {item.projectSummaryLabel}
+                                  </span>
                                 </Button>
                               ) : (
-                                item.warehouseSummaryLabel || "—"
+                                item.projectSummaryLabel || "Por clasificar"
                               )}
+                            </td>
+                            <td className="p-3 text-xs">
+                              {item.warehouseSummaryLabel || "—"}
                             </td>
                             <td className="p-3">
                               <div className="flex justify-end gap-2">
@@ -1886,7 +2034,7 @@ export default function Inventario() {
                                   onClick={() => openAssignmentDialog(item)}
                                 >
                                   <ArrowRightLeft className="h-3.5 w-3.5 mr-2" />
-                                  Pasar a proyecto
+                                  Clasificar
                                 </Button>
                               </td>
                             ) : null}
@@ -1906,27 +2054,37 @@ export default function Inventario() {
                                     <thead>
                                       <tr className="border-b bg-muted/30">
                                         <th className="p-2 text-left font-semibold uppercase tracking-wider text-muted-foreground">
-                                          Almacén
+                                          Proyecto / bodega
                                         </th>
                                         <th className="p-2 text-right font-semibold uppercase tracking-wider text-muted-foreground">
                                           Stock
                                         </th>
+                                        <th className="p-2 text-right font-semibold uppercase tracking-wider text-muted-foreground">
+                                          Mínimo
+                                        </th>
                                       </tr>
                                     </thead>
                                     <tbody>
-                                      {item.warehouseBreakdown.map(
-                                        (warehouseRow: any) => (
+                                      {item.projectBreakdown.map(
+                                        (projectRow: any) => (
                                           <tr
-                                            key={warehouseRow.id}
+                                            key={projectRow.id}
                                             className="border-b last:border-0"
                                           >
                                             <td className="p-2">
-                                              {warehouseRow.warehouseLocation}
+                                              {projectRow.projectLabel}
                                             </td>
                                             <td className="p-2 text-right font-mono">
                                               {formatQuantity(
-                                                warehouseRow.currentStock
+                                                projectRow.currentStock
                                               )}
+                                            </td>
+                                            <td className="p-2 text-right font-mono text-muted-foreground">
+                                              {projectRow.minimumStock
+                                                ? formatQuantity(
+                                                    projectRow.minimumStock
+                                                  )
+                                                : "—"}
                                             </td>
                                           </tr>
                                         )
@@ -1946,7 +2104,21 @@ export default function Inventario() {
 
               <div className="flex flex-col gap-4 border-t border-border px-4 py-4 md:flex-row md:items-center md:justify-between">
                 <p className="text-sm text-muted-foreground">
-                  Mostrando {rangeStart.toLocaleString("es-HN")} a {rangeEnd.toLocaleString("es-HN")} de {total.toLocaleString("es-HN")} registros
+                  {groupedItems.length !== items.length ? (
+                    <>
+                      Mostrando{" "}
+                      {groupedItems.length.toLocaleString("es-HN")} grupos en
+                      esta página ({rangeStart.toLocaleString("es-HN")} a{" "}
+                      {rangeEnd.toLocaleString("es-HN")} de{" "}
+                      {total.toLocaleString("es-HN")} registros)
+                    </>
+                  ) : (
+                    <>
+                      Mostrando {rangeStart.toLocaleString("es-HN")} a{" "}
+                      {rangeEnd.toLocaleString("es-HN")} de{" "}
+                      {total.toLocaleString("es-HN")} registros
+                    </>
+                  )}
                 </p>
 
                 <Pagination className="mx-0 w-auto justify-end">

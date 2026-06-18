@@ -59,6 +59,7 @@ type WarehouseFormState = {
   description: string;
   projectId: string;
   isCentralWarehouse: boolean;
+  isSharedWarehouse: boolean;
 };
 
 type WarehouseSortField =
@@ -66,6 +67,7 @@ type WarehouseSortField =
   | "name"
   | "responsible"
   | "central"
+  | "shared"
   | "projectCount"
   | "inventoryRows"
   | "uniqueItems"
@@ -88,6 +90,7 @@ const EMPTY_WAREHOUSE_FORM: WarehouseFormState = {
   description: "",
   projectId: "",
   isCentralWarehouse: false,
+  isSharedWarehouse: false,
 };
 const DETAIL_INVENTORY_PAGE_SIZE = 100;
 
@@ -162,6 +165,8 @@ function getWarehouseSortValue(warehouse: any, field: WarehouseSortField) {
         : "Sin responsable";
     case "central":
       return warehouse.isCentralWarehouse ? 0 : 1;
+    case "shared":
+      return warehouse.isSharedWarehouse ? 0 : 1;
     case "projectCount":
       return Number(warehouse.projectCount ?? 0);
     case "inventoryRows":
@@ -180,10 +185,14 @@ function compareSortValues(leftValue: unknown, rightValue: unknown) {
     return leftValue - rightValue;
   }
 
-  return String(leftValue ?? "").localeCompare(String(rightValue ?? ""), "es-HN", {
-    numeric: true,
-    sensitivity: "base",
-  });
+  return String(leftValue ?? "").localeCompare(
+    String(rightValue ?? ""),
+    "es-HN",
+    {
+      numeric: true,
+      sensitivity: "base",
+    }
+  );
 }
 
 function compareWarehouseByField(
@@ -198,7 +207,9 @@ function compareWarehouseByField(
 }
 
 function getInventoryProjectLabel(item: any) {
-  return item.project ? `${item.project.code} - ${item.project.name}` : "Sin proyecto";
+  return item.project
+    ? `${item.project.code} - ${item.project.name}`
+    : "Sin proyecto";
 }
 
 function getInventorySortValue(item: any, field: WarehouseInventorySortField) {
@@ -218,7 +229,9 @@ function getInventorySortValue(item: any, field: WarehouseInventorySortField) {
   }
 }
 
-function getInventoryServerSortField(field: WarehouseInventorySortField | null) {
+function getInventoryServerSortField(
+  field: WarehouseInventorySortField | null
+) {
   switch (field) {
     case "sap":
       return "sapItemCode";
@@ -234,7 +247,10 @@ function getInventoryServerSortField(field: WarehouseInventorySortField | null) 
   }
 }
 
-function getWarehouseProjectSortValue(project: any, field: WarehouseProjectSortField) {
+function getWarehouseProjectSortValue(
+  project: any,
+  field: WarehouseProjectSortField
+) {
   switch (field) {
     case "code":
       return project.code ?? "";
@@ -293,6 +309,7 @@ export default function Almacenes() {
   const isProjectWarehouseManager = userRole === "administrador_proyecto";
   const canManageCentralWarehouse =
     user?.role === "admin" || userRole === "administracion_central";
+  const canManageSharedWarehouse = canManageCentralWarehouse;
   const canManage =
     user?.role === "admin" ||
     userRole === "administracion_central" ||
@@ -362,21 +379,18 @@ export default function Almacenes() {
   const isDetailInventoryLoading =
     isDetailInventorySearchPending || (isInventoryFetching && !inventory);
 
-  const availableProjects = useMemo(
-    () => {
-      const assignedProjectIds = new Set(
-        (selectedWarehouse?.projects ?? []).map((project: any) =>
-          Number(project.id)
-        )
-      );
-      return (projects ?? []).filter(
-        (project: any) =>
-          project.status === "activo" &&
-          !assignedProjectIds.has(Number(project.id))
-      );
-    },
-    [projects, selectedWarehouse]
-  );
+  const availableProjects = useMemo(() => {
+    const assignedProjectIds = new Set(
+      (selectedWarehouse?.projects ?? []).map((project: any) =>
+        Number(project.id)
+      )
+    );
+    return (projects ?? []).filter(
+      (project: any) =>
+        project.status === "activo" &&
+        !assignedProjectIds.has(Number(project.id))
+    );
+  }, [projects, selectedWarehouse]);
 
   const availableWarehouseUsers = useMemo(() => {
     const assignedUserIds = new Set(
@@ -476,12 +490,15 @@ export default function Almacenes() {
 
   const visibleWarehouseProjects = useMemo(() => {
     const search = normalizeSearchText(detailProjectSearch);
-    const filtered = (selectedWarehouse?.projects ?? []).filter((project: any) => {
-      if (!search) return true;
+    const filtered = (selectedWarehouse?.projects ?? []).filter(
+      (project: any) => {
+        if (!search) return true;
 
-      return normalizeSearchText([project.code, project.name, project.status].join(" "))
-        .includes(search);
-    });
+        return normalizeSearchText(
+          [project.code, project.name, project.status].join(" ")
+        ).includes(search);
+      }
+    );
 
     if (!detailProjectSortField) return filtered;
 
@@ -491,24 +508,30 @@ export default function Almacenes() {
         getWarehouseProjectSortValue(right, detailProjectSortField)
       )
     );
-  }, [detailProjectSearch, detailProjectSortField, selectedWarehouse?.projects]);
+  }, [
+    detailProjectSearch,
+    detailProjectSortField,
+    selectedWarehouse?.projects,
+  ]);
 
   const visibleWarehouseUsers = useMemo(() => {
     const search = normalizeSearchText(detailUserSearch);
-    const filtered = (selectedWarehouse?.assignedUsers ?? []).filter((assignedUser: any) => {
-      if (!search) return true;
+    const filtered = (selectedWarehouse?.assignedUsers ?? []).filter(
+      (assignedUser: any) => {
+        if (!search) return true;
 
-      return normalizeSearchText(
-        [
-          formatWarehouseUser(assignedUser),
-          assignedUser.email,
-          formatWarehouseUserRole(assignedUser.buildreqRole),
-          assignedUser.isResponsible ? "Responsable" : "Acceso",
-        ]
-          .filter(Boolean)
-          .join(" ")
-      ).includes(search);
-    });
+        return normalizeSearchText(
+          [
+            formatWarehouseUser(assignedUser),
+            assignedUser.email,
+            formatWarehouseUserRole(assignedUser.buildreqRole),
+            assignedUser.isResponsible ? "Responsable" : "Acceso",
+          ]
+            .filter(Boolean)
+            .join(" ")
+        ).includes(search);
+      }
+    );
 
     if (!detailUserSortField) return filtered;
 
@@ -530,12 +553,12 @@ export default function Almacenes() {
         utils.projects.list.invalidate(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
 
-  const setCentralWarehouseMutation = trpc.warehouses.update.useMutation({
+  const updateWarehouseFlagsMutation = trpc.warehouses.update.useMutation({
     onSuccess: () => {
-      toast.success("Bodega central actualizada");
+      toast.success("Bodega actualizada");
       void Promise.all([
         utils.warehouses.list.invalidate(),
         selectedWarehouseId
@@ -543,11 +566,11 @@ export default function Almacenes() {
           : Promise.resolve(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
 
   const assignMutation = trpc.warehouses.assignProject.useMutation({
-    onSuccess: (result) => {
+    onSuccess: result => {
       toast.success(
         result.linkedRows > 0
           ? `Proyecto asignado y ${formatNumber(result.linkedRows)} filas de inventario actualizadas`
@@ -563,7 +586,7 @@ export default function Almacenes() {
         utils.projects.list.invalidate(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
 
   const unassignMutation = trpc.warehouses.unassignProject.useMutation({
@@ -578,7 +601,7 @@ export default function Almacenes() {
         utils.projects.list.invalidate(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
 
   const assignUserMutation = trpc.warehouses.assignUser.useMutation({
@@ -592,7 +615,7 @@ export default function Almacenes() {
           : Promise.resolve(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
 
   const unassignUserMutation = trpc.warehouses.unassignUser.useMutation({
@@ -605,7 +628,7 @@ export default function Almacenes() {
           : Promise.resolve(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
 
   const setResponsibleMutation = trpc.warehouses.setResponsible.useMutation({
@@ -618,7 +641,7 @@ export default function Almacenes() {
           : Promise.resolve(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
 
   const openWarehouseDetail = (warehouseId: number) => {
@@ -650,6 +673,9 @@ export default function Almacenes() {
       isCentralWarehouse: canManageCentralWarehouse
         ? warehouseForm.isCentralWarehouse
         : undefined,
+      isSharedWarehouse: canManageSharedWarehouse
+        ? warehouseForm.isSharedWarehouse
+        : undefined,
       projectId: warehouseForm.projectId
         ? Number(warehouseForm.projectId)
         : undefined,
@@ -659,9 +685,18 @@ export default function Almacenes() {
   const updateCentralWarehouse = (warehouse: any, checked: boolean) => {
     if (!canManageCentralWarehouse) return;
     if (Boolean(warehouse.isCentralWarehouse) === checked) return;
-    setCentralWarehouseMutation.mutate({
+    updateWarehouseFlagsMutation.mutate({
       id: Number(warehouse.id),
       isCentralWarehouse: checked,
+    });
+  };
+
+  const updateSharedWarehouse = (warehouse: any, checked: boolean) => {
+    if (!canManageSharedWarehouse) return;
+    if (Boolean(warehouse.isSharedWarehouse) === checked) return;
+    updateWarehouseFlagsMutation.mutate({
+      id: Number(warehouse.id),
+      isSharedWarehouse: checked,
     });
   };
 
@@ -749,8 +784,8 @@ export default function Almacenes() {
                     <Label className="text-xs">Código *</Label>
                     <Input
                       value={warehouseForm.code}
-                      onChange={(event) =>
-                        setWarehouseForm((form) => ({
+                      onChange={event =>
+                        setWarehouseForm(form => ({
                           ...form,
                           code: event.target.value,
                         }))
@@ -762,8 +797,8 @@ export default function Almacenes() {
                     <Label className="text-xs">Nombre *</Label>
                     <Input
                       value={warehouseForm.name}
-                      onChange={(event) =>
-                        setWarehouseForm((form) => ({
+                      onChange={event =>
+                        setWarehouseForm(form => ({
                           ...form,
                           name: event.target.value,
                         }))
@@ -776,8 +811,8 @@ export default function Almacenes() {
                   <Label className="text-xs">Descripción</Label>
                   <Textarea
                     value={warehouseForm.description}
-                    onChange={(event) =>
-                      setWarehouseForm((form) => ({
+                    onChange={event =>
+                      setWarehouseForm(form => ({
                         ...form,
                         description: event.target.value,
                       }))
@@ -786,28 +821,55 @@ export default function Almacenes() {
                   />
                 </div>
                 {canManageCentralWarehouse ? (
-                  <div className="flex items-start gap-3 rounded-md border p-3">
-                    <Checkbox
-                      id="warehouse-is-central"
-                      checked={warehouseForm.isCentralWarehouse}
-                      onCheckedChange={(checked) =>
-                        setWarehouseForm((form) => ({
-                          ...form,
-                          isCentralWarehouse: checked === true,
-                        }))
-                      }
-                    />
-                    <div className="space-y-1">
-                      <Label
-                        htmlFor="warehouse-is-central"
-                        className="text-sm font-medium"
-                      >
-                        Bodega central
-                      </Label>
-                      <p className="text-xs text-muted-foreground">
-                        Al marcar esta bodega, cualquier otra bodega central se
-                        desmarcará automáticamente.
-                      </p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="flex items-start gap-3 rounded-md border p-3">
+                      <Checkbox
+                        id="warehouse-is-central"
+                        checked={warehouseForm.isCentralWarehouse}
+                        onCheckedChange={checked =>
+                          setWarehouseForm(form => ({
+                            ...form,
+                            isCentralWarehouse: checked === true,
+                          }))
+                        }
+                      />
+                      <div className="space-y-1">
+                        <Label
+                          htmlFor="warehouse-is-central"
+                          className="text-sm font-medium"
+                        >
+                          Bodega central
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Al marcar esta bodega, cualquier otra bodega central
+                          se desmarcará automáticamente.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3 rounded-md border p-3">
+                      <Checkbox
+                        id="warehouse-is-shared"
+                        checked={warehouseForm.isSharedWarehouse}
+                        onCheckedChange={checked =>
+                          setWarehouseForm(form => ({
+                            ...form,
+                            isSharedWarehouse: checked === true,
+                          }))
+                        }
+                      />
+                      <div className="space-y-1">
+                        <Label
+                          htmlFor="warehouse-is-shared"
+                          className="text-sm font-medium"
+                        >
+                          Multiproyecto
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Este almacén físico puede alojar bodegas de varios
+                          proyectos; la existencia se mantiene separada por
+                          proyecto.
+                        </p>
+                      </div>
                     </div>
                   </div>
                 ) : null}
@@ -817,8 +879,8 @@ export default function Almacenes() {
                   </Label>
                   <Select
                     value={warehouseForm.projectId || undefined}
-                    onValueChange={(projectId) =>
-                      setWarehouseForm((form) => ({ ...form, projectId }))
+                    onValueChange={projectId =>
+                      setWarehouseForm(form => ({ ...form, projectId }))
                     }
                   >
                     <SelectTrigger>
@@ -833,7 +895,8 @@ export default function Almacenes() {
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    El proyecto quedará asignado a esta bodega como almacén padre.
+                    El proyecto quedará asignado a esta bodega como almacén
+                    padre.
                   </p>
                 </div>
                 <Button
@@ -925,7 +988,9 @@ export default function Almacenes() {
                       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                       <Input
                         value={warehouseSearch}
-                        onChange={(event) => setWarehouseSearch(event.target.value)}
+                        onChange={event =>
+                          setWarehouseSearch(event.target.value)
+                        }
                         placeholder="Código o nombre de almacén"
                         className="pl-9"
                       />
@@ -954,6 +1019,9 @@ export default function Almacenes() {
                       <th className="p-3 text-left">
                         {renderSortableHeader("central", "Central")}
                       </th>
+                      <th className="p-3 text-left">
+                        {renderSortableHeader("shared", "Multiproyecto")}
+                      </th>
                       <th className="p-3 text-right">
                         {renderSortableHeader(
                           "projectCount",
@@ -962,10 +1030,18 @@ export default function Almacenes() {
                         )}
                       </th>
                       <th className="p-3 text-right">
-                        {renderSortableHeader("inventoryRows", "Filas", "right")}
+                        {renderSortableHeader(
+                          "inventoryRows",
+                          "Filas",
+                          "right"
+                        )}
                       </th>
                       <th className="p-3 text-right">
-                        {renderSortableHeader("uniqueItems", "Artículos", "right")}
+                        {renderSortableHeader(
+                          "uniqueItems",
+                          "Artículos",
+                          "right"
+                        )}
                       </th>
                       <th className="p-3 text-left">
                         {renderSortableHeader("status", "Estado")}
@@ -977,7 +1053,7 @@ export default function Almacenes() {
                       <tr>
                         <td
                           className="p-8 text-center text-sm text-muted-foreground"
-                          colSpan={8}
+                          colSpan={9}
                         >
                           No hay bodegas que coincidan con la búsqueda.
                         </td>
@@ -1004,7 +1080,9 @@ export default function Almacenes() {
                             {warehouse.responsibleUser ? (
                               <div>
                                 <div className="font-medium">
-                                  {formatWarehouseUser(warehouse.responsibleUser)}
+                                  {formatWarehouseUser(
+                                    warehouse.responsibleUser
+                                  )}
                                 </div>
                                 <div className="text-xs text-muted-foreground">
                                   {formatWarehouseUserRole(
@@ -1020,17 +1098,17 @@ export default function Almacenes() {
                           </td>
                           <td
                             className="p-3"
-                            onClick={(event) => event.stopPropagation()}
+                            onClick={event => event.stopPropagation()}
                           >
                             <div className="flex items-center gap-2">
                               <Checkbox
                                 checked={Boolean(warehouse.isCentralWarehouse)}
                                 disabled={
                                   !canManageCentralWarehouse ||
-                                  setCentralWarehouseMutation.isPending
+                                  updateWarehouseFlagsMutation.isPending
                                 }
                                 aria-label={`Marcar ${warehouse.name} como bodega central`}
-                                onCheckedChange={(checked) =>
+                                onCheckedChange={checked =>
                                   updateCentralWarehouse(
                                     warehouse,
                                     checked === true
@@ -1039,6 +1117,34 @@ export default function Almacenes() {
                               />
                               {warehouse.isCentralWarehouse ? (
                                 <Badge variant="outline">Central</Badge>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">
+                                  No
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td
+                            className="p-3"
+                            onClick={event => event.stopPropagation()}
+                          >
+                            <div className="flex items-center gap-2">
+                              <Checkbox
+                                checked={Boolean(warehouse.isSharedWarehouse)}
+                                disabled={
+                                  !canManageSharedWarehouse ||
+                                  updateWarehouseFlagsMutation.isPending
+                                }
+                                aria-label={`Marcar ${warehouse.name} como bodega multiproyecto`}
+                                onCheckedChange={checked =>
+                                  updateSharedWarehouse(
+                                    warehouse,
+                                    checked === true
+                                  )
+                                }
+                              />
+                              {warehouse.isSharedWarehouse ? (
+                                <Badge variant="secondary">Sí</Badge>
                               ) : (
                                 <span className="text-xs text-muted-foreground">
                                   No
@@ -1057,7 +1163,9 @@ export default function Almacenes() {
                           </td>
                           <td className="p-3">
                             <Badge
-                              variant={warehouse.isActive ? "secondary" : "outline"}
+                              variant={
+                                warehouse.isActive ? "secondary" : "outline"
+                              }
                             >
                               {warehouse.isActive ? "Activo" : "Inactivo"}
                             </Badge>
@@ -1129,15 +1237,14 @@ export default function Almacenes() {
                       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                       <Input
                         value={detailInventorySearch}
-                        onChange={(event) => {
+                        onChange={event => {
                           setDetailInventorySearch(event.target.value);
                           setDetailInventoryPage(1);
                         }}
                         placeholder="SAP, artículo, unidad o proyecto"
                         className="pl-9 pr-9"
                       />
-                      {isDetailInventorySearchPending ||
-                      isInventoryFetching ? (
+                      {isDetailInventorySearchPending || isInventoryFetching ? (
                         <Spinner className="absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                       ) : null}
                     </div>
@@ -1218,12 +1325,17 @@ export default function Almacenes() {
                           </tr>
                         ) : (
                           visibleInventoryItems.map((item: any) => (
-                            <tr key={item.id} className="border-b last:border-0">
+                            <tr
+                              key={item.id}
+                              className="border-b last:border-0"
+                            >
                               <td className="p-3 font-mono text-xs">
                                 {item.sapItemCode}
                               </td>
                               <td className="p-3">{item.name}</td>
-                              <td className="p-3 text-xs">{item.unit || "-"}</td>
+                              <td className="p-3 text-xs">
+                                {item.unit || "-"}
+                              </td>
                               <td className="p-3 text-right">
                                 {formatNumber(item.currentStock)}
                               </td>
@@ -1236,7 +1348,8 @@ export default function Almacenes() {
                       </tbody>
                     </table>
                   </div>
-                  {!isDetailInventoryLoading && detailInventoryTotalPages > 1 ? (
+                  {!isDetailInventoryLoading &&
+                  detailInventoryTotalPages > 1 ? (
                     <div className="flex flex-col gap-3 border-t px-3 py-3 md:flex-row md:items-center md:justify-between">
                       <p className="text-xs text-muted-foreground">
                         Página {formatNumber(detailInventoryCurrentPage)} de{" "}
@@ -1247,10 +1360,10 @@ export default function Almacenes() {
                           <PaginationItem>
                             <PaginationPrevious
                               href="#"
-                              onClick={(event) => {
+                              onClick={event => {
                                 event.preventDefault();
                                 if (detailInventoryCurrentPage <= 1) return;
-                                setDetailInventoryPage((current) =>
+                                setDetailInventoryPage(current =>
                                   Math.max(current - 1, 1)
                                 );
                               }}
@@ -1272,7 +1385,7 @@ export default function Almacenes() {
                                   isActive={
                                     pageItem === detailInventoryCurrentPage
                                   }
-                                  onClick={(event) => {
+                                  onClick={event => {
                                     event.preventDefault();
                                     setDetailInventoryPage(pageItem);
                                   }}
@@ -1286,7 +1399,7 @@ export default function Almacenes() {
                           <PaginationItem>
                             <PaginationNext
                               href="#"
-                              onClick={(event) => {
+                              onClick={event => {
                                 event.preventDefault();
                                 if (
                                   detailInventoryCurrentPage >=
@@ -1294,7 +1407,7 @@ export default function Almacenes() {
                                 ) {
                                   return;
                                 }
-                                setDetailInventoryPage((current) =>
+                                setDetailInventoryPage(current =>
                                   Math.min(
                                     current + 1,
                                     detailInventoryTotalPages
@@ -1326,7 +1439,7 @@ export default function Almacenes() {
                       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                       <Input
                         value={detailProjectSearch}
-                        onChange={(event) =>
+                        onChange={event =>
                           setDetailProjectSearch(event.target.value)
                         }
                         placeholder="Código, nombre o estado"
@@ -1387,7 +1500,10 @@ export default function Almacenes() {
                           </tr>
                         ) : (
                           visibleWarehouseProjects.map((project: any) => (
-                            <tr key={project.id} className="border-b last:border-0">
+                            <tr
+                              key={project.id}
+                              className="border-b last:border-0"
+                            >
                               <td className="p-3 font-mono text-xs">
                                 {project.code}
                               </td>
@@ -1473,7 +1589,9 @@ export default function Almacenes() {
                     {selectedWarehouse.responsibleUser ? (
                       <div className="mt-1">
                         <p className="font-semibold">
-                          {formatWarehouseUser(selectedWarehouse.responsibleUser)}
+                          {formatWarehouseUser(
+                            selectedWarehouse.responsibleUser
+                          )}
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {formatWarehouseUserRole(
@@ -1506,7 +1624,9 @@ export default function Almacenes() {
                       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                       <Input
                         value={detailUserSearch}
-                        onChange={(event) => setDetailUserSearch(event.target.value)}
+                        onChange={event =>
+                          setDetailUserSearch(event.target.value)
+                        }
                         placeholder="Nombre, correo, rol o estado"
                         className="pl-9"
                       />
@@ -1558,7 +1678,8 @@ export default function Almacenes() {
                               className="p-4 text-center text-sm text-muted-foreground"
                               colSpan={canManage ? 4 : 3}
                             >
-                              {(selectedWarehouse.assignedUsers ?? []).length === 0
+                              {(selectedWarehouse.assignedUsers ?? [])
+                                .length === 0
                                 ? "No hay usuarios asignados a esta bodega."
                                 : "No hay usuarios que coincidan con la búsqueda."}
                             </td>
@@ -1580,13 +1701,13 @@ export default function Almacenes() {
                                 ) : null}
                               </td>
                               <td className="p-3 text-xs">
-                                {formatWarehouseUserRole(assignedUser.buildreqRole)}
+                                {formatWarehouseUserRole(
+                                  assignedUser.buildreqRole
+                                )}
                               </td>
                               <td className="p-3">
                                 {assignedUser.isResponsible ? (
-                                  <Badge variant="secondary">
-                                    Responsable
-                                  </Badge>
+                                  <Badge variant="secondary">Responsable</Badge>
                                 ) : (
                                   <Badge variant="outline">Acceso</Badge>
                                 )}
@@ -1649,15 +1770,19 @@ export default function Almacenes() {
                             <SelectValue placeholder="Seleccione un usuario" />
                           </SelectTrigger>
                           <SelectContent>
-                            {availableWarehouseUsers.map((warehouseUser: any) => (
-                              <SelectItem
-                                key={warehouseUser.id}
-                                value={String(warehouseUser.id)}
-                              >
-                                {formatWarehouseUser(warehouseUser)} ·{" "}
-                                {formatWarehouseUserRole(warehouseUser.buildreqRole)}
-                              </SelectItem>
-                            ))}
+                            {availableWarehouseUsers.map(
+                              (warehouseUser: any) => (
+                                <SelectItem
+                                  key={warehouseUser.id}
+                                  value={String(warehouseUser.id)}
+                                >
+                                  {formatWarehouseUser(warehouseUser)} ·{" "}
+                                  {formatWarehouseUserRole(
+                                    warehouseUser.buildreqRole
+                                  )}
+                                </SelectItem>
+                              )
+                            )}
                           </SelectContent>
                         </Select>
                       </div>

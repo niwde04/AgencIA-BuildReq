@@ -128,6 +128,7 @@ export const inventoryRouter = router({
   visibleWarehouseStockForItems: protectedProcedure
     .input(
       z.object({
+        includeQuantities: z.boolean().optional(),
         items: z
           .array(
             z.object({
@@ -161,6 +162,7 @@ export const inventoryRouter = router({
       } = { isActive: true };
       const scopedWarehouseFilters = applyProjectScope(baseFilters, ctx.user);
       const hideQuantities =
+        !input.includeQuantities &&
         ctx.user.role !== "admin" &&
         ctx.user.buildreqRole === "bodeguero_proyecto";
       const visibleWarehouses = canManageWarehousesGlobally(ctx.user) ||
@@ -193,6 +195,7 @@ export const inventoryRouter = router({
           isActive: z.boolean().optional(),
           warehouseId: z.number().int().positive().optional(),
           projectId: z.number().int().positive().optional(),
+          unclassifiedOnly: z.boolean().optional(),
           page: z.number().int().min(1).optional(),
           pageSize: z.number().int().min(10).max(200).optional(),
           includePendingQuantities: z.boolean().optional(),
@@ -216,6 +219,12 @@ export const inventoryRouter = router({
     )
     .query(async ({ ctx, input }) => {
       assertCanReadInventory(ctx);
+      if (input?.unclassifiedOnly && !canManageWarehousesGlobally(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Solo Administración Central puede ver inventario por clasificar",
+        });
+      }
       const normalizedInput = input?.warehouseId
         ? { ...input, projectId: undefined }
         : (input ?? {});
@@ -236,6 +245,9 @@ export const inventoryRouter = router({
 
         return db.listInventoryItems({
           ...normalizedInput,
+          projectId: normalizedInput.unclassifiedOnly
+            ? undefined
+            : normalizedInput.projectId,
           warehouseIds: normalizedInput.warehouseId
             ? undefined
             : readableWarehouseIds,
@@ -321,19 +333,16 @@ export const inventoryRouter = router({
         category: z.string().optional(),
         currentStock: z.string().optional(),
         minimumStock: z.string().optional(),
-        projectId: z.number().int().positive().optional(),
-        warehouseId: z.number().int().positive().optional(),
+        projectId: z.number().int().positive(),
+        warehouseId: z.number().int().positive(),
         warehouseLocation: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (
-        ctx.user.buildreqRole !== "jefe_bodega_central" &&
-        ctx.user.role !== "admin"
-      ) {
+      if (!canManageWarehousesGlobally(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo el Jefe de Bodega Central puede gestionar inventario",
+          message: "Solo Administración Central puede clasificar inventario",
         });
       }
       return db.createInventoryItem(input);
@@ -356,13 +365,10 @@ export const inventoryRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (
-        ctx.user.buildreqRole !== "jefe_bodega_central" &&
-        ctx.user.role !== "admin"
-      ) {
+      if (!canManageWarehousesGlobally(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo el Jefe de Bodega Central puede gestionar inventario",
+          message: "Solo Administración Central puede clasificar inventario",
         });
       }
       if (input.projectId !== undefined) {
@@ -380,24 +386,27 @@ export const inventoryRouter = router({
     .input(
       z.object({
         ids: z.array(z.number().int().positive()).min(1),
-        projectId: z.number().int().positive().nullable(),
+        projectId: z.number().int().positive(),
+        warehouseId: z.number().int().positive(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       if (
         ctx.user.buildreqRole !== "jefe_bodega_central" &&
+        ctx.user.buildreqRole !== "administracion_central" &&
         ctx.user.role !== "admin"
       ) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo el Jefe de Bodega Central puede gestionar inventario",
+          message:
+            "Solo Administración Central o el Jefe de Bodega Central pueden gestionar inventario",
         });
       }
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message:
-          "Los movimientos masivos entre proyectos deben gestionarse desde requisiciones, traslados y recepciones.",
-      });
+      return db.bulkAssignInventoryProject(
+        input.ids,
+        input.projectId,
+        input.warehouseId
+      );
     }),
 
   bulkAssignProjectByFilters: protectedProcedure
@@ -408,23 +417,31 @@ export const inventoryRouter = router({
         isActive: z.boolean().optional(),
         warehouseId: z.number().int().positive().optional(),
         projectId: z.number().int().positive().optional(),
-        targetProjectId: z.number().int().positive().nullable(),
+        unclassifiedOnly: z.boolean().optional(),
+        targetProjectId: z.number().int().positive(),
+        targetWarehouseId: z.number().int().positive(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       if (
         ctx.user.buildreqRole !== "jefe_bodega_central" &&
+        ctx.user.buildreqRole !== "administracion_central" &&
         ctx.user.role !== "admin"
       ) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo el Jefe de Bodega Central puede gestionar inventario",
+          message:
+            "Solo Administración Central o el Jefe de Bodega Central pueden gestionar inventario",
         });
       }
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message:
-          "Los movimientos masivos entre proyectos deben gestionarse desde requisiciones, traslados y recepciones.",
-      });
+      const { targetProjectId, targetWarehouseId, ...filters } = input;
+      return db.bulkAssignInventoryProjectByFilters(
+        {
+          ...filters,
+          unclassifiedOnly: true,
+        },
+        targetProjectId,
+        targetWarehouseId
+      );
     }),
 });
