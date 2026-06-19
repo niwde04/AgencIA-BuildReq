@@ -806,7 +806,7 @@ describe("BuildReq - Articles catalog", () => {
     updateArticleSpy.mockRestore();
   });
 
-  it("Admin, Administración Central, Project Admin and Contable can create articles", async () => {
+  it("Admin, Bodega Central, Administración Central, Project Admin and Contable can create articles", async () => {
     const createArticleSpy = vi.spyOn(db, "createArticle").mockImplementation(
       async (data: Parameters<typeof db.createArticle>[0]) =>
         ({
@@ -823,6 +823,7 @@ describe("BuildReq - Articles catalog", () => {
         ctx: createUserContext({ role: "admin", buildreqRole: null }).ctx,
         itemCode: "ADM-001",
       },
+      { ctx: createBodegaContext().ctx, itemCode: "BC-001" },
       { ctx: createAdminCentralContext().ctx, itemCode: "AC-001" },
       { ctx: createProjectAdminContext().ctx, itemCode: "AP-001" },
       { ctx: createContableContext().ctx, itemCode: "CT-001" },
@@ -840,21 +841,25 @@ describe("BuildReq - Articles catalog", () => {
       ).resolves.toEqual(expect.objectContaining({ itemCode }));
     }
 
-    expect(createArticleSpy).toHaveBeenCalledTimes(4);
+    expect(createArticleSpy).toHaveBeenCalledTimes(5);
     expect(createArticleSpy).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ itemCode: "ADM-001" })
     );
     expect(createArticleSpy).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ itemCode: "AC-001" })
+      expect.objectContaining({ itemCode: "BC-001" })
     );
     expect(createArticleSpy).toHaveBeenNthCalledWith(
       3,
-      expect.objectContaining({ itemCode: "AP-001" })
+      expect.objectContaining({ itemCode: "AC-001" })
     );
     expect(createArticleSpy).toHaveBeenNthCalledWith(
       4,
+      expect.objectContaining({ itemCode: "AP-001" })
+    );
+    expect(createArticleSpy).toHaveBeenNthCalledWith(
+      5,
       expect.objectContaining({ itemCode: "CT-001" })
     );
 
@@ -865,7 +870,6 @@ describe("BuildReq - Articles catalog", () => {
     const createArticleSpy = vi.spyOn(db, "createArticle");
 
     for (const { ctx } of [
-      createBodegaContext(),
       createProjectBodegueroContext(),
       createSuperintendentContext(),
       createIngenieroContext(),
@@ -7162,6 +7166,32 @@ describe("BuildReq - User Management", () => {
     expect(listUsersSpy).toHaveBeenCalled();
 
     listUsersSpy.mockRestore();
+  });
+
+  it("Project Administrators cannot access user management", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const listUsersSpy = vi.spyOn(db, "listUsers");
+    const getUserByEmailSpy = vi.spyOn(db, "getUserByEmail");
+
+    await expect(caller.userManagement.list()).rejects.toThrow(
+      "No tiene permisos para gestionar usuarios."
+    );
+    await expect(
+      caller.userManagement.createDirect({
+        name: "Usuario Proyecto",
+        email: "proyecto@buildreq.com",
+        password: "12345678",
+        buildreqRole: "ingeniero_residente",
+        assignedProjectIds: [1],
+      })
+    ).rejects.toThrow("No tiene permisos para gestionar usuarios.");
+
+    expect(listUsersSpy).not.toHaveBeenCalled();
+    expect(getUserByEmailSpy).not.toHaveBeenCalled();
+
+    listUsersSpy.mockRestore();
+    getUserByEmailSpy.mockRestore();
   });
 
   it("Administracion Central can reset user passwords", async () => {

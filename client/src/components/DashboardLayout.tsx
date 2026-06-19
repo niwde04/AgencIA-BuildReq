@@ -266,7 +266,7 @@ const allMenuItems: MenuItem[] = [
     icon: Users,
     label: "Usuarios",
     path: "/usuarios",
-    roles: ["admin", "administracion_central", "administrador_proyecto"],
+    roles: ["admin", "administracion_central"],
   },
   {
     icon: Database,
@@ -431,6 +431,10 @@ function DashboardLayoutContent({
     /^\/solicitudes\/\d+$/.test(location);
   const shouldRedirectSuperintendent =
     userRole === "superintendente" && !isSuperintendentAllowedPath;
+  const shouldRedirectUserManagement =
+    location.startsWith("/usuarios") &&
+    !isAdmin &&
+    userRole !== "administracion_central";
 
   useEffect(() => {
     if (isCollapsed) setIsResizing(false);
@@ -447,6 +451,12 @@ function DashboardLayoutContent({
       setLocation(location.startsWith("/solicitudes") ? "/solicitudes" : "/");
     }
   }, [location, setLocation, shouldRedirectSuperintendent]);
+
+  useEffect(() => {
+    if (shouldRedirectUserManagement) {
+      setLocation("/");
+    }
+  }, [setLocation, shouldRedirectUserManagement]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -484,7 +494,11 @@ function DashboardLayoutContent({
     contable: "Contable",
   };
 
-  if (shouldRedirectContable || shouldRedirectSuperintendent) {
+  if (
+    shouldRedirectContable ||
+    shouldRedirectSuperintendent ||
+    shouldRedirectUserManagement
+  ) {
     return null;
   }
 

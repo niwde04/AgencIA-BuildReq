@@ -44,8 +44,7 @@ type ManagedUser = {
 function canManageUsers(user: UserManager) {
   return (
     user.role === "admin" ||
-    user.buildreqRole === "administracion_central" ||
-    user.buildreqRole === "administrador_proyecto"
+    user.buildreqRole === "administracion_central"
   );
 }
 

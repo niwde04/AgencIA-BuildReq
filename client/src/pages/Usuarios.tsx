@@ -149,8 +149,7 @@ function formatAssignedProjects(entity: any) {
 function canManageUserAccounts(user: any) {
   return (
     user?.role === "admin" ||
-    user?.buildreqRole === "administracion_central" ||
-    user?.buildreqRole === "administrador_proyecto"
+    user?.buildreqRole === "administracion_central"
   );
 }
 
@@ -336,10 +335,14 @@ export default function Usuarios() {
   const canManageAccounts = canManageUserAccounts(user);
   const canUseInvitations = isSystemAdmin;
   const canResetUserPasswords = canManageAccounts;
-  const { data: users, isLoading: usersLoading } = trpc.userManagement.list.useQuery();
+  const { data: users, isLoading: usersLoading } =
+    trpc.userManagement.list.useQuery(undefined, { enabled: canManageAccounts });
   const { data: invitationsList, isLoading: invLoading } =
     trpc.invitations.list.useQuery(undefined, { enabled: canUseInvitations });
-  const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
+  const { data: projects } = trpc.projects.list.useQuery(
+    { status: "activo" },
+    { enabled: canManageAccounts }
+  );
   const sortedUsers = useMemo(
     () => [...(users || [])].sort(compareUsersByName),
     [users]

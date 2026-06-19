@@ -241,6 +241,7 @@ export default function Articulos() {
     user?.role === "admin" || buildreqRole === "jefe_bodega_central";
   const canCreate =
     user?.role === "admin" ||
+    buildreqRole === "jefe_bodega_central" ||
     buildreqRole === "administracion_central" ||
     buildreqRole === "administrador_proyecto" ||
     buildreqRole === "contable";
