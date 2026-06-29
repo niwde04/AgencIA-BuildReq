@@ -14022,6 +14022,7 @@ export type InventoryListFilters = {
   warehouseIds?: number[];
   projectId?: number;
   projectIds?: number[];
+  includeUnclassified?: boolean;
   unclassifiedOnly?: boolean;
   page?: number;
   pageSize?: number;
@@ -14065,7 +14066,7 @@ function buildInventoryWhere(filters?: InventoryListFilters) {
   if (filters?.unclassifiedOnly) {
     conditions.push(sql`${inventoryItems.projectId} IS NULL`);
     conditions.push(sql`${inventoryItems.currentStock}::numeric > 0`);
-  } else {
+  } else if (!filters?.includeUnclassified) {
     conditions.push(sql`${inventoryItems.projectId} IS NOT NULL`);
   }
   if (filters?.search) {

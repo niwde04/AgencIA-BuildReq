@@ -2797,6 +2797,108 @@ describe("BuildReq - Role-based Access Control", () => {
     listInventoryItemsSpy.mockRestore();
   });
 
+  it("Jefe de Bodega can include unclassified inventory inside assigned warehouses", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const listWarehousesSpy = vi.spyOn(db, "listWarehouses").mockResolvedValue([
+      { id: 101, displayName: "001 - HEH LA BARCA" },
+      { id: 102, displayName: "002 - HEH COMAYAGUA" },
+    ] as any);
+    const listInventoryItemsSpy = vi
+      .spyOn(db, "listInventoryItems")
+      .mockResolvedValue({
+        items: [],
+        total: 0,
+        page: 1,
+        pageSize: 25,
+        totalPages: 1,
+        sortBy: "name",
+        sortDir: "asc",
+      } as any);
+
+    await expect(
+      caller.inventory.list({ includeUnclassified: true, page: 1, pageSize: 25 })
+    ).resolves.toEqual(expect.objectContaining({ items: [] }));
+
+    expect(listWarehousesSpy).toHaveBeenCalledWith({
+      isActive: true,
+      assignedUserId: ctx.user!.id,
+    });
+    expect(listInventoryItemsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        includeUnclassified: true,
+        warehouseIds: [101, 102],
+      })
+    );
+
+    listWarehousesSpy.mockRestore();
+    listInventoryItemsSpy.mockRestore();
+  });
+
+  it("Jefe de Bodega can include unclassified inventory for an assigned warehouse detail", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const listWarehousesSpy = vi.spyOn(db, "listWarehouses").mockResolvedValue([
+      { id: 101, displayName: "001 - HEH LA BARCA" },
+    ] as any);
+    const listInventoryItemsSpy = vi
+      .spyOn(db, "listInventoryItems")
+      .mockResolvedValue({
+        items: [
+          {
+            id: 901,
+            sapItemCode: "050200024",
+            name: "CEMENTO GU EN SACO 42.5KG",
+            project: null,
+            warehouseId: 101,
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 25,
+        totalPages: 1,
+        sortBy: "name",
+        sortDir: "asc",
+      } as any);
+
+    await expect(
+      caller.inventory.list({
+        warehouseId: 101,
+        includeUnclassified: true,
+        page: 1,
+        pageSize: 25,
+      })
+    ).resolves.toEqual(expect.objectContaining({ total: 1 }));
+
+    expect(listWarehousesSpy).toHaveBeenCalledWith({
+      isActive: true,
+      assignedUserId: ctx.user!.id,
+    });
+    expect(listInventoryItemsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        warehouseId: 101,
+        warehouseIds: undefined,
+        includeUnclassified: true,
+      })
+    );
+
+    listWarehousesSpy.mockRestore();
+    listInventoryItemsSpy.mockRestore();
+  });
+
+  it("Non warehouse inventory roles cannot include unclassified inventory", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const listInventoryItemsSpy = vi.spyOn(db, "listInventoryItems");
+
+    await expect(
+      caller.inventory.list({ includeUnclassified: true })
+    ).rejects.toThrow("No tiene acceso a inventario sin proyecto asignado");
+
+    expect(listInventoryItemsSpy).not.toHaveBeenCalled();
+    listInventoryItemsSpy.mockRestore();
+  });
+
   it("Jefe de Bodega cannot list unclassified inventory", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);

@@ -209,7 +209,7 @@ function compareWarehouseByField(
 function getInventoryProjectLabel(item: any) {
   return item.project
     ? `${item.project.code} - ${item.project.name}`
-    : "Sin proyecto";
+    : "Por clasificar";
 }
 
 function getInventorySortValue(item: any, field: WarehouseInventorySortField) {
@@ -343,6 +343,7 @@ export default function Almacenes() {
         search: debouncedDetailInventorySearch || undefined,
         page: detailInventoryPage,
         pageSize: DETAIL_INVENTORY_PAGE_SIZE,
+        includeUnclassified: true,
         includePendingQuantities: false,
         sortBy: getInventoryServerSortField(detailInventorySortField),
         sortDir: "asc",

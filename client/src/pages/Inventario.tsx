@@ -277,6 +277,11 @@ export default function Inventario() {
     userRole === "jefe_bodega_central" || user?.role === "admin";
   const canViewUnclassified =
     user?.role === "admin" || userRole === "administracion_central";
+  const canIncludeUnclassified =
+    canViewUnclassified ||
+    userRole === "jefe_bodega_central" ||
+    userRole === "administrador_proyecto" ||
+    userRole === "bodeguero_proyecto";
   const canAccessWarehouses =
     canManage ||
     userRole === "administracion_central" ||
@@ -316,11 +321,14 @@ export default function Inventario() {
           ) ?? null,
     [warehouseFilter, warehouseOptions]
   );
+  const allProjectFilterLabel = canIncludeUnclassified
+    ? `Todos los registros visibles (${projectOptions.length.toLocaleString("es-HN")} proyectos/bodegas)`
+    : `Todos los proyectos/bodegas (${projectOptions.length.toLocaleString("es-HN")})`;
   const selectedProjectFilterLabel = selectedFilterProject
     ? `${selectedFilterProject.code} - ${selectedFilterProject.name}`
     : projectFilter === "unclassified"
       ? "Inventario por clasificar"
-      : `Todos los proyectos/bodegas (${projectOptions.length.toLocaleString("es-HN")})`;
+      : allProjectFilterLabel;
   const allWarehouseFilterLabel = `Todos los almacenes físicos (${warehouseOptions.length.toLocaleString("es-HN")})`;
   const selectedWarehouseFilterLabel = selectedFilterWarehouse
     ? formatWarehouseOptionLabel(selectedFilterWarehouse)
@@ -438,6 +446,8 @@ export default function Inventario() {
     search: debouncedSearch || undefined,
     projectId: selectedProjectId,
     warehouseId: selectedWarehouseId,
+    includeUnclassified:
+      canIncludeUnclassified && projectFilter === "all" ? true : undefined,
     unclassifiedOnly: projectFilter === "unclassified" || undefined,
   };
 
@@ -1684,7 +1694,9 @@ export default function Inventario() {
               >
                 <span className="truncate">
                   {projectFilterDisabled
-                    ? "Todos los proyectos de la bodega"
+                    ? canIncludeUnclassified
+                      ? "Todos los registros de la bodega"
+                      : "Todos los proyectos de la bodega"
                     : selectedProjectFilterLabel}
                 </span>
                 <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -1700,7 +1712,7 @@ export default function Inventario() {
                   <CommandEmpty>No se encontraron proyectos.</CommandEmpty>
                   <CommandGroup>
                     <CommandItem
-                      value="todos los proyectos all"
+                      value="todos los registros visibles proyectos bodegas all"
                       onSelect={() => {
                         setProjectFilter("all");
                         setProjectFilterOpen(false);
@@ -1711,9 +1723,7 @@ export default function Inventario() {
                           projectFilter === "all" ? "opacity-100" : "opacity-0"
                         }`}
                       />
-                      <span className="truncate">
-                        Todos los proyectos/bodegas ({projectOptions.length.toLocaleString("es-HN")})
-                      </span>
+                      <span className="truncate">{allProjectFilterLabel}</span>
                     </CommandItem>
                     {canViewUnclassified ? (
                       <CommandItem
@@ -1829,7 +1839,7 @@ export default function Inventario() {
                     ? projectFilter === "unclassified"
                       ? "No hay inventario por clasificar"
                       : "No hay inventario asignado a este proyecto/bodega"
-                    : "El inventario está vacío"}
+                    : "No hay inventario visible"}
               </p>
             </div>
           ) : (

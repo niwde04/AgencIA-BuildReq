@@ -49,6 +49,10 @@ function canManageWarehousesGlobally(user: {
   );
 }
 
+function canReadUnclassifiedInventory(user: InventoryAccessUser) {
+  return canManageWarehousesGlobally(user) || shouldScopeInventoryByWarehouse(user);
+}
+
 function isWarehouseAssignedViewer(user: { buildreqRole?: string | null }) {
   return Boolean(
     user.buildreqRole && WAREHOUSE_VIEWER_ROLES.has(user.buildreqRole)
@@ -195,6 +199,7 @@ export const inventoryRouter = router({
           isActive: z.boolean().optional(),
           warehouseId: z.number().int().positive().optional(),
           projectId: z.number().int().positive().optional(),
+          includeUnclassified: z.boolean().optional(),
           unclassifiedOnly: z.boolean().optional(),
           page: z.number().int().min(1).optional(),
           pageSize: z.number().int().min(10).max(200).optional(),
@@ -223,6 +228,12 @@ export const inventoryRouter = router({
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "Solo Administración Central puede ver inventario por clasificar",
+        });
+      }
+      if (input?.includeUnclassified && !canReadUnclassifiedInventory(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a inventario sin proyecto asignado",
         });
       }
       const normalizedInput = input?.warehouseId
