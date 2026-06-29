@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -50,6 +51,7 @@ import {
   ChevronUp,
   ChevronsUpDown,
   ClipboardList,
+  Download,
   Search,
   Warehouse,
 } from "lucide-react";
@@ -72,6 +74,7 @@ type SortDirection = "asc" | "desc";
 type BulkAssignmentMode = "selected" | "filtered";
 
 const PAGE_SIZE = 25;
+const EXPORT_PAGE_SIZE = 200;
 
 const columns: Array<{
   key: InventorySortField;
@@ -249,6 +252,7 @@ export default function Inventario() {
   const [bulkAssignmentProjectId, setBulkAssignmentProjectId] = useState("none");
   const [bulkAssignmentWarehouseId, setBulkAssignmentWarehouseId] = useState("");
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
 
   const [sapItemCode, setSapItemCode] = useState("");
   const [name, setName] = useState("");
@@ -839,6 +843,94 @@ export default function Inventario() {
     );
   };
 
+  const exportInventoryExcel = async () => {
+    if (total === 0 || isExportingExcel) return;
+
+    setIsExportingExcel(true);
+    try {
+      const rows: any[] = [];
+      let nextPage = 1;
+      let totalPagesToFetch = Math.max(1, Math.ceil(total / EXPORT_PAGE_SIZE));
+
+      while (nextPage <= totalPagesToFetch) {
+        const pageData = await utils.inventory.list.fetch({
+          ...listQueryInput,
+          page: nextPage,
+          pageSize: EXPORT_PAGE_SIZE,
+          includePendingQuantities: true,
+        });
+
+        rows.push(...(pageData.items ?? []));
+        totalPagesToFetch = pageData.totalPages ?? totalPagesToFetch;
+        nextPage += 1;
+      }
+
+      await downloadExcel(
+        buildDatedExcelFileName("inventario"),
+        "Inventario",
+        [
+          { header: "Código SAP", value: row => row.sapItemCode, width: 16 },
+          { header: "Nombre", value: row => row.name, width: 36 },
+          {
+            header: "Descripción",
+            value: row => row.description || "",
+            width: 42,
+          },
+          { header: "Marca", value: row => row.brand || "" },
+          { header: "No. parte", value: row => row.partNumber || "" },
+          { header: "Categoría", value: row => row.category || "" },
+          { header: "Unidad", value: row => row.unit || "" },
+          {
+            header: "Stock",
+            value: row => parseQuantity(row.currentStock),
+            numFmt: "#,##0.00",
+          },
+          {
+            header: "Total requeridas",
+            value: row => parseQuantity(row.totalRequiredQuantity),
+            numFmt: "#,##0.00",
+          },
+          {
+            header: "Por recibirse",
+            value: row => parseQuantity(row.pendingReceiptQuantity),
+            numFmt: "#,##0.00",
+          },
+          {
+            header: "Mínimo",
+            value: row => parseQuantity(row.minimumStock),
+            numFmt: "#,##0.00",
+          },
+          {
+            header: "Proyecto / bodega",
+            value: row => formatProject(row.project),
+            width: 36,
+          },
+          {
+            header: "Almacén físico",
+            value: row =>
+              row.warehouse
+                ? formatWarehouseOptionLabel(row.warehouse)
+                : row.warehouseLocation || "",
+            width: 32,
+          },
+          {
+            header: "Estado",
+            value: row => (row.isActive === false ? "Inactivo" : "Activo"),
+          },
+        ],
+        rows
+      );
+
+      toast.success(
+        `Se exportaron ${rows.length.toLocaleString("es-HN")} registro(s)`
+      );
+    } catch {
+      toast.error("No se pudo exportar el archivo Excel");
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
   const trackingData = trackingQuery.data;
   const kardexData = kardexQuery.data;
   const trackingTotal =
@@ -848,7 +940,7 @@ export default function Inventario() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
           <h1>Inventario</h1>
           <p className="text-sm text-muted-foreground">
@@ -861,7 +953,21 @@ export default function Inventario() {
                   : `${total.toLocaleString("es-HN")} registros encontrados`}
           </p>
         </div>
-        {canManage && (
+        <div className="flex flex-wrap gap-2 sm:justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void exportInventoryExcel()}
+            disabled={
+              isLoading || Boolean(error) || total === 0 || isExportingExcel
+            }
+            className="gap-2"
+          >
+            <Download className="h-4 w-4" />
+            {isExportingExcel ? "Exportando..." : "Exportar Excel"}
+          </Button>
+        </div>
+        {canManage ? (
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogContent className="sm:max-w-4xl">
               <DialogHeader>
@@ -1009,7 +1115,7 @@ export default function Inventario() {
               </div>
             </DialogContent>
           </Dialog>
-        )}
+        ) : null}
       </div>
 
       {allowInventoryReassignment ? (

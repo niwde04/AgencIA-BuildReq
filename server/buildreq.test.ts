@@ -4416,7 +4416,6 @@ describe("BuildReq - Role-based Access Control", () => {
 
     await expect(
       caller.supplyFlows.createDirectPurchaseBatch({
-        paymentMethod: "caja_chica",
         items: [{ requestId: 9, requestItemId: 41, quantity: "5.00" }],
       })
     ).resolves.toEqual({
@@ -8804,6 +8803,40 @@ describe("BuildReq - Purchase Orders", () => {
     updatePurchaseOrderSpy.mockRestore();
   });
 
+  it("does not allow emitting a direct purchase PO without payment method", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "borrador",
+          supplierId: 7,
+          purchaseType: "compra_directa",
+          paymentMethod: null,
+        },
+        directPurchasePaymentMethod: null,
+        items: [{ id: 15, unitPrice: "125.50", receivedQuantity: "0.00" }],
+      } as any);
+    const updatePurchaseOrderSpy = vi.spyOn(db, "updatePurchaseOrder");
+
+    await expect(
+      caller.purchaseOrders.sendToSupplier({
+        id: 4,
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "Seleccione el método de pago para la orden de compra",
+    });
+    expect(updatePurchaseOrderSpy).not.toHaveBeenCalled();
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    updatePurchaseOrderSpy.mockRestore();
+  });
+
   it("does not allow emitting a PO with zero unit prices", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -9223,6 +9256,101 @@ describe("BuildReq - Receipts", () => {
 
     getPurchaseOrderByIdSpy.mockRestore();
     getProjectSubprojectByIdSpy.mockRestore();
+    registerReceiptSpy.mockRestore();
+  });
+
+  it("can register purchase order receipts directly into a physical warehouse without project", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-010-00000011",
+          projectId: 10,
+          status: "emitida",
+        },
+        items: [
+          {
+            id: 15,
+            itemName: "ADITIVO ADMIX DX2",
+            quantity: "2.00",
+            receivedQuantity: "0.00",
+            unitPrice: "30200.0000",
+            taxCode: "isv_15",
+          },
+        ],
+      } as any);
+    const listWarehousesSpy = vi
+      .spyOn(db, "listWarehouses")
+      .mockResolvedValue([
+        {
+          ...DEFAULT_PROJECT_WAREHOUSE,
+          id: 202,
+          displayName: "002 - HEH COMAYAGUA",
+        },
+      ] as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({
+        id: 7,
+        receiptNumber: "RC-2026-0002",
+        status: "completa",
+      } as any);
+
+    await expect(
+      caller.receipts.register({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: null,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        documentDate: "2026-04-14",
+        documentDueDate: "2026-05-14",
+        emissionDeadline: "2026-04-30",
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            warehouseId: 202,
+            itemName: "ADITIVO ADMIX DX2",
+            quantityExpected: "2.00",
+            quantityReceived: "2.00",
+            unit: "lt",
+            unitPrice: "30200.0000",
+            taxCode: "isv_15",
+          },
+        ],
+      })
+    ).resolves.toEqual({
+      id: 7,
+      receiptNumber: "RC-2026-0002",
+      status: "completa",
+    });
+
+    expect(listWarehousesSpy).toHaveBeenCalledWith({ isActive: true });
+    expect(registerReceiptSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: null,
+      }),
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceItemId: 15,
+          warehouseId: 202,
+          targetType: null,
+          subProjectId: null,
+        }),
+      ])
+    );
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    listWarehousesSpy.mockRestore();
     registerReceiptSpy.mockRestore();
   });
 
@@ -13936,7 +14064,6 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
     await expect(
       caller.supplyFlows.createDirectPurchaseBatch({
         requestId: 10,
-        paymentMethod: "linea_credito",
         supplierId: 7,
         notes: "Compra agrupada por proveedor",
         items: [
@@ -14069,7 +14196,6 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
 
     await expect(
       caller.supplyFlows.createDirectPurchaseBatch({
-        paymentMethod: "linea_credito",
         supplierId: 7,
         notes: "Compra consolidada",
         items: [
@@ -14222,7 +14348,6 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
 
     await expect(
       caller.supplyFlows.createDirectPurchaseBatch({
-        paymentMethod: "linea_credito",
         supplierId: 8,
         notes: "Unificar SC por proveedor",
         items: [
@@ -14402,6 +14527,88 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
     createPurchaseOrderSpy.mockRestore();
   });
 
+  it("createFromPurchaseRequest allows direct purchase orders without payment method in draft", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 54,
+          projectId: 3,
+          requestNumber: "SC-2026-0011",
+          purchaseType: "compra_directa",
+          status: "pendiente",
+        },
+        items: [
+          {
+            id: 401,
+            materialRequestItemId: 101,
+            itemName: "CEMENTO",
+            quantity: "10.00",
+            convertedQuantity: "0.00",
+            pendingConversionQuantity: "10.00",
+            unit: "und",
+          },
+        ],
+      } as any);
+    const listDirectPurchaseFlowItemsByOrderSpy = vi
+      .spyOn(db, "listDirectPurchaseFlowItemsByOrder")
+      .mockResolvedValue([
+        {
+          flow: { id: 80, notes: "SC desde compra directa" },
+          item: { id: 101 },
+        },
+      ] as any);
+    const createPurchaseOrderSpy = vi
+      .spyOn(db, "createPurchaseOrder")
+      .mockResolvedValue({ id: 900, orderNumber: "OC-2026-0041" });
+    const adjustPurchaseRequestItemConvertedQuantitySpy = vi
+      .spyOn(db, "adjustPurchaseRequestItemConvertedQuantity")
+      .mockResolvedValue({ purchaseRequestId: 54 } as any);
+    const syncPurchaseRequestConversionStatusSpy = vi
+      .spyOn(db, "syncPurchaseRequestConversionStatus")
+      .mockResolvedValue("convertida" as any);
+    const updateSupplyFlowRecordSpy = vi
+      .spyOn(db, "updateSupplyFlowRecord")
+      .mockResolvedValue({ success: true } as any);
+
+    await expect(
+      caller.purchaseOrders.createFromPurchaseRequest({
+        purchaseRequestId: 54,
+        selectedItemIds: [401],
+      })
+    ).resolves.toEqual({
+      success: true,
+      purchaseOrderId: 900,
+      purchaseOrderNumber: "OC-2026-0041",
+    });
+
+    expect(createPurchaseOrderSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purchaseRequestId: 54,
+        classification: "cd",
+        paymentMethod: null,
+      }),
+      [expect.objectContaining({ purchaseRequestItemId: 401 })]
+    );
+    expect(updateSupplyFlowRecordSpy).toHaveBeenCalledWith(
+      80,
+      expect.objectContaining({
+        purchaseOrderNumber: "OC-2026-0041",
+        sapDocumentType: "orden_compra",
+        status: "en_proceso",
+      })
+    );
+
+    getPurchaseRequestByIdSpy.mockRestore();
+    listDirectPurchaseFlowItemsByOrderSpy.mockRestore();
+    createPurchaseOrderSpy.mockRestore();
+    adjustPurchaseRequestItemConvertedQuantitySpy.mockRestore();
+    syncPurchaseRequestConversionStatusSpy.mockRestore();
+    updateSupplyFlowRecordSpy.mockRestore();
+  });
+
   it("createFromPurchaseRequest keeps direct purchase requests as CD and updates their flow to the generated OC", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -14460,6 +14667,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
       caller.purchaseOrders.createFromPurchaseRequest({
         purchaseRequestId: 55,
         selectedItemIds: [501],
+        paymentMethod: "linea_credito",
       })
     ).resolves.toEqual({
       success: true,
@@ -14471,6 +14679,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
       expect.objectContaining({
         purchaseRequestId: 55,
         classification: "cd",
+        paymentMethod: "linea_credito",
         supplierId: 7,
       }),
       [
@@ -14486,6 +14695,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
       expect.objectContaining({
         purchaseOrderNumber: "OC-2026-0042",
         sapDocumentType: "orden_compra",
+        paymentMethod: "linea_credito",
         status: "en_proceso",
       })
     );
@@ -14545,6 +14755,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
       caller.purchaseOrders.createFromPurchaseRequest({
         purchaseRequestId: 58,
         selectedItemIds: [701],
+        paymentMethod: "fondo_proyecto",
       })
     ).resolves.toEqual({
       success: true,
@@ -14557,6 +14768,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
         purchaseRequestId: 58,
         projectId: 3,
         classification: "oc",
+        paymentMethod: "fondo_proyecto",
         createdById: 5,
       }),
       [expect.objectContaining({ purchaseRequestItemId: 701 })]
@@ -14855,6 +15067,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
       caller.purchaseOrders.createFromPurchaseRequest({
         purchaseRequestId: 56,
         selectedItemIds: [601, 602],
+        paymentMethod: "fondo_proyecto",
       })
     ).resolves.toEqual({
       success: true,
@@ -14879,6 +15092,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
         purchaseRequestId: 56,
         projectId: 4,
         classification: "cd",
+        paymentMethod: "fondo_proyecto",
         supplierId: 8,
       }),
       [expect.objectContaining({ purchaseRequestItemId: 601 })]
@@ -14889,17 +15103,24 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
         purchaseRequestId: 56,
         projectId: 6,
         classification: "cd",
+        paymentMethod: "fondo_proyecto",
         supplierId: 8,
       }),
       [expect.objectContaining({ purchaseRequestItemId: 602 })]
     );
     expect(updateSupplyFlowRecordSpy).toHaveBeenCalledWith(
       91,
-      expect.objectContaining({ purchaseOrderNumber: "OC-2026-0050" })
+      expect.objectContaining({
+        purchaseOrderNumber: "OC-2026-0050",
+        paymentMethod: "fondo_proyecto",
+      })
     );
     expect(updateSupplyFlowRecordSpy).toHaveBeenCalledWith(
       92,
-      expect.objectContaining({ purchaseOrderNumber: "OC-2026-0051" })
+      expect.objectContaining({
+        purchaseOrderNumber: "OC-2026-0051",
+        paymentMethod: "fondo_proyecto",
+      })
     );
 
     getPurchaseRequestByIdSpy.mockRestore();

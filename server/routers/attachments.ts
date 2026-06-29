@@ -366,11 +366,13 @@ async function assertReceiptAttachmentAccess(
       message: "No tiene acceso a recepciones",
     });
   }
-  assertProjectScopedAccess(
-    user,
-    detail.receipt.projectId,
-    "No tiene acceso a adjuntos de recepciones de otro proyecto"
-  );
+  if (detail.receipt.projectId) {
+    assertProjectScopedAccess(
+      user,
+      detail.receipt.projectId,
+      "No tiene acceso a adjuntos de recepciones de otro proyecto"
+    );
+  }
 
   if (action === "manage" && !canAccessReceipts(user)) {
     throw new TRPCError({

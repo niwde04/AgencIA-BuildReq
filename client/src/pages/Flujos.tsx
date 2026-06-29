@@ -300,8 +300,6 @@ export default function Flujos() {
   const [dispatchCheckedByItemId, setDispatchCheckedByItemId] = useState<
     Record<number, boolean>
   >({});
-  const [directPurchasePaymentMethodByFlowType, setDirectPurchasePaymentMethodByFlowType] =
-    useState<Partial<Record<QueueFlowType, DirectPurchasePaymentMethod>>>({});
   const [directPurchaseNotesByFlowType, setDirectPurchaseNotesByFlowType] = useState<
     Partial<Record<QueueFlowType, string>>
   >({});
@@ -507,15 +505,10 @@ export default function Flujos() {
 
   const processDirectPurchaseFlow = async (flowType: QueueFlowType) => {
     const rows = pendingRowsByFlow[flowType];
-    const paymentMethod = directPurchasePaymentMethodByFlowType[flowType];
     const selectedRows = rows.filter(
       (row) => directPurchaseCheckedByItemId[row.item.id] === true
     );
 
-    if (!paymentMethod) {
-      toast.error("Seleccione el método de pago para la compra directa");
-      return;
-    }
     if (selectedRows.length === 0) {
       toast.error("Seleccione al menos un detalle para la compra directa");
       return;
@@ -542,7 +535,6 @@ export default function Flujos() {
     setProcessingFlowType(flowType);
     try {
       const result = await directPurchaseMutation.mutateAsync({
-        paymentMethod: paymentMethod as "linea_credito" | "fondo_proyecto",
         notes: directPurchaseNotesByFlowType[flowType] || undefined,
         items: selectedRows.map((row) => ({
           requestId: row.request.id,
@@ -1690,27 +1682,6 @@ export default function Flujos() {
 
                   {canProcessThisFlow && flowType === "compra_directa" && (
                     <div className="grid gap-3">
-                      <div className="min-w-0 space-y-2">
-                        <Label className="text-sm font-medium">Método de pago *</Label>
-                        <Select
-                          value={directPurchasePaymentMethodByFlowType[flowType] || ""}
-                          onValueChange={(value) =>
-                            setDirectPurchasePaymentMethodByFlowType((current) => ({
-                              ...current,
-                              [flowType]: value as DirectPurchasePaymentMethod,
-                            }))
-                          }
-                        >
-                          <SelectTrigger className="w-full min-w-0">
-                            <SelectValue placeholder="Seleccione" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="linea_credito">Línea de Crédito</SelectItem>
-                            <SelectItem value="fondo_proyecto">Fondo del proyecto</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
                       <div className="space-y-2">
                         <Label className="text-sm font-medium">Notas</Label>
                         <Textarea

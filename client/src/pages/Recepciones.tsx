@@ -59,6 +59,7 @@ import {
 } from "@/components/ui/popover";
 import {
   Check,
+  ChevronDown,
   ChevronsUpDown,
   Download,
   Eye,
@@ -164,6 +165,12 @@ const PURCHASE_ORDER_STATUS_COLORS: Record<string, string> = {
   recibida: "border-emerald-300 bg-emerald-50 text-emerald-700",
   anulada: "border-rose-300 bg-rose-50 text-rose-700",
 };
+
+const CORRECTABLE_RECEIPT_INVOICE_STATUSES = new Set([
+  "borrador",
+  "rechazada",
+  "revisada",
+]);
 
 const TRANSFER_STATUS_LABELS: Record<string, string> = {
   pendiente: "Pendiente",
@@ -285,6 +292,13 @@ function mapReceiptLineTargetToSelection(
   }
 
   return null;
+}
+
+function formatReceiptTargetSummary(selection: ReceiptTargetSelection | null) {
+  const label = selection?.label?.trim();
+  if (!label) return "";
+
+  return `Destino: ${label.replace(/^(Activo fijo|Subproyecto):\s*/i, "")}`;
 }
 
 function getReceiptTargetPayload(selection: ReceiptTargetSelection | null) {
@@ -891,6 +905,8 @@ const ASSET_DETAIL_OPTIONAL_FIELDS: Array<{
   { key: "plateOrCode", label: "Placa/código", placeholder: "Placa o código" },
 ];
 
+const NO_RECEIPT_PROJECT_VALUE = "__warehouse_only__";
+
 export default function Recepciones() {
   const utils = trpc.useUtils();
   const [location, setLocation] = useLocation();
@@ -925,6 +941,7 @@ export default function Recepciones() {
     Record<number, string>
   >({});
   const [receiptProjectId, setReceiptProjectId] = useState("");
+  const [receiptWarehouseId, setReceiptWarehouseId] = useState("");
   const [priceMap, setPriceMap] = useState<Record<number, string>>({});
   const [subtotalMap, setSubtotalMap] = useState<Record<number, string>>({});
   const [taxCodeByItemId, setTaxCodeByItemId] = useState<
@@ -951,6 +968,8 @@ export default function Recepciones() {
   const [assetDrafts, setAssetDrafts] = useState<
     Record<number, ReceiptAssetDraft>
   >({});
+  const [expandedReceiptDetailItemIds, setExpandedReceiptDetailItemIds] =
+    useState<string[]>([]);
   const [
     selectedReceiptFixedAssetArticle,
     setSelectedReceiptFixedAssetArticle,
@@ -978,6 +997,9 @@ export default function Recepciones() {
   >([]);
   const [preparingReceiptAttachment, setPreparingReceiptAttachment] =
     useState(false);
+  const [receiptCorrectionDialogOpen, setReceiptCorrectionDialogOpen] =
+    useState(false);
+  const [receiptCorrectionReason, setReceiptCorrectionReason] = useState("");
 
   const { data: receipts, isLoading } = trpc.receipts.list.useQuery();
   const {
@@ -1108,6 +1130,7 @@ export default function Recepciones() {
     setReceivedMap({});
     setWarehouseByItemId({});
     setReceiptProjectId("");
+    setReceiptWarehouseId("");
     setPriceMap({});
     setSubtotalMap({});
     setTaxCodeByItemId({});
@@ -1120,6 +1143,7 @@ export default function Recepciones() {
     setManualItemSearch("");
     setManualItemPopoverOpen(false);
     setAssetDrafts({});
+    setExpandedReceiptDetailItemIds([]);
     setTransferClosureDrafts({});
     setCloseTransferLineItem(null);
     setTransferCloseReason(TRANSFER_CLOSE_REASONS[0].value);
@@ -1139,6 +1163,12 @@ export default function Recepciones() {
     setDialogOpen(true);
     setLocation("/recepciones");
   }, [location, setLocation]);
+
+  useEffect(() => {
+    if (viewReceiptId !== null) return;
+    setReceiptCorrectionDialogOpen(false);
+    setReceiptCorrectionReason("");
+  }, [viewReceiptId]);
 
   const sourceItems = useMemo(
     () =>
@@ -1161,8 +1191,7 @@ export default function Recepciones() {
         : transferDetail?.transferRequest?.destinationType === "bodega_central"
           ? transferDetail.transferRequest.projectId
           : undefined;
-  const selectedReceiptProjectId =
-    Number(receiptProjectId || sourceProjectId || 0) || undefined;
+  const selectedReceiptProjectId = Number(receiptProjectId || 0) || undefined;
   const selectedReceiptProject = (receiptProjects ?? []).find(
     (project: any) => project.id === selectedReceiptProjectId
   );
@@ -1170,9 +1199,9 @@ export default function Recepciones() {
     ? formatProjectReference(selectedReceiptProject, "Proyecto/bodega")
     : selectedReceiptProjectId
       ? `Proyecto ${selectedReceiptProjectId}`
-      : "Proyecto/bodega";
+      : "Sin proyecto";
   const lockedReceiptProjectId =
-    sourceType === "purchase_order" ||
+    sourceType === "transfer" &&
     transferDetail?.transferRequest?.destinationType === "proyecto"
       ? sourceProjectId
       : undefined;
@@ -1183,40 +1212,29 @@ export default function Recepciones() {
     {
       enabled:
         dialogOpen &&
-        Boolean(sourceId) &&
-        Boolean(selectedReceiptProjectId || sourceProjectId),
+        Boolean(sourceId),
     }
   );
   const receiptWarehouseOptions = useMemo(() => {
-    const warehouses = receiptWarehouses ?? [];
-    if (!selectedReceiptProject) return warehouses;
-
-    const projectWarehouseIds = getProjectWarehouseIds(selectedReceiptProject);
-    if (projectWarehouseIds.size === 0) return warehouses;
-
-    return warehouses.filter((warehouse: any) =>
-      projectWarehouseIds.has(Number(warehouse.id))
-    );
-  }, [receiptWarehouses, selectedReceiptProject]);
-  const defaultReceiptWarehouseId = useMemo(() => {
-    const warehouses = receiptWarehouseOptions ?? [];
-    const defaultWarehouse =
-      warehouses.find((warehouse: any) => warehouse.isDefault) ?? warehouses[0];
-    return defaultWarehouse?.id ? String(defaultWarehouse.id) : "";
-  }, [receiptWarehouseOptions]);
-
+    return receiptWarehouses ?? [];
+  }, [receiptWarehouses]);
   useEffect(() => {
-    if (!sourceProjectId) {
-      setReceiptProjectId("");
+    if (
+      sourceType === "transfer" &&
+      transferDetail?.transferRequest?.destinationType === "proyecto" &&
+      sourceProjectId
+    ) {
+      setReceiptProjectId(String(sourceProjectId));
       return;
     }
 
-    setReceiptProjectId(current =>
-      current && Number(current) === Number(sourceProjectId)
-        ? current
-        : String(sourceProjectId)
-    );
-  }, [sourceId, sourceProjectId]);
+    setReceiptProjectId("");
+  }, [sourceId, sourceProjectId, sourceType, transferDetail?.transferRequest?.destinationType]);
+
+  useEffect(() => {
+    setExpandedReceiptDetailItemIds([]);
+  }, [sourceId, sourceType]);
+
   const isSameTransferOriginScope = (
     item: any,
     warehouseId?: string | number | null
@@ -1250,14 +1268,24 @@ export default function Recepciones() {
     return originProjectId === destinationProjectId;
   };
   const getDefaultReceiptWarehouseIdForItem = (item: any) => {
-    if (sourceType !== "transfer") return defaultReceiptWarehouseId;
+    if (
+      receiptWarehouseId &&
+      receiptWarehouseOptions.some(
+        (warehouse: any) => String(warehouse.id) === receiptWarehouseId
+      ) &&
+      !isSameTransferOriginScope(item, receiptWarehouseId)
+    ) {
+      return receiptWarehouseId;
+    }
 
-    const destinationWarehouseId = transferDetail?.destinationWarehouse?.id
-      ? String(transferDetail.destinationWarehouse.id)
-      : "";
+    const destinationWarehouseId =
+      sourceType === "transfer" && transferDetail?.destinationWarehouse?.id
+        ? String(transferDetail.destinationWarehouse.id)
+        : "";
 
     if (
       destinationWarehouseId &&
+      lockedReturnDestinationWarehouseId &&
       receiptWarehouseOptions.some(
         (warehouse: any) => String(warehouse.id) === destinationWarehouseId
       ) &&
@@ -1266,10 +1294,7 @@ export default function Recepciones() {
       return destinationWarehouseId;
     }
 
-    const fallbackWarehouse = (receiptWarehouseOptions ?? []).find(
-      (warehouse: any) => !isSameTransferOriginScope(item, warehouse.id)
-    );
-    return fallbackWarehouse?.id ? String(fallbackWarehouse.id) : "";
+    return "";
   };
   const lockedReturnDestinationWarehouseId =
     sourceType === "transfer" &&
@@ -1278,17 +1303,42 @@ export default function Recepciones() {
     transferDetail.destinationWarehouse?.id
       ? String(transferDetail.destinationWarehouse.id)
       : "";
+  useEffect(() => {
+    if (!dialogOpen || !sourceId || !receiptWarehouseOptions.length) {
+      setReceiptWarehouseId("");
+      return;
+    }
+
+    setReceiptWarehouseId(current => {
+      const currentIsAvailable =
+        current &&
+        receiptWarehouseOptions.some(
+          (warehouse: any) => String(warehouse.id) === current
+        ) &&
+        (!lockedReturnDestinationWarehouseId ||
+          current === lockedReturnDestinationWarehouseId);
+
+      if (currentIsAvailable) return current;
+      if (lockedReturnDestinationWarehouseId) return lockedReturnDestinationWarehouseId;
+      return "";
+    });
+  }, [
+    dialogOpen,
+    lockedReturnDestinationWarehouseId,
+    receiptWarehouseOptions,
+    sourceId,
+  ]);
   const { data: targetOptions, isLoading: targetOptionsLoading } =
     trpc.materialRequests.targetOptions.useQuery(
       {
-        projectId: Number(selectedReceiptProjectId || sourceProjectId || 0),
+        projectId: Number(selectedReceiptProjectId || 0),
         search: targetSearch.trim() || undefined,
       },
       {
         enabled:
           dialogOpen &&
           sourceType === "purchase_order" &&
-          Boolean(selectedReceiptProjectId || sourceProjectId),
+          Boolean(selectedReceiptProjectId),
       }
     );
   const { data: manualSapResults } =
@@ -1402,7 +1452,7 @@ export default function Recepciones() {
               ? ""
               : item.warehouseId
                 ? String(item.warehouseId)
-                : defaultReceiptWarehouseId,
+                : receiptWarehouseId,
           ])
         ),
       }));
@@ -1419,13 +1469,14 @@ export default function Recepciones() {
         ),
       }));
     }
-  }, [activeSalesTaxes, defaultReceiptWarehouseId, editingDraftReceiptDetail]);
+  }, [activeSalesTaxes, editingDraftReceiptDetail, receiptWarehouseId]);
 
   useEffect(() => {
     if (!sourceItems.length) {
       setReceivedMap({});
       setWarehouseByItemId({});
       setReceiptProjectId("");
+      setReceiptWarehouseId("");
       setPriceMap({});
       setSubtotalMap({});
       setTaxCodeByItemId({});
@@ -1527,6 +1578,12 @@ export default function Recepciones() {
     }
     setReceivedMap(nextMap);
     setWarehouseByItemId(nextWarehouseMap);
+    const draftWarehouseIds = new Set(
+      Object.values(nextWarehouseMap).filter(Boolean)
+    );
+    if (!receiptWarehouseId && draftWarehouseIds.size === 1) {
+      setReceiptWarehouseId(Array.from(draftWarehouseIds)[0]);
+    }
     setPriceMap(nextPriceMap);
     setSubtotalMap(nextSubtotalMap);
     setTaxCodeByItemId(nextTaxCodeMap);
@@ -1575,7 +1632,7 @@ export default function Recepciones() {
     });
   }, [
     activeSalesTaxes,
-    defaultReceiptWarehouseId,
+    receiptWarehouseId,
     editingDraftReceiptDetail,
     receiptWarehouseOptions,
     selectedReceiptProjectId,
@@ -1774,6 +1831,43 @@ export default function Recepciones() {
               : "La recepción fue registrada, pero no se pudieron subir todos los adjuntos"
           );
         }
+      }
+    },
+    onError: error => toast.error(error.message),
+  });
+
+  const correctReceiptMutation = trpc.invoices.correctReceipt.useMutation({
+    onSuccess: result => {
+      const replacementReceipt = (result as any).replacementReceipt;
+      const originalReceiptId = viewReceiptId;
+      const invoiceId = receiptDetail?.invoice?.id;
+
+      toast.success(
+        replacementReceipt?.receiptNumber
+          ? `Recepción anulada. Borrador ${replacementReceipt.receiptNumber} listo para corregir.`
+          : "Recepción anulada y borrador creado para corregir."
+      );
+      setReceiptCorrectionDialogOpen(false);
+      setReceiptCorrectionReason("");
+      void Promise.all([
+        utils.receipts.list.invalidate(),
+        utils.invoices.list.invalidate(),
+        utils.purchaseOrders.list.invalidate(),
+        utils.materialRequests.list.invalidate(),
+        utils.inventory.list.invalidate(),
+        originalReceiptId
+          ? utils.receipts.getById.invalidate({ id: originalReceiptId })
+          : Promise.resolve(),
+        invoiceId
+          ? utils.invoices.getById.invalidate({ id: invoiceId })
+          : Promise.resolve(),
+        replacementReceipt?.id
+          ? utils.receipts.getById.invalidate({ id: replacementReceipt.id })
+          : Promise.resolve(),
+      ]);
+      setViewReceiptId(null);
+      if (replacementReceipt?.id) {
+        setLocation(`/recepciones?editar=${replacementReceipt.id}`);
       }
     },
     onError: error => toast.error(error.message),
@@ -2026,7 +2120,7 @@ export default function Recepciones() {
         ...current,
         [nextId]: isReceiptNonInventoryItem(manualItem)
           ? ""
-          : defaultReceiptWarehouseId,
+          : receiptWarehouseId,
       }));
       setTargetByItemId(current => ({ ...current, [nextId]: null }));
       setAssetDrafts(current => ({
@@ -2117,17 +2211,171 @@ export default function Recepciones() {
   ) => {
     const selectedWarehouseId = Number(warehouseId);
     const lockedProjectId = Number(lockedReceiptProjectId ?? 0);
+    if (
+      !Number.isInteger(selectedWarehouseId) ||
+      selectedWarehouseId <= 0
+    ) {
+      return lockedProjectId
+        ? (receiptProjects ?? []).filter(
+            (project: any) => project.id === lockedProjectId
+          )
+        : [];
+    }
+
     return (receiptProjects ?? []).filter((project: any) => {
       if (lockedProjectId && project.id !== lockedProjectId) return false;
-      if (
-        Number.isInteger(selectedWarehouseId) &&
-        selectedWarehouseId > 0 &&
-        !projectUsesWarehouse(project, selectedWarehouseId)
-      ) {
+      if (!projectUsesWarehouse(project, selectedWarehouseId)) {
         return false;
       }
       return true;
     });
+  };
+
+  const getWarehousesForReceiptProject = (project: any | null | undefined) => {
+    const warehouses = receiptWarehouses ?? [];
+    if (!project) return warehouses;
+
+    const projectWarehouseIds = getProjectWarehouseIds(project);
+    if (projectWarehouseIds.size === 0) return warehouses;
+
+    return warehouses.filter((warehouse: any) =>
+      projectWarehouseIds.has(Number(warehouse.id))
+    );
+  };
+
+  const isReceiptWarehouseSelectableForItem = (
+    item: any,
+    warehouseId?: string | number | null,
+    warehouseOptions = receiptWarehouseOptions
+  ) => {
+    const warehouseKey = String(warehouseId ?? "");
+    if (!warehouseKey) return false;
+    if (sourceType === "purchase_order" && isReceiptNonInventoryItem(item)) {
+      return false;
+    }
+    if (
+      lockedReturnDestinationWarehouseId &&
+      warehouseKey !== lockedReturnDestinationWarehouseId
+    ) {
+      return false;
+    }
+    if (isSameTransferOriginScope(item, warehouseKey)) return false;
+
+    return (warehouseOptions ?? []).some(
+      (warehouse: any) => String(warehouse.id) === warehouseKey
+    );
+  };
+
+  const getReceiptWarehouseForItem = (
+    item: any,
+    preferredWarehouseId?: string | number | null,
+    warehouseOptions = receiptWarehouseOptions
+  ) => {
+    if (sourceType === "purchase_order" && isReceiptNonInventoryItem(item)) {
+      return "";
+    }
+
+    if (
+      isReceiptWarehouseSelectableForItem(
+        item,
+        preferredWarehouseId,
+        warehouseOptions
+      )
+    ) {
+      return String(preferredWarehouseId);
+    }
+
+    const fallbackWarehouse = (warehouseOptions ?? []).find((warehouse: any) =>
+      isReceiptWarehouseSelectableForItem(item, warehouse.id, warehouseOptions)
+    );
+    return fallbackWarehouse?.id ? String(fallbackWarehouse.id) : "";
+  };
+
+  const applyReceiptWarehouseToAllItems = (
+    warehouseId?: string | number | null,
+    warehouseOptions = receiptWarehouseOptions
+  ) => {
+    setWarehouseByItemId(current => {
+      const next = { ...current };
+      receiptEditableItems.forEach((item: any) => {
+        next[item.id] = getReceiptWarehouseForItem(
+          item,
+          warehouseId,
+          warehouseOptions
+        );
+      });
+      return next;
+    });
+  };
+
+  const receiptWarehouseSelectionValue = receiptWarehouseId;
+  const receiptHeaderProjectOptions = (() => {
+    const options = getReceiptProjectOptionsForWarehouse(
+      receiptWarehouseSelectionValue
+    );
+    if (options.length > 0 || !selectedReceiptProject) return options;
+    return [selectedReceiptProject];
+  })();
+  const receiptHeaderWarehouseOptions = (receiptWarehouseOptions ?? []).filter(
+    (warehouse: any) =>
+      receiptEditableItems.length === 0 ||
+      receiptEditableItems.some((item: any) =>
+        isReceiptWarehouseSelectableForItem(item, warehouse.id)
+      )
+  );
+  const receiptItemsRequireWarehouse = receiptEditableItems.some(
+    (item: any) =>
+      !(sourceType === "purchase_order" && isReceiptNonInventoryItem(item))
+  );
+  const shouldShowReceiptEntryScopeControls =
+    Boolean(sourceId) && receiptItemsRequireWarehouse;
+  const getReceiptWarehouseSelectionError = () => {
+    if (!shouldShowReceiptEntryScopeControls) return "";
+    if (!receiptWarehouseSelectionValue) {
+      return "Seleccione un almacén de ingreso antes de guardar o registrar.";
+    }
+    const selectedWarehouseIsAvailable = receiptHeaderWarehouseOptions.some(
+      (warehouse: any) => String(warehouse.id) === receiptWarehouseSelectionValue
+    );
+    if (!selectedWarehouseIsAvailable) {
+      return "Seleccione un almacén de ingreso válido.";
+    }
+    return "";
+  };
+  const receiptWarehouseSelectionError = getReceiptWarehouseSelectionError();
+
+  const handleReceiptHeaderWarehouseChange = (value: string) => {
+    setReceiptWarehouseId(value);
+    applyReceiptWarehouseToAllItems(value);
+
+    const nextProjectOptions = getReceiptProjectOptionsForWarehouse(value);
+    if (
+      selectedReceiptProjectId &&
+      !nextProjectOptions.some(
+        (project: any) => Number(project.id) === Number(selectedReceiptProjectId)
+      )
+    ) {
+      setReceiptProjectId("");
+      setTargetByItemId({});
+    }
+  };
+
+  const handleReceiptHeaderProjectChange = (value: string) => {
+    if (!receiptWarehouseSelectionValue) {
+      toast.error("Seleccione un almacén de ingreso primero");
+      return;
+    }
+
+    if (value === NO_RECEIPT_PROJECT_VALUE) {
+      setReceiptProjectId("");
+      setTargetByItemId({});
+      applyReceiptWarehouseToAllItems(receiptWarehouseSelectionValue);
+      return;
+    }
+
+    setReceiptProjectId(value);
+    setTargetByItemId({});
+    applyReceiptWarehouseToAllItems(receiptWarehouseSelectionValue);
   };
 
   const renderReceiptWarehouseSelector = (
@@ -2175,7 +2423,7 @@ export default function Recepciones() {
       getReceiptProjectOptionsForWarehouse(selectedWarehouseValue);
     const selectedProjectValue = selectedReceiptProjectId
       ? String(selectedReceiptProjectId)
-      : undefined;
+      : NO_RECEIPT_PROJECT_VALUE;
     const selectedProjectInWarehouse = projectOptions.find(
       (project: any) => String(project.id) === selectedProjectValue
     );
@@ -2237,7 +2485,14 @@ export default function Recepciones() {
         <Select
           value={selectedProjectValue}
           onValueChange={value => {
+            if (value === NO_RECEIPT_PROJECT_VALUE) {
+              setReceiptProjectId("");
+              setTargetByItemId({});
+              return;
+            }
+
             setReceiptProjectId(value);
+            setTargetByItemId({});
             const nextProject = (receiptProjects ?? []).find(
               (project: any) => String(project.id) === value
             );
@@ -2255,12 +2510,20 @@ export default function Recepciones() {
               }
             }
           }}
-          disabled={!projectOptions.length || registerMutation.isPending}
+          disabled={
+            Boolean(lockedReceiptProjectId) ||
+            registerMutation.isPending
+          }
         >
           <SelectTrigger className={compact ? "min-w-64" : "w-full min-w-0"}>
-            <SelectValue placeholder="Seleccione bodega/proyecto" />
+            <SelectValue placeholder="Sin proyecto" />
           </SelectTrigger>
           <SelectContent className="max-w-[min(720px,calc(100vw-2rem))]">
+            {!lockedReceiptProjectId ? (
+              <SelectItem value={NO_RECEIPT_PROJECT_VALUE}>
+                Sin proyecto - ingreso directo al almacén
+              </SelectItem>
+            ) : null}
             {projectOptions.map((project: any) => (
               <SelectItem key={project.id} value={String(project.id)}>
                 {formatProjectReference(project, `Proyecto ${project.id}`)}
@@ -2322,7 +2585,7 @@ export default function Recepciones() {
                 type="button"
                 variant="outline"
                 disabled={
-                  !(selectedReceiptProjectId || sourceProjectId) ||
+                  !selectedReceiptProjectId ||
                   registerMutation.isPending
                 }
                 className="min-w-0 flex-1 justify-between font-normal"
@@ -2513,6 +2776,37 @@ export default function Recepciones() {
     [otherChargeDrafts]
   );
   const receiptTableColumnCount = sourceType === "purchase_order" ? 11 : 8;
+  const isReceiptLineDetailsExpanded = (itemId: string | number) =>
+    expandedReceiptDetailItemIds.includes(String(itemId));
+  const toggleReceiptLineDetails = (itemId: string | number) => {
+    const key = String(itemId);
+    setExpandedReceiptDetailItemIds(current =>
+      current.includes(key)
+        ? current.filter(entry => entry !== key)
+        : [...current, key]
+    );
+  };
+  const renderReceiptLineDetailsButton = (
+    itemId: string | number,
+    expanded: boolean,
+    className = ""
+  ) => (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className={`h-7 gap-1.5 px-2 text-xs ${className}`}
+      onClick={() => toggleReceiptLineDetails(itemId)}
+      aria-expanded={expanded}
+    >
+      <ChevronDown
+        className={`h-3.5 w-3.5 transition-transform ${
+          expanded ? "rotate-180" : ""
+        }`}
+      />
+      {expanded ? "Ocultar detalles" : "Detalles"}
+    </Button>
+  );
 
   const totals = useMemo(
     () =>
@@ -2724,6 +3018,10 @@ export default function Recepciones() {
       );
       return;
     }
+    if (receiptWarehouseSelectionError) {
+      toast.error(receiptWarehouseSelectionError);
+      return;
+    }
     const draft = getReceiptAssetDraft(item.id);
     if (!draft.isFixedAsset) {
       toast.error("Marque la línea como activo fijo");
@@ -2850,10 +3148,13 @@ export default function Recepciones() {
   };
 
   const handleRegisterReceipt = () => {
-    const receiptProjectForSubmit =
-      selectedReceiptProjectId ?? sourceProjectId;
-    if (!sourceId || !receiptProjectForSubmit) {
+    const receiptProjectForSubmit = selectedReceiptProjectId ?? null;
+    if (!sourceId) {
       toast.error("Selecciona un documento origen válido");
+      return;
+    }
+    if (receiptWarehouseSelectionError) {
+      toast.error(receiptWarehouseSelectionError);
       return;
     }
     if (contractReceiptBlockReason) {
@@ -3378,6 +3679,36 @@ export default function Recepciones() {
     () => getOtherChargesTotal((receiptDetail as any)?.otherCharges ?? []),
     [receiptDetail]
   );
+  const canEditReceiptCorrections =
+    user?.role === "admin" ||
+    userRole === "administracion_central" ||
+    userRole === "administrador_proyecto";
+  const receiptCorrectionInvoiceStatus = String(
+    receiptDetail?.invoice?.status ?? ""
+  );
+  const receiptCorrectionDisabledReason =
+    !receiptDetail ||
+    receiptDetail.receipt.sourceType !== "purchase_order" ||
+    receiptDetail.receipt.status === "anulada"
+      ? null
+      : !receiptDetail.invoice?.id
+        ? "Esta recepción no tiene factura vinculada para corregir."
+        : receiptDetail.invoice.status === "registrada"
+          ? "La factura ya está contabilizada; no se puede corregir la recepción."
+          : receiptDetail.invoice.status === "anulada"
+            ? "La factura ya está anulada."
+            : !CORRECTABLE_RECEIPT_INVOICE_STATUSES.has(
+                  receiptCorrectionInvoiceStatus
+                )
+              ? "Esta factura no permite corrección de recepción."
+              : !canEditReceiptCorrections
+                ? "No tienes permisos para corregir recepciones."
+                : null;
+  const canOpenReceiptCorrection =
+    Boolean(receiptDetail?.invoice?.id) &&
+    !receiptCorrectionDisabledReason &&
+    receiptDetail?.receipt.sourceType === "purchase_order" &&
+    receiptDetail?.receipt.status !== "anulada";
 
   const handlePrintReceipt = () => {
     if (!receiptDetail) return;
@@ -3963,6 +4294,28 @@ export default function Recepciones() {
     );
     setDialogOpen(true);
   };
+  const handleCorrectReceiptFromReceipt = () => {
+    const invoiceId = Number(receiptDetail?.invoice?.id);
+    if (!Number.isInteger(invoiceId) || invoiceId <= 0) {
+      toast.error("No se encontró una factura vinculada a esta recepción.");
+      return;
+    }
+    if (!canOpenReceiptCorrection) {
+      toast.error(
+        receiptCorrectionDisabledReason ||
+          "Esta recepción no permite corrección."
+      );
+      return;
+    }
+    if (receiptCorrectionReason.trim().length < 5) {
+      toast.error("Escribe un motivo de corrección de al menos 5 caracteres");
+      return;
+    }
+    correctReceiptMutation.mutate({
+      id: invoiceId,
+      reason: receiptCorrectionReason.trim(),
+    });
+  };
   const fixedAssetReceiptBlockReason = getFixedAssetReceiptBlockReason();
 
   return (
@@ -4040,6 +4393,7 @@ export default function Recepciones() {
                         setReceivedMap({});
                         setWarehouseByItemId({});
                         setReceiptProjectId("");
+                        setReceiptWarehouseId("");
                         setPriceMap({});
                         setSubtotalMap({});
                         setTaxCodeByItemId({});
@@ -4237,6 +4591,107 @@ export default function Recepciones() {
                     </p>
                   </div>
                 </div>
+
+                {shouldShowReceiptEntryScopeControls ? (
+                  <div className="rounded-2xl border border-border/70 bg-background p-3.5 sm:p-4">
+                    <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Ingreso
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          El cambio se aplica a todas las líneas de la recepción.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">
+                          Almacén ingreso *
+                        </Label>
+                        <Select
+                          value={receiptWarehouseSelectionValue || undefined}
+                          onValueChange={handleReceiptHeaderWarehouseChange}
+                          disabled={
+                            !receiptHeaderWarehouseOptions.length ||
+                            Boolean(lockedReturnDestinationWarehouseId) ||
+                            registerMutation.isPending
+                          }
+                        >
+                          <SelectTrigger
+                            className={`h-11 ${
+                              receiptWarehouseSelectionError
+                                ? "border-destructive"
+                                : ""
+                            }`}
+                          >
+                            <SelectValue placeholder="Seleccione almacén" />
+                          </SelectTrigger>
+                          <SelectContent className="max-w-[min(720px,calc(100vw-2rem))]">
+                            {receiptHeaderWarehouseOptions.map(
+                              (warehouse: any) => (
+                                <SelectItem
+                                  key={warehouse.id}
+                                  value={String(warehouse.id)}
+                                >
+                                  {formatWarehouseReference(
+                                    warehouse,
+                                    `Almacén ${warehouse.id}`
+                                  )}
+                                </SelectItem>
+                              )
+                            )}
+                          </SelectContent>
+                        </Select>
+                        {receiptWarehouseSelectionError ? (
+                          <p className="text-xs text-destructive">
+                            {receiptWarehouseSelectionError}
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">
+                          Proyecto / bodega opcional
+                        </Label>
+                        <Select
+                          value={
+                            selectedReceiptProjectId
+                              ? String(selectedReceiptProjectId)
+                              : NO_RECEIPT_PROJECT_VALUE
+                          }
+                          onValueChange={handleReceiptHeaderProjectChange}
+                          disabled={
+                            Boolean(lockedReceiptProjectId) ||
+                            !receiptWarehouseSelectionValue ||
+                            registerMutation.isPending
+                          }
+                        >
+                          <SelectTrigger className="h-11">
+                            <SelectValue placeholder="Sin proyecto" />
+                          </SelectTrigger>
+                          <SelectContent className="max-w-[min(720px,calc(100vw-2rem))]">
+                            {!lockedReceiptProjectId ? (
+                              <SelectItem value={NO_RECEIPT_PROJECT_VALUE}>
+                                Sin proyecto - ingreso directo al almacén
+                              </SelectItem>
+                            ) : null}
+                            {receiptHeaderProjectOptions.map((project: any) => (
+                              <SelectItem
+                                key={project.id}
+                                value={String(project.id)}
+                              >
+                                {formatProjectReference(
+                                  project,
+                                  `Proyecto ${project.id}`
+                                )}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
 
                 {isContractPurchaseOrder ? (
                   <div
@@ -4859,6 +5314,12 @@ export default function Recepciones() {
                                 taxes: activeSalesTaxes,
                               })
                             : null;
+                          const receiptLineDetailsExpanded =
+                            isReceiptLineDetailsExpanded(item.id);
+                          const selectedReceiptTarget =
+                            targetByItemId[item.id] ?? null;
+                          const hasReceiptLineNotes =
+                            assetDraft.notes.trim().length > 0;
                           return (
                             <Fragment key={item.id}>
                               {shouldRenderFixedAssetReceiptRows
@@ -4921,6 +5382,26 @@ export default function Recepciones() {
                                               <div className="mt-1 text-xs text-muted-foreground">
                                                 Serie:{" "}
                                                 {articleDetail.serialNumber}
+                                              </div>
+                                            ) : null}
+                                            {index === 0 ? (
+                                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                                {renderReceiptLineDetailsButton(
+                                                  item.id,
+                                                  receiptLineDetailsExpanded
+                                                )}
+                                                {selectedReceiptTarget?.label ? (
+                                                  <span className="max-w-64 truncate text-xs text-muted-foreground">
+                                                    {formatReceiptTargetSummary(
+                                                      selectedReceiptTarget
+                                                    )}
+                                                  </span>
+                                                ) : null}
+                                                {hasReceiptLineNotes ? (
+                                                  <Badge variant="outline">
+                                                    Con observación
+                                                  </Badge>
+                                                ) : null}
                                               </div>
                                             ) : null}
                                           </td>
@@ -5003,6 +5484,41 @@ export default function Recepciones() {
                                       {sourceCode}
                                     </div>
                                   ) : null}
+                                  <div className="mt-2 flex max-w-[360px] flex-wrap items-center gap-1.5">
+                                    {renderReceiptLineDetailsButton(
+                                      item.id,
+                                      receiptLineDetailsExpanded
+                                    )}
+                                    {sourceType === "purchase_order" ? (
+                                      selectedReceiptTarget?.label ? (
+                                        <span className="truncate text-xs text-muted-foreground">
+                                          {formatReceiptTargetSummary(
+                                            selectedReceiptTarget
+                                          )}
+                                        </span>
+                                      ) : (
+                                        <Badge
+                                          variant="outline"
+                                          className="border-amber-300 text-amber-700"
+                                        >
+                                          Destino pendiente
+                                        </Badge>
+                                      )
+                                    ) : null}
+                                    {isLineFixedAsset ? (
+                                      <Badge
+                                        variant="outline"
+                                        className="border-blue-300 text-blue-700"
+                                      >
+                                        Activo fijo
+                                      </Badge>
+                                    ) : null}
+                                    {hasReceiptLineNotes ? (
+                                      <Badge variant="outline">
+                                        Con observación
+                                      </Badge>
+                                    ) : null}
+                                  </div>
                                 </td>
                                 <td className="p-4 font-mono text-sm">
                                   {sourceCode || "—"}
@@ -5244,14 +5760,15 @@ export default function Recepciones() {
                                 ) : null}
                                 </tr>
                               ) : null}
-                              <tr
-                                key={`${item.id}-asset`}
-                                className="border-b border-border/70 bg-muted/10 last:border-0"
-                              >
-                                <td
-                                  colSpan={receiptTableColumnCount}
-                                  className="p-4 pt-0"
+                              {receiptLineDetailsExpanded ? (
+                                <tr
+                                  key={`${item.id}-asset`}
+                                  className="border-b border-border/70 bg-muted/10 last:border-0"
                                 >
+                                  <td
+                                    colSpan={receiptTableColumnCount}
+                                    className="p-4 pt-0"
+                                  >
                                   <div className="space-y-4 rounded-xl border border-border/70 bg-background p-3">
                                     {sourceType === "purchase_order" ? (
                                       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
@@ -5718,8 +6235,9 @@ export default function Recepciones() {
                                       )
                                     ) : null}
                                   </div>
-                                </td>
-                              </tr>
+                                  </td>
+                                </tr>
+                              ) : null}
                             </Fragment>
                           );
                         })
@@ -5842,7 +6360,8 @@ export default function Recepciones() {
                       activeSourceLoading ||
                       pendingReceiptAttachments.length === 0 ||
                       Boolean(contractReceiptBlockReason) ||
-                      Boolean(fixedAssetReceiptBlockReason)
+                      Boolean(fixedAssetReceiptBlockReason) ||
+                      Boolean(receiptWarehouseSelectionError)
                     }
                   >
                     {registerMutation.isPending
@@ -5857,6 +6376,11 @@ export default function Recepciones() {
                   {pendingReceiptAttachments.length === 0 ? (
                     <p className="mt-2 max-w-md text-right text-xs text-amber-700">
                       Adjunta el comprobante antes de registrar la recepción.
+                    </p>
+                  ) : null}
+                  {receiptWarehouseSelectionError ? (
+                    <p className="mt-2 max-w-md text-right text-xs text-amber-700">
+                      {receiptWarehouseSelectionError}
                     </p>
                   ) : null}
                 </div>
@@ -6503,6 +7027,30 @@ export default function Recepciones() {
                 />
 
                 <div className="flex flex-wrap justify-end gap-3 border-t border-border/70 pt-1">
+                  {receiptDetail.receipt.sourceType === "purchase_order" &&
+                  receiptDetail.invoice?.id &&
+                  receiptDetail.receipt.status !== "anulada" ? (
+                    <div className="flex flex-col items-end gap-1">
+                      <Button
+                        variant="destructive"
+                        size="lg"
+                        className="h-10 min-w-[210px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
+                        onClick={() => setReceiptCorrectionDialogOpen(true)}
+                        disabled={
+                          !canOpenReceiptCorrection ||
+                          correctReceiptMutation.isPending
+                        }
+                      >
+                        <RotateCcw className="mr-2 h-4 w-4" />
+                        Corregir recepción
+                      </Button>
+                      {receiptCorrectionDisabledReason ? (
+                        <p className="max-w-[320px] text-right text-xs text-muted-foreground">
+                          {receiptCorrectionDisabledReason}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <Button
                     variant="outline"
                     size="lg"
@@ -6519,6 +7067,69 @@ export default function Recepciones() {
                 </div>
               </div>
             ) : null}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={receiptCorrectionDialogOpen}
+          onOpenChange={open => {
+            if (!open && !correctReceiptMutation.isPending) {
+              setReceiptCorrectionDialogOpen(false);
+              setReceiptCorrectionReason("");
+            }
+          }}
+        >
+          <DialogContent className="max-w-lg rounded-2xl border-border/70">
+            <DialogHeader className="space-y-2">
+              <DialogTitle>Corregir recepción</DialogTitle>
+              <DialogDescription>
+                La factura y la recepción original quedarán anuladas. El
+                sistema devolverá las entradas de inventario, restará cantidades
+                recibidas y creará una nueva recepción en borrador.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+              Si la factura ya está contabilizada o algún ítem ya no tiene
+              existencia suficiente en su bodega, la corrección se bloqueará sin
+              hacer cambios.
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="receipt-correction-reason">
+                Motivo de corrección *
+              </Label>
+              <Textarea
+                id="receipt-correction-reason"
+                value={receiptCorrectionReason}
+                onChange={event =>
+                  setReceiptCorrectionReason(event.target.value)
+                }
+                rows={4}
+                maxLength={2000}
+                disabled={correctReceiptMutation.isPending}
+                placeholder="Ej. Cantidad recibida incorrecta, se debe registrar nuevamente."
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setReceiptCorrectionDialogOpen(false);
+                  setReceiptCorrectionReason("");
+                }}
+                disabled={correctReceiptMutation.isPending}
+              >
+                Cancelar
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleCorrectReceiptFromReceipt}
+                disabled={correctReceiptMutation.isPending}
+              >
+                {correctReceiptMutation.isPending
+                  ? "Corrigiendo..."
+                  : "Anular y crear borrador"}
+              </Button>
+            </div>
           </DialogContent>
         </Dialog>
 

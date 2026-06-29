@@ -218,7 +218,7 @@ function isSameReceiptLineTarget(
 async function resolveReceiptLineTarget(params: {
   item: ReceiptLineTargetInput;
   sourceItem?: any;
-  projectId: number;
+  projectId?: number | null;
 }): Promise<ReceiptLineTargetFields> {
   const sourceTarget = extractReceiptLineTarget(params.sourceItem);
   const hasExplicitTarget =
@@ -231,6 +231,17 @@ async function resolveReceiptLineTarget(params: {
 
   if (!requestedTarget.targetType) {
     return emptyReceiptLineTarget();
+  }
+
+  if (!params.projectId) {
+    if (!hasExplicitTarget) {
+      return emptyReceiptLineTarget();
+    }
+
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `Seleccione proyecto/bodega para asignar destino a ${params.item.itemName}`,
+    });
   }
 
   if (isSameReceiptLineTarget(requestedTarget, sourceTarget)) {
@@ -448,7 +459,7 @@ function isPurchaseOrderNonInventoryLine(params: {
 }
 
 async function assertReceiptWarehouses(
-  projectId: number,
+  projectId: number | null | undefined,
   items: Array<{
     warehouseId?: number;
     quantityReceived: string;
@@ -458,7 +469,9 @@ async function assertReceiptWarehouses(
 ) {
   const activeWarehouses = options?.allowAnyActiveWarehouse
     ? await db.listWarehouses({ isActive: true })
-    : await db.listProjectWarehouses(projectId, {
+    : !projectId
+      ? await db.listWarehouses({ isActive: true })
+      : await db.listProjectWarehouses(projectId, {
         isActive: true,
       });
   const activeWarehouseIds = new Set(
@@ -470,7 +483,7 @@ async function assertReceiptWarehouses(
     if (!item.warehouseId || !activeWarehouseIds.has(item.warehouseId)) {
       throw new TRPCError({
         code: "BAD_REQUEST",
-        message: options?.allowAnyActiveWarehouse
+        message: options?.allowAnyActiveWarehouse || !projectId
           ? `Seleccione un almacén activo para ${item.itemName}`
           : `Seleccione un almacén activo del proyecto para ${item.itemName}`,
       });
@@ -563,7 +576,9 @@ export const receiptsRouter = router({
           message: "Recepción no encontrada",
         });
       }
-      assertProjectScopedAccess(ctx.user, detail.receipt.projectId);
+      if (detail.receipt.projectId) {
+        assertProjectScopedAccess(ctx.user, detail.receipt.projectId);
+      }
       return detail;
     }),
 
@@ -793,7 +808,7 @@ export const receiptsRouter = router({
         .object({
           sourceType: z.enum(["purchase_order", "transfer"]),
           sourceId: z.number(),
-          projectId: z.number(),
+          projectId: z.number().nullable().optional(),
           isFiscalDocument: z.boolean().optional(),
           cai: z.string().trim().max(100).optional(),
           invoiceNumber: z.string().trim().max(100).optional(),
@@ -950,12 +965,8 @@ export const receiptsRouter = router({
           });
         }
         assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
-        if (input.projectId !== detail.purchaseOrder.projectId) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message:
-              "El proyecto de la recepción no coincide con la orden de compra",
-          });
+        if (input.projectId) {
+          assertProjectScopedAccess(ctx.user, input.projectId);
         }
 
         if (
@@ -1328,7 +1339,7 @@ export const receiptsRouter = router({
       const receiptData = {
         sourceType: input.sourceType,
         sourceId: input.sourceId,
-        projectId: input.projectId,
+        projectId: input.projectId ?? null,
         receivedById: ctx.user.id,
         status: "pendiente" as const,
         isFiscalDocument,

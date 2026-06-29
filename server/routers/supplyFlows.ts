@@ -453,6 +453,7 @@ export const supplyFlowsRouter = router({
           projectId: detail.request.projectId,
           classification: "cd",
           purchaseType: "compra_directa",
+          paymentMethod: input.paymentMethod,
           supplierId: input.supplierId,
           supplierEmail: null,
           status: "emitida",
@@ -530,7 +531,6 @@ export const supplyFlowsRouter = router({
           )
           .min(1),
         supplierId: z.number().optional(),
-        paymentMethod: directPurchasePaymentMethodSchema,
         notes: z.string().optional(),
       })
     )
@@ -776,9 +776,7 @@ export const supplyFlowsRouter = router({
           status: "pendiente",
           neededBy: earliestNeededBy ?? null,
           sapDocumentNumber: null,
-          notes:
-            input.notes ??
-            `Compra directa por ${getPaymentMethodLabel(input.paymentMethod)}`,
+          notes: input.notes ?? "Compra directa",
           rejectionReason: null,
           printedDocumentName: null,
           printedDocumentMimeType: null,
@@ -808,7 +806,7 @@ export const supplyFlowsRouter = router({
           requestId: entry.requestId,
           requestItemId: entry.processedItemId,
           flowType: "compra_directa",
-          paymentMethod: input.paymentMethod,
+          paymentMethod: null,
           supplierId: input.supplierId ?? null,
           purchaseOrderNumber: purchaseRequest.requestNumber,
           sapDocumentType: "solicitud_compra",

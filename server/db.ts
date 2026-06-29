@@ -9,6 +9,7 @@ import {
   or,
   inArray,
   isNotNull,
+  isNull,
   gte,
   lte,
 } from "drizzle-orm";
@@ -6431,6 +6432,25 @@ export async function getPurchaseOrderById(id: number) {
     rows[0].purchaseOrder,
     storedSupplierContact ?? fallbackSupplierContact
   );
+  const directPurchasePaymentRows = await db
+    .select({ paymentMethod: supplyFlowRecords.paymentMethod })
+    .from(supplyFlowRecords)
+    .where(
+      and(
+        eq(supplyFlowRecords.flowType, "compra_directa"),
+        eq(
+          supplyFlowRecords.purchaseOrderNumber,
+          rows[0].purchaseOrder.orderNumber
+        ),
+        isNotNull(supplyFlowRecords.paymentMethod),
+        sql`${supplyFlowRecords.status} <> 'cancelado'`
+      )
+    )
+    .limit(1);
+  const directPurchasePaymentMethod =
+    rows[0].purchaseOrder.paymentMethod ??
+    directPurchasePaymentRows[0]?.paymentMethod ??
+    null;
 
   const printedDocumentContent = buildPurchaseOrderDocument({
     orderNumber: rows[0].purchaseOrder.orderNumber,
@@ -6502,6 +6522,7 @@ export async function getPurchaseOrderById(id: number) {
       invoiceCountMap.get(id) ?? 0
     ),
     preferredSupplierContact,
+    directPurchasePaymentMethod,
     originalRequester,
     originalRequestNumbers,
     auditLogs,
@@ -7899,7 +7920,22 @@ export async function registerReceipt(
     }
   }
 
-  const receiptNumber = await generateReceiptNumber(data.projectId);
+  let receiptNumberProjectId = data.projectId ?? null;
+  if (!receiptNumberProjectId) {
+    if (data.sourceType === "purchase_order") {
+      receiptNumberProjectId =
+        purchaseOrderDetailForReceipt?.purchaseOrder.projectId ?? null;
+    } else {
+      const transferDetailForNumber = await getTransferById(data.sourceId);
+      receiptNumberProjectId =
+        transferDetailForNumber?.transferRequest?.projectId ?? null;
+    }
+  }
+  if (!receiptNumberProjectId) {
+    throw new Error("No se pudo determinar el correlativo de la recepción");
+  }
+
+  const receiptNumber = await generateReceiptNumber(receiptNumberProjectId);
   const totalExpected = items.reduce(
     (sum, item) => sum + parseDecimal(item.quantityExpected),
     0
@@ -7925,7 +7961,9 @@ export async function registerReceipt(
       and(
         eq(receipts.sourceType, data.sourceType),
         eq(receipts.sourceId, data.sourceId),
-        eq(receipts.projectId, data.projectId),
+        data.projectId === null || data.projectId === undefined
+          ? isNull(receipts.projectId)
+          : eq(receipts.projectId, data.projectId),
         eq(receipts.status, "borrador")
       )
     )
@@ -8104,7 +8142,7 @@ export async function registerReceipt(
           sapItemCode: item.sapItemCode ?? null,
           itemName: item.itemName,
           unit: item.unit,
-          projectId: purchaseOrderDetail.purchaseOrder.projectId,
+          projectId: data.projectId ?? null,
           warehouseId: item.warehouseId,
           quantity: item.quantityReceived,
         });
@@ -8185,7 +8223,7 @@ export async function registerReceipt(
             existingItem.originalSapItemCode,
           itemName: existingItem.itemName,
           unit: existingItem.unit,
-          projectId: purchaseOrderDetail.purchaseOrder.projectId,
+          projectId: data.projectId ?? null,
           warehouseId: item.warehouseId,
           quantity: item.quantityReceived,
         });
@@ -8471,15 +8509,32 @@ export async function saveReceiptDraft(
       and(
         eq(receipts.sourceType, data.sourceType),
         eq(receipts.sourceId, data.sourceId),
-        eq(receipts.projectId, data.projectId),
+        data.projectId === null || data.projectId === undefined
+          ? isNull(receipts.projectId)
+          : eq(receipts.projectId, data.projectId),
         eq(receipts.status, "borrador")
       )
     )
     .limit(1);
 
+  let receiptNumberProjectId = data.projectId ?? null;
+  if (!receiptNumberProjectId) {
+    if (data.sourceType === "purchase_order") {
+      const purchaseOrderDetail = await getPurchaseOrderById(data.sourceId);
+      receiptNumberProjectId =
+        purchaseOrderDetail?.purchaseOrder.projectId ?? null;
+    } else {
+      const transferDetail = await getTransferById(data.sourceId);
+      receiptNumberProjectId = transferDetail?.transferRequest?.projectId ?? null;
+    }
+  }
+  if (!receiptNumberProjectId) {
+    throw new Error("No se pudo determinar el correlativo de la recepción");
+  }
+
   const receiptNumber =
     existingDraft?.receiptNumber ??
-    (await generateReceiptNumber(data.projectId));
+    (await generateReceiptNumber(receiptNumberProjectId));
   const receiptData = {
     ...data,
     receiptNumber,
@@ -9659,8 +9714,10 @@ export async function correctInvoiceReceiptFromInvoice(params: {
     throw new Error("Factura o recepción no encontrada");
   }
 
+  const replacementReceiptNumberProjectId =
+    initialRow.receipt.projectId ?? initialRow.invoice.projectId;
   const replacementReceiptNumber = await generateReceiptNumber(
-    initialRow.receipt.projectId
+    replacementReceiptNumberProjectId
   );
   const affectedRequestIds = new Set<number>();
   let affectedPurchaseOrderId = initialRow.invoice.purchaseOrderId;
@@ -9708,7 +9765,9 @@ export async function correctInvoiceReceiptFromInvoice(params: {
         and(
           eq(receipts.sourceType, row.receipt.sourceType),
           eq(receipts.sourceId, row.receipt.sourceId),
-          eq(receipts.projectId, row.receipt.projectId),
+          row.receipt.projectId === null
+            ? isNull(receipts.projectId)
+            : eq(receipts.projectId, row.receipt.projectId),
           eq(receipts.status, "borrador"),
           sql`${receipts.id} <> ${row.receipt.id}`
         )
@@ -12983,26 +13042,55 @@ async function addInventoryStock(params: {
   if (quantityToAdd <= 0) {
     return { addedQuantity: 0, inventoryItemId: null };
   }
-  if (params.projectId === null || params.projectId === undefined) {
-    throw new Error(
-      "Seleccione proyecto/bodega para registrar inventario operativo"
-    );
-  }
 
   const normalizedSapItemCode = params.sapItemCode?.trim() || null;
-  const projectAssignment = await resolveProjectAssignment(
-    params.projectId,
-    params.warehouseId
-  );
-  if (!projectAssignment) {
-    throw new Error("Seleccione proyecto/bodega para registrar inventario");
-  }
-  const warehouseAssignment = {
-    warehouseId: projectAssignment.warehouseId,
-    warehouseLocation: projectAssignment.warehouseLocation,
+  let warehouseAssignment: {
+    warehouseId?: number | null;
+    warehouseLocation?: string | null;
   };
-  const inventoryProjectId =
-    getInventoryProjectIdForAssignment(projectAssignment);
+  let inventoryProjectId: number | null;
+
+  if (params.projectId === null || params.projectId === undefined) {
+    if (!params.warehouseId) {
+      throw new Error(
+        "Seleccione almacén físico para registrar inventario directo"
+      );
+    }
+
+    const [warehouse] = await db
+      .select()
+      .from(warehouses)
+      .where(
+        and(
+          eq(warehouses.id, params.warehouseId),
+          eq(warehouses.isActive, true)
+        )
+      )
+      .limit(1);
+
+    if (!warehouse) {
+      throw new Error("Seleccione un almacén activo para registrar inventario");
+    }
+
+    warehouseAssignment = {
+      warehouseId: warehouse.id,
+      warehouseLocation: warehouse.displayName,
+    };
+    inventoryProjectId = null;
+  } else {
+    const projectAssignment = await resolveProjectAssignment(
+      params.projectId,
+      params.warehouseId
+    );
+    if (!projectAssignment) {
+      throw new Error("Seleccione proyecto/bodega para registrar inventario");
+    }
+    warehouseAssignment = {
+      warehouseId: projectAssignment.warehouseId,
+      warehouseLocation: projectAssignment.warehouseLocation,
+    };
+    inventoryProjectId = getInventoryProjectIdForAssignment(projectAssignment);
+  }
 
   const rows = await listInventoryRowsForStock({
     sapItemCode: normalizedSapItemCode,

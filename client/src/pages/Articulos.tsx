@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,7 +35,14 @@ import {
   ASSET_CONDITION_VALUES,
   type AssetCondition,
 } from "@shared/fixed-assets";
-import { PackageSearch, Pencil, Plus, Save, Search } from "lucide-react";
+import {
+  Download,
+  PackageSearch,
+  Pencil,
+  Plus,
+  Save,
+  Search,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -97,6 +105,7 @@ type ArticleCreateFormState = {
 };
 
 const PAGE_SIZE = 25;
+const EXPORT_PAGE_SIZE = 200;
 
 const ARTICLE_TYPE_LABELS: Record<ArticleType, string> = {
   1: "Artículo",
@@ -232,6 +241,7 @@ export default function Articulos() {
     useState("");
   const [fixedAssetIsLeasingDraft, setFixedAssetIsLeasingDraft] =
     useState(false);
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
 
   const buildreqRole = (user as any)?.buildreqRole || "";
   const isPendingFixedAssetsView = location.startsWith(
@@ -545,6 +555,117 @@ export default function Articulos() {
     });
   };
 
+  const exportArticlesExcel = async () => {
+    if (total === 0 || isExportingExcel) return;
+
+    setIsExportingExcel(true);
+    try {
+      const rows: ArticleRecord[] = [];
+      let nextPage = 1;
+      let totalPagesToFetch = Math.max(1, Math.ceil(total / EXPORT_PAGE_SIZE));
+
+      while (nextPage <= totalPagesToFetch) {
+        const pageData = await utils.articles.list.fetch({
+          ...listInput,
+          page: nextPage,
+          pageSize: EXPORT_PAGE_SIZE,
+        });
+
+        rows.push(...((pageData.items ?? []) as ArticleRecord[]));
+        totalPagesToFetch = pageData.totalPages ?? totalPagesToFetch;
+        nextPage += 1;
+      }
+
+      await downloadExcel(
+        buildDatedExcelFileName(
+          isPendingFixedAssetsView ? "activos-fijos-pendientes" : "articulos"
+        ),
+        isPendingFixedAssetsView ? "Activos fijos pendientes" : "Articulos",
+        [
+          { header: "Código", value: row => row.itemCode, width: 16 },
+          { header: "Descripción", value: row => row.description, width: 42 },
+          { header: "Grupo", value: row => row.itemGroup || "" },
+          { header: "Marca", value: row => row.brand || "" },
+          { header: "No. parte", value: row => row.partNumber || "" },
+          {
+            header: "Tipo",
+            value: row => getArticleTypeLabel(row.tipoArticulo),
+          },
+          {
+            header: "Proyecto",
+            value: row => getArticleProjectLabel(row, projectById),
+            width: 36,
+          },
+          {
+            header: "Estado",
+            value: row => (row.isActive ? "Activo" : "Inactivo"),
+          },
+          {
+            header: "Retención",
+            value: row => (row.allowsTaxWithholding ? "Permite" : "No permite"),
+          },
+          {
+            header: "Estado activo fijo",
+            value: row => getFixedAssetStatusLabel(row.fixedAssetStatus) || "",
+          },
+          {
+            header: "Código temporal",
+            value: row => row.temporaryItemCode || "",
+          },
+          {
+            header: "Serie activo fijo",
+            value: row => row.fixedAssetSerialNumber || "",
+          },
+          {
+            header: "Condición activo fijo",
+            value: row =>
+              ASSET_CONDITION_VALUES.includes(
+                row.fixedAssetCondition as AssetCondition
+              )
+                ? ASSET_CONDITION_LABELS[row.fixedAssetCondition as AssetCondition]
+                : "",
+          },
+          { header: "Color", value: row => row.fixedAssetColor || "" },
+          { header: "Modelo", value: row => row.fixedAssetModel || "" },
+          {
+            header: "Marca activo fijo",
+            value: row => row.fixedAssetBrand || "",
+          },
+          {
+            header: "Serie chasis",
+            value: row => row.fixedAssetChassisSeries || "",
+          },
+          {
+            header: "Serie motor",
+            value: row => row.fixedAssetMotorSeries || "",
+          },
+          {
+            header: "Placa/código",
+            value: row => row.fixedAssetPlateOrCode || "",
+          },
+          {
+            header: "Leasing",
+            value: row => (row.fixedAssetIsLeasing ? "Sí" : "No"),
+          },
+          {
+            header: "Observación",
+            value: row => row.fixedAssetObservation || "",
+            width: 42,
+          },
+        ],
+        rows
+      );
+
+      toast.success(
+        `Se exportaron ${rows.length.toLocaleString("es-HN")} registro(s)`
+      );
+    } catch {
+      toast.error("No se pudo exportar el archivo Excel");
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -562,12 +683,26 @@ export default function Articulos() {
                 : `${total.toLocaleString("es-HN")} registros encontrados`}
           </p>
         </div>
-        {canCreate ? (
-          <Button onClick={() => setCreateDialogOpen(true)} className="gap-2">
-            <Plus className="h-4 w-4" />
-            Crear artículo
+        <div className="flex flex-wrap gap-2 sm:justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void exportArticlesExcel()}
+            disabled={
+              isLoading || Boolean(error) || total === 0 || isExportingExcel
+            }
+            className="gap-2"
+          >
+            <Download className="h-4 w-4" />
+            {isExportingExcel ? "Exportando..." : "Exportar Excel"}
           </Button>
-        ) : null}
+          {canCreate ? (
+            <Button onClick={() => setCreateDialogOpen(true)} className="gap-2">
+              <Plus className="h-4 w-4" />
+              Crear artículo
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <div

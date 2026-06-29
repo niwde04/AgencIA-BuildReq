@@ -116,6 +116,25 @@ const PURCHASE_TYPE_LABELS: Record<string, string> = {
   extranjera: "Compra Extranjera",
   compra_directa: "Compra Directa",
 };
+type DirectPurchasePaymentMethod =
+  | "linea_credito"
+  | "fondo_proyecto"
+  | "caja_chica";
+const DIRECT_PURCHASE_PAYMENT_METHOD_LABELS: Record<
+  DirectPurchasePaymentMethod,
+  string
+> = {
+  linea_credito: "Línea de Crédito",
+  fondo_proyecto: "Fondo del proyecto",
+  caja_chica: "Fondo del proyecto",
+};
+function formatDirectPurchasePaymentMethod(value?: string | null) {
+  return (
+    DIRECT_PURCHASE_PAYMENT_METHOD_LABELS[
+      value as DirectPurchasePaymentMethod
+    ] ?? "Pendiente"
+  );
+}
 
 const EMISSION_STATUS_LABELS: Record<string, string> = {
   borrador: "Pendiente",
@@ -1634,6 +1653,13 @@ export default function OrdenesCompra() {
       return `Ingrese un precio unitario mayor que cero para ${itemWithoutPrice.itemName}`;
     }
     if (
+      detail.purchaseOrder.purchaseType === "compra_directa" &&
+      !detail.purchaseOrder.paymentMethod &&
+      !detail.directPurchasePaymentMethod
+    ) {
+      return "Seleccione el método de pago para la orden de compra";
+    }
+    if (
       detail.purchaseOrder.appliesContract &&
       (!detail.purchaseOrder.contractPaymentFrequency ||
         !detail.purchaseOrder.contractFirstPaymentDate ||
@@ -1720,6 +1746,24 @@ export default function OrdenesCompra() {
     updateMutation.mutate({
       id: detail.purchaseOrder.id,
       supplierContactId: Number(value),
+    });
+  };
+
+  const handlePaymentMethodChange = (value: string) => {
+    if (!detail) return;
+    if (!canEditOrderStructure) {
+      toast.error("La OC ya fue emitida y no se puede actualizar");
+      return;
+    }
+
+    const paymentMethod = value as DirectPurchasePaymentMethod;
+    if (detail.purchaseOrder.paymentMethod === paymentMethod) {
+      return;
+    }
+
+    updateMutation.mutate({
+      id: detail.purchaseOrder.id,
+      paymentMethod,
     });
   };
 
@@ -3774,6 +3818,49 @@ export default function OrdenesCompra() {
                     {detail.purchaseOrder.classification}
                   </p>
                 </div>
+                {detail.purchaseOrder.purchaseType === "compra_directa" ||
+                detail.purchaseOrder.paymentMethod ||
+                detail.directPurchasePaymentMethod ? (
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3 lg:col-span-2">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Método de pago
+                    </Label>
+                    {canEditOrderStructure ? (
+                      <Select
+                        value={
+                          detail.purchaseOrder.paymentMethod ??
+                          detail.directPurchasePaymentMethod ??
+                          undefined
+                        }
+                        onValueChange={handlePaymentMethodChange}
+                        disabled={updateMutation.isPending}
+                      >
+                        <SelectTrigger className="h-10 bg-background sm:h-11">
+                          <SelectValue placeholder="Seleccione" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="linea_credito">
+                            {
+                              DIRECT_PURCHASE_PAYMENT_METHOD_LABELS.linea_credito
+                            }
+                          </SelectItem>
+                          <SelectItem value="fondo_proyecto">
+                            {
+                              DIRECT_PURCHASE_PAYMENT_METHOD_LABELS.fondo_proyecto
+                            }
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <p className="text-base font-semibold leading-tight sm:text-lg">
+                        {formatDirectPurchasePaymentMethod(
+                          detail.purchaseOrder.paymentMethod ??
+                            detail.directPurchasePaymentMethod
+                        )}
+                      </p>
+                    )}
+                  </div>
+                ) : null}
                 <div className="space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-6 lg:col-span-4">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                     Proveedor

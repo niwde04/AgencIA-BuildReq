@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   ArrowUpDown,
   Building2,
+  Download,
   FolderKanban,
   Package,
   Plus,
@@ -93,6 +95,7 @@ const EMPTY_WAREHOUSE_FORM: WarehouseFormState = {
   isSharedWarehouse: false,
 };
 const DETAIL_INVENTORY_PAGE_SIZE = 100;
+const DETAIL_INVENTORY_EXPORT_PAGE_SIZE = 200;
 
 function buildPageItems(currentPage: number, totalPages: number) {
   if (totalPages <= 1) return [1];
@@ -301,6 +304,8 @@ export default function Almacenes() {
   const [detailUserSearch, setDetailUserSearch] = useState("");
   const [detailUserSortField, setDetailUserSortField] =
     useState<WarehouseUserSortField | null>(null);
+  const [isExportingDetailInventory, setIsExportingDetailInventory] =
+    useState(false);
   const trimmedDetailInventorySearch = detailInventorySearch.trim();
   const [debouncedDetailInventorySearch, setDebouncedDetailInventorySearch] =
     useState("");
@@ -543,6 +548,80 @@ export default function Almacenes() {
       )
     );
   }, [detailUserSearch, detailUserSortField, selectedWarehouse?.assignedUsers]);
+
+  const exportDetailInventoryExcel = async () => {
+    if (
+      !selectedWarehouseId ||
+      !selectedWarehouse ||
+      detailInventoryTotal === 0 ||
+      isExportingDetailInventory
+    ) {
+      return;
+    }
+
+    setIsExportingDetailInventory(true);
+    try {
+      const rows: any[] = [];
+      let nextPage = 1;
+      let totalPagesToFetch = Math.max(
+        1,
+        Math.ceil(detailInventoryTotal / DETAIL_INVENTORY_EXPORT_PAGE_SIZE)
+      );
+
+      while (nextPage <= totalPagesToFetch) {
+        const pageData = await utils.inventory.list.fetch({
+          warehouseId: selectedWarehouseId,
+          search: debouncedDetailInventorySearch || undefined,
+          page: nextPage,
+          pageSize: DETAIL_INVENTORY_EXPORT_PAGE_SIZE,
+          includeUnclassified: true,
+          includePendingQuantities: false,
+          sortBy: getInventoryServerSortField(detailInventorySortField),
+          sortDir: "asc",
+        });
+
+        rows.push(...(pageData.items ?? []));
+        totalPagesToFetch = pageData.totalPages ?? totalPagesToFetch;
+        nextPage += 1;
+      }
+
+      await downloadExcel(
+        buildDatedExcelFileName(
+          `inventario-almacen-${selectedWarehouse.code ?? selectedWarehouseId}`
+        ),
+        "Inventario",
+        [
+          { header: "SAP", value: row => row.sapItemCode, width: 16 },
+          { header: "Artículo", value: row => row.name, width: 40 },
+          { header: "Unidad", value: row => row.unit || "" },
+          {
+            header: "Stock",
+            value: row => Number(row.currentStock ?? 0),
+            numFmt: "#,##0.00",
+          },
+          {
+            header: "Proyecto",
+            value: row => getInventoryProjectLabel(row),
+            width: 36,
+          },
+          {
+            header: "Almacén físico",
+            value: () => `${selectedWarehouse.code} - ${selectedWarehouse.name}`,
+            width: 32,
+          },
+        ],
+        rows
+      );
+
+      toast.success(
+        `Se exportaron ${formatNumber(rows.length)} registro(s) del almacén`
+      );
+    } catch {
+      toast.error("No se pudo exportar el archivo Excel");
+    } finally {
+      setIsExportingDetailInventory(false);
+    }
+  };
 
   const createMutation = trpc.warehouses.create.useMutation({
     onSuccess: () => {
@@ -1250,11 +1329,29 @@ export default function Almacenes() {
                       ) : null}
                     </div>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    {isDetailInventoryLoading
-                      ? "Buscando inventario..."
-                      : `Mostrando ${formatNumber(detailInventoryRangeStart)} a ${formatNumber(detailInventoryRangeEnd)} de ${formatNumber(detailInventoryTotal)}`}
-                  </p>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <p className="text-xs text-muted-foreground">
+                      {isDetailInventoryLoading
+                        ? "Buscando inventario..."
+                        : `Mostrando ${formatNumber(detailInventoryRangeStart)} a ${formatNumber(detailInventoryRangeEnd)} de ${formatNumber(detailInventoryTotal)}`}
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void exportDetailInventoryExcel()}
+                      disabled={
+                        isDetailInventoryLoading ||
+                        detailInventoryTotal === 0 ||
+                        isExportingDetailInventory
+                      }
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      {isExportingDetailInventory
+                        ? "Exportando..."
+                        : "Exportar Excel"}
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="rounded-md border">

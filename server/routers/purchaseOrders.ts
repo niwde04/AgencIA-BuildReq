@@ -157,6 +157,12 @@ const fixedAssetDetailSchema = z.object({
   plateOrCode: z.string().trim().max(120).nullish(),
 });
 
+const directPurchasePaymentMethodSchema = z.enum([
+  "linea_credito",
+  "fondo_proyecto",
+  "caja_chica",
+]);
+
 function getPendingConversionQuantity(item: {
   quantity: string | number | null | undefined;
   convertedQuantity?: string | number | null | undefined;
@@ -418,6 +424,7 @@ export const purchaseOrdersRouter = router({
           supplierId: z.number().optional(),
           supplierContactId: z.number().nullable().optional(),
           supplierEmail: z.string().email().optional(),
+          paymentMethod: directPurchasePaymentMethodSchema.optional(),
           notes: z.string().optional(),
         })
         .merge(contractFieldsBaseSchema)
@@ -563,6 +570,9 @@ export const purchaseOrdersRouter = router({
         current.push(linkedFlowItem);
         directPurchaseFlowByRequestItemId.set(requestItemId, current);
       }
+      const requiresPaymentMethod =
+        detail.purchaseRequest.purchaseType === "compra_directa" ||
+        directPurchaseFlowItems.length > 0;
 
       const selectedItemsByProject = new Map<number, any[]>();
       for (const conversionItem of conversionItems) {
@@ -574,7 +584,6 @@ export const purchaseOrdersRouter = router({
         current.push(conversionItem);
         selectedItemsByProject.set(sourceProjectId, current);
       }
-
       const createdOrders: Array<{
         projectId: number;
         purchaseOrderId: number;
@@ -634,6 +643,9 @@ export const purchaseOrdersRouter = router({
             projectId,
             classification: inferredClassification,
             purchaseType: detail.purchaseRequest.purchaseType,
+            paymentMethod: requiresPaymentMethod
+              ? input.paymentMethod ?? null
+              : null,
             supplierId: inferredSupplierId,
             supplierContactId: selectedSupplierContact?.id ?? null,
             supplierEmail: input.supplierEmail,
@@ -691,6 +703,7 @@ export const purchaseOrdersRouter = router({
           await db.updateSupplyFlowRecord(linkedFlowItem.flow.id, {
             purchaseOrderNumber: created.orderNumber,
             sapDocumentType: "orden_compra",
+            paymentMethod: input.paymentMethod,
             status: "en_proceso",
             notes: input.notes ?? linkedFlowItem.flow.notes ?? undefined,
           });
@@ -951,6 +964,7 @@ export const purchaseOrdersRouter = router({
         supplierId: z.number().optional(),
         supplierContactId: z.number().nullable().optional(),
         supplierEmail: z.string().email().nullable().optional(),
+        paymentMethod: directPurchasePaymentMethodSchema.nullable().optional(),
         notes: z.string().optional(),
       })
     )
@@ -996,6 +1010,7 @@ export const purchaseOrdersRouter = router({
         supplierId: input.supplierId,
         supplierContactId: input.supplierContactId,
         supplierEmail: input.supplierEmail,
+        paymentMethod: input.paymentMethod,
         notes: input.notes,
       });
     }),
@@ -1879,6 +1894,17 @@ export const purchaseOrdersRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Seleccione un proveedor antes de emitir la OC",
+        });
+      }
+
+      if (
+        detail.purchaseOrder.purchaseType === "compra_directa" &&
+        !detail.purchaseOrder.paymentMethod &&
+        !detail.directPurchasePaymentMethod
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Seleccione el método de pago para la orden de compra",
         });
       }
 

@@ -1,0 +1,2 @@
+ALTER TABLE "receipts"
+ALTER COLUMN "projectId" DROP NOT NULL;

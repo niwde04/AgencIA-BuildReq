@@ -674,6 +674,7 @@ export const purchaseOrders = pgTable(
       .default("oc")
       .notNull(),
     purchaseType: purchaseTypeEnum("purchaseType"),
+    paymentMethod: paymentMethodEnum("paymentMethod"),
     supplierId: integer("supplierId"),
     supplierEmail: varchar("supplierEmail", { length: 320 }),
     supplierContactId: integer("supplierContactId").references(
@@ -949,7 +950,7 @@ export const receipts = pgTable(
     receiptNumber: varchar("receiptNumber", { length: 64 }).notNull().unique(),
     sourceType: receiptSourceTypeEnum("sourceType").notNull(),
     sourceId: integer("sourceId").notNull(),
-    projectId: integer("projectId").notNull(),
+    projectId: integer("projectId"),
     receivedById: integer("receivedById").notNull(),
     status: receiptStatusEnum("status").default("pendiente").notNull(),
     isFiscalDocument: boolean("isFiscalDocument").default(false).notNull(),
