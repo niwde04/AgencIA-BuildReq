@@ -122,7 +122,7 @@ export const warehouseExitsRouter = router({
     .input(
       z.object({
         id: z.number().int().positive(),
-        receivedByName: z.string().trim().min(1).max(255),
+        receivedByName: z.string().trim().max(255).nullable().optional(),
         notes: z.string().trim().max(1000).nullable().optional(),
         items: z
           .array(

@@ -11078,7 +11078,7 @@ async function applyWarehouseExitToRequestItem(params: {
 export async function updateWarehouseExitDraft(
   id: number,
   params: {
-    receivedByName: string;
+    receivedByName?: string | null;
     notes?: string | null;
     items: Array<{
       id: number;
@@ -11096,9 +11096,6 @@ export async function updateWarehouseExitDraft(
   }
   if (detail.warehouseExit.status !== "borrador") {
     throw new Error("Solo se pueden editar salidas en borrador");
-  }
-  if (!params.receivedByName.trim()) {
-    throw new Error("Ingrese a quién se le entrega la salida");
   }
   if (params.items.length === 0) {
     throw new Error("Debe registrar al menos un ítem");
@@ -11215,7 +11212,7 @@ export async function updateWarehouseExitDraft(
   }
 
   const normalizedNotes = params.notes?.trim() || null;
-  const normalizedReceivedByName = params.receivedByName.trim();
+  const normalizedReceivedByName = params.receivedByName?.trim() || null;
   await db.transaction(async tx => {
     await tx
       .update(warehouseExits)
@@ -11276,6 +11273,9 @@ export async function emitWarehouseExit(id: number, emittedById: number) {
   }
   if (!detail.items.length) {
     throw new Error("La salida de bodega no tiene ítems");
+  }
+  if (!detail.warehouseExit.receivedByName?.trim()) {
+    throw new Error("Recibido por es obligatorio para emitir la salida");
   }
 
   const affectedRequestIds = new Set<number>();

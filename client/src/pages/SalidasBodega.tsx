@@ -45,7 +45,7 @@ import {
   Send,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 
@@ -457,7 +457,6 @@ export default function SalidasBodega() {
   const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false);
   const [deliveryRequestId, setDeliveryRequestId] = useState("");
   const [deliveryNotes, setDeliveryNotes] = useState("");
-  const [deliveryReceivedByName, setDeliveryReceivedByName] = useState("");
   const [deliveryQuantityByItemId, setDeliveryQuantityByItemId] = useState<
     Record<number, string>
   >({});
@@ -491,6 +490,7 @@ export default function SalidasBodega() {
   const [draftItemEdits, setDraftItemEdits] = useState<
     Record<number, { quantity: string; notes: string }>
   >({});
+  const emittingAfterDraftSaveRef = useRef(false);
 
   const { data: exits, isLoading } = trpc.warehouseExits.list.useQuery();
   const canCreateReturns =
@@ -525,6 +525,7 @@ export default function SalidasBodega() {
   );
   const emitMutation = trpc.warehouseExits.emit.useMutation({
     onSuccess: (result) => {
+      emittingAfterDraftSaveRef.current = false;
       toast.success(`Salida ${result.exitNumber} emitida`);
       const affectedRequestIds = result.materialRequestIds ?? [];
       void Promise.all([
@@ -543,7 +544,10 @@ export default function SalidasBodega() {
         utils.inventory.visibleWarehouseStockForItems.invalidate(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: (error) => {
+      emittingAfterDraftSaveRef.current = false;
+      toast.error(error.message);
+    },
   });
   const createDeliveryMutation = trpc.requestItems.recordWarehouseExitBatch.useMutation({
     onSuccess: (result) => {
@@ -552,7 +556,6 @@ export default function SalidasBodega() {
       setDeliveryDialogOpen(false);
       setDeliveryRequestId("");
       setDeliveryNotes("");
-      setDeliveryReceivedByName("");
       setDeliveryQuantityByItemId({});
       setDeliveryWarehouseByItemId({});
       setDeliveryProjectByItemId({});
@@ -591,7 +594,9 @@ export default function SalidasBodega() {
   });
   const updateDraftMutation = trpc.warehouseExits.updateDraft.useMutation({
     onSuccess: () => {
-      toast.success("Borrador actualizado");
+      if (!emittingAfterDraftSaveRef.current) {
+        toast.success("Borrador actualizado");
+      }
       void Promise.all([
         utils.warehouseExits.list.invalidate(),
         selectedId
@@ -621,7 +626,10 @@ export default function SalidasBodega() {
         utils.materialRequests.list.invalidate(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: (error) => {
+      emittingAfterDraftSaveRef.current = false;
+      toast.error(error.message);
+    },
   });
 
   const getDeliveryDestinationWarehouseOptions = useCallback(
@@ -1604,11 +1612,6 @@ export default function SalidasBodega() {
       return;
     }
 
-    const receivedByName = deliveryReceivedByName.trim();
-    if (!receivedByName) {
-      toast.error("Ingrese quién recibe la salida");
-      return;
-    }
     const selectedItems = deliveryItems
       .map((item: any) => {
         const quantity = Number(deliveryQuantityByItemId[item.id] ?? 0);
@@ -1690,7 +1693,6 @@ export default function SalidasBodega() {
     createDeliveryMutation.mutate({
       requestId: deliveryRequestDetail.request.id,
       note: deliveryNotes.trim() || undefined,
-      receivedByName,
       items: selectedItems.map(
         ({
           item,
@@ -1728,11 +1730,13 @@ export default function SalidasBodega() {
     }));
   };
 
-  const submitDraftUpdate = () => {
+  const buildDraftUpdatePayload = (options?: {
+    requireReceivedByName?: boolean;
+  }) => {
     if (!detail || detail.warehouseExit.status !== "borrador") return;
 
     const receivedByName = draftReceivedByName.trim();
-    if (!receivedByName) {
+    if (options?.requireReceivedByName && !receivedByName) {
       toast.error("Ingrese a quién se le entrega la salida");
       return;
     }
@@ -1772,12 +1776,31 @@ export default function SalidasBodega() {
       });
     }
 
-    updateDraftMutation.mutate({
+    return {
       id: detail.warehouseExit.id,
-      receivedByName,
+      receivedByName: receivedByName || null,
       notes: draftNotes.trim() || null,
       items,
-    });
+    };
+  };
+
+  const submitDraftUpdate = () => {
+    const payload = buildDraftUpdatePayload();
+    if (!payload) return;
+    updateDraftMutation.mutate(payload);
+  };
+
+  const submitEmitWarehouseExit = async () => {
+    const payload = buildDraftUpdatePayload({ requireReceivedByName: true });
+    if (!payload) return;
+
+    emittingAfterDraftSaveRef.current = true;
+    try {
+      await updateDraftMutation.mutateAsync(payload);
+      emitMutation.mutate({ id: payload.id });
+    } catch {
+      emittingAfterDraftSaveRef.current = false;
+    }
   };
 
   const openReturnPanel = () => {
@@ -2329,16 +2352,20 @@ export default function SalidasBodega() {
                 </div>
                 <div className="rounded-xl border bg-muted/20 p-4">
                   <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                    Recibido por
+                    Recibido por *
                   </Label>
                   {detailIsDraft ? (
                     <Input
-                      className="mt-2 bg-background font-semibold"
+                      className={`mt-2 bg-background font-semibold ${
+                        !draftReceivedByName.trim() ? "border-destructive" : ""
+                      }`}
                       value={draftReceivedByName}
                       onChange={(event) =>
                         setDraftReceivedByName(event.target.value)
                       }
                       placeholder="Nombre de quien recibe"
+                      maxLength={255}
+                      required
                     />
                   ) : (
                     <p className="mt-2 font-semibold">
@@ -2745,7 +2772,7 @@ export default function SalidasBodega() {
                       {cancelMutation.isPending ? "Anulando..." : "Anular borrador"}
                     </Button>
                     <Button
-                      onClick={() => emitMutation.mutate({ id: detail.warehouseExit.id })}
+                      onClick={() => void submitEmitWarehouseExit()}
                       disabled={
                         emitMutation.isPending ||
                         cancelMutation.isPending ||
@@ -2785,7 +2812,6 @@ export default function SalidasBodega() {
           if (!open) {
             setDeliveryRequestId("");
             setDeliveryNotes("");
-            setDeliveryReceivedByName("");
             setDeliveryQuantityByItemId({});
             setDeliveryWarehouseByItemId({});
             setDeliveryProjectByItemId({});
@@ -3385,19 +3411,6 @@ export default function SalidasBodega() {
                 )}
 
                 <div className="space-y-2">
-                  <Label>Recibido por *</Label>
-                  <Input
-                    value={deliveryReceivedByName}
-                    onChange={(event) =>
-                      setDeliveryReceivedByName(event.target.value)
-                    }
-                    placeholder="Nombre de quien recibe"
-                    maxLength={255}
-                    required
-                  />
-                </div>
-
-                <div className="space-y-2">
                   <Label>Notas</Label>
                   <Textarea
                     value={deliveryNotes}
@@ -3426,7 +3439,6 @@ export default function SalidasBodega() {
                 disabled={
                   !deliveryRequestDetail ||
                   deliveryItems.length === 0 ||
-                  !deliveryReceivedByName.trim() ||
                   createDeliveryMutation.isPending
                 }
               >

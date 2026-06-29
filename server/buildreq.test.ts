@@ -4162,7 +4162,7 @@ describe("BuildReq - Role-based Access Control", () => {
     syncMaterialRequestFulfillmentStatusSpy.mockRestore();
   });
 
-  it("Bodeguero de Proyecto can create warehouse exits for their assigned project", async () => {
+  it("Bodeguero de Proyecto can create warehouse exit drafts without recipient", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
     const getRequestItemByIdSpy = vi
@@ -4206,7 +4206,6 @@ describe("BuildReq - Role-based Access Control", () => {
           },
         ],
         note: "Salida del proyecto",
-        receivedByName: "Juan Perez",
       })
     ).resolves.toEqual({
       success: true,
@@ -4228,7 +4227,6 @@ describe("BuildReq - Role-based Access Control", () => {
         }),
       ],
       note: "Salida del proyecto",
-      receivedByName: "Juan Perez",
       processedById: 6,
     });
 

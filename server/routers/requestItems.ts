@@ -702,7 +702,7 @@ export const requestItemsRouter = router({
         dispatchedQuantity: z.string(),
         warehouseId: z.number().int().positive().optional(),
         note: z.string().optional(),
-        receivedByName: z.string().trim().min(1).max(255),
+        receivedByName: z.string().trim().max(255).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -739,7 +739,9 @@ export const requestItemsRouter = router({
         quantity: input.dispatchedQuantity,
         warehouseId: input.warehouseId,
         note: input.note,
-        receivedByName: input.receivedByName,
+        ...(input.receivedByName
+          ? { receivedByName: input.receivedByName }
+          : {}),
         processedById: ctx.user.id,
       });
     }),
@@ -780,7 +782,7 @@ export const requestItemsRouter = router({
           )
           .min(1),
         note: z.string().optional(),
-        receivedByName: z.string().trim().min(1).max(255),
+        receivedByName: z.string().trim().max(255).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -885,7 +887,9 @@ export const requestItemsRouter = router({
           fixedAssetName: item.fixedAssetName,
         })),
         note: input.note,
-        receivedByName: input.receivedByName,
+        ...(input.receivedByName
+          ? { receivedByName: input.receivedByName }
+          : {}),
         processedById: ctx.user.id,
       });
     }),
