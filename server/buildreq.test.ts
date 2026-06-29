@@ -1184,6 +1184,73 @@ describe("BuildReq - Suppliers catalog", () => {
     listSupplierCatalogSpy.mockRestore();
   });
 
+  it("Administracion Central can create suppliers", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const createSupplierSpy = vi.spyOn(db, "createSupplier").mockResolvedValue({
+      id: 9,
+      supplierCode: "PROV-00999",
+      name: "Proveedor Nuevo",
+      email: "compras@proveedor.com",
+      rtn: "08019999999999",
+      address: "Tegucigalpa",
+      allowsTaxWithholding: true,
+      subjectToAccountPayments: false,
+      isActive: true,
+    } as any);
+
+    await expect(
+      caller.suppliers.create({
+        supplierCode: "prov-00999",
+        name: "Proveedor Nuevo",
+        email: "Compras@Proveedor.com",
+        rtn: "08019999999999",
+        address: "Tegucigalpa",
+        allowsTaxWithholding: true,
+        subjectToAccountPayments: false,
+        isActive: true,
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        supplierCode: "PROV-00999",
+        subjectToAccountPayments: false,
+      })
+    );
+
+    expect(createSupplierSpy).toHaveBeenCalledWith({
+      supplierCode: "PROV-00999",
+      name: "Proveedor Nuevo",
+      email: "compras@proveedor.com",
+      rtn: "08019999999999",
+      address: "Tegucigalpa",
+      allowsTaxWithholding: true,
+      subjectToAccountPayments: false,
+      isActive: true,
+      demoBatchKey: null,
+    });
+
+    createSupplierSpy.mockRestore();
+  });
+
+  it("Jefe de Bodega Central cannot create suppliers", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const createSupplierSpy = vi.spyOn(db, "createSupplier");
+
+    await expect(
+      caller.suppliers.create({
+        supplierCode: "PROV-00999",
+        name: "Proveedor Nuevo",
+        allowsTaxWithholding: true,
+        subjectToAccountPayments: true,
+        isActive: true,
+      })
+    ).rejects.toThrow("Solo Administración Central puede crear proveedores");
+
+    expect(createSupplierSpy).not.toHaveBeenCalled();
+    createSupplierSpy.mockRestore();
+  });
+
   it("Authorized users can update supplier fiscal flags", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);

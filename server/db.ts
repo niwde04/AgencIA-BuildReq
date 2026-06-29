@@ -16900,6 +16900,34 @@ export async function listSupplierCatalog(filters?: SupplierListFilters) {
   };
 }
 
+export async function createSupplier(data: InsertSupplier) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const supplierCode = data.supplierCode.trim();
+  const [existingSupplier] = await db
+    .select({ id: suppliers.id })
+    .from(suppliers)
+    .where(eq(suppliers.supplierCode, supplierCode))
+    .limit(1);
+
+  if (existingSupplier) {
+    throw new Error("Ya existe un proveedor con ese código");
+  }
+
+  const now = new Date();
+  const [supplier] = await db
+    .insert(suppliers)
+    .values({
+      ...data,
+      supplierCode,
+      updatedAt: now,
+    })
+    .returning();
+
+  return supplier;
+}
+
 export async function updateSupplier(
   id: number,
   data: {

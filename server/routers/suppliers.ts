@@ -28,6 +28,13 @@ function canManageSupplierCatalog(user: {
   );
 }
 
+function canCreateSupplierCatalog(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  return user.role === "admin" || user.buildreqRole === "administracion_central";
+}
+
 function canManageSupplierContacts(user: {
   role?: string | null;
   buildreqRole?: string | null;
@@ -60,6 +67,20 @@ function assertCanManageSupplierCatalog(user: {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene permisos para modificar el catálogo de proveedores",
+    });
+  }
+}
+
+function assertCanCreateSupplierCatalog(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  assertCanReadSuppliers(user);
+
+  if (!canCreateSupplierCatalog(user)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Solo Administración Central puede crear proveedores",
     });
   }
 }
@@ -129,6 +150,21 @@ const supplierContactBaseSchema = z.object({
 
 const supplierContactPayloadSchema = supplierContactBaseSchema.extend({
   contactType: supplierContactTypeSchema.default("ventas"),
+  isActive: z.boolean().default(true),
+});
+
+const supplierCreateSchema = z.object({
+  supplierCode: z
+    .string()
+    .trim()
+    .min(1, "Ingrese el código del proveedor")
+    .max(50),
+  name: z.string().trim().min(1, "Ingrese el nombre del proveedor").max(500),
+  email: optionalEmailSchema,
+  rtn: z.string().trim().max(50).optional(),
+  address: z.string().trim().max(1000).optional(),
+  allowsTaxWithholding: z.boolean().default(true),
+  subjectToAccountPayments: z.boolean().default(true),
   isActive: z.boolean().default(true),
 });
 
@@ -311,6 +347,23 @@ export const suppliersRouter = router({
     .mutation(async ({ ctx, input }) => {
       assertCanManageSupplierCatalog(ctx.user);
       return db.importSupplierExcel(input);
+    }),
+
+  create: protectedProcedure
+    .input(supplierCreateSchema)
+    .mutation(async ({ ctx, input }) => {
+      assertCanCreateSupplierCatalog(ctx.user);
+      return db.createSupplier({
+        supplierCode: input.supplierCode.trim().toUpperCase(),
+        name: input.name.trim(),
+        email: input.email?.trim().toLowerCase() || null,
+        rtn: input.rtn?.trim() || null,
+        address: input.address?.trim() || null,
+        allowsTaxWithholding: input.allowsTaxWithholding,
+        subjectToAccountPayments: input.subjectToAccountPayments,
+        isActive: input.isActive,
+        demoBatchKey: null,
+      });
     }),
 
   update: protectedProcedure

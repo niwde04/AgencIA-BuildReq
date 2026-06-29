@@ -137,6 +137,16 @@ const EMPTY_DOCUMENT_TYPE_DRAFT = {
   expirationMode: "optional" as SupplierDocumentExpirationMode,
   isActive: true,
 };
+const EMPTY_SUPPLIER_DRAFT = {
+  supplierCode: "",
+  name: "",
+  email: "",
+  rtn: "",
+  address: "",
+  allowsTaxWithholding: true,
+  subjectToAccountPayments: true,
+  isActive: true,
+};
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i;
 
 const DOCUMENT_STATUS_LABELS: Record<SupplierDocumentRecord["status"], string> = {
@@ -200,6 +210,10 @@ export default function Proveedores() {
   const [page, setPage] = useState(1);
   const [selectedSupplier, setSelectedSupplier] =
     useState<SupplierRecord | null>(null);
+  const [supplierDialogMode, setSupplierDialogMode] = useState<
+    "create" | "edit" | null
+  >(null);
+  const [supplierDraft, setSupplierDraft] = useState(EMPTY_SUPPLIER_DRAFT);
   const [editAllowsTaxWithholding, setEditAllowsTaxWithholding] =
     useState(true);
   const [editSubjectToAccountPayments, setEditSubjectToAccountPayments] =
@@ -225,6 +239,8 @@ export default function Proveedores() {
   const documentFileInputRef = useRef<HTMLInputElement>(null);
 
   const buildreqRole = (user as any)?.buildreqRole || "";
+  const canCreateSupplier =
+    user?.role === "admin" || buildreqRole === "administracion_central";
   const canManageSupplierCatalog =
     user?.role === "admin" ||
     buildreqRole === "jefe_bodega_central" ||
@@ -259,9 +275,12 @@ export default function Proveedores() {
     trpc.suppliers.list.useQuery(listInput, {
       placeholderData: (previousData) => previousData,
     });
+  const isCreatingSupplier = supplierDialogMode === "create";
+  const isExistingSupplier = Boolean(selectedSupplier?.id);
+  const supplierDialogOpen = isCreatingSupplier || isExistingSupplier;
   const { data: projects } = trpc.projects.list.useQuery(
     { status: "activo" },
-    { enabled: Boolean(selectedSupplier) }
+    { enabled: isExistingSupplier }
   );
   const selectedContactProjectId = Number(contactProjectId) || undefined;
   const contactListInput = useMemo(
@@ -274,7 +293,7 @@ export default function Proveedores() {
   );
   const { data: contactRows, isLoading: contactsLoading } =
     trpc.suppliers.listContacts.useQuery(contactListInput, {
-      enabled: Boolean(selectedSupplier && selectedContactProjectId),
+      enabled: Boolean(isExistingSupplier && selectedContactProjectId),
     });
   const { data: documentTypesRaw, isLoading: documentTypesLoading } =
     trpc.suppliers.listDocumentTypes.useQuery(
@@ -282,13 +301,13 @@ export default function Proveedores() {
       {
         enabled:
           canManageSupplierCatalog &&
-          (Boolean(selectedSupplier) || documentTypesDialogOpen),
+          (isExistingSupplier || documentTypesDialogOpen),
       }
     );
   const { data: supplierDocumentsRaw, isLoading: documentsLoading } =
     trpc.suppliers.listDocuments.useQuery(
       { supplierId: selectedSupplier?.id ?? 0 },
-      { enabled: canManageSupplierCatalog && Boolean(selectedSupplier) }
+      { enabled: canManageSupplierCatalog && isExistingSupplier }
     );
 
   useEffect(() => {
@@ -298,7 +317,7 @@ export default function Proveedores() {
   }, [data?.page, page]);
 
   useEffect(() => {
-    if (!selectedSupplier) {
+    if (!isExistingSupplier) {
       setContactProjectId("");
       setEditingContactId(null);
       setContactDraft(EMPTY_CONTACT_DRAFT);
@@ -312,13 +331,35 @@ export default function Proveedores() {
     if (!contactProjectId && projects?.length) {
       setContactProjectId(String(projects[0].id));
     }
-  }, [contactProjectId, projects, selectedSupplier]);
+  }, [contactProjectId, isExistingSupplier, projects]);
 
+  function closeSupplierDialog() {
+    setSupplierDialogMode(null);
+    setSelectedSupplier(null);
+    setSupplierDraft(EMPTY_SUPPLIER_DRAFT);
+    setEditingContactId(null);
+    setContactDraft(EMPTY_CONTACT_DRAFT);
+    setDocumentDialogOpen(false);
+    setEditingDocumentId(null);
+    setDocumentDraft(EMPTY_DOCUMENT_DRAFT);
+    setSelectedDocumentFile(null);
+  }
+
+  const createMutation = trpc.suppliers.create.useMutation({
+    onSuccess: () => {
+      toast.success("Proveedor creado");
+      void utils.suppliers.list.invalidate();
+      setActiveFilter("active");
+      setPage(1);
+      closeSupplierDialog();
+    },
+    onError: (e) => toast.error(getFriendlyMutationError(e.message)),
+  });
   const updateMutation = trpc.suppliers.update.useMutation({
     onSuccess: () => {
       toast.success("Proveedor actualizado");
       utils.suppliers.list.invalidate();
-      setSelectedSupplier(null);
+      closeSupplierDialog();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -415,8 +456,32 @@ export default function Proveedores() {
   const rangeStart = total === 0 ? 0 : ((data?.page ?? page) - 1) * PAGE_SIZE + 1;
   const rangeEnd = total === 0 ? 0 : Math.min((data?.page ?? page) * PAGE_SIZE, total);
 
+  const openCreateDialog = () => {
+    if (!canCreateSupplier) return;
+    setSupplierDialogMode("create");
+    setSelectedSupplier(null);
+    setSupplierDraft(EMPTY_SUPPLIER_DRAFT);
+    setEditAllowsTaxWithholding(true);
+    setEditSubjectToAccountPayments(true);
+    setEditRtn("");
+    setEditAddress("");
+    setEditingContactId(null);
+    setContactDraft(EMPTY_CONTACT_DRAFT);
+  };
+
   const openEditDialog = (supplier: SupplierRecord) => {
+    setSupplierDialogMode("edit");
     setSelectedSupplier(supplier);
+    setSupplierDraft({
+      supplierCode: supplier.supplierCode,
+      name: supplier.name,
+      email: supplier.email ?? "",
+      rtn: supplier.rtn ?? "",
+      address: supplier.address ?? "",
+      allowsTaxWithholding: supplier.allowsTaxWithholding,
+      subjectToAccountPayments: supplier.subjectToAccountPayments !== false,
+      isActive: supplier.isActive,
+    });
     setEditAllowsTaxWithholding(supplier.allowsTaxWithholding);
     setEditSubjectToAccountPayments(
       supplier.subjectToAccountPayments !== false
@@ -427,7 +492,37 @@ export default function Proveedores() {
     setContactDraft(EMPTY_CONTACT_DRAFT);
   };
 
-  const submitUpdate = () => {
+  const submitSupplier = () => {
+    const supplierCode = supplierDraft.supplierCode.trim().toUpperCase();
+    const name = supplierDraft.name.trim();
+    const email = supplierDraft.email.trim().toLowerCase();
+
+    if (isCreatingSupplier) {
+      if (!supplierCode) {
+        toast.error("Ingrese el código del proveedor");
+        return;
+      }
+      if (!name) {
+        toast.error("Ingrese el nombre del proveedor");
+        return;
+      }
+      if (email && !EMAIL_PATTERN.test(email)) {
+        toast.error("Ingrese un correo válido");
+        return;
+      }
+      createMutation.mutate({
+        supplierCode,
+        name,
+        email,
+        rtn: editRtn.trim(),
+        address: editAddress.trim(),
+        allowsTaxWithholding: editAllowsTaxWithholding,
+        subjectToAccountPayments: editSubjectToAccountPayments,
+        isActive: supplierDraft.isActive,
+      });
+      return;
+    }
+
     if (!selectedSupplier) return;
     updateMutation.mutate({
       id: selectedSupplier.id,
@@ -631,6 +726,12 @@ export default function Proveedores() {
                 : `${total.toLocaleString("es-HN")} registros encontrados`}
           </p>
         </div>
+        {canCreateSupplier ? (
+          <Button type="button" onClick={openCreateDialog}>
+            <Plus className="mr-2 h-4 w-4" />
+            Nuevo proveedor
+          </Button>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(240px,1fr)_180px]">
@@ -818,51 +919,108 @@ export default function Proveedores() {
       </Card>
 
       <Dialog
-        open={Boolean(selectedSupplier)}
+        open={supplierDialogOpen}
         onOpenChange={(open) => {
-          if (!open) setSelectedSupplier(null);
+          if (!open) closeSupplierDialog();
         }}
       >
         <DialogContent className="scrollbar-none max-h-[calc(100vh-1rem)] overflow-y-auto sm:max-w-5xl">
           <DialogHeader>
             <DialogTitle>
-              {canManageSupplierCatalog
+              {isCreatingSupplier
+                ? "Nuevo proveedor"
+                : canManageSupplierCatalog
                 ? "Editar proveedor"
                 : "Contactos del proveedor"}
             </DialogTitle>
           </DialogHeader>
 
-          {selectedSupplier ? (
+          {selectedSupplier || isCreatingSupplier ? (
             <div className="space-y-4 pt-2">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
                   <Label className="text-xs">Código</Label>
-                  <Input value={selectedSupplier.supplierCode} readOnly />
+                  <Input
+                    value={supplierDraft.supplierCode}
+                    readOnly={!isCreatingSupplier}
+                    onChange={(event) =>
+                      setSupplierDraft((current) => ({
+                        ...current,
+                        supplierCode: event.target.value.toUpperCase(),
+                      }))
+                    }
+                    placeholder="PROV-000000"
+                    maxLength={50}
+                  />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Estado</Label>
-                  <Input
-                    value={selectedSupplier.isActive ? "Activo" : "Inactivo"}
-                    readOnly
-                  />
+                  {isCreatingSupplier ? (
+                    <div className="flex h-10 items-center justify-between rounded-md border px-3">
+                      <span className="text-sm">
+                        {supplierDraft.isActive ? "Activo" : "Inactivo"}
+                      </span>
+                      <Switch
+                        checked={supplierDraft.isActive}
+                        onCheckedChange={(checked) =>
+                          setSupplierDraft((current) => ({
+                            ...current,
+                            isActive: checked,
+                          }))
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <Input
+                      value={selectedSupplier?.isActive ? "Activo" : "Inactivo"}
+                      readOnly
+                    />
+                  )}
                 </div>
               </div>
 
               <div className="space-y-1">
                 <Label className="text-xs">Proveedor</Label>
-                <Input value={selectedSupplier.name} readOnly />
+                <Input
+                  value={supplierDraft.name}
+                  readOnly={!isCreatingSupplier}
+                  onChange={(event) =>
+                    setSupplierDraft((current) => ({
+                      ...current,
+                      name: event.target.value,
+                    }))
+                  }
+                  placeholder="Nombre del proveedor"
+                  maxLength={500}
+                />
               </div>
 
               <div className="space-y-1">
                 <Label className="text-xs">Correo</Label>
-                <Input value={selectedSupplier.email || ""} readOnly />
+                <Input
+                  type="email"
+                  value={supplierDraft.email}
+                  readOnly={!isCreatingSupplier}
+                  onChange={(event) =>
+                    setSupplierDraft((current) => ({
+                      ...current,
+                      email: event.target.value,
+                    }))
+                  }
+                  placeholder="correo@proveedor.com"
+                  maxLength={320}
+                />
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
                   <Label className="text-xs">RTN</Label>
                   <Input
-                    value={canManageSupplierCatalog ? editRtn : selectedSupplier.rtn || ""}
+                    value={
+                      canManageSupplierCatalog
+                        ? editRtn
+                        : selectedSupplier?.rtn || ""
+                    }
                     readOnly={!canManageSupplierCatalog}
                     onChange={event => setEditRtn(event.target.value)}
                     placeholder="RTN del proveedor"
@@ -875,7 +1033,7 @@ export default function Proveedores() {
                     value={
                       canManageSupplierCatalog
                         ? editAddress
-                        : selectedSupplier.address || ""
+                        : selectedSupplier?.address || ""
                     }
                     readOnly={!canManageSupplierCatalog}
                     onChange={event => setEditAddress(event.target.value)}
@@ -907,7 +1065,7 @@ export default function Proveedores() {
                 </>
               ) : null}
 
-              {canManageSupplierContacts ? (
+              {canManageSupplierContacts && isExistingSupplier ? (
               <div className="space-y-4 rounded-md border p-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
@@ -1167,7 +1325,7 @@ export default function Proveedores() {
               </div>
               ) : null}
 
-              {canManageSupplierCatalog ? (
+              {canManageSupplierCatalog && isExistingSupplier ? (
               <div className="space-y-4 rounded-md border p-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
@@ -1326,14 +1484,14 @@ export default function Proveedores() {
               </div>
               ) : null}
 
-              {canManageSupplierCatalog ? (
+              {canManageSupplierCatalog || isCreatingSupplier ? (
                 <Button
                   type="button"
-                  onClick={submitUpdate}
-                  disabled={updateMutation.isPending}
+                  onClick={submitSupplier}
+                  disabled={createMutation.isPending || updateMutation.isPending}
                   className="w-full"
                 >
-                  Guardar cambios
+                  {isCreatingSupplier ? "Crear proveedor" : "Guardar cambios"}
                 </Button>
               ) : null}
             </div>
