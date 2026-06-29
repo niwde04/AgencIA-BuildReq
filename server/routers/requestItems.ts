@@ -172,8 +172,8 @@ async function validateDispatchWarehouseForItem(params: {
   }
 
   const pendingQuantity = getWarehouseDispatchPendingQuantity(params.item);
-  const stockRows = await db.listProjectStockForItems({
-    projectId: params.projectId,
+  const stockRows = await db.listVisibleWarehouseStockForItems({
+    warehouseIds: [params.warehouseId],
     items: [
       {
         id: params.item.id,
@@ -182,10 +182,12 @@ async function validateDispatchWarehouseForItem(params: {
       },
     ],
   });
-  const warehouseStock = stockRows[0]?.warehouses?.find(
-    (entry: any) => Number(entry.warehouseId) === params.warehouseId
-  );
-  const availableQuantity = parseQuantityValue(warehouseStock?.quantity);
+  const availableQuantity = (stockRows[0]?.warehouses ?? [])
+    .filter((entry: any) => Number(entry.warehouseId) === params.warehouseId)
+    .reduce(
+      (total: number, entry: any) => total + parseQuantityValue(entry.quantity),
+      0
+    );
   if (pendingQuantity > 0 && pendingQuantity - availableQuantity > 0.000001) {
     throw new TRPCError({
       code: "BAD_REQUEST",

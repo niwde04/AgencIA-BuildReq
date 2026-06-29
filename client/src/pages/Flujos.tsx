@@ -152,10 +152,13 @@ const getPendingDispatchQuantity = (item: any) =>
   );
 
 const getAvailableDispatchQuantity = (item: any) =>
-  Math.max(parseQuantityValue(item.projectStock), 0);
+  Math.max(parseQuantityValue(item.dispatchStock ?? item.projectStock), 0);
 
-const getSuggestedDispatchQuantity = (item: any) =>
-  Math.min(getPendingDispatchQuantity(item), getAvailableDispatchQuantity(item));
+const getSuggestedDispatchQuantity = (item: any, availableQuantity?: number) =>
+  Math.min(
+    getPendingDispatchQuantity(item),
+    availableQuantity ?? getAvailableDispatchQuantity(item)
+  );
 
 const getDispatchWarehouseOptionId = (warehouse: any) =>
   Number(warehouse?.warehouseId ?? warehouse?.id ?? 0);
@@ -177,20 +180,57 @@ const getDispatchWarehouseOptionLabel = (warehouse: any) =>
     ? `${warehouse.warehouseCode}`
     : `Almacén #${getDispatchWarehouseOptionId(warehouse)}`);
 
-const getDispatchWarehouseOptionsForRow = (row: PendingQueueRow) => {
-  const stockWarehouses = ((row.item?.projectStockWarehouses ?? []) as any[]).filter(
-    (warehouse) =>
-      getDispatchWarehouseOptionId(warehouse) > 0 && warehouse.isActive !== false
+const getDispatchSourceProjectOptionId = (option: any) =>
+  Number(option?.projectId ?? 0);
+
+const getDispatchSourceProjectOptionLabel = (option: any) =>
+  [option?.projectCode, option?.projectName].filter(Boolean).join(" — ") ||
+  `Proyecto #${getDispatchSourceProjectOptionId(option)}`;
+
+const getDispatchStockOptionsForRow = (row: PendingQueueRow) =>
+  ((row.item?.dispatchStockOptions ?? row.item?.projectStockWarehouses ?? []) as any[]).filter(
+    (option) =>
+      getDispatchWarehouseOptionId(option) > 0 &&
+      getDispatchSourceProjectOptionId(option) > 0
   );
 
+const getDispatchWarehouseOptionsForRow = (row: PendingQueueRow) => {
+  const stockWarehouses = getDispatchStockOptionsForRow(row);
+
   if (stockWarehouses.length > 0) {
-    return stockWarehouses;
+    const byWarehouse = new Map<number, any>();
+    for (const option of stockWarehouses) {
+      const warehouseId = getDispatchWarehouseOptionId(option);
+      const current = byWarehouse.get(warehouseId);
+      const quantity =
+        (current ? parseQuantityValue(current.quantity) : 0) +
+        parseQuantityValue(option.quantity);
+      byWarehouse.set(warehouseId, {
+        ...option,
+        quantity: quantity.toFixed(2),
+      });
+    }
+
+    return Array.from(byWarehouse.values());
   }
 
   return ((row.project?.warehouses ?? []) as any[]).filter(
     (warehouse) =>
       getDispatchWarehouseOptionId(warehouse) > 0 && warehouse.isActive !== false
   );
+};
+
+const getDispatchSourceProjectOptionsForRow = (
+  row: PendingQueueRow,
+  warehouseId: number
+) => {
+  const options = getDispatchStockOptionsForRow(row).filter(
+    (option) => getDispatchWarehouseOptionId(option) === warehouseId
+  );
+  const withStock = options.filter(
+    (option) => parseQuantityValue(option.quantity) > 0
+  );
+  return withStock.length > 0 ? withStock : options;
 };
 
 const getDefaultDispatchWarehouseIdForRow = (row: PendingQueueRow) => {
@@ -202,6 +242,18 @@ const getDefaultDispatchWarehouseIdForRow = (row: PendingQueueRow) => {
     }) ?? warehouses[0];
 
   return getDispatchWarehouseOptionId(warehouseWithStock);
+};
+
+const getDefaultDispatchSourceProjectIdForRow = (
+  row: PendingQueueRow,
+  warehouseId: number
+) => {
+  const options = getDispatchSourceProjectOptionsForRow(row, warehouseId);
+  const optionWithStock =
+    options.find((option) => parseQuantityValue(option.quantity) > 0) ??
+    options[0];
+
+  return getDispatchSourceProjectOptionId(optionWithStock);
 };
 
 const formatSupplierReferenceLabel = (reference: {
@@ -242,6 +294,9 @@ export default function Flujos() {
   const [dispatchWarehouseByItemId, setDispatchWarehouseByItemId] = useState<Record<number, string>>(
     {}
   );
+  const [dispatchSourceProjectByItemId, setDispatchSourceProjectByItemId] = useState<
+    Record<number, string>
+  >({});
   const [dispatchCheckedByItemId, setDispatchCheckedByItemId] = useState<
     Record<number, boolean>
   >({});
@@ -418,6 +473,11 @@ export default function Flujos() {
       for (const itemId of itemIds) delete next[itemId];
       return next;
     });
+    setDispatchSourceProjectByItemId((current) => {
+      const next = { ...current };
+      for (const itemId of itemIds) delete next[itemId];
+      return next;
+    });
     setDispatchCheckedByItemId((current) => {
       const next = { ...current };
       for (const itemId of itemIds) delete next[itemId];
@@ -572,6 +632,7 @@ export default function Flujos() {
       row: PendingQueueRow;
       dispatchedQuantity: string;
       warehouseId: number;
+      sourceProjectId: number;
     }> = [];
 
     if (rows.length === 0) {
@@ -588,16 +649,28 @@ export default function Flujos() {
       const warehouseId = Number(
         dispatchWarehouseByItemId[item.id] ?? defaultWarehouseId ?? 0
       );
-      const selectedWarehouse = getDispatchWarehouseOptionsForRow(row).find(
-        (warehouse) => getDispatchWarehouseOptionId(warehouse) === warehouseId
+      const sourceProjectOptions = getDispatchSourceProjectOptionsForRow(
+        row,
+        warehouseId
+      );
+      const sourceProjectId = Number(
+        dispatchSourceProjectByItemId[item.id] ??
+          getDefaultDispatchSourceProjectIdForRow(row, warehouseId) ??
+          0
+      );
+      const selectedSourceProject = sourceProjectOptions.find(
+        (option) => getDispatchSourceProjectOptionId(option) === sourceProjectId
       );
       const selectedWarehouseQuantity =
-        getDispatchWarehouseOptionQuantity(selectedWarehouse);
+        getDispatchWarehouseOptionQuantity(selectedSourceProject);
       const pendingQuantity = getPendingDispatchQuantity(item);
       const availableQuantity = getAvailableDispatchQuantity(item);
       const dispatchedQuantity =
         dispatchQuantityByItemId[item.id] ??
-        getSuggestedDispatchQuantity(item).toFixed(2);
+        getSuggestedDispatchQuantity(
+          item,
+          selectedWarehouseQuantity ?? availableQuantity
+        ).toFixed(2);
       const dispatchedNumber = Number(dispatchedQuantity);
 
       if (!Number.isFinite(dispatchedNumber) || dispatchedNumber < 0) {
@@ -607,6 +680,10 @@ export default function Flujos() {
       if (dispatchedNumber <= 0) continue;
       if (!warehouseId) {
         toast.error(`${item.itemName}: seleccione almacén origen`);
+        return;
+      }
+      if (!sourceProjectId || !selectedSourceProject) {
+        toast.error(`${item.itemName}: seleccione proyecto/origen del inventario`);
         return;
       }
       if (dispatchedNumber - pendingQuantity > 0.000001) {
@@ -626,12 +703,17 @@ export default function Flujos() {
         dispatchedNumber - selectedWarehouseQuantity > 0.000001
       ) {
         toast.error(
-          `${item.itemName}: la cantidad despachada no puede exceder la existencia de la bodega seleccionada`
+          `${item.itemName}: la cantidad despachada no puede exceder la existencia del origen seleccionado`
         );
         return;
       }
 
-      dispatchRows.push({ row, dispatchedQuantity, warehouseId });
+      dispatchRows.push({
+        row,
+        dispatchedQuantity,
+        warehouseId,
+        sourceProjectId,
+      });
     }
 
     if (dispatchRows.length === 0) {
@@ -641,12 +723,13 @@ export default function Flujos() {
       return;
     }
 
-    const rowsByRequestId = new Map<number, typeof dispatchRows>();
+    const rowsByRequestId = new Map<string, typeof dispatchRows>();
     for (const dispatchRow of dispatchRows) {
       const requestId = dispatchRow.row.request.id;
-      const currentRows = rowsByRequestId.get(requestId) ?? [];
+      const groupKey = `${requestId}:${dispatchRow.sourceProjectId}`;
+      const currentRows = rowsByRequestId.get(groupKey) ?? [];
       currentRows.push(dispatchRow);
-      rowsByRequestId.set(requestId, currentRows);
+      rowsByRequestId.set(groupKey, currentRows);
     }
 
     setProcessingFlowType(flowType);
@@ -655,14 +738,18 @@ export default function Flujos() {
     const createdExitNumbers: string[] = [];
 
     try {
-      for (const [requestId, requestRows] of Array.from(rowsByRequestId.entries())) {
+      for (const requestRows of Array.from(rowsByRequestId.values())) {
+        const requestId = requestRows[0].row.request.id;
         const result = await warehouseExitBatchMutation.mutateAsync({
           requestId,
-        items: requestRows.map(({ row, dispatchedQuantity, warehouseId }) => ({
-            requestItemId: row.item.id,
-            dispatchedQuantity,
-            warehouseId,
-          })),
+          items: requestRows.map(
+            ({ row, dispatchedQuantity, warehouseId, sourceProjectId }) => ({
+              requestItemId: row.item.id,
+              dispatchedQuantity,
+              sourceProjectId,
+              warehouseId,
+            })
+          ),
           note: dispatchNotesByFlowType[flowType] || undefined,
           receivedByName,
         });
@@ -1167,16 +1254,45 @@ export default function Flujos() {
                           const defaultDispatchWarehouseId =
                             dispatchWarehouseByItemId[item.id] ||
                             (defaultWarehouseId ? String(defaultWarehouseId) : "");
+                          const selectedDispatchWarehouseId = Number(
+                            defaultDispatchWarehouseId || 0
+                          );
+                          const sourceProjectOptions =
+                            getDispatchSourceProjectOptionsForRow(
+                              row,
+                              selectedDispatchWarehouseId
+                            );
+                          const defaultSourceProjectId =
+                            getDefaultDispatchSourceProjectIdForRow(
+                              row,
+                              selectedDispatchWarehouseId
+                            );
+                          const selectedSourceProjectId = Number(
+                            dispatchSourceProjectByItemId[item.id] ||
+                              defaultSourceProjectId ||
+                              0
+                          );
+                          const selectedSourceProject = sourceProjectOptions.find(
+                            (option) =>
+                              getDispatchSourceProjectOptionId(option) ===
+                              selectedSourceProjectId
+                          );
+                          const selectedSourceQuantity =
+                            getDispatchWarehouseOptionQuantity(selectedSourceProject) ??
+                            0;
                           const dispatchInputValue =
                             dispatchQuantityByItemId[item.id] ??
-                            getSuggestedDispatchQuantity(item).toFixed(2);
+                            getSuggestedDispatchQuantity(
+                              item,
+                              selectedSourceQuantity
+                            ).toFixed(2);
                           const selectedDispatchQuantity = parseQuantityValue(dispatchInputValue);
                           const dispatchBalanceQuantity = Math.max(
                             pendingDispatchQuantity - selectedDispatchQuantity,
                             0
                           );
                           const projectedStockQuantity =
-                            availableDispatchQuantity - selectedDispatchQuantity;
+                            selectedSourceQuantity - selectedDispatchQuantity;
                           return (
                             <tr
                               key={`${flowType}:${row.request.id}:${item.id}`}
@@ -1328,12 +1444,17 @@ export default function Flujos() {
                                 <td className="p-2">
                                   <Select
                                     value={defaultDispatchWarehouseId || undefined}
-                                    onValueChange={(value) =>
+                                    onValueChange={(value) => {
                                       setDispatchWarehouseByItemId((current) => ({
                                         ...current,
                                         [item.id]: value,
-                                      }))
-                                    }
+                                      }));
+                                      setDispatchSourceProjectByItemId((current) => {
+                                        const next = { ...current };
+                                        delete next[item.id];
+                                        return next;
+                                      });
+                                    }}
                                     disabled={isProcessing || projectWarehouses.length === 0}
                                   >
                                     <SelectTrigger className="h-9 w-full min-w-0 overflow-hidden px-2 text-[11px] [&_svg]:size-3.5">
@@ -1377,6 +1498,63 @@ export default function Flujos() {
                                       )}
                                     </SelectContent>
                                   </Select>
+                                  {sourceProjectOptions.length > 1 ? (
+                                    <Select
+                                      value={
+                                        selectedSourceProjectId
+                                          ? String(selectedSourceProjectId)
+                                          : undefined
+                                      }
+                                      onValueChange={(value) =>
+                                        setDispatchSourceProjectByItemId((current) => ({
+                                          ...current,
+                                          [item.id]: value,
+                                        }))
+                                      }
+                                      disabled={isProcessing}
+                                    >
+                                      <SelectTrigger className="mt-2 h-8 w-full min-w-0 overflow-hidden px-2 text-[11px] [&_svg]:size-3.5">
+                                        <SelectValue placeholder="Seleccione origen" />
+                                      </SelectTrigger>
+                                      <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
+                                        {sourceProjectOptions.map((option: any) => {
+                                          const sourceProjectId =
+                                            getDispatchSourceProjectOptionId(option);
+                                          const quantity =
+                                            getDispatchWarehouseOptionQuantity(option);
+
+                                          return (
+                                            <SelectItem
+                                              key={`${getDispatchWarehouseOptionId(
+                                                option
+                                              )}:${sourceProjectId}`}
+                                              value={String(sourceProjectId)}
+                                              disabled={quantity !== null && quantity <= 0}
+                                              className="text-xs"
+                                            >
+                                              {getDispatchSourceProjectOptionLabel(option)}
+                                              {quantity !== null
+                                                ? ` - Disp. ${formatQuantityValue(
+                                                    quantity
+                                                  )}`
+                                                : ""}
+                                            </SelectItem>
+                                          );
+                                        })}
+                                      </SelectContent>
+                                    </Select>
+                                  ) : sourceProjectOptions.length === 1 ? (
+                                    <p className="mt-1 truncate text-[10px] text-muted-foreground">
+                                      Origen:{" "}
+                                      {getDispatchSourceProjectOptionLabel(
+                                        sourceProjectOptions[0]
+                                      )}
+                                    </p>
+                                  ) : (
+                                    <p className="mt-1 text-[10px] font-medium text-destructive">
+                                      Sin origen con stock
+                                    </p>
+                                  )}
                                 </td>
                               )}
                               {canProcessThisFlow && flowType === "compra_directa" && (
@@ -1417,7 +1595,7 @@ export default function Flujos() {
                                     min="0"
                                     max={Math.min(
                                       pendingDispatchQuantity,
-                                      availableDispatchQuantity
+                                      selectedSourceQuantity
                                     )}
                                     step="any"
                                     className="ml-auto h-9 w-28 text-right"

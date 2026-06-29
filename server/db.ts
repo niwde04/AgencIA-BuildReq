@@ -4388,13 +4388,28 @@ export async function listPendingFlowQueueItems(filters?: {
       const insight = sapCode ? procurementInsightsByCode[sapCode] : undefined;
       const resolvedSapDescription =
         row.item.sapItemDescription?.trim() || insight?.sapDescription || null;
-      const currentProjectStock =
+      const dispatchStock =
         row.item.assignedFlow === "despacho_bodega"
-          ? await getProjectStockBreakdownByWarehouse({
-              sapItemCode: sapCode,
-              itemName: row.item.itemName,
-              projectId: row.request.projectId,
-            })
+          ? await (async () => {
+              const projectWarehouses = await listProjectWarehouses(
+                row.request.projectId,
+                { isActive: true }
+              );
+              const warehouseIds = projectWarehouses.map(
+                warehouse => warehouse.id
+              );
+              const [stock] = await listVisibleWarehouseStockForItems({
+                warehouseIds,
+                items: [
+                  {
+                    id: row.item.id,
+                    sapItemCode: sapCode,
+                    itemName: row.item.itemName,
+                  },
+                ],
+              });
+              return stock;
+            })()
           : null;
 
       return {
@@ -4404,11 +4419,19 @@ export async function listPendingFlowQueueItems(filters?: {
           sapItemDescription: resolvedSapDescription,
           projectStock:
             row.item.assignedFlow === "despacho_bodega"
-              ? (currentProjectStock?.quantity ?? "0.00")
+              ? (dispatchStock?.quantity ?? "0.00")
               : row.item.projectStock,
           projectStockWarehouses:
             row.item.assignedFlow === "despacho_bodega"
-              ? (currentProjectStock?.warehouses ?? [])
+              ? (dispatchStock?.warehouses ?? [])
+              : [],
+          dispatchStock:
+            row.item.assignedFlow === "despacho_bodega"
+              ? (dispatchStock?.quantity ?? "0.00")
+              : null,
+          dispatchStockOptions:
+            row.item.assignedFlow === "despacho_bodega"
+              ? (dispatchStock?.warehouses ?? [])
               : [],
         },
         purchaseInsight: {

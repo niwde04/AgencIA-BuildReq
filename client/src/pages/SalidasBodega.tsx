@@ -526,14 +526,21 @@ export default function SalidasBodega() {
   const emitMutation = trpc.warehouseExits.emit.useMutation({
     onSuccess: (result) => {
       toast.success(`Salida ${result.exitNumber} emitida`);
+      const affectedRequestIds = result.materialRequestIds ?? [];
       void Promise.all([
         utils.warehouseExits.list.invalidate(),
         selectedId
           ? utils.warehouseExits.getById.invalidate({ id: selectedId })
           : Promise.resolve(),
+        utils.materialRequests.list.invalidate(),
+        ...affectedRequestIds.map((id: number) =>
+          utils.materialRequests.getById.invalidate({ id })
+        ),
         utils.supplyFlows.pendingQueue.invalidate(),
         utils.supplyFlows.list.invalidate(),
         utils.inventory.list.invalidate(),
+        utils.inventory.projectStockForItems.invalidate(),
+        utils.inventory.visibleWarehouseStockForItems.invalidate(),
       ]);
     },
     onError: (error) => toast.error(error.message),

@@ -1071,9 +1071,11 @@ export default function SolicitudDetalle() {
     `Almacén #${warehouse.id}`;
 
   const getItemWarehouseStock = (item: any, warehouseId: number) => {
-    const warehouses = Array.isArray(item.projectStockWarehouses)
-      ? item.projectStockWarehouses
-      : [];
+    const warehouses = Array.isArray(item.warehouseStockWarehouses)
+      ? item.warehouseStockWarehouses
+      : Array.isArray(item.projectStockWarehouses)
+        ? item.projectStockWarehouses
+        : [];
     const stockEntry = warehouses.find(
       (warehouse: any) => Number(warehouse.warehouseId) === warehouseId
     );

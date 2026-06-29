@@ -3460,9 +3460,9 @@ describe("BuildReq - Role-based Access Control", () => {
     const listWarehousesSpy = vi
       .spyOn(db, "listWarehouses")
       .mockResolvedValue([] as any);
-    const listProjectStockForItemsSpy = vi.spyOn(
+    const listVisibleWarehouseStockForItemsSpy = vi.spyOn(
       db,
-      "listProjectStockForItems"
+      "listVisibleWarehouseStockForItems"
     );
     const updateRequestItemSpy = vi.spyOn(db, "updateRequestItem");
 
@@ -3475,14 +3475,14 @@ describe("BuildReq - Role-based Access Control", () => {
     ).rejects.toThrow(
       "La bodega seleccionada no está activa o no está asignada al proyecto"
     );
-    expect(listProjectStockForItemsSpy).not.toHaveBeenCalled();
+    expect(listVisibleWarehouseStockForItemsSpy).not.toHaveBeenCalled();
     expect(updateRequestItemSpy).not.toHaveBeenCalled();
 
     getRequestItemByIdSpy.mockRestore();
     getMaterialRequestByIdSpy.mockRestore();
     getSupplyFlowByRequestIdSpy.mockRestore();
     listWarehousesSpy.mockRestore();
-    listProjectStockForItemsSpy.mockRestore();
+    listVisibleWarehouseStockForItemsSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
   });
 
@@ -3519,8 +3519,8 @@ describe("BuildReq - Role-based Access Control", () => {
     const listWarehousesSpy = vi
       .spyOn(db, "listWarehouses")
       .mockResolvedValue([DEFAULT_PROJECT_WAREHOUSE] as any);
-    const listProjectStockForItemsSpy = vi
-      .spyOn(db, "listProjectStockForItems")
+    const listVisibleWarehouseStockForItemsSpy = vi
+      .spyOn(db, "listVisibleWarehouseStockForItems")
       .mockResolvedValue([
         {
           itemId: 41,
@@ -3548,11 +3548,11 @@ describe("BuildReq - Role-based Access Control", () => {
     getMaterialRequestByIdSpy.mockRestore();
     getSupplyFlowByRequestIdSpy.mockRestore();
     listWarehousesSpy.mockRestore();
-    listProjectStockForItemsSpy.mockRestore();
+    listVisibleWarehouseStockForItemsSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
   });
 
-  it("Saves warehouseId when assigning warehouse dispatch", async () => {
+  it("Saves warehouseId when assigning warehouse dispatch from visible physical stock", async () => {
     const { ctx } = createBodegaContext();
     const caller = appRouter.createCaller(ctx);
     const getRequestItemByIdSpy = vi
@@ -3585,8 +3585,8 @@ describe("BuildReq - Role-based Access Control", () => {
     const listWarehousesSpy = vi
       .spyOn(db, "listWarehouses")
       .mockResolvedValue([DEFAULT_PROJECT_WAREHOUSE] as any);
-    const listProjectStockForItemsSpy = vi
-      .spyOn(db, "listProjectStockForItems")
+    const listVisibleWarehouseStockForItemsSpy = vi
+      .spyOn(db, "listVisibleWarehouseStockForItems")
       .mockResolvedValue([
         {
           itemId: 41,
@@ -3594,6 +3594,9 @@ describe("BuildReq - Role-based Access Control", () => {
           warehouses: [
             {
               warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+              projectId: 22,
+              projectCode: "ORIG",
+              projectName: "Origen con stock",
               quantity: "10.00",
             },
           ],
@@ -3621,12 +3624,22 @@ describe("BuildReq - Role-based Access Control", () => {
       warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
       status: "pendiente",
     });
+    expect(listVisibleWarehouseStockForItemsSpy).toHaveBeenCalledWith({
+      warehouseIds: [DEFAULT_PROJECT_WAREHOUSE_ID],
+      items: [
+        {
+          id: 41,
+          sapItemCode: "SAP-001",
+          itemName: "Disco de frenos",
+        },
+      ],
+    });
 
     getRequestItemByIdSpy.mockRestore();
     getMaterialRequestByIdSpy.mockRestore();
     getSupplyFlowByRequestIdSpy.mockRestore();
     listWarehousesSpy.mockRestore();
-    listProjectStockForItemsSpy.mockRestore();
+    listVisibleWarehouseStockForItemsSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     syncMaterialRequestFulfillmentStatusSpy.mockRestore();
     getAttachmentsByEntitySpy.mockRestore();
