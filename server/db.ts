@@ -2020,6 +2020,7 @@ async function getStockByItem(params: {
   itemName: string;
   projectId?: number | null;
   warehouseId?: number | null;
+  includeUnclassifiedProjectStock?: boolean;
 }) {
   const db = await getDb();
   if (!db) return "0.00";
@@ -2034,6 +2035,13 @@ async function getStockByItem(params: {
   }
   if (params.projectId === null || params.projectId === undefined) {
     conditions.push(sql`${inventoryItems.projectId} IS NULL`);
+  } else if (params.includeUnclassifiedProjectStock) {
+    conditions.push(
+      or(
+        eq(inventoryItems.projectId, params.projectId),
+        isNull(inventoryItems.projectId)
+      )!
+    );
   } else {
     conditions.push(eq(inventoryItems.projectId, params.projectId));
   }
@@ -2190,7 +2198,6 @@ async function getAssignedWarehouseStockBreakdown(params: {
   const warehouseIds = projectWarehouses.map(warehouse => warehouse.id);
   const conditions = [
     eq(inventoryItems.isActive, true),
-    sql`${inventoryItems.projectId} IS NOT NULL`,
     inArray(inventoryItems.warehouseId, warehouseIds),
   ];
   const sapItemCode = params.sapItemCode?.trim() || null;
@@ -2483,7 +2490,6 @@ export async function listVisibleWarehouseStockForItems(params: {
     const itemConditions = [
       eq(inventoryItems.isActive, true),
       inArray(inventoryItems.warehouseId, warehouseIds),
-      sql`${inventoryItems.projectId} IS NOT NULL`,
       sql`${inventoryItems.currentStock}::numeric > 0`,
     ];
 
@@ -2534,10 +2540,10 @@ export async function listVisibleWarehouseStockForItems(params: {
         continue;
       }
 
-      if (typeof row.projectId !== "number") {
-        continue;
-      }
-      const scopeKey = `${row.projectId}:${row.warehouseId}`;
+      const isUnclassifiedStock = typeof row.projectId !== "number";
+      const scopeKey = `${
+        isUnclassifiedStock ? "unclassified" : row.projectId
+      }:${row.warehouseId}`;
       const existing = optionsByScope.get(scopeKey);
       optionsByScope.set(scopeKey, {
         warehouseId: row.warehouseId,
@@ -2548,9 +2554,9 @@ export async function listVisibleWarehouseStockForItems(params: {
           row.warehouseDisplayName ??
           row.warehouseLocation ??
           null,
-        projectId: row.projectId,
-        projectCode: row.projectCode,
-        projectName: row.projectName,
+        projectId: isUnclassifiedStock ? null : row.projectId,
+        projectCode: isUnclassifiedStock ? null : row.projectCode,
+        projectName: isUnclassifiedStock ? "Por clasificar" : row.projectName,
         quantity: toDecimalString(row.quantity),
       });
     }
@@ -3971,6 +3977,7 @@ export async function recordWarehouseExitBatch(params: {
         itemName: requested.itemName,
         projectId: requested.sourceProjectId,
         warehouseId: requested.warehouseId,
+        includeUnclassifiedProjectStock: true,
       })
     );
 
@@ -10632,6 +10639,7 @@ export async function getWarehouseExitById(id: number) {
         itemName: item.itemName,
         projectId: rows[0].warehouseExit.projectId,
         warehouseId: item.warehouseId ?? rows[0].warehouseExit.warehouseId,
+        includeUnclassifiedProjectStock: true,
       });
       const availableQuantity = stockRows.reduce(
         (sum, row) => sum + parseDecimal(row.currentStock),
@@ -11200,6 +11208,7 @@ export async function updateWarehouseExitDraft(
         itemName: requested.itemName,
         projectId: detail.warehouseExit.projectId,
         warehouseId: requested.warehouseId,
+        includeUnclassifiedProjectStock: true,
       })
     );
     if (requested.quantity - availableQuantity > 0.000001) {
@@ -11286,6 +11295,7 @@ export async function emitWarehouseExit(id: number, emittedById: number) {
       projectId: detail.warehouseExit.projectId,
       warehouseId: item.warehouseId ?? detail.warehouseExit.warehouseId,
       quantity: item.quantity,
+      includeUnclassifiedProjectStock: true,
     });
 
     if (item.materialRequestItemId) {
@@ -12828,6 +12838,7 @@ async function listInventoryRowsForStock(params: {
   projectId?: number | null;
   warehouseId?: number | null;
   warehouseLocation?: string | null;
+  includeUnclassifiedProjectStock?: boolean;
 }) {
   const db = await getDb();
   if (!db) return [] as InventoryItem[];
@@ -12853,6 +12864,13 @@ async function listInventoryRowsForStock(params: {
 
   if (params.projectId === null || params.projectId === undefined) {
     conditions.push(sql`${inventoryItems.projectId} IS NULL`);
+  } else if (params.includeUnclassifiedProjectStock) {
+    conditions.push(
+      or(
+        eq(inventoryItems.projectId, params.projectId),
+        isNull(inventoryItems.projectId)
+      )!
+    );
   } else {
     conditions.push(eq(inventoryItems.projectId, params.projectId));
   }
@@ -12871,6 +12889,7 @@ async function consumeInventoryStock(params: {
   quantity: string | number;
   warehouseId?: number | null;
   warehouseLocation?: string | null;
+  includeUnclassifiedProjectStock?: boolean;
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -12882,7 +12901,17 @@ async function consumeInventoryStock(params: {
   await resolveProjectAssignment(params.projectId, params.warehouseId);
 
   const rows = await listInventoryRowsForStock(params);
-  const available = rows.reduce(
+  const consumptionRows =
+    params.includeUnclassifiedProjectStock &&
+    params.projectId !== null &&
+    params.projectId !== undefined
+      ? [...rows].sort((left, right) => {
+          const leftRank = left.projectId === params.projectId ? 0 : 1;
+          const rightRank = right.projectId === params.projectId ? 0 : 1;
+          return leftRank - rightRank || left.id - right.id;
+        })
+      : rows;
+  const available = consumptionRows.reduce(
     (total, row) => total + parseDecimal(row.currentStock),
     0
   );
@@ -12897,7 +12926,7 @@ async function consumeInventoryStock(params: {
 
   let pending = quantityToConsume;
 
-  for (const row of rows) {
+  for (const row of consumptionRows) {
     if (pending <= 0) break;
 
     const currentStock = parseDecimal(row.currentStock);

@@ -113,6 +113,8 @@ const STATUS_COLORS: Record<string, string> = {
   cancelado: "border-rose-300 bg-rose-50 text-rose-700",
 };
 
+const UNCLASSIFIED_STOCK_SOURCE_PROJECT_ID = -1;
+
 type PendingQueueRow = {
   item: any;
   request: any;
@@ -181,17 +183,24 @@ const getDispatchWarehouseOptionLabel = (warehouse: any) =>
     : `Almacén #${getDispatchWarehouseOptionId(warehouse)}`);
 
 const getDispatchSourceProjectOptionId = (option: any) =>
-  Number(option?.projectId ?? 0);
+  option && option.projectId == null
+    ? UNCLASSIFIED_STOCK_SOURCE_PROJECT_ID
+    : Number(option?.projectId ?? 0);
 
 const getDispatchSourceProjectOptionLabel = (option: any) =>
-  [option?.projectCode, option?.projectName].filter(Boolean).join(" — ") ||
-  `Proyecto #${getDispatchSourceProjectOptionId(option)}`;
+  getDispatchSourceProjectOptionId(option) ===
+  UNCLASSIFIED_STOCK_SOURCE_PROJECT_ID
+    ? "Por clasificar"
+    : [option?.projectCode, option?.projectName].filter(Boolean).join(" — ") ||
+      `Proyecto #${getDispatchSourceProjectOptionId(option)}`;
 
 const getDispatchStockOptionsForRow = (row: PendingQueueRow) =>
   ((row.item?.dispatchStockOptions ?? row.item?.projectStockWarehouses ?? []) as any[]).filter(
     (option) =>
       getDispatchWarehouseOptionId(option) > 0 &&
-      getDispatchSourceProjectOptionId(option) > 0
+      (getDispatchSourceProjectOptionId(option) > 0 ||
+        getDispatchSourceProjectOptionId(option) ===
+          UNCLASSIFIED_STOCK_SOURCE_PROJECT_ID)
   );
 
 const getDispatchWarehouseOptionsForRow = (row: PendingQueueRow) => {
@@ -615,7 +624,7 @@ export default function Flujos() {
       row: PendingQueueRow;
       dispatchedQuantity: string;
       warehouseId: number;
-      sourceProjectId: number;
+      sourceProjectId: number | null;
     }> = [];
 
     if (rows.length === 0) {
@@ -644,6 +653,10 @@ export default function Flujos() {
       const selectedSourceProject = sourceProjectOptions.find(
         (option) => getDispatchSourceProjectOptionId(option) === sourceProjectId
       );
+      const normalizedSourceProjectId =
+        sourceProjectId === UNCLASSIFIED_STOCK_SOURCE_PROJECT_ID
+          ? null
+          : sourceProjectId;
       const selectedWarehouseQuantity =
         getDispatchWarehouseOptionQuantity(selectedSourceProject);
       const pendingQuantity = getPendingDispatchQuantity(item);
@@ -665,7 +678,11 @@ export default function Flujos() {
         toast.error(`${item.itemName}: seleccione almacén origen`);
         return;
       }
-      if (!sourceProjectId || !selectedSourceProject) {
+      if (
+        (!normalizedSourceProjectId &&
+          sourceProjectId !== UNCLASSIFIED_STOCK_SOURCE_PROJECT_ID) ||
+        !selectedSourceProject
+      ) {
         toast.error(`${item.itemName}: seleccione proyecto/origen del inventario`);
         return;
       }
@@ -695,7 +712,7 @@ export default function Flujos() {
         row,
         dispatchedQuantity,
         warehouseId,
-        sourceProjectId,
+        sourceProjectId: normalizedSourceProjectId,
       });
     }
 

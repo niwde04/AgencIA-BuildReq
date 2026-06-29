@@ -757,7 +757,7 @@ export const requestItemsRouter = router({
             z.object({
               requestItemId: z.number(),
               dispatchedQuantity: z.string(),
-              sourceProjectId: z.number().int().positive().optional(),
+              sourceProjectId: z.number().int().positive().nullable().optional(),
               warehouseId: z.number().int().positive().optional(),
               destinationProjectId: z.number().int().positive().optional(),
               destinationWarehouseId: z.number().int().positive().optional(),
@@ -871,7 +871,7 @@ export const requestItemsRouter = router({
         items: input.items.map((item) => ({
           requestItemId: item.requestItemId,
           quantity: item.dispatchedQuantity,
-          ...(item.sourceProjectId
+          ...(item.sourceProjectId !== undefined
             ? { sourceProjectId: item.sourceProjectId }
             : {}),
           warehouseId: item.warehouseId!,
