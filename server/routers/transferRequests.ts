@@ -219,6 +219,8 @@ export const transferRequestsRouter = router({
         },
         input.items.map((item) => ({
           materialRequestItemId: item.materialRequestItemId ?? null,
+          sourceProjectId: null,
+          sourceWarehouseId: null,
           itemName: item.itemName,
           sapItemCode: item.sapItemCode,
           quantity: item.quantity,

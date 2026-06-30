@@ -2638,7 +2638,7 @@ export async function getMaterialRequestById(id: number) {
       ? await db
           .select({
             materialRequestItemId: transferRequestItems.materialRequestItemId,
-            sourceProjectId: transferRequests.projectId,
+            sourceProjectId: transferRequestItems.sourceProjectId,
             sourceWarehouseId: transferRequestItems.sourceWarehouseId,
             receiptProjectId: receipts.projectId,
             receiptWarehouseId: receiptItems.warehouseId,
@@ -3852,7 +3852,7 @@ export async function recordWarehouseExitBatch(params: {
       ? await db
           .select({
             materialRequestItemId: transferRequestItems.materialRequestItemId,
-            sourceProjectId: transferRequests.projectId,
+            sourceProjectId: transferRequestItems.sourceProjectId,
             sourceWarehouseId: transferRequestItems.sourceWarehouseId,
           })
           .from(transferRequestItems)
@@ -6917,7 +6917,7 @@ export async function getTransferRequestById(id: number) {
             await getStockByItem({
               sapItemCode: item.sapItemCode,
               itemName: item.itemName,
-              projectId: rows[0].transferRequest.projectId,
+              projectId: item.sourceProjectId ?? null,
               warehouseId: item.sourceWarehouseId,
             })
           )
@@ -7017,7 +7017,9 @@ export async function createTransferFromRequest(
     const selectedSource = sourceByItemId.get(item.id);
     const sourceProjectId = selectedSource
       ? (selectedSource.sourceProjectId ?? null)
-      : detail.transferRequest.projectId;
+      : item.sourceWarehouseId
+        ? (item.sourceProjectId ?? null)
+        : detail.transferRequest.projectId;
     const sourceWarehouseId =
       selectedSource?.sourceWarehouseId ?? item.sourceWarehouseId ?? null;
 
@@ -7031,9 +7033,6 @@ export async function createTransferFromRequest(
     }
     if (transferQuantity > 0 && !sourceWarehouseId) {
       throw new Error(`Seleccione almacén origen para ${item.itemName}`);
-    }
-    if (transferQuantity > 0 && !sourceProjectId) {
-      throw new Error(`Seleccione proyecto/bodega origen para ${item.itemName}`);
     }
     return {
       item,
@@ -7053,7 +7052,11 @@ export async function createTransferFromRequest(
     new Set(
       transferItems
         .filter(entry => entry.transferQuantity > 0)
-        .map(entry => `project:${entry.sourceProjectId}`)
+        .map(entry =>
+          entry.sourceProjectId === null
+            ? "project:unclassified"
+            : `project:${entry.sourceProjectId}`
+        )
     )
   );
   if (positiveSourceOrigins.length !== 1) {
@@ -7062,11 +7065,19 @@ export async function createTransferFromRequest(
     );
   }
   const selectedSourceOrigin = positiveSourceOrigins[0];
-  const selectedSourceProjectId = selectedSourceOrigin.startsWith("project:")
-    ? Number(selectedSourceOrigin.replace("project:", ""))
-    : detail.transferRequest.projectId;
-  const sourceProject = await getProjectById(selectedSourceProjectId);
-  const sourceProjectLabel = sourceProject?.code ?? selectedSourceProjectId;
+  const selectedSourceProjectId =
+    selectedSourceOrigin === "project:unclassified"
+      ? null
+      : Number(selectedSourceOrigin.replace("project:", ""));
+  const documentProjectId =
+    selectedSourceProjectId ?? detail.transferRequest.projectId;
+  const sourceProject = selectedSourceProjectId
+    ? await getProjectById(selectedSourceProjectId)
+    : null;
+  const sourceProjectLabel =
+    selectedSourceProjectId === null
+      ? "Por clasificar"
+      : (sourceProject?.code ?? selectedSourceProjectId);
 
   const affectedRequestIds = new Set<number>();
 
@@ -7078,6 +7089,7 @@ export async function createTransferFromRequest(
         .update(transferRequestItems)
         .set({
           quantity: toDecimalString(entry.transferQuantity),
+          sourceProjectId: entry.sourceProjectId,
           sourceWarehouseId: entry.sourceWarehouseId,
           updatedAt: new Date(),
         })
@@ -7180,10 +7192,8 @@ export async function createTransferFromRequest(
     }
   }
 
-  const transferNumber = await generateTransferNumber(selectedSourceProjectId);
-  const guideNumber = await generateRemissionGuideNumber(
-    selectedSourceProjectId
-  );
+  const transferNumber = await generateTransferNumber(documentProjectId);
+  const guideNumber = await generateRemissionGuideNumber(documentProjectId);
   const sapCorrelative = `SAP-${guideNumber}`;
   const documentContent = buildSimplePdfBase64(
     `Guía de Remisión ${guideNumber}`,
@@ -7223,7 +7233,7 @@ export async function createTransferFromRequest(
   });
 
   await updateTransferRequest(transferRequestId, {
-    projectId: selectedSourceProjectId,
+    projectId: documentProjectId,
     status: "convertida",
   });
   if (detail.transferRequest.reverseLogisticId) {
@@ -8267,7 +8277,6 @@ export async function registerReceipt(
   } else {
     const transferDetail = await getTransferById(data.sourceId);
     if (transferDetail?.transfer) {
-      const originProjectId = transferDetail.transferRequest?.projectId;
       const destinationProjectId =
         transferDetail.transferRequest?.destinationType === "proyecto"
           ? transferDetail.transferRequest.destinationProjectId
@@ -8431,16 +8440,16 @@ export async function registerReceipt(
         }
 
         if (receivedQuantity > 0) {
-          if (!originProjectId || !existingItem.sourceWarehouseId) {
+          if (!existingItem.sourceWarehouseId) {
             throw new Error(
-              `El traslado de ${existingItem.itemName} no tiene bodega/proyecto origen completa`
+              `El traslado de ${existingItem.itemName} no tiene almacén origen completo`
             );
           }
 
           await consumeInventoryStock({
             sapItemCode: existingItem.sapItemCode,
             itemName: existingItem.itemName,
-            projectId: originProjectId,
+            projectId: existingItem.sourceProjectId ?? null,
             warehouseId: existingItem.sourceWarehouseId,
             quantity: toDecimalString(receivedQuantity),
           });
@@ -15060,7 +15069,7 @@ export async function getInventoryKardex(params: {
   ];
   applyProjectScope(
     transferExitConditions,
-    transferRequests.projectId,
+    transferRequestItems.sourceProjectId,
     scopeProjectIds
   );
   if (params.warehouseId) {
@@ -15185,7 +15194,10 @@ export async function getInventoryKardex(params: {
         transfers,
         eq(transfers.transferRequestId, transferRequests.id)
       )
-      .leftJoin(projects, eq(transferRequests.projectId, projects.id))
+      .leftJoin(
+        projects,
+        eq(transferRequestItems.sourceProjectId, projects.id)
+      )
       .leftJoin(
         warehouses,
         eq(transferRequestItems.sourceWarehouseId, warehouses.id)

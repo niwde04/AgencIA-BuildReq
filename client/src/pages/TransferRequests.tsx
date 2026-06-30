@@ -427,8 +427,13 @@ export default function TransferRequests() {
           ? requestedQuantity.toFixed(2)
           : "0.00";
       if (item.sourceWarehouseId) {
+        const persistedSourceProjectId =
+          item.sourceProjectId === null ||
+          typeof item.sourceProjectId === "number"
+            ? item.sourceProjectId
+            : detail.transferRequest.projectId;
         nextSourceWarehouses[item.id] = getTransferSourceOptionValue({
-          projectId: detail.transferRequest.projectId,
+          projectId: persistedSourceProjectId,
           warehouseId: Number(item.sourceWarehouseId),
         });
         nextSourcePhysicalWarehouses[item.id] = String(item.sourceWarehouseId);
@@ -447,7 +452,11 @@ export default function TransferRequests() {
     sourceWarehouseByItemId[item.id] ||
     (item.sourceWarehouseId
       ? getTransferSourceOptionValue({
-          projectId: detail?.transferRequest.projectId ?? 0,
+          projectId:
+            item.sourceProjectId === null ||
+            typeof item.sourceProjectId === "number"
+              ? item.sourceProjectId
+              : (detail?.transferRequest.projectId ?? 0),
           warehouseId: Number(item.sourceWarehouseId),
         })
       : "");

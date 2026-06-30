@@ -851,6 +851,7 @@ export const transferRequestItems = pgTable(
     id: serial("id").primaryKey(),
     transferRequestId: integer("transferRequestId").notNull(),
     materialRequestItemId: integer("materialRequestItemId"),
+    sourceProjectId: integer("sourceProjectId"),
     sourceWarehouseId: integer("sourceWarehouseId").references(
       () => warehouses.id,
       {
@@ -880,6 +881,9 @@ export const transferRequestItems = pgTable(
   table => ({
     transferRequestIdx: index("tri_transfer_request_idx").on(
       table.transferRequestId
+    ),
+    sourceProjectIdx: index("tri_source_project_idx").on(
+      table.sourceProjectId
     ),
     sourceWarehouseIdx: index("tri_source_warehouse_idx").on(
       table.sourceWarehouseId

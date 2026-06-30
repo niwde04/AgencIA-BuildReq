@@ -13499,6 +13499,62 @@ describe("BuildReq - Transfer Requests", () => {
     createTransferFromRequestSpy.mockRestore();
   });
 
+  it("Bodeguero de Proyecto can convert transfer requests from unclassified warehouse stock", async () => {
+    const { ctx } = createProjectBodegueroContext({ assignedProjectId: 1 });
+    const caller = appRouter.createCaller(ctx);
+    const getTransferRequestByIdSpy = vi
+      .spyOn(db, "getTransferRequestById")
+      .mockResolvedValue({
+        transferRequest: {
+          id: 7,
+          requestNumber: "ST-2026-0002",
+          projectId: 1,
+          destinationProjectId: 14,
+          status: "pendiente",
+        },
+        items: [{ id: 41, materialRequestItemId: 25, quantity: "1.00" }],
+      } as any);
+    const createTransferFromRequestSpy = vi
+      .spyOn(db, "createTransferFromRequest")
+      .mockResolvedValue({
+        id: 45,
+        transferNumber: "TR-2026-0002",
+        guideNumber: "GR-2026-0002",
+        sapCorrelative: "SAP-GR-2026-0002",
+      } as any);
+
+    await expect(
+      caller.transferRequests.convertToTransfer({
+        id: 7,
+        items: [
+          {
+            transferRequestItemId: 41,
+            quantity: "1.00",
+            sourceProjectId: null,
+            sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          },
+        ],
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 45,
+        transferNumber: "TR-2026-0002",
+      })
+    );
+
+    expect(createTransferFromRequestSpy).toHaveBeenCalledWith(7, 6, [
+      {
+        transferRequestItemId: 41,
+        quantity: "1.00",
+        sourceProjectId: null,
+        sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+      },
+    ]);
+
+    getTransferRequestByIdSpy.mockRestore();
+    createTransferFromRequestSpy.mockRestore();
+  });
+
   it("Bodeguero de Proyecto cannot convert transfer requests from another project", async () => {
     const { ctx } = createProjectBodegueroContext({ assignedProjectId: 1 });
     const caller = appRouter.createCaller(ctx);

@@ -955,6 +955,7 @@ export const supplyFlowsRouter = router({
         [
           {
             materialRequestItemId: item.id,
+            sourceProjectId: input.sourceProjectId ?? null,
             sourceWarehouseId: input.sourceWarehouseId ?? null,
             itemName: item.sapItemDescription || item.itemName,
             sapItemCode: item.sapItemCode,
@@ -1104,6 +1105,7 @@ export const supplyFlowsRouter = router({
         },
         preparedItems.map(({ item }) => ({
           materialRequestItemId: item.id,
+          sourceProjectId: input.sourceProjectId ?? null,
           sourceWarehouseId: item.sourceWarehouseId,
           itemName: item.sapItemDescription || item.itemName,
           sapItemCode: item.sapItemCode,
