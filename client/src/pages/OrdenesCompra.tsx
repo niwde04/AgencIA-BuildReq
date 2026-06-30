@@ -2048,6 +2048,11 @@ export default function OrdenesCompra() {
       detail.createdBy?.name ||
       user?.name ||
       "-";
+    const createdByLabel = formatPurchaseOrderCreatedBy(detail);
+    const preparedByLabel =
+      createdByLabel !== "—"
+        ? createdByLabel
+        : user?.name || user?.email || "-";
     const originalRequestNumbers = Array.isArray(
       (detail as any).originalRequestNumbers
     )
@@ -2288,11 +2293,18 @@ export default function OrdenesCompra() {
               margin: 16px 0 10px;
             }
             .signature {
-              border-top: 2px solid #111;
               font-size: 9.4px;
               font-weight: 700;
-              padding-top: 5px;
               text-align: center;
+            }
+            .signature-name {
+              font-size: 9px;
+              min-height: 18px;
+              overflow-wrap: anywhere;
+            }
+            .signature-line {
+              border-top: 2px solid #111;
+              padding-top: 5px;
             }
             .note {
               border: 2px solid #111;
@@ -2308,10 +2320,6 @@ export default function OrdenesCompra() {
               display: block;
               font-weight: 800;
               margin-bottom: 2px;
-            }
-            .footer-user {
-              font-size: 9px;
-              margin-top: 6px;
             }
             @media print {
               .sheet { max-width: none; padding: 0; }
@@ -2420,8 +2428,14 @@ export default function OrdenesCompra() {
             </section>
 
             <section class="signatures">
-              <div class="signature">Elaborado por:</div>
-              <div class="signature">Autorizado por:</div>
+              <div class="signature">
+                <div class="signature-name">${escapeHtml(preparedByLabel)}</div>
+                <div class="signature-line">Elaborado por:</div>
+              </div>
+              <div class="signature">
+                <div class="signature-name">&nbsp;</div>
+                <div class="signature-line">Autorizado por:</div>
+              </div>
             </section>
 
             <section class="note">
@@ -2432,8 +2446,6 @@ export default function OrdenesCompra() {
               Presentar con la factura su constancia de estar sujetos al RÉGIMEN DE PAGOS A CUENTA vigente,
               caso contrario se procederá con las retenciones correspondientes.
             </section>
-
-            <div class="footer-user">${escapeHtml(requestedByLabel)}</div>
           </main>
         </body>
       </html>
