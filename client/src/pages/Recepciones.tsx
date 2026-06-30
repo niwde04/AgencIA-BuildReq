@@ -301,6 +301,52 @@ function formatReceiptTargetSummary(selection: ReceiptTargetSelection | null) {
   return `Destino: ${label.replace(/^(Activo fijo|Subproyecto):\s*/i, "")}`;
 }
 
+function normalizeReceiptPrintLabel(value: unknown) {
+  const label = String(value ?? "").trim();
+  if (
+    !label ||
+    /^(null|undefined)$/i.test(label) ||
+    /^proyecto\s+(null|undefined)$/i.test(label)
+  ) {
+    return "";
+  }
+  return label;
+}
+
+function formatReceiptWarehouseLabel(detail: any, fallback = "Almacén de ingreso") {
+  const directWarehouseLabel = normalizeReceiptPrintLabel(
+    formatWarehouseReference(detail?.warehouse, "")
+  );
+  if (directWarehouseLabel) return directWarehouseLabel;
+
+  const itemWarehouseLabels = Array.from(
+    new Set(
+      (detail?.items || [])
+        .map((item: any) =>
+          normalizeReceiptPrintLabel(formatWarehouseReference(item.warehouse, ""))
+        )
+        .filter(Boolean)
+    )
+  );
+
+  if (itemWarehouseLabels.length === 1) return itemWarehouseLabels[0] as string;
+  if (itemWarehouseLabels.length > 1) return "Varios almacenes";
+  return fallback;
+}
+
+function formatReceiptProjectLabel(detail: any, fallback = "-") {
+  if (detail?.project) {
+    return `${detail.project.code} ${detail.project.name}`;
+  }
+
+  const projectId = Number(detail?.receipt?.projectId);
+  if (Number.isInteger(projectId) && projectId > 0) {
+    return `Proyecto ${projectId}`;
+  }
+
+  return fallback;
+}
+
 function getReceiptTargetPayload(selection: ReceiptTargetSelection | null) {
   if (!selection) {
     return {
@@ -3721,13 +3767,8 @@ export default function Recepciones() {
     const sourceItemsById = new Map(
       sourceItems.map((item: any) => [item.id, item])
     );
-    const projectLabel = receiptDetail.project
-      ? `${receiptDetail.project.code} ${receiptDetail.project.name}`
-      : `Proyecto ${receipt.projectId}`;
-    const warehouseLabel =
-      (receiptDetail as any).warehouse?.displayName ||
-      receiptDetail.project?.name ||
-      projectLabel;
+    const warehouseLabel = formatReceiptWarehouseLabel(receiptDetail);
+    const projectLabel = formatReceiptProjectLabel(receiptDetail, warehouseLabel);
     const receivedByLabel = formatUserReference(
       (receiptDetail as any).receivedBy,
       receipt.receivedById
@@ -3741,9 +3782,11 @@ export default function Recepciones() {
         receivedByLabel
       : receivedByLabel;
     const destinationLabel = isPurchaseOrderReceipt
-      ? receiptPurchaseOrderDetail?.purchaseRequest?.printDestination?.trim() ||
-        receiptDetail.project?.name ||
-        projectLabel
+      ? normalizeReceiptPrintLabel(
+          receiptPurchaseOrderDetail?.purchaseRequest?.printDestination
+        ) ||
+        normalizeReceiptPrintLabel(receiptDetail.project?.name) ||
+        warehouseLabel
       : getTransferDestinationLabel(receiptTransferDetail, "-");
     const sourceWarehouseLabel = isPurchaseOrderReceipt
       ? "N/A"

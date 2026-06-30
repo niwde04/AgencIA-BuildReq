@@ -217,6 +217,19 @@ function formatWarehouseExitWarehouseLabel(detail: any) {
   return "Bodega del proyecto";
 }
 
+function formatWarehouseExitProjectLabel(detail: any, fallback = "-") {
+  if (detail?.project) {
+    return `${detail.project.code} ${detail.project.name}`;
+  }
+
+  const projectId = Number(detail?.warehouseExit?.projectId);
+  if (Number.isInteger(projectId) && projectId > 0) {
+    return `Proyecto ${projectId}`;
+  }
+
+  return fallback;
+}
+
 function formatWarehouseExitDestinationProjectLabel(detail: any) {
   if (detail?.destinationProject) {
     return `${detail.destinationProject.code} - ${detail.destinationProject.name}`;
@@ -1876,10 +1889,8 @@ export default function SalidasBodega() {
     if (!detail) return;
 
     const warehouseExit = detail.warehouseExit;
-    const projectLabel = detail.project
-      ? `${detail.project.code} ${detail.project.name}`
-      : `Proyecto ${warehouseExit.projectId}`;
     const warehouseLabel = formatWarehouseExitWarehouseLabel(detail);
+    const projectLabel = formatWarehouseExitProjectLabel(detail, warehouseLabel);
     const destinationProjectLabel =
       formatWarehouseExitDestinationProjectLabel(detail);
     const destinationWarehouseLabel =
