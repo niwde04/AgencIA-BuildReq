@@ -4686,6 +4686,7 @@ function buildPurchaseRequestDocument(params: {
   printedAt?: Date | string | null | undefined;
   items: Array<{
     itemName: string;
+    partNumber?: string | null;
     quantity: string | number;
     unit?: string | null;
     unitPrice?: string | number | null;
@@ -4722,6 +4723,9 @@ function buildPurchaseRequestDocument(params: {
     items: params.items.map(item => ({
       description: item.itemName,
       quantityLabel: `${item.quantity} ${item.unit ?? ""}`.trim(),
+      metaLines: [
+        item.partNumber?.trim() ? `No. parte: ${item.partNumber.trim()}` : "",
+      ].filter(Boolean),
     })),
     generatedLabel: formatDateLabel(params.printedAt ?? new Date()),
     footerNote: "Solicitud generada automáticamente por BuildReq.",
@@ -5463,6 +5467,7 @@ export async function getPurchaseRequestById(id: number) {
     return {
       ...row.item,
       brand: savedBrand ?? normalizeOptionalText(catalog?.brand),
+      partNumber: normalizeOptionalText(catalog?.partNumber),
       catalogItem: catalog,
       requestedItemName: normalizeOptionalText(row.sourceItem?.itemName),
       pendingConversionQuantity: toDecimalString(
@@ -5523,6 +5528,7 @@ export async function getPurchaseRequestById(id: number) {
     printedAt: rows[0].purchaseRequest.printedAt,
     items: items.map(item => ({
       itemName: item.itemName,
+      partNumber: item.partNumber ?? item.catalogItem?.partNumber ?? null,
       quantity: item.quantity,
       unit: item.unit,
       unitPrice: item.unitPrice,

@@ -262,6 +262,16 @@ function getRequesterItemNameForTemporaryFixedAsset(item: any) {
   return requestedItemName;
 }
 
+function getPurchaseRequestItemPartNumber(item: any) {
+  return (
+    item.partNumber ||
+    item.catalogItem?.partNumber ||
+    item.currentSapItemCode ||
+    item.originalSapItemCode ||
+    "-"
+  );
+}
+
 const getConvertedQuantity = (item: any) => Number(item.convertedQuantity ?? 0);
 
 const getPendingConversionQuantity = (item: any) =>
@@ -1015,6 +1025,7 @@ export default function PurchaseRequests() {
         const draft = getItemDraft(item);
         const quantity = formatQuantity(item.quantity);
         const code = item.currentSapItemCode || item.originalSapItemCode || "-";
+        const partNumber = getPurchaseRequestItemPartNumber(item);
         const requesterItemName =
           getRequesterItemNameForTemporaryFixedAsset(item);
         const itemDescriptionMarkup = requesterItemName
@@ -1025,6 +1036,7 @@ export default function PurchaseRequests() {
             <td>${escapeHtml(code)}</td>
             <td class="numeric">${escapeHtml(quantity)}</td>
             <td>${itemDescriptionMarkup}</td>
+            <td>${escapeHtml(partNumber)}</td>
             <td>${escapeHtml(getItemTargetLabel(item))}</td>
             <td>${escapeHtml(draft.brand || "-")}</td>
             <td>${escapeHtml(item.unit || "-")}</td>
@@ -1209,18 +1221,20 @@ export default function PurchaseRequests() {
                 <tr>
                   <th style="width: 13%;">Codigo</th>
                   <th style="width: 9%;" class="numeric">Cantidad</th>
-                  <th>Descripción</th>
-                  <th style="width: 18%;">Destino</th>
-                  <th style="width: 12%;">Marca</th>
-                  <th style="width: 9%;">U.M</th>
-                  <th style="width: 18%;">Responsable compra</th>
+                  <th style="width: 18%;">Descripción</th>
+                  <th style="width: 12%;">No. Parte</th>
+                  <th style="width: 17%;">Destino</th>
+                  <th style="width: 10%;">Marca</th>
+                  <th style="width: 7%;">U.M</th>
+                  <th style="width: 14%;">Responsable compra</th>
                 </tr>
               </thead>
               <tbody>
-                ${itemRows || `<tr><td colspan="7">Sin ítems</td></tr>`}
+                ${itemRows || `<tr><td colspan="8">Sin ítems</td></tr>`}
                 <tr class="summary">
-                  <td colspan="5">Total solicitado</td>
+                  <td colspan="6">Total solicitado</td>
                   <td class="numeric">${escapeHtml(formatQuantity(totalQuantity))}</td>
+                  <td></td>
                 </tr>
               </tbody>
             </table>
@@ -1845,6 +1859,9 @@ export default function PurchaseRequests() {
                           SAP
                         </th>
                         <th className="w-44 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          No. parte
+                        </th>
+                        <th className="w-44 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Marca
                         </th>
                         <th className="w-52 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1932,6 +1949,9 @@ export default function PurchaseRequests() {
                               {item.currentSapItemCode ||
                                 item.originalSapItemCode ||
                                 "—"}
+                            </td>
+                            <td className="p-4 align-top text-xs">
+                              {getPurchaseRequestItemPartNumber(item)}
                             </td>
                             <td className="p-4 align-top">
                               <Input
