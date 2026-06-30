@@ -1102,6 +1102,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   createdDateLabel: string;
   deliveryDateLabel: string;
   requestedByLabel: string;
+  preparedByLabel?: string | null;
   originalRequestLabel: string;
   salesAdvisorLabel: string;
   observations: string;
@@ -1640,6 +1641,19 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     const signatureWidth = 150;
     const firstSignatureX = marginX + 96;
     const secondSignatureX = firstSignatureX + 190;
+    const preparedByLabel =
+      params.preparedByLabel?.trim() || params.requestedByLabel || "-";
+
+    drawCenteredWrappedText(
+      firstSignatureX,
+      signaturesTop - 18,
+      signatureWidth,
+      preparedByLabel,
+      8.4,
+      "F2",
+      9,
+      2
+    );
 
     drawLine(
       page,
@@ -1695,14 +1709,6 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       10,
       4
     );
-
-    drawText(page, {
-      x: marginX,
-      top: noteTop + noteHeight + 9,
-      text: params.requestedByLabel,
-      fontSize: 8.6,
-      color: ink,
-    });
   }
 
   const tableTop = drawFirstPageHeader();

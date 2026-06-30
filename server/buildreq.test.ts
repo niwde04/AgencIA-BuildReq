@@ -9107,6 +9107,60 @@ describe("BuildReq - Purchase Orders", () => {
     expect(pdfText).toContain(`<${encodedSalesAdvisor}> Tj`);
     expect(pdfText).toContain("/Subtype /Image");
   });
+
+  it("prints the purchase order preparer above the prepared-by signature", () => {
+    const requestedByLabel = "WILSON MOLINA";
+    const preparedByLabel = "EDWIN BARAHONA";
+    const pdf = buildPurchaseOrderPrintPdfBase64({
+      orderNumber: "OC-010-00000011",
+      orderId: "11",
+      projectLabel: "010 SISTEMA DE AGUA POTABLE SAN JOSE",
+      supplierLabel: "LAZARUS Y LAZARUS SA DE CV",
+      createdDateLabel: "26/06/2026",
+      destinationLabel: "010 SISTEMA DE AGUA POTABLE SAN JOSE",
+      deliveryDateLabel: "21/06/2026",
+      requestedByLabel,
+      preparedByLabel,
+      originalRequestLabel: "REQ-010-00000021",
+      salesAdvisorLabel: "-",
+      observations: "ENTREGAR EN PLANTEL",
+      quoteLabel: "-",
+      items: [
+        {
+          itemNumber: "1",
+          description: "ADITIVO ADMIX DX2",
+          destinationLabel: "Activo fijo: AFMAQ00077 - CONCRETERA",
+          partNumber: "SNP7067",
+          quantityLabel: "2",
+          unitPriceLabel: "30,200.00",
+          subtotalLabel: "60,400.00",
+        },
+      ],
+      summaryRows: [
+        { label: "Sub-total L.", value: "60,400.00" },
+        { label: "I.S.V. 15% L.", value: "9,060.00" },
+        { label: "Total a pagar L.", value: "69,460.00", emphasized: true },
+      ],
+    });
+
+    const pdfText = Buffer.from(pdf, "base64").toString("latin1");
+    const encodedRequestedBy = Buffer.from(requestedByLabel, "latin1")
+      .toString("hex")
+      .toUpperCase();
+    const encodedPreparedBy = Buffer.from(preparedByLabel, "latin1")
+      .toString("hex")
+      .toUpperCase();
+    const encodedPreparedByCaption = Buffer.from("Elaborado por:", "latin1")
+      .toString("hex")
+      .toUpperCase();
+
+    const requestedByOccurrences =
+      pdfText.match(new RegExp(`<${encodedRequestedBy}> Tj`, "g"))?.length ?? 0;
+    expect(requestedByOccurrences).toBe(1);
+    expect(pdfText.indexOf(`<${encodedPreparedBy}> Tj`)).toBeLessThan(
+      pdfText.indexOf(`<${encodedPreparedByCaption}> Tj`)
+    );
+  });
 });
 
 // ============================================================

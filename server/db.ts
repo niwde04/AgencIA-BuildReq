@@ -4849,6 +4849,7 @@ function buildPurchaseOrderDocument(params: {
   neededBy: Date | string | null | undefined;
   printedAt?: Date | string | null | undefined;
   requestedByLabel?: string | null;
+  preparedByLabel?: string | null;
   originalRequestLabel?: string | null;
   salesAdvisorLabel?: string | null;
   observations?: string | null;
@@ -4901,6 +4902,10 @@ function buildPurchaseOrderDocument(params: {
       ? formatPrintDateLabel(params.neededBy)
       : "INMEDIATA",
     requestedByLabel: params.requestedByLabel?.trim() || "-",
+    preparedByLabel:
+      params.preparedByLabel?.trim() ||
+      params.requestedByLabel?.trim() ||
+      "-",
     originalRequestLabel: params.originalRequestLabel?.trim() || "-",
     salesAdvisorLabel: params.salesAdvisorLabel?.trim() || "-",
     observations: params.observations?.trim() || "-",
@@ -5892,6 +5897,7 @@ export async function createPurchaseOrder(
     neededBy: data.neededBy,
     printedAt,
     requestedByLabel: createdBy?.name ?? "-",
+    preparedByLabel: createdBy?.name ?? createdBy?.email ?? "-",
     salesAdvisorLabel: formatSupplierContactReference(preferredSupplierContact),
     observations: data.notes,
     quoteLabel: sourcePurchaseRequest?.quoteAttachmentId
@@ -6474,6 +6480,8 @@ export async function getPurchaseOrderById(id: number) {
       originalRequester?.email ??
       rows[0].createdBy?.name ??
       "-",
+    preparedByLabel:
+      rows[0].createdBy?.name ?? rows[0].createdBy?.email ?? "-",
     originalRequestLabel:
       originalRequestNumbers.length > 0
         ? originalRequestNumbers.join(", ")
