@@ -198,10 +198,6 @@ function formatWarehouseExitTargetLabel(item: any, projectId?: number | null) {
 }
 
 function formatWarehouseExitWarehouseLabel(detail: any) {
-  const directWarehouse =
-    detail?.warehouse?.displayName || detail?.warehouse?.name || null;
-  if (directWarehouse) return directWarehouse;
-
   const itemWarehouseLabels = Array.from(
     new Set(
       (detail?.items || [])
@@ -214,7 +210,16 @@ function formatWarehouseExitWarehouseLabel(detail: any) {
 
   if (itemWarehouseLabels.length === 1) return itemWarehouseLabels[0] as string;
   if (itemWarehouseLabels.length > 1) return "Varios almacenes";
+
+  const directWarehouse =
+    detail?.warehouse?.displayName || detail?.warehouse?.name || null;
+  if (directWarehouse) return directWarehouse;
+
   return "Bodega del proyecto";
+}
+
+function formatWarehouseExitItemWarehouseLabel(item: any, fallback = "-") {
+  return item?.warehouse?.displayName || item?.warehouse?.name || fallback;
 }
 
 function formatWarehouseExitProjectLabel(detail: any, fallback = "-") {
@@ -1921,6 +1926,7 @@ export default function SalidasBodega() {
           <tr>
             <td>${escapeHtml(item.sapItemCode || "-")}</td>
             <td>${escapeHtml(item.itemName || "-")}</td>
+            <td>${escapeHtml(formatWarehouseExitItemWarehouseLabel(item, warehouseLabel))}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantity))}</td>
             <td class="center">${escapeHtml(item.unit || "-")}</td>
             <td>${escapeHtml(destinationLabel)}</td>
@@ -2125,19 +2131,20 @@ export default function SalidasBodega() {
             <table>
               <thead>
                 <tr>
-                  <th style="width: 16%;">Código/No. Serie</th>
-                  <th style="width: 26%;">Identificador</th>
-                  <th style="width: 9%;" class="numeric">Cantidad</th>
-                  <th style="width: 9%;" class="center">U Medida</th>
-                  <th style="width: 19%;">Destino</th>
-                  <th style="width: 17%;">Referencia</th>
-                  <th style="width: 7%;" class="numeric">Total</th>
+                  <th style="width: 13%;">Código/No. Serie</th>
+                  <th style="width: 21%;">Identificador</th>
+                  <th style="width: 14%;">Bodega origen</th>
+                  <th style="width: 8%;" class="numeric">Cantidad</th>
+                  <th style="width: 8%;" class="center">U Medida</th>
+                  <th style="width: 18%;">Destino</th>
+                  <th style="width: 13%;">Referencia</th>
+                  <th style="width: 5%;" class="numeric">Total</th>
                 </tr>
               </thead>
               <tbody>
-                ${itemRows || `<tr><td colspan="7">Sin ítems</td></tr>`}
+                ${itemRows || `<tr><td colspan="8">Sin ítems</td></tr>`}
                 <tr class="total-row">
-                  <td colspan="6">Total general</td>
+                  <td colspan="7">Total general</td>
                   <td class="numeric">${escapeHtml(formatPrintNumber(totalLines))}</td>
                 </tr>
               </tbody>

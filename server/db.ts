@@ -10297,6 +10297,7 @@ function buildWarehouseExitDocument(params: {
   items: Array<{
     sapItemCode: string;
     itemName: string;
+    warehouseLabel?: string | null;
     quantity: string | number;
     unit?: string | null;
     targetLabel?: string | null;
@@ -10340,6 +10341,7 @@ function buildWarehouseExitDocument(params: {
       quantityLabel: `${item.quantity} ${item.unit ?? ""}`.trim(),
       metaLines: [
         ...(item.sapItemCode ? [`SAP: ${item.sapItemCode}`] : []),
+        ...(item.warehouseLabel ? [`Bodega: ${item.warehouseLabel}`] : []),
         ...(item.targetLabel ? [`Destino: ${item.targetLabel}`] : []),
         ...((item.notes ?? params.notes)
           ? [`Notas: ${item.notes ?? params.notes}`]
@@ -10381,10 +10383,6 @@ function buildWarehouseExitWarehouseLabel(params: {
     warehouse?: { displayName?: string | null; name?: string | null } | null;
   }>;
 }) {
-  const directLabel =
-    params.warehouse?.displayName?.trim() || params.warehouse?.name?.trim();
-  if (directLabel) return directLabel;
-
   const itemLabels = Array.from(
     new Set(
       (params.items ?? [])
@@ -10398,6 +10396,11 @@ function buildWarehouseExitWarehouseLabel(params: {
 
   if (itemLabels.length === 1) return itemLabels[0];
   if (itemLabels.length > 1) return "Varios almacenes";
+
+  const directLabel =
+    params.warehouse?.displayName?.trim() || params.warehouse?.name?.trim();
+  if (directLabel) return directLabel;
+
   return "Bodega del proyecto";
 }
 
@@ -10750,6 +10753,8 @@ export async function getWarehouseExitById(id: number) {
             items: enrichedItems.map(item => ({
               sapItemCode: item.sapItemCode,
               itemName: item.itemName,
+              warehouseLabel:
+                item.warehouse?.displayName || item.warehouse?.name || null,
               quantity: item.quantity,
               unit: item.unit,
               targetLabel: [
@@ -11350,6 +11355,8 @@ export async function emitWarehouseExit(id: number, emittedById: number) {
     items: detail.items.map(item => ({
       sapItemCode: item.sapItemCode,
       itemName: item.itemName,
+      warehouseLabel:
+        item.warehouse?.displayName || item.warehouse?.name || null,
       quantity: item.quantity,
       unit: item.unit,
       targetLabel: buildWarehouseExitTargetLabel(item),

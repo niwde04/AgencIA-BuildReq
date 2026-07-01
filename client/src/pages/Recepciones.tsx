@@ -314,11 +314,6 @@ function normalizeReceiptPrintLabel(value: unknown) {
 }
 
 function formatReceiptWarehouseLabel(detail: any, fallback = "Almacén de ingreso") {
-  const directWarehouseLabel = normalizeReceiptPrintLabel(
-    formatWarehouseReference(detail?.warehouse, "")
-  );
-  if (directWarehouseLabel) return directWarehouseLabel;
-
   const itemWarehouseLabels = Array.from(
     new Set(
       (detail?.items || [])
@@ -331,6 +326,12 @@ function formatReceiptWarehouseLabel(detail: any, fallback = "Almacén de ingres
 
   if (itemWarehouseLabels.length === 1) return itemWarehouseLabels[0] as string;
   if (itemWarehouseLabels.length > 1) return "Varios almacenes";
+
+  const directWarehouseLabel = normalizeReceiptPrintLabel(
+    formatWarehouseReference(detail?.warehouse, "")
+  );
+  if (directWarehouseLabel) return directWarehouseLabel;
+
   return fallback;
 }
 

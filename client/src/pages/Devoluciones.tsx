@@ -137,6 +137,25 @@ function escapeHtml(value: unknown) {
     .replace(/'/g, "&#039;");
 }
 
+function formatWarehouseLabel(warehouse: any) {
+  if (!warehouse) return "";
+  return (
+    warehouse.displayName ||
+    [warehouse.code || warehouse.localCode, warehouse.name]
+      .filter(Boolean)
+      .join(" - ") ||
+    warehouse.name ||
+    (warehouse.id ? `Bodega #${warehouse.id}` : "")
+  );
+}
+
+function summarizeWarehouseLabels(labels: string[], fallback = "-") {
+  const uniqueLabels = Array.from(new Set(labels.filter(Boolean)));
+  if (uniqueLabels.length === 1) return uniqueLabels[0];
+  if (uniqueLabels.length > 1) return "Varios almacenes";
+  return fallback;
+}
+
 function DetailField({
   label,
   value,
@@ -220,14 +239,19 @@ export default function Devoluciones() {
       row.transferRequest?.status
     )
   );
-  const itemSourceWarehouse = returnItems.find((item: any) => item.warehouse)
-    ?.warehouse;
-  const sourceWarehouseLabel =
-    itemSourceWarehouse?.displayName ??
-    sourceWarehouse?.displayName ??
+  const itemSourceWarehouseLabels = returnItems
+    .map((item: any) => formatWarehouseLabel(item.warehouse))
+    .filter(Boolean);
+  const fallbackSourceWarehouseLabel =
+    formatWarehouseLabel(sourceWarehouse) ||
     (sourceProject
       ? `Bodega del Proyecto - ${sourceProject.code} - ${sourceProject.name}`
       : "-");
+  const sourceWarehouseLabel =
+    summarizeWarehouseLabels(
+      itemSourceWarehouseLabels,
+      fallbackSourceWarehouseLabel
+    );
   const destinationProjectLabel = destinationProject
     ? `${destinationProject.code} - ${destinationProject.name}`
     : selectedReturn?.destinationProjectId
@@ -363,11 +387,14 @@ export default function Devoluciones() {
       selectedReturn.reasonCategory;
     const itemRows = returnItems
       .map(
-        (item: any) => `
+        (item: any) => {
+          const itemWarehouseLabel =
+            formatWarehouseLabel(item.warehouse) || sourceWarehouseLabel;
+          return `
           <tr>
             <td>${escapeHtml(item.sapItemCode || "-")}</td>
             <td>${escapeHtml(item.itemName || "-")}</td>
-            <td class="center"></td>
+            <td>${escapeHtml(itemWarehouseLabel)}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantity))}</td>
             <td class="center">${escapeHtml(item.unit || "-")}</td>
             <td>${escapeHtml(destinationLabel)}</td>
@@ -376,7 +403,8 @@ export default function Devoluciones() {
             </td>
             <td class="numeric">1</td>
           </tr>
-        `
+        `;
+        }
       )
       .join("");
     const totalLines = returnItems.length;
@@ -595,14 +623,14 @@ export default function Devoluciones() {
             <table>
               <thead>
                 <tr>
-                  <th style="width: 16%;">Código/No. Serie</th>
-                  <th>Identificador</th>
-                  <th style="width: 8%;" class="center">Costo</th>
+                  <th style="width: 13%;">Código/No. Serie</th>
+                  <th style="width: 21%;">Identificador</th>
+                  <th style="width: 14%;">Bodega origen</th>
                   <th style="width: 9%;" class="numeric">Cantidad</th>
                   <th style="width: 9%;" class="center">U Medida</th>
-                  <th style="width: 19%;">Destino</th>
-                  <th style="width: 17%;">Referencia</th>
-                  <th style="width: 7%;" class="numeric">Total</th>
+                  <th style="width: 17%;">Destino</th>
+                  <th style="width: 12%;">Referencia</th>
+                  <th style="width: 5%;" class="numeric">Total</th>
                 </tr>
               </thead>
               <tbody>

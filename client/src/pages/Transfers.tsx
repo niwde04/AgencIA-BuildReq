@@ -110,7 +110,7 @@ function getTransferSourceWarehouseSummary(detail: any) {
   );
 
   if (labels.length === 1) return labels[0];
-  if (labels.length > 1) return "Ver origen por línea";
+  if (labels.length > 1) return "Varios almacenes";
   return getWarehouseLabel(detail?.originWarehouse);
 }
 
@@ -282,6 +282,7 @@ export default function Transfers() {
           <tr>
             <td>${escapeHtml(item.sapItemCode || "-")}</td>
             <td>${escapeHtml(item.itemName || "-")}</td>
+            <td>${escapeHtml(getWarehouseLabel(item.sourceWarehouse))}</td>
             <td>${escapeHtml(getTransferItemTargetLabel(item))}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantity))}</td>
             <td class="center">${escapeHtml(item.unit || "-")}</td>
@@ -484,18 +485,19 @@ export default function Transfers() {
               <thead>
                 <tr>
                   <th style="width: 14%;">Código/No. Serie</th>
-                  <th>Identificador</th>
-                  <th style="width: 20%;">Subproyecto / activo fijo</th>
-                  <th style="width: 10%;" class="numeric">Cantidad</th>
-                  <th style="width: 9%;" class="center">U Medida</th>
-                  <th style="width: 16%;">Referencia</th>
-                  <th style="width: 9%;" class="numeric">Total</th>
+                  <th style="width: 19%;">Identificador</th>
+                  <th style="width: 14%;">Almacén origen</th>
+                  <th style="width: 18%;">Subproyecto / activo fijo</th>
+                  <th style="width: 9%;" class="numeric">Cantidad</th>
+                  <th style="width: 8%;" class="center">U Medida</th>
+                  <th style="width: 12%;">Referencia</th>
+                  <th style="width: 6%;" class="numeric">Total</th>
                 </tr>
               </thead>
               <tbody>
-                ${itemRows || `<tr><td colspan="7">Sin ítems</td></tr>`}
+                ${itemRows || `<tr><td colspan="8">Sin ítems</td></tr>`}
                 <tr class="total-row">
-                  <td colspan="6">Total general</td>
+                  <td colspan="7">Total general</td>
                   <td class="numeric">${escapeHtml(formatPrintNumber(totalQuantity))}</td>
                 </tr>
               </tbody>
