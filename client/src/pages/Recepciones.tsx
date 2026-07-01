@@ -784,11 +784,18 @@ function formatWarehouseReference(warehouse: any, fallback = "—") {
 }
 
 function getProjectWarehouseIds(project: any) {
-  return new Set<number>(
-    (project?.warehouses ?? [])
-      .map((warehouse: any) => Number(warehouse.id))
-      .filter((warehouseId: number) => Number.isInteger(warehouseId))
-  );
+  const warehouseIds = [
+    ...(project?.warehouses ?? []).map((warehouse: any) => warehouse?.id),
+    project?.warehouse?.id,
+    project?.warehouseId,
+  ]
+    .map((warehouseId: any) => Number(warehouseId))
+    .filter(
+      (warehouseId: number) =>
+        Number.isInteger(warehouseId) && warehouseId > 0
+    );
+
+  return new Set<number>(warehouseIds);
 }
 
 function projectUsesWarehouse(project: any, warehouseId?: string | number | null) {
@@ -950,8 +957,6 @@ const ASSET_DETAIL_OPTIONAL_FIELDS: Array<{
   { key: "motorSeries", label: "Serie motor", placeholder: "Serie motor" },
   { key: "plateOrCode", label: "Placa/código", placeholder: "Placa o código" },
 ];
-
-const NO_RECEIPT_PROJECT_VALUE = "__warehouse_only__";
 
 export default function Recepciones() {
   const utils = trpc.useUtils();
@@ -1245,12 +1250,8 @@ export default function Recepciones() {
     ? formatProjectReference(selectedReceiptProject, "Proyecto/bodega")
     : selectedReceiptProjectId
       ? `Proyecto ${selectedReceiptProjectId}`
-      : "Sin proyecto";
-  const lockedReceiptProjectId =
-    sourceType === "transfer" &&
-    transferDetail?.transferRequest?.destinationType === "proyecto"
-      ? sourceProjectId
-      : undefined;
+      : "Seleccione proyecto";
+  const lockedReceiptProjectId = sourceProjectId;
   const { data: receiptWarehouses } = trpc.warehouses.list.useQuery(
     {
       isActive: true,
@@ -1264,18 +1265,29 @@ export default function Recepciones() {
   const receiptWarehouseOptions = useMemo(() => {
     return receiptWarehouses ?? [];
   }, [receiptWarehouses]);
+  const getWarehousesForReceiptProject = (project: any | null | undefined) => {
+    const warehouses = receiptWarehouseOptions ?? [];
+    if (!project) return [];
+
+    const projectWarehouseIds = getProjectWarehouseIds(project);
+    if (projectWarehouseIds.size === 0) return [];
+
+    return warehouses.filter((warehouse: any) =>
+      projectWarehouseIds.has(Number(warehouse.id))
+    );
+  };
+  const receiptProjectWarehouseOptions = useMemo(
+    () => getWarehousesForReceiptProject(selectedReceiptProject),
+    [receiptWarehouseOptions, selectedReceiptProject]
+  );
   useEffect(() => {
-    if (
-      sourceType === "transfer" &&
-      transferDetail?.transferRequest?.destinationType === "proyecto" &&
-      sourceProjectId
-    ) {
+    if (sourceProjectId) {
       setReceiptProjectId(String(sourceProjectId));
       return;
     }
 
     setReceiptProjectId("");
-  }, [sourceId, sourceProjectId, sourceType, transferDetail?.transferRequest?.destinationType]);
+  }, [sourceId, sourceProjectId]);
 
   useEffect(() => {
     setExpandedReceiptDetailItemIds([]);
@@ -1316,7 +1328,7 @@ export default function Recepciones() {
   const getDefaultReceiptWarehouseIdForItem = (item: any) => {
     if (
       receiptWarehouseId &&
-      receiptWarehouseOptions.some(
+      receiptProjectWarehouseOptions.some(
         (warehouse: any) => String(warehouse.id) === receiptWarehouseId
       ) &&
       !isSameTransferOriginScope(item, receiptWarehouseId)
@@ -1332,7 +1344,7 @@ export default function Recepciones() {
     if (
       destinationWarehouseId &&
       lockedReturnDestinationWarehouseId &&
-      receiptWarehouseOptions.some(
+      receiptProjectWarehouseOptions.some(
         (warehouse: any) => String(warehouse.id) === destinationWarehouseId
       ) &&
       !isSameTransferOriginScope(item, destinationWarehouseId)
@@ -1350,7 +1362,7 @@ export default function Recepciones() {
       ? String(transferDetail.destinationWarehouse.id)
       : "";
   useEffect(() => {
-    if (!dialogOpen || !sourceId || !receiptWarehouseOptions.length) {
+    if (!dialogOpen || !sourceId || !receiptProjectWarehouseOptions.length) {
       setReceiptWarehouseId("");
       return;
     }
@@ -1358,7 +1370,7 @@ export default function Recepciones() {
     setReceiptWarehouseId(current => {
       const currentIsAvailable =
         current &&
-        receiptWarehouseOptions.some(
+        receiptProjectWarehouseOptions.some(
           (warehouse: any) => String(warehouse.id) === current
         ) &&
         (!lockedReturnDestinationWarehouseId ||
@@ -1371,7 +1383,7 @@ export default function Recepciones() {
   }, [
     dialogOpen,
     lockedReturnDestinationWarehouseId,
-    receiptWarehouseOptions,
+    receiptProjectWarehouseOptions,
     sourceId,
   ]);
   const { data: targetOptions, isLoading: targetOptionsLoading } =
@@ -1595,7 +1607,7 @@ export default function Recepciones() {
         nextWarehouseMap[item.id] = "";
       } else {
         const draftWarehouseIsAvailable = draftWarehouseId
-          ? receiptWarehouseOptions.some(
+          ? receiptProjectWarehouseOptions.some(
               (warehouse: any) => String(warehouse.id) === draftWarehouseId
             )
           : false;
@@ -1680,7 +1692,7 @@ export default function Recepciones() {
     activeSalesTaxes,
     receiptWarehouseId,
     editingDraftReceiptDetail,
-    receiptWarehouseOptions,
+    receiptProjectWarehouseOptions,
     selectedReceiptProjectId,
     sourceProjectId,
     sourceId,
@@ -2277,22 +2289,10 @@ export default function Recepciones() {
     });
   };
 
-  const getWarehousesForReceiptProject = (project: any | null | undefined) => {
-    const warehouses = receiptWarehouses ?? [];
-    if (!project) return warehouses;
-
-    const projectWarehouseIds = getProjectWarehouseIds(project);
-    if (projectWarehouseIds.size === 0) return warehouses;
-
-    return warehouses.filter((warehouse: any) =>
-      projectWarehouseIds.has(Number(warehouse.id))
-    );
-  };
-
   const isReceiptWarehouseSelectableForItem = (
     item: any,
     warehouseId?: string | number | null,
-    warehouseOptions = receiptWarehouseOptions
+    warehouseOptions = receiptProjectWarehouseOptions
   ) => {
     const warehouseKey = String(warehouseId ?? "");
     if (!warehouseKey) return false;
@@ -2315,7 +2315,7 @@ export default function Recepciones() {
   const getReceiptWarehouseForItem = (
     item: any,
     preferredWarehouseId?: string | number | null,
-    warehouseOptions = receiptWarehouseOptions
+    warehouseOptions = receiptProjectWarehouseOptions
   ) => {
     if (sourceType === "purchase_order" && isReceiptNonInventoryItem(item)) {
       return "";
@@ -2339,7 +2339,7 @@ export default function Recepciones() {
 
   const applyReceiptWarehouseToAllItems = (
     warehouseId?: string | number | null,
-    warehouseOptions = receiptWarehouseOptions
+    warehouseOptions = receiptProjectWarehouseOptions
   ) => {
     setWarehouseByItemId(current => {
       const next = { ...current };
@@ -2362,11 +2362,15 @@ export default function Recepciones() {
     if (options.length > 0 || !selectedReceiptProject) return options;
     return [selectedReceiptProject];
   })();
-  const receiptHeaderWarehouseOptions = (receiptWarehouseOptions ?? []).filter(
+  const receiptHeaderWarehouseOptions = receiptProjectWarehouseOptions.filter(
     (warehouse: any) =>
       receiptEditableItems.length === 0 ||
       receiptEditableItems.some((item: any) =>
-        isReceiptWarehouseSelectableForItem(item, warehouse.id)
+        isReceiptWarehouseSelectableForItem(
+          item,
+          warehouse.id,
+          receiptProjectWarehouseOptions
+        )
       )
   );
   const receiptItemsRequireWarehouse = receiptEditableItems.some(
@@ -2377,6 +2381,9 @@ export default function Recepciones() {
     Boolean(sourceId) && receiptItemsRequireWarehouse;
   const getReceiptWarehouseSelectionError = () => {
     if (!shouldShowReceiptEntryScopeControls) return "";
+    if (!selectedReceiptProjectId) {
+      return "Seleccione el proyecto de la recepción.";
+    }
     if (!receiptWarehouseSelectionValue) {
       return "Seleccione un almacén de ingreso antes de guardar o registrar.";
     }
@@ -2396,6 +2403,7 @@ export default function Recepciones() {
 
     const nextProjectOptions = getReceiptProjectOptionsForWarehouse(value);
     if (
+      !lockedReceiptProjectId &&
       selectedReceiptProjectId &&
       !nextProjectOptions.some(
         (project: any) => Number(project.id) === Number(selectedReceiptProjectId)
@@ -2409,13 +2417,6 @@ export default function Recepciones() {
   const handleReceiptHeaderProjectChange = (value: string) => {
     if (!receiptWarehouseSelectionValue) {
       toast.error("Seleccione un almacén de ingreso primero");
-      return;
-    }
-
-    if (value === NO_RECEIPT_PROJECT_VALUE) {
-      setReceiptProjectId("");
-      setTargetByItemId({});
-      applyReceiptWarehouseToAllItems(receiptWarehouseSelectionValue);
       return;
     }
 
@@ -2451,7 +2452,8 @@ export default function Recepciones() {
     }
 
     const lockedDestinationWarehouseId = lockedReturnDestinationWarehouseId;
-    const hasSelectableWarehouses = (receiptWarehouseOptions ?? []).some(
+    const itemWarehouseOptions = receiptProjectWarehouseOptions;
+    const hasSelectableWarehouses = itemWarehouseOptions.some(
       (warehouse: any) => {
         const warehouseId = String(warehouse.id);
         if (isSameTransferOriginScope(item, warehouseId)) return false;
@@ -2462,14 +2464,14 @@ export default function Recepciones() {
       }
     );
     const selectedWarehouseValue = warehouseValue ?? warehouseByItemId[item.id];
-    const selectedWarehouse = (receiptWarehouseOptions ?? []).find(
+    const selectedWarehouse = itemWarehouseOptions.find(
       (warehouse: any) => String(warehouse.id) === selectedWarehouseValue
     );
     const projectOptions =
       getReceiptProjectOptionsForWarehouse(selectedWarehouseValue);
     const selectedProjectValue = selectedReceiptProjectId
       ? String(selectedReceiptProjectId)
-      : NO_RECEIPT_PROJECT_VALUE;
+      : undefined;
     const selectedProjectInWarehouse = projectOptions.find(
       (project: any) => String(project.id) === selectedProjectValue
     );
@@ -2496,7 +2498,7 @@ export default function Recepciones() {
             }));
           }}
           disabled={
-            !receiptWarehouseOptions?.length ||
+            !itemWarehouseOptions.length ||
             !hasSelectableWarehouses ||
             registerMutation.isPending
           }
@@ -2505,7 +2507,7 @@ export default function Recepciones() {
             <SelectValue placeholder="Seleccione almacén" />
           </SelectTrigger>
           <SelectContent className="max-w-[min(680px,calc(100vw-2rem))]">
-            {(receiptWarehouseOptions ?? []).map((warehouse: any) => {
+            {itemWarehouseOptions.map((warehouse: any) => {
               const warehouseId = String(warehouse.id);
               const isSourceWarehouse =
                 isSameTransferOriginScope(item, warehouseId);
@@ -2531,12 +2533,6 @@ export default function Recepciones() {
         <Select
           value={selectedProjectValue}
           onValueChange={value => {
-            if (value === NO_RECEIPT_PROJECT_VALUE) {
-              setReceiptProjectId("");
-              setTargetByItemId({});
-              return;
-            }
-
             setReceiptProjectId(value);
             setTargetByItemId({});
             const nextProject = (receiptProjects ?? []).find(
@@ -2562,14 +2558,9 @@ export default function Recepciones() {
           }
         >
           <SelectTrigger className={compact ? "min-w-64" : "w-full min-w-0"}>
-            <SelectValue placeholder="Sin proyecto" />
+            <SelectValue placeholder="Seleccione proyecto" />
           </SelectTrigger>
           <SelectContent className="max-w-[min(720px,calc(100vw-2rem))]">
-            {!lockedReceiptProjectId ? (
-              <SelectItem value={NO_RECEIPT_PROJECT_VALUE}>
-                Sin proyecto - ingreso directo al almacén
-              </SelectItem>
-            ) : null}
             {projectOptions.map((project: any) => (
               <SelectItem key={project.id} value={String(project.id)}>
                 {formatProjectReference(project, `Proyecto ${project.id}`)}
@@ -3194,9 +3185,13 @@ export default function Recepciones() {
   };
 
   const handleRegisterReceipt = () => {
-    const receiptProjectForSubmit = selectedReceiptProjectId ?? null;
+    const receiptProjectForSubmit = selectedReceiptProjectId;
     if (!sourceId) {
       toast.error("Selecciona un documento origen válido");
+      return;
+    }
+    if (!receiptProjectForSubmit) {
+      toast.error("Seleccione el proyecto de la recepción");
       return;
     }
     if (receiptWarehouseSelectionError) {
@@ -3781,15 +3776,8 @@ export default function Recepciones() {
         receiptPurchaseOrderDetail?.createdBy?.name ||
         receivedByLabel
       : receivedByLabel;
-    const destinationLabel = isPurchaseOrderReceipt
-      ? normalizeReceiptPrintLabel(
-          receiptPurchaseOrderDetail?.purchaseRequest?.printDestination
-        ) ||
-        normalizeReceiptPrintLabel(receiptDetail.project?.name) ||
-        warehouseLabel
-      : getTransferDestinationLabel(receiptTransferDetail, "-");
     const sourceWarehouseLabel = isPurchaseOrderReceipt
-      ? "N/A"
+      ? warehouseLabel
       : getTransferOriginLabel(receiptTransferDetail, "-");
     const supplierLabel = isPurchaseOrderReceipt
       ? receiptPurchaseOrderDetail?.supplier?.name ||
@@ -3865,9 +3853,7 @@ export default function Recepciones() {
         const targetLabel = isPurchaseOrderReceipt
           ? formatReceiptLineTargetLabel(item, sourceItem, receipt.projectId)
           : null;
-        const targetHtml = targetLabel
-          ? `<div class="line-note"><strong>Destino:</strong> ${escapeHtml(targetLabel)}</div>`
-          : "";
+        const targetCellLabel = targetLabel || "-";
         const notesHtml = item.notes?.trim()
           ? `<div class="line-note">${escapeHtml(item.notes)}</div>`
           : "";
@@ -3890,7 +3876,8 @@ export default function Recepciones() {
         return `
           <tr>
             <td>${escapeHtml(companyCode || "-")}</td>
-            <td>${escapeHtml(item.itemName)}${brandHtml}${targetHtml}${notesHtml}${assetHtml}</td>
+            <td>${escapeHtml(item.itemName)}${brandHtml}${notesHtml}${assetHtml}</td>
+            <td>${escapeHtml(targetCellLabel)}</td>
             <td class="center">${escapeHtml(partNumber || "-")}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantityReceived))}</td>
             <td class="center">${escapeHtml(item.unit || "-")}</td>
@@ -3906,6 +3893,7 @@ export default function Recepciones() {
           <tr class="charge-row">
             <td>-</td>
             <td><strong>Otros cargos:</strong> ${escapeHtml(charge.concept)}</td>
+            <td class="center">-</td>
             <td class="center">-</td>
             <td class="numeric">-</td>
             <td class="center">-</td>
@@ -4147,10 +4135,6 @@ export default function Recepciones() {
                   <div class="value">${escapeHtml(requestedByLabel)}</div>
                 </div>
                 <div class="field">
-                  <div class="label">Destino:</div>
-                  <div class="value">${escapeHtml(destinationLabel)}</div>
-                </div>
-                <div class="field">
                   <div class="label">De Bodega:</div>
                   <div class="value">${escapeHtml(sourceWarehouseLabel)}</div>
                 </div>
@@ -4198,17 +4182,18 @@ export default function Recepciones() {
             <table>
               <thead>
                 <tr>
-                  <th style="width: 13%;">Código Empresa</th>
-                  <th>Descripción</th>
-                  <th style="width: 16%;" class="center">No. Parte/No. Serie</th>
-                  <th style="width: 9%;" class="numeric">Cantidad</th>
-                  <th style="width: 9%;" class="center">U Medida</th>
-                  <th style="width: 10%;" class="numeric">Valor U</th>
-                  <th style="width: 10%;" class="numeric">Valor T</th>
+                  <th style="width: 12%;">Código Empresa</th>
+                  <th style="width: 25%;">Descripción</th>
+                  <th style="width: 16%;">Destino</th>
+                  <th style="width: 14%;" class="center">No. Parte/No. Serie</th>
+                  <th style="width: 8%;" class="numeric">Cantidad</th>
+                  <th style="width: 8%;" class="center">U Medida</th>
+                  <th style="width: 9%;" class="numeric">Valor U</th>
+                  <th style="width: 8%;" class="numeric">Valor T</th>
                 </tr>
               </thead>
               <tbody>
-                ${itemRows || `<tr><td colspan="7">Sin ítems</td></tr>`}
+                ${itemRows || `<tr><td colspan="8">Sin ítems</td></tr>`}
                 ${otherChargeRows}
               </tbody>
             </table>
@@ -4694,13 +4679,13 @@ export default function Recepciones() {
                       </div>
                       <div className="space-y-1.5">
                         <Label className="text-xs text-muted-foreground">
-                          Proyecto / bodega opcional
+                          Proyecto *
                         </Label>
                         <Select
                           value={
                             selectedReceiptProjectId
                               ? String(selectedReceiptProjectId)
-                              : NO_RECEIPT_PROJECT_VALUE
+                              : undefined
                           }
                           onValueChange={handleReceiptHeaderProjectChange}
                           disabled={
@@ -4710,14 +4695,9 @@ export default function Recepciones() {
                           }
                         >
                           <SelectTrigger className="h-11">
-                            <SelectValue placeholder="Sin proyecto" />
+                            <SelectValue placeholder="Seleccione proyecto" />
                           </SelectTrigger>
                           <SelectContent className="max-w-[min(720px,calc(100vw-2rem))]">
-                            {!lockedReceiptProjectId ? (
-                              <SelectItem value={NO_RECEIPT_PROJECT_VALUE}>
-                                Sin proyecto - ingreso directo al almacén
-                              </SelectItem>
-                            ) : null}
                             {receiptHeaderProjectOptions.map((project: any) => (
                               <SelectItem
                                 key={project.id}

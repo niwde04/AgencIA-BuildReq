@@ -627,7 +627,7 @@ export const receiptsRouter = router({
       z.object({
         sourceType: z.literal("purchase_order"),
         sourceId: z.number(),
-        projectId: z.number(),
+        projectId: z.number().int().positive(),
         isFiscalDocument: z.boolean().optional(),
         cai: z.string().trim().max(100).optional(),
         invoiceNumber: z.string().trim().max(100).optional(),
@@ -808,7 +808,7 @@ export const receiptsRouter = router({
         .object({
           sourceType: z.enum(["purchase_order", "transfer"]),
           sourceId: z.number(),
-          projectId: z.number().nullable().optional(),
+          projectId: z.number().int().positive(),
           isFiscalDocument: z.boolean().optional(),
           cai: z.string().trim().max(100).optional(),
           invoiceNumber: z.string().trim().max(100).optional(),
@@ -965,8 +965,11 @@ export const receiptsRouter = router({
           });
         }
         assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
-        if (input.projectId) {
-          assertProjectScopedAccess(ctx.user, input.projectId);
+        if (input.projectId !== detail.purchaseOrder.projectId) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "El proyecto de la recepción no coincide con la orden de compra",
+          });
         }
 
         if (
@@ -1171,20 +1174,18 @@ export const receiptsRouter = router({
         const destinationProjectId =
           detail.transferRequest?.destinationType === "proyecto"
             ? detail.transferRequest.destinationProjectId
-            : input.projectId;
+            : detail.transferRequest?.projectId ?? input.projectId;
         allowAnyActiveReceiptWarehouse = false;
-        if (typeof destinationProjectId === "number") {
-          assertProjectScopedAccess(ctx.user, destinationProjectId);
-          if (
-            detail.transferRequest?.destinationType === "proyecto" &&
-            input.projectId !== destinationProjectId
-          ) {
-            throw new TRPCError({
-              code: "BAD_REQUEST",
-              message:
-                "El proyecto de la recepción no coincide con el destino del traslado",
-            });
-          }
+        assertProjectScopedAccess(ctx.user, input.projectId);
+        if (
+          typeof destinationProjectId === "number" &&
+          input.projectId !== destinationProjectId
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "El proyecto de la recepción no coincide con el traslado",
+          });
         }
 
         if (!RECEIVABLE_TRANSFER_STATUSES.has(detail.transfer.status)) {
@@ -1339,7 +1340,7 @@ export const receiptsRouter = router({
       const receiptData = {
         sourceType: input.sourceType,
         sourceId: input.sourceId,
-        projectId: input.projectId ?? null,
+        projectId: input.projectId,
         receivedById: ctx.user.id,
         status: "pendiente" as const,
         isFiscalDocument,

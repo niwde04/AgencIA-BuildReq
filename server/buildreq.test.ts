@@ -9378,51 +9378,15 @@ describe("BuildReq - Receipts", () => {
     registerReceiptSpy.mockRestore();
   });
 
-  it("can register purchase order receipts directly into a physical warehouse without project", async () => {
+  it("rejects purchase order receipts without project", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
-    const getPurchaseOrderByIdSpy = vi
-      .spyOn(db, "getPurchaseOrderById")
-      .mockResolvedValue({
-        purchaseOrder: {
-          id: 4,
-          orderNumber: "OC-010-00000011",
-          projectId: 10,
-          status: "emitida",
-        },
-        items: [
-          {
-            id: 15,
-            itemName: "ADITIVO ADMIX DX2",
-            quantity: "2.00",
-            receivedQuantity: "0.00",
-            unitPrice: "30200.0000",
-            taxCode: "isv_15",
-          },
-        ],
-      } as any);
-    const listWarehousesSpy = vi
-      .spyOn(db, "listWarehouses")
-      .mockResolvedValue([
-        {
-          ...DEFAULT_PROJECT_WAREHOUSE,
-          id: 202,
-          displayName: "002 - HEH COMAYAGUA",
-        },
-      ] as any);
-    const registerReceiptSpy = vi
-      .spyOn(db, "registerReceipt")
-      .mockResolvedValue({
-        id: 7,
-        receiptNumber: "RC-2026-0002",
-        status: "completa",
-      } as any);
 
     await expect(
       caller.receipts.register({
         sourceType: "purchase_order",
         sourceId: 4,
-        projectId: null,
+        projectId: null as any,
         cai: VALID_CAI,
         invoiceNumber: VALID_INVOICE_NUMBER,
         documentRangeStart: VALID_DOCUMENT_RANGE_START,
@@ -9445,32 +9409,7 @@ describe("BuildReq - Receipts", () => {
           },
         ],
       })
-    ).resolves.toEqual({
-      id: 7,
-      receiptNumber: "RC-2026-0002",
-      status: "completa",
-    });
-
-    expect(listWarehousesSpy).toHaveBeenCalledWith({ isActive: true });
-    expect(registerReceiptSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sourceType: "purchase_order",
-        sourceId: 4,
-        projectId: null,
-      }),
-      expect.arrayContaining([
-        expect.objectContaining({
-          sourceItemId: 15,
-          warehouseId: 202,
-          targetType: null,
-          subProjectId: null,
-        }),
-      ])
-    );
-
-    getPurchaseOrderByIdSpy.mockRestore();
-    listWarehousesSpy.mockRestore();
-    registerReceiptSpy.mockRestore();
+    ).rejects.toThrow("expected number");
   });
 
   it("allows receiving purchase order services without warehouse inventory entry", async () => {
