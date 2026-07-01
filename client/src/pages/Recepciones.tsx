@@ -317,9 +317,7 @@ function formatReceiptWarehouseLabel(detail: any, fallback = "Almacén de ingres
   const itemWarehouseLabels = Array.from(
     new Set(
       (detail?.items || [])
-        .map((item: any) =>
-          normalizeReceiptPrintLabel(formatWarehouseReference(item.warehouse, ""))
-        )
+        .map((item: any) => formatReceiptItemWarehouseLabel(item, ""))
         .filter(Boolean)
     )
   );
@@ -333,6 +331,15 @@ function formatReceiptWarehouseLabel(detail: any, fallback = "Almacén de ingres
   if (directWarehouseLabel) return directWarehouseLabel;
 
   return fallback;
+}
+
+function formatReceiptItemWarehouseLabel(item: any, fallback = "-") {
+  return normalizeReceiptPrintLabel(
+    formatWarehouseReference(
+      item?.warehouse,
+      item?.warehouseId ? `Almacén #${item.warehouseId}` : fallback
+    )
+  );
 }
 
 function formatReceiptProjectLabel(detail: any, fallback = "-") {
@@ -3855,6 +3862,10 @@ export default function Recepciones() {
           ? formatReceiptLineTargetLabel(item, sourceItem, receipt.projectId)
           : null;
         const targetCellLabel = targetLabel || "-";
+        const itemWarehouseLabel = formatReceiptItemWarehouseLabel(
+          item,
+          warehouseLabel
+        );
         const notesHtml = item.notes?.trim()
           ? `<div class="line-note">${escapeHtml(item.notes)}</div>`
           : "";
@@ -3878,6 +3889,7 @@ export default function Recepciones() {
           <tr>
             <td>${escapeHtml(companyCode || "-")}</td>
             <td>${escapeHtml(item.itemName)}${brandHtml}${notesHtml}${assetHtml}</td>
+            <td>${escapeHtml(itemWarehouseLabel)}</td>
             <td>${escapeHtml(targetCellLabel)}</td>
             <td class="center">${escapeHtml(partNumber || "-")}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantityReceived))}</td>
@@ -3894,6 +3906,7 @@ export default function Recepciones() {
           <tr class="charge-row">
             <td>-</td>
             <td><strong>Otros cargos:</strong> ${escapeHtml(charge.concept)}</td>
+            <td class="center">-</td>
             <td class="center">-</td>
             <td class="center">-</td>
             <td class="numeric">-</td>
@@ -4183,18 +4196,19 @@ export default function Recepciones() {
             <table>
               <thead>
                 <tr>
-                  <th style="width: 12%;">Código Empresa</th>
-                  <th style="width: 25%;">Descripción</th>
-                  <th style="width: 16%;">Destino</th>
-                  <th style="width: 14%;" class="center">No. Parte/No. Serie</th>
-                  <th style="width: 8%;" class="numeric">Cantidad</th>
-                  <th style="width: 8%;" class="center">U Medida</th>
-                  <th style="width: 9%;" class="numeric">Valor U</th>
-                  <th style="width: 8%;" class="numeric">Valor T</th>
+                  <th style="width: 11%;">Código Empresa</th>
+                  <th style="width: 20%;">Descripción</th>
+                  <th style="width: 14%;">Bodega ingreso</th>
+                  <th style="width: 15%;">Destino</th>
+                  <th style="width: 13%;" class="center">No. Parte/No. Serie</th>
+                  <th style="width: 7%;" class="numeric">Cantidad</th>
+                  <th style="width: 7%;" class="center">U Medida</th>
+                  <th style="width: 7%;" class="numeric">Valor U</th>
+                  <th style="width: 6%;" class="numeric">Valor T</th>
                 </tr>
               </thead>
               <tbody>
-                ${itemRows || `<tr><td colspan="8">Sin ítems</td></tr>`}
+                ${itemRows || `<tr><td colspan="9">Sin ítems</td></tr>`}
                 ${otherChargeRows}
               </tbody>
             </table>
