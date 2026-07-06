@@ -50,6 +50,7 @@ import {
   Eye,
   EyeOff,
   ChevronDown,
+  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -144,6 +145,31 @@ function formatAssignedProjects(entity: any) {
     return "Sin proyectos asignados";
   }
   return "N/A";
+}
+
+function normalizeSearchValue(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function getUserSearchText(user: any) {
+  const assignedProjects = Array.isArray(user?.assignedProjects)
+    ? user.assignedProjects
+    : [];
+
+  return [
+    user?.name,
+    user?.email,
+    user?.role === "admin" ? "Administrador" : "Usuario",
+    ROLE_LABELS[user?.buildreqRole],
+    user?.buildreqRole,
+    formatAssignedProjects(user),
+    user?.mustChangePassword ? "Cambio pendiente" : null,
+    user?.lastSignedIn ? new Date(user.lastSignedIn).toLocaleDateString("es") : null,
+    ...assignedProjects.flatMap((project: any) => [project?.code, project?.name]),
+  ].join(" ");
 }
 
 function canManageUserAccounts(user: any) {
@@ -361,6 +387,7 @@ export default function Usuarios() {
   const [showDirectUserDialog, setShowDirectUserDialog] = useState(false);
   const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [emailData, setEmailData] = useState<{ to: string; subject: string; content: string } | null>(null);
+  const [userSearchTerm, setUserSearchTerm] = useState("");
 
   // Form state
   const [invName, setInvName] = useState("");
@@ -382,6 +409,20 @@ export default function Usuarios() {
   const [resetPassword, setResetPassword] = useState("");
   const [resetPasswordConfirmation, setResetPasswordConfirmation] = useState("");
   const [showResetPassword, setShowResetPassword] = useState(false);
+
+  const filteredUsers = useMemo(() => {
+    const searchTerms = normalizeSearchValue(userSearchTerm)
+      .split(/\s+/)
+      .filter(Boolean);
+
+    if (searchTerms.length === 0) return sortedUsers;
+
+    return sortedUsers.filter((row: any) => {
+      const searchText = normalizeSearchValue(getUserSearchText(row));
+      return searchTerms.every((term) => searchText.includes(term));
+    });
+  }, [sortedUsers, userSearchTerm]);
+  const hasUserSearch = userSearchTerm.trim().length > 0;
 
   const updateRoleMutation = trpc.userManagement.updateRole.useMutation({
     onSuccess: () => {
@@ -649,7 +690,35 @@ export default function Usuarios() {
         </TabsList>
 
         {/* USERS TAB */}
-        <TabsContent value="users">
+        <TabsContent value="users" className="space-y-3">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+            <div className="relative min-w-0 flex-1 lg:max-w-xl">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={userSearchTerm}
+                onChange={(event) => setUserSearchTerm(event.target.value)}
+                placeholder="Buscar usuarios por nombre, email, rol o proyecto..."
+                className="h-10 pl-9 pr-10"
+              />
+              {hasUserSearch ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 text-muted-foreground"
+                  onClick={() => setUserSearchTerm("")}
+                  aria-label="Limpiar búsqueda"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              ) : null}
+            </div>
+            {sortedUsers.length > 0 ? (
+              <p className="text-xs text-muted-foreground">
+                {filteredUsers.length} de {sortedUsers.length} usuarios
+              </p>
+            ) : null}
+          </div>
           <Card>
             <CardContent className="p-0">
               {usersLoading ? (
@@ -661,6 +730,21 @@ export default function Usuarios() {
                   {canManageAccounts ? (
                     <p className="text-xs text-muted-foreground mt-1">Cree usuarios con el botón superior</p>
                   ) : null}
+                </div>
+              ) : filteredUsers.length === 0 ? (
+                <div className="p-8 text-center">
+                  <Search className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
+                  <p className="text-muted-foreground">No hay usuarios que coincidan con la búsqueda</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 gap-2"
+                    onClick={() => setUserSearchTerm("")}
+                  >
+                    <X className="h-4 w-4" />
+                    Limpiar búsqueda
+                  </Button>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -677,7 +761,7 @@ export default function Usuarios() {
                       </tr>
                     </thead>
                     <tbody>
-                      {sortedUsers.map((u: any) => {
+                      {filteredUsers.map((u: any) => {
                         const canManageThisUser = canManageListedUser(user, u);
                         return (
                         <tr key={u.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
