@@ -119,6 +119,7 @@ const allMenuItems: MenuItem[] = [
       "administracion_central",
       "administrador_proyecto",
       "bodeguero_proyecto",
+      "ingeniero_residente",
       "superintendente",
       "contable",
       "admin",
@@ -397,7 +398,11 @@ function DashboardLayoutContent({
   const menuItems = useMemo(() => {
     return allMenuItems.filter((item) => {
       if (userRole === "superintendente") {
-        return item.path === "/" || item.path === "/solicitudes";
+        return (
+          item.path === "/" ||
+          item.path === "/solicitudes" ||
+          item.path === "/articulos"
+        );
       }
       if (userRole === "contable") {
         return (
@@ -427,6 +432,7 @@ function DashboardLayoutContent({
     location !== "/retenciones";
   const isSuperintendentAllowedPath =
     location === "/" ||
+    location === "/articulos" ||
     location === "/solicitudes" ||
     /^\/solicitudes\/\d+$/.test(location);
   const shouldRedirectSuperintendent =

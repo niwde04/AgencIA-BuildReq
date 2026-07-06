@@ -26,6 +26,7 @@ function canReadArticles(user: {
     user.buildreqRole === "administracion_central" ||
     user.buildreqRole === "administrador_proyecto" ||
     user.buildreqRole === "bodeguero_proyecto" ||
+    user.buildreqRole === "ingeniero_residente" ||
     user.buildreqRole === "superintendente" ||
     user.buildreqRole === "contable"
   );
@@ -35,7 +36,13 @@ function canManageArticles(user: {
   role?: string | null;
   buildreqRole?: string | null;
 }) {
-  return user.role === "admin" || user.buildreqRole === "jefe_bodega_central";
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "contable"
+  );
 }
 
 function canCreateArticles(user: {

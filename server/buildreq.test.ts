@@ -755,7 +755,7 @@ describe("BuildReq - Articles catalog", () => {
     listArticlesSpy.mockRestore();
   });
 
-  it("Project and supervisory roles can list articles but cannot modify them", async () => {
+  it("Read-only roles can list articles but cannot modify them", async () => {
     const listArticlesSpy = vi.spyOn(db, "listArticles").mockResolvedValue({
       items: [
         {
@@ -774,9 +774,9 @@ describe("BuildReq - Articles catalog", () => {
     const updateArticleSpy = vi.spyOn(db, "updateArticle");
 
     for (const { ctx } of [
-      createProjectAdminContext(),
       createProjectBodegueroContext(),
       createSuperintendentContext(),
+      createIngenieroContext(),
     ]) {
       const caller = appRouter.createCaller(ctx);
 
@@ -1018,9 +1018,7 @@ describe("BuildReq - Articles catalog", () => {
     ).toBe("OC-006-0008");
   });
 
-  it("Admin or Jefe de Bodega can update article type and status", async () => {
-    const { ctx } = createBodegaContext();
-    const caller = appRouter.createCaller(ctx);
+  it("Catalog manager roles can update article type and status", async () => {
     const updateArticleSpy = vi.spyOn(db, "updateArticle").mockResolvedValue({
       id: 1,
       tipoArticulo: 3,
@@ -1029,15 +1027,26 @@ describe("BuildReq - Articles catalog", () => {
       allowsTaxWithholding: false,
     } as any);
 
-    await expect(
-      caller.articles.update({
-        id: 1,
-        tipoArticulo: 3,
-        isActive: false,
-        allowsTaxWithholding: false,
-      })
-    ).resolves.toEqual(expect.objectContaining({ tipoArticulo: 3 }));
+    for (const { ctx } of [
+      createUserContext({ role: "admin", buildreqRole: null }),
+      createBodegaContext(),
+      createAdminCentralContext(),
+      createProjectAdminContext(),
+      createContableContext(),
+    ]) {
+      const caller = appRouter.createCaller(ctx);
 
+      await expect(
+        caller.articles.update({
+          id: 1,
+          tipoArticulo: 3,
+          isActive: false,
+          allowsTaxWithholding: false,
+        })
+      ).resolves.toEqual(expect.objectContaining({ tipoArticulo: 3 }));
+    }
+
+    expect(updateArticleSpy).toHaveBeenCalledTimes(5);
     expect(updateArticleSpy).toHaveBeenCalledWith(1, {
       tipoArticulo: 3,
       projectId: null,
@@ -1067,25 +1076,31 @@ describe("BuildReq - Articles catalog", () => {
   });
 
   it("Blocks article updates for read-only users", async () => {
-    const { ctx } = createAdminCentralContext();
-    const caller = appRouter.createCaller(ctx);
     const updateArticleSpy = vi.spyOn(db, "updateArticle");
 
-    await expect(
-      caller.articles.update({
-        id: 1,
-        tipoArticulo: 1,
-        isActive: true,
-        allowsTaxWithholding: true,
-      })
-    ).rejects.toThrow("No tiene permisos para modificar artículos");
+    for (const { ctx } of [
+      createProjectBodegueroContext(),
+      createSuperintendentContext(),
+      createIngenieroContext(),
+    ]) {
+      const caller = appRouter.createCaller(ctx);
+
+      await expect(
+        caller.articles.update({
+          id: 1,
+          tipoArticulo: 1,
+          isActive: true,
+          allowsTaxWithholding: true,
+        })
+      ).rejects.toThrow("No tiene permisos para modificar artículos");
+    }
 
     expect(updateArticleSpy).not.toHaveBeenCalled();
     updateArticleSpy.mockRestore();
   });
 
-  it("Blocks article listing for unauthorized roles", async () => {
-    const { ctx } = createIngenieroContext();
+  it("Blocks article listing for users without a BuildReq role", async () => {
+    const { ctx } = createUserContext({ role: "user", buildreqRole: null });
     const caller = appRouter.createCaller(ctx);
     const listArticlesSpy = vi.spyOn(db, "listArticles");
 

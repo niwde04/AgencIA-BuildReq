@@ -37,6 +37,7 @@ import {
 } from "@shared/fixed-assets";
 import {
   Download,
+  Eye,
   PackageSearch,
   Pencil,
   Plus,
@@ -248,7 +249,11 @@ export default function Articulos() {
     "/activos-fijos-pendientes"
   );
   const canManage =
-    user?.role === "admin" || buildreqRole === "jefe_bodega_central";
+    user?.role === "admin" ||
+    buildreqRole === "jefe_bodega_central" ||
+    buildreqRole === "administracion_central" ||
+    buildreqRole === "administrador_proyecto" ||
+    buildreqRole === "contable";
   const canCreate =
     user?.role === "admin" ||
     buildreqRole === "jefe_bodega_central" ||
@@ -259,6 +264,7 @@ export default function Articulos() {
     user?.role === "admin" ||
     buildreqRole === "jefe_bodega_central" ||
     buildreqRole === "contable";
+  const canViewArticleAttributes = Boolean(user?.role === "admin" || buildreqRole);
   const selectedArticleIsPendingFixedAsset = Boolean(
     selectedArticle?.fixedAssetStatus === "pendiente" &&
       selectedArticle?.temporaryItemCode
@@ -271,6 +277,11 @@ export default function Articulos() {
   );
   const canEditSelectedFixedAssetDetails = Boolean(
     selectedArticle?.tipoArticulo === 3 && canResolveFixedAssets
+  );
+  const isSelectedArticleReadOnly = Boolean(
+    selectedArticle &&
+      !isResolvingSelectedArticle &&
+      !canEditSelectedArticleCatalog
   );
 
   useEffect(() => {
@@ -840,7 +851,7 @@ export default function Articulos() {
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Retención
                       </th>
-                      {canManage || canResolveFixedAssets ? (
+                      {canViewArticleAttributes ? (
                         <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Acciones
                         </th>
@@ -852,10 +863,19 @@ export default function Articulos() {
                       const fixedAssetStatusLabel = getFixedAssetStatusLabel(
                         article.fixedAssetStatus
                       );
-                      const canOpenArticle =
-                        canManage ||
-                        (canResolveFixedAssets &&
-                          article.tipoArticulo === 3);
+                      const canResolveArticle = Boolean(
+                        canResolveFixedAssets &&
+                          article.fixedAssetStatus === "pendiente" &&
+                          article.temporaryItemCode
+                      );
+                      const actionLabel = canResolveArticle
+                        ? "Resolver"
+                        : canManage
+                          ? "Editar"
+                          : "Ver";
+                      const ActionIcon = canResolveArticle || canManage
+                        ? Pencil
+                        : Eye;
                       return (
                       <tr
                         key={article.id}
@@ -944,25 +964,17 @@ export default function Articulos() {
                               : "No permite"}
                           </Badge>
                         </td>
-                        {canManage || canResolveFixedAssets ? (
+                        {canViewArticleAttributes ? (
                           <td className="p-3 text-right">
-                            {canOpenArticle ? (
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={() => openEditDialog(article)}
-                              >
-                                <Pencil className="mr-2 h-3.5 w-3.5" />
-                                {article.fixedAssetStatus === "pendiente"
-                                  ? "Resolver"
-                                  : "Editar"}
-                              </Button>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">
-                                —
-                              </span>
-                            )}
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openEditDialog(article)}
+                            >
+                              <ActionIcon className="mr-2 h-3.5 w-3.5" />
+                              {actionLabel}
+                            </Button>
                           </td>
                         ) : null}
                       </tr>
@@ -1224,7 +1236,9 @@ export default function Articulos() {
             <DialogTitle>
               {isResolvingSelectedArticle
                 ? "Resolver código de activo fijo"
-                : "Editar artículo"}
+                : canEditSelectedArticleCatalog
+                  ? "Editar artículo"
+                  : "Ver atributos del artículo"}
             </DialogTitle>
           </DialogHeader>
 
@@ -1416,24 +1430,36 @@ export default function Articulos() {
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs">Condición</Label>
-                      <Select
-                        value={fixedAssetDetailDraft.condition}
-                        disabled={!canEditSelectedFixedAssetDetails}
-                        onValueChange={value =>
-                          updateFixedAssetDraftField("condition", value)
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {ASSET_CONDITION_VALUES.map(condition => (
-                            <SelectItem key={condition} value={condition}>
-                              {ASSET_CONDITION_LABELS[condition]}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      {canEditSelectedFixedAssetDetails ? (
+                        <Select
+                          value={fixedAssetDetailDraft.condition}
+                          onValueChange={value =>
+                            updateFixedAssetDraftField("condition", value)
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ASSET_CONDITION_VALUES.map(condition => (
+                              <SelectItem key={condition} value={condition}>
+                                {ASSET_CONDITION_LABELS[condition]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          value={
+                            selectedArticle.fixedAssetCondition
+                              ? ASSET_CONDITION_LABELS[
+                                  selectedArticle.fixedAssetCondition as AssetCondition
+                                ]
+                              : ""
+                          }
+                          readOnly
+                        />
+                      )}
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs">Color</Label>
@@ -1546,24 +1572,26 @@ export default function Articulos() {
                     updateFixedAssetDetailsMutation.isPending
                   }
                 >
-                  Cancelar
+                  {isSelectedArticleReadOnly ? "Cerrar" : "Cancelar"}
                 </Button>
-                <Button
-                  type="button"
-                  onClick={submitUpdate}
-                  disabled={
-                    updateMutation.isPending ||
-                    resolveFixedAssetMutation.isPending ||
-                    updateFixedAssetDetailsMutation.isPending
-                  }
-                >
-                  <Save className="mr-2 h-4 w-4" />
-                  {updateMutation.isPending || resolveFixedAssetMutation.isPending
-                    ? "Guardando..."
-                    : isResolvingSelectedArticle
-                      ? "Guardar código real"
-                      : "Guardar cambios"}
-                </Button>
+                {!isSelectedArticleReadOnly ? (
+                  <Button
+                    type="button"
+                    onClick={submitUpdate}
+                    disabled={
+                      updateMutation.isPending ||
+                      resolveFixedAssetMutation.isPending ||
+                      updateFixedAssetDetailsMutation.isPending
+                    }
+                  >
+                    <Save className="mr-2 h-4 w-4" />
+                    {updateMutation.isPending || resolveFixedAssetMutation.isPending
+                      ? "Guardando..."
+                      : isResolvingSelectedArticle
+                        ? "Guardar código real"
+                        : "Guardar cambios"}
+                  </Button>
+                ) : null}
               </div>
             </div>
           ) : null}
