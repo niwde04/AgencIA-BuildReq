@@ -211,6 +211,26 @@ function buildFixedAssetDraft(article?: ArticleRecord | null): FixedAssetDetailD
   };
 }
 
+function buildFixedAssetSearchBadges(article: ArticleRecord) {
+  if (article.tipoArticulo !== 3) return [];
+  return [
+    article.fixedAssetSerialNumber
+      ? `Serie ${article.fixedAssetSerialNumber}`
+      : null,
+    article.fixedAssetPlateOrCode
+      ? `Placa ${article.fixedAssetPlateOrCode}`
+      : null,
+    article.fixedAssetChassisSeries
+      ? `Chasis ${article.fixedAssetChassisSeries}`
+      : null,
+    article.fixedAssetMotorSeries
+      ? `Motor ${article.fixedAssetMotorSeries}`
+      : null,
+    article.fixedAssetBrand ? `Marca activo ${article.fixedAssetBrand}` : null,
+    article.fixedAssetModel ? `Modelo ${article.fixedAssetModel}` : null,
+  ].filter(Boolean) as string[];
+}
+
 export default function Articulos() {
   const { user } = useAuth();
   const [location] = useLocation();
@@ -728,8 +748,8 @@ export default function Articulos() {
           <Input
             placeholder={
               isPendingFixedAssetsView
-                ? "Buscar por código, serie, descripción o marca"
-                : "Buscar por código, descripción, marca o número de parte"
+                ? "Buscar código, descripción, serie, placa, chasis, motor, marca o modelo"
+                : "Buscar código, descripción, marca, parte, serie, placa, chasis o motor"
             }
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -902,7 +922,8 @@ export default function Articulos() {
                               ) : null}
                             </div>
                           ) : null}
-                          {article.temporaryItemCode || article.fixedAssetSerialNumber ? (
+                          {article.temporaryItemCode ||
+                          buildFixedAssetSearchBadges(article).length > 0 ? (
                             <div className="mt-2 flex flex-wrap gap-1.5">
                               {fixedAssetStatusLabel ? (
                                 <Badge
@@ -919,11 +940,11 @@ export default function Articulos() {
                               {article.fixedAssetIsLeasing ? (
                                 <Badge variant="outline">Leasing</Badge>
                               ) : null}
-                              {article.fixedAssetSerialNumber ? (
-                                <Badge variant="outline">
-                                  Serie {article.fixedAssetSerialNumber}
+                              {buildFixedAssetSearchBadges(article).map(label => (
+                                <Badge key={label} variant="outline">
+                                  {label}
                                 </Badge>
-                              ) : null}
+                              ))}
                             </div>
                           ) : null}
                         </td>

@@ -130,3 +130,11 @@ verification-notes.txt
 verification-v3.txt
 verification-v5.txt
 vite.config.ts.bak
+
+# Local Hidalgo import reports with operational/catalog data
+reports/fixed-assets-imports/hidalgo-06072026-*.json
+reports/fixed-assets-prune/hidalgo-06072026-*.json
+reports/products-inventory-imports/hidalgo-06072026-*.json
+reports/products-inventory-imports/hidalgo-06072026-conflicts.md
+reports/services-imports/hidalgo-06072026-*.json
+reports/services-imports/plantilla-servicios-hidalgo-06072026.xlsx

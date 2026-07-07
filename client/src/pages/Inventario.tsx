@@ -68,6 +68,7 @@ type InventorySortField =
   | "currentStock"
   | "minimumStock"
   | "warehouseLocation"
+  | "storageLocation"
   | "projectName";
 
 type SortDirection = "asc" | "desc";
@@ -91,6 +92,7 @@ const columns: Array<{
   { key: "minimumStock", label: "Mínimo", align: "right" },
   { key: "projectName", label: "Proyecto / bodega" },
   { key: "warehouseLocation", label: "Almacén físico" },
+  { key: "storageLocation", label: "Ubicación" },
 ];
 
 function buildPageItems(currentPage: number, totalPages: number) {
@@ -263,6 +265,7 @@ export default function Inventario() {
   const [minimumStock, setMinimumStock] = useState("");
   const [projectId, setProjectId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
+  const [storageLocation, setStorageLocation] = useState("");
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -589,6 +592,7 @@ export default function Inventario() {
     setMinimumStock("");
     setProjectId("");
     setWarehouseId("");
+    setStorageLocation("");
   };
 
   const items = data?.items || [];
@@ -644,6 +648,7 @@ export default function Inventario() {
           warehouse: item.warehouse ?? null,
           warehouseId: warehouseId ?? undefined,
           warehouseLocation,
+          storageLocationsByKey: new Map<string, string>(),
         };
 
       const projectKey = item.project?.id
@@ -666,6 +671,13 @@ export default function Inventario() {
       existing.sourceIds.push(item.id);
       existing.currentStockTotal += parseQuantity(item.currentStock);
       existing.minimumStockTotal += parseQuantity(item.minimumStock);
+      const itemStorageLocation = String(item.storageLocation ?? "").trim();
+      if (itemStorageLocation) {
+        existing.storageLocationsByKey.set(
+          itemStorageLocation.toLowerCase(),
+          itemStorageLocation
+        );
+      }
       projectBreakdownEntry.sourceIds.push(item.id);
       projectBreakdownEntry.currentStockTotal += parseQuantity(item.currentStock);
       projectBreakdownEntry.minimumStockTotal += parseQuantity(item.minimumStock);
@@ -709,6 +721,9 @@ export default function Inventario() {
       const singleProject = hasSingleProject
         ? projectBreakdown[0]?.project ?? null
         : null;
+      const storageLocations = Array.from(
+        item.storageLocationsByKey.values()
+      ) as string[];
 
       return {
         ...item,
@@ -736,6 +751,10 @@ export default function Inventario() {
         totalRequiredQuantity: totalRequiredQuantity.toFixed(2),
         pendingReceiptQuantity: pendingReceiptQuantity.toFixed(2),
         warehouseSummaryLabel: item.warehouseLocation || "Sin almacén",
+        storageLocation:
+          storageLocations.length > 1
+            ? `${storageLocations.length} ubicaciones`
+            : storageLocations[0] || item.storageLocation || null,
       };
     });
   }, [
@@ -914,6 +933,11 @@ export default function Inventario() {
             width: 32,
           },
           {
+            header: "Ubicación",
+            value: row => row.storageLocation || "",
+            width: 28,
+          },
+          {
             header: "Estado",
             value: row => (row.isActive === false ? "Inactivo" : "Activo"),
           },
@@ -1018,13 +1042,21 @@ export default function Inventario() {
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                   <div className="space-y-1">
                     <Label className="text-xs">Categoría</Label>
                     <Input
                       value={category}
                       onChange={(e) => setCategory(e.target.value)}
                       placeholder="Materiales"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Ubicación</Label>
+                    <Input
+                      value={storageLocation}
+                      onChange={(e) => setStorageLocation(e.target.value)}
+                      placeholder="Estante, zona o plantel"
                     />
                   </div>
                   <div className="space-y-1">
@@ -1105,6 +1137,7 @@ export default function Inventario() {
                       minimumStock: minimumStock || undefined,
                       projectId: Number(projectId),
                       warehouseId: Number(warehouseId),
+                      storageLocation: storageLocation || undefined,
                     });
                   }}
                   disabled={createMutation.isPending}
@@ -2109,6 +2142,9 @@ export default function Inventario() {
                             </td>
                             <td className="p-3 text-xs">
                               {item.warehouseSummaryLabel || "—"}
+                            </td>
+                            <td className="p-3 text-xs">
+                              {item.storageLocation || "—"}
                             </td>
                             <td className="p-3">
                               <div className="flex justify-end gap-2">

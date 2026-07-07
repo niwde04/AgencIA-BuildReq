@@ -215,6 +215,7 @@ export const inventoryRouter = router({
               "currentStock",
               "minimumStock",
               "warehouseLocation",
+              "storageLocation",
               "projectName",
             ])
             .optional(),
@@ -347,6 +348,7 @@ export const inventoryRouter = router({
         projectId: z.number().int().positive(),
         warehouseId: z.number().int().positive(),
         warehouseLocation: z.string().optional(),
+        storageLocation: z.string().max(255).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -372,6 +374,7 @@ export const inventoryRouter = router({
         projectId: z.number().int().positive().nullable().optional(),
         warehouseId: z.number().int().positive().nullable().optional(),
         warehouseLocation: z.string().optional(),
+        storageLocation: z.string().max(255).nullable().optional(),
         isActive: z.boolean().optional(),
       })
     )

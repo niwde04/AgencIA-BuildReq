@@ -14159,6 +14159,7 @@ export type InventorySortField =
   | "currentStock"
   | "minimumStock"
   | "warehouseLocation"
+  | "storageLocation"
   | "projectName";
 
 export type InventoryListFilters = {
@@ -14226,6 +14227,7 @@ function buildInventoryWhere(filters?: InventoryListFilters) {
         ilike(inventoryItems.unit, `%${search}%`),
         ilike(sapCatalog.description, `%${search}%`),
         ilike(inventoryItems.warehouseLocation, `%${search}%`),
+        ilike(inventoryItems.storageLocation, `%${search}%`),
         ilike(sapCatalog.brand, `%${search}%`),
         ilike(sapCatalog.partNumber, `%${search}%`),
         ilike(warehouses.code, `%${search}%`),
@@ -14438,6 +14440,8 @@ export async function listInventoryItems(filters?: InventoryListFilters) {
         return inventoryItems.minimumStock;
       case "warehouseLocation":
         return sql<string>`coalesce(${warehouses.displayName}, ${inventoryItems.warehouseLocation})`;
+      case "storageLocation":
+        return inventoryItems.storageLocation;
       case "projectName":
         return sql<string>`coalesce(${projects.name}, 'Por clasificar')`;
       case "name":
@@ -14547,6 +14551,7 @@ export async function searchGlobalInventoryAvailability(params?: {
       ilike(inventoryItems.name, `%${search}%`),
       ilike(inventoryItems.description, `%${search}%`),
       ilike(inventoryItems.category, `%${search}%`),
+      ilike(inventoryItems.storageLocation, `%${search}%`),
       ilike(sapCatalog.description, `%${search}%`),
       ilike(sapCatalog.brand, `%${search}%`),
       ilike(sapCatalog.partNumber, `%${search}%`),
@@ -16063,20 +16068,75 @@ export type ArticleListFilters = {
   pageSize?: number;
 };
 
+export const ARTICLE_SEARCH_FIELD_NAMES = [
+  "itemCode",
+  "temporaryItemCode",
+  "description",
+  "itemGroup",
+  "brand",
+  "partNumber",
+  "fixedAssetSerialNumber",
+  "fixedAssetCondition",
+  "fixedAssetColor",
+  "fixedAssetModel",
+  "fixedAssetBrand",
+  "fixedAssetChassisSeries",
+  "fixedAssetMotorSeries",
+  "fixedAssetPlateOrCode",
+  "fixedAssetObservation",
+] as const;
+
+export const ARTICLE_COMPACT_SEARCH_FIELD_NAMES = [
+  "itemCode",
+  "temporaryItemCode",
+  "brand",
+  "partNumber",
+  "fixedAssetSerialNumber",
+  "fixedAssetModel",
+  "fixedAssetBrand",
+  "fixedAssetChassisSeries",
+  "fixedAssetMotorSeries",
+  "fixedAssetPlateOrCode",
+] as const;
+
+function buildArticleFieldSearchCondition(
+  fieldName: (typeof ARTICLE_SEARCH_FIELD_NAMES)[number],
+  term: string
+) {
+  if (fieldName === "fixedAssetCondition") {
+    return sql`${sapCatalog.fixedAssetCondition}::text ilike ${`%${term}%`}`;
+  }
+  return ilike(sapCatalog[fieldName], `%${term}%`);
+}
+
 function buildArticleWhere(filters?: ArticleListFilters) {
   const conditions = [];
 
   if (filters?.search?.trim()) {
     const search = filters.search.trim();
+    const compactSearch = search.replace(/[\s\-_/\\.]+/g, "");
+    const normalizedSearchTerms = Array.from(
+      new Set([search, compactSearch].filter(Boolean))
+    );
+    const compactSearchColumns = ARTICLE_COMPACT_SEARCH_FIELD_NAMES.map(
+      fieldName => sapCatalog[fieldName]
+    );
+    const compactAssetIdentifierConditions =
+      compactSearch
+        ? compactSearchColumns.map(
+            column =>
+              sql`regexp_replace(coalesce(${column}, ''), '[[:space:]\\-_/\\.]', '', 'g') ilike ${`%${compactSearch}%`}`
+          )
+        : [];
+
     conditions.push(
       or(
-        ilike(sapCatalog.itemCode, `%${search}%`),
-        ilike(sapCatalog.temporaryItemCode, `%${search}%`),
-        ilike(sapCatalog.description, `%${search}%`),
-        ilike(sapCatalog.itemGroup, `%${search}%`),
-        ilike(sapCatalog.brand, `%${search}%`),
-        ilike(sapCatalog.partNumber, `%${search}%`),
-        ilike(sapCatalog.fixedAssetSerialNumber, `%${search}%`)
+        ...normalizedSearchTerms.flatMap(term =>
+          ARTICLE_SEARCH_FIELD_NAMES.map(fieldName =>
+            buildArticleFieldSearchCondition(fieldName, term)
+          )
+        ),
+        ...compactAssetIdentifierConditions
       )!
     );
   }

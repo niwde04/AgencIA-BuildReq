@@ -1762,6 +1762,7 @@ export const inventoryItems = pgTable(
       onDelete: "set null",
     }),
     warehouseLocation: varchar("warehouseLocation", { length: 100 }),
+    storageLocation: varchar("storageLocation", { length: 255 }),
     isActive: boolean("isActive").default(true).notNull(),
     demoBatchKey: varchar("demoBatchKey", { length: 64 }),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
