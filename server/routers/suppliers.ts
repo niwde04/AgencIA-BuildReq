@@ -427,6 +427,15 @@ export const suppliersRouter = router({
     .mutation(async ({ ctx, input }) => {
       assertCanManageSupplierFiscalProfile(ctx.user);
       const data: Parameters<typeof db.updateSupplier>[1] = {};
+      if (
+        ctx.user.buildreqRole === "administrador_proyecto" &&
+        input.rtn !== undefined
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para modificar el RTN del proveedor",
+        });
+      }
       if (input.rtn !== undefined) {
         data.rtn = input.rtn.trim() || null;
       }

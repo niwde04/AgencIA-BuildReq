@@ -1277,38 +1277,8 @@ describe("BuildReq - Suppliers catalog", () => {
     createSupplierSpy.mockRestore();
   });
 
-  it("Authorized users can update supplier fiscal flags", async () => {
+  it("Authorized users can update supplier fiscal profile including RTN", async () => {
     const { ctx } = createAdminCentralContext();
-    const caller = appRouter.createCaller(ctx);
-    const updateSupplierSpy = vi.spyOn(db, "updateSupplier").mockResolvedValue({
-      id: 5,
-      allowsTaxWithholding: false,
-      subjectToAccountPayments: false,
-    } as any);
-
-    await expect(
-      caller.suppliers.update({
-        id: 5,
-        allowsTaxWithholding: false,
-        subjectToAccountPayments: false,
-      })
-    ).resolves.toEqual(
-      expect.objectContaining({
-        allowsTaxWithholding: false,
-        subjectToAccountPayments: false,
-      })
-    );
-
-    expect(updateSupplierSpy).toHaveBeenCalledWith(5, {
-      allowsTaxWithholding: false,
-      subjectToAccountPayments: false,
-    });
-
-    updateSupplierSpy.mockRestore();
-  });
-
-  it("Project Administrator can update supplier fiscal flags", async () => {
-    const { ctx } = createProjectAdminContext();
     const caller = appRouter.createCaller(ctx);
     const updateSupplierSpy = vi.spyOn(db, "updateSupplier").mockResolvedValue({
       id: 5,
@@ -1340,6 +1310,59 @@ describe("BuildReq - Suppliers catalog", () => {
       allowsTaxWithholding: false,
       subjectToAccountPayments: false,
     });
+
+    updateSupplierSpy.mockRestore();
+  });
+
+  it("Project Administrator can update supplier fiscal flags", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const updateSupplierSpy = vi.spyOn(db, "updateSupplier").mockResolvedValue({
+      id: 5,
+      address: "Tegucigalpa",
+      allowsTaxWithholding: false,
+      subjectToAccountPayments: false,
+    } as any);
+
+    await expect(
+      caller.suppliers.update({
+        id: 5,
+        address: "Tegucigalpa",
+        allowsTaxWithholding: false,
+        subjectToAccountPayments: false,
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        address: "Tegucigalpa",
+        allowsTaxWithholding: false,
+        subjectToAccountPayments: false,
+      })
+    );
+
+    expect(updateSupplierSpy).toHaveBeenCalledWith(5, {
+      address: "Tegucigalpa",
+      allowsTaxWithholding: false,
+      subjectToAccountPayments: false,
+    });
+    updateSupplierSpy.mockRestore();
+  });
+
+  it("Project Administrator cannot update supplier RTN", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const updateSupplierSpy = vi.spyOn(db, "updateSupplier");
+
+    await expect(
+      caller.suppliers.update({
+        id: 5,
+        rtn: "08019999999999",
+        address: "Tegucigalpa",
+        allowsTaxWithholding: false,
+        subjectToAccountPayments: false,
+      })
+    ).rejects.toThrow("No tiene permisos para modificar el RTN del proveedor");
+
+    expect(updateSupplierSpy).not.toHaveBeenCalled();
     updateSupplierSpy.mockRestore();
   });
 

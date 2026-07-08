@@ -249,6 +249,7 @@ export default function Proveedores() {
     canManageSupplierCatalog || buildreqRole === "administrador_proyecto";
   const canManageSupplierFiscalProfile =
     canManageSupplierCatalog || buildreqRole === "administrador_proyecto";
+  const canEditSupplierRtn = canManageSupplierCatalog;
   const canManageSupplierDocuments =
     canManageSupplierCatalog || buildreqRole === "administrador_proyecto";
 
@@ -530,7 +531,7 @@ export default function Proveedores() {
     if (!selectedSupplier) return;
     updateMutation.mutate({
       id: selectedSupplier.id,
-      rtn: editRtn.trim(),
+      ...(canEditSupplierRtn ? { rtn: editRtn.trim() } : {}),
       address: editAddress.trim(),
       allowsTaxWithholding: editAllowsTaxWithholding,
       subjectToAccountPayments: editSubjectToAccountPayments,
@@ -1023,11 +1024,11 @@ export default function Proveedores() {
                   <Label className="text-xs">RTN</Label>
                   <Input
                     value={
-                      canManageSupplierFiscalProfile
+                      canEditSupplierRtn
                         ? editRtn
                         : selectedSupplier?.rtn || ""
                     }
-                    readOnly={!canManageSupplierFiscalProfile}
+                    readOnly={!canEditSupplierRtn}
                     onChange={event => setEditRtn(event.target.value)}
                     placeholder="RTN del proveedor"
                     maxLength={50}
