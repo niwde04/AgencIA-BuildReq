@@ -9298,6 +9298,90 @@ describe("BuildReq - Receipts", () => {
     saveReceiptDraftSpy.mockRestore();
   });
 
+  it("keeps receipt draft storage location per inventory line", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "emitida",
+        },
+        items: [
+          {
+            id: 16,
+            itemName: "CODO PVC DRENAJE 4X90",
+            quantity: "6.00",
+            receivedQuantity: "0.00",
+            currentSapItemCode: "050200037",
+            unit: "UNIDAD",
+          },
+        ],
+      } as any);
+    const saveReceiptDraftSpy = vi
+      .spyOn(db, "saveReceiptDraft")
+      .mockResolvedValue({
+        id: 10,
+        receiptNumber: "RC-006-0002",
+        status: "borrador",
+        updated: false,
+      } as any);
+
+    await expect(
+      caller.receipts.saveDraft({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        isFiscalDocument: true,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 16,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+            storageLocation: " 2C1 ",
+            itemName: "CODO PVC DRENAJE 4X90",
+            quantityExpected: "6.00",
+            quantityReceived: "6.00",
+            unit: "UNIDAD",
+            unitPrice: "10.00",
+          },
+        ],
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        status: "borrador",
+        receiptNumber: "RC-006-0002",
+      })
+    );
+
+    expect(saveReceiptDraftSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+      }),
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceItemId: 16,
+          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          storageLocation: "2C1",
+          quantityReceived: "6.00",
+        }),
+      ])
+    );
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    saveReceiptDraftSpy.mockRestore();
+  });
+
   it("Bodeguero de Proyecto can register purchase order receipts for their project", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
@@ -9354,6 +9438,7 @@ describe("BuildReq - Receipts", () => {
           {
             sourceItemId: 15,
             warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+            storageLocation: " Estante A1 ",
             itemName: "CEMENTO GRANEL",
             quantityExpected: "100.00",
             quantityReceived: "100.00",
@@ -9380,6 +9465,7 @@ describe("BuildReq - Receipts", () => {
         expect.objectContaining({
           sourceItemId: 15,
           warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          storageLocation: "Estante A1",
           quantityReceived: "100.00",
           targetType: "subproyecto",
           subProjectId: 77,

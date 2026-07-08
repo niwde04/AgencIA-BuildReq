@@ -8055,6 +8055,7 @@ export async function registerReceipt(
         sourceItemId: receiptItems.sourceItemId,
         sapItemCode: receiptItems.sapItemCode,
         warehouseId: receiptItems.warehouseId,
+        storageLocation: receiptItems.storageLocation,
         itemName: receiptItems.itemName,
         quantityExpected: receiptItems.quantityExpected,
         quantityReceived: receiptItems.quantityReceived,
@@ -8175,6 +8176,7 @@ export async function registerReceipt(
           unit: item.unit,
           projectId: data.projectId ?? null,
           warehouseId: item.warehouseId,
+          storageLocation: item.storageLocation ?? null,
           quantity: item.quantityReceived,
         });
         continue;
@@ -8256,6 +8258,7 @@ export async function registerReceipt(
           unit: existingItem.unit,
           projectId: data.projectId ?? null,
           warehouseId: item.warehouseId,
+          storageLocation: item.storageLocation ?? null,
           quantity: item.quantityReceived,
         });
       }
@@ -8475,6 +8478,7 @@ export async function registerReceipt(
           unit: existingItem.unit,
           projectId: destinationInventoryProjectId,
           warehouseId: item.warehouseId,
+          storageLocation: item.storageLocation ?? null,
           quantity: item.quantityReceived,
         });
       }
@@ -9902,6 +9906,7 @@ export async function correctInvoiceReceiptFromInvoice(params: {
           itemName: item.itemName,
           projectId: row.receipt.projectId,
           warehouseId: item.warehouseId,
+          storageLocation: item.storageLocation ?? null,
           quantity: item.quantityReceived,
         });
       }
@@ -10009,6 +10014,7 @@ export async function correctInvoiceReceiptFromInvoice(params: {
           sourceItemId: item.sourceItemId,
           sapItemCode: item.sapItemCode,
           warehouseId: item.warehouseId,
+          storageLocation: item.storageLocation,
           itemName: item.itemName,
           quantityExpected: item.quantityExpected,
           quantityReceived: item.quantityReceived,
@@ -12862,12 +12868,20 @@ async function getWarehouseAssignedUsersByWarehouseIds(warehouseIds: number[]) {
   return assignedUsersByWarehouseId;
 }
 
+export function normalizeInventoryStorageLocation(
+  value: string | null | undefined
+) {
+  const normalized = String(value ?? "").trim();
+  return normalized || null;
+}
+
 async function listInventoryRowsForStock(params: {
   sapItemCode?: string | null;
   itemName: string;
   projectId?: number | null;
   warehouseId?: number | null;
   warehouseLocation?: string | null;
+  storageLocation?: string | null;
   includeUnclassifiedProjectStock?: boolean;
 }) {
   const db = await getDb();
@@ -12903,6 +12917,21 @@ async function listInventoryRowsForStock(params: {
     );
   } else {
     conditions.push(eq(inventoryItems.projectId, params.projectId));
+  }
+
+  if ("storageLocation" in params) {
+    const normalizedStorageLocation = normalizeInventoryStorageLocation(
+      params.storageLocation
+    );
+    if (normalizedStorageLocation) {
+      conditions.push(
+        sql`lower(trim(coalesce(${inventoryItems.storageLocation}, ''))) = lower(${normalizedStorageLocation})`
+      );
+    } else {
+      conditions.push(
+        sql`nullif(trim(coalesce(${inventoryItems.storageLocation}, '')), '') IS NULL`
+      );
+    }
   }
 
   return db
@@ -12988,6 +13017,7 @@ async function consumeInventoryStockWithClient(
     quantity: string | number;
     warehouseId?: number | null;
     warehouseLocation?: string | null;
+    storageLocation?: string | null;
   }
 ) {
   const quantityToConsume = parseDecimal(params.quantity);
@@ -13038,6 +13068,20 @@ async function consumeInventoryStockWithClient(
     throw new Error("El almacén seleccionado no está asignado al proyecto");
   }
   conditions.push(eq(inventoryItems.projectId, params.projectId));
+  if ("storageLocation" in params) {
+    const normalizedStorageLocation = normalizeInventoryStorageLocation(
+      params.storageLocation
+    );
+    if (normalizedStorageLocation) {
+      conditions.push(
+        sql`lower(trim(coalesce(${inventoryItems.storageLocation}, ''))) = lower(${normalizedStorageLocation})`
+      );
+    } else {
+      conditions.push(
+        sql`nullif(trim(coalesce(${inventoryItems.storageLocation}, '')), '') IS NULL`
+      );
+    }
+  }
 
   const rows = await client
     .select()
@@ -13093,6 +13137,7 @@ async function addInventoryStock(params: {
   quantity: string | number;
   warehouseId?: number | null;
   warehouseLocation?: string | null;
+  storageLocation?: string | null;
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -13103,6 +13148,10 @@ async function addInventoryStock(params: {
   }
 
   const normalizedSapItemCode = params.sapItemCode?.trim() || null;
+  const hasStorageLocationFilter = "storageLocation" in params;
+  const normalizedStorageLocation = normalizeInventoryStorageLocation(
+    params.storageLocation
+  );
   let warehouseAssignment: {
     warehouseId?: number | null;
     warehouseLocation?: string | null;
@@ -13157,10 +13206,16 @@ async function addInventoryStock(params: {
     projectId: inventoryProjectId,
     warehouseId: warehouseAssignment.warehouseId,
     warehouseLocation: warehouseAssignment.warehouseLocation,
+    ...(hasStorageLocationFilter
+      ? { storageLocation: normalizedStorageLocation }
+      : {}),
   });
   const existingRow = rows[0];
 
   if (existingRow) {
+    const existingStorageLocation =
+      normalizeInventoryStorageLocation(existingRow.storageLocation) ??
+      normalizedStorageLocation;
     const nextStock = parseDecimal(existingRow.currentStock) + quantityToAdd;
     await db
       .update(inventoryItems)
@@ -13171,6 +13226,9 @@ async function addInventoryStock(params: {
         projectId: inventoryProjectId,
         warehouseId: warehouseAssignment.warehouseId,
         warehouseLocation: warehouseAssignment.warehouseLocation,
+        ...(hasStorageLocationFilter
+          ? { storageLocation: existingStorageLocation }
+          : {}),
         currentStock: toDecimalString(nextStock),
         isActive: true,
         updatedAt: new Date(),
@@ -13200,6 +13258,9 @@ async function addInventoryStock(params: {
       projectId: inventoryProjectId,
       warehouseId: warehouseAssignment.warehouseId,
       warehouseLocation: warehouseAssignment.warehouseLocation,
+      ...(hasStorageLocationFilter
+        ? { storageLocation: normalizedStorageLocation }
+        : {}),
       isActive: true,
     })
     .returning({ id: inventoryItems.id });

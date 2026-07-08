@@ -314,6 +314,7 @@ const receiptItemSchema = z
     sourceItemId: z.number().nullable().optional(),
     sapItemCode: z.string().trim().max(50).nullable().optional(),
     warehouseId: z.number().int().positive().optional(),
+    storageLocation: z.string().trim().max(255).nullable().optional(),
     itemName: z.string().min(1),
     quantityExpected: z.string().min(1),
     quantityReceived: z.string().min(1),
@@ -780,6 +781,9 @@ export const receiptsRouter = router({
               item.sapItemCode?.trim() ??
               null,
             warehouseId: isNonInventoryLine ? undefined : item.warehouseId,
+            storageLocation: isNonInventoryLine
+              ? null
+              : item.storageLocation?.trim() || null,
             itemName: item.itemName,
             quantityExpected: item.quantityExpected,
             quantityReceived: item.quantityReceived,
@@ -1432,6 +1436,10 @@ export const receiptsRouter = router({
               item.sapItemCode?.trim() ??
               null,
             warehouseId: isNonInventoryLine ? undefined : item.warehouseId,
+            storageLocation:
+              isNonInventoryLine || sourceIsFixedAsset || isFixedAsset
+                ? null
+                : item.storageLocation?.trim() || null,
             itemName: item.itemName,
             quantityExpected: item.quantityExpected,
             quantityReceived: item.quantityReceived,

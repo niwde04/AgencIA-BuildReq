@@ -994,6 +994,7 @@ export const receiptItems = pgTable(
     warehouseId: integer("warehouseId").references(() => warehouses.id, {
       onDelete: "set null",
     }),
+    storageLocation: varchar("storageLocation", { length: 255 }),
     itemName: varchar("itemName", { length: 500 }).notNull(),
     quantityExpected: decimal("quantityExpected", {
       precision: 12,

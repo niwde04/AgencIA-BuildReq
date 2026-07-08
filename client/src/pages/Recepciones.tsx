@@ -999,6 +999,13 @@ export default function Recepciones() {
   const [warehouseByItemId, setWarehouseByItemId] = useState<
     Record<number, string>
   >({});
+  const [storageLocationByItemId, setStorageLocationByItemId] = useState<
+    Record<number, string>
+  >({});
+  const [
+    storageLocationSuggestionItemId,
+    setStorageLocationSuggestionItemId,
+  ] = useState<number | null>(null);
   const [receiptProjectId, setReceiptProjectId] = useState("");
   const [receiptWarehouseId, setReceiptWarehouseId] = useState("");
   const [priceMap, setPriceMap] = useState<Record<number, string>>({});
@@ -1188,6 +1195,8 @@ export default function Recepciones() {
     setEmissionDeadline("");
     setReceivedMap({});
     setWarehouseByItemId({});
+    setStorageLocationByItemId({});
+    setStorageLocationSuggestionItemId(null);
     setReceiptProjectId("");
     setReceiptWarehouseId("");
     setPriceMap({});
@@ -1522,6 +1531,15 @@ export default function Recepciones() {
           ])
         ),
       }));
+      setStorageLocationByItemId(current => ({
+        ...current,
+        ...Object.fromEntries(
+          manualDraftItems.map((item: any) => [
+            -Number(item.id),
+            String(item.storageLocation ?? ""),
+          ])
+        ),
+      }));
       setTaxCodeByItemId(current => ({
         ...current,
         ...Object.fromEntries(
@@ -1541,6 +1559,8 @@ export default function Recepciones() {
     if (!sourceItems.length) {
       setReceivedMap({});
       setWarehouseByItemId({});
+      setStorageLocationByItemId({});
+      setStorageLocationSuggestionItemId(null);
       setReceiptProjectId("");
       setReceiptWarehouseId("");
       setPriceMap({});
@@ -1556,6 +1576,7 @@ export default function Recepciones() {
     const nextPriceMap: Record<number, string> = {};
     const nextSubtotalMap: Record<number, string> = {};
     const nextWarehouseMap: Record<number, string> = {};
+    const nextStorageLocationMap: Record<number, string> = {};
     const nextTaxCodeMap: Record<number, PurchaseOrderTaxCode> = {};
     const nextAdditionalTaxCodesMap: Record<number, string[]> = {};
     const nextTargetMap: Record<number, ReceiptTargetSelection | null> = {};
@@ -1613,6 +1634,7 @@ export default function Recepciones() {
         isReceiptNonInventoryItem(item)
       ) {
         nextWarehouseMap[item.id] = "";
+        nextStorageLocationMap[item.id] = "";
       } else {
         const draftWarehouseIsAvailable = draftWarehouseId
           ? receiptProjectWarehouseOptions.some(
@@ -1625,6 +1647,9 @@ export default function Recepciones() {
           !isSameTransferOriginScope(item, draftWarehouseId)
             ? draftWarehouseId
             : getDefaultReceiptWarehouseIdForItem(item);
+        nextStorageLocationMap[item.id] = String(
+          draftItem?.storageLocation ?? ""
+        );
       }
       const taxCode = normalizePurchaseOrderTaxCode(
         draftItem?.taxCode ?? item.taxCode,
@@ -1644,6 +1669,7 @@ export default function Recepciones() {
     }
     setReceivedMap(nextMap);
     setWarehouseByItemId(nextWarehouseMap);
+    setStorageLocationByItemId(nextStorageLocationMap);
     const draftWarehouseIds = new Set(
       Object.values(nextWarehouseMap).filter(Boolean)
     );
@@ -2138,6 +2164,81 @@ export default function Recepciones() {
         : (sourceItems as any[]),
     [manualReceiptItems, sourceItems, sourceType]
   );
+  const storageLocationSuggestionItem = useMemo(
+    () =>
+      receiptEditableItems.find(
+        (item: any) => item.id === storageLocationSuggestionItemId
+      ) ?? null,
+    [receiptEditableItems, storageLocationSuggestionItemId]
+  );
+  const storageLocationSuggestionSapCode = String(
+    storageLocationSuggestionItem
+      ? getSourceItemCode(storageLocationSuggestionItem) ?? ""
+      : ""
+  ).trim();
+  const storageLocationSuggestionWarehouseId =
+    storageLocationSuggestionItemId !== null
+      ? warehouseByItemId[storageLocationSuggestionItemId]
+      : "";
+  const storageLocationSuggestionsEnabled =
+    dialogOpen &&
+    Boolean(storageLocationSuggestionItem) &&
+    Boolean(storageLocationSuggestionSapCode) &&
+    Boolean(selectedReceiptProjectId) &&
+    Boolean(storageLocationSuggestionWarehouseId) &&
+    !(
+      sourceType === "purchase_order" &&
+      storageLocationSuggestionItem &&
+      isReceiptNonInventoryItem(storageLocationSuggestionItem)
+    );
+  const { data: storageLocationSuggestionInventory } =
+    trpc.inventory.list.useQuery(
+      {
+        search: storageLocationSuggestionSapCode,
+        warehouseId: Number(storageLocationSuggestionWarehouseId) || undefined,
+        page: 1,
+        pageSize: 200,
+        includePendingQuantities: false,
+        sortBy: "storageLocation",
+        sortDir: "asc",
+      },
+      {
+        enabled: storageLocationSuggestionsEnabled,
+      }
+    );
+  const receiptStorageLocationSuggestions = useMemo(() => {
+    if (!storageLocationSuggestionsEnabled) return [];
+    const expectedCode = storageLocationSuggestionSapCode.toUpperCase();
+    const expectedWarehouseId = Number(storageLocationSuggestionWarehouseId);
+    const expectedProjectId = Number(selectedReceiptProjectId);
+    const suggestions = new Map<string, string>();
+
+    for (const row of storageLocationSuggestionInventory?.items ?? []) {
+      const rowCode = String(row.sapItemCode ?? "").trim().toUpperCase();
+      const rowWarehouseId = Number(row.warehouseId ?? row.warehouse?.id ?? 0);
+      const rowProjectId = Number(row.projectId ?? row.project?.id ?? 0);
+      const storageLocation = String(row.storageLocation ?? "").trim();
+      if (
+        rowCode !== expectedCode ||
+        rowWarehouseId !== expectedWarehouseId ||
+        rowProjectId !== expectedProjectId ||
+        !storageLocation
+      ) {
+        continue;
+      }
+      suggestions.set(storageLocation.toLowerCase(), storageLocation);
+    }
+
+    return Array.from(suggestions.values()).sort((left, right) =>
+      left.localeCompare(right, "es", { numeric: true, sensitivity: "base" })
+    );
+  }, [
+    selectedReceiptProjectId,
+    storageLocationSuggestionInventory,
+    storageLocationSuggestionSapCode,
+    storageLocationSuggestionWarehouseId,
+    storageLocationSuggestionsEnabled,
+  ]);
 
   const getEditableReceiptExpectedQuantity = (item: any) =>
     item.isManualReceiptItem
@@ -2188,6 +2289,10 @@ export default function Recepciones() {
           ? ""
           : receiptWarehouseId,
       }));
+      setStorageLocationByItemId(current => ({
+        ...current,
+        [nextId]: "",
+      }));
       setTargetByItemId(current => ({ ...current, [nextId]: null }));
       setAssetDrafts(current => ({
         ...current,
@@ -2213,6 +2318,10 @@ export default function Recepciones() {
       return next;
     });
     setWarehouseByItemId(current => {
+      const { [itemId]: _removed, ...next } = current;
+      return next;
+    });
+    setStorageLocationByItemId(current => {
       const { [itemId]: _removed, ...next } = current;
       return next;
     });
@@ -2257,6 +2366,9 @@ export default function Recepciones() {
           : warehouseByItemId[item.id]
             ? Number(warehouseByItemId[item.id])
             : undefined,
+        storageLocation: isNonInventoryLine
+          ? undefined
+          : storageLocationByItemId[item.id]?.trim() || undefined,
         itemName: item.itemName,
         quantityExpected: quantityReceived,
         quantityReceived,
@@ -2433,6 +2545,53 @@ export default function Recepciones() {
     applyReceiptWarehouseToAllItems(receiptWarehouseSelectionValue);
   };
 
+  const renderReceiptStorageLocationInput = (
+    item: any,
+    compact = false,
+    selectedWarehouseValue?: string
+  ) => {
+    if (sourceType === "purchase_order" && isReceiptNonInventoryItem(item)) {
+      return null;
+    }
+
+    const value = storageLocationByItemId[item.id] ?? "";
+    const datalistId = `receipt-storage-location-${item.id}`;
+    const suggestions =
+      storageLocationSuggestionItemId === item.id
+        ? receiptStorageLocationSuggestions
+        : [];
+
+    return (
+      <div className="min-w-0 space-y-1.5">
+        {!compact ? <Label>Ubicación</Label> : null}
+        <Input
+          list={datalistId}
+          maxLength={255}
+          placeholder="Ubicación"
+          value={value}
+          onFocus={() => setStorageLocationSuggestionItemId(item.id)}
+          onChange={event =>
+            setStorageLocationByItemId(current => ({
+              ...current,
+              [item.id]: event.target.value,
+            }))
+          }
+          disabled={
+            !selectedWarehouseValue ||
+            !selectedReceiptProjectId ||
+            registerMutation.isPending
+          }
+          className={compact ? "min-w-64" : "w-full min-w-0"}
+        />
+        <datalist id={datalistId}>
+          {suggestions.map(storageLocation => (
+            <option key={storageLocation} value={storageLocation} />
+          ))}
+        </datalist>
+      </div>
+    );
+  };
+
   const renderReceiptWarehouseSelector = (
     item: any,
     compact = false,
@@ -2576,6 +2735,11 @@ export default function Recepciones() {
             ))}
           </SelectContent>
         </Select>
+        {renderReceiptStorageLocationInput(
+          item,
+          compact,
+          selectedWarehouseValue
+        )}
         {selectedIsSourceWarehouse ? (
           <p className="text-[10px] font-medium text-destructive">
             No se puede ingresar a la misma bodega/proyecto de origen.
@@ -3154,6 +3318,9 @@ export default function Recepciones() {
                 : warehouseByItemId[sourceItem.id]
                   ? Number(warehouseByItemId[sourceItem.id])
                   : undefined,
+              storageLocation: isNonInventoryLine
+                ? undefined
+                : storageLocationByItemId[sourceItem.id]?.trim() || undefined,
               itemName: sourceItem.itemName,
               quantityExpected: String(getReceivableQuantity(sourceItem)),
               quantityReceived: isFixedAsset
@@ -3371,6 +3538,9 @@ export default function Recepciones() {
             : warehouseByItemId[item.id]
               ? Number(warehouseByItemId[item.id])
               : undefined,
+          storageLocation: isNonInventoryLine || isFixedAsset
+            ? undefined
+            : storageLocationByItemId[item.id]?.trim() || undefined,
           itemName: item.itemName,
           quantityExpected: String(getReceivableQuantity(item)),
           quantityReceived: receivedMap[item.id] || "0",
@@ -3438,6 +3608,7 @@ export default function Recepciones() {
                 sapItemCode:
                   articleCode === "—" ? getSourceItemCode(item) : articleCode,
                 warehouseId: undefined,
+                storageLocation: undefined,
                 requiresWarehouse: false,
                 itemName: article?.description || item.itemName,
                 quantityExpected: "1.00",
@@ -3866,6 +4037,11 @@ export default function Recepciones() {
           item,
           warehouseLabel
         );
+        const storageLocationHtml = item.storageLocation
+          ? `<div class="line-note"><strong>Ubicación:</strong> ${escapeHtml(
+              item.storageLocation
+            )}</div>`
+          : "";
         const notesHtml = item.notes?.trim()
           ? `<div class="line-note">${escapeHtml(item.notes)}</div>`
           : "";
@@ -3889,7 +4065,7 @@ export default function Recepciones() {
           <tr>
             <td>${escapeHtml(companyCode || "-")}</td>
             <td>${escapeHtml(item.itemName)}${brandHtml}${notesHtml}${assetHtml}</td>
-            <td>${escapeHtml(itemWarehouseLabel)}</td>
+            <td>${escapeHtml(itemWarehouseLabel)}${storageLocationHtml}</td>
             <td>${escapeHtml(targetCellLabel)}</td>
             <td class="center">${escapeHtml(partNumber || "-")}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantityReceived))}</td>
@@ -4435,6 +4611,8 @@ export default function Recepciones() {
                         setSourceId("");
                         setReceivedMap({});
                         setWarehouseByItemId({});
+                        setStorageLocationByItemId({});
+                        setStorageLocationSuggestionItemId(null);
                         setReceiptProjectId("");
                         setReceiptWarehouseId("");
                         setPriceMap({});
@@ -4484,6 +4662,8 @@ export default function Recepciones() {
                         setSourceId(value);
                         setReceivedMap({});
                         setWarehouseByItemId({});
+                        setStorageLocationByItemId({});
+                        setStorageLocationSuggestionItemId(null);
                         setReceiptProjectId("");
                         setPriceMap({});
                         setSubtotalMap({});
@@ -6981,6 +7161,11 @@ export default function Recepciones() {
                                       : "—"
                                   )}
                                 </div>
+                                {item.storageLocation ? (
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    Ubicación: {item.storageLocation}
+                                  </div>
+                                ) : null}
                               </td>
                               <td className="p-4 text-right font-semibold">
                                 {formatQuantity(item.quantityExpected)}{" "}
