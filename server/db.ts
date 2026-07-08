@@ -7477,13 +7477,19 @@ export async function listTransfers(filters?: {
 export async function getTransferById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
+  const transferRequestCreatedByUsers = alias(
+    users,
+    "transfer_request_created_by_users"
+  );
+  const transferConfirmedByUsers = alias(users, "transfer_confirmed_by_users");
   const rows = await db
     .select({
       transfer: transfers,
       transferRequest: transferRequests,
       project: projects,
       remissionGuide: remissionGuides,
-      createdBy: users,
+      createdBy: transferRequestCreatedByUsers,
+      confirmedBy: transferConfirmedByUsers,
     })
     .from(transfers)
     .leftJoin(
@@ -7492,7 +7498,14 @@ export async function getTransferById(id: number) {
     )
     .leftJoin(projects, eq(transferRequests.projectId, projects.id))
     .leftJoin(remissionGuides, eq(remissionGuides.transferId, transfers.id))
-    .leftJoin(users, eq(transferRequests.createdById, users.id))
+    .leftJoin(
+      transferRequestCreatedByUsers,
+      eq(transferRequests.createdById, transferRequestCreatedByUsers.id)
+    )
+    .leftJoin(
+      transferConfirmedByUsers,
+      eq(transfers.confirmedById, transferConfirmedByUsers.id)
+    )
     .where(eq(transfers.id, id))
     .limit(1);
   if (!rows[0]) return undefined;
@@ -7582,6 +7595,13 @@ export async function getTransferById(id: number) {
           id: rows[0].createdBy.id,
           name: rows[0].createdBy.name,
           email: rows[0].createdBy.email,
+        }
+      : null,
+    confirmedBy: rows[0].confirmedBy
+      ? {
+          id: rows[0].confirmedBy.id,
+          name: rows[0].confirmedBy.name,
+          email: rows[0].confirmedBy.email,
         }
       : null,
     items,

@@ -22,6 +22,7 @@ import {
   isInvoiceNumberWithinFiscalRange,
   normalizeFiscalRtn,
 } from "../shared/invoices";
+import { getDefaultTransferPreparedByName } from "../client/src/lib/transfer-print";
 
 // ============================================================
 // Test helpers
@@ -3462,6 +3463,53 @@ describe("BuildReq - Role-based Access Control", () => {
     });
 
     listTransfersSpy.mockRestore();
+  });
+
+  it("Transfer detail returns requester and confirmer separately", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getTransferByIdSpy = vi
+      .spyOn(db, "getTransferById")
+      .mockResolvedValue({
+        transfer: {
+          id: 18,
+          transferNumber: "TR-001-00000001",
+          confirmedById: 156,
+          preparedByName: null,
+        },
+        transferRequest: {
+          id: 22,
+          requestNumber: "ST-010-00000001",
+          createdById: 181,
+          projectId: 1,
+        },
+        createdBy: {
+          id: 181,
+          name: "WILSON OSWALDO MOLINA VARGAS",
+          email: "bodegasj01@gmail.com",
+        },
+        confirmedBy: {
+          id: 156,
+          name: "JOSE ALVINO MATHEU ORELLANA",
+          email: "jmatheu@hehhonduras.com",
+        },
+        items: [],
+      } as any);
+
+    await expect(caller.transfers.getById({ id: 18 })).resolves.toEqual(
+      expect.objectContaining({
+        createdBy: expect.objectContaining({
+          id: 181,
+          name: "WILSON OSWALDO MOLINA VARGAS",
+        }),
+        confirmedBy: expect.objectContaining({
+          id: 156,
+          name: "JOSE ALVINO MATHEU ORELLANA",
+        }),
+      })
+    );
+
+    getTransferByIdSpy.mockRestore();
   });
 
   it("Bodeguero de Proyecto cannot edit purchase orders", async () => {
@@ -13788,6 +13836,32 @@ describe("BuildReq - Document attachments", () => {
     getPurchaseOrderByIdSpy.mockRestore();
     storageDeleteSpy.mockRestore();
     deleteAttachmentSpy.mockRestore();
+  });
+});
+
+describe("BuildReq - Transfer print fields", () => {
+  it("defaults Elaborado por to the confirmer when no manual value exists", () => {
+    expect(
+      getDefaultTransferPreparedByName({
+        transfer: { preparedByName: null },
+        confirmedBy: { name: "JOSE ALVINO MATHEU ORELLANA" },
+      })
+    ).toBe("JOSE ALVINO MATHEU ORELLANA");
+  });
+
+  it("keeps the manual Elaborado por and never falls back to requester", () => {
+    expect(
+      getDefaultTransferPreparedByName({
+        transfer: { preparedByName: "FRAN GODOY" },
+        confirmedBy: { name: "JOSE ALVINO MATHEU ORELLANA" },
+      })
+    ).toBe("FRAN GODOY");
+    expect(
+      getDefaultTransferPreparedByName({
+        transfer: { preparedByName: "" },
+        createdBy: { name: "WILSON OSWALDO MOLINA VARGAS" },
+      } as any)
+    ).toBe("");
   });
 });
 

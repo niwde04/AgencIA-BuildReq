@@ -21,6 +21,7 @@ import { Eye, Printer, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
+import { getDefaultTransferPreparedByName } from "@/lib/transfer-print";
 
 const STATUS_LABELS: Record<string, string> = {
   pendiente: "Pendiente",
@@ -152,13 +153,13 @@ export default function Transfers() {
 
   useEffect(() => {
     if (!detail?.transfer?.id) return;
-    setPreparedByName(detail.transfer.preparedByName || detail.createdBy?.name || "");
+    setPreparedByName(getDefaultTransferPreparedByName(detail));
     setDeliveredToName(detail.transfer.deliveredToName || "");
   }, [
     detail?.transfer?.id,
     detail?.transfer?.preparedByName,
     detail?.transfer?.deliveredToName,
-    detail?.createdBy?.name,
+    detail?.confirmedBy?.name,
   ]);
 
   const filteredTransfers = useMemo(() => {
