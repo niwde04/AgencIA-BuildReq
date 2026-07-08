@@ -9675,6 +9675,7 @@ export async function getInvoiceById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const voidedByUsers = alias(users, "invoice_voided_by_users");
+  const invoiceCreatedByUsers = alias(users, "invoice_detail_created_by_users");
 
   const rows = await db
     .select({
@@ -9684,6 +9685,7 @@ export async function getInvoiceById(id: number) {
       project: projects,
       supplier: suppliers,
       supplierContact: supplierContacts,
+      createdBy: invoiceCreatedByUsers,
       voidedBy: voidedByUsers,
     })
     .from(invoices)
@@ -9694,6 +9696,10 @@ export async function getInvoiceById(id: number) {
     .leftJoin(
       supplierContacts,
       eq(purchaseOrders.supplierContactId, supplierContacts.id)
+    )
+    .leftJoin(
+      invoiceCreatedByUsers,
+      eq(receipts.receivedById, invoiceCreatedByUsers.id)
     )
     .leftJoin(voidedByUsers, eq(invoices.voidedById, voidedByUsers.id))
     .where(eq(invoices.id, id))
