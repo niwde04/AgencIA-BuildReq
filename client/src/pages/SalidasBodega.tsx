@@ -75,6 +75,7 @@ const RETURN_CONDITION_LABELS: Record<string, string> = {
   defectuoso: "Defectuoso",
   danado: "Dañado",
 };
+const NO_STORAGE_LOCATION_VALUE = "__sin_ubicacion__";
 
 type DeliveryTargetSelection =
   | {
@@ -375,6 +376,20 @@ function getDeliveryScopeKey(projectId?: number | null, warehouseId?: number | n
   return `${Number(projectId ?? 0)}:${Number(warehouseId ?? 0)}`;
 }
 
+function encodeStorageLocationValue(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  return normalized || NO_STORAGE_LOCATION_VALUE;
+}
+
+function decodeStorageLocationValue(value: string | null | undefined) {
+  if (!value || value === NO_STORAGE_LOCATION_VALUE) return null;
+  return value.trim() || null;
+}
+
+function getStorageLocationLabel(value: string | null | undefined) {
+  return String(value ?? "").trim() || "Sin ubicación";
+}
+
 function getStockWarehouseLabel(option: any): string {
   return (
     option?.displayName ||
@@ -484,6 +499,8 @@ export default function SalidasBodega() {
   const [deliveryProjectByItemId, setDeliveryProjectByItemId] = useState<
     Record<number, string>
   >({});
+  const [deliveryStorageLocationByItemId, setDeliveryStorageLocationByItemId] =
+    useState<Record<number, string>>({});
   const [
     deliveryDestinationWarehouseByItemId,
     setDeliveryDestinationWarehouseByItemId,
@@ -506,7 +523,7 @@ export default function SalidasBodega() {
   const [draftReceivedByName, setDraftReceivedByName] = useState("");
   const [draftNotes, setDraftNotes] = useState("");
   const [draftItemEdits, setDraftItemEdits] = useState<
-    Record<number, { quantity: string; notes: string }>
+    Record<number, { quantity: string; storageLocation: string; notes: string }>
   >({});
   const emittingAfterDraftSaveRef = useRef(false);
 
@@ -840,6 +857,7 @@ export default function SalidasBodega() {
           item.id,
           {
             quantity: Number(item.quantity ?? 0).toFixed(2),
+            storageLocation: encodeStorageLocationValue(item.storageLocation),
             notes: item.notes ?? "",
           },
         ])
@@ -852,6 +870,7 @@ export default function SalidasBodega() {
       setDeliveryQuantityByItemId({});
       setDeliveryWarehouseByItemId({});
       setDeliveryProjectByItemId({});
+      setDeliveryStorageLocationByItemId({});
       setDeliveryDestinationWarehouseByItemId({});
       setDeliveryDestinationProjectByItemId({});
       setDeliveryDestinationWarehouseTouchedByItemId({});
@@ -862,6 +881,7 @@ export default function SalidasBodega() {
     const nextQuantities: Record<number, string> = {};
     const nextWarehouses: Record<number, string> = {};
     const nextProjects: Record<number, string> = {};
+    const nextStorageLocations: Record<number, string> = {};
     const nextDestinationWarehouses: Record<number, string> = {};
     const nextDestinationProjects: Record<number, string> = {};
     const nextTargets: Record<number, DeliveryTargetSelection | null> = {};
@@ -914,6 +934,7 @@ export default function SalidasBodega() {
     setDeliveryQuantityByItemId(nextQuantities);
     setDeliveryWarehouseByItemId(nextWarehouses);
     setDeliveryProjectByItemId(nextProjects);
+    setDeliveryStorageLocationByItemId(nextStorageLocations);
     setDeliveryDestinationWarehouseByItemId(nextDestinationWarehouses);
     setDeliveryDestinationProjectByItemId(nextDestinationProjects);
     setDeliveryDestinationWarehouseTouchedByItemId({});
@@ -1032,6 +1053,47 @@ export default function SalidasBodega() {
     },
     [deliveryScopeStockByItemId]
   );
+  const getDeliveryStorageLocationOptions = useCallback(
+    (item: any, projectId: number, warehouseId: number) => {
+      if (!projectId || !warehouseId) return [];
+      const scope = deliveryScopeStockByItemId
+        .get(item.id)
+        ?.get(getDeliveryScopeKey(projectId, warehouseId));
+      return [...(scope?.storageLocations ?? [])]
+        .filter((location: any) => Number(location.quantity ?? 0) > 0)
+        .sort((left: any, right: any) => {
+          if (left.storageLocation && !right.storageLocation) return -1;
+          if (!left.storageLocation && right.storageLocation) return 1;
+          return getStorageLocationLabel(left.storageLocation).localeCompare(
+            getStorageLocationLabel(right.storageLocation)
+          );
+        });
+    },
+    [deliveryScopeStockByItemId]
+  );
+  const getDeliveryStorageLocationAvailableQuantity = useCallback(
+    (
+      item: any,
+      projectId: number,
+      warehouseId: number,
+      storageLocationValue?: string | null
+    ) => {
+      if (!storageLocationValue) return 0;
+      const decodedStorageLocation =
+        decodeStorageLocationValue(storageLocationValue);
+      const expectedValue = encodeStorageLocationValue(decodedStorageLocation);
+      const option = getDeliveryStorageLocationOptions(
+        item,
+        projectId,
+        warehouseId
+      ).find(
+        (location: any) =>
+          encodeStorageLocationValue(location.storageLocation) === expectedValue
+      );
+      return Number(option?.quantity ?? 0);
+    },
+    [getDeliveryStorageLocationOptions]
+  );
   const getDeliveryWarehouseOptions = useCallback(
     (item: any) => {
       const byWarehouse = new Map<number, any>();
@@ -1075,11 +1137,24 @@ export default function SalidasBodega() {
   );
   const setDeliverySourceForItem = useCallback(
     (item: any, projectId: number, warehouseId: number) => {
-      const availableQuantity = getDeliveryScopeAvailableQuantity(
+      const storageLocationOptions = getDeliveryStorageLocationOptions(
         item,
         projectId,
         warehouseId
       );
+      const currentStorageLocationValue =
+        deliveryStorageLocationByItemId[item.id];
+      const currentStorageLocationOption = storageLocationOptions.find(
+        (location: any) =>
+          encodeStorageLocationValue(location.storageLocation) ===
+          currentStorageLocationValue
+      );
+      const selectedStorageLocationOption =
+        currentStorageLocationOption ??
+        (storageLocationOptions.length === 1 ? storageLocationOptions[0] : null);
+      const availableQuantity = selectedStorageLocationOption
+        ? Number(selectedStorageLocationOption.quantity ?? 0)
+        : 0;
       const nextQuantity = Math.min(
         getDeliveryPendingQuantity(item),
         Math.max(availableQuantity, 0)
@@ -1093,12 +1168,23 @@ export default function SalidasBodega() {
         ...current,
         [item.id]: String(projectId),
       }));
+      setDeliveryStorageLocationByItemId((current) => {
+        const next = { ...current };
+        if (selectedStorageLocationOption) {
+          next[item.id] = encodeStorageLocationValue(
+            selectedStorageLocationOption.storageLocation
+          );
+        } else {
+          delete next[item.id];
+        }
+        return next;
+      });
       setDeliveryQuantityByItemId((current) => ({
         ...current,
         [item.id]: nextQuantity > 0 ? nextQuantity.toFixed(2) : "0.00",
       }));
     },
-    [getDeliveryScopeAvailableQuantity]
+    [deliveryStorageLocationByItemId, getDeliveryStorageLocationOptions]
   );
   const clearDeliveryProjectForItem = useCallback((item: any, warehouseId: number) => {
     setDeliveryWarehouseByItemId((current) => ({
@@ -1106,6 +1192,11 @@ export default function SalidasBodega() {
       [item.id]: String(warehouseId),
     }));
     setDeliveryProjectByItemId((current) => {
+      const next = { ...current };
+      delete next[item.id];
+      return next;
+    });
+    setDeliveryStorageLocationByItemId((current) => {
       const next = { ...current };
       delete next[item.id];
       return next;
@@ -1176,6 +1267,94 @@ export default function SalidasBodega() {
     },
     [deliveryWarehouseByItemId, setDeliverySourceForItem]
   );
+  const handleDeliveryStorageLocationChange = useCallback(
+    (item: any, value: string) => {
+      const projectId = Number(deliveryProjectByItemId[item.id] ?? 0);
+      const warehouseId = Number(deliveryWarehouseByItemId[item.id] ?? 0);
+      const availableQuantity = getDeliveryStorageLocationAvailableQuantity(
+        item,
+        projectId,
+        warehouseId,
+        value
+      );
+      const nextQuantity = Math.min(
+        getDeliveryPendingQuantity(item),
+        Math.max(availableQuantity, 0)
+      );
+      setDeliveryStorageLocationByItemId((current) => ({
+        ...current,
+        [item.id]: value,
+      }));
+      setDeliveryQuantityByItemId((current) => ({
+        ...current,
+        [item.id]: nextQuantity > 0 ? nextQuantity.toFixed(2) : "0.00",
+      }));
+    },
+    [
+      deliveryProjectByItemId,
+      deliveryWarehouseByItemId,
+      getDeliveryStorageLocationAvailableQuantity,
+    ]
+  );
+  useEffect(() => {
+    if (!deliveryDialogOpen || deliveryItems.length === 0) return;
+
+    const nextStorageLocations = { ...deliveryStorageLocationByItemId };
+    const nextQuantities: Record<number, string> = {};
+    let changed = false;
+
+    for (const item of deliveryItems as any[]) {
+      const projectId = Number(deliveryProjectByItemId[item.id] ?? 0);
+      const warehouseId = Number(deliveryWarehouseByItemId[item.id] ?? 0);
+      if (!projectId || !warehouseId) continue;
+
+      const options = getDeliveryStorageLocationOptions(
+        item,
+        projectId,
+        warehouseId
+      );
+      const currentValue = deliveryStorageLocationByItemId[item.id];
+      const currentStillValid = options.some(
+        (location: any) =>
+          encodeStorageLocationValue(location.storageLocation) === currentValue
+      );
+      if (currentStillValid) continue;
+
+      if (options.length === 1) {
+        const selectedValue = encodeStorageLocationValue(
+          options[0].storageLocation
+        );
+        nextStorageLocations[item.id] = selectedValue;
+        const nextQuantity = Math.min(
+          getDeliveryPendingQuantity(item),
+          Number(options[0].quantity ?? 0)
+        );
+        nextQuantities[item.id] =
+          nextQuantity > 0 ? nextQuantity.toFixed(2) : "0.00";
+        changed = true;
+      } else if (currentValue) {
+        delete nextStorageLocations[item.id];
+        nextQuantities[item.id] = "0.00";
+        changed = true;
+      }
+    }
+
+    if (!changed) return;
+    setDeliveryStorageLocationByItemId(nextStorageLocations);
+    if (Object.keys(nextQuantities).length > 0) {
+      setDeliveryQuantityByItemId((current) => ({
+        ...current,
+        ...nextQuantities,
+      }));
+    }
+  }, [
+    deliveryDialogOpen,
+    deliveryItems,
+    deliveryProjectByItemId,
+    deliveryStorageLocationByItemId,
+    deliveryWarehouseByItemId,
+    getDeliveryStorageLocationOptions,
+  ]);
   const handleDeliveryDestinationWarehouseChange = useCallback(
     (item: any, value: string) => {
       const warehouseId = Number(value);
@@ -1642,15 +1821,17 @@ export default function SalidasBodega() {
           deliveryDestinationProjectByItemId[item.id] ?? 0
         );
         const targetSelection = deliveryTargetByItemId[item.id] ?? null;
+        const storageLocationValue = deliveryStorageLocationByItemId[item.id];
         const isBlockedWarehouse = isDeliveryScopeBlocked(
           item,
           sourceProjectId,
           warehouseId
         );
-        const availableQuantity = getDeliveryScopeAvailableQuantity(
+        const availableQuantity = getDeliveryStorageLocationAvailableQuantity(
           item,
           sourceProjectId,
-          warehouseId
+          warehouseId,
+          storageLocationValue
         );
         const pendingQuantity = getDeliveryPendingQuantity(item);
 
@@ -1663,6 +1844,7 @@ export default function SalidasBodega() {
           warehouseId,
           destinationProjectId,
           destinationWarehouseId,
+          storageLocationValue,
           isBlockedWarehouse,
           targetSelection,
         };
@@ -1683,12 +1865,14 @@ export default function SalidasBodega() {
         warehouseId,
         destinationProjectId,
         destinationWarehouseId,
+        storageLocationValue,
         isBlockedWarehouse,
       }) =>
         !Number.isFinite(quantity) ||
         quantity <= 0 ||
         !sourceProjectId ||
         !warehouseId ||
+        !storageLocationValue ||
         !destinationProjectId ||
         !destinationWarehouseId ||
         isBlockedWarehouse ||
@@ -1717,6 +1901,7 @@ export default function SalidasBodega() {
           quantity,
           sourceProjectId,
           warehouseId,
+          storageLocationValue,
           destinationProjectId,
           destinationWarehouseId,
           targetSelection,
@@ -1725,6 +1910,7 @@ export default function SalidasBodega() {
           dispatchedQuantity: quantity.toFixed(2),
           sourceProjectId,
           warehouseId,
+          storageLocation: decodeStorageLocationValue(storageLocationValue),
           destinationProjectId,
           destinationWarehouseId,
           ...getDeliveryTargetPayload(targetSelection),
@@ -1735,13 +1921,15 @@ export default function SalidasBodega() {
 
   const updateDraftItemEdit = (
     itemId: number,
-    field: "quantity" | "notes",
+    field: "quantity" | "storageLocation" | "notes",
     value: string
   ) => {
     setDraftItemEdits((current) => ({
       ...current,
       [itemId]: {
         quantity: current[itemId]?.quantity ?? "",
+        storageLocation:
+          current[itemId]?.storageLocation ?? NO_STORAGE_LOCATION_VALUE,
         notes: current[itemId]?.notes ?? "",
         [field]: value,
       },
@@ -1763,6 +1951,7 @@ export default function SalidasBodega() {
     for (const item of detail.items as any[]) {
       const edit = draftItemEdits[item.id] ?? {
         quantity: String(item.quantity ?? ""),
+        storageLocation: encodeStorageLocationValue(item.storageLocation),
         notes: item.notes ?? "",
       };
       const quantity = parseEditableQuantity(edit.quantity);
@@ -1779,10 +1968,23 @@ export default function SalidasBodega() {
         return;
       }
 
-      const availableQuantity = parseQuantity(item.availableQuantity);
+      const selectedStorageLocationValue =
+        edit.storageLocation ?? encodeStorageLocationValue(item.storageLocation);
+      const selectedStorageLocationOption = (
+        item.storageLocationOptions ?? []
+      ).find(
+        (location: any) =>
+          encodeStorageLocationValue(location.storageLocation) ===
+          selectedStorageLocationValue
+      );
+      const availableQuantity = parseQuantity(
+        selectedStorageLocationOption?.quantity ?? item.availableQuantity
+      );
       if (quantity - availableQuantity > 0.000001) {
         toast.error(
-          `${item.itemName}: la cantidad excede el disponible en bodega`
+          `${item.itemName}: la cantidad excede el disponible en ${getStorageLocationLabel(
+            decodeStorageLocationValue(selectedStorageLocationValue)
+          )}`
         );
         return;
       }
@@ -1790,6 +1992,9 @@ export default function SalidasBodega() {
       items.push({
         id: item.id,
         quantity: quantity.toFixed(2),
+        storageLocation: decodeStorageLocationValue(
+          selectedStorageLocationValue
+        ),
         notes: edit.notes.trim() || null,
       });
     }
@@ -1927,6 +2132,7 @@ export default function SalidasBodega() {
             <td>${escapeHtml(item.sapItemCode || "-")}</td>
             <td>${escapeHtml(item.itemName || "-")}</td>
             <td>${escapeHtml(formatWarehouseExitItemWarehouseLabel(item, warehouseLabel))}</td>
+            <td>${escapeHtml(getStorageLocationLabel(item.storageLocation))}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantity))}</td>
             <td class="center">${escapeHtml(item.unit || "-")}</td>
             <td>${escapeHtml(destinationLabel)}</td>
@@ -2133,18 +2339,19 @@ export default function SalidasBodega() {
                 <tr>
                   <th style="width: 13%;">Código/No. Serie</th>
                   <th style="width: 21%;">Identificador</th>
-                  <th style="width: 14%;">Bodega origen</th>
+                  <th style="width: 13%;">Bodega origen</th>
+                  <th style="width: 10%;">Ubicación</th>
                   <th style="width: 8%;" class="numeric">Cantidad</th>
                   <th style="width: 8%;" class="center">U Medida</th>
-                  <th style="width: 18%;">Destino</th>
-                  <th style="width: 13%;">Referencia</th>
+                  <th style="width: 15%;">Destino</th>
+                  <th style="width: 12%;">Referencia</th>
                   <th style="width: 5%;" class="numeric">Total</th>
                 </tr>
               </thead>
               <tbody>
-                ${itemRows || `<tr><td colspan="8">Sin ítems</td></tr>`}
+                ${itemRows || `<tr><td colspan="9">Sin ítems</td></tr>`}
                 <tr class="total-row">
-                  <td colspan="7">Total general</td>
+                  <td colspan="8">Total general</td>
                   <td class="numeric">${escapeHtml(formatPrintNumber(totalLines))}</td>
                 </tr>
               </tbody>
@@ -2445,6 +2652,9 @@ export default function SalidasBodega() {
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Destino bodega
                       </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Ubicación
+                      </th>
                       <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Cantidad
                       </th>
@@ -2470,9 +2680,25 @@ export default function SalidasBodega() {
                       const editableQuantity = parseEditableQuantity(
                         draftItemEdits[item.id]?.quantity ?? item.quantity
                       );
+                      const draftStorageLocationValue =
+                        draftItemEdits[item.id]?.storageLocation ??
+                        encodeStorageLocationValue(item.storageLocation);
+                      const draftStorageLocationOption = (
+                        item.storageLocationOptions ?? []
+                      ).find(
+                        (location: any) =>
+                          encodeStorageLocationValue(location.storageLocation) ===
+                          draftStorageLocationValue
+                      );
+                      const draftAvailableQuantity = detailIsDraft
+                        ? parseQuantity(
+                            draftStorageLocationOption?.quantity ??
+                              item.availableQuantity
+                          )
+                        : parseQuantity(item.availableQuantity);
                       const draftStockAfterExit =
                         detailIsDraft && Number.isFinite(editableQuantity)
-                          ? parseQuantity(item.availableQuantity) - editableQuantity
+                          ? draftAvailableQuantity - editableQuantity
                           : parseQuantity(item.stockAfterExit);
 
                       return (
@@ -2487,6 +2713,53 @@ export default function SalidasBodega() {
                           </td>
                           <td className="p-3 text-xs text-muted-foreground">
                             {formatWarehouseExitItemDestinationLabel(item)}
+                          </td>
+                          <td className="p-3 text-xs text-muted-foreground">
+                            {detailIsDraft ? (
+                              <Select
+                                value={draftStorageLocationValue}
+                                onValueChange={(value) =>
+                                  updateDraftItemEdit(
+                                    item.id,
+                                    "storageLocation",
+                                    value
+                                  )
+                                }
+                              >
+                                <SelectTrigger className="h-9 min-w-[180px] bg-background text-xs">
+                                  <SelectValue placeholder="Seleccione ubicación" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {(item.storageLocationOptions ?? []).map(
+                                    (location: any) => (
+                                      <SelectItem
+                                        key={encodeStorageLocationValue(
+                                          location.storageLocation
+                                        )}
+                                        value={encodeStorageLocationValue(
+                                          location.storageLocation
+                                        )}
+                                        className="text-xs"
+                                      >
+                                        <span className="flex w-full min-w-0 items-center justify-between gap-3 pr-4">
+                                          <span className="truncate">
+                                            {getStorageLocationLabel(
+                                              location.storageLocation
+                                            )}
+                                          </span>
+                                          <QuantityPill
+                                            value={location.quantity}
+                                            unit={item.unit}
+                                          />
+                                        </span>
+                                      </SelectItem>
+                                    )
+                                  )}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              getStorageLocationLabel(item.storageLocation)
+                            )}
                           </td>
                           <td className="p-3 text-right">
                             {detailIsDraft ? (
@@ -2833,6 +3106,7 @@ export default function SalidasBodega() {
             setDeliveryQuantityByItemId({});
             setDeliveryWarehouseByItemId({});
             setDeliveryProjectByItemId({});
+            setDeliveryStorageLocationByItemId({});
             setDeliveryDestinationWarehouseByItemId({});
             setDeliveryDestinationProjectByItemId({});
             setDeliveryDestinationWarehouseTouchedByItemId({});
@@ -2933,7 +3207,7 @@ export default function SalidasBodega() {
                               selectedProjectId,
                               selectedWarehouseId
                             );
-                          const availableQuantity =
+                          const scopeAvailableQuantity =
                             getDeliveryScopeAvailableQuantity(
                               item,
                               selectedProjectId,
@@ -2957,6 +3231,27 @@ export default function SalidasBodega() {
                             (project: any) =>
                               Number(project.projectId) === selectedProjectId
                           );
+                          const storageLocationOptions =
+                            getDeliveryStorageLocationOptions(
+                              item,
+                              selectedProjectId,
+                              selectedWarehouseId
+                            );
+                          const selectedStorageLocationValue =
+                            deliveryStorageLocationByItemId[item.id];
+                          const selectedLocationAvailableQuantity =
+                            selectedStorageLocationValue
+                              ? getDeliveryStorageLocationAvailableQuantity(
+                                  item,
+                                  selectedProjectId,
+                                  selectedWarehouseId,
+                                  selectedStorageLocationValue
+                                )
+                              : 0;
+                          const availableQuantity =
+                            selectedStorageLocationValue
+                              ? selectedLocationAvailableQuantity
+                              : scopeAvailableQuantity;
                           const selectedDestinationWarehouseId = Number(
                             deliveryDestinationWarehouseByItemId[item.id] ?? 0
                           );
@@ -2992,7 +3287,8 @@ export default function SalidasBodega() {
                             );
                           const canDeliver =
                             pendingQuantity > 0 &&
-                            availableQuantity > 0 &&
+                            Boolean(selectedStorageLocationValue) &&
+                            selectedLocationAvailableQuantity > 0 &&
                             !selectedWarehouseBlocked &&
                             Boolean(item.sapItemCode);
 
@@ -3183,6 +3479,71 @@ export default function SalidasBodega() {
                                       </SelectContent>
                                     </Select>
                                   </div>
+                                  <div className="space-y-1">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                      Ubicación
+                                    </p>
+                                    <Select
+                                      value={selectedStorageLocationValue}
+                                      onValueChange={(value) =>
+                                        handleDeliveryStorageLocationChange(
+                                          item,
+                                          value
+                                        )
+                                      }
+                                      disabled={
+                                        !selectedProjectId ||
+                                        !selectedWarehouseId ||
+                                        storageLocationOptions.length === 0
+                                      }
+                                    >
+                                      <SelectTrigger className="h-9 w-full min-w-0 overflow-hidden text-left text-xs [&>span]:truncate">
+                                        <SelectValue
+                                          placeholder={
+                                            selectedProjectId
+                                              ? "Seleccione ubicación"
+                                              : "Seleccione bodega"
+                                          }
+                                        />
+                                      </SelectTrigger>
+                                      <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
+                                        {storageLocationOptions.length === 0 ? (
+                                          <SelectItem value="sin-ubicaciones" disabled>
+                                            Sin ubicaciones con stock
+                                          </SelectItem>
+                                        ) : (
+                                          storageLocationOptions.map(
+                                            (location: any) => (
+                                              <SelectItem
+                                                key={encodeStorageLocationValue(
+                                                  location.storageLocation
+                                                )}
+                                                value={encodeStorageLocationValue(
+                                                  location.storageLocation
+                                                )}
+                                                textValue={getStorageLocationLabel(
+                                                  location.storageLocation
+                                                )}
+                                                className="text-xs"
+                                              >
+                                                <span className="flex w-full min-w-0 items-center justify-between gap-3 pr-4">
+                                                  <span className="truncate">
+                                                    {getStorageLocationLabel(
+                                                      location.storageLocation
+                                                    )}
+                                                  </span>
+                                                  <QuantityPill
+                                                    value={location.quantity}
+                                                    unit={item.unit}
+                                                  />
+                                                </span>
+                                              </SelectItem>
+                                            )
+                                          )
+                                        )}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
                                 </div>
                                 <p className="mt-1 max-w-[334px] truncate text-[10px] text-muted-foreground">
                                   Origen:{" "}
@@ -3197,6 +3558,14 @@ export default function SalidasBodega() {
                                         selectedWarehouseOption
                                       )
                                     : "almacén físico"}{" "}
+                                  /{" "}
+                                  {selectedStorageLocationValue
+                                    ? getStorageLocationLabel(
+                                        decodeStorageLocationValue(
+                                          selectedStorageLocationValue
+                                        )
+                                      )
+                                    : "ubicación pendiente"}{" "}
                                   · Disponible:{" "}
                                   <span className="font-semibold text-emerald-700">
                                     {formatQuantity(availableQuantity)}{" "}

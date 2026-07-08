@@ -2460,6 +2460,7 @@ export async function listVisibleWarehouseStockForItems(params: {
         ...option,
         quantity: null,
         quantityHidden: true,
+        storageLocations: [],
       })),
     }));
   }
@@ -2476,6 +2477,11 @@ export async function listVisibleWarehouseStockForItems(params: {
       projectCode: string | null;
       projectName: string | null;
       quantity: string;
+      storageLocations?: Array<{
+        storageLocation: string | null;
+        label: string;
+        quantity: string;
+      }>;
     }>
   >();
 
@@ -2511,6 +2517,7 @@ export async function listVisibleWarehouseStockForItems(params: {
         projectId: inventoryItems.projectId,
         projectCode: projects.code,
         projectName: projects.name,
+        storageLocation: inventoryItems.storageLocation,
         quantity: sql<string>`coalesce(sum(${inventoryItems.currentStock}), 0)`,
       })
       .from(inventoryItems)
@@ -2525,15 +2532,26 @@ export async function listVisibleWarehouseStockForItems(params: {
         warehouses.displayName,
         inventoryItems.projectId,
         projects.code,
-        projects.name
+        projects.name,
+        inventoryItems.storageLocation
       )
       .orderBy(asc(projects.code), asc(warehouses.displayName));
 
     const optionsByScope = new Map(
       Array.from(visibleWarehouseOptionsByScope.entries()).map(
-        ([scopeKey, option]) => [scopeKey, { ...option, quantity: "0.00" }]
+        ([scopeKey, option]) => [
+          scopeKey,
+          { ...option, quantity: "0.00", storageLocations: [] },
+        ]
       )
     );
+    const storageLocationsByScope = new Map<
+      string,
+      Map<
+        string,
+        { storageLocation: string | null; label: string; quantity: string }
+      >
+    >();
 
     for (const row of rows) {
       if (typeof row.warehouseId !== "number") {
@@ -2545,6 +2563,8 @@ export async function listVisibleWarehouseStockForItems(params: {
         isUnclassifiedStock ? "unclassified" : row.projectId
       }:${row.warehouseId}`;
       const existing = optionsByScope.get(scopeKey);
+      const nextQuantity =
+        parseDecimal(existing?.quantity) + parseDecimal(row.quantity);
       optionsByScope.set(scopeKey, {
         warehouseId: row.warehouseId,
         warehouseCode: row.warehouseCode,
@@ -2557,11 +2577,41 @@ export async function listVisibleWarehouseStockForItems(params: {
         projectId: isUnclassifiedStock ? null : row.projectId,
         projectCode: isUnclassifiedStock ? null : row.projectCode,
         projectName: isUnclassifiedStock ? "Por clasificar" : row.projectName,
-        quantity: toDecimalString(row.quantity),
+        quantity: toDecimalString(nextQuantity),
+        storageLocations: existing?.storageLocations ?? [],
       });
+
+      const storageLocation = normalizeInventoryStorageLocation(
+        row.storageLocation
+      );
+      const storageLocationKey = storageLocation?.toLowerCase() ?? "";
+      const scopeStorageLocations =
+        storageLocationsByScope.get(scopeKey) ?? new Map();
+      const currentLocation = scopeStorageLocations.get(storageLocationKey);
+      scopeStorageLocations.set(storageLocationKey, {
+        storageLocation,
+        label: storageLocation ?? "Sin ubicación",
+        quantity: toDecimalString(
+          parseDecimal(currentLocation?.quantity) + parseDecimal(row.quantity)
+        ),
+      });
+      storageLocationsByScope.set(scopeKey, scopeStorageLocations);
     }
 
-    const options = Array.from(optionsByScope.values()).sort((left, right) => {
+    const options = Array.from(optionsByScope.entries()).map(
+      ([scopeKey, option]) => ({
+        ...option,
+        storageLocations: Array.from(
+          storageLocationsByScope.get(scopeKey)?.values() ?? []
+        )
+          .filter(location => parseDecimal(location.quantity) > 0)
+          .sort((left, right) => {
+            if (left.storageLocation && !right.storageLocation) return -1;
+            if (!left.storageLocation && right.storageLocation) return 1;
+            return left.label.localeCompare(right.label);
+          }),
+      })
+    ).sort((left, right) => {
       const leftProject = left.projectCode ?? "";
       const rightProject = right.projectCode ?? "";
       return (
@@ -3754,6 +3804,7 @@ export async function recordWarehouseExit(params: {
   requestItemId: number;
   quantity: string;
   warehouseId?: number | null;
+  storageLocation?: string | null;
   note?: string;
   receivedByName?: string | null;
   processedById: number;
@@ -3765,6 +3816,7 @@ export async function recordWarehouseExit(params: {
         requestItemId: params.requestItemId,
         quantity: params.quantity,
         warehouseId: params.warehouseId,
+        storageLocation: params.storageLocation,
       },
     ],
     note: params.note,
@@ -3789,6 +3841,7 @@ export async function recordWarehouseExitBatch(params: {
     quantity: string;
     sourceProjectId?: number | null;
     warehouseId?: number | null;
+    storageLocation?: string | null;
     destinationProjectId?: number | null;
     destinationWarehouseId?: number | null;
     targetType?: "subproyecto" | "activo_fijo" | null;
@@ -3928,6 +3981,7 @@ export async function recordWarehouseExitBatch(params: {
       itemName: string;
       sourceProjectId: number;
       warehouseId: number;
+      storageLocation: string | null;
       quantity: number;
     }
   >();
@@ -3956,14 +4010,18 @@ export async function recordWarehouseExitBatch(params: {
       );
     }
     const sapItemCode = item.sapItemCode?.trim() || null;
+    const storageLocation = normalizeInventoryStorageLocation(
+      entry.storageLocation
+    );
     const stockKey = `${
       sapItemCode || item.itemName.trim().toLowerCase()
-    }::${sourceProjectId}::${entry.warehouseId}`;
+    }::${sourceProjectId}::${entry.warehouseId}::${storageLocation ?? ""}`;
     const current = requestedByStockKey.get(stockKey) ?? {
       sapItemCode,
       itemName: item.itemName,
       sourceProjectId,
       warehouseId: entry.warehouseId,
+      storageLocation,
       quantity: 0,
     };
     current.quantity += parseDecimal(entry.quantity);
@@ -3971,19 +4029,24 @@ export async function recordWarehouseExitBatch(params: {
   }
 
   for (const requested of Array.from(requestedByStockKey.values())) {
-    const availableQuantity = parseDecimal(
-      await getStockByItem({
+    const stockRows = await listInventoryRowsForStock({
         sapItemCode: requested.sapItemCode,
         itemName: requested.itemName,
         projectId: requested.sourceProjectId,
         warehouseId: requested.warehouseId,
+        storageLocation: requested.storageLocation,
         includeUnclassifiedProjectStock: true,
-      })
+      });
+    const availableQuantity = stockRows.reduce(
+      (sum, row) => sum + parseDecimal(row.currentStock),
+      0
     );
 
     if (requested.quantity - availableQuantity > 0.000001) {
       throw new Error(
-        `Stock insuficiente para ${requested.itemName}. Disponible: ${toDecimalString(
+        `Stock insuficiente para ${requested.itemName} en ${
+          requested.storageLocation ?? "Sin ubicación"
+        }. Disponible: ${toDecimalString(
           availableQuantity
         )}, solicitado para salida: ${toDecimalString(requested.quantity)}.`
       );
@@ -4098,6 +4161,9 @@ export async function recordWarehouseExitBatch(params: {
       return {
         materialRequestItemId: entry.requestItemId,
         warehouseId: entry.warehouseId,
+        storageLocation: normalizeInventoryStorageLocation(
+          entry.storageLocation
+        ),
         ...(destination
           ? {
               destinationProjectId: destination.projectId,
@@ -10304,6 +10370,7 @@ function buildWarehouseExitDocument(params: {
     sapItemCode: string;
     itemName: string;
     warehouseLabel?: string | null;
+    storageLocation?: string | null;
     quantity: string | number;
     unit?: string | null;
     targetLabel?: string | null;
@@ -10348,6 +10415,10 @@ function buildWarehouseExitDocument(params: {
       metaLines: [
         ...(item.sapItemCode ? [`SAP: ${item.sapItemCode}`] : []),
         ...(item.warehouseLabel ? [`Bodega: ${item.warehouseLabel}`] : []),
+        `Ubicación: ${
+          normalizeInventoryStorageLocation(item.storageLocation) ??
+          "Sin ubicación"
+        }`,
         ...(item.targetLabel ? [`Destino: ${item.targetLabel}`] : []),
         ...((item.notes ?? params.notes)
           ? [`Notas: ${item.notes ?? params.notes}`]
@@ -10666,17 +10737,52 @@ export async function getWarehouseExitById(id: number) {
 
   const enrichedItems = await Promise.all(
     items.map(async item => {
-      const stockRows = await listInventoryRowsForStock({
+      const stockScope = {
         sapItemCode: item.sapItemCode,
         itemName: item.itemName,
         projectId: rows[0].warehouseExit.projectId,
         warehouseId: item.warehouseId ?? rows[0].warehouseExit.warehouseId,
         includeUnclassifiedProjectStock: true,
+      };
+      const allLocationStockRows = await listInventoryRowsForStock(stockScope);
+      const stockRows = await listInventoryRowsForStock({
+        ...stockScope,
+        storageLocation: item.storageLocation ?? null,
       });
       const availableQuantity = stockRows.reduce(
         (sum, row) => sum + parseDecimal(row.currentStock),
         0
       );
+      const storageLocationOptionsByKey = new Map<
+        string,
+        { storageLocation: string | null; label: string; quantity: string }
+      >();
+      for (const row of allLocationStockRows) {
+        const storageLocation = normalizeInventoryStorageLocation(
+          row.storageLocation
+        );
+        const key = storageLocation?.toLowerCase() ?? "";
+        const current = storageLocationOptionsByKey.get(key);
+        storageLocationOptionsByKey.set(key, {
+          storageLocation,
+          label: storageLocation ?? "Sin ubicación",
+          quantity: toDecimalString(
+            parseDecimal(current?.quantity) + parseDecimal(row.currentStock)
+          ),
+        });
+      }
+      const currentStorageLocation = normalizeInventoryStorageLocation(
+        item.storageLocation
+      );
+      const currentStorageLocationKey =
+        currentStorageLocation?.toLowerCase() ?? "";
+      if (!storageLocationOptionsByKey.has(currentStorageLocationKey)) {
+        storageLocationOptionsByKey.set(currentStorageLocationKey, {
+          storageLocation: currentStorageLocation,
+          label: currentStorageLocation ?? "Sin ubicación",
+          quantity: "0.00",
+        });
+      }
       const exitQuantity = parseDecimal(item.quantity);
       const returnedQuantity = returnedQuantityByExitItemId.get(item.id) ?? 0;
       const stockAfterExit =
@@ -10687,6 +10793,13 @@ export async function getWarehouseExitById(id: number) {
       return {
         ...item,
         availableQuantity: toDecimalString(availableQuantity),
+        storageLocationOptions: Array.from(
+          storageLocationOptionsByKey.values()
+        ).sort((left, right) => {
+          if (left.storageLocation && !right.storageLocation) return -1;
+          if (!left.storageLocation && right.storageLocation) return 1;
+          return left.label.localeCompare(right.label);
+        }),
         stockAfterExit: toDecimalString(stockAfterExit),
         returnedQuantity: toDecimalString(returnedQuantity),
         returnableQuantity: toDecimalString(
@@ -10761,6 +10874,7 @@ export async function getWarehouseExitById(id: number) {
               itemName: item.itemName,
               warehouseLabel:
                 item.warehouse?.displayName || item.warehouse?.name || null,
+              storageLocation: item.storageLocation ?? null,
               quantity: item.quantity,
               unit: item.unit,
               targetLabel: [
@@ -10961,6 +11075,9 @@ export async function createWarehouseExit(
         itemName: item.itemName.trim(),
         quantity: toDecimalString(quantity),
         unit: item.unit?.trim() || null,
+        storageLocation: normalizeInventoryStorageLocation(
+          item.storageLocation
+        ),
         ...target,
         notes: item.notes?.trim() || null,
       };
@@ -11125,6 +11242,7 @@ export async function updateWarehouseExitDraft(
     items: Array<{
       id: number;
       quantity: string | number;
+      storageLocation?: string | null;
       notes?: string | null;
     }>;
   }
@@ -11178,6 +11296,7 @@ export async function updateWarehouseExitDraft(
       sapItemCode: string | null;
       itemName: string;
       warehouseId: number;
+      storageLocation: string | null;
       quantity: number;
     }
   >();
@@ -11218,11 +11337,17 @@ export async function updateWarehouseExitDraft(
     }
 
     const sapItemCode = item.sapItemCode?.trim() || null;
-    const stockKey = `${sapItemCode || item.itemName.trim().toLowerCase()}::${warehouseId}`;
+    const storageLocation = normalizeInventoryStorageLocation(
+      input.storageLocation
+    );
+    const stockKey = `${
+      sapItemCode || item.itemName.trim().toLowerCase()
+    }::${warehouseId}::${storageLocation ?? ""}`;
     const current = requestedByStockKey.get(stockKey) ?? {
       sapItemCode,
       itemName: item.itemName,
       warehouseId,
+      storageLocation,
       quantity: 0,
     };
     current.quantity += quantity;
@@ -11231,23 +11356,29 @@ export async function updateWarehouseExitDraft(
     return {
       id: item.id,
       quantity: toDecimalString(quantity),
+      storageLocation,
       notes: input.notes?.trim() || null,
     };
   });
 
   for (const requested of Array.from(requestedByStockKey.values())) {
-    const availableQuantity = parseDecimal(
-      await getStockByItem({
+    const stockRows = await listInventoryRowsForStock({
         sapItemCode: requested.sapItemCode,
         itemName: requested.itemName,
         projectId: detail.warehouseExit.projectId,
         warehouseId: requested.warehouseId,
+        storageLocation: requested.storageLocation,
         includeUnclassifiedProjectStock: true,
-      })
+      });
+    const availableQuantity = stockRows.reduce(
+      (sum, row) => sum + parseDecimal(row.currentStock),
+      0
     );
     if (requested.quantity - availableQuantity > 0.000001) {
       throw new Error(
-        `Stock insuficiente para ${requested.itemName}. Disponible: ${toDecimalString(
+        `Stock insuficiente para ${requested.itemName} en ${
+          requested.storageLocation ?? "Sin ubicación"
+        }. Disponible: ${toDecimalString(
           availableQuantity
         )}, solicitado para salida: ${toDecimalString(requested.quantity)}.`
       );
@@ -11271,6 +11402,7 @@ export async function updateWarehouseExitDraft(
         .update(warehouseExitItems)
         .set({
           quantity: item.quantity,
+          storageLocation: item.storageLocation,
           notes: item.notes,
           updatedAt: new Date(),
         })
@@ -11328,6 +11460,7 @@ export async function emitWarehouseExit(id: number, emittedById: number) {
       itemName: item.itemName,
       projectId: detail.warehouseExit.projectId,
       warehouseId: item.warehouseId ?? detail.warehouseExit.warehouseId,
+      storageLocation: item.storageLocation ?? null,
       quantity: item.quantity,
       includeUnclassifiedProjectStock: true,
     });
@@ -11363,6 +11496,7 @@ export async function emitWarehouseExit(id: number, emittedById: number) {
       itemName: item.itemName,
       warehouseLabel:
         item.warehouse?.displayName || item.warehouse?.name || null,
+      storageLocation: item.storageLocation ?? null,
       quantity: item.quantity,
       unit: item.unit,
       targetLabel: buildWarehouseExitTargetLabel(item),
@@ -11975,6 +12109,7 @@ export async function createWarehouseExitProjectReturn(params: {
       unit: sourceItem.unit,
       projectId: detail.warehouseExit.projectId,
       warehouseId: sourceItem.warehouseId ?? detail.warehouseExit.warehouseId,
+      storageLocation: sourceItem.storageLocation ?? null,
       quantity,
     });
 
@@ -12948,6 +13083,7 @@ async function consumeInventoryStock(params: {
   quantity: string | number;
   warehouseId?: number | null;
   warehouseLocation?: string | null;
+  storageLocation?: string | null;
   includeUnclassifiedProjectStock?: boolean;
 }) {
   const db = await getDb();
@@ -12977,7 +13113,14 @@ async function consumeInventoryStock(params: {
 
   if (available + 0.0001 < quantityToConsume) {
     throw new Error(
-      `Stock insuficiente para ${params.itemName}. Disponible: ${toDecimalString(
+      `Stock insuficiente para ${params.itemName}${
+        "storageLocation" in params
+          ? ` en ${
+              normalizeInventoryStorageLocation(params.storageLocation) ??
+              "Sin ubicación"
+            }`
+          : ""
+      }. Disponible: ${toDecimalString(
         available
       )}, solicitado: ${toDecimalString(quantityToConsume)}.`
     );

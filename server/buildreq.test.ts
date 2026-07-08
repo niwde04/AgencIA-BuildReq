@@ -4283,6 +4283,7 @@ describe("BuildReq - Role-based Access Control", () => {
             requestItemId: 41,
             dispatchedQuantity: "5.00",
             warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+            storageLocation: "2C1",
             targetType: "subproyecto",
             subProjectId: 301,
           },
@@ -4304,6 +4305,7 @@ describe("BuildReq - Role-based Access Control", () => {
           requestItemId: 41,
           quantity: "5.00",
           warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          storageLocation: "2C1",
           targetType: "subproyecto",
           subProjectId: 301,
         }),
@@ -4365,7 +4367,14 @@ describe("BuildReq - Role-based Access Control", () => {
           receivedByName: "Maria Perez",
           notes: "Entrega parcial",
         },
-        items: [{ id: 501, quantity: "4.00", notes: "Línea revisada" }],
+        items: [
+          {
+            id: 501,
+            quantity: "4.00",
+            storageLocation: "B10",
+            notes: "Línea revisada",
+          },
+        ],
       } as any);
 
     await expect(
@@ -4373,7 +4382,14 @@ describe("BuildReq - Role-based Access Control", () => {
         id: 33,
         receivedByName: "Maria Perez",
         notes: "Entrega parcial",
-        items: [{ id: 501, quantity: "4.00", notes: "Línea revisada" }],
+        items: [
+          {
+            id: 501,
+            quantity: "4.00",
+            storageLocation: " B10 ",
+            notes: "Línea revisada",
+          },
+        ],
       })
     ).resolves.toEqual({
       warehouseExit: {
@@ -4383,13 +4399,27 @@ describe("BuildReq - Role-based Access Control", () => {
         receivedByName: "Maria Perez",
         notes: "Entrega parcial",
       },
-      items: [{ id: 501, quantity: "4.00", notes: "Línea revisada" }],
+      items: [
+        {
+          id: 501,
+          quantity: "4.00",
+          storageLocation: "B10",
+          notes: "Línea revisada",
+        },
+      ],
     });
     expect(getWarehouseExitByIdSpy).toHaveBeenCalledWith(33);
     expect(updateWarehouseExitDraftSpy).toHaveBeenCalledWith(33, {
       receivedByName: "Maria Perez",
       notes: "Entrega parcial",
-      items: [{ id: 501, quantity: "4.00", notes: "Línea revisada" }],
+      items: [
+        {
+          id: 501,
+          quantity: "4.00",
+          storageLocation: "B10",
+          notes: "Línea revisada",
+        },
+      ],
     });
 
     getWarehouseExitByIdSpy.mockRestore();
@@ -4914,6 +4944,7 @@ describe("BuildReq - Role-based Access Control", () => {
         requestItemId: 41,
         dispatchedQuantity: "25.00",
         warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+        storageLocation: "2C1",
         note: "Salida aprobada por administración central",
         receivedByName: "Luis Mejia",
       })
@@ -4924,6 +4955,7 @@ describe("BuildReq - Role-based Access Control", () => {
       requestItemId: 41,
       quantity: "25.00",
       warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+      storageLocation: "2C1",
       note: "Salida aprobada por administración central",
       receivedByName: "Luis Mejia",
       processedById: 4,
@@ -4974,11 +5006,13 @@ describe("BuildReq - Role-based Access Control", () => {
             requestItemId: 41,
             dispatchedQuantity: "25.00",
             warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+            storageLocation: "2C1",
           },
           {
             requestItemId: 42,
             dispatchedQuantity: "10.00",
             warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+            storageLocation: null,
           },
         ],
         note: "Salida aprobada por administración central",
@@ -4999,11 +5033,13 @@ describe("BuildReq - Role-based Access Control", () => {
           requestItemId: 41,
           quantity: "25.00",
           warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          storageLocation: "2C1",
         },
         {
           requestItemId: 42,
           quantity: "10.00",
           warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          storageLocation: null,
         },
       ],
       note: "Salida aprobada por administración central",

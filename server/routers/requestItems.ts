@@ -701,6 +701,7 @@ export const requestItemsRouter = router({
         requestItemId: z.number(),
         dispatchedQuantity: z.string(),
         warehouseId: z.number().int().positive().optional(),
+        storageLocation: z.string().trim().max(255).nullable().optional(),
         note: z.string().optional(),
         receivedByName: z.string().trim().max(255).optional(),
       })
@@ -738,6 +739,7 @@ export const requestItemsRouter = router({
         requestItemId: input.requestItemId,
         quantity: input.dispatchedQuantity,
         warehouseId: input.warehouseId,
+        storageLocation: input.storageLocation ?? null,
         note: input.note,
         ...(input.receivedByName
           ? { receivedByName: input.receivedByName }
@@ -759,6 +761,7 @@ export const requestItemsRouter = router({
               dispatchedQuantity: z.string(),
               sourceProjectId: z.number().int().positive().nullable().optional(),
               warehouseId: z.number().int().positive().optional(),
+              storageLocation: z.string().trim().max(255).nullable().optional(),
               destinationProjectId: z.number().int().positive().optional(),
               destinationWarehouseId: z.number().int().positive().optional(),
               targetType: z
@@ -875,6 +878,7 @@ export const requestItemsRouter = router({
             ? { sourceProjectId: item.sourceProjectId }
             : {}),
           warehouseId: item.warehouseId!,
+          storageLocation: item.storageLocation ?? null,
           ...(item.destinationProjectId
             ? { destinationProjectId: item.destinationProjectId }
             : {}),

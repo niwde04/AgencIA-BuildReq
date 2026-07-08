@@ -1412,6 +1412,7 @@ export const warehouseExitItems = pgTable(
     itemName: varchar("itemName", { length: 500 }).notNull(),
     quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull(),
     unit: varchar("unit", { length: 50 }),
+    storageLocation: varchar("storageLocation", { length: 255 }),
     targetType: materialRequestTargetTypeEnum("targetType"),
     subProjectId: integer("subProjectId").references(
       () => projectSubprojects.id,

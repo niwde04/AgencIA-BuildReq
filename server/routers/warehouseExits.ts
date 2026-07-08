@@ -129,6 +129,7 @@ export const warehouseExitsRouter = router({
             z.object({
               id: z.number().int().positive(),
               quantity: z.string().trim().min(1),
+              storageLocation: z.string().trim().max(255).nullable().optional(),
               notes: z.string().trim().max(1000).nullable().optional(),
             })
           )
