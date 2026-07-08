@@ -1252,7 +1252,7 @@ export default function Articulos() {
           if (!open) setSelectedArticle(null);
         }}
       >
-        <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-3xl">
+        <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-4xl">
           <DialogHeader>
             <DialogTitle>
               {isResolvingSelectedArticle
@@ -1435,11 +1435,13 @@ export default function Articulos() {
                     </div>
                   </div>
 
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
                     <div className="space-y-1">
                       <Label className="text-xs">Serie</Label>
                       <Input
+                        className="px-2 font-mono text-xs md:text-xs"
                         value={fixedAssetDetailDraft.serialNumber}
+                        title={fixedAssetDetailDraft.serialNumber}
                         disabled={!canEditSelectedFixedAssetDetails}
                         onChange={event =>
                           updateFixedAssetDraftField(
@@ -1515,7 +1517,9 @@ export default function Articulos() {
                     <div className="space-y-1">
                       <Label className="text-xs">Placa/código</Label>
                       <Input
+                        className="px-2 font-mono text-xs md:text-xs"
                         value={fixedAssetDetailDraft.plateOrCode}
+                        title={fixedAssetDetailDraft.plateOrCode}
                         disabled={!canEditSelectedFixedAssetDetails}
                         onChange={event =>
                           updateFixedAssetDraftField(
@@ -1528,7 +1532,9 @@ export default function Articulos() {
                     <div className="space-y-1">
                       <Label className="text-xs">Serie chasis</Label>
                       <Input
+                        className="px-2 font-mono text-xs md:text-xs"
                         value={fixedAssetDetailDraft.chassisSeries}
+                        title={fixedAssetDetailDraft.chassisSeries}
                         disabled={!canEditSelectedFixedAssetDetails}
                         onChange={event =>
                           updateFixedAssetDraftField(
@@ -1541,7 +1547,9 @@ export default function Articulos() {
                     <div className="space-y-1">
                       <Label className="text-xs">Serie motor</Label>
                       <Input
+                        className="px-2 font-mono text-xs md:text-xs"
                         value={fixedAssetDetailDraft.motorSeries}
+                        title={fixedAssetDetailDraft.motorSeries}
                         disabled={!canEditSelectedFixedAssetDetails}
                         onChange={event =>
                           updateFixedAssetDraftField(
@@ -1551,7 +1559,7 @@ export default function Articulos() {
                         }
                       />
                     </div>
-                    <div className="space-y-1 md:col-span-2 xl:col-span-4">
+                    <div className="space-y-1 md:col-span-2 lg:col-span-3">
                       <Label className="text-xs">Observación</Label>
                       <Textarea
                         rows={2}
