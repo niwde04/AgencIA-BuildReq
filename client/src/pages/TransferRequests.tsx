@@ -1280,20 +1280,25 @@ export default function TransferRequests() {
       </Card>
 
       <Dialog open={Boolean(detailId)} onOpenChange={(open) => !open && setDetailId(null)}>
-        <DialogContent className="scrollbar-visible !h-[calc(100dvh-0.5rem)] !max-h-[calc(100dvh-0.5rem)] !w-[calc(100vw-0.5rem)] !max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:!h-[calc(100dvh-1rem)] sm:!max-h-[calc(100dvh-1rem)] sm:!w-[calc(100vw-1rem)] sm:!max-w-[calc(100vw-1rem)] sm:p-6 lg:p-7 xl:!max-w-[1900px]">
-          <DialogHeader>
-            <DialogTitle>{detail?.transferRequest.requestNumber || "Solicitud de Traslado"}</DialogTitle>
-          </DialogHeader>
-          {detailLoading ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">
-              Cargando solicitud...
-            </div>
-          ) : detailError ? (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-              {detailError.message}
-            </div>
-          ) : detail ? (
-            <div className="space-y-4">
+        <DialogContent className="scrollbar-visible !flex !h-[calc(100dvh-2rem)] !max-h-[calc(100dvh-2rem)] !w-[calc(100vw-2rem)] !max-w-[1760px] flex-col gap-0 overflow-hidden rounded-2xl p-0">
+          <div className="shrink-0 border-b border-border px-4 py-3 sm:px-6">
+            <DialogHeader>
+              <DialogTitle>
+                {detail?.transferRequest.requestNumber || "Solicitud de Traslado"}
+              </DialogTitle>
+            </DialogHeader>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+            {detailLoading ? (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                Cargando solicitud...
+              </div>
+            ) : detailError ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                {detailError.message}
+              </div>
+            ) : detail ? (
+              <div className="space-y-4">
               <div className="grid gap-4 md:grid-cols-4">
                 <div>
                   <Label className="text-xs text-muted-foreground">
@@ -1330,44 +1335,44 @@ export default function TransferRequests() {
                 </div>
               </div>
 
-              <div className="overflow-x-auto rounded border border-border">
-                <table className="w-full min-w-[1880px] table-fixed text-sm">
+              <div className="max-w-full overflow-x-auto rounded border border-border">
+                <table className="w-full min-w-[1640px] table-fixed text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
-                      <th className="w-20 p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="w-[70px] p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Código
                       </th>
-                      <th className="w-44 p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="w-[150px] p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Ítem
                       </th>
-                      <th className="w-56 p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="w-[190px] p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Almacén origen
                       </th>
-                      <th className="w-64 p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="w-[210px] p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Bodega origen
                       </th>
-                      <th className="w-52 p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="w-40 p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Ubicación origen
                       </th>
-                      <th className="w-56 p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="w-[190px] p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Almacén destino
                       </th>
-                      <th className="w-64 p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="w-[210px] p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Bodega destino
                       </th>
-                      <th className="w-24 p-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="w-[90px] p-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Cant. solicitada
                       </th>
                       {canConvertTransferRequests &&
                         detail.transferRequest.status === "pendiente" && (
-                        <th className="w-28 p-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        <th className="w-[100px] p-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Enviar
                         </th>
                       )}
-                      <th className="w-24 p-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="w-[90px] p-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Exist. origen
                       </th>
-                      <th className="w-28 p-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="w-[100px] p-2 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Saldo al recibir
                       </th>
                       {canConvertTransferRequests &&
@@ -1914,39 +1919,40 @@ export default function TransferRequests() {
                 canDelete={false}
               />
 
-              {canConvertTransferRequests || canCancelTransferRequests ? (
-                <div className="flex justify-end">
-                <div className="flex flex-wrap justify-end gap-2">
-                  {canCancelTransferRequests &&
-                  detail.transferRequest.status === "pendiente" ? (
-                    <Button
-                      variant="outline"
-                      className="border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800"
-                      onClick={() => setConfirmCancelId(detail.transferRequest.id)}
-                      disabled={cancelMutation.isPending || convertMutation.isPending}
-                    >
-                      <Ban className="mr-2 h-4 w-4" />
-                      Cancelar solicitud
-                    </Button>
-                  ) : null}
-                  {canConvertTransferRequests ? (
-                    <Button
-                      onClick={handleConvertToTransfer}
-                      disabled={
-                        convertMutation.isPending ||
-                        originStockLoading ||
-                        detail.transferRequest.status !== "pendiente"
-                      }
-                    >
-                      <Truck className="mr-2 h-4 w-4" />
-                      {convertMutation.isPending ? "Generando..." : "Convertir a traslado"}
-                    </Button>
-                  ) : null}
-                </div>
+                {canConvertTransferRequests || canCancelTransferRequests ? (
+                  <div className="sticky bottom-0 z-10 -mx-4 border-t border-border bg-background/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {canCancelTransferRequests &&
+                      detail.transferRequest.status === "pendiente" ? (
+                        <Button
+                          variant="outline"
+                          className="border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                          onClick={() => setConfirmCancelId(detail.transferRequest.id)}
+                          disabled={cancelMutation.isPending || convertMutation.isPending}
+                        >
+                          <Ban className="mr-2 h-4 w-4" />
+                          Cancelar solicitud
+                        </Button>
+                      ) : null}
+                      {canConvertTransferRequests ? (
+                        <Button
+                          onClick={handleConvertToTransfer}
+                          disabled={
+                            convertMutation.isPending ||
+                            originStockLoading ||
+                            detail.transferRequest.status !== "pendiente"
+                          }
+                        >
+                          <Truck className="mr-2 h-4 w-4" />
+                          {convertMutation.isPending ? "Generando..." : "Convertir a traslado"}
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
               </div>
-              ) : null}
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </DialogContent>
       </Dialog>
 
