@@ -1,6 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
+import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -830,6 +831,21 @@ function formatRetentionPrintDate(value: string | Date | null | undefined) {
 function formatRetentionPrintNumber(value: string | number | null | undefined) {
   return toNumber(value).toLocaleString("es-HN", {
     minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatInvoicePrintDate(value: string | Date | null | undefined) {
+  return formatRetentionPrintDate(value) || "-";
+}
+
+function formatInvoicePrintMoney(value: string | number | null | undefined) {
+  return formatRetentionPrintNumber(value);
+}
+
+function formatInvoicePrintQuantity(value: string | number | null | undefined) {
+  return toNumber(value).toLocaleString("es-HN", {
+    minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   });
 }
@@ -1916,6 +1932,445 @@ export default function Facturas() {
       setIsExportingInvoiceExcel(false);
     }
   };
+
+  const handlePrintInvoiceDetail = () => {
+    if (!detail?.invoice) return;
+
+    const invoice = detail.invoice;
+    const printNumber = invoice.invoiceDocumentNumber || `FT-${invoice.id}`;
+    const supplierLabel = detail.supplier
+      ? `${detail.supplier.supplierCode} - ${detail.supplier.name}`
+      : "Proveedor pendiente";
+    const projectLabel = detail.project
+      ? `${detail.project.code} - ${detail.project.name}`
+      : "Proyecto no identificado";
+    const purchaseOrderLabel = detail.purchaseOrder?.orderNumber || "-";
+    const receiptLabel = detail.receipt?.receiptNumber || "-";
+    const requestedByLabel = formatInvoiceRequestedBy(detail);
+    const createdByLabel = formatInvoiceCreatedBy(detail);
+    const documentTypeLabel =
+      invoiceDraft.isFiscalDocument !== false ? "Factura" : "Documento extranjero";
+    const observations =
+      invoiceDraft.notes?.trim() || invoice.notes?.trim() || "-";
+
+    const getLineRetentionLabel = (itemId: number) => {
+      const lineRetentions = retentionDrafts.filter(
+        retention => retention.invoiceItemId === itemId
+      );
+      if (lineRetentions.length === 0) return "";
+      return lineRetentions
+        .map(retention =>
+          [
+            retention.retentionCode,
+            retention.description,
+            `L ${formatInvoicePrintMoney(getRetentionAmount(retention))}`,
+          ]
+            .filter(Boolean)
+            .join(" - ")
+        )
+        .join("; ");
+    };
+
+    const getTargetLabel = (item: any) => {
+      if (item.targetType === "activo_fijo") {
+        return [
+          "Activo fijo:",
+          item.fixedAssetSapItemCode,
+          item.fixedAssetName,
+        ]
+          .filter(Boolean)
+          .join(" ");
+      }
+      if (item.targetType === "subproyecto") {
+        return item.subProjectId ? `Subproyecto #${item.subProjectId}` : "Subproyecto";
+      }
+      return "-";
+    };
+
+    const itemRows = (detail.items ?? [])
+      .map((item: any) => {
+        const assetBreakdownRows = getInvoiceAssetBreakdownRows(
+          item,
+          parseFixedAssetDetails(item.assetDetails)
+        );
+        const primaryAsset = assetBreakdownRows[0];
+        const itemCode =
+          getInvoiceAssetDisplayCode(primaryAsset ?? {}, item) ||
+          item.currentSapItemCode ||
+          item.originalSapItemCode ||
+          "-";
+        const partOrSerial =
+          primaryAsset?.serialNumber ||
+          primaryAsset?.plateOrCode ||
+          item.currentSapItemCode ||
+          item.originalSapItemCode ||
+          "-";
+        const lineRetentionLabel = getLineRetentionLabel(item.id);
+        const lineObservationHtml = item.lineObservation?.trim()
+          ? `<div class="line-note">${escapePrintHtml(item.lineObservation)}</div>`
+          : "";
+        const retentionHtml = lineRetentionLabel
+          ? `<div class="line-note"><strong>Retención:</strong> ${escapePrintHtml(
+              lineRetentionLabel
+            )}</div>`
+          : "";
+        const assetHtml =
+          item.isFixedAsset || item.isLeasing || assetBreakdownRows.length > 0
+            ? `
+              <div class="asset-meta">
+                <strong>Activo fijo${item.isLeasing ? " / Leasing" : ""}</strong>
+                ${assetBreakdownRows
+                  .map((asset, index) => {
+                    const summary = getAssetDetailSummary(asset);
+                    const displayCode = getInvoiceAssetDisplayCode(asset, item);
+                    return `<div>Unidad ${index + 1}: ${escapePrintHtml(
+                      [displayCode, summary].filter(Boolean).join(" - ")
+                    )}</div>`;
+                  })
+                  .join("")}
+              </div>
+            `
+            : "";
+
+        return `
+          <tr>
+            <td>${escapePrintHtml(itemCode)}</td>
+            <td>${escapePrintHtml(item.itemName)}${lineObservationHtml}${retentionHtml}${assetHtml}</td>
+            <td>${escapePrintHtml(projectLabel)}</td>
+            <td>${escapePrintHtml(getTargetLabel(item))}</td>
+            <td class="center">${escapePrintHtml(partOrSerial)}</td>
+            <td class="numeric">${escapePrintHtml(formatInvoicePrintQuantity(item.quantity))}</td>
+            <td class="center">${escapePrintHtml(item.unit || "-")}</td>
+            <td class="numeric">${escapePrintHtml(formatInvoicePrintMoney(item.unitPrice))}</td>
+            <td class="numeric">${escapePrintHtml(formatInvoicePrintMoney(item.subtotal))}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    const otherChargeRows = (detail.otherCharges ?? [])
+      .map(
+        (charge: any) => `
+          <tr class="charge-row">
+            <td>-</td>
+            <td><strong>Otros cargos:</strong> ${escapePrintHtml(charge.concept)}</td>
+            <td class="center">-</td>
+            <td class="center">-</td>
+            <td class="center">-</td>
+            <td class="numeric">-</td>
+            <td class="center">-</td>
+            <td class="numeric">-</td>
+            <td class="numeric">${escapePrintHtml(formatInvoicePrintMoney(charge.amount))}</td>
+          </tr>
+        `
+      )
+      .join("");
+
+    const summaryRows = [
+      { label: "Sub-total L.", value: invoice.subtotal },
+      ...(invoiceOtherChargesTotal > 0
+        ? [{ label: "Otros cargos L.", value: invoiceOtherChargesTotal }]
+        : []),
+      { label: "I.S.V. L.", value: invoice.taxAmount },
+      { label: "Total factura L.", value: invoice.total },
+      { label: "(-) Total retenciones L.", value: retentionTotal },
+      { label: "Total a pagar L.", value: netPayable, emphasized: true },
+    ]
+      .map(
+        row => `
+          <tr class="${row.emphasized ? "emphasized" : ""}">
+            <td>${escapePrintHtml(row.label)}</td>
+            <td class="numeric">${escapePrintHtml(formatInvoicePrintMoney(row.value))}</td>
+          </tr>
+        `
+      )
+      .join("");
+
+    const printWindow = window.open("", "_blank", "width=840,height=1000");
+    if (!printWindow) {
+      toast.error("No se pudo abrir la ventana de impresión");
+      return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${escapePrintHtml(printNumber)}</title>
+          <style>
+            @page { size: A4 portrait; margin: 7mm; }
+            * { box-sizing: border-box; }
+            body {
+              background: #fff;
+              color: #000;
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 9.5px;
+              margin: 0;
+            }
+            .sheet {
+              margin: 0 auto;
+              max-width: 196mm;
+              padding: 0 1mm 3mm;
+            }
+            .header {
+              align-items: start;
+              display: grid;
+              gap: 8px;
+              grid-template-columns: 82px 1fr 108px;
+            }
+            .logo {
+              display: block;
+              height: 44px;
+              margin-left: 2px;
+              object-fit: contain;
+              width: 64px;
+            }
+            .title {
+              color: #000;
+              font-size: 11.5px;
+              font-weight: 800;
+              line-height: 1.25;
+              text-align: center;
+              text-transform: uppercase;
+            }
+            .company {
+              color: #000;
+              font-size: 13px;
+              margin-bottom: 2px;
+            }
+            .document-number {
+              border: 4px double #222;
+              color: #000;
+              font-size: 12px;
+              font-weight: 800;
+              margin-top: 1mm;
+              padding: 3px 6px;
+              text-align: center;
+            }
+            .meta {
+              display: grid;
+              gap: 10px;
+              grid-template-columns: 1fr 1fr;
+              margin-top: 6mm;
+            }
+            .meta-column {
+              display: grid;
+              gap: 3px;
+            }
+            .field {
+              display: grid;
+              gap: 4px;
+              grid-template-columns: 112px 1fr;
+              min-height: 12px;
+            }
+            .meta-column.right .field {
+              grid-template-columns: 104px 1fr;
+            }
+            .label {
+              font-weight: 800;
+            }
+            .value {
+              font-weight: 700;
+              overflow-wrap: anywhere;
+            }
+            table {
+              border-collapse: collapse;
+              margin-top: 4mm;
+              table-layout: fixed;
+              width: 100%;
+            }
+            th {
+              border-bottom: 2px solid #111;
+              border-top: 2px solid #111;
+              font-size: 8.5px;
+              font-weight: 800;
+              padding: 3px 4px;
+              text-align: left;
+            }
+            td {
+              border-bottom: 1px solid #111;
+              padding: 3px 4px;
+              overflow-wrap: anywhere;
+              vertical-align: top;
+            }
+            .line-note,
+            .asset-meta {
+              color: #000;
+              font-size: 8px;
+              line-height: 1.25;
+              margin-top: 1px;
+            }
+            .charge-row td {
+              font-weight: 800;
+            }
+            .center { text-align: center; }
+            .numeric {
+              font-variant-numeric: tabular-nums;
+              text-align: right;
+            }
+            .summary {
+              display: grid;
+              grid-template-columns: 1fr minmax(280px, 300px);
+              margin-top: 0;
+            }
+            .summary-table {
+              border-collapse: collapse;
+              grid-column: 2;
+              margin-top: 0;
+              table-layout: auto;
+              width: 100%;
+            }
+            .summary-table td {
+              border-bottom: 1px solid #111;
+              font-weight: 800;
+              padding: 3px 4px;
+              white-space: nowrap;
+            }
+            .summary-table .emphasized td {
+              font-size: 10px;
+            }
+            .summary-table td:first-child {
+              min-width: 170px;
+            }
+            .signatures {
+              display: grid;
+              grid-template-columns: 220px;
+              justify-content: center;
+              margin-top: 10mm;
+            }
+            .signature-line {
+              border-top: 2px solid #111;
+              font-weight: 700;
+              padding-top: 4px;
+              text-align: center;
+            }
+            @media print {
+              .sheet { max-width: none; padding: 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <main class="sheet">
+            <section class="header">
+              ${getPrintLogoMarkup()}
+              <div class="title">
+                <div class="company">HIDALGO E HIDALGO HONDURAS S.A. DE C.V.</div>
+                <div>${escapePrintHtml(projectLabel)}</div>
+                <div>FACTURA</div>
+              </div>
+              <div class="document-number">${escapePrintHtml(printNumber)}</div>
+            </section>
+
+            <section class="meta">
+              <div class="meta-column">
+                <div class="field">
+                  <div class="label">Fecha Documento:</div>
+                  <div class="value">${escapePrintHtml(formatInvoicePrintDate(invoiceDraft.documentDate || invoice.documentDate))}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Fecha Vencimiento (crédito):</div>
+                  <div class="value">${escapePrintHtml(formatInvoicePrintDate(invoiceDraft.documentDueDate || invoice.documentDueDate))}</div>
+                </div>
+                <div class="field">
+                  <div class="label">No Pedido:</div>
+                  <div class="value">${escapePrintHtml(purchaseOrderLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Recepción:</div>
+                  <div class="value">${escapePrintHtml(receiptLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Job:</div>
+                  <div class="value">${escapePrintHtml(projectLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Solicitado por:</div>
+                  <div class="value">${escapePrintHtml(requestedByLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Registrado por:</div>
+                  <div class="value">${escapePrintHtml(createdByLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Fecha Ingreso:</div>
+                  <div class="value">${escapePrintHtml(formatInvoicePrintDate(invoiceDraft.receiptDate || invoice.receiptDate))}</div>
+                </div>
+              </div>
+              <div class="meta-column right">
+                <div class="field">
+                  <div class="label">Proveedor:</div>
+                  <div class="value">${escapePrintHtml(supplierLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">RTN Proveedor:</div>
+                  <div class="value">${escapePrintHtml(formatSupplierRtnLabel(detail.supplier))}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Tipo Documento:</div>
+                  <div class="value">${escapePrintHtml(documentTypeLabel)}</div>
+                </div>
+                <div class="field">
+                  <div class="label">No Documento:</div>
+                  <div class="value">${escapePrintHtml(invoiceDraft.invoiceNumber || invoice.invoiceNumber || "-")}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Rango Autorizado Inicial:</div>
+                  <div class="value">${escapePrintHtml(invoiceDraft.documentRangeStart || invoice.documentRangeStart || "-")}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Rango Autorizado Final:</div>
+                  <div class="value">${escapePrintHtml(invoiceDraft.documentRangeEnd || invoice.documentRangeEnd || "-")}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Referencia:</div>
+                  <div class="value">Compra</div>
+                </div>
+                <div class="field">
+                  <div class="label">Observacion:</div>
+                  <div class="value">${escapePrintHtml(observations)}</div>
+                </div>
+              </div>
+            </section>
+
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 11%;">Código Empresa</th>
+                  <th style="width: 20%;">Descripción</th>
+                  <th style="width: 14%;">Bodega ingreso</th>
+                  <th style="width: 15%;">Destino</th>
+                  <th style="width: 13%;" class="center">No. Parte/No. Serie</th>
+                  <th style="width: 7%;" class="numeric">Cantidad</th>
+                  <th style="width: 7%;" class="center">U Medida</th>
+                  <th style="width: 7%;" class="numeric">Valor U</th>
+                  <th style="width: 6%;" class="numeric">Valor T</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemRows || `<tr><td colspan="9">Sin ítems</td></tr>`}
+                ${otherChargeRows}
+              </tbody>
+            </table>
+
+            <section class="summary">
+              <table class="summary-table">
+                <tbody>${summaryRows}</tbody>
+              </table>
+            </section>
+
+            <section class="signatures">
+              <div class="signature-line">Elaborado</div>
+            </section>
+          </main>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindowWhenReady(printWindow);
+  };
+
   const isRejected = detail?.invoice.status === "rechazada";
   const isDraft = detail?.invoice.status === "borrador" || isRejected;
   const isReviewed = detail?.invoice.status === "revisada";
@@ -2800,6 +3255,14 @@ export default function Facturas() {
               </div>
               {detail ? (
                 <div className="flex max-w-full flex-wrap items-center justify-start gap-2 pr-1 sm:pr-3 lg:justify-end lg:pr-0">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handlePrintInvoiceDetail}
+                  >
+                    <Printer className="mr-2 h-4 w-4" />
+                    Exportar PDF
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"
