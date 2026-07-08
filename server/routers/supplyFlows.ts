@@ -345,17 +345,14 @@ async function resolvePurchaseRequestPrintDestination(params: {
       ? projectWarehouses[0]
       : null;
 
-  if (!selectedWarehouse) {
+  if (params.destinationWarehouseId && !selectedWarehouse) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message:
-        params.destinationWarehouseId
-          ? "La bodega destino seleccionada no esta asignada al proyecto"
-          : "Seleccione bodega destino para la solicitud de compra",
+      message: "La bodega destino seleccionada no esta asignada al proyecto",
     });
   }
 
-  return getWarehousePrintLabel(selectedWarehouse);
+  return selectedWarehouse ? getWarehousePrintLabel(selectedWarehouse) : null;
 }
 
 export const supplyFlowsRouter = router({

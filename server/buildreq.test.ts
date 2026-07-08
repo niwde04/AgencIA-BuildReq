@@ -4886,7 +4886,7 @@ describe("BuildReq - Role-based Access Control", () => {
     createNotificationSpy.mockRestore();
   });
 
-  it("Purchase-request flow requires destination warehouse when project has multiple active warehouses", async () => {
+  it("Purchase-request flow does not require destination warehouse when project has multiple active warehouses", async () => {
     const { ctx } = createProjectAdminContext();
     const caller = appRouter.createCaller(ctx);
     const getMaterialRequestByIdSpy = vi
@@ -4926,8 +4926,25 @@ describe("BuildReq - Role-based Access Control", () => {
         DEFAULT_PROJECT_WAREHOUSE,
         SECOND_PROJECT_WAREHOUSE,
       ] as any);
-    const updateRequestItemSpy = vi.spyOn(db, "updateRequestItem");
-    const createPurchaseRequestSpy = vi.spyOn(db, "createPurchaseRequest");
+    const updateRequestItemSpy = vi
+      .spyOn(db, "updateRequestItem")
+      .mockResolvedValue({ id: 41 } as any);
+    const createPurchaseRequestSpy = vi
+      .spyOn(db, "createPurchaseRequest")
+      .mockResolvedValue({
+        id: 77,
+        requestNumber: "SC-2026-0001",
+      } as any);
+    const createSupplyFlowRecordSpy = vi
+      .spyOn(db, "createSupplyFlowRecord")
+      .mockResolvedValue({ id: 88 } as any);
+    const syncMaterialRequestFulfillmentStatusSpy = vi
+      .spyOn(db, "syncMaterialRequestFulfillmentStatus")
+      .mockResolvedValue({ changed: false, status: "en_proceso" } as any);
+    const getUsersByBuildreqRoleSpy = vi
+      .spyOn(db, "getUsersByBuildreqRole")
+      .mockResolvedValue([] as any);
+    const createNotificationSpy = vi.spyOn(db, "createNotification");
 
     await expect(
       caller.supplyFlows.createPurchaseRequest({
@@ -4935,10 +4952,32 @@ describe("BuildReq - Role-based Access Control", () => {
         requestItemId: 41,
         purchaseType: "local",
       })
-    ).rejects.toThrow("Seleccione bodega destino para la solicitud de compra");
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 88,
+        purchaseRequestId: 77,
+        purchaseRequestNumber: "SC-2026-0001",
+      })
+    );
 
-    expect(updateRequestItemSpy).not.toHaveBeenCalled();
-    expect(createPurchaseRequestSpy).not.toHaveBeenCalled();
+    expect(updateRequestItemSpy).toHaveBeenCalledWith(41, {
+      assignedFlow: "solicitud_compra",
+      status: "pendiente",
+    });
+    expect(createPurchaseRequestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 1,
+        purchaseType: "local",
+        printDestination: null,
+      }),
+      expect.arrayContaining([
+        expect.objectContaining({
+          materialRequestItemId: 41,
+          itemName: "Cemento",
+        }),
+      ])
+    );
+    expect(createNotificationSpy).not.toHaveBeenCalled();
 
     getMaterialRequestByIdSpy.mockRestore();
     getActivePurchaseRequestByMaterialRequestItemIdSpy.mockRestore();
@@ -4946,6 +4985,10 @@ describe("BuildReq - Role-based Access Control", () => {
     listProjectWarehousesSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     createPurchaseRequestSpy.mockRestore();
+    createSupplyFlowRecordSpy.mockRestore();
+    syncMaterialRequestFulfillmentStatusSpy.mockRestore();
+    getUsersByBuildreqRoleSpy.mockRestore();
+    createNotificationSpy.mockRestore();
   });
 
   it("Purchase-request flow rejects a destination warehouse outside the project", async () => {
@@ -5010,7 +5053,7 @@ describe("BuildReq - Role-based Access Control", () => {
     createPurchaseRequestSpy.mockRestore();
   });
 
-  it("Purchase-request batch requires destination warehouse when project has multiple active warehouses", async () => {
+  it("Purchase-request batch does not require destination warehouse when project has multiple active warehouses", async () => {
     const { ctx } = createProjectAdminContext();
     const caller = appRouter.createCaller(ctx);
     const getMaterialRequestByIdSpy = vi
@@ -5060,8 +5103,27 @@ describe("BuildReq - Role-based Access Control", () => {
         DEFAULT_PROJECT_WAREHOUSE,
         SECOND_PROJECT_WAREHOUSE,
       ] as any);
-    const updateRequestItemSpy = vi.spyOn(db, "updateRequestItem");
-    const createPurchaseRequestSpy = vi.spyOn(db, "createPurchaseRequest");
+    const updateRequestItemSpy = vi
+      .spyOn(db, "updateRequestItem")
+      .mockResolvedValue({ success: true } as any);
+    const createPurchaseRequestSpy = vi
+      .spyOn(db, "createPurchaseRequest")
+      .mockResolvedValue({
+        id: 77,
+        requestNumber: "SC-2026-0001",
+      } as any);
+    const createSupplyFlowRecordSpy = vi
+      .spyOn(db, "createSupplyFlowRecord")
+      .mockImplementation(
+        async (data: any) => ({ id: data.requestItemId }) as any
+      );
+    const syncMaterialRequestFulfillmentStatusSpy = vi
+      .spyOn(db, "syncMaterialRequestFulfillmentStatus")
+      .mockResolvedValue({ changed: false, status: "en_proceso" } as any);
+    const getUsersByBuildreqRoleSpy = vi
+      .spyOn(db, "getUsersByBuildreqRole")
+      .mockResolvedValue([] as any);
+    const createNotificationSpy = vi.spyOn(db, "createNotification");
 
     await expect(
       caller.supplyFlows.createPurchaseRequestBatch({
@@ -5071,10 +5133,41 @@ describe("BuildReq - Role-based Access Control", () => {
           { requestId: 9, requestItemId: 42 },
         ],
       })
-    ).rejects.toThrow("Seleccione bodega destino para la solicitud de compra");
+    ).resolves.toEqual({
+      success: true,
+      purchaseRequestId: 77,
+      purchaseRequestNumber: "SC-2026-0001",
+      processedItems: 2,
+      flowIds: [41, 42],
+    });
 
-    expect(updateRequestItemSpy).not.toHaveBeenCalled();
-    expect(createPurchaseRequestSpy).not.toHaveBeenCalled();
+    expect(updateRequestItemSpy).toHaveBeenCalledWith(41, {
+      assignedFlow: "solicitud_compra",
+      status: "pendiente",
+    });
+    expect(updateRequestItemSpy).toHaveBeenCalledWith(42, {
+      assignedFlow: "solicitud_compra",
+      status: "pendiente",
+    });
+    expect(createPurchaseRequestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        materialRequestId: 9,
+        projectId: 1,
+        purchaseType: "local",
+        printDestination: null,
+      }),
+      [
+        expect.objectContaining({
+          materialRequestItemId: 41,
+          itemName: "Cemento",
+        }),
+        expect.objectContaining({
+          materialRequestItemId: 42,
+          itemName: "Arena",
+        }),
+      ]
+    );
+    expect(createNotificationSpy).not.toHaveBeenCalled();
 
     getMaterialRequestByIdSpy.mockRestore();
     getActivePurchaseRequestByMaterialRequestItemIdSpy.mockRestore();
@@ -5082,6 +5175,10 @@ describe("BuildReq - Role-based Access Control", () => {
     listProjectWarehousesSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     createPurchaseRequestSpy.mockRestore();
+    createSupplyFlowRecordSpy.mockRestore();
+    syncMaterialRequestFulfillmentStatusSpy.mockRestore();
+    getUsersByBuildreqRoleSpy.mockRestore();
+    createNotificationSpy.mockRestore();
   });
 
   it("Purchase-request consolidation rejects items from different projects", async () => {
