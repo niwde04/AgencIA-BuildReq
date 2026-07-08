@@ -214,6 +214,15 @@ async function assertItemApprovedForProcessing(requestItemId: number) {
     });
   }
 
+  assertDetailItemApprovedForProcessing(detail, item);
+
+  return { item, detail };
+}
+
+function assertDetailItemApprovedForProcessing(
+  detail: NonNullable<Awaited<ReturnType<typeof db.getMaterialRequestById>>>,
+  item: { approvalStatus?: string | null }
+) {
   if (
     detail.request.requestType === "bienes" &&
     detail.request.approvalStatus === "pendiente"
@@ -241,8 +250,6 @@ async function assertItemApprovedForProcessing(requestItemId: number) {
       message: "El ítem todavía no ha sido autorizado para procesarse",
     });
   }
-
-  return { item, detail };
 }
 
 async function syncRequestStatusFromAssignments(requestId: number, userId: number) {
@@ -823,20 +830,46 @@ export const requestItemsRouter = router({
         });
       }
 
+      const detail = await db.getMaterialRequestById(input.requestId);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "La requisición no existe",
+        });
+      }
+      if (!canAccessRequest(ctx.user, detail.request)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a esta solicitud",
+        });
+      }
+      const detailItems: any[] = Array.isArray((detail as any).items)
+        ? (detail as any).items
+        : await Promise.all(
+            input.items.map(entry => db.getRequestItemById(entry.requestItemId))
+          );
+      const detailItemsById = new Map<number, any>(
+        detailItems
+          .filter(Boolean)
+          .map((item: any) => [item.id, item] as const)
+      );
+
       for (const entry of input.items) {
-        const { item, detail } = await assertItemApprovedForProcessing(entry.requestItemId);
+        const item = detailItemsById.get(entry.requestItemId);
+        if (!item) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Uno de los ítems ya no existe en la requisición",
+          });
+        }
         if (item.requestId !== input.requestId) {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: "Uno de los ítems no pertenece a la requisición indicada",
           });
         }
-        if (!canAccessRequest(ctx.user, detail.request)) {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "No tiene acceso a esta solicitud",
-          });
-        }
+        assertDetailItemApprovedForProcessing(detail, item);
+
         const sourceProjectId = entry.sourceProjectId ?? detail.request.projectId;
         if (sourceProjectId && !canAccessProject(ctx.user, sourceProjectId)) {
           throw new TRPCError({

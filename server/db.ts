@@ -1666,6 +1666,132 @@ export async function getActiveFixedAssetByCode(
   return rows[0];
 }
 
+function formatProjectForDiagnostic(
+  project:
+    | { id?: number | null; code?: string | null; name?: string | null }
+    | null
+    | undefined,
+  fallbackId?: number | null
+) {
+  const code = project?.code?.trim();
+  const name = project?.name?.trim();
+  const id = project?.id ?? fallbackId ?? null;
+  const label =
+    code && name
+      ? `${code} - ${name}`
+      : name ||
+        (code
+          ? `Proyecto ${code}`
+          : id
+            ? `Proyecto ID ${id}`
+            : "proyecto sin definir");
+
+  return id ? `${label} (ID ${id})` : label;
+}
+
+async function getProjectForDiagnostic(projectId?: number | null) {
+  if (!projectId) return undefined;
+
+  try {
+    const db = await getDb();
+    if (!db) return undefined;
+
+    const [project] = await db
+      .select({
+        id: projects.id,
+        code: projects.code,
+        name: projects.name,
+        warehouseId: projects.warehouseId,
+      })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+
+    return project;
+  } catch (error) {
+    console.warn(
+      `No se pudo obtener el proyecto ${projectId} para diagnóstico`,
+      error
+    );
+    return undefined;
+  }
+}
+
+async function getSapCatalogItemForDiagnostic(itemCode: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const normalizedItemCode = itemCode.trim();
+  if (!normalizedItemCode) return undefined;
+
+  const [item] = await db
+    .select({
+      itemCode: sapCatalog.itemCode,
+      description: sapCatalog.description,
+      tipoArticulo: sapCatalog.tipoArticulo,
+      projectId: sapCatalog.projectId,
+      isActive: sapCatalog.isActive,
+    })
+    .from(sapCatalog)
+    .where(eq(sapCatalog.itemCode, normalizedItemCode))
+    .limit(1);
+
+  return item;
+}
+
+async function buildFixedAssetTargetDiagnostic(params: {
+  itemCode: string;
+  itemName: string;
+  projectId: number;
+  requestNumber?: string | null;
+}) {
+  const expectedProject = await getProjectForDiagnostic(params.projectId);
+  const expectedProjectLabel = formatProjectForDiagnostic(
+    expectedProject,
+    params.projectId
+  );
+  const contextLabel = params.requestNumber
+    ? `la requisición ${params.requestNumber} en ${expectedProjectLabel}`
+    : `el proyecto ${expectedProjectLabel}`;
+  const baseMessage = `El activo fijo destino ${params.itemCode} de ${params.itemName} no es válido para ${contextLabel}.`;
+
+  const activeFixedAsset = await getActiveFixedAssetByCode(params.itemCode);
+  if (activeFixedAsset) {
+    const assetProject = activeFixedAsset.projectId
+      ? await getProjectForDiagnostic(activeFixedAsset.projectId)
+      : undefined;
+    const assetProjectLabel = activeFixedAsset.projectId
+      ? formatProjectForDiagnostic(assetProject, activeFixedAsset.projectId)
+      : "sin proyecto asignado";
+
+    return `${baseMessage} El código existe como activo fijo activo en ${assetProjectLabel}: ${activeFixedAsset.description}.`;
+  }
+
+  const catalogItem = await getSapCatalogItemForDiagnostic(params.itemCode);
+  if (!catalogItem) {
+    return `${baseMessage} El código no existe en el catálogo SAP.`;
+  }
+
+  const reasons: string[] = [];
+  if (!catalogItem.isActive) reasons.push("está inactivo");
+  if (catalogItem.tipoArticulo !== 3) {
+    reasons.push(`es tipo de artículo ${catalogItem.tipoArticulo}, no activo fijo`);
+  }
+  if (catalogItem.projectId !== params.projectId) {
+    const catalogProject = catalogItem.projectId
+      ? await getProjectForDiagnostic(catalogItem.projectId)
+      : undefined;
+    reasons.push(
+      `pertenece a ${formatProjectForDiagnostic(
+        catalogProject,
+        catalogItem.projectId
+      )}`
+    );
+  }
+
+  return `${baseMessage} El código existe como "${catalogItem.description}", pero ${reasons.join(", ")}.`;
+}
+
 // ============================================================
 // MATERIAL REQUESTS
 // ============================================================
@@ -1718,7 +1844,7 @@ async function generateProjectScopedDocumentNumber(params: {
     documentPrefix: string
   ) => Promise<Array<string | null | undefined>>;
 }) {
-  const project = await getProjectById(params.projectId);
+  const project = await getProjectForDiagnostic(params.projectId);
   if (!project) {
     throw new Error("Proyecto no encontrado para correlativo");
   }
@@ -1986,13 +2112,10 @@ async function getCommittedQuantityForItem(
         sql`${requestItems.requestId} <> ${requestId}`,
         or(
           and(
-            sql`${requestItems.status} <> 'completo'`,
+            sql`${requestItems.status}::text <> 'completo'`,
             sql`${materialRequests.status}::text IN ('pendiente_aprobar', 'en_espera', 'en_proceso', 'parcialmente_atendida')`
           ),
-          inArray(materialRequests.status, [
-            "flujo_completado",
-            "cerrada_incompleta",
-          ])
+          sql`${materialRequests.status}::text IN ('flujo_completado', 'cerrada_incompleta')`
         )
       )
     );
@@ -3884,6 +4007,7 @@ export async function recordWarehouseExitBatch(params: {
   const [request] = await db
     .select({
       projectId: materialRequests.projectId,
+      requestNumber: materialRequests.requestNumber,
     })
     .from(materialRequests)
     .where(eq(materialRequests.id, params.requestId))
@@ -4146,6 +4270,7 @@ export async function recordWarehouseExitBatch(params: {
       entry.requestItemId,
       await resolveWarehouseExitItemTarget({
         projectId: request.projectId,
+        requestNumber: request.requestNumber,
         itemName: item.sapItemDescription || item.itemName,
         targetType: hasExplicitTarget ? entry.targetType : item.targetType,
         subProjectId: hasExplicitTarget
@@ -11000,6 +11125,7 @@ export async function getWarehouseExitById(id: number) {
 
 async function resolveWarehouseExitItemTarget(params: {
   projectId: number;
+  requestNumber?: string | null;
   itemName: string;
   targetType?: "subproyecto" | "activo_fijo" | null;
   subProjectId?: number | null;
@@ -11043,7 +11169,9 @@ async function resolveWarehouseExitItemTarget(params: {
 
   const fixedAssetSapItemCode = params.fixedAssetSapItemCode?.trim();
   if (!fixedAssetSapItemCode) {
-    throw new Error(`Seleccione un activo fijo válido para ${params.itemName}`);
+    throw new Error(
+      `Seleccione un activo fijo válido para ${params.itemName}; no hay código de activo fijo destino guardado`
+    );
   }
 
   const fixedAsset = await getActiveFixedAssetByCode(
@@ -11052,7 +11180,12 @@ async function resolveWarehouseExitItemTarget(params: {
   );
   if (!fixedAsset) {
     throw new Error(
-      `El activo fijo de ${params.itemName} no existe, está inactivo o no pertenece al proyecto`
+      await buildFixedAssetTargetDiagnostic({
+        itemCode: fixedAssetSapItemCode,
+        itemName: params.itemName,
+        projectId: params.projectId,
+        requestNumber: params.requestNumber,
+      })
     );
   }
 
@@ -11087,10 +11220,22 @@ export async function createWarehouseExit(
     throw new Error("Debe registrar al menos un ítem");
   }
 
-  const project = await getProjectById(data.projectId);
+  const project = await getProjectForDiagnostic(data.projectId);
   if (!project) {
     throw new Error("El proyecto seleccionado no existe");
   }
+  const [materialRequestTarget] = data.materialRequestId
+    ? await db
+        .select({
+          projectId: materialRequests.projectId,
+          requestNumber: materialRequests.requestNumber,
+        })
+        .from(materialRequests)
+        .where(eq(materialRequests.id, data.materialRequestId))
+        .limit(1)
+    : [null];
+  const targetProjectId = materialRequestTarget?.projectId ?? project.id;
+  const targetRequestNumber = materialRequestTarget?.requestNumber ?? null;
   const hasDestinationScope =
     data.destinationProjectId != null || data.destinationWarehouseId != null;
   const destinationAssignment = hasDestinationScope
@@ -11136,7 +11281,8 @@ export async function createWarehouseExit(
         );
       }
       const target = await resolveWarehouseExitItemTarget({
-        projectId: project.id,
+        projectId: targetProjectId,
+        requestNumber: targetRequestNumber,
         itemName: item.itemName,
         targetType: item.targetType,
         subProjectId: item.subProjectId,
@@ -15656,7 +15802,7 @@ async function resolveProjectAssignment(
 ) {
   if (!projectId) return null;
 
-  const project = await getProjectById(projectId);
+  const project = await getProjectForDiagnostic(projectId);
   if (!project) {
     throw new Error("El proyecto seleccionado no existe");
   }
