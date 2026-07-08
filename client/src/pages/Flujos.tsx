@@ -182,6 +182,13 @@ const getDispatchWarehouseOptionLabel = (warehouse: any) =>
     ? `${warehouse.warehouseCode}`
     : `Almacén #${getDispatchWarehouseOptionId(warehouse)}`);
 
+const getPurchaseRequestDestinationWarehouseLabel = (warehouse: any) =>
+  warehouse?.displayName ||
+  [warehouse?.localCode || warehouse?.code, warehouse?.name]
+    .filter(Boolean)
+    .join(" - ") ||
+  `Almacén #${Number(warehouse?.id ?? 0)}`;
+
 const getDispatchSourceProjectOptionId = (option: any) =>
   option && option.projectId == null
     ? UNCLASSIFIED_STOCK_SOURCE_PROJECT_ID
@@ -330,6 +337,10 @@ export default function Flujos() {
   const [purchaseRequestCheckedByItemId, setPurchaseRequestCheckedByItemId] = useState<
     Record<number, boolean>
   >({});
+  const [
+    purchaseRequestDestinationWarehouseByFlowType,
+    setPurchaseRequestDestinationWarehouseByFlowType,
+  ] = useState<Partial<Record<QueueFlowType, string>>>({});
 
   const userRole = (user as any)?.buildreqRole || "";
   const isAdmin = user?.role === "admin";
@@ -428,6 +439,45 @@ export default function Flujos() {
     return grouped;
   }, [visiblePendingRows]);
 
+  const selectedPurchaseRequestRows = useMemo(
+    () =>
+      pendingRowsByFlow.solicitud_compra.filter(
+        (row) => purchaseRequestCheckedByItemId[row.item.id] === true
+      ),
+    [pendingRowsByFlow, purchaseRequestCheckedByItemId]
+  );
+
+  const selectedPurchaseRequestProjectIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          selectedPurchaseRequestRows
+            .map((row) => Number(row.request.projectId ?? 0))
+            .filter((projectId) => projectId > 0)
+        )
+      ),
+    [selectedPurchaseRequestRows]
+  );
+
+  const selectedPurchaseRequestProjectId =
+    selectedPurchaseRequestProjectIds.length === 1
+      ? selectedPurchaseRequestProjectIds[0]
+      : 0;
+
+  const {
+    data: purchaseRequestDestinationWarehouses,
+    isFetching: isFetchingPurchaseRequestDestinationWarehouses,
+  } = trpc.warehouses.list.useQuery(
+    {
+      projectId: selectedPurchaseRequestProjectId,
+      isActive: true,
+    },
+    { enabled: selectedPurchaseRequestProjectId > 0 }
+  );
+
+  const purchaseRequestDestinationWarehouseOptions =
+    purchaseRequestDestinationWarehouses ?? [];
+
   const pendingCountByFlow = useMemo(
     () =>
       Object.fromEntries(
@@ -507,6 +557,22 @@ export default function Flujos() {
       for (const itemId of itemIds) delete next[itemId];
       return next;
     });
+  };
+
+  const getSelectedPurchaseRequestDestinationWarehouseId = (
+    flowType: QueueFlowType
+  ) => {
+    const selectedValue = Number(
+      purchaseRequestDestinationWarehouseByFlowType[flowType] ?? 0
+    );
+    const selectedWarehouse = purchaseRequestDestinationWarehouseOptions.find(
+      (warehouse: any) => Number(warehouse.id) === selectedValue
+    );
+    if (selectedWarehouse) return selectedValue;
+    if (purchaseRequestDestinationWarehouseOptions.length === 1) {
+      return Number(purchaseRequestDestinationWarehouseOptions[0].id);
+    }
+    return undefined;
   };
 
   const processDirectPurchaseFlow = async (flowType: QueueFlowType) => {
@@ -908,14 +974,36 @@ export default function Flujos() {
       return;
     }
 
-    if (consolidate) {
-      const projectIds = Array.from(new Set(selectedRows.map((row) => row.request.projectId)));
-      if (projectIds.length !== 1) {
-        toast.error(
-          "Seleccione ítems del mismo proyecto para consolidar en una sola solicitud"
-        );
-        return;
-      }
+    const projectIds = Array.from(
+      new Set(
+        selectedRows
+          .map((row) => Number(row.request.projectId ?? 0))
+          .filter((projectId) => projectId > 0)
+      )
+    );
+    if (projectIds.length !== 1) {
+      toast.error(
+        "Seleccione ítems del mismo proyecto para consolidar en una sola solicitud"
+      );
+      return;
+    }
+
+    if (
+      selectedPurchaseRequestProjectId === projectIds[0] &&
+      isFetchingPurchaseRequestDestinationWarehouses
+    ) {
+      toast.error("Cargando bodegas del proyecto. Intente nuevamente.");
+      return;
+    }
+
+    const destinationWarehouseId =
+      getSelectedPurchaseRequestDestinationWarehouseId(flowType);
+    if (
+      purchaseRequestDestinationWarehouseOptions.length > 1 &&
+      !destinationWarehouseId
+    ) {
+      toast.error("Seleccione bodega destino para la solicitud de compra");
+      return;
     }
 
     setProcessingFlowType(flowType);
@@ -926,6 +1014,7 @@ export default function Flujos() {
       try {
         const result = await purchaseRequestBatchMutation.mutateAsync({
           purchaseType: purchaseType as PurchaseType,
+          destinationWarehouseId,
           notes: purchaseRequestNotesByFlowType[flowType] || undefined,
           items: selectedRows.map((row) => ({
             requestId: row.request.id,
@@ -953,6 +1042,7 @@ export default function Flujos() {
           requestId: row.request.id,
           requestItemId: item.id,
           purchaseType: purchaseType as PurchaseType,
+          destinationWarehouseId,
           notes: purchaseRequestNotesByFlowType[flowType] || undefined,
         });
 
@@ -1136,6 +1226,23 @@ export default function Flujos() {
             const isProcessing = processingFlowType === flowType;
             const isReturningQueued = returningQueuedFlowType === flowType;
             const canProcessThisFlow = canProcessFlow(flowType);
+            const hasMixedPurchaseRequestProjects =
+              flowType === "solicitud_compra" &&
+              selectedPurchaseRequestProjectIds.length > 1;
+            const selectedDestinationWarehouseValue =
+              flowType === "solicitud_compra" &&
+              selectedPurchaseRequestRows.length > 0 &&
+              !hasMixedPurchaseRequestProjects
+                ? purchaseRequestDestinationWarehouseOptions.some(
+                    (warehouse: any) =>
+                      String(warehouse.id) ===
+                      purchaseRequestDestinationWarehouseByFlowType[flowType]
+                  )
+                  ? purchaseRequestDestinationWarehouseByFlowType[flowType] || ""
+                  : purchaseRequestDestinationWarehouseOptions.length === 1
+                    ? String(purchaseRequestDestinationWarehouseOptions[0].id)
+                    : ""
+                : "";
 
             if (rows.length === 0) {
               return null;
@@ -1731,6 +1838,75 @@ export default function Flujos() {
                     <div className="space-y-3">
                       <div className="rounded-lg border border-border/70 bg-muted/15 p-3 text-xs text-muted-foreground">
                         Aquí solo se genera la solicitud. La bodega origen se seleccionará en Solicitudes de Traslado antes de convertirla a traslado.
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">
+                          Bodega destino de la SC
+                          {purchaseRequestDestinationWarehouseOptions.length > 1
+                            ? " *"
+                            : ""}
+                        </Label>
+                        <Select
+                          value={selectedDestinationWarehouseValue}
+                          onValueChange={(value) =>
+                            setPurchaseRequestDestinationWarehouseByFlowType(
+                              (current) => ({
+                                ...current,
+                                [flowType]: value,
+                              })
+                            )
+                          }
+                          disabled={
+                            isProcessing ||
+                            isReturningQueued ||
+                            selectedPurchaseRequestRows.length === 0 ||
+                            hasMixedPurchaseRequestProjects ||
+                            isFetchingPurchaseRequestDestinationWarehouses ||
+                            purchaseRequestDestinationWarehouseOptions.length <= 1
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue
+                              placeholder={
+                                selectedPurchaseRequestRows.length === 0
+                                  ? "Seleccione ítems primero"
+                                  : hasMixedPurchaseRequestProjects
+                                    ? "Ítems de varios proyectos"
+                                    : isFetchingPurchaseRequestDestinationWarehouses
+                                      ? "Cargando bodegas..."
+                                      : purchaseRequestDestinationWarehouseOptions.length === 0
+                                        ? "Sin bodegas activas"
+                                        : purchaseRequestDestinationWarehouseOptions.length === 1
+                                          ? "Bodega automática"
+                                          : "Seleccione bodega destino"
+                              }
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {purchaseRequestDestinationWarehouseOptions.length === 0 ? (
+                              <SelectItem value="sin-bodegas" disabled>
+                                Sin bodegas activas
+                              </SelectItem>
+                            ) : (
+                              purchaseRequestDestinationWarehouseOptions.map(
+                                (warehouse: any) => (
+                                  <SelectItem
+                                    key={warehouse.id}
+                                    value={String(warehouse.id)}
+                                  >
+                                    {getPurchaseRequestDestinationWarehouseLabel(
+                                      warehouse
+                                    )}
+                                  </SelectItem>
+                                )
+                              )
+                            )}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Solo se usa como destino impreso; no descuenta inventario.
+                        </p>
                       </div>
 
                       <div className="space-y-2">

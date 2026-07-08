@@ -175,6 +175,16 @@ const DEFAULT_PROJECT_WAREHOUSE = {
   isActive: true,
   isDefault: true,
 } as any;
+const SECOND_PROJECT_WAREHOUSE = {
+  id: 102,
+  projectId: 1,
+  code: "WH-P002",
+  localCode: "001",
+  name: "HEH LA BARCA",
+  displayName: "001 - HEH LA BARCA",
+  isActive: true,
+  isDefault: false,
+} as any;
 
 describe("BuildReq - Invoice fiscal helpers", () => {
   it("normalizes RTN and compares fiscal ranges inclusively", () => {
@@ -4600,6 +4610,9 @@ describe("BuildReq - Role-based Access Control", () => {
     const getActiveSupplyFlowForRequestItemSpy = vi
       .spyOn(db, "getActiveSupplyFlowForRequestItem")
       .mockResolvedValue(undefined as any);
+    const listProjectWarehousesSpy = vi
+      .spyOn(db, "listProjectWarehouses")
+      .mockResolvedValue([DEFAULT_PROJECT_WAREHOUSE] as any);
     const updateRequestItemSpy = vi
       .spyOn(db, "updateRequestItem")
       .mockResolvedValue({ id: 41 } as any);
@@ -4643,6 +4656,7 @@ describe("BuildReq - Role-based Access Control", () => {
         projectId: 1,
         createdById: 6,
         purchaseType: "compra_directa",
+        printDestination: DEFAULT_PROJECT_WAREHOUSE.displayName,
       }),
       expect.arrayContaining([
         expect.objectContaining({
@@ -4666,6 +4680,7 @@ describe("BuildReq - Role-based Access Control", () => {
     getMaterialRequestByIdSpy.mockRestore();
     getActivePurchaseRequestByMaterialRequestItemIdSpy.mockRestore();
     getActiveSupplyFlowForRequestItemSpy.mockRestore();
+    listProjectWarehousesSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     createPurchaseRequestSpy.mockRestore();
     createSupplyFlowRecordSpy.mockRestore();
@@ -4718,6 +4733,12 @@ describe("BuildReq - Role-based Access Control", () => {
     const getActiveSupplyFlowForRequestItemSpy = vi
       .spyOn(db, "getActiveSupplyFlowForRequestItem")
       .mockResolvedValue(undefined as any);
+    const listProjectWarehousesSpy = vi
+      .spyOn(db, "listProjectWarehouses")
+      .mockResolvedValue([
+        DEFAULT_PROJECT_WAREHOUSE,
+        SECOND_PROJECT_WAREHOUSE,
+      ] as any);
     const updateRequestItemSpy = vi
       .spyOn(db, "updateRequestItem")
       .mockResolvedValue({ success: true } as any);
@@ -4743,6 +4764,7 @@ describe("BuildReq - Role-based Access Control", () => {
     await expect(
       caller.supplyFlows.createPurchaseRequestBatch({
         purchaseType: "compra_directa",
+        destinationWarehouseId: SECOND_PROJECT_WAREHOUSE.id,
         notes: "Consolidada",
         items: [
           { requestId: 9, requestItemId: 41 },
@@ -4763,6 +4785,7 @@ describe("BuildReq - Role-based Access Control", () => {
         projectId: 1,
         createdById: 5,
         purchaseType: "compra_directa",
+        printDestination: SECOND_PROJECT_WAREHOUSE.displayName,
       }),
       [
         expect.objectContaining({
@@ -4806,12 +4829,211 @@ describe("BuildReq - Role-based Access Control", () => {
     getMaterialRequestByIdSpy.mockRestore();
     getActivePurchaseRequestByMaterialRequestItemIdSpy.mockRestore();
     getActiveSupplyFlowForRequestItemSpy.mockRestore();
+    listProjectWarehousesSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     createPurchaseRequestSpy.mockRestore();
     createSupplyFlowRecordSpy.mockRestore();
     syncMaterialRequestFulfillmentStatusSpy.mockRestore();
     getUsersByBuildreqRoleSpy.mockRestore();
     createNotificationSpy.mockRestore();
+  });
+
+  it("Purchase-request flow requires destination warehouse when project has multiple active warehouses", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 9,
+          requestNumber: "REQ-2026-0009",
+          requestedById: 2,
+          projectId: 1,
+          requestType: "bienes",
+          approvalStatus: "aprobada",
+          neededBy: null,
+        },
+        items: [
+          {
+            id: 41,
+            requestId: 9,
+            itemName: "cemento",
+            quantity: "5.00",
+            unit: "und",
+            sapItemCode: "SAP-001",
+            sapItemDescription: "Cemento",
+            approvalStatus: "aprobada",
+          },
+        ],
+      } as any);
+    const getActivePurchaseRequestByMaterialRequestItemIdSpy = vi
+      .spyOn(db, "getActivePurchaseRequestByMaterialRequestItemId")
+      .mockResolvedValue(undefined as any);
+    const getActiveSupplyFlowForRequestItemSpy = vi
+      .spyOn(db, "getActiveSupplyFlowForRequestItem")
+      .mockResolvedValue(undefined as any);
+    const listProjectWarehousesSpy = vi
+      .spyOn(db, "listProjectWarehouses")
+      .mockResolvedValue([
+        DEFAULT_PROJECT_WAREHOUSE,
+        SECOND_PROJECT_WAREHOUSE,
+      ] as any);
+    const updateRequestItemSpy = vi.spyOn(db, "updateRequestItem");
+    const createPurchaseRequestSpy = vi.spyOn(db, "createPurchaseRequest");
+
+    await expect(
+      caller.supplyFlows.createPurchaseRequest({
+        requestId: 9,
+        requestItemId: 41,
+        purchaseType: "local",
+      })
+    ).rejects.toThrow("Seleccione bodega destino para la solicitud de compra");
+
+    expect(updateRequestItemSpy).not.toHaveBeenCalled();
+    expect(createPurchaseRequestSpy).not.toHaveBeenCalled();
+
+    getMaterialRequestByIdSpy.mockRestore();
+    getActivePurchaseRequestByMaterialRequestItemIdSpy.mockRestore();
+    getActiveSupplyFlowForRequestItemSpy.mockRestore();
+    listProjectWarehousesSpy.mockRestore();
+    updateRequestItemSpy.mockRestore();
+    createPurchaseRequestSpy.mockRestore();
+  });
+
+  it("Purchase-request flow rejects a destination warehouse outside the project", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 9,
+          requestNumber: "REQ-2026-0009",
+          requestedById: 2,
+          projectId: 1,
+          requestType: "bienes",
+          approvalStatus: "aprobada",
+          neededBy: null,
+        },
+        items: [
+          {
+            id: 41,
+            requestId: 9,
+            itemName: "cemento",
+            quantity: "5.00",
+            unit: "und",
+            sapItemCode: "SAP-001",
+            sapItemDescription: "Cemento",
+            approvalStatus: "aprobada",
+          },
+        ],
+      } as any);
+    const getActivePurchaseRequestByMaterialRequestItemIdSpy = vi
+      .spyOn(db, "getActivePurchaseRequestByMaterialRequestItemId")
+      .mockResolvedValue(undefined as any);
+    const getActiveSupplyFlowForRequestItemSpy = vi
+      .spyOn(db, "getActiveSupplyFlowForRequestItem")
+      .mockResolvedValue(undefined as any);
+    const listProjectWarehousesSpy = vi
+      .spyOn(db, "listProjectWarehouses")
+      .mockResolvedValue([DEFAULT_PROJECT_WAREHOUSE] as any);
+    const updateRequestItemSpy = vi.spyOn(db, "updateRequestItem");
+    const createPurchaseRequestSpy = vi.spyOn(db, "createPurchaseRequest");
+
+    await expect(
+      caller.supplyFlows.createPurchaseRequest({
+        requestId: 9,
+        requestItemId: 41,
+        purchaseType: "local",
+        destinationWarehouseId: 999,
+      })
+    ).rejects.toThrow(
+      "La bodega destino seleccionada no esta asignada al proyecto"
+    );
+
+    expect(updateRequestItemSpy).not.toHaveBeenCalled();
+    expect(createPurchaseRequestSpy).not.toHaveBeenCalled();
+
+    getMaterialRequestByIdSpy.mockRestore();
+    getActivePurchaseRequestByMaterialRequestItemIdSpy.mockRestore();
+    getActiveSupplyFlowForRequestItemSpy.mockRestore();
+    listProjectWarehousesSpy.mockRestore();
+    updateRequestItemSpy.mockRestore();
+    createPurchaseRequestSpy.mockRestore();
+  });
+
+  it("Purchase-request batch requires destination warehouse when project has multiple active warehouses", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 9,
+          requestNumber: "REQ-2026-0009",
+          requestedById: 2,
+          projectId: 1,
+          requestType: "bienes",
+          approvalStatus: "aprobada",
+          neededBy: null,
+        },
+        items: [
+          {
+            id: 41,
+            requestId: 9,
+            itemName: "cemento",
+            quantity: "5.00",
+            unit: "und",
+            sapItemCode: "SAP-001",
+            sapItemDescription: "Cemento",
+            approvalStatus: "aprobada",
+          },
+          {
+            id: 42,
+            requestId: 9,
+            itemName: "arena",
+            quantity: "7.00",
+            unit: "m3",
+            sapItemCode: "SAP-002",
+            sapItemDescription: "Arena",
+            approvalStatus: "aprobada",
+          },
+        ],
+      } as any);
+    const getActivePurchaseRequestByMaterialRequestItemIdSpy = vi
+      .spyOn(db, "getActivePurchaseRequestByMaterialRequestItemId")
+      .mockResolvedValue(undefined as any);
+    const getActiveSupplyFlowForRequestItemSpy = vi
+      .spyOn(db, "getActiveSupplyFlowForRequestItem")
+      .mockResolvedValue(undefined as any);
+    const listProjectWarehousesSpy = vi
+      .spyOn(db, "listProjectWarehouses")
+      .mockResolvedValue([
+        DEFAULT_PROJECT_WAREHOUSE,
+        SECOND_PROJECT_WAREHOUSE,
+      ] as any);
+    const updateRequestItemSpy = vi.spyOn(db, "updateRequestItem");
+    const createPurchaseRequestSpy = vi.spyOn(db, "createPurchaseRequest");
+
+    await expect(
+      caller.supplyFlows.createPurchaseRequestBatch({
+        purchaseType: "local",
+        items: [
+          { requestId: 9, requestItemId: 41 },
+          { requestId: 9, requestItemId: 42 },
+        ],
+      })
+    ).rejects.toThrow("Seleccione bodega destino para la solicitud de compra");
+
+    expect(updateRequestItemSpy).not.toHaveBeenCalled();
+    expect(createPurchaseRequestSpy).not.toHaveBeenCalled();
+
+    getMaterialRequestByIdSpy.mockRestore();
+    getActivePurchaseRequestByMaterialRequestItemIdSpy.mockRestore();
+    getActiveSupplyFlowForRequestItemSpy.mockRestore();
+    listProjectWarehousesSpy.mockRestore();
+    updateRequestItemSpy.mockRestore();
+    createPurchaseRequestSpy.mockRestore();
   });
 
   it("Purchase-request consolidation rejects items from different projects", async () => {

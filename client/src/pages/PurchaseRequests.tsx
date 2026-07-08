@@ -42,6 +42,7 @@ import {
   Eye,
   FileText,
   FolderOpen,
+  MapPin,
   Printer,
   Save,
   Search,
@@ -299,12 +300,20 @@ function formatPrintDate(value: string | Date | null | undefined) {
 
 const toNullablePrintText = (value: string) => value.trim() || null;
 
+const getWarehousePrintDestinationLabel = (warehouse: any) =>
+  warehouse?.displayName ||
+  [warehouse?.localCode || warehouse?.code, warehouse?.name]
+    .filter(Boolean)
+    .join(" - ") ||
+  `Almacén #${Number(warehouse?.id ?? 0)}`;
+
 export default function PurchaseRequests() {
   const { user } = useAuth();
   const utils = trpc.useUtils();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editNotes, setEditNotes] = useState("");
   const [editNeededBy, setEditNeededBy] = useState("");
+  const [editPrintDestination, setEditPrintDestination] = useState("");
   const [editPurchaseType, setEditPurchaseType] =
     useState<PurchaseType>("local");
   const [editItems, setEditItems] = useState<
@@ -355,6 +364,13 @@ export default function PurchaseRequests() {
       },
       { enabled: selectedProjectIdNumber > 0 }
     );
+  const { data: selectedProjectWarehouses } = trpc.warehouses.list.useQuery(
+    {
+      projectId: selectedProjectIdNumber,
+      isActive: true,
+    },
+    { enabled: selectedProjectIdNumber > 0 }
+  );
 
   const canReject =
     user?.role === "admin" ||
@@ -763,6 +779,18 @@ export default function PurchaseRequests() {
     canConvert && canEditSelectedPurchaseRequest;
 
   const purchaseTypeLabel = getPurchaseTypeLabel(editPurchaseType);
+  const printDestinationOptions = selectedProjectWarehouses ?? [];
+  const customPrintDestination =
+    editPrintDestination.trim() &&
+    !printDestinationOptions.some(
+      (warehouse: any) =>
+        getWarehousePrintDestinationLabel(warehouse) ===
+        editPrintDestination.trim()
+    )
+      ? editPrintDestination.trim()
+      : null;
+  const printDestinationSelectValue =
+    editPrintDestination.trim() || "__project_default__";
 
   const renderItemTargetCombobox = (
     item: any,
@@ -938,6 +966,7 @@ export default function PurchaseRequests() {
     setEditPurchaseType(
       (row?.purchaseRequest.purchaseType || "local") as PurchaseType
     );
+    setEditPrintDestination(row?.purchaseRequest.printDestination || "");
     setEditItems({});
     setConvertQuantities({});
     setTargetPopoverOpen(null);
@@ -968,6 +997,7 @@ export default function PurchaseRequests() {
       id: detail.purchaseRequest.id,
       purchaseType: editPurchaseType,
       neededBy: editNeededBy || undefined,
+      printDestination: toNullablePrintText(editPrintDestination),
       notes: editNotes || undefined,
       items,
     });
@@ -985,6 +1015,7 @@ export default function PurchaseRequests() {
         id: detail.purchaseRequest.id,
         purchaseType: editPurchaseType,
         neededBy: editNeededBy || undefined,
+        printDestination: toNullablePrintText(editPrintDestination),
         notes: editNotes || undefined,
         items,
       });
@@ -1008,7 +1039,11 @@ export default function PurchaseRequests() {
       ? `${detail.project.code} ${detail.project.name}`
       : projectLabel;
     const warehouseLabel =
-      detail.warehouse?.displayName || detail.project?.name || projectLabel;
+      editPrintDestination.trim() ||
+      purchaseRequest.printDestination?.trim() ||
+      detail.warehouse?.displayName ||
+      detail.project?.name ||
+      projectLabel;
     const requestedByLabel =
       detail.requestedBy?.name ||
       detail.requestedBy?.email ||
@@ -1662,7 +1697,7 @@ export default function PurchaseRequests() {
 
           {detail && (
             <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-6 lg:px-8">
-              <div className="grid gap-4 xl:grid-cols-[1.25fr_1fr_1fr_1.2fr]">
+              <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr_1fr_1fr_1.1fr]">
                 <div className="rounded-2xl border border-border/70 bg-card p-5">
                   <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
                     <FolderOpen className="h-4 w-4" />
@@ -1676,6 +1711,48 @@ export default function PurchaseRequests() {
                     {detail.purchaseRequest.printedDocumentContent
                       ? "Listo para descarga"
                       : "Pendiente de generar"}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-border/70 bg-card p-5">
+                  <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                    <MapPin className="h-4 w-4" />
+                    Destino impreso
+                  </div>
+                  <Select
+                    value={printDestinationSelectValue}
+                    onValueChange={value =>
+                      setEditPrintDestination(
+                        value === "__project_default__" ? "" : value
+                      )
+                    }
+                    disabled={!canEditSelectedPurchaseRequest}
+                  >
+                    <SelectTrigger className="h-12 text-base">
+                      <SelectValue placeholder="Usar bodega principal" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__project_default__">
+                        Usar bodega principal
+                      </SelectItem>
+                      {printDestinationOptions.map((warehouse: any) => {
+                        const label =
+                          getWarehousePrintDestinationLabel(warehouse);
+                        return (
+                          <SelectItem key={warehouse.id} value={label}>
+                            {label}
+                          </SelectItem>
+                        );
+                      })}
+                      {customPrintDestination ? (
+                        <SelectItem value={customPrintDestination} disabled>
+                          {customPrintDestination}
+                        </SelectItem>
+                      ) : null}
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Solo aparece en el encabezado de impresión.
                   </p>
                 </div>
 

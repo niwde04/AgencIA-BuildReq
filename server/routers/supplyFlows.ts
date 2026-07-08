@@ -309,6 +309,55 @@ function resolveEarliestNeededBy(
     : currentDate;
 }
 
+function getWarehousePrintLabel(warehouse: any) {
+  return (
+    warehouse?.displayName ||
+    [warehouse?.localCode || warehouse?.code, warehouse?.name]
+      .filter(Boolean)
+      .join(" - ") ||
+    null
+  );
+}
+
+async function resolvePurchaseRequestPrintDestination(params: {
+  projectId: number;
+  destinationWarehouseId?: number | null;
+}) {
+  const projectWarehouses = await db.listProjectWarehouses(params.projectId, {
+    isActive: true,
+  });
+
+  if (projectWarehouses.length === 0) {
+    if (params.destinationWarehouseId) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "La bodega destino seleccionada no esta asignada al proyecto",
+      });
+    }
+    return null;
+  }
+
+  const selectedWarehouse = params.destinationWarehouseId
+    ? projectWarehouses.find(
+        warehouse => Number(warehouse.id) === params.destinationWarehouseId
+      )
+    : projectWarehouses.length === 1
+      ? projectWarehouses[0]
+      : null;
+
+  if (!selectedWarehouse) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        params.destinationWarehouseId
+          ? "La bodega destino seleccionada no esta asignada al proyecto"
+          : "Seleccione bodega destino para la solicitud de compra",
+    });
+  }
+
+  return getWarehousePrintLabel(selectedWarehouse);
+}
+
 export const supplyFlowsRouter = router({
   list: protectedProcedure
     .input(
@@ -1152,6 +1201,7 @@ export const supplyFlowsRouter = router({
         requestId: z.number(),
         requestItemId: z.number(),
         purchaseType: purchaseTypeSchema,
+        destinationWarehouseId: z.number().int().positive().optional(),
         notes: z.string().optional(),
       })
     )
@@ -1193,6 +1243,11 @@ export const supplyFlowsRouter = router({
         });
       }
 
+      const printDestination = await resolvePurchaseRequestPrintDestination({
+        projectId: detail.request.projectId,
+        destinationWarehouseId: input.destinationWarehouseId,
+      });
+
       await db.updateRequestItem(input.requestItemId, {
         assignedFlow: "solicitud_compra",
         status: "pendiente",
@@ -1208,6 +1263,7 @@ export const supplyFlowsRouter = router({
           status: "pendiente",
           neededBy: detail.request.neededBy,
           sapDocumentNumber: null,
+          printDestination,
           notes: input.notes,
           rejectionReason: null,
           printedDocumentName: null,
@@ -1280,6 +1336,7 @@ export const supplyFlowsRouter = router({
           )
           .min(1),
         purchaseType: purchaseTypeSchema,
+        destinationWarehouseId: z.number().int().positive().optional(),
         notes: z.string().optional(),
       })
     )
@@ -1358,6 +1415,11 @@ export const supplyFlowsRouter = router({
         );
       }
 
+      const printDestination = await resolvePurchaseRequestPrintDestination({
+        projectId: projectIds[0],
+        destinationWarehouseId: input.destinationWarehouseId,
+      });
+
       for (const { item } of preparedItems) {
         await db.updateRequestItem(item.id, {
           assignedFlow: "solicitud_compra",
@@ -1375,6 +1437,7 @@ export const supplyFlowsRouter = router({
           status: "pendiente",
           neededBy: earliestNeededBy,
           sapDocumentNumber: null,
+          printDestination,
           notes: input.notes,
           rejectionReason: null,
           printedDocumentName: null,
