@@ -7,6 +7,7 @@ import {
   buildImportData,
   buildPlan,
   parseRows,
+  parseArgs,
   readWorkbook,
   type DbProject,
   type DbWarehouse,
@@ -161,7 +162,7 @@ describe("import-products-inventory-hidalgo", () => {
     });
   });
 
-  it("sums duplicate inventory groups by product, warehouse and project", () => {
+  it("sums duplicate inventory groups only when storageLocation also matches", () => {
     const data = parseFixture([
       {
         "codigo_sap*": "P001",
@@ -194,7 +195,82 @@ describe("import-products-inventory-hidalgo", () => {
     });
   });
 
-  it("preserves existing storageLocation when Excel update is empty", () => {
+  it("splits inventory groups when storageLocation differs", () => {
+    const data = parseFixture([
+      {
+        "codigo_sap*": "P001",
+        "descripcion_articulo*": "Cemento",
+        "tipo_articulo*": "Materiales",
+        "codigo_almacen*": "001",
+        codigo_bodega: "004",
+        "cantidad_inicial*": "2.50",
+        ubicacion: "Zona 1",
+      },
+      {
+        "codigo_sap*": "P001",
+        "descripcion_articulo*": "Cemento",
+        "tipo_articulo*": "Materiales",
+        "codigo_almacen*": "001",
+        codigo_bodega: "004",
+        "cantidad_inicial*": "3.25",
+        ubicacion: "Zona 2",
+      },
+    ]);
+
+    expect(data.products).toHaveLength(1);
+    expect(data.inventory).toHaveLength(2);
+    expect(data.inventory).toEqual([
+      expect.objectContaining({
+        key: "P001::1::4::ZONA 1",
+        currentStock: 2.5,
+        storageLocation: "Zona 1",
+      }),
+      expect.objectContaining({
+        key: "P001::1::4::ZONA 2",
+        currentStock: 3.25,
+        storageLocation: "Zona 2",
+      }),
+    ]);
+  });
+
+  it("keeps blank storageLocation as its own group with zero stock", () => {
+    const data = parseFixture([
+      {
+        "codigo_sap*": "P001",
+        "descripcion_articulo*": "Cemento",
+        "tipo_articulo*": "Materiales",
+        "codigo_almacen*": "001",
+        codigo_bodega: "004",
+        "cantidad_inicial*": "0",
+        ubicacion: "",
+      },
+      {
+        "codigo_sap*": "P001",
+        "descripcion_articulo*": "Cemento",
+        "tipo_articulo*": "Materiales",
+        "codigo_almacen*": "001",
+        codigo_bodega: "004",
+        "cantidad_inicial*": "2",
+        ubicacion: "Zona 2",
+      },
+    ]);
+
+    expect(data.inventory).toHaveLength(2);
+    expect(data.inventory).toEqual([
+      expect.objectContaining({
+        key: "P001::1::4::__SIN_UBICACION__",
+        currentStock: 0,
+        storageLocation: null,
+      }),
+      expect.objectContaining({
+        key: "P001::1::4::ZONA 2",
+        currentStock: 2,
+        storageLocation: "Zona 2",
+      }),
+    ]);
+  });
+
+  it("does not preserve an existing storageLocation when Excel group is blank", () => {
     const data = parseFixture([
       {
         "codigo_sap*": "P001",
@@ -233,11 +309,69 @@ describe("import-products-inventory-hidalgo", () => {
       existingInventoryRows: existingInventory,
     });
 
-    expect(plan.inventory.updates).toHaveLength(1);
-    expect(plan.inventory.updates[0]).toMatchObject({
-      id: 99,
-      storageLocationForDb: "Ubicacion previa",
+    expect(plan.inventory.updates).toHaveLength(0);
+    expect(plan.inventory.inserts).toHaveLength(1);
+    expect(plan.inventory.inserts[0]).toMatchObject({
+      storageLocationForDb: null,
     });
+  });
+
+  it("reconciles exact inventory by deleting old rows and inserting split locations", () => {
+    const data = parseFixture([
+      {
+        "codigo_sap*": "P001",
+        "descripcion_articulo*": "Cemento",
+        "tipo_articulo*": "Materiales",
+        "codigo_almacen*": "001",
+        codigo_bodega: "004",
+        "cantidad_inicial*": "6",
+        ubicacion: "2C1",
+      },
+      {
+        "codigo_sap*": "P001",
+        "descripcion_articulo*": "Cemento",
+        "tipo_articulo*": "Materiales",
+        "codigo_almacen*": "001",
+        codigo_bodega: "004",
+        "cantidad_inicial*": "6",
+        ubicacion: "2B1",
+      },
+    ]);
+    const resolvedInventory = data.inventory.map(item => ({
+      ...item,
+      project: project(),
+      warehouse: warehouse(),
+      projectId: 4,
+      warehouseId: 1,
+      warehouseLocation: "001 - ALMACEN CENTRAL",
+    }));
+    const existingInventory: ExistingInventoryRow[] = [
+      {
+        id: 99,
+        sapItemCode: "P001",
+        projectId: 4,
+        warehouseId: 1,
+        storageLocation: "2C1",
+      },
+    ];
+
+    const plan = buildPlan({
+      data,
+      resolvedInventory,
+      existingCatalogRows: [existingCatalog()],
+      existingInventoryRows: existingInventory,
+      reconcileInventory: true,
+    });
+
+    expect(plan.inventory.reconcileDeletes).toEqual([
+      expect.objectContaining({ id: 99 }),
+    ]);
+    expect(plan.inventory.updates).toHaveLength(0);
+    expect(plan.inventory.inserts).toHaveLength(2);
+    expect(plan.inventory.inserts.map(row => row.storageLocationForDb)).toEqual([
+      "2C1",
+      "2B1",
+    ]);
   });
 
   it("blocks product codes that already exist as fixed assets", () => {
@@ -274,5 +408,59 @@ describe("import-products-inventory-hidalgo", () => {
     ]);
     expect(plan.catalog.inserts).toHaveLength(0);
     expect(plan.catalog.updates).toHaveLength(0);
+    expect(plan.inventory.inserts).toHaveLength(0);
+  });
+
+  it("blocks product codes that already exist as services", () => {
+    const data = parseFixture([
+      {
+        "codigo_sap*": "P001",
+        "descripcion_articulo*": "Cemento",
+        "tipo_articulo*": "Materiales",
+        "codigo_almacen*": "001",
+        codigo_bodega: "004",
+        "cantidad_inicial*": "4",
+      },
+    ]);
+    const resolvedInventory = [
+      {
+        ...data.inventory[0],
+        project: project(),
+        warehouse: warehouse(),
+        projectId: 4,
+        warehouseId: 1,
+        warehouseLocation: "001 - ALMACEN CENTRAL",
+      },
+    ];
+
+    const plan = buildPlan({
+      data,
+      resolvedInventory,
+      existingCatalogRows: [existingCatalog({ tipoArticulo: 2 })],
+      existingInventoryRows: [
+        {
+          id: 88,
+          sapItemCode: "P001",
+          projectId: 4,
+          warehouseId: 1,
+          storageLocation: null,
+        },
+      ],
+      reconcileInventory: true,
+    });
+
+    expect(plan.catalog.existingServiceConflicts).toEqual([
+      expect.objectContaining({ itemCode: "P001", tipoArticulo: 2 }),
+    ]);
+    expect(plan.catalog.inserts).toHaveLength(0);
+    expect(plan.catalog.updates).toHaveLength(0);
+    expect(plan.inventory.reconcileDeletes).toHaveLength(0);
+    expect(plan.inventory.inserts).toHaveLength(0);
+  });
+
+  it("requires confirmation for apply reconcile mode", () => {
+    expect(() =>
+      parseArgs(["--file", "productos.xlsx", "--apply", "--reconcile-inventory"])
+    ).toThrow(/RECONCILE_HIDALGO_PRODUCTS_BY_LOCATION/);
   });
 });

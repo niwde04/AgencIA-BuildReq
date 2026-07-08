@@ -212,6 +212,25 @@ function compareWarehouseByCode(left: any, right: any) {
   );
 }
 
+function formatStorageLocationLabel(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  return normalized || "Sin ubicación";
+}
+
+function getStorageLocationKey(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  return normalized ? normalized.toLowerCase() : "__sin_ubicacion__";
+}
+
+function compareStorageLocationRows(left: any, right: any) {
+  if (left.storageLocation && !right.storageLocation) return -1;
+  if (!left.storageLocation && right.storageLocation) return 1;
+  return left.label.localeCompare(right.label, "es-HN", {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
 function formatStatus(status: string | null | undefined) {
   if (!status) return "—";
   return status.replace(/_/g, " ");
@@ -249,6 +268,9 @@ export default function Inventario() {
   const [trackingItem, setTrackingItem] = useState<any | null>(null);
   const [kardexItem, setKardexItem] = useState<any | null>(null);
   const [expandedInventoryKeys, setExpandedInventoryKeys] = useState<string[]>([]);
+  const [expandedStorageLocationKeys, setExpandedStorageLocationKeys] = useState<
+    string[]
+  >([]);
   const [assignmentProjectId, setAssignmentProjectId] = useState("none");
   const [assignmentWarehouseId, setAssignmentWarehouseId] = useState("");
   const [bulkAssignmentProjectId, setBulkAssignmentProjectId] = useState("none");
@@ -648,7 +670,7 @@ export default function Inventario() {
           warehouse: item.warehouse ?? null,
           warehouseId: warehouseId ?? undefined,
           warehouseLocation,
-          storageLocationsByKey: new Map<string, string>(),
+          storageLocationBreakdownByKey: new Map<string, any>(),
         };
 
       const projectKey = item.project?.id
@@ -672,12 +694,21 @@ export default function Inventario() {
       existing.currentStockTotal += parseQuantity(item.currentStock);
       existing.minimumStockTotal += parseQuantity(item.minimumStock);
       const itemStorageLocation = String(item.storageLocation ?? "").trim();
-      if (itemStorageLocation) {
-        existing.storageLocationsByKey.set(
-          itemStorageLocation.toLowerCase(),
-          itemStorageLocation
-        );
-      }
+      const storageLocationKey = getStorageLocationKey(itemStorageLocation);
+      const storageLocationEntry =
+        existing.storageLocationBreakdownByKey.get(storageLocationKey) ?? {
+          id: storageLocationKey,
+          storageLocation: itemStorageLocation || null,
+          label: formatStorageLocationLabel(itemStorageLocation),
+          sourceIds: [],
+          currentStockTotal: 0,
+        };
+      storageLocationEntry.sourceIds.push(item.id);
+      storageLocationEntry.currentStockTotal += parseQuantity(item.currentStock);
+      existing.storageLocationBreakdownByKey.set(
+        storageLocationKey,
+        storageLocationEntry
+      );
       projectBreakdownEntry.sourceIds.push(item.id);
       projectBreakdownEntry.currentStockTotal += parseQuantity(item.currentStock);
       projectBreakdownEntry.minimumStockTotal += parseQuantity(item.minimumStock);
@@ -722,8 +753,9 @@ export default function Inventario() {
         ? projectBreakdown[0]?.project ?? null
         : null;
       const storageLocations = Array.from(
-        item.storageLocationsByKey.values()
-      ) as string[];
+        item.storageLocationBreakdownByKey.values()
+      ) as any[];
+      storageLocations.sort(compareStorageLocationRows);
 
       return {
         ...item,
@@ -751,10 +783,14 @@ export default function Inventario() {
         totalRequiredQuantity: totalRequiredQuantity.toFixed(2),
         pendingReceiptQuantity: pendingReceiptQuantity.toFixed(2),
         warehouseSummaryLabel: item.warehouseLocation || "Sin almacén",
+        storageLocationBreakdown: storageLocations.map((entry: any) => ({
+          ...entry,
+          currentStock: entry.currentStockTotal.toFixed(2),
+        })),
         storageLocation:
           storageLocations.length > 1
             ? `${storageLocations.length} ubicaciones`
-            : storageLocations[0] || item.storageLocation || null,
+            : storageLocations[0]?.label || item.storageLocation || null,
       };
     });
   }, [
@@ -829,10 +865,23 @@ export default function Inventario() {
         ? current
         : current.filter((key) => visibleKeys.has(key))
     );
+    setExpandedStorageLocationKeys((current) =>
+      current.every((key) => visibleKeys.has(key))
+        ? current
+        : current.filter((key) => visibleKeys.has(key))
+    );
   }, [groupedItems]);
 
   const toggleInventoryBreakdown = (key: string) => {
     setExpandedInventoryKeys((current) =>
+      current.includes(key)
+        ? current.filter((entry) => entry !== key)
+        : [...current, key]
+    );
+  };
+
+  const toggleStorageLocationBreakdown = (key: string) => {
+    setExpandedStorageLocationKeys((current) =>
       current.includes(key)
         ? current.filter((entry) => entry !== key)
         : [...current, key]
@@ -2048,7 +2097,11 @@ export default function Inventario() {
                         parseFloat(item.currentStock) <=
                           parseFloat(item.minimumStock);
                       const isExpanded = expandedInventoryKeys.includes(item.id);
+                      const isStorageExpanded =
+                        expandedStorageLocationKeys.includes(item.id);
                       const hasBreakdown = item.projectBreakdown.length > 1;
+                      const hasStorageBreakdown =
+                        item.storageLocationBreakdown?.length > 1;
 
                       return (
                         <Fragment key={item.id}>
@@ -2144,7 +2197,30 @@ export default function Inventario() {
                               {item.warehouseSummaryLabel || "—"}
                             </td>
                             <td className="p-3 text-xs">
-                              {item.storageLocation || "—"}
+                              {hasStorageBreakdown ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 max-w-[180px] px-2"
+                                  aria-expanded={isStorageExpanded}
+                                  title="Ver ubicaciones"
+                                  onClick={() =>
+                                    toggleStorageLocationBreakdown(item.id)
+                                  }
+                                >
+                                  {isStorageExpanded ? (
+                                    <ChevronUp className="mr-1 h-3.5 w-3.5 shrink-0" />
+                                  ) : (
+                                    <ChevronDown className="mr-1 h-3.5 w-3.5 shrink-0" />
+                                  )}
+                                  <span className="truncate">
+                                    {item.storageLocation}
+                                  </span>
+                                </Button>
+                              ) : (
+                                item.storageLocation || "—"
+                              )}
                             </td>
                             <td className="p-3">
                               <div className="flex justify-end gap-2">
@@ -2237,6 +2313,52 @@ export default function Inventario() {
                                                     projectRow.minimumStock
                                                   )
                                                 : "—"}
+                                            </td>
+                                          </tr>
+                                        )
+                                      )}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </td>
+                            </tr>
+                          ) : null}
+                          {hasStorageBreakdown && isStorageExpanded ? (
+                            <tr className="border-b bg-muted/20">
+                              <td
+                                className="px-3 py-2"
+                                colSpan={
+                                  columns.length +
+                                  3 +
+                                  (canManage && allowInventoryReassignment ? 2 : 0)
+                                }
+                              >
+                                <div className="ml-auto max-w-lg overflow-x-auto rounded-md border bg-background">
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="border-b bg-muted/30">
+                                        <th className="p-2 text-left font-semibold uppercase tracking-wider text-muted-foreground">
+                                          Ubicación
+                                        </th>
+                                        <th className="p-2 text-right font-semibold uppercase tracking-wider text-muted-foreground">
+                                          Stock
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {item.storageLocationBreakdown.map(
+                                        (locationRow: any) => (
+                                          <tr
+                                            key={locationRow.id}
+                                            className="border-b last:border-0"
+                                          >
+                                            <td className="p-2">
+                                              {locationRow.label}
+                                            </td>
+                                            <td className="p-2 text-right font-mono">
+                                              {formatQuantity(
+                                                locationRow.currentStock
+                                              )}
                                             </td>
                                           </tr>
                                         )

@@ -9,6 +9,9 @@ import XLSX from "xlsx";
 const DEFAULT_SHEET_NAME = "Inventario";
 const BATCH_SIZE = 500;
 const PRODUCT_ARTICLE_TYPE = 1;
+const SERVICE_ARTICLE_TYPE = 2;
+const FIXED_ASSET_ARTICLE_TYPE = 3;
+const RECONCILE_CONFIRMATION = "RECONCILE_HIDALGO_PRODUCTS_BY_LOCATION";
 
 const REQUIRED_HEADERS = [
   "codigo_sap*",
@@ -44,6 +47,8 @@ type CliOptions = {
   file: string;
   report?: string;
   sheetName?: string;
+  reconcileInventory: boolean;
+  confirm?: string;
 };
 
 type RawExcelRow = Record<string, unknown>;
@@ -218,11 +223,13 @@ export type ImportPlan = {
     inserts: CatalogWrite[];
     updates: CatalogWrite[];
     existingAssetConflicts: ExistingCatalogRow[];
+    existingServiceConflicts: ExistingCatalogRow[];
   };
   inventory: {
     inserts: InventoryWrite[];
     updates: InventoryWrite[];
     existingDuplicateKeys: number;
+    reconcileDeletes: ExistingInventoryRow[];
   };
 };
 
@@ -259,6 +266,9 @@ type ImportReport = {
     rawRows: number;
     unmappedColumns: string[];
   };
+  options: {
+    reconcileInventory: boolean;
+  };
   summary: {
     rawRows: number;
     parsedRows: number;
@@ -274,6 +284,7 @@ type ImportReport = {
     missingWarehouses: number;
     missingAssignments: number;
     existingAssetConflicts: number;
+    existingServiceConflicts: number;
     catalog: {
       inserts: number;
       updates: number;
@@ -281,6 +292,7 @@ type ImportReport = {
     inventory: {
       inserts: number;
       updates: number;
+      deletes: number;
       existingDuplicateKeys: number;
     };
   };
@@ -291,6 +303,7 @@ type ImportReport = {
   missingWarehouses: MissingWarehouse[];
   missingAssignments: MissingAssignment[];
   existingAssetConflicts: ExistingCatalogRow[];
+  existingServiceConflicts: ExistingCatalogRow[];
   catalogInserts: CatalogWrite[];
   catalogUpdates: CatalogWrite[];
   inventoryInserts: InventoryWrite[];
@@ -303,6 +316,7 @@ type ImportReport = {
     inventory: {
       inserted: number;
       updated: number;
+      deleted: number;
     };
   };
   verification?: VerificationResult;
@@ -315,6 +329,7 @@ function printUsage() {
       "  pnpm exec tsx scripts/import-products-inventory-hidalgo.ts --file <xlsx> --dry-run --report <json>",
       "  pnpm exec tsx scripts/import-products-inventory-hidalgo.ts --file <xlsx> --apply --report <json>",
       "  Optional: --sheet <sheet-name>",
+      `  Reconcile: --reconcile-inventory --confirm ${RECONCILE_CONFIRMATION}`,
     ].join("\n")
   );
 }
@@ -324,6 +339,8 @@ export function parseArgs(argv: string[]): CliOptions {
   let file: string | undefined;
   let report: string | undefined;
   let sheetName: string | undefined;
+  let reconcileInventory = false;
+  let confirm: string | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -336,6 +353,11 @@ export function parseArgs(argv: string[]): CliOptions {
     } else if (arg === "--sheet") {
       sheetName = argv[index + 1];
       index += 1;
+    } else if (arg === "--confirm") {
+      confirm = argv[index + 1];
+      index += 1;
+    } else if (arg === "--reconcile-inventory") {
+      reconcileInventory = true;
     } else if (arg === "--dry-run") {
       mode = "dry-run";
     } else if (arg === "--apply") {
@@ -352,7 +374,12 @@ export function parseArgs(argv: string[]): CliOptions {
     throw new Error("Use solo uno: --dry-run o --apply");
   }
   if (!file) throw new Error("Debe indicar --file <xlsx>");
-  return { mode, file, report, sheetName };
+  if (mode === "apply" && reconcileInventory && confirm !== RECONCILE_CONFIRMATION) {
+    throw new Error(
+      `Para --apply --reconcile-inventory debe indicar --confirm ${RECONCILE_CONFIRMATION}`
+    );
+  }
+  return { mode, file, report, sheetName, reconcileInventory, confirm };
 }
 
 function normalizeCell(value: unknown) {
@@ -373,6 +400,11 @@ export function normalizeProjectKey(value: unknown) {
 
 export function normalizeWarehouseKey(value: unknown) {
   return normalizeProjectKey(value);
+}
+
+function normalizeStorageLocationKey(value: unknown) {
+  const normalized = normalizeUpper(value);
+  return normalized || "__SIN_UBICACION__";
 }
 
 function nullableText(value: unknown) {
@@ -731,7 +763,12 @@ export function buildImportData(params: {
     productRows.push(row);
     productRowsByCode.set(row.itemCode, productRows);
 
-    const inventoryKey = `${row.itemCode}::${row.warehouseKey}::${row.projectKey}`;
+    const inventoryKey = [
+      row.itemCode,
+      row.warehouseKey,
+      row.projectKey,
+      normalizeStorageLocationKey(row.storageLocation),
+    ].join("::");
     const inventoryRows = inventoryRowsByKey.get(inventoryKey) ?? [];
     inventoryRows.push(row);
     inventoryRowsByKey.set(inventoryKey, inventoryRows);
@@ -913,9 +950,15 @@ function resolveInventoryRows(inventory: InventoryInput[], relations: Relations)
 function inventoryDbKey(
   sapItemCode: string,
   projectId: number | null,
-  warehouseId: number | null
+  warehouseId: number | null,
+  storageLocation: string | null
 ) {
-  return `${sapItemCode}::${projectId ?? "null"}::${warehouseId ?? "null"}`;
+  return [
+    sapItemCode,
+    projectId ?? "null",
+    warehouseId ?? "null",
+    normalizeStorageLocationKey(storageLocation),
+  ].join("::");
 }
 
 export function buildPlan(params: {
@@ -923,6 +966,7 @@ export function buildPlan(params: {
   resolvedInventory: ResolvedInventoryInput[];
   existingCatalogRows: ExistingCatalogRow[];
   existingInventoryRows: ExistingInventoryRow[];
+  reconcileInventory?: boolean;
 }) {
   const existingCatalogByCode = new Map(
     params.existingCatalogRows.map(row => [row.itemCode, row])
@@ -930,11 +974,17 @@ export function buildPlan(params: {
   const catalogInserts: CatalogWrite[] = [];
   const catalogUpdates: CatalogWrite[] = [];
   const existingAssetConflicts: ExistingCatalogRow[] = [];
+  const existingServiceConflicts: ExistingCatalogRow[] = [];
+  const reconcilableProductCodes = new Set<string>();
 
   for (const product of params.data.products) {
     const existing = existingCatalogByCode.get(product.itemCode);
-    if (existing?.tipoArticulo === 3) {
+    if (existing?.tipoArticulo === FIXED_ASSET_ARTICLE_TYPE) {
       existingAssetConflicts.push(existing);
+      continue;
+    }
+    if (existing?.tipoArticulo === SERVICE_ARTICLE_TYPE) {
+      existingServiceConflicts.push(existing);
       continue;
     }
 
@@ -945,12 +995,18 @@ export function buildPlan(params: {
     };
     if (existing) catalogUpdates.push(write);
     else catalogInserts.push(write);
+    reconcilableProductCodes.add(product.itemCode);
   }
 
   const existingInventoryByKey = new Map<string, ExistingInventoryRow>();
   let existingDuplicateKeys = 0;
   for (const row of params.existingInventoryRows) {
-    const key = inventoryDbKey(row.sapItemCode, row.projectId, row.warehouseId);
+    const key = inventoryDbKey(
+      row.sapItemCode,
+      row.projectId,
+      row.warehouseId,
+      row.storageLocation
+    );
     if (existingInventoryByKey.has(key)) {
       existingDuplicateKeys += 1;
       continue;
@@ -958,17 +1014,29 @@ export function buildPlan(params: {
     existingInventoryByKey.set(key, row);
   }
 
+  const reconcileDeletes = params.reconcileInventory
+    ? params.existingInventoryRows.filter(row => reconcilableProductCodes.has(row.sapItemCode))
+    : [];
+
   const inventoryInserts: InventoryWrite[] = [];
   const inventoryUpdates: InventoryWrite[] = [];
   for (const item of params.resolvedInventory) {
-    const existing = existingInventoryByKey.get(
-      inventoryDbKey(item.sapItemCode, item.projectId, item.warehouseId)
-    );
+    if (!reconcilableProductCodes.has(item.sapItemCode)) continue;
+    const existing = params.reconcileInventory
+      ? undefined
+      : existingInventoryByKey.get(
+          inventoryDbKey(
+            item.sapItemCode,
+            item.projectId,
+            item.warehouseId,
+            item.storageLocation
+          )
+        );
     const write: InventoryWrite = {
       ...item,
       id: existing?.id,
       existing,
-      storageLocationForDb: item.storageLocation ?? existing?.storageLocation ?? null,
+      storageLocationForDb: item.storageLocation ?? null,
     };
     if (existing) inventoryUpdates.push(write);
     else inventoryInserts.push(write);
@@ -979,11 +1047,13 @@ export function buildPlan(params: {
       inserts: catalogInserts,
       updates: catalogUpdates,
       existingAssetConflicts,
+      existingServiceConflicts,
     },
     inventory: {
       inserts: inventoryInserts,
       updates: inventoryUpdates,
       existingDuplicateKeys,
+      reconcileDeletes,
     },
   } satisfies ImportPlan;
 }
@@ -1170,10 +1240,7 @@ async function updateInventoryRows(client: Client, rows: InventoryWrite[]) {
               "projectId" = x."projectId",
               "warehouseId" = x."warehouseId",
               "warehouseLocation" = x."warehouseLocation",
-              "storageLocation" = case
-                when x."storageLocation" is null then item."storageLocation"
-                else x."storageLocation"
-              end,
+              "storageLocation" = x."storageLocation",
               "isActive" = x."isActive",
               "updatedAt" = now()
          from jsonb_to_recordset($1::jsonb) as x(
@@ -1257,11 +1324,36 @@ async function insertInventoryRows(client: Client, rows: InventoryWrite[]) {
   return inserted;
 }
 
+async function deleteReconciledInventoryRows(
+  client: Client,
+  rows: ExistingInventoryRow[]
+) {
+  let deleted = 0;
+  for (const chunk of chunkItems(rows, BATCH_SIZE)) {
+    if (chunk.length === 0) continue;
+    const result = await client.query<{ id: number }>(
+      `delete from "inventoryItems" inv
+        using "sapCatalog" cat
+        where inv.id = any($1::int[])
+          and cat."itemCode" = inv."sapItemCode"
+          and cat."tipoArticulo" = ${PRODUCT_ARTICLE_TYPE}
+        returning inv.id`,
+      [chunk.map(row => row.id)]
+    );
+    deleted += result.rowCount ?? result.rows.length;
+  }
+  return deleted;
+}
+
 async function applyPlan(client: Client, plan: ImportPlan) {
   await client.query("begin");
   try {
     const catalogInserted = await upsertCatalogProducts(client, plan.catalog.inserts);
     const catalogUpdated = await upsertCatalogProducts(client, plan.catalog.updates);
+    const inventoryDeleted = await deleteReconciledInventoryRows(
+      client,
+      plan.inventory.reconcileDeletes
+    );
     const inventoryUpdated = await updateInventoryRows(client, plan.inventory.updates);
     const inventoryInserted = await insertInventoryRows(client, plan.inventory.inserts);
     await client.query("commit");
@@ -1273,6 +1365,7 @@ async function applyPlan(client: Client, plan: ImportPlan) {
       inventory: {
         inserted: inventoryInserted,
         updated: inventoryUpdated,
+        deleted: inventoryDeleted,
       },
     };
   } catch (error) {
@@ -1434,6 +1527,11 @@ function validateReportForApply(params: {
       `${params.plan.catalog.existingAssetConflicts.length} codigos ya existen como activos fijos`
     );
   }
+  if (params.plan.catalog.existingServiceConflicts.length > 0) {
+    errors.push(
+      `${params.plan.catalog.existingServiceConflicts.length} codigos ya existen como servicios`
+    );
+  }
 
   return errors;
 }
@@ -1446,6 +1544,7 @@ function buildReport(params: {
   rawRows: number;
   unmappedColumns: string[];
   data: ImportData;
+  reconcileInventory: boolean;
   missingProjects: MissingProject[];
   missingWarehouses: MissingWarehouse[];
   missingAssignments: MissingAssignment[];
@@ -1462,6 +1561,9 @@ function buildReport(params: {
       availableSheets: params.availableSheets,
       rawRows: params.rawRows,
       unmappedColumns: params.unmappedColumns,
+    },
+    options: {
+      reconcileInventory: params.reconcileInventory,
     },
     summary: {
       rawRows: params.rawRows,
@@ -1482,6 +1584,7 @@ function buildReport(params: {
       missingWarehouses: params.missingWarehouses.length,
       missingAssignments: params.missingAssignments.length,
       existingAssetConflicts: params.plan.catalog.existingAssetConflicts.length,
+      existingServiceConflicts: params.plan.catalog.existingServiceConflicts.length,
       catalog: {
         inserts: params.plan.catalog.inserts.length,
         updates: params.plan.catalog.updates.length,
@@ -1489,6 +1592,7 @@ function buildReport(params: {
       inventory: {
         inserts: params.plan.inventory.inserts.length,
         updates: params.plan.inventory.updates.length,
+        deletes: params.plan.inventory.reconcileDeletes.length,
         existingDuplicateKeys: params.plan.inventory.existingDuplicateKeys,
       },
     },
@@ -1499,6 +1603,7 @@ function buildReport(params: {
     missingWarehouses: params.missingWarehouses,
     missingAssignments: params.missingAssignments,
     existingAssetConflicts: params.plan.catalog.existingAssetConflicts,
+    existingServiceConflicts: params.plan.catalog.existingServiceConflicts,
     catalogInserts: params.plan.catalog.inserts,
     catalogUpdates: params.plan.catalog.updates,
     inventoryInserts: params.plan.inventory.inserts,
@@ -1516,6 +1621,7 @@ async function writeReport(reportPath: string | undefined, report: ImportReport)
 
 function printSummary(report: ImportReport) {
   console.log(`Modo: ${report.mode}`);
+  console.log(`Reconciliacion exacta: ${report.options.reconcileInventory ? "si" : "no"}`);
   console.log(`Archivo: ${report.source.file}`);
   console.log(`Hoja: ${report.source.sheetName}`);
   console.log(`Filas Excel: ${report.summary.rawRows}`);
@@ -1528,14 +1634,17 @@ function printSummary(report: ImportReport) {
   console.log(`Catalogo a actualizar: ${report.summary.catalog.updates}`);
   console.log(`Inventario a insertar: ${report.summary.inventory.inserts}`);
   console.log(`Inventario a actualizar: ${report.summary.inventory.updates}`);
+  console.log(`Inventario a borrar: ${report.summary.inventory.deletes}`);
   console.log(`Validaciones: ${report.summary.validationErrors}`);
   console.log(`Proyectos faltantes: ${report.summary.missingProjects}`);
   console.log(`Almacenes faltantes: ${report.summary.missingWarehouses}`);
   console.log(`Asignaciones faltantes: ${report.summary.missingAssignments}`);
   console.log(`Conflictos con activos: ${report.summary.existingAssetConflicts}`);
+  console.log(`Conflictos con servicios: ${report.summary.existingServiceConflicts}`);
   if (report.applyResult) {
     console.log(`Catalogo insertado: ${report.applyResult.catalog.inserted}`);
     console.log(`Catalogo actualizado: ${report.applyResult.catalog.updated}`);
+    console.log(`Inventario borrado: ${report.applyResult.inventory.deleted}`);
     console.log(`Inventario insertado: ${report.applyResult.inventory.inserted}`);
     console.log(`Inventario actualizado: ${report.applyResult.inventory.updated}`);
   }
@@ -1586,6 +1695,7 @@ async function run(options: CliOptions) {
       resolvedInventory: resolvedInventoryResult.resolved,
       existingCatalogRows,
       existingInventoryRows,
+      reconcileInventory: options.reconcileInventory,
     });
     const blockingErrors = validateReportForApply({
       data,
@@ -1618,6 +1728,7 @@ async function run(options: CliOptions) {
       rawRows: workbook.rawRows.length,
       unmappedColumns: workbook.unmappedColumns,
       data,
+      reconcileInventory: options.reconcileInventory,
       missingProjects,
       missingWarehouses,
       missingAssignments: resolvedInventoryResult.missingAssignments,
