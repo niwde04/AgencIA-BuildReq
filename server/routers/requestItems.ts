@@ -739,7 +739,9 @@ export const requestItemsRouter = router({
         requestItemId: input.requestItemId,
         quantity: input.dispatchedQuantity,
         warehouseId: input.warehouseId,
-        storageLocation: input.storageLocation ?? null,
+        ...(input.storageLocation
+          ? { storageLocation: input.storageLocation }
+          : {}),
         note: input.note,
         ...(input.receivedByName
           ? { receivedByName: input.receivedByName }
@@ -878,7 +880,9 @@ export const requestItemsRouter = router({
             ? { sourceProjectId: item.sourceProjectId }
             : {}),
           warehouseId: item.warehouseId!,
-          storageLocation: item.storageLocation ?? null,
+          ...(item.storageLocation
+            ? { storageLocation: item.storageLocation }
+            : {}),
           ...(item.destinationProjectId
             ? { destinationProjectId: item.destinationProjectId }
             : {}),

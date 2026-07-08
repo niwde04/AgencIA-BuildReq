@@ -4045,13 +4045,15 @@ export async function recordWarehouseExitBatch(params: {
 
   for (const requested of Array.from(requestedByStockKey.values())) {
     const stockRows = await listInventoryRowsForStock({
-        sapItemCode: requested.sapItemCode,
-        itemName: requested.itemName,
-        projectId: requested.sourceProjectId,
-        warehouseId: requested.warehouseId,
-        storageLocation: requested.storageLocation,
-        includeUnclassifiedProjectStock: true,
-      });
+      sapItemCode: requested.sapItemCode,
+      itemName: requested.itemName,
+      projectId: requested.sourceProjectId,
+      warehouseId: requested.warehouseId,
+      ...(requested.storageLocation
+        ? { storageLocation: requested.storageLocation }
+        : {}),
+      includeUnclassifiedProjectStock: true,
+    });
     const availableQuantity = stockRows.reduce(
       (sum, row) => sum + parseDecimal(row.currentStock),
       0
@@ -4059,8 +4061,10 @@ export async function recordWarehouseExitBatch(params: {
 
     if (requested.quantity - availableQuantity > 0.000001) {
       throw new Error(
-        `Stock insuficiente para ${requested.itemName} en ${
-          requested.storageLocation ?? "Sin ubicación"
+        `Stock insuficiente para ${requested.itemName}${
+          requested.storageLocation
+            ? ` en ${requested.storageLocation}`
+            : " en el almacén seleccionado"
         }. Disponible: ${toDecimalString(
           availableQuantity
         )}, solicitado para salida: ${toDecimalString(requested.quantity)}.`
@@ -10819,7 +10823,9 @@ export async function getWarehouseExitById(id: number) {
       const allLocationStockRows = await listInventoryRowsForStock(stockScope);
       const stockRows = await listInventoryRowsForStock({
         ...stockScope,
-        storageLocation: item.storageLocation ?? null,
+        ...(item.storageLocation
+          ? { storageLocation: item.storageLocation }
+          : {}),
       });
       const availableQuantity = stockRows.reduce(
         (sum, row) => sum + parseDecimal(row.currentStock),
@@ -11435,21 +11441,25 @@ export async function updateWarehouseExitDraft(
 
   for (const requested of Array.from(requestedByStockKey.values())) {
     const stockRows = await listInventoryRowsForStock({
-        sapItemCode: requested.sapItemCode,
-        itemName: requested.itemName,
-        projectId: detail.warehouseExit.projectId,
-        warehouseId: requested.warehouseId,
-        storageLocation: requested.storageLocation,
-        includeUnclassifiedProjectStock: true,
-      });
+      sapItemCode: requested.sapItemCode,
+      itemName: requested.itemName,
+      projectId: detail.warehouseExit.projectId,
+      warehouseId: requested.warehouseId,
+      ...(requested.storageLocation
+        ? { storageLocation: requested.storageLocation }
+        : {}),
+      includeUnclassifiedProjectStock: true,
+    });
     const availableQuantity = stockRows.reduce(
       (sum, row) => sum + parseDecimal(row.currentStock),
       0
     );
     if (requested.quantity - availableQuantity > 0.000001) {
       throw new Error(
-        `Stock insuficiente para ${requested.itemName} en ${
-          requested.storageLocation ?? "Sin ubicación"
+        `Stock insuficiente para ${requested.itemName}${
+          requested.storageLocation
+            ? ` en ${requested.storageLocation}`
+            : " en el almacén seleccionado"
         }. Disponible: ${toDecimalString(
           availableQuantity
         )}, solicitado para salida: ${toDecimalString(requested.quantity)}.`
@@ -11532,7 +11542,9 @@ export async function emitWarehouseExit(id: number, emittedById: number) {
       itemName: item.itemName,
       projectId: detail.warehouseExit.projectId,
       warehouseId: item.warehouseId ?? detail.warehouseExit.warehouseId,
-      storageLocation: item.storageLocation ?? null,
+      ...(item.storageLocation
+        ? { storageLocation: item.storageLocation }
+        : {}),
       quantity: item.quantity,
       includeUnclassifiedProjectStock: true,
     });
