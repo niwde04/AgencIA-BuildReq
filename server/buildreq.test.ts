@@ -1307,22 +1307,39 @@ describe("BuildReq - Suppliers catalog", () => {
     updateSupplierSpy.mockRestore();
   });
 
-  it("Project Administrator cannot update supplier fiscal flags", async () => {
+  it("Project Administrator can update supplier fiscal flags", async () => {
     const { ctx } = createProjectAdminContext();
     const caller = appRouter.createCaller(ctx);
-    const updateSupplierSpy = vi.spyOn(db, "updateSupplier");
+    const updateSupplierSpy = vi.spyOn(db, "updateSupplier").mockResolvedValue({
+      id: 5,
+      rtn: "08019999999999",
+      address: "Tegucigalpa",
+      allowsTaxWithholding: false,
+      subjectToAccountPayments: false,
+    } as any);
 
     await expect(
       caller.suppliers.update({
         id: 5,
+        rtn: "08019999999999",
+        address: "Tegucigalpa",
         allowsTaxWithholding: false,
         subjectToAccountPayments: false,
       })
-    ).rejects.toThrow(
-      "No tiene permisos para modificar el catálogo de proveedores"
+    ).resolves.toEqual(
+      expect.objectContaining({
+        rtn: "08019999999999",
+        allowsTaxWithholding: false,
+        subjectToAccountPayments: false,
+      })
     );
 
-    expect(updateSupplierSpy).not.toHaveBeenCalled();
+    expect(updateSupplierSpy).toHaveBeenCalledWith(5, {
+      rtn: "08019999999999",
+      address: "Tegucigalpa",
+      allowsTaxWithholding: false,
+      subjectToAccountPayments: false,
+    });
     updateSupplierSpy.mockRestore();
   });
 
@@ -1472,6 +1489,61 @@ describe("BuildReq - Suppliers catalog", () => {
       isActive: false,
     });
 
+    createSupplierDocumentTypeSpy.mockRestore();
+    updateSupplierDocumentTypeSpy.mockRestore();
+  });
+
+  it("Project Administrator can list supplier document types but cannot manage them", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const listSupplierDocumentTypesSpy = vi
+      .spyOn(db, "listSupplierDocumentTypes")
+      .mockResolvedValue([
+        {
+          id: 3,
+          code: "rtn",
+          name: "RTN",
+          expirationMode: "none",
+          isActive: true,
+        },
+      ] as any);
+    const createSupplierDocumentTypeSpy = vi.spyOn(
+      db,
+      "createSupplierDocumentType"
+    );
+    const updateSupplierDocumentTypeSpy = vi.spyOn(
+      db,
+      "updateSupplierDocumentType"
+    );
+
+    await expect(
+      caller.suppliers.listDocumentTypes({ includeInactive: true })
+    ).resolves.toEqual([expect.objectContaining({ name: "RTN" })]);
+
+    await expect(
+      caller.suppliers.createDocumentType({
+        name: "Constancia de pagos a cuenta",
+        expirationMode: "required",
+        isActive: true,
+      })
+    ).rejects.toThrow("No tiene permisos para modificar el catálogo");
+    await expect(
+      caller.suppliers.updateDocumentType({
+        id: 3,
+        name: "RTN actualizado",
+      })
+    ).rejects.toThrow("No tiene permisos para modificar el catálogo");
+    await expect(
+      caller.suppliers.deactivateDocumentType({ id: 3 })
+    ).rejects.toThrow("No tiene permisos para modificar el catálogo");
+
+    expect(listSupplierDocumentTypesSpy).toHaveBeenCalledWith({
+      includeInactive: true,
+    });
+    expect(createSupplierDocumentTypeSpy).not.toHaveBeenCalled();
+    expect(updateSupplierDocumentTypeSpy).not.toHaveBeenCalled();
+
+    listSupplierDocumentTypesSpy.mockRestore();
     createSupplierDocumentTypeSpy.mockRestore();
     updateSupplierDocumentTypeSpy.mockRestore();
   });
@@ -1695,6 +1767,334 @@ describe("BuildReq - Suppliers catalog", () => {
     getSupplierByIdSpy.mockRestore();
     listSupplierDocumentsSpy.mockRestore();
     storageGetSpy.mockRestore();
+  });
+
+  it("Project Administrator can list supplier documents", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getSupplierByIdSpy = vi
+      .spyOn(db, "getSupplierById")
+      .mockResolvedValue({ id: 5, name: "Proveedor Demo" } as any);
+    const listSupplierDocumentsSpy = vi
+      .spyOn(db, "listSupplierDocuments")
+      .mockResolvedValue([
+        {
+          document: {
+            id: 45,
+            supplierId: 5,
+            documentTypeId: 3,
+            attachmentId: 102,
+            documentDate: new Date("2026-01-01T00:00:00"),
+            expirationDate: null,
+            description: "RTN",
+            createdById: 5,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+          documentType: {
+            id: 3,
+            code: "rtn",
+            name: "RTN",
+            expirationMode: "none",
+            isActive: true,
+          },
+          attachment: {
+            id: 102,
+            entityType: "supplier",
+            entityId: 5,
+            fileName: "rtn.pdf",
+            fileKey: "buildreq/supplier/5/rtn.pdf",
+            fileUrl: "https://storage.local/old-rtn.pdf",
+            mimeType: "application/pdf",
+            fileSize: 40,
+            category: "documento_proveedor",
+            uploadedById: 5,
+            createdAt: new Date(),
+          },
+          createdBy: { id: 5, name: "Admin Proyecto", email: "ap@test.com" },
+        } as any,
+      ]);
+    const storageGetSpy = vi.spyOn(storage, "storageGet").mockResolvedValue({
+      key: "buildreq/supplier/5/rtn.pdf",
+      url: "https://storage.local/signed-rtn.pdf",
+    });
+
+    await expect(
+      caller.suppliers.listDocuments({ supplierId: 5 })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: 45,
+        status: "sin_vencimiento",
+        attachment: expect.objectContaining({
+          fileUrl: "https://storage.local/signed-rtn.pdf",
+        }),
+      }),
+    ]);
+
+    getSupplierByIdSpy.mockRestore();
+    listSupplierDocumentsSpy.mockRestore();
+    storageGetSpy.mockRestore();
+  });
+
+  it("Project Administrator can create supplier documents with validity dates", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const documentType = {
+      id: 4,
+      code: "constancia_pago_a_cuenta",
+      name: "Constancia de pagos a cuenta",
+      description: null,
+      expirationMode: "required",
+      isActive: true,
+    };
+    const attachment = {
+      id: 110,
+      entityType: "supplier",
+      entityId: 5,
+      fileName: "constancia.pdf",
+      fileKey: "buildreq/supplier/5/constancia.pdf",
+      fileUrl: "https://storage.local/old-constancia.pdf",
+      mimeType: "application/pdf",
+      fileSize: 40,
+      category: "documento_proveedor",
+      uploadedById: ctx.user!.id,
+      createdAt: new Date(),
+    };
+    const supplierDocument = {
+      id: 55,
+      supplierId: 5,
+      documentTypeId: 4,
+      attachmentId: 110,
+      documentDate: new Date("2026-07-01T00:00:00"),
+      expirationDate: new Date("2026-09-30T00:00:00"),
+      description: "Constancia vigente",
+      createdById: ctx.user!.id,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const getSupplierByIdSpy = vi
+      .spyOn(db, "getSupplierById")
+      .mockResolvedValue({ id: 5, name: "Proveedor Demo" } as any);
+    const getSupplierDocumentTypeByIdSpy = vi
+      .spyOn(db, "getSupplierDocumentTypeById")
+      .mockResolvedValue(documentType as any);
+    const storagePutSpy = vi.spyOn(storage, "storagePut").mockResolvedValue({
+      key: attachment.fileKey,
+      url: "https://storage.local/constancia.pdf",
+    });
+    const createAttachmentSpy = vi
+      .spyOn(db, "createAttachment")
+      .mockResolvedValue({ id: attachment.id });
+    const createSupplierDocumentSpy = vi
+      .spyOn(db, "createSupplierDocument")
+      .mockResolvedValue(supplierDocument as any);
+    const getSupplierDocumentByIdSpy = vi
+      .spyOn(db, "getSupplierDocumentById")
+      .mockResolvedValue({
+        document: supplierDocument,
+        documentType,
+        attachment,
+        createdBy: {
+          id: ctx.user!.id,
+          name: "Admin Proyecto",
+          email: "ap@test.com",
+        },
+      } as any);
+    const storageGetSpy = vi.spyOn(storage, "storageGet").mockResolvedValue({
+      key: attachment.fileKey,
+      url: "https://storage.local/signed-constancia.pdf",
+    });
+
+    await expect(
+      caller.suppliers.createDocument({
+        supplierId: 5,
+        documentTypeId: 4,
+        documentDate: "2026-07-01",
+        expirationDate: "2026-09-30",
+        description: "Constancia vigente",
+        fileName: "constancia.pdf",
+        fileData: VALID_PDF_BASE64,
+        mimeType: "application/pdf",
+        fileSize: 40,
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 55,
+        status: "vigente",
+        attachment: expect.objectContaining({
+          fileUrl: "https://storage.local/signed-constancia.pdf",
+        }),
+      })
+    );
+
+    expect(createAttachmentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: "supplier",
+        entityId: 5,
+        category: "documento_proveedor",
+        uploadedById: ctx.user!.id,
+      })
+    );
+    expect(createSupplierDocumentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        supplierId: 5,
+        documentTypeId: 4,
+        description: "Constancia vigente",
+        createdById: ctx.user!.id,
+        documentDate: expect.any(Date),
+        expirationDate: expect.any(Date),
+      })
+    );
+
+    getSupplierByIdSpy.mockRestore();
+    getSupplierDocumentTypeByIdSpy.mockRestore();
+    storagePutSpy.mockRestore();
+    createAttachmentSpy.mockRestore();
+    createSupplierDocumentSpy.mockRestore();
+    getSupplierDocumentByIdSpy.mockRestore();
+    storageGetSpy.mockRestore();
+  });
+
+  it("Project Administrator can update supplier document validity dates", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const currentDocumentType = {
+      id: 3,
+      code: "rtn",
+      name: "RTN",
+      expirationMode: "none",
+      isActive: true,
+    };
+    const updatedDocumentType = {
+      id: 4,
+      code: "constancia_pago_a_cuenta",
+      name: "Constancia de pagos a cuenta",
+      expirationMode: "required",
+      isActive: true,
+    };
+    const attachment = {
+      id: 102,
+      entityType: "supplier",
+      entityId: 5,
+      fileName: "constancia.pdf",
+      fileKey: "buildreq/supplier/5/constancia.pdf",
+      fileUrl: "https://storage.local/old-constancia.pdf",
+      mimeType: "application/pdf",
+      fileSize: 40,
+      category: "documento_proveedor",
+      uploadedById: ctx.user!.id,
+      createdAt: new Date(),
+    };
+    const currentDocument = {
+      id: 45,
+      supplierId: 5,
+      documentTypeId: 3,
+      attachmentId: 102,
+      documentDate: new Date("2026-01-01T00:00:00"),
+      expirationDate: null,
+      description: "RTN",
+      createdById: ctx.user!.id,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const updatedDocument = {
+      ...currentDocument,
+      documentTypeId: 4,
+      documentDate: new Date("2026-07-01T00:00:00"),
+      expirationDate: new Date("2026-12-31T00:00:00"),
+      description: "Vigencia actualizada",
+    };
+    const getSupplierDocumentByIdSpy = vi
+      .spyOn(db, "getSupplierDocumentById")
+      .mockResolvedValueOnce({
+        document: currentDocument,
+        documentType: currentDocumentType,
+        attachment,
+        createdBy: null,
+      } as any)
+      .mockResolvedValueOnce({
+        document: updatedDocument,
+        documentType: updatedDocumentType,
+        attachment,
+        createdBy: null,
+      } as any);
+    const getSupplierDocumentTypeByIdSpy = vi
+      .spyOn(db, "getSupplierDocumentTypeById")
+      .mockResolvedValue(updatedDocumentType as any);
+    const updateSupplierDocumentSpy = vi
+      .spyOn(db, "updateSupplierDocument")
+      .mockResolvedValue({ id: 45 } as any);
+    const storageGetSpy = vi.spyOn(storage, "storageGet").mockResolvedValue({
+      key: attachment.fileKey,
+      url: "https://storage.local/signed-constancia.pdf",
+    });
+
+    await expect(
+      caller.suppliers.updateDocument({
+        id: 45,
+        documentTypeId: 4,
+        documentDate: "2026-07-01",
+        expirationDate: "2026-12-31",
+        description: "Vigencia actualizada",
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 45,
+        documentTypeId: 4,
+        status: "vigente",
+        description: "Vigencia actualizada",
+      })
+    );
+
+    expect(updateSupplierDocumentSpy).toHaveBeenCalledWith(
+      45,
+      expect.objectContaining({
+        documentTypeId: 4,
+        documentDate: expect.any(Date),
+        expirationDate: expect.any(Date),
+        description: "Vigencia actualizada",
+      })
+    );
+
+    getSupplierDocumentByIdSpy.mockRestore();
+    getSupplierDocumentTypeByIdSpy.mockRestore();
+    updateSupplierDocumentSpy.mockRestore();
+    storageGetSpy.mockRestore();
+  });
+
+  it("Project Administrator can delete supplier documents", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const attachment = {
+      id: 102,
+      fileKey: "buildreq/supplier/5/constancia.pdf",
+    };
+    const getSupplierDocumentByIdSpy = vi
+      .spyOn(db, "getSupplierDocumentById")
+      .mockResolvedValue({
+        document: { id: 45, supplierId: 5 },
+        documentType: { id: 4, name: "Constancia de pagos a cuenta" },
+        attachment,
+        createdBy: null,
+      } as any);
+    const storageDeleteSpy = vi
+      .spyOn(storage, "storageDelete")
+      .mockResolvedValue({
+        key: attachment.fileKey,
+      });
+    const deleteAttachmentSpy = vi
+      .spyOn(db, "deleteAttachment")
+      .mockResolvedValue(undefined);
+
+    await expect(caller.suppliers.deleteDocument({ id: 45 })).resolves.toEqual({
+      success: true,
+    });
+    expect(storageDeleteSpy).toHaveBeenCalledWith(attachment.fileKey);
+    expect(deleteAttachmentSpy).toHaveBeenCalledWith(attachment.id);
+
+    getSupplierDocumentByIdSpy.mockRestore();
+    storageDeleteSpy.mockRestore();
+    deleteAttachmentSpy.mockRestore();
   });
 
   it("Blocks supplier document listing for unauthorized roles", async () => {

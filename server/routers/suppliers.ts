@@ -45,6 +45,26 @@ function canManageSupplierContacts(user: {
   );
 }
 
+function canManageSupplierFiscalProfile(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  return (
+    canManageSupplierCatalog(user) ||
+    user.buildreqRole === "administrador_proyecto"
+  );
+}
+
+function canManageSupplierDocuments(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  return (
+    canManageSupplierCatalog(user) ||
+    user.buildreqRole === "administrador_proyecto"
+  );
+}
+
 function assertCanReadSuppliers(user: {
   role?: string | null;
   buildreqRole?: string | null;
@@ -93,6 +113,34 @@ function assertCanManageSupplierContacts(user: {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene permisos para gestionar contactos de proveedores",
+    });
+  }
+}
+
+function assertCanManageSupplierFiscalProfile(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  assertCanReadSuppliers(user);
+
+  if (!canManageSupplierFiscalProfile(user)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para modificar datos fiscales del proveedor",
+    });
+  }
+}
+
+function assertCanManageSupplierDocuments(user: {
+  role?: string | null;
+  buildreqRole?: string | null;
+}) {
+  assertCanReadSuppliers(user);
+
+  if (!canManageSupplierDocuments(user)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para gestionar documentos de proveedores",
     });
   }
 }
@@ -377,7 +425,7 @@ export const suppliersRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      assertCanManageSupplierCatalog(ctx.user);
+      assertCanManageSupplierFiscalProfile(ctx.user);
       const data: Parameters<typeof db.updateSupplier>[1] = {};
       if (input.rtn !== undefined) {
         data.rtn = input.rtn.trim() || null;
@@ -399,7 +447,7 @@ export const suppliersRouter = router({
   listDocumentTypes: protectedProcedure
     .input(z.object({ includeInactive: z.boolean().optional() }).optional())
     .query(async ({ ctx, input }) => {
-      assertCanManageSupplierCatalog(ctx.user);
+      assertCanManageSupplierDocuments(ctx.user);
       return db.listSupplierDocumentTypes(input ?? {});
     }),
 
@@ -461,7 +509,7 @@ export const suppliersRouter = router({
   listDocuments: protectedProcedure
     .input(z.object({ supplierId: z.number().int().positive() }))
     .query(async ({ ctx, input }) => {
-      assertCanManageSupplierCatalog(ctx.user);
+      assertCanManageSupplierDocuments(ctx.user);
       const supplier = await db.getSupplierById(input.supplierId);
       if (!supplier) {
         throw new TRPCError({
@@ -476,7 +524,7 @@ export const suppliersRouter = router({
   createDocument: protectedProcedure
     .input(supplierDocumentCreateSchema)
     .mutation(async ({ ctx, input }) => {
-      assertCanManageSupplierCatalog(ctx.user);
+      assertCanManageSupplierDocuments(ctx.user);
       const [supplier, documentType] = await Promise.all([
         db.getSupplierById(input.supplierId),
         db.getSupplierDocumentTypeById(input.documentTypeId),
@@ -553,7 +601,7 @@ export const suppliersRouter = router({
   updateDocument: protectedProcedure
     .input(supplierDocumentUpdateSchema)
     .mutation(async ({ ctx, input }) => {
-      assertCanManageSupplierCatalog(ctx.user);
+      assertCanManageSupplierDocuments(ctx.user);
       const current = await db.getSupplierDocumentById(input.id);
       if (!current) {
         throw new TRPCError({
@@ -605,7 +653,7 @@ export const suppliersRouter = router({
   deleteDocument: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
-      assertCanManageSupplierCatalog(ctx.user);
+      assertCanManageSupplierDocuments(ctx.user);
       const document = await db.getSupplierDocumentById(input.id);
       if (!document) {
         throw new TRPCError({

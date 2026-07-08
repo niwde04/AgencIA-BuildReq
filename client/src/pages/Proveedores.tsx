@@ -247,6 +247,10 @@ export default function Proveedores() {
     buildreqRole === "administracion_central";
   const canManageSupplierContacts =
     canManageSupplierCatalog || buildreqRole === "administrador_proyecto";
+  const canManageSupplierFiscalProfile =
+    canManageSupplierCatalog || buildreqRole === "administrador_proyecto";
+  const canManageSupplierDocuments =
+    canManageSupplierCatalog || buildreqRole === "administrador_proyecto";
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -300,14 +304,14 @@ export default function Proveedores() {
       { includeInactive: true },
       {
         enabled:
-          canManageSupplierCatalog &&
+          canManageSupplierDocuments &&
           (isExistingSupplier || documentTypesDialogOpen),
       }
     );
   const { data: supplierDocumentsRaw, isLoading: documentsLoading } =
     trpc.suppliers.listDocuments.useQuery(
       { supplierId: selectedSupplier?.id ?? 0 },
-      { enabled: canManageSupplierCatalog && isExistingSupplier }
+      { enabled: canManageSupplierDocuments && isExistingSupplier }
     );
 
   useEffect(() => {
@@ -878,7 +882,9 @@ export default function Proveedores() {
                               onClick={() => openEditDialog(supplier)}
                             >
                               <Pencil className="mr-2 h-3.5 w-3.5" />
-                              {canManageSupplierCatalog ? "Editar" : "Contactos"}
+                              {canManageSupplierFiscalProfile
+                                ? "Editar"
+                                : "Contactos"}
                             </Button>
                           </td>
                         ) : null}
@@ -929,7 +935,7 @@ export default function Proveedores() {
             <DialogTitle>
               {isCreatingSupplier
                 ? "Nuevo proveedor"
-                : canManageSupplierCatalog
+                : canManageSupplierFiscalProfile
                 ? "Editar proveedor"
                 : "Contactos del proveedor"}
             </DialogTitle>
@@ -1017,11 +1023,11 @@ export default function Proveedores() {
                   <Label className="text-xs">RTN</Label>
                   <Input
                     value={
-                      canManageSupplierCatalog
+                      canManageSupplierFiscalProfile
                         ? editRtn
                         : selectedSupplier?.rtn || ""
                     }
-                    readOnly={!canManageSupplierCatalog}
+                    readOnly={!canManageSupplierFiscalProfile}
                     onChange={event => setEditRtn(event.target.value)}
                     placeholder="RTN del proveedor"
                     maxLength={50}
@@ -1031,11 +1037,11 @@ export default function Proveedores() {
                   <Label className="text-xs">Dirección</Label>
                   <Input
                     value={
-                      canManageSupplierCatalog
+                      canManageSupplierFiscalProfile
                         ? editAddress
                         : selectedSupplier?.address || ""
                     }
-                    readOnly={!canManageSupplierCatalog}
+                    readOnly={!canManageSupplierFiscalProfile}
                     onChange={event => setEditAddress(event.target.value)}
                     placeholder="Dirección fiscal del proveedor"
                     maxLength={1000}
@@ -1043,7 +1049,7 @@ export default function Proveedores() {
                 </div>
               </div>
 
-              {canManageSupplierCatalog ? (
+              {canManageSupplierFiscalProfile ? (
                 <>
                   <div className="flex items-center justify-between rounded-md border p-3">
                     <Label className="text-sm">Permite retención</Label>
@@ -1325,7 +1331,7 @@ export default function Proveedores() {
               </div>
               ) : null}
 
-              {canManageSupplierCatalog && isExistingSupplier ? (
+              {canManageSupplierDocuments && isExistingSupplier ? (
               <div className="space-y-4 rounded-md border p-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
@@ -1335,18 +1341,20 @@ export default function Proveedores() {
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        startNewDocumentType();
-                        setDocumentTypesDialogOpen(true);
-                      }}
-                    >
-                      <Settings className="mr-2 h-4 w-4" />
-                      Tipos
-                    </Button>
+                    {canManageSupplierCatalog ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          startNewDocumentType();
+                          setDocumentTypesDialogOpen(true);
+                        }}
+                      >
+                        <Settings className="mr-2 h-4 w-4" />
+                        Tipos
+                      </Button>
+                    ) : null}
                     <Button
                       type="button"
                       size="sm"
@@ -1484,7 +1492,7 @@ export default function Proveedores() {
               </div>
               ) : null}
 
-              {canManageSupplierCatalog || isCreatingSupplier ? (
+              {canManageSupplierFiscalProfile || isCreatingSupplier ? (
                 <Button
                   type="button"
                   onClick={submitSupplier}
