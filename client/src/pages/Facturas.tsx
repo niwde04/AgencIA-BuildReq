@@ -136,6 +136,9 @@ type RetentionOption = {
   erpCode?: string | null;
 };
 
+type InvoiceExcelCellValue = string | number | boolean | Date | null | undefined;
+type InvoiceExcelRow = InvoiceExcelCellValue[];
+
 type InvoiceAssetDraft = {
   isFixedAsset: boolean;
   isLeasing: boolean;
@@ -607,6 +610,67 @@ function getInvoiceStatusNote(invoice: any) {
   }
 
   return null;
+}
+
+function sanitizeExcelFileBase(value: string) {
+  return (
+    value
+      .trim()
+      .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 120) || "factura"
+  );
+}
+
+function sanitizeWorkbookSheetName(value: string) {
+  return value.replace(/[\[\]:*?/\\]/g, " ").trim().slice(0, 31) || "Hoja";
+}
+
+function getExcelColumnWidth(rows: InvoiceExcelRow[], columnIndex: number) {
+  const maxLength = rows.reduce((max, row) => {
+    const value = row[columnIndex];
+    const length = value instanceof Date ? 10 : String(value ?? "").length;
+    return Math.max(max, length);
+  }, 0);
+  return Math.min(Math.max(maxLength + 2, 10), 48);
+}
+
+async function downloadInvoiceWorkbook(params: {
+  fileName: string;
+  sheets: Array<{ name: string; rows: InvoiceExcelRow[] }>;
+}) {
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.utils.book_new();
+
+  params.sheets.forEach(sheet => {
+    const worksheet = XLSX.utils.aoa_to_sheet(sheet.rows);
+    const columnCount = sheet.rows.reduce(
+      (max, row) => Math.max(max, row.length),
+      0
+    );
+
+    worksheet["!cols"] = Array.from({ length: columnCount }, (_, index) => ({
+      wch: getExcelColumnWidth(sheet.rows, index),
+    }));
+
+    Object.keys(worksheet).forEach(cellAddress => {
+      if (cellAddress.startsWith("!")) return;
+      const cell = worksheet[cellAddress];
+      if (cell && typeof cell.v === "number") {
+        cell.z = "#,##0.00";
+      }
+    });
+
+    XLSX.utils.book_append_sheet(
+      workbook,
+      worksheet,
+      sanitizeWorkbookSheetName(sheet.name)
+    );
+  });
+
+  XLSX.writeFile(workbook, params.fileName, { bookType: "xlsx" });
 }
 
 function getInvoiceHistoryRows(invoice: any) {
@@ -1192,6 +1256,7 @@ export default function Facturas() {
     retentionsSavedId: null,
     reviewSentId: null,
   });
+  const [isExportingInvoiceExcel, setIsExportingInvoiceExcel] = useState(false);
   const [attachmentState, setAttachmentState] = useState({
     count: 0,
     isLoading: false,
@@ -1698,6 +1763,159 @@ export default function Facturas() {
       ? "La factura no tiene líneas habilitadas para retención."
       : "";
   const netPayable = Math.max(invoiceTotal - retentionTotal, 0);
+  const exportInvoiceDetailExcel = async () => {
+    if (!detail?.invoice || isExportingInvoiceExcel) return;
+
+    setIsExportingInvoiceExcel(true);
+    try {
+      const invoice = detail.invoice;
+      const supplierLabel = detail.supplier
+        ? `${detail.supplier.supplierCode} — ${detail.supplier.name}`
+        : "Proveedor pendiente";
+      const projectLabel = detail.project
+        ? `${detail.project.code} — ${detail.project.name}`
+        : "Proyecto no identificado";
+      const fileName = buildDatedExcelFileName(
+        sanitizeExcelFileBase(
+          `factura-${invoice.invoiceDocumentNumber || invoice.id}`
+        )
+      );
+      const getItemRetentionLabel = (itemId: number) => {
+        const lineRetentions = retentionDrafts.filter(
+          retention => retention.invoiceItemId === itemId
+        );
+        return lineRetentions.length > 0
+          ? lineRetentions
+              .map(retention =>
+                [
+                  retention.retentionCode,
+                  retention.description,
+                  formatPurchaseOrderCurrency(getRetentionAmount(retention)),
+                ]
+                  .filter(Boolean)
+                  .join(" - ")
+              )
+              .join("; ")
+          : "Sin retención";
+      };
+      const summaryRows: InvoiceExcelRow[] = [
+        ["Factura", invoice.invoiceDocumentNumber || ""],
+        ["Estado", getInvoiceStatusLabel(invoice)],
+        [],
+        ["Datos generales"],
+        ["Proveedor", supplierLabel],
+        ["RTN proveedor", formatSupplierRtnLabel(detail.supplier)],
+        ["Origen OC", detail.purchaseOrder?.orderNumber || "OC"],
+        ["Recepción", detail.receipt?.receiptNumber || "Recepción"],
+        ["Proyecto", projectLabel],
+        ["Requisición", formatInvoiceRequestNumbers(detail)],
+        ["Requiriente", formatInvoiceRequestedBy(detail)],
+        ["Creada por", formatInvoiceCreatedBy(detail)],
+        [],
+        ["Información fiscal"],
+        [
+          "Documento fiscal",
+          invoiceDraft.isFiscalDocument ? "Fiscal" : "Extranjero",
+        ],
+        ["Número documento", invoiceDraft.invoiceNumber || ""],
+        ["CAI", invoiceDraft.cai || ""],
+        ["Rango autorizado inicial", invoiceDraft.documentRangeStart || ""],
+        ["Rango autorizado final", invoiceDraft.documentRangeEnd || ""],
+        ["Fecha documento", formatDateLabel(invoiceDraft.documentDate)],
+        [
+          "Fecha vencimiento (crédito)",
+          formatDateLabel(invoiceDraft.documentDueDate),
+        ],
+        ["Fecha contabilización", formatDateLabel(invoiceDraft.postingDate)],
+        ["Fecha recepción", formatDateLabel(invoiceDraft.receiptDate)],
+        ["Fecha límite emisión", formatDateLabel(invoiceDraft.emissionDeadline)],
+        [
+          "Número comprobante de retención",
+          invoiceDraft.retentionReceiptNumber || "",
+        ],
+        ["Notas", invoiceDraft.notes || ""],
+        [],
+        ["Resumen"],
+        ["Subtotal", toNumber(invoice.subtotal)],
+        ["ISV", toNumber(invoice.taxAmount)],
+        ...(invoiceOtherChargesTotal > 0
+          ? ([["Otros cargos", invoiceOtherChargesTotal]] as InvoiceExcelRow[])
+          : []),
+        ["Total factura", invoiceTotal],
+        ["Total retenciones", retentionTotal],
+        ["Neto a pagar", netPayable],
+      ];
+      const detailRows: InvoiceExcelRow[] = [
+        [
+          "Ítem",
+          "SAP",
+          "Cantidad",
+          "Unidad",
+          "Precio unitario",
+          "Subtotal",
+          "ISV",
+          "Total",
+          "Retención",
+        ],
+        ...(detail.items ?? []).map((item: any) => [
+          item.itemName,
+          item.currentSapItemCode || item.originalSapItemCode || "",
+          toNumber(item.quantity),
+          item.unit || "",
+          toNumber(item.unitPrice),
+          toNumber(item.subtotal),
+          toNumber(item.taxAmount),
+          toNumber(item.total),
+          getItemRetentionLabel(item.id),
+        ]),
+      ];
+      const sheets: Array<{ name: string; rows: InvoiceExcelRow[] }> = [
+        { name: "Resumen", rows: summaryRows },
+        { name: "Detalle", rows: detailRows },
+      ];
+
+      if (detail.otherCharges?.length) {
+        sheets.push({
+          name: "Otros cargos",
+          rows: [
+            ["Concepto", "Monto"],
+            ...detail.otherCharges.map((charge: any) => [
+              charge.concept,
+              toNumber(charge.amount),
+            ]),
+          ],
+        });
+      }
+
+      if (retentionDrafts.length > 0) {
+        sheets.push({
+          name: "Retenciones",
+          rows: [
+            ["Línea", "Retención", "Descripción", "Base", "%", "Monto"],
+            ...retentionDrafts.map(retention => {
+              const item = detail.items?.find(
+                (entry: any) => entry.id === retention.invoiceItemId
+              );
+              return [
+                retention.itemName || item?.itemName || "Retención general",
+                retention.retentionCode || "",
+                retention.description || "",
+                toNumber(retention.baseAmount),
+                toNumber(retention.percentage),
+                getRetentionAmount(retention),
+              ];
+            }),
+          ],
+        });
+      }
+
+      await downloadInvoiceWorkbook({ fileName, sheets });
+    } catch {
+      toast.error("No se pudo exportar la factura a Excel");
+    } finally {
+      setIsExportingInvoiceExcel(false);
+    }
+  };
   const isRejected = detail?.invoice.status === "rechazada";
   const isDraft = detail?.invoice.status === "borrador" || isRejected;
   const isReviewed = detail?.invoice.status === "revisada";
@@ -2582,6 +2800,15 @@ export default function Facturas() {
               </div>
               {detail ? (
                 <div className="flex max-w-full flex-wrap items-center justify-start gap-2 pr-1 sm:pr-3 lg:justify-end lg:pr-0">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void exportInvoiceDetailExcel()}
+                    disabled={isExportingInvoiceExcel}
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    {isExportingInvoiceExcel ? "Exportando..." : "Exportar Excel"}
+                  </Button>
                   {canCorrectSelectedReceipt ? (
                     <Button
                       type="button"
