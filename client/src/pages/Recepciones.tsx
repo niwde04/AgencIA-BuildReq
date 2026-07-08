@@ -2550,7 +2550,13 @@ export default function Recepciones() {
     compact = false,
     selectedWarehouseValue?: string
   ) => {
-    if (sourceType === "purchase_order" && isReceiptNonInventoryItem(item)) {
+    const isFixedAssetLine =
+      sourceType === "purchase_order" &&
+      getReceiptAssetDraft(item.id).isFixedAsset;
+    if (
+      sourceType === "purchase_order" &&
+      (isReceiptNonInventoryItem(item) || isFixedAssetLine)
+    ) {
       return null;
     }
 
@@ -2735,11 +2741,6 @@ export default function Recepciones() {
             ))}
           </SelectContent>
         </Select>
-        {renderReceiptStorageLocationInput(
-          item,
-          compact,
-          selectedWarehouseValue
-        )}
         {selectedIsSourceWarehouse ? (
           <p className="text-[10px] font-medium text-destructive">
             No se puede ingresar a la misma bodega/proyecto de origen.
@@ -2984,7 +2985,7 @@ export default function Recepciones() {
     () => getOtherChargesTotal(otherChargeDrafts),
     [otherChargeDrafts]
   );
-  const receiptTableColumnCount = sourceType === "purchase_order" ? 11 : 8;
+  const receiptTableColumnCount = sourceType === "purchase_order" ? 12 : 9;
   const isReceiptLineDetailsExpanded = (itemId: string | number) =>
     expandedReceiptDetailItemIds.includes(String(itemId));
   const toggleReceiptLineDetails = (itemId: string | number) => {
@@ -5340,8 +5341,8 @@ export default function Recepciones() {
                   <table
                     className={`w-full text-sm ${
                       sourceType === "purchase_order"
-                        ? "min-w-[1540px]"
-                        : "min-w-[1240px]"
+                        ? "min-w-[1740px]"
+                        : "min-w-[1420px]"
                     }`}
                   >
                     <thead>
@@ -5382,6 +5383,9 @@ export default function Recepciones() {
                         </th>
                         <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                           Almacén ingreso
+                        </th>
+                        <th className="p-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                          Ubicación
                         </th>
                         {sourceType === "transfer" ? (
                           <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
@@ -5677,6 +5681,17 @@ export default function Recepciones() {
                                               true
                                             )}
                                           </td>
+                                          <td className="p-4">
+                                            {renderReceiptStorageLocationInput(
+                                              item,
+                                              true,
+                                              warehouseByItemId[item.id]
+                                            ) ?? (
+                                              <span className="text-xs text-muted-foreground">
+                                                No aplica
+                                              </span>
+                                            )}
+                                          </td>
                                         </tr>
                                       );
                                     }
@@ -5912,6 +5927,17 @@ export default function Recepciones() {
                                 </td>
                                 <td className="p-4">
                                   {renderReceiptWarehouseSelector(item, true)}
+                                </td>
+                                <td className="p-4">
+                                  {renderReceiptStorageLocationInput(
+                                    item,
+                                    true,
+                                    warehouseByItemId[item.id]
+                                  ) ?? (
+                                    <span className="text-xs text-muted-foreground">
+                                      No aplica
+                                    </span>
+                                  )}
                                 </td>
                                 {sourceType === "transfer" ? (
                                   <td className="p-4 text-right">
