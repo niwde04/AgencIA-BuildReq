@@ -8484,7 +8484,7 @@ describe("BuildReq - User Management", () => {
 // Tests: Purchase Requests
 // ============================================================
 describe("BuildReq - Purchase Requests", () => {
-  it("Bodeguero de Proyecto can view purchase requests but cannot manage them", async () => {
+  it("Bodeguero de Proyecto can view purchase requests and attach quotes but cannot edit them", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
     const detail = {
@@ -8503,7 +8503,12 @@ describe("BuildReq - Purchase Requests", () => {
       .spyOn(db, "getPurchaseRequestById")
       .mockResolvedValue(detail);
     const createPurchaseRequestSpy = vi.spyOn(db, "createPurchaseRequest");
-    const updatePurchaseRequestSpy = vi.spyOn(db, "updatePurchaseRequest");
+    const updatePurchaseRequestSpy = vi
+      .spyOn(db, "updatePurchaseRequest")
+      .mockResolvedValue({
+        ...detail.purchaseRequest,
+        quoteAttachmentId: 10,
+      } as any);
 
     await expect(caller.purchaseRequests.list()).resolves.toEqual([]);
     expect(listPurchaseRequestsSpy).toHaveBeenCalledWith({ projectIds: [1] });
@@ -8539,15 +8544,16 @@ describe("BuildReq - Purchase Requests", () => {
       message: "No tiene permisos para editar solicitudes de compra",
     });
 
-    await expect(
-      caller.purchaseRequests.attachQuote({ id: 33, attachmentId: 10 })
-    ).rejects.toMatchObject({
-      code: "FORBIDDEN",
-      message: "No tiene permisos para adjuntar cotizaciones",
-    });
-
     expect(createPurchaseRequestSpy).not.toHaveBeenCalled();
     expect(updatePurchaseRequestSpy).not.toHaveBeenCalled();
+
+    await expect(
+      caller.purchaseRequests.attachQuote({ id: 33, attachmentId: 10 })
+    ).resolves.toEqual(expect.anything());
+
+    expect(updatePurchaseRequestSpy).toHaveBeenCalledWith(33, {
+      quoteAttachmentId: 10,
+    });
 
     listPurchaseRequestsSpy.mockRestore();
     getPurchaseRequestByIdSpy.mockRestore();
@@ -13971,6 +13977,58 @@ describe("BuildReq - Document attachments", () => {
     );
 
     getPurchaseOrderByIdSpy.mockRestore();
+    storagePutSpy.mockRestore();
+    createAttachmentSpy.mockRestore();
+  });
+
+  it("allows project warehouse users to upload purchase request attachments", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 33,
+          projectId: 1,
+          status: "pendiente",
+        },
+        items: [],
+      } as any);
+    const storagePutSpy = vi.spyOn(storage, "storagePut").mockResolvedValue({
+      key: "buildreq/purchase_request/33/cotizacion.pdf",
+      url: "https://storage.local/cotizacion.pdf",
+    });
+    const createAttachmentSpy = vi
+      .spyOn(db, "createAttachment")
+      .mockResolvedValue({ id: 708 });
+
+    await expect(
+      caller.attachments.upload({
+        entityType: "purchase_request",
+        entityId: 33,
+        fileName: "cotizacion.pdf",
+        fileData: pdfBuffer.toString("base64"),
+        mimeType: "application/pdf",
+        fileSize: pdfBuffer.byteLength,
+        category: "documento_proveedor",
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 708,
+        url: "https://storage.local/cotizacion.pdf",
+      })
+    );
+    expect(createAttachmentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: "purchase_request",
+        entityId: 33,
+        fileName: "cotizacion.pdf",
+        category: "documento_proveedor",
+        uploadedById: ctx.user.id,
+      })
+    );
+
+    getPurchaseRequestByIdSpy.mockRestore();
     storagePutSpy.mockRestore();
     createAttachmentSpy.mockRestore();
   });

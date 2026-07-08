@@ -29,6 +29,16 @@ function canManagePurchaseRequests(user: {
   );
 }
 
+function canAttachPurchaseRequestQuotes(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return (
+    canManagePurchaseRequests(user) ||
+    user.buildreqRole === "bodeguero_proyecto"
+  );
+}
+
 function canManagePurchaseRequestDestinations(user: {
   role: string;
   buildreqRole?: string | null;
@@ -526,7 +536,7 @@ export const purchaseRequestsRouter = router({
           message: "Solicitud de compra no encontrada",
         });
       }
-      if (!canManagePurchaseRequests(ctx.user)) {
+      if (!canAttachPurchaseRequestQuotes(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene permisos para adjuntar cotizaciones",

@@ -377,6 +377,7 @@ export default function PurchaseRequests() {
     (user as any)?.buildreqRole === "administrador_proyecto";
   const buildreqRole = (user as any)?.buildreqRole;
   const isProjectAdmin = buildreqRole === "administrador_proyecto";
+  const isProjectWarehouse = buildreqRole === "bodeguero_proyecto";
   const canManagePurchaseRequests =
     user?.role === "admin" ||
     buildreqRole === "jefe_bodega_central" ||
@@ -770,6 +771,8 @@ export default function PurchaseRequests() {
     isConvertedPurchaseRequest || isCancelledPurchaseRequest;
   const canEditSelectedPurchaseRequest =
     canManagePurchaseRequests && !isClosedPurchaseRequest;
+  const canManagePurchaseRequestAttachments =
+    (canManagePurchaseRequests || isProjectWarehouse) && !isClosedPurchaseRequest;
   const canEditPurchaseRequestDestination =
     canEditSelectedPurchaseRequest &&
     (user?.role === "admin" ||
@@ -1854,7 +1857,7 @@ export default function PurchaseRequests() {
                 entityId={selectedId}
                 category="documento_proveedor"
                 title="Adjuntos y cotizaciones"
-                canManage={canEditSelectedPurchaseRequest}
+                canManage={canManagePurchaseRequestAttachments}
                 disabled={attachQuoteMutation.isPending}
                 onUploadSuccess={result => {
                   if (!selectedId) return;

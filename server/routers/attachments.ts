@@ -415,7 +415,8 @@ function canAccessPurchaseRequests(user: BuildReqUser) {
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administracion_central" ||
-    user.buildreqRole === "administrador_proyecto"
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto"
   );
 }
 
@@ -440,7 +441,8 @@ async function assertPurchaseRequestAttachmentAccess(
   }
   if (
     user.role !== "admin" &&
-    user.buildreqRole === "administrador_proyecto" &&
+    (user.buildreqRole === "administrador_proyecto" ||
+      user.buildreqRole === "bodeguero_proyecto") &&
     !canAccessProject(user, detail.purchaseRequest.projectId)
   ) {
     throw new TRPCError({
