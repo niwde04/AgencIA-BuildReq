@@ -756,6 +756,9 @@ export default function Inventario() {
         item.storageLocationBreakdownByKey.values()
       ) as any[];
       storageLocations.sort(compareStorageLocationRows);
+      const visibleStorageLocations = storageLocations.filter(
+        (entry: any) => Math.abs(entry.currentStockTotal) > 0
+      );
 
       return {
         ...item,
@@ -783,14 +786,14 @@ export default function Inventario() {
         totalRequiredQuantity: totalRequiredQuantity.toFixed(2),
         pendingReceiptQuantity: pendingReceiptQuantity.toFixed(2),
         warehouseSummaryLabel: item.warehouseLocation || "Sin almacén",
-        storageLocationBreakdown: storageLocations.map((entry: any) => ({
+        storageLocationBreakdown: visibleStorageLocations.map((entry: any) => ({
           ...entry,
           currentStock: entry.currentStockTotal.toFixed(2),
         })),
         storageLocation:
-          storageLocations.length > 1
-            ? `${storageLocations.length} ubicaciones`
-            : storageLocations[0]?.label || item.storageLocation || null,
+          visibleStorageLocations.length > 1
+            ? `${visibleStorageLocations.length} ubicaciones`
+            : visibleStorageLocations[0]?.label || item.storageLocation || null,
       };
     });
   }, [

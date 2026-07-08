@@ -42,6 +42,8 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   ArrowUpDown,
   Building2,
+  ChevronDown,
+  ChevronUp,
   Download,
   FolderKanban,
   Package,
@@ -52,7 +54,7 @@ import {
   Unlink,
   UserPlus,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 type WarehouseFormState = {
@@ -80,6 +82,7 @@ type WarehouseInventorySortField =
   | "item"
   | "unit"
   | "stock"
+  | "storageLocation"
   | "project";
 
 type WarehouseProjectSortField = "code" | "name" | "status";
@@ -215,6 +218,31 @@ function getInventoryProjectLabel(item: any) {
     : "Por clasificar";
 }
 
+function parseQuantity(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return 0;
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function formatStorageLocationLabel(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  return normalized || "Sin ubicación";
+}
+
+function getStorageLocationKey(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  return normalized ? normalized.toLowerCase() : "__sin_ubicacion__";
+}
+
+function compareStorageLocationRows(left: any, right: any) {
+  if (left.storageLocation && !right.storageLocation) return -1;
+  if (!left.storageLocation && right.storageLocation) return 1;
+  return left.label.localeCompare(right.label, "es-HN", {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
 function getInventorySortValue(item: any, field: WarehouseInventorySortField) {
   switch (field) {
     case "sap":
@@ -225,6 +253,8 @@ function getInventorySortValue(item: any, field: WarehouseInventorySortField) {
       return item.unit ?? "";
     case "stock":
       return Number(item.currentStock ?? 0);
+    case "storageLocation":
+      return item.storageLocation ?? "";
     case "project":
       return getInventoryProjectLabel(item);
     default:
@@ -242,6 +272,8 @@ function getInventoryServerSortField(
       return "unit";
     case "stock":
       return "currentStock";
+    case "storageLocation":
+      return "storageLocation";
     case "project":
       return "projectName";
     case "item":
@@ -298,6 +330,8 @@ export default function Almacenes() {
   const [detailInventorySortField, setDetailInventorySortField] =
     useState<WarehouseInventorySortField | null>(null);
   const [detailInventoryPage, setDetailInventoryPage] = useState(1);
+  const [expandedInventoryLocationKeys, setExpandedInventoryLocationKeys] =
+    useState<string[]>([]);
   const [detailProjectSearch, setDetailProjectSearch] = useState("");
   const [detailProjectSortField, setDetailProjectSortField] =
     useState<WarehouseProjectSortField | null>(null);
@@ -380,6 +414,14 @@ export default function Almacenes() {
       setDetailInventoryPage(inventory.page);
     }
   }, [detailInventoryPage, inventory?.page]);
+
+  const toggleInventoryLocationBreakdown = (key: string) => {
+    setExpandedInventoryLocationKeys((current) =>
+      current.includes(key)
+        ? current.filter((entry) => entry !== key)
+        : [...current, key]
+    );
+  };
   const isDetailInventorySearchPending =
     trimmedDetailInventorySearch !== debouncedDetailInventorySearch;
   const isDetailInventoryLoading =
@@ -475,6 +517,83 @@ export default function Almacenes() {
       )
     );
   }, [detailInventorySortField, inventory?.items]);
+
+  const visibleInventoryGroups = useMemo(() => {
+    const groups = new Map<string, any>();
+
+    for (const item of visibleInventoryItems as any[]) {
+      const projectKey = item.project?.id
+        ? `project:${item.project.id}`
+        : "unclassified";
+      const itemKey =
+        item.sapItemCode?.trim() || item.name?.trim().toLowerCase();
+      const groupKey = `${itemKey}:${projectKey}`;
+      const existing =
+        groups.get(groupKey) ??
+        {
+          ...item,
+          id: groupKey,
+          sourceIds: [],
+          currentStockTotal: 0,
+          storageLocationBreakdownByKey: new Map<string, any>(),
+        };
+
+      const stock = parseQuantity(item.currentStock);
+      const itemStorageLocation = String(item.storageLocation ?? "").trim();
+      const storageLocationKey = getStorageLocationKey(itemStorageLocation);
+      const storageLocationEntry =
+        existing.storageLocationBreakdownByKey.get(storageLocationKey) ?? {
+          id: storageLocationKey,
+          storageLocation: itemStorageLocation || null,
+          label: formatStorageLocationLabel(itemStorageLocation),
+          currentStockTotal: 0,
+        };
+
+      existing.sourceIds.push(item.id);
+      existing.currentStockTotal += stock;
+      storageLocationEntry.currentStockTotal += stock;
+      existing.storageLocationBreakdownByKey.set(
+        storageLocationKey,
+        storageLocationEntry
+      );
+      groups.set(groupKey, existing);
+    }
+
+    return Array.from(groups.values()).map((item: any) => {
+      const storageLocations = Array.from(
+        item.storageLocationBreakdownByKey.values()
+      ) as any[];
+      storageLocations.sort(compareStorageLocationRows);
+      const visibleStorageLocations = storageLocations.filter(
+        (entry: any) => Math.abs(entry.currentStockTotal) > 0
+      );
+
+      return {
+        ...item,
+        currentStock: item.currentStockTotal,
+        storageLocationBreakdown: visibleStorageLocations.map((entry: any) => ({
+          ...entry,
+          currentStock: entry.currentStockTotal,
+        })),
+        storageLocation:
+          visibleStorageLocations.length > 1
+            ? `${visibleStorageLocations.length} ubicaciones`
+            : visibleStorageLocations[0]?.label || item.storageLocation || null,
+      };
+    });
+  }, [visibleInventoryItems]);
+
+  useEffect(() => {
+    const visibleKeys = new Set(
+      visibleInventoryGroups.map((item: any) => item.id)
+    );
+    setExpandedInventoryLocationKeys((current) =>
+      current.every((key) => visibleKeys.has(key))
+        ? current
+        : current.filter((key) => visibleKeys.has(key))
+    );
+  }, [visibleInventoryGroups]);
+
   const detailInventoryTotal = inventory?.total ?? 0;
   const detailInventoryTotalPages = inventory?.totalPages ?? 1;
   const detailInventoryCurrentPage = detailInventoryPage;
@@ -598,6 +717,11 @@ export default function Almacenes() {
             header: "Stock",
             value: row => Number(row.currentStock ?? 0),
             numFmt: "#,##0.00",
+          },
+          {
+            header: "Ubicación",
+            value: row => row.storageLocation || "",
+            width: 20,
           },
           {
             header: "Proyecto",
@@ -1390,6 +1514,13 @@ export default function Almacenes() {
                           </th>
                           <th className="p-3 text-left">
                             {renderDetailSortableHeader(
+                              "Ubicación",
+                              detailInventorySortField === "storageLocation",
+                              () => setDetailInventorySortField("storageLocation")
+                            )}
+                          </th>
+                          <th className="p-3 text-left">
+                            {renderDetailSortableHeader(
                               "Proyecto",
                               detailInventorySortField === "project",
                               () => setDetailInventorySortField("project")
@@ -1402,7 +1533,7 @@ export default function Almacenes() {
                           <tr>
                             <td
                               className="p-6 text-center text-sm text-muted-foreground"
-                              colSpan={5}
+                              colSpan={6}
                             >
                               <div className="flex items-center justify-center gap-2">
                                 <Spinner className="size-4" />
@@ -1414,7 +1545,7 @@ export default function Almacenes() {
                           <tr>
                             <td
                               className="p-4 text-center text-sm text-muted-foreground"
-                              colSpan={5}
+                              colSpan={6}
                             >
                               {trimmedDetailInventorySearch
                                 ? "No hay inventario que coincida con la búsqueda."
@@ -1422,26 +1553,99 @@ export default function Almacenes() {
                             </td>
                           </tr>
                         ) : (
-                          visibleInventoryItems.map((item: any) => (
-                            <tr
-                              key={item.id}
-                              className="border-b last:border-0"
-                            >
-                              <td className="p-3 font-mono text-xs">
-                                {item.sapItemCode}
-                              </td>
-                              <td className="p-3">{item.name}</td>
-                              <td className="p-3 text-xs">
-                                {item.unit || "-"}
-                              </td>
-                              <td className="p-3 text-right">
-                                {formatNumber(item.currentStock)}
-                              </td>
-                              <td className="p-3 text-xs">
-                                {getInventoryProjectLabel(item)}
-                              </td>
-                            </tr>
-                          ))
+                          visibleInventoryGroups.map((item: any) => {
+                            const hasStorageBreakdown =
+                              item.storageLocationBreakdown?.length > 1;
+                            const isStorageExpanded =
+                              expandedInventoryLocationKeys.includes(item.id);
+
+                            return (
+                              <Fragment key={item.id}>
+                                <tr className="border-b last:border-0">
+                                  <td className="p-3 font-mono text-xs">
+                                    {item.sapItemCode}
+                                  </td>
+                                  <td className="p-3">{item.name}</td>
+                                  <td className="p-3 text-xs">
+                                    {item.unit || "-"}
+                                  </td>
+                                  <td className="p-3 text-right">
+                                    {formatNumber(item.currentStock)}
+                                  </td>
+                                  <td className="p-3 text-xs">
+                                    {hasStorageBreakdown ? (
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-7 max-w-[180px] px-2"
+                                        aria-expanded={isStorageExpanded}
+                                        title="Ver ubicaciones"
+                                        onClick={() =>
+                                          toggleInventoryLocationBreakdown(
+                                            item.id
+                                          )
+                                        }
+                                      >
+                                        {isStorageExpanded ? (
+                                          <ChevronUp className="mr-1 h-3.5 w-3.5 shrink-0" />
+                                        ) : (
+                                          <ChevronDown className="mr-1 h-3.5 w-3.5 shrink-0" />
+                                        )}
+                                        <span className="truncate">
+                                          {item.storageLocation}
+                                        </span>
+                                      </Button>
+                                    ) : (
+                                      item.storageLocation || "—"
+                                    )}
+                                  </td>
+                                  <td className="p-3 text-xs">
+                                    {getInventoryProjectLabel(item)}
+                                  </td>
+                                </tr>
+                                {hasStorageBreakdown && isStorageExpanded ? (
+                                  <tr className="border-b bg-muted/20">
+                                    <td className="px-3 py-2" colSpan={6}>
+                                      <div className="ml-auto max-w-lg overflow-x-auto rounded-md border bg-background">
+                                        <table className="w-full text-xs">
+                                          <thead>
+                                            <tr className="border-b bg-muted/30">
+                                              <th className="p-2 text-left font-semibold uppercase tracking-wider text-muted-foreground">
+                                                Ubicación
+                                              </th>
+                                              <th className="p-2 text-right font-semibold uppercase tracking-wider text-muted-foreground">
+                                                Stock
+                                              </th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {item.storageLocationBreakdown.map(
+                                              (locationRow: any) => (
+                                                <tr
+                                                  key={locationRow.id}
+                                                  className="border-b last:border-0"
+                                                >
+                                                  <td className="p-2">
+                                                    {locationRow.label}
+                                                  </td>
+                                                  <td className="p-2 text-right font-mono">
+                                                    {formatNumber(
+                                                      locationRow.currentStock
+                                                    )}
+                                                  </td>
+                                                </tr>
+                                              )
+                                            )}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ) : null}
+                              </Fragment>
+                            );
+                          })
                         )}
                       </tbody>
                     </table>
