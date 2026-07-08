@@ -858,6 +858,7 @@ export const transferRequestItems = pgTable(
         onDelete: "set null",
       }
     ),
+    sourceStorageLocation: varchar("sourceStorageLocation", { length: 255 }),
     itemName: varchar("itemName", { length: 500 }).notNull(),
     sapItemCode: varchar("sapItemCode", { length: 50 }),
     quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull(),

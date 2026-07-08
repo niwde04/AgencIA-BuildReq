@@ -2020,6 +2020,7 @@ async function getStockByItem(params: {
   itemName: string;
   projectId?: number | null;
   warehouseId?: number | null;
+  storageLocation?: string | null;
   includeUnclassifiedProjectStock?: boolean;
 }) {
   const db = await getDb();
@@ -2047,6 +2048,20 @@ async function getStockByItem(params: {
   }
   if (params.warehouseId) {
     conditions.push(eq(inventoryItems.warehouseId, params.warehouseId));
+  }
+  if ("storageLocation" in params) {
+    const normalizedStorageLocation = normalizeInventoryStorageLocation(
+      params.storageLocation
+    );
+    if (normalizedStorageLocation) {
+      conditions.push(
+        sql`lower(trim(coalesce(${inventoryItems.storageLocation}, ''))) = lower(${normalizedStorageLocation})`
+      );
+    } else {
+      conditions.push(
+        sql`nullif(trim(coalesce(${inventoryItems.storageLocation}, '')), '') IS NULL`
+      );
+    }
   }
 
   const rows = await db
@@ -6999,6 +7014,7 @@ export async function getTransferRequestById(id: number) {
               itemName: item.itemName,
               projectId: item.sourceProjectId ?? null,
               warehouseId: item.sourceWarehouseId,
+              storageLocation: item.sourceStorageLocation ?? null,
             })
           )
         : 0;
@@ -7064,6 +7080,7 @@ export async function createTransferFromRequest(
     quantity: string | number;
     sourceProjectId?: number | null;
     sourceWarehouseId?: number | null;
+    sourceStorageLocation?: string | null;
   }>
 ) {
   const db = await getDb();
@@ -7074,7 +7091,11 @@ export async function createTransferFromRequest(
   const quantityByItemId = new Map<number, number>();
   const sourceByItemId = new Map<
     number,
-    { sourceProjectId?: number | null; sourceWarehouseId?: number | null }
+    {
+      sourceProjectId?: number | null;
+      sourceWarehouseId?: number | null;
+      sourceStorageLocation?: string | null;
+    }
   >();
   for (const item of itemQuantities ?? []) {
     quantityByItemId.set(
@@ -7084,11 +7105,14 @@ export async function createTransferFromRequest(
     sourceByItemId.set(item.transferRequestItemId, {
       sourceProjectId: item.sourceProjectId ?? null,
       sourceWarehouseId: item.sourceWarehouseId ?? null,
+      sourceStorageLocation: normalizeInventoryStorageLocation(
+        item.sourceStorageLocation
+      ),
     });
   }
 
   const requestedItems = detail.items || [];
-  const transferItems = requestedItems.map(item => {
+  const transferItems = await Promise.all(requestedItems.map(async item => {
     const requestedQuantity = parseDecimal(item.quantity);
     const transferQuantity = itemQuantities
       ? (quantityByItemId.get(item.id) ?? 0)
@@ -7102,6 +7126,11 @@ export async function createTransferFromRequest(
         : detail.transferRequest.projectId;
     const sourceWarehouseId =
       selectedSource?.sourceWarehouseId ?? item.sourceWarehouseId ?? null;
+    const sourceStorageLocation = selectedSource
+      ? (selectedSource.sourceStorageLocation ?? null)
+      : item.sourceWarehouseId
+        ? (item.sourceStorageLocation ?? null)
+        : null;
 
     if (transferQuantity < 0) {
       throw new Error("La cantidad a trasladar no puede ser negativa");
@@ -7114,6 +7143,26 @@ export async function createTransferFromRequest(
     if (transferQuantity > 0 && !sourceWarehouseId) {
       throw new Error(`Seleccione almacén origen para ${item.itemName}`);
     }
+    if (transferQuantity > 0) {
+      const availableQuantity = parseDecimal(
+        await getStockByItem({
+          sapItemCode: item.sapItemCode,
+          itemName: item.itemName,
+          projectId: sourceProjectId ?? null,
+          warehouseId: sourceWarehouseId,
+          storageLocation: sourceStorageLocation ?? null,
+        })
+      );
+      if (availableQuantity + 0.0001 < transferQuantity) {
+        throw new Error(
+          `Stock insuficiente para ${item.itemName} en ${
+            sourceStorageLocation ?? "Sin ubicación"
+          }. Disponible: ${toDecimalString(
+            availableQuantity
+          )}, solicitado: ${toDecimalString(transferQuantity)}.`
+        );
+      }
+    }
     return {
       item,
       requestedQuantity,
@@ -7121,8 +7170,9 @@ export async function createTransferFromRequest(
       pendingQuantity,
       sourceProjectId,
       sourceWarehouseId,
+      sourceStorageLocation,
     };
-  });
+  }));
 
   if (!transferItems.some(entry => entry.transferQuantity > 0)) {
     throw new Error("Debe trasladar al menos una cantidad mayor que cero");
@@ -7171,6 +7221,7 @@ export async function createTransferFromRequest(
           quantity: toDecimalString(entry.transferQuantity),
           sourceProjectId: entry.sourceProjectId,
           sourceWarehouseId: entry.sourceWarehouseId,
+          sourceStorageLocation: entry.sourceStorageLocation,
           updatedAt: new Date(),
         })
         .where(eq(transferRequestItems.id, item.id));
@@ -8534,6 +8585,7 @@ export async function registerReceipt(
             itemName: existingItem.itemName,
             projectId: existingItem.sourceProjectId ?? null,
             warehouseId: existingItem.sourceWarehouseId,
+            storageLocation: existingItem.sourceStorageLocation ?? null,
             quantity: toDecimalString(receivedQuantity),
           });
         }

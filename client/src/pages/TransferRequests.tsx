@@ -69,6 +69,7 @@ function getWarehouseLabel(warehouse: any): string {
 }
 
 const CENTRAL_SOURCE_PROJECT_KEY = "central";
+const NO_SOURCE_STORAGE_LOCATION_VALUE = "__sin_ubicacion__";
 
 const getTransferSourceOptionValue = (option: {
   projectId?: number | null;
@@ -104,6 +105,17 @@ const formatQuantity = (value: unknown) => {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed.toFixed(2) : "0.00";
 };
+
+const encodeSourceStorageLocationValue = (value?: string | null) =>
+  value?.trim() || NO_SOURCE_STORAGE_LOCATION_VALUE;
+
+const decodeSourceStorageLocationValue = (value?: string | null) => {
+  if (!value || value === NO_SOURCE_STORAGE_LOCATION_VALUE) return null;
+  return value.trim() || null;
+};
+
+const getSourceStorageLocationLabel = (value?: string | null) =>
+  value?.trim() || "Sin ubicación";
 
 function QuantityPill({
   value,
@@ -239,6 +251,8 @@ export default function TransferRequests() {
   >({});
   const [sourcePhysicalWarehouseByItemId, setSourcePhysicalWarehouseByItemId] =
     useState<Record<number, string>>({});
+  const [sourceStorageLocationByItemId, setSourceStorageLocationByItemId] =
+    useState<Record<number, string>>({});
   const [destinationProjectByRequestId, setDestinationProjectByRequestId] =
     useState<Record<number, string>>({});
   const [destinationWarehouseByRequestId, setDestinationWarehouseByRequestId] =
@@ -265,7 +279,7 @@ export default function TransferRequests() {
   );
   const { data: originStockRows, isFetching: originStockLoading } =
     trpc.inventory.visibleWarehouseStockForItems.useQuery(
-      { items: originStockItems },
+      { items: originStockItems, includeQuantities: true },
       {
         enabled:
           canConvertTransferRequests &&
@@ -414,6 +428,7 @@ export default function TransferRequests() {
     const nextQuantities: Record<number, string> = {};
     const nextSourceWarehouses: Record<number, string> = {};
     const nextSourcePhysicalWarehouses: Record<number, string> = {};
+    const nextSourceStorageLocations: Record<number, string> = {};
     for (const item of detail.items || []) {
       const requestedQuantity = Number(item.quantity ?? 0);
       const availableQuantity = Number(item.originStockQuantity ?? 0);
@@ -437,11 +452,14 @@ export default function TransferRequests() {
           warehouseId: Number(item.sourceWarehouseId),
         });
         nextSourcePhysicalWarehouses[item.id] = String(item.sourceWarehouseId);
+        nextSourceStorageLocations[item.id] =
+          encodeSourceStorageLocationValue(item.sourceStorageLocation);
       }
     }
     setTransferQuantityByItemId(nextQuantities);
     setSourceWarehouseByItemId(nextSourceWarehouses);
     setSourcePhysicalWarehouseByItemId(nextSourcePhysicalWarehouses);
+    setSourceStorageLocationByItemId(nextSourceStorageLocations);
   }, [
     canViewOriginQuantities,
     detail?.transferRequest.id,
@@ -556,17 +574,72 @@ export default function TransferRequests() {
       );
   };
 
-  const setSelectedSourceForItem = (item: any, value: string) => {
-    const selectedWarehouse = getOriginStockOptions(item).find(
-      (warehouse: any) => getTransferSourceOptionValue(warehouse) === value
+  const getSourceStorageLocationOptions = (
+    item: any,
+    sourceValue?: string | null
+  ) => {
+    if (!sourceValue) return [];
+    const sourceOption = getOriginStockOptions(item).find(
+      (option: any) => getTransferSourceOptionValue(option) === sourceValue
     );
+    return [...(sourceOption?.storageLocations ?? [])]
+      .filter((location: any) =>
+        location.quantityHidden ? true : Number(location.quantity ?? 0) > 0
+      )
+      .sort((left: any, right: any) => {
+        if (left.storageLocation && !right.storageLocation) return -1;
+        if (!left.storageLocation && right.storageLocation) return 1;
+        return getSourceStorageLocationLabel(left.storageLocation).localeCompare(
+          getSourceStorageLocationLabel(right.storageLocation)
+        );
+      });
+  };
+
+  const getSelectedSourceStorageLocationValue = (item: any) => {
+    const selectedValue = sourceStorageLocationByItemId[item.id];
+    if (selectedValue) return selectedValue;
+    if (item.sourceWarehouseId) {
+      return encodeSourceStorageLocationValue(item.sourceStorageLocation);
+    }
+    return "";
+  };
+
+  const getSourceStorageLocationQuantity = (
+    item: any,
+    sourceValue?: string | null,
+    storageLocationValue?: string | null
+  ) => {
+    if (!sourceValue || !storageLocationValue) return 0;
+    const expectedValue = encodeSourceStorageLocationValue(
+      decodeSourceStorageLocationValue(storageLocationValue)
+    );
+    const option = getSourceStorageLocationOptions(item, sourceValue).find(
+      (location: any) =>
+        encodeSourceStorageLocationValue(location.storageLocation) ===
+        expectedValue
+    );
+    return Number(option?.quantity ?? 0);
+  };
+
+  const setSelectedSourceForItem = (item: any, value: string) => {
+    const storageLocationOptions = getSourceStorageLocationOptions(item, value);
+    const currentStorageLocationValue = getSelectedSourceStorageLocationValue(item);
+    const currentStorageLocationOption = storageLocationOptions.find(
+      (location: any) =>
+        encodeSourceStorageLocationValue(location.storageLocation) ===
+        currentStorageLocationValue
+    );
+    const selectedStorageLocationOption =
+      currentStorageLocationOption ??
+      (storageLocationOptions.length === 1 ? storageLocationOptions[0] : null);
     const selectedSource = parseTransferSourceOptionValue(value);
     const requestedQuantity = Number(item.quantity ?? 0);
+    const selectedLocationQuantity = selectedStorageLocationOption
+      ? Number(selectedStorageLocationOption.quantity ?? requestedQuantity)
+      : 0;
     const suggestedQuantity = Math.min(
       requestedQuantity,
-      canViewOriginQuantities
-        ? Number(selectedWarehouse?.quantity ?? 0)
-        : requestedQuantity
+      canViewOriginQuantities ? selectedLocationQuantity : requestedQuantity
     );
 
     setSourceWarehouseByItemId((current) => ({
@@ -579,6 +652,17 @@ export default function TransferRequests() {
         [item.id]: String(selectedSource.warehouseId),
       }));
     }
+    setSourceStorageLocationByItemId((current) => {
+      const next = { ...current };
+      if (selectedStorageLocationOption) {
+        next[item.id] = encodeSourceStorageLocationValue(
+          selectedStorageLocationOption.storageLocation
+        );
+      } else {
+        delete next[item.id];
+      }
+      return next;
+    });
     setTransferQuantityByItemId((current) => ({
       ...current,
       [item.id]: suggestedQuantity.toFixed(2),
@@ -595,6 +679,11 @@ export default function TransferRequests() {
       ...current,
       [item.id]: "0.00",
     }));
+    setSourceStorageLocationByItemId((current) => {
+      const next = { ...current };
+      delete next[item.id];
+      return next;
+    });
   };
 
   const handleSourceWarehouseChange = (item: any, value: string) => {
@@ -629,6 +718,85 @@ export default function TransferRequests() {
 
     clearSelectedSourceForItem(item);
   };
+
+  const handleSourceStorageLocationChange = (item: any, value: string) => {
+    const selectedSourceValue = getSelectedSourceValue(item);
+    const selectedQuantity = getSourceStorageLocationQuantity(
+      item,
+      selectedSourceValue,
+      value
+    );
+    const requestedQuantity = Number(item.quantity ?? 0);
+    const suggestedQuantity = Math.min(
+      requestedQuantity,
+      canViewOriginQuantities ? selectedQuantity : requestedQuantity
+    );
+
+    setSourceStorageLocationByItemId((current) => ({
+      ...current,
+      [item.id]: value,
+    }));
+    setTransferQuantityByItemId((current) => ({
+      ...current,
+      [item.id]: suggestedQuantity.toFixed(2),
+    }));
+  };
+
+  useEffect(() => {
+    if (!detail || detail.transferRequest.status !== "pendiente") return;
+
+    const nextStorageLocations = { ...sourceStorageLocationByItemId };
+    const nextQuantities: Record<number, string> = {};
+    let changed = false;
+
+    for (const item of detail.items || []) {
+      const selectedSourceValue = getSelectedSourceValue(item);
+      if (!selectedSourceValue) continue;
+
+      const options = getSourceStorageLocationOptions(item, selectedSourceValue);
+      const currentValue = sourceStorageLocationByItemId[item.id];
+      const currentStillValid = options.some(
+        (location: any) =>
+          encodeSourceStorageLocationValue(location.storageLocation) ===
+          currentValue
+      );
+      if (currentStillValid) continue;
+
+      if (options.length === 1) {
+        const selectedValue = encodeSourceStorageLocationValue(
+          options[0].storageLocation
+        );
+        nextStorageLocations[item.id] = selectedValue;
+        const requestedQuantity = Number(item.quantity ?? 0);
+        const availableQuantity = Number(options[0].quantity ?? requestedQuantity);
+        nextQuantities[item.id] = Math.min(
+          requestedQuantity,
+          canViewOriginQuantities ? availableQuantity : requestedQuantity
+        ).toFixed(2);
+        changed = true;
+      } else if (currentValue) {
+        delete nextStorageLocations[item.id];
+        nextQuantities[item.id] = "0.00";
+        changed = true;
+      }
+    }
+
+    if (!changed) return;
+    setSourceStorageLocationByItemId(nextStorageLocations);
+    if (Object.keys(nextQuantities).length > 0) {
+      setTransferQuantityByItemId((current) => ({
+        ...current,
+        ...nextQuantities,
+      }));
+    }
+  }, [
+    canViewOriginQuantities,
+    detail?.transferRequest.id,
+    detail?.transferRequest.status,
+    originStockRows,
+    sourceStorageLocationByItemId,
+    sourceWarehouseByItemId,
+  ]);
 
   const getDestinationProjectWarehouseOptions = (projectId?: number | null) => {
     if (!projectId) return [];
@@ -704,12 +872,30 @@ export default function TransferRequests() {
     const selectedValue = getSelectedSourceValue(item);
     const selectedSource = parseTransferSourceOptionValue(selectedValue);
     if (!selectedSource) return null;
+    const selectedStorageLocationValue =
+      getSelectedSourceStorageLocationValue(item);
+    if (!selectedStorageLocationValue) return null;
+
+    const selectedLocationQuantity = getSourceStorageLocationQuantity(
+      item,
+      selectedValue,
+      selectedStorageLocationValue
+    );
+    if (selectedLocationQuantity > 0) return selectedLocationQuantity;
 
     const stockOption = getOriginStockOptions(item).find(
       (entry: any) =>
         getTransferSourceOptionValue(entry) === selectedValue
     );
-    if (stockOption) return Number(stockOption.quantity ?? 0);
+    const persistedStorageLocationValue = item.sourceWarehouseId
+      ? encodeSourceStorageLocationValue(item.sourceStorageLocation)
+      : "";
+    if (
+      stockOption &&
+      persistedStorageLocationValue === selectedStorageLocationValue
+    ) {
+      return Number(item.originStockQuantity ?? 0);
+    }
 
     if (
       item.sourceWarehouseId &&
@@ -772,6 +958,7 @@ export default function TransferRequests() {
       quantity: string;
       sourceProjectId?: number | null;
       sourceWarehouseId?: number;
+      sourceStorageLocation?: string | null;
     };
 
     const items = (detail.items || []).map(
@@ -780,6 +967,8 @@ export default function TransferRequests() {
       const selectedSource = parseTransferSourceOptionValue(
         getSelectedSourceValue(item)
       );
+      const selectedStorageLocationValue =
+        getSelectedSourceStorageLocationValue(item);
       const availableQuantity = getSelectedOriginStock(item) ?? 0;
       const transferQuantity = getTransferQuantity(item);
 
@@ -795,6 +984,10 @@ export default function TransferRequests() {
         toast.error(`Seleccione bodega origen para ${item.itemName}`);
         return null;
       }
+      if (transferQuantity > 0 && !selectedStorageLocationValue) {
+        toast.error(`Seleccione ubicación origen para ${item.itemName}`);
+        return null;
+      }
       if (
         canViewOriginQuantities &&
         transferQuantity - availableQuantity > 0.000001
@@ -808,6 +1001,9 @@ export default function TransferRequests() {
         quantity: transferQuantity.toFixed(2),
         sourceProjectId: selectedSource ? selectedSource.projectId : undefined,
         sourceWarehouseId: selectedSource?.warehouseId,
+        sourceStorageLocation: selectedStorageLocationValue
+          ? decodeSourceStorageLocationValue(selectedStorageLocationValue)
+          : undefined,
       };
     });
 
@@ -1135,7 +1331,7 @@ export default function TransferRequests() {
               </div>
 
               <div className="overflow-x-auto rounded border border-border">
-                <table className="w-full min-w-[1680px] table-fixed text-sm">
+                <table className="w-full min-w-[1880px] table-fixed text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
                       <th className="w-20 p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1149,6 +1345,9 @@ export default function TransferRequests() {
                       </th>
                       <th className="w-64 p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Bodega origen
+                      </th>
+                      <th className="w-52 p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Ubicación origen
                       </th>
                       <th className="w-56 p-2 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Almacén destino
@@ -1204,6 +1403,13 @@ export default function TransferRequests() {
                         item,
                         selectedSourceWarehouseId
                       );
+                      const sourceStorageLocationOptions =
+                        getSourceStorageLocationOptions(
+                          item,
+                          selectedSourceValue
+                        );
+                      const selectedSourceStorageLocationValue =
+                        getSelectedSourceStorageLocationValue(item);
                       const originStockQuantity = canViewOriginQuantities
                         ? detail.transferRequest.status === "pendiente"
                           ? (getSelectedOriginStock(item) ?? 0)
@@ -1419,6 +1625,82 @@ export default function TransferRequests() {
                             )}
                           </td>
                           <td className="p-2">
+                            {canConvertTransferRequests &&
+                            detail.transferRequest.status === "pendiente" ? (
+                              <Select
+                                value={
+                                  selectedSourceStorageLocationValue ||
+                                  undefined
+                                }
+                                onValueChange={(value) =>
+                                  handleSourceStorageLocationChange(
+                                    item,
+                                    value
+                                  )
+                                }
+                                disabled={
+                                  convertMutation.isPending ||
+                                  originStockLoading ||
+                                  !selectedSource ||
+                                  sourceStorageLocationOptions.length === 0
+                                }
+                              >
+                                <SelectTrigger className="h-9 w-full min-w-0 overflow-hidden px-2 text-xs">
+                                  <SelectValue
+                                    placeholder={
+                                      selectedSource
+                                        ? "Seleccione ubicación"
+                                        : "Seleccione bodega"
+                                    }
+                                  />
+                                </SelectTrigger>
+                                <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
+                                  {sourceStorageLocationOptions.length === 0 ? (
+                                    <SelectItem value="sin-ubicaciones" disabled>
+                                      Sin ubicaciones con stock
+                                    </SelectItem>
+                                  ) : (
+                                    sourceStorageLocationOptions.map(
+                                      (location: any) => {
+                                        const locationValue =
+                                          encodeSourceStorageLocationValue(
+                                            location.storageLocation
+                                          );
+                                        return (
+                                          <SelectItem
+                                            key={locationValue}
+                                            value={locationValue}
+                                            className="text-xs"
+                                          >
+                                            <span className="flex w-full min-w-0 items-center justify-between gap-3 pr-4">
+                                              <span className="truncate">
+                                                {getSourceStorageLocationLabel(
+                                                  location.storageLocation
+                                                )}
+                                              </span>
+                                              {canViewOriginQuantities ? (
+                                                <QuantityPill
+                                                  value={location.quantity}
+                                                  label="Disp."
+                                                />
+                                              ) : null}
+                                            </span>
+                                          </SelectItem>
+                                        );
+                                      }
+                                    )
+                                  )}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <p className="max-w-[180px] truncate text-xs font-medium">
+                                {getSourceStorageLocationLabel(
+                                  item.sourceStorageLocation
+                                )}
+                              </p>
+                            )}
+                          </td>
+                          <td className="p-2">
                             {canEditDestinationWarehouse ? (
                               <Select
                                 value={
@@ -1543,12 +1825,14 @@ export default function TransferRequests() {
                                 disabled={
                                   convertMutation.isPending ||
                                   !selectedSource ||
+                                  !selectedSourceStorageLocationValue ||
                                   originStockLoading
                                 }
                               />
-                              {!selectedSource ? (
+                              {!selectedSource ||
+                              !selectedSourceStorageLocationValue ? (
                                 <p className="mt-1 text-right text-[10px] text-muted-foreground">
-                                  Seleccione origen
+                                  Seleccione origen y ubicación
                                 </p>
                               ) : null}
                             </td>
@@ -1569,7 +1853,8 @@ export default function TransferRequests() {
                               <span className="text-xs text-muted-foreground">
                                 Cargando...
                               </span>
-                            ) : !selectedSource &&
+                            ) : (!selectedSource ||
+                              !selectedSourceStorageLocationValue) &&
                               detail.transferRequest.status === "pendiente" ? (
                               <span className="text-xs text-muted-foreground">
                                 Por definir

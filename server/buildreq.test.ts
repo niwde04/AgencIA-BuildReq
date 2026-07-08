@@ -13606,6 +13606,7 @@ describe("BuildReq - Transfer Requests", () => {
             quantity: "1.00",
             sourceProjectId: 1,
             sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+            sourceStorageLocation: " 2C1 ",
           },
         ],
       })
@@ -13622,6 +13623,7 @@ describe("BuildReq - Transfer Requests", () => {
         quantity: "1.00",
         sourceProjectId: 1,
         sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+        sourceStorageLocation: "2C1",
       },
     ]);
 
