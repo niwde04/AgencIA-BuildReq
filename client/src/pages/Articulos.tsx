@@ -863,9 +863,6 @@ export default function Articulos() {
                         Tipo
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Proyecto
-                      </th>
-                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Estado
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -955,9 +952,6 @@ export default function Articulos() {
                           <Badge variant="outline">
                             {getArticleTypeLabel(article.tipoArticulo)}
                           </Badge>
-                        </td>
-                        <td className="max-w-[240px] p-3 text-xs text-muted-foreground">
-                          {getArticleProjectLabel(article, projectById)}
                         </td>
                         <td className="p-3">
                           <Badge
@@ -1436,7 +1430,7 @@ export default function Articulos() {
                   </div>
 
                   <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                    <div className="space-y-1">
+                    <div className="space-y-1 md:col-span-2">
                       <Label className="text-xs">Serie</Label>
                       <Input
                         className="px-2 font-mono text-xs md:text-xs"
@@ -1529,7 +1523,7 @@ export default function Articulos() {
                         }
                       />
                     </div>
-                    <div className="space-y-1">
+                    <div className="space-y-1 md:col-span-2">
                       <Label className="text-xs">Serie chasis</Label>
                       <Input
                         className="px-2 font-mono text-xs md:text-xs"
