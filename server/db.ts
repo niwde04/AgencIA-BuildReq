@@ -11152,6 +11152,7 @@ export async function getWarehouseExitById(id: number) {
     warehouses,
     "warehouse_exit_item_destination_warehouses"
   );
+  const requestProjects = alias(projects, "warehouse_exit_request_projects");
   const rows = await db
     .select({
       warehouseExit: warehouseExits,
@@ -11343,6 +11344,12 @@ export async function getWarehouseExitById(id: number) {
     id: number;
     requestNumber: string;
     requestedById: number | null;
+    projectId: number;
+    project: {
+      id: number;
+      code: string;
+      name: string;
+    } | null;
   } | null = null;
   let requestedBySummary: {
     id: number;
@@ -11355,9 +11362,11 @@ export async function getWarehouseExitById(id: number) {
       .select({
         request: materialRequests,
         requestedBy: users,
+        requestProject: requestProjects,
       })
       .from(materialRequests)
       .leftJoin(users, eq(materialRequests.requestedById, users.id))
+      .leftJoin(requestProjects, eq(materialRequests.projectId, requestProjects.id))
       .where(eq(materialRequests.id, rows[0].warehouseExit.materialRequestId))
       .limit(1);
 
@@ -11366,6 +11375,14 @@ export async function getWarehouseExitById(id: number) {
         id: requestRow.request.id,
         requestNumber: requestRow.request.requestNumber,
         requestedById: requestRow.request.requestedById,
+        projectId: requestRow.request.projectId,
+        project: requestRow.requestProject
+          ? {
+              id: requestRow.requestProject.id,
+              code: requestRow.requestProject.code,
+              name: requestRow.requestProject.name,
+            }
+          : null,
       };
     }
     if (requestRow?.requestedBy) {

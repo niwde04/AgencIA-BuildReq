@@ -236,6 +236,24 @@ function formatWarehouseExitProjectLabel(detail: any, fallback = "-") {
   return fallback;
 }
 
+function formatWarehouseExitRequestProjectLabel(detail: any) {
+  const requestProject = detail?.materialRequest?.project;
+  if (requestProject) {
+    return `${requestProject.code} - ${requestProject.name}`;
+  }
+
+  const requestNumber = detail?.materialRequest?.requestNumber;
+  const projectCodeFromRequest =
+    typeof requestNumber === "string"
+      ? requestNumber.match(/^REQ-([^-]+)/)?.[1]
+      : null;
+  if (projectCodeFromRequest) {
+    return `Proyecto ${projectCodeFromRequest}`;
+  }
+
+  return "-";
+}
+
 function formatWarehouseExitDestinationProjectLabel(detail: any) {
   if (detail?.destinationProject) {
     return `${detail.destinationProject.code} - ${detail.destinationProject.name}`;
@@ -388,6 +406,20 @@ function decodeStorageLocationValue(value: string | null | undefined) {
 
 function getStorageLocationLabel(value: string | null | undefined) {
   return String(value ?? "").trim() || "Sin ubicación";
+}
+
+function getDefaultStorageLocationValue(item: any) {
+  const currentValue = encodeStorageLocationValue(item.storageLocation);
+  if (decodeStorageLocationValue(currentValue)) return currentValue;
+
+  const positiveOptions = (item.storageLocationOptions ?? []).filter(
+    (location: any) => Number(location.quantity ?? 0) > 0
+  );
+  if (positiveOptions.length === 1) {
+    return encodeStorageLocationValue(positiveOptions[0].storageLocation);
+  }
+
+  return currentValue;
 }
 
 function getStockWarehouseLabel(option: any): string {
@@ -857,7 +889,7 @@ export default function SalidasBodega() {
           item.id,
           {
             quantity: Number(item.quantity ?? 0).toFixed(2),
-            storageLocation: encodeStorageLocationValue(item.storageLocation),
+            storageLocation: getDefaultStorageLocationValue(item),
             notes: item.notes ?? "",
           },
         ])
@@ -1951,7 +1983,7 @@ export default function SalidasBodega() {
     for (const item of detail.items as any[]) {
       const edit = draftItemEdits[item.id] ?? {
         quantity: String(item.quantity ?? ""),
-        storageLocation: encodeStorageLocationValue(item.storageLocation),
+        storageLocation: getDefaultStorageLocationValue(item),
         notes: item.notes ?? "",
       };
       const quantity = parseEditableQuantity(edit.quantity);
@@ -1969,7 +2001,7 @@ export default function SalidasBodega() {
       }
 
       const selectedStorageLocationValue =
-        edit.storageLocation ?? encodeStorageLocationValue(item.storageLocation);
+        edit.storageLocation ?? getDefaultStorageLocationValue(item);
       const selectedStorageLocationOption = (
         item.storageLocationOptions ?? []
       ).find(
@@ -2101,6 +2133,7 @@ export default function SalidasBodega() {
     const warehouseExit = detail.warehouseExit;
     const warehouseLabel = formatWarehouseExitWarehouseLabel(detail);
     const projectLabel = formatWarehouseExitProjectLabel(detail, warehouseLabel);
+    const requestProjectLabel = formatWarehouseExitRequestProjectLabel(detail);
     const destinationProjectLabel =
       formatWarehouseExitDestinationProjectLabel(detail);
     const destinationWarehouseLabel =
@@ -2306,21 +2339,25 @@ export default function SalidasBodega() {
                   <div class="value">${escapeHtml(receivedByLabel)}</div>
                 </div>
                 <div class="field">
+                  <div class="label">Proyecto solicitante:</div>
+                  <div class="value">${escapeHtml(requestProjectLabel)}</div>
+                </div>
+                <div class="field">
                   <div class="label">Tipo Egreso:</div>
                   <div class="value">EGRESO DE BODEGA</div>
                 </div>
                 <div class="field">
-                  <div class="label">De Bodega:</div>
+                  <div class="label">Almacén físico:</div>
                   <div class="value">${escapeHtml(warehouseLabel)}</div>
                 </div>
               </div>
               <div class="meta-column">
                 <div class="field">
-                  <div class="label">Job origen:</div>
+                  <div class="label">Dueño stock:</div>
                   <div class="value">${escapeHtml(projectLabel)}</div>
                 </div>
                 <div class="field">
-                  <div class="label">Job destino:</div>
+                  <div class="label">Cargo destino:</div>
                   <div class="value">${escapeHtml(destinationProjectLabel)}</div>
                 </div>
                 <div class="field">
@@ -2540,10 +2577,23 @@ export default function SalidasBodega() {
 
           {detail ? (
             <div className="space-y-5 pt-2">
-              <div className="grid gap-3 md:grid-cols-5">
+              <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
                 <div className="rounded-xl border bg-muted/20 p-4">
                   <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                    Proyecto/bodega origen
+                    Proyecto solicitante
+                  </Label>
+                  <p className="mt-2 font-semibold">
+                    {formatWarehouseExitRequestProjectLabel(detail)}
+                  </p>
+                  {detail.materialRequest?.requestNumber ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {detail.materialRequest.requestNumber}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="rounded-xl border bg-muted/20 p-4">
+                  <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                    Proyecto dueño del stock
                   </Label>
                   <p className="mt-2 font-semibold">
                     {detail.project
@@ -2553,7 +2603,7 @@ export default function SalidasBodega() {
                 </div>
                 <div className="rounded-xl border bg-muted/20 p-4">
                   <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                    Almacén origen
+                    Almacén físico origen
                   </Label>
                   <p className="mt-2 font-semibold">
                     {detail.warehouse?.displayName || "-"}
@@ -2603,7 +2653,7 @@ export default function SalidasBodega() {
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-xl border bg-muted/20 p-4">
                   <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                    Proyecto/bodega destino
+                    Proyecto/cargo destino
                   </Label>
                   <p className="mt-2 font-semibold">
                     {formatWarehouseExitDestinationProjectLabel(detail)}
@@ -2647,10 +2697,10 @@ export default function SalidasBodega() {
                         Ítem
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Destino interno
+                        Cargo interno
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Destino bodega
+                        Proyecto/almacén destino
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Ubicación
@@ -2665,10 +2715,10 @@ export default function SalidasBodega() {
                         Por devolver
                       </th>
                       <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Disponible bodega
+                        Disponible ubicación
                       </th>
                       <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Nueva existencia
+                        Stock después
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Notas
@@ -2682,7 +2732,7 @@ export default function SalidasBodega() {
                       );
                       const draftStorageLocationValue =
                         draftItemEdits[item.id]?.storageLocation ??
-                        encodeStorageLocationValue(item.storageLocation);
+                        getDefaultStorageLocationValue(item);
                       const draftStorageLocationOption = (
                         item.storageLocationOptions ?? []
                       ).find(

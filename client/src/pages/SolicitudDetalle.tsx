@@ -247,6 +247,25 @@ const formatProjectStockWarehouseLabel = (warehouse: any) => {
   return name || warehouse.displayName || "Almacén";
 };
 
+const formatProjectStockOwnerLabel = (warehouse: any) =>
+  [warehouse.projectCode, warehouse.projectName].filter(Boolean).join(" - ") ||
+  (warehouse.projectId ? `Proyecto ${warehouse.projectId}` : "Por clasificar");
+
+const formatProjectStockLocationLabel = (warehouse: any) => {
+  const positiveLocations = (warehouse.storageLocations ?? []).filter(
+    (location: any) => parseQuantityValue(location.quantity) > 0
+  );
+
+  if (positiveLocations.length === 1) {
+    return positiveLocations[0].label || "Sin ubicación";
+  }
+  if (positiveLocations.length > 1) {
+    return "Varias ubicaciones";
+  }
+
+  return null;
+};
+
 function ProjectStockBreakdown({
   item,
   hasSapTranslation,
@@ -277,13 +296,22 @@ function ProjectStockBreakdown({
     <div className="min-w-[240px] space-y-1 text-left">
       {warehouses.map((warehouse: any, index: number) => {
         const quantity = parseQuantityValue(warehouse.quantity);
+        const locationLabel = formatProjectStockLocationLabel(warehouse);
         return (
           <div
             key={`${warehouse.warehouseId ?? "legacy"}-${index}`}
             className="flex items-start justify-between gap-3"
           >
-            <span className="min-w-0 truncate text-[11px] text-muted-foreground">
-              {formatProjectStockWarehouseLabel(warehouse)}
+            <span className="min-w-0 text-[11px] text-muted-foreground">
+              <span className="block truncate">
+                {formatProjectStockWarehouseLabel(warehouse)}
+              </span>
+              <span className="block truncate">
+                Dueño: {formatProjectStockOwnerLabel(warehouse)}
+              </span>
+              {locationLabel ? (
+                <span className="block truncate">Ubicación: {locationLabel}</span>
+              ) : null}
             </span>
             <span
               className={`shrink-0 font-mono text-[11px] ${

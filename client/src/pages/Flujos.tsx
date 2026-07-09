@@ -194,6 +194,19 @@ const getDispatchSourceProjectOptionLabel = (option: any) =>
     : [option?.projectCode, option?.projectName].filter(Boolean).join(" — ") ||
       `Proyecto #${getDispatchSourceProjectOptionId(option)}`;
 
+const getDispatchPositiveStorageLocations = (option: any) =>
+  ((option?.storageLocations ?? []) as any[]).filter(
+    (location) => parseQuantityValue(location.quantity) > 0
+  );
+
+const getDispatchStorageLocationLabel = (location: any) =>
+  location?.label || location?.storageLocation || "Sin ubicación";
+
+const getSingleDispatchStorageLocation = (option: any) => {
+  const locations = getDispatchPositiveStorageLocations(option);
+  return locations.length === 1 ? locations[0] : null;
+};
+
 const getDispatchStockOptionsForRow = (row: PendingQueueRow) =>
   ((row.item?.dispatchStockOptions ?? row.item?.projectStockWarehouses ?? []) as any[]).filter(
     (option) =>
@@ -625,6 +638,7 @@ export default function Flujos() {
       dispatchedQuantity: string;
       warehouseId: number;
       sourceProjectId: number | null;
+      storageLocation: string | null;
     }> = [];
 
     if (rows.length === 0) {
@@ -659,6 +673,8 @@ export default function Flujos() {
           : sourceProjectId;
       const selectedWarehouseQuantity =
         getDispatchWarehouseOptionQuantity(selectedSourceProject);
+      const singleStorageLocation =
+        getSingleDispatchStorageLocation(selectedSourceProject);
       const pendingQuantity = getPendingDispatchQuantity(item);
       const availableQuantity = getAvailableDispatchQuantity(item);
       const dispatchedQuantity =
@@ -713,6 +729,7 @@ export default function Flujos() {
         dispatchedQuantity,
         warehouseId,
         sourceProjectId: normalizedSourceProjectId,
+        storageLocation: singleStorageLocation?.storageLocation ?? null,
       });
     }
 
@@ -743,11 +760,18 @@ export default function Flujos() {
         const result = await warehouseExitBatchMutation.mutateAsync({
           requestId,
           items: requestRows.map(
-            ({ row, dispatchedQuantity, warehouseId, sourceProjectId }) => ({
+            ({
+              row,
+              dispatchedQuantity,
+              warehouseId,
+              sourceProjectId,
+              storageLocation,
+            }) => ({
               requestItemId: row.item.id,
               dispatchedQuantity,
               sourceProjectId,
               warehouseId,
+              ...(storageLocation ? { storageLocation } : {}),
             })
           ),
           note: dispatchNotesByFlowType[flowType] || undefined,
@@ -1276,6 +1300,8 @@ export default function Flujos() {
                               getDispatchSourceProjectOptionId(option) ===
                               selectedSourceProjectId
                           );
+                          const selectedSourceStorageLocation =
+                            getSingleDispatchStorageLocation(selectedSourceProject);
                           const selectedSourceQuantity =
                             getDispatchWarehouseOptionQuantity(selectedSourceProject) ??
                             0;
@@ -1544,7 +1570,7 @@ export default function Flujos() {
                                     </Select>
                                   ) : sourceProjectOptions.length === 1 ? (
                                     <p className="mt-1 truncate text-[10px] text-muted-foreground">
-                                      Origen:{" "}
+                                      Dueño stock:{" "}
                                       {getDispatchSourceProjectOptionLabel(
                                         sourceProjectOptions[0]
                                       )}
@@ -1554,6 +1580,14 @@ export default function Flujos() {
                                       Sin origen con stock
                                     </p>
                                   )}
+                                  {selectedSourceStorageLocation ? (
+                                    <p className="mt-1 truncate text-[10px] text-muted-foreground">
+                                      Ubicación:{" "}
+                                      {getDispatchStorageLocationLabel(
+                                        selectedSourceStorageLocation
+                                      )}
+                                    </p>
+                                  ) : null}
                                 </td>
                               )}
                               {canProcessThisFlow && flowType === "compra_directa" && (
