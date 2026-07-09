@@ -309,6 +309,24 @@ function resolveEarliestNeededBy(
     : currentDate;
 }
 
+function joinUniqueNotes(notes: Array<string | null | undefined>) {
+  const uniqueNotes: string[] = [];
+  const seen = new Set<string>();
+
+  for (const note of notes) {
+    const normalized = note?.trim();
+    if (!normalized) continue;
+
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    uniqueNotes.push(normalized);
+  }
+
+  return uniqueNotes.length > 0 ? uniqueNotes.join("\n\n") : null;
+}
+
 function getWarehousePrintLabel(warehouse: any) {
   return (
     warehouse?.displayName ||
@@ -785,6 +803,10 @@ export const supplyFlowsRouter = router({
             Number(existingLine.quantity ?? 0) +
             Number(entry.item.quantity ?? 0);
           existingLine.quantity = nextQuantity.toFixed(2);
+          existingLine.notes = joinUniqueNotes([
+            existingLine.notes,
+            entry.item.notes,
+          ]);
           continue;
         }
 
@@ -801,7 +823,7 @@ export const supplyFlowsRouter = router({
           subProjectId: entry.item.subProjectId,
           fixedAssetSapItemCode: entry.item.fixedAssetSapItemCode,
           fixedAssetName: entry.item.fixedAssetName,
-          notes: input.notes,
+          notes: joinUniqueNotes([input.notes, entry.item.notes]),
         });
       }
 
@@ -811,6 +833,10 @@ export const supplyFlowsRouter = router({
       const sourceProjectIds = Array.from(
         new Set(preparedItems.map(entry => entry.projectId))
       );
+      const purchaseRequestNotes = joinUniqueNotes([
+        input.notes,
+        ...preparedItems.map(entry => entry.item.notes),
+      ]);
 
       const purchaseRequest = await db.createPurchaseRequest(
         {
@@ -822,7 +848,7 @@ export const supplyFlowsRouter = router({
           status: "pendiente",
           neededBy: earliestNeededBy ?? null,
           sapDocumentNumber: null,
-          notes: input.notes ?? "Compra directa",
+          notes: purchaseRequestNotes ?? "Compra directa",
           rejectionReason: null,
           printedDocumentName: null,
           printedDocumentMimeType: null,
@@ -857,7 +883,9 @@ export const supplyFlowsRouter = router({
           purchaseOrderNumber: purchaseRequest.requestNumber,
           sapDocumentType: "solicitud_compra",
           processedById: ctx.user.id,
-          notes: input.notes,
+          notes:
+            joinUniqueNotes([input.notes, entry.item.notes]) ??
+            purchaseRequestNotes,
           status: "pendiente",
         });
       }
@@ -1411,6 +1439,10 @@ export const supplyFlowsRouter = router({
           detail.request.neededBy
         );
       }
+      const purchaseRequestNotes = joinUniqueNotes([
+        input.notes,
+        ...preparedItems.map(({ item }) => item.notes),
+      ]);
 
       const printDestination = await resolvePurchaseRequestPrintDestination({
         projectId: projectIds[0],
@@ -1435,7 +1467,7 @@ export const supplyFlowsRouter = router({
           neededBy: earliestNeededBy,
           sapDocumentNumber: null,
           printDestination,
-          notes: input.notes,
+          notes: purchaseRequestNotes,
           rejectionReason: null,
           printedDocumentName: null,
           printedDocumentMimeType: null,
@@ -1455,7 +1487,7 @@ export const supplyFlowsRouter = router({
           subProjectId: item.subProjectId,
           fixedAssetSapItemCode: item.fixedAssetSapItemCode,
           fixedAssetName: item.fixedAssetName,
-          notes: input.notes,
+          notes: joinUniqueNotes([input.notes, item.notes]),
         }))
       );
 
@@ -1469,7 +1501,9 @@ export const supplyFlowsRouter = router({
           sapDocumentType: "solicitud_compra",
           sapDocumentNumber: purchaseRequest.requestNumber,
           processedById: ctx.user.id,
-          notes: input.notes,
+          notes:
+            joinUniqueNotes([input.notes, item.notes]) ??
+            purchaseRequestNotes,
           status: "pendiente",
         });
         flowResults.push(result);

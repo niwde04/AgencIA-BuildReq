@@ -5531,6 +5531,7 @@ describe("BuildReq - Role-based Access Control", () => {
             sapItemCode: "SAP-001",
             sapItemDescription: "Cemento",
             approvalStatus: "aprobada",
+            notes: "Enviar con certificacion del proveedor",
           },
           {
             id: 42,
@@ -5608,11 +5609,13 @@ describe("BuildReq - Role-based Access Control", () => {
         projectId: 1,
         purchaseType: "local",
         printDestination: null,
+        notes: "Enviar con certificacion del proveedor",
       }),
       [
         expect.objectContaining({
           materialRequestItemId: 41,
           itemName: "Cemento",
+          notes: "Enviar con certificacion del proveedor",
         }),
         expect.objectContaining({
           materialRequestItemId: 42,
@@ -15275,6 +15278,90 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
     getActiveSupplyFlowSpy.mockRestore();
     createPurchaseRequestSpy.mockRestore();
     createRequestItemSpy.mockRestore();
+    updateRequestItemSpy.mockRestore();
+    createSupplyFlowRecordSpy.mockRestore();
+    getRequestItemsByRequestIdSpy.mockRestore();
+    updateMaterialRequestStatusSpy.mockRestore();
+  });
+
+  it("createDirectPurchaseBatch copies selected item notes into the generated purchase request", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getMaterialRequestByIdSpy = vi
+      .spyOn(db, "getMaterialRequestById")
+      .mockResolvedValue({
+        request: {
+          id: 10,
+          projectId: 3,
+          requestType: "bienes",
+          approvalStatus: "aprobada",
+          neededBy: new Date("2026-04-30"),
+        },
+        items: [
+          {
+            id: 101,
+            itemName: "Manguera",
+            sapItemCode: "0504000016",
+            sapItemDescription: "MANGUERA SUCCION 2",
+            quantity: "30.00",
+            unit: "m",
+            approvalStatus: "aprobada",
+            notes: "CAMBIO DE EMPAQUES DEL CABEZOTE MAL ESTADO",
+          },
+        ],
+      } as any);
+    const getActiveSupplyFlowSpy = vi
+      .spyOn(db, "getActiveSupplyFlowForRequestItem")
+      .mockResolvedValue(undefined);
+    const createPurchaseRequestSpy = vi
+      .spyOn(db, "createPurchaseRequest")
+      .mockResolvedValue({ id: 502, requestNumber: "SC-2026-0006" });
+    const updateRequestItemSpy = vi
+      .spyOn(db, "updateRequestItem")
+      .mockResolvedValue({ success: true });
+    const createSupplyFlowRecordSpy = vi
+      .spyOn(db, "createSupplyFlowRecord")
+      .mockResolvedValue({ id: 901 } as any);
+    const getRequestItemsByRequestIdSpy = vi
+      .spyOn(db, "getRequestItemsByRequestId")
+      .mockResolvedValue([{ id: 101, assignedFlow: "compra_directa" }] as any);
+    const updateMaterialRequestStatusSpy = vi
+      .spyOn(db, "updateMaterialRequestStatus")
+      .mockResolvedValue({ success: true });
+
+    await expect(
+      caller.supplyFlows.createDirectPurchaseBatch({
+        requestId: 10,
+        items: [{ requestItemId: 101, quantity: "30.00" }],
+      })
+    ).resolves.toEqual({
+      success: true,
+      purchaseRequestId: 502,
+      purchaseRequestNumber: "SC-2026-0006",
+      processedItems: 1,
+    });
+
+    expect(createPurchaseRequestSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        notes: "CAMBIO DE EMPAQUES DEL CABEZOTE MAL ESTADO",
+      }),
+      [
+        expect.objectContaining({
+          materialRequestItemId: 101,
+          notes: "CAMBIO DE EMPAQUES DEL CABEZOTE MAL ESTADO",
+        }),
+      ]
+    );
+    expect(createSupplyFlowRecordSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestItemId: 101,
+        notes: "CAMBIO DE EMPAQUES DEL CABEZOTE MAL ESTADO",
+      })
+    );
+
+    getMaterialRequestByIdSpy.mockRestore();
+    getActiveSupplyFlowSpy.mockRestore();
+    createPurchaseRequestSpy.mockRestore();
     updateRequestItemSpy.mockRestore();
     createSupplyFlowRecordSpy.mockRestore();
     getRequestItemsByRequestIdSpy.mockRestore();
