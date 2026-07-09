@@ -11,11 +11,8 @@ function canAccessReports(user: {
   buildreqRole?: string | null;
 }) {
   return (
-    user.role === "admin" ||
-    user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administracion_central" ||
     user.buildreqRole === "administrador_proyecto" ||
-    user.buildreqRole === "bodeguero_proyecto" ||
     user.buildreqRole === "contable"
   );
 }

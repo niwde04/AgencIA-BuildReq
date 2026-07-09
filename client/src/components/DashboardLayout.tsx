@@ -244,12 +244,9 @@ const allMenuItems: MenuItem[] = [
     label: "Reportes",
     path: "/reportes",
     roles: [
-      "jefe_bodega_central",
       "administracion_central",
       "administrador_proyecto",
-      "bodeguero_proyecto",
       "contable",
-      "admin",
     ],
   },
   {

@@ -62,11 +62,8 @@ function formatDateLabel(value: Date | string | null | undefined) {
 function canAccessReports(user: ReturnType<typeof useAuth>["user"]) {
   const buildreqRole = (user as any)?.buildreqRole;
   return (
-    user?.role === "admin" ||
-    buildreqRole === "jefe_bodega_central" ||
     buildreqRole === "administracion_central" ||
     buildreqRole === "administrador_proyecto" ||
-    buildreqRole === "bodeguero_proyecto" ||
     buildreqRole === "contable"
   );
 }
@@ -261,7 +258,7 @@ export default function Reportes() {
               ) : (
                 <Download className="mr-2 h-4 w-4" />
               )}
-              {isGenerating ? "Generando..." : "Generar DMC BuildReq"}
+              {isGenerating ? "Generando..." : "Registro de facturas"}
             </Button>
             <Button
               type="button"

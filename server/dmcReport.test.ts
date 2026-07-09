@@ -489,6 +489,45 @@ describe("DMC SAR report mapper", () => {
   });
 });
 
+describe("DMC report authorization", () => {
+  it.each([
+    "administracion_central",
+    "administrador_proyecto",
+    "contable",
+  ] as const)("allows %s to generate reports", async buildreqRole => {
+    vi.spyOn(db, "listDmcReportSourceInvoices").mockResolvedValue([]);
+    const caller = appRouter.createCaller(
+      createUserContext({ role: "user", buildreqRole })
+    );
+
+    await expect(
+      caller.reports.dmcPurchases({
+        dateFrom: null,
+        dateTo: null,
+        statusMode: "non_void",
+      })
+    ).resolves.toMatchObject({
+      summary: { invoiceCount: 0 },
+    });
+  });
+
+  it.each([
+    { role: "user" as const, buildreqRole: "jefe_bodega_central" },
+    { role: "user" as const, buildreqRole: "bodeguero_proyecto" },
+    { role: "admin" as const, buildreqRole: null },
+  ])("blocks report access for %o", async userOverride => {
+    const caller = appRouter.createCaller(createUserContext(userOverride));
+
+    await expect(
+      caller.reports.dmcPurchases({
+        dateFrom: null,
+        dateTo: null,
+        statusMode: "non_void",
+      })
+    ).rejects.toThrow("No tiene acceso a reportes");
+  });
+});
+
 describe("invoice OCE validation", () => {
   it("rejects active OCE without resolution number", async () => {
     const caller = appRouter.createCaller(createUserContext());
