@@ -249,6 +249,15 @@ function parseDateInput(value?: string | null) {
   return value ? new Date(`${value}T12:00:00`) : null;
 }
 
+function parseMoneyInput(value?: string | number | null) {
+  if (value === null || value === undefined || value === "") return 0;
+  const parsed =
+    typeof value === "number"
+      ? value
+      : Number(String(value).replace(/,/g, "").trim());
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
 const invoiceRetentionSchema = z
   .object({
     invoiceItemId: z.number().int().positive().optional(),
@@ -417,127 +426,158 @@ export const invoicesRouter = router({
           receiptDate: z.string(),
           emissionDeadline: z.string().optional(),
           retentionReceiptNumber: z.string().trim().max(100).optional(),
+          hasOceExemption: z.boolean().optional(),
+          oceResolutionNumber: z.string().trim().max(100).optional(),
+          oceResolutionDate: z.string().optional(),
+          oceExemptAmount: z.string().trim().optional(),
           notes: z.string().trim().max(2000).optional(),
         })
         .superRefine((value, ctx) => {
+          const hasOceExemption = value.hasOceExemption === true;
           const requiresFiscalFormat = value.isFiscalDocument !== false;
-          if (!requiresFiscalFormat) return;
 
-          if (!value.cai?.trim()) {
+          if (requiresFiscalFormat) {
+            if (!value.cai?.trim()) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["cai"],
+                message: "Ingrese el CAI del documento",
+              });
+            } else if (!isValidCai(value.cai)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["cai"],
+                message: `El CAI debe tener el formato ${CAI_FORMAT_EXAMPLE}`,
+              });
+            }
+            if (!value.invoiceNumber?.trim()) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["invoiceNumber"],
+                message: "Ingrese el número documento",
+              });
+            } else if (!isValidInvoiceNumber(value.invoiceNumber)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["invoiceNumber"],
+                message: `El número documento debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+              });
+            }
+            if (!value.documentRangeStart?.trim()) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["documentRangeStart"],
+                message: "Ingrese el rango autorizado inicial",
+              });
+            } else if (!isValidInvoiceNumber(value.documentRangeStart)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["documentRangeStart"],
+                message: `El rango autorizado inicial debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+              });
+            }
+            if (!value.documentRangeEnd?.trim()) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["documentRangeEnd"],
+                message: "Ingrese el rango autorizado final",
+              });
+            } else if (!isValidInvoiceNumber(value.documentRangeEnd)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["documentRangeEnd"],
+                message: `El rango autorizado final debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+              });
+            }
+            if (
+              value.documentRangeStart?.trim() &&
+              value.documentRangeEnd?.trim() &&
+              isValidInvoiceNumber(value.documentRangeStart) &&
+              isValidInvoiceNumber(value.documentRangeEnd) &&
+              !isFiscalInvoiceRangeOrdered({
+                documentRangeStart: value.documentRangeStart,
+                documentRangeEnd: value.documentRangeEnd,
+              })
+            ) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["documentRangeEnd"],
+                message:
+                  "El rango autorizado final debe ser mayor o igual al inicial",
+              });
+            }
+            if (
+              value.invoiceNumber?.trim() &&
+              value.documentRangeStart?.trim() &&
+              value.documentRangeEnd?.trim() &&
+              isValidInvoiceNumber(value.invoiceNumber) &&
+              isValidInvoiceNumber(value.documentRangeStart) &&
+              isValidInvoiceNumber(value.documentRangeEnd) &&
+              isFiscalInvoiceRangeOrdered({
+                documentRangeStart: value.documentRangeStart,
+                documentRangeEnd: value.documentRangeEnd,
+              }) &&
+              !isInvoiceNumberWithinFiscalRange({
+                invoiceNumber: value.invoiceNumber,
+                documentRangeStart: value.documentRangeStart,
+                documentRangeEnd: value.documentRangeEnd,
+              })
+            ) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["invoiceNumber"],
+                message:
+                  "El número documento debe estar dentro del rango autorizado",
+              });
+            }
+            if (
+              value.retentionReceiptNumber?.trim() &&
+              !isValidInvoiceNumber(value.retentionReceiptNumber)
+            ) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["retentionReceiptNumber"],
+                message: `El comprobante de retención debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+              });
+            }
+            if (!value.documentDueDate) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["documentDueDate"],
+                message: "Seleccione la fecha de vencimiento del documento",
+              });
+            }
+            if (!value.emissionDeadline) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["emissionDeadline"],
+                message: "Seleccione la fecha límite de emisión",
+              });
+            }
+          }
+
+          if (!hasOceExemption) return;
+
+          if (!value.oceResolutionNumber?.trim()) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
-              path: ["cai"],
-              message: "Ingrese el CAI del documento",
-            });
-          } else if (!isValidCai(value.cai)) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ["cai"],
-              message: `El CAI debe tener el formato ${CAI_FORMAT_EXAMPLE}`,
+              path: ["oceResolutionNumber"],
+              message: "Ingrese el número de resolución OCE",
             });
           }
-          if (!value.invoiceNumber?.trim()) {
+          if (!value.oceResolutionDate) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
-              path: ["invoiceNumber"],
-              message: "Ingrese el número documento",
-            });
-          } else if (!isValidInvoiceNumber(value.invoiceNumber)) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ["invoiceNumber"],
-              message: `El número documento debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+              path: ["oceResolutionDate"],
+              message: "Seleccione la fecha de resolución OCE",
             });
           }
-          if (!value.documentRangeStart?.trim()) {
+          const exemptAmount = parseMoneyInput(value.oceExemptAmount);
+          if (!Number.isFinite(exemptAmount) || exemptAmount <= 0) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
-              path: ["documentRangeStart"],
-              message: "Ingrese el rango autorizado inicial",
-            });
-          } else if (!isValidInvoiceNumber(value.documentRangeStart)) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ["documentRangeStart"],
-              message: `El rango autorizado inicial debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
-            });
-          }
-          if (!value.documentRangeEnd?.trim()) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ["documentRangeEnd"],
-              message: "Ingrese el rango autorizado final",
-            });
-          } else if (!isValidInvoiceNumber(value.documentRangeEnd)) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ["documentRangeEnd"],
-              message: `El rango autorizado final debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
-            });
-          }
-          if (
-            value.documentRangeStart?.trim() &&
-            value.documentRangeEnd?.trim() &&
-            isValidInvoiceNumber(value.documentRangeStart) &&
-            isValidInvoiceNumber(value.documentRangeEnd) &&
-            !isFiscalInvoiceRangeOrdered({
-              documentRangeStart: value.documentRangeStart,
-              documentRangeEnd: value.documentRangeEnd,
-            })
-          ) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ["documentRangeEnd"],
-              message:
-                "El rango autorizado final debe ser mayor o igual al inicial",
-            });
-          }
-          if (
-            value.invoiceNumber?.trim() &&
-            value.documentRangeStart?.trim() &&
-            value.documentRangeEnd?.trim() &&
-            isValidInvoiceNumber(value.invoiceNumber) &&
-            isValidInvoiceNumber(value.documentRangeStart) &&
-            isValidInvoiceNumber(value.documentRangeEnd) &&
-            isFiscalInvoiceRangeOrdered({
-              documentRangeStart: value.documentRangeStart,
-              documentRangeEnd: value.documentRangeEnd,
-            }) &&
-            !isInvoiceNumberWithinFiscalRange({
-              invoiceNumber: value.invoiceNumber,
-              documentRangeStart: value.documentRangeStart,
-              documentRangeEnd: value.documentRangeEnd,
-            })
-          ) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ["invoiceNumber"],
-              message:
-                "El número documento debe estar dentro del rango autorizado",
-            });
-          }
-          if (
-            value.retentionReceiptNumber?.trim() &&
-            !isValidInvoiceNumber(value.retentionReceiptNumber)
-          ) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ["retentionReceiptNumber"],
-              message: `El comprobante de retención debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
-            });
-          }
-          if (!value.documentDueDate) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ["documentDueDate"],
-              message: "Seleccione la fecha de vencimiento del documento",
-            });
-          }
-          if (!value.emissionDeadline) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ["emissionDeadline"],
-              message: "Seleccione la fecha límite de emisión",
+              path: ["oceExemptAmount"],
+              message: "Ingrese un importe exento mayor que cero",
             });
           }
         })
@@ -563,11 +603,26 @@ export const invoicesRouter = router({
       const isFiscalDocument = input.isFiscalDocument !== false;
       const retentionReceiptNumber =
         input.retentionReceiptNumber?.trim() || null;
+      const hasOceExemption = input.hasOceExemption === true;
+      const oceExemptAmount = hasOceExemption
+        ? parseMoneyInput(input.oceExemptAmount)
+        : 0;
       if ((detail.retentions?.length ?? 0) > 0 && !retentionReceiptNumber) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message:
             "Ingrese el número de comprobante de retención para esta factura",
+        });
+      }
+      const invoiceSubtotal = parseMoneyInput(detail.invoice.subtotal);
+      if (
+        hasOceExemption &&
+        Number.isFinite(invoiceSubtotal) &&
+        oceExemptAmount > invoiceSubtotal + 0.0001
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "El importe exento no puede exceder el subtotal de la factura",
         });
       }
 
@@ -606,6 +661,16 @@ export const invoicesRouter = router({
             ? formatInvoiceNumberInput(retentionReceiptNumber)
             : retentionReceiptNumber
           : null,
+        hasOceExemption,
+        oceResolutionNumber: hasOceExemption
+          ? input.oceResolutionNumber?.trim() || null
+          : null,
+        oceResolutionDate: hasOceExemption
+          ? parseDateInput(input.oceResolutionDate)
+          : null,
+        oceExemptAmount: hasOceExemption
+          ? oceExemptAmount.toFixed(4)
+          : "0.0000",
         notes: input.notes?.trim() || null,
       });
     }),

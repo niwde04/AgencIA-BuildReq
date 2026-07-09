@@ -7,6 +7,12 @@ export type ExcelColumn<T> = {
   numFmt?: string;
 };
 
+export type ExcelWorksheet<T = any> = {
+  sheetName: string;
+  columns: ExcelColumn<T>[];
+  rows: T[];
+};
+
 function normalizeExcelValue(value: ExcelCellValue) {
   if (value === null || value === undefined) return "";
   return value;
@@ -45,6 +51,22 @@ export async function downloadExcel<T>(
   rows: T[]
 ) {
   const XLSX = await import("xlsx");
+  const worksheet = buildWorksheet(XLSX, columns, rows);
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    worksheet,
+    sanitizeSheetName(sheetName)
+  );
+  XLSX.writeFile(workbook, fileName, { bookType: "xlsx" });
+}
+
+function buildWorksheet<T>(
+  XLSX: typeof import("xlsx"),
+  columns: ExcelColumn<T>[],
+  rows: T[]
+) {
   const data = [
     columns.map(column => column.header),
     ...rows.map(row =>
@@ -74,11 +96,22 @@ export async function downloadExcel<T>(
     }
   });
 
+  return worksheet;
+}
+
+export async function downloadWorkbook(
+  fileName: string,
+  sheets: ExcelWorksheet[]
+) {
+  const XLSX = await import("xlsx");
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(
-    workbook,
-    worksheet,
-    sanitizeSheetName(sheetName)
-  );
+  sheets.forEach(sheet => {
+    const worksheet = buildWorksheet(XLSX, sheet.columns, sheet.rows);
+    XLSX.utils.book_append_sheet(
+      workbook,
+      worksheet,
+      sanitizeSheetName(sheet.sheetName)
+    );
+  });
   XLSX.writeFile(workbook, fileName, { bookType: "xlsx" });
 }

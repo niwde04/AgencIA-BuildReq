@@ -1106,6 +1106,12 @@ export const invoices = pgTable(
     receiptDate: timestamp("receiptDate").notNull(),
     emissionDeadline: timestamp("emissionDeadline").notNull(),
     retentionReceiptNumber: varchar("retentionReceiptNumber", { length: 100 }),
+    hasOceExemption: boolean("hasOceExemption").default(false).notNull(),
+    oceResolutionNumber: varchar("oceResolutionNumber", { length: 100 }),
+    oceResolutionDate: timestamp("oceResolutionDate"),
+    oceExemptAmount: decimal("oceExemptAmount", { precision: 14, scale: 4 })
+      .default("0.0000")
+      .notNull(),
     notes: text("notes"),
     subtotal: decimal("subtotal", { precision: 14, scale: 4 })
       .default("0.0000")

@@ -118,6 +118,7 @@ import type {
   Warehouse,
   OpeningBalance,
 } from "../drizzle/schema";
+import type { DmcReportSourceInvoice } from "../shared/dmc-report";
 import { ENV } from "./_core/env";
 import {
   buildEmailPreview,
@@ -9671,6 +9672,313 @@ export async function listInvoices(filters?: {
   });
 }
 
+export async function listDmcReportSourceInvoices(filters?: {
+  projectId?: number | null;
+  projectIds?: number[] | null;
+  statuses?: string[];
+  excludeStatus?: string;
+  dateFrom?: Date | null;
+  dateTo?: Date | null;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.projectId) {
+    conditions.push(eq(invoices.projectId, filters.projectId));
+  }
+  if (filters?.projectIds) {
+    if (filters.projectIds.length === 0) return [];
+    conditions.push(inArray(invoices.projectId, filters.projectIds));
+  }
+  if (filters?.statuses?.length) {
+    conditions.push(inArray(invoices.status, filters.statuses as any));
+  }
+  if (filters?.excludeStatus) {
+    conditions.push(sql`${invoices.status} <> ${filters.excludeStatus}`);
+  }
+  if (filters?.dateFrom) {
+    conditions.push(
+      sql`coalesce(${invoices.documentDate}, ${invoices.postingDate}, ${invoices.receiptDate}, ${invoices.createdAt}) >= ${filters.dateFrom}`
+    );
+  }
+  if (filters?.dateTo) {
+    conditions.push(
+      sql`coalesce(${invoices.documentDate}, ${invoices.postingDate}, ${invoices.receiptDate}, ${invoices.createdAt}) <= ${filters.dateTo}`
+    );
+  }
+
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const rows = await db
+    .select({
+      invoice: invoices,
+      receipt: receipts,
+      purchaseOrder: purchaseOrders,
+      project: projects,
+      supplier: suppliers,
+    })
+    .from(invoices)
+    .leftJoin(receipts, eq(invoices.receiptId, receipts.id))
+    .leftJoin(purchaseOrders, eq(invoices.purchaseOrderId, purchaseOrders.id))
+    .leftJoin(projects, eq(invoices.projectId, projects.id))
+    .leftJoin(suppliers, eq(invoices.supplierId, suppliers.id))
+    .where(where)
+    .orderBy(
+      asc(invoices.documentDate),
+      asc(invoices.postingDate),
+      asc(invoices.id)
+    );
+
+  const invoiceIds = rows.map(row => row.invoice.id);
+  if (invoiceIds.length === 0) return [];
+
+  const [itemRows, retentionRows] = await Promise.all([
+    db
+      .select()
+      .from(invoiceItems)
+      .where(inArray(invoiceItems.invoiceId, invoiceIds))
+      .orderBy(asc(invoiceItems.invoiceId), asc(invoiceItems.id)),
+    db
+      .select()
+      .from(invoiceRetentions)
+      .where(inArray(invoiceRetentions.invoiceId, invoiceIds))
+      .orderBy(asc(invoiceRetentions.invoiceId), asc(invoiceRetentions.id)),
+  ]);
+
+  const itemsByInvoiceId = new Map<number, typeof itemRows>();
+  itemRows.forEach(item => {
+    const current = itemsByInvoiceId.get(item.invoiceId) ?? [];
+    current.push(item);
+    itemsByInvoiceId.set(item.invoiceId, current);
+  });
+
+  const retentionsByInvoiceId = new Map<number, typeof retentionRows>();
+  retentionRows.forEach(retention => {
+    const current = retentionsByInvoiceId.get(retention.invoiceId) ?? [];
+    current.push(retention);
+    retentionsByInvoiceId.set(retention.invoiceId, current);
+  });
+
+  const directSourceItems = alias(requestItems, "dmc_direct_request_items");
+  const directSourceRequests = alias(
+    materialRequests,
+    "dmc_direct_material_requests"
+  );
+  const purchaseRequestSourceItems = alias(
+    requestItems,
+    "dmc_purchase_request_items"
+  );
+  const purchaseRequestSourceRequests = alias(
+    materialRequests,
+    "dmc_purchase_request_material_requests"
+  );
+  const invoiceItemSubprojects = alias(
+    projectSubprojects,
+    "dmc_invoice_item_subprojects"
+  );
+  const directItemSubprojects = alias(
+    projectSubprojects,
+    "dmc_direct_item_subprojects"
+  );
+  const purchaseRequestItemSubprojects = alias(
+    projectSubprojects,
+    "dmc_purchase_request_item_subprojects"
+  );
+
+  const sourceRows = await db
+    .select({
+      invoiceId: invoiceItems.invoiceId,
+      directRequestId: directSourceRequests.id,
+      directRequestNumber: directSourceRequests.requestNumber,
+      directItemAssignedFlow: directSourceItems.assignedFlow,
+      directRequestAssignedFlow: directSourceRequests.assignedFlow,
+      purchaseRequestRequestId: purchaseRequestSourceRequests.id,
+      purchaseRequestRequestNumber: purchaseRequestSourceRequests.requestNumber,
+      purchaseRequestItemAssignedFlow: purchaseRequestSourceItems.assignedFlow,
+      purchaseRequestAssignedFlow: purchaseRequestSourceRequests.assignedFlow,
+      invoiceSubprojectCode: invoiceItemSubprojects.code,
+      invoiceSubprojectName: invoiceItemSubprojects.name,
+      directSubprojectCode: directItemSubprojects.code,
+      directSubprojectName: directItemSubprojects.name,
+      purchaseRequestSubprojectCode: purchaseRequestItemSubprojects.code,
+      purchaseRequestSubprojectName: purchaseRequestItemSubprojects.name,
+    })
+    .from(invoiceItems)
+    .leftJoin(
+      invoiceItemSubprojects,
+      eq(invoiceItems.subProjectId, invoiceItemSubprojects.id)
+    )
+    .leftJoin(
+      purchaseOrderItems,
+      eq(invoiceItems.purchaseOrderItemId, purchaseOrderItems.id)
+    )
+    .leftJoin(
+      directSourceItems,
+      eq(purchaseOrderItems.materialRequestItemId, directSourceItems.id)
+    )
+    .leftJoin(
+      directSourceRequests,
+      eq(directSourceItems.requestId, directSourceRequests.id)
+    )
+    .leftJoin(
+      directItemSubprojects,
+      eq(directSourceItems.subProjectId, directItemSubprojects.id)
+    )
+    .leftJoin(
+      purchaseRequestItems,
+      eq(purchaseOrderItems.purchaseRequestItemId, purchaseRequestItems.id)
+    )
+    .leftJoin(
+      purchaseRequestSourceItems,
+      eq(purchaseRequestItems.materialRequestItemId, purchaseRequestSourceItems.id)
+    )
+    .leftJoin(
+      purchaseRequestSourceRequests,
+      eq(purchaseRequestSourceItems.requestId, purchaseRequestSourceRequests.id)
+    )
+    .leftJoin(
+      purchaseRequestItemSubprojects,
+      eq(purchaseRequestItems.subProjectId, purchaseRequestItemSubprojects.id)
+    )
+    .where(inArray(invoiceItems.invoiceId, invoiceIds))
+    .orderBy(asc(invoiceItems.invoiceId), asc(invoiceItems.id));
+
+  const sourceDataByInvoiceId = new Map<
+    number,
+    Pick<DmcReportSourceInvoice, "materialRequests" | "subProjectLabels">
+  >();
+  const seenRequestIdsByInvoiceId = new Map<number, Set<number>>();
+
+  const getSourceData = (invoiceId: number) => {
+    const existing = sourceDataByInvoiceId.get(invoiceId);
+    if (existing) return existing;
+    const created: Pick<
+      DmcReportSourceInvoice,
+      "materialRequests" | "subProjectLabels"
+    > = { materialRequests: [], subProjectLabels: [] };
+    sourceDataByInvoiceId.set(invoiceId, created);
+    return created;
+  };
+
+  const addMaterialRequest = (
+    invoiceId: number,
+    requestId: number | null,
+    requestNumber: string | null,
+    assignedFlow?: string | null
+  ) => {
+    if (!requestId || !requestNumber) return;
+    const seen = seenRequestIdsByInvoiceId.get(invoiceId) ?? new Set<number>();
+    if (seen.has(requestId)) return;
+    seen.add(requestId);
+    seenRequestIdsByInvoiceId.set(invoiceId, seen);
+    getSourceData(invoiceId).materialRequests.push({
+      id: requestId,
+      requestNumber,
+      assignedFlow: assignedFlow ?? null,
+    });
+  };
+
+  const addSubproject = (
+    invoiceId: number,
+    code: string | null,
+    name: string | null
+  ) => {
+    const label = [code, name].filter(Boolean).join(" - ").trim();
+    if (!label) return;
+    const data = getSourceData(invoiceId);
+    if (!data.subProjectLabels.includes(label)) {
+      data.subProjectLabels.push(label);
+    }
+  };
+
+  sourceRows.forEach(row => {
+    addMaterialRequest(
+      row.invoiceId,
+      row.directRequestId,
+      row.directRequestNumber,
+      row.directItemAssignedFlow ?? row.directRequestAssignedFlow
+    );
+    addMaterialRequest(
+      row.invoiceId,
+      row.purchaseRequestRequestId,
+      row.purchaseRequestRequestNumber,
+      row.purchaseRequestItemAssignedFlow ?? row.purchaseRequestAssignedFlow
+    );
+    addSubproject(
+      row.invoiceId,
+      row.invoiceSubprojectCode,
+      row.invoiceSubprojectName
+    );
+    addSubproject(row.invoiceId, row.directSubprojectCode, row.directSubprojectName);
+    addSubproject(
+      row.invoiceId,
+      row.purchaseRequestSubprojectCode,
+      row.purchaseRequestSubprojectName
+    );
+  });
+
+  return rows.map(({ invoice, receipt, purchaseOrder, project, supplier }) => {
+    const sourceData = sourceDataByInvoiceId.get(invoice.id) ?? {
+      materialRequests: [],
+      subProjectLabels: [],
+    };
+
+    return {
+      invoiceId: invoice.id,
+      invoiceDocumentNumber: invoice.invoiceDocumentNumber,
+      invoiceNumber: invoice.invoiceNumber,
+      status: invoice.status,
+      isFiscalDocument: invoice.isFiscalDocument,
+      cai: invoice.cai,
+      documentDate: invoice.documentDate,
+      documentDueDate: invoice.documentDueDate,
+      postingDate: invoice.postingDate,
+      receiptDate: invoice.receiptDate,
+      retentionReceiptNumber: invoice.retentionReceiptNumber,
+      hasOceExemption: invoice.hasOceExemption,
+      oceResolutionNumber: invoice.oceResolutionNumber,
+      oceResolutionDate: invoice.oceResolutionDate,
+      oceExemptAmount: invoice.oceExemptAmount,
+      subtotal: invoice.subtotal,
+      taxAmount: invoice.taxAmount,
+      total: invoice.total,
+      retentionTotal: invoice.retentionTotal,
+      netPayable: invoice.netPayable,
+      receiptNumber: receipt?.receiptNumber ?? null,
+      purchaseOrderNumber: purchaseOrder?.orderNumber ?? null,
+      purchaseType: purchaseOrder?.purchaseType ?? null,
+      purchaseOrderPaymentMethod: purchaseOrder?.paymentMethod ?? null,
+      projectCode: project?.code ?? null,
+      projectName: project?.name ?? null,
+      supplierCode: supplier?.supplierCode ?? null,
+      supplierName: supplier?.name ?? null,
+      supplierRtn: supplier?.rtn ?? null,
+      items: (itemsByInvoiceId.get(invoice.id) ?? []).map(item => ({
+        id: item.id,
+        itemName: item.itemName,
+        taxCode: item.taxCode,
+        subtotal: item.subtotal,
+        taxAmount: item.taxAmount,
+        total: item.total,
+        taxBreakdown: item.taxBreakdown,
+      })),
+      retentions: (retentionsByInvoiceId.get(invoice.id) ?? []).map(
+        retention => ({
+          id: retention.id,
+          retentionCode: retention.retentionCode,
+          retentionErpCode: retention.retentionErpCode,
+          description: retention.description,
+          percentage: retention.percentage,
+          baseAmount: retention.baseAmount,
+          amount: retention.amount,
+        })
+      ),
+      materialRequests: sourceData.materialRequests,
+      subProjectLabels: sourceData.subProjectLabels,
+    } satisfies DmcReportSourceInvoice;
+  });
+}
+
 export async function getInvoiceById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
@@ -9877,6 +10185,10 @@ export async function updateInvoice(
       | "receiptDate"
       | "emissionDeadline"
       | "retentionReceiptNumber"
+      | "hasOceExemption"
+      | "oceResolutionNumber"
+      | "oceResolutionDate"
+      | "oceExemptAmount"
       | "notes"
     >
   >

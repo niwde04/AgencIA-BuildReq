@@ -32,6 +32,7 @@ import Recepciones from "./pages/Recepciones";
 import Facturas from "./pages/Facturas";
 import Impuestos from "./pages/Impuestos";
 import Retenciones from "./pages/Retenciones";
+import Reportes from "./pages/Reportes";
 import SaldosIniciales from "./pages/SaldosIniciales";
 import SalidasBodega from "./pages/SalidasBodega";
 import ActualizarContrasena from "./pages/ActualizarContrasena";
@@ -184,6 +185,7 @@ function DashboardRoutes() {
       <Route path="/traslados" component={Transfers} />
       <Route path="/recepciones" component={Recepciones} />
       <Route path="/facturas" component={Facturas} />
+      <Route path="/reportes" component={Reportes} />
       <Route path="/impuestos" component={Impuestos} />
       <Route path="/retenciones" component={Retenciones} />
       <Route path="/salidas-inventario" component={SalidasBodega} />

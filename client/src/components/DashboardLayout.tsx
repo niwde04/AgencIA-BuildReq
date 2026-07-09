@@ -39,6 +39,7 @@ import {
   Users,
   Bell,
   Database,
+  FileSpreadsheet,
   FileText,
   KeyRound,
   Percent,
@@ -239,6 +240,19 @@ const allMenuItems: MenuItem[] = [
     ],
   },
   {
+    icon: FileSpreadsheet,
+    label: "Reportes",
+    path: "/reportes",
+    roles: [
+      "jefe_bodega_central",
+      "administracion_central",
+      "administrador_proyecto",
+      "bodeguero_proyecto",
+      "contable",
+      "admin",
+    ],
+  },
+  {
     icon: Percent,
     label: "Impuestos",
     path: "/impuestos",
@@ -409,6 +423,7 @@ function DashboardLayoutContent({
           item.path === "/articulos" ||
           item.path === "/activos-fijos-pendientes" ||
           item.path === "/facturas" ||
+          item.path === "/reportes" ||
           item.path === "/impuestos" ||
           item.path === "/retenciones"
         );
@@ -428,6 +443,7 @@ function DashboardLayoutContent({
     location !== "/articulos" &&
     location !== "/activos-fijos-pendientes" &&
     location !== "/facturas" &&
+    location !== "/reportes" &&
     location !== "/impuestos" &&
     location !== "/retenciones";
   const isSuperintendentAllowedPath =

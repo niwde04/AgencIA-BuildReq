@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   AlertTriangle,
@@ -98,6 +99,10 @@ type InvoiceDraft = {
   receiptDate: string;
   emissionDeadline: string;
   retentionReceiptNumber: string;
+  hasOceExemption: boolean;
+  oceResolutionNumber: string;
+  oceResolutionDate: string;
+  oceExemptAmount: string;
   notes: string;
 };
 
@@ -515,6 +520,72 @@ function formatDateTimeLabel(value: string | Date | null | undefined) {
 function toNumber(value: string | number | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toMoneyNumber(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return 0;
+  const parsed =
+    typeof value === "number"
+      ? value
+      : Number(String(value).replace(/,/g, "").trim());
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 10000) / 10000;
+}
+
+function formatMoneyInput(value: string | number | null | undefined) {
+  const parsed = toMoneyNumber(value);
+  return parsed > 0 ? parsed.toFixed(2) : "";
+}
+
+function parseTaxBreakdown(value: unknown) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function calculateOceExemptAmountSuggestion(detail: any) {
+  const items = Array.isArray(detail?.items) ? detail.items : [];
+  const subtotal = toMoneyNumber(detail?.invoice?.subtotal);
+  const taxAmount = toMoneyNumber(detail?.invoice?.taxAmount);
+  let exemptAmount = 0;
+
+  for (const item of items) {
+    const itemSubtotal = toMoneyNumber(item?.subtotal);
+    const breakdown = parseTaxBreakdown(item?.taxBreakdown);
+    const baseRows = breakdown.filter((entry: any) => entry?.taxType === "base");
+
+    if (baseRows.length === 0) {
+      const itemTaxAmount = toMoneyNumber(item?.taxAmount);
+      if (
+        !["isv_15", "isv_18", "isv_4"].includes(String(item?.taxCode ?? "")) &&
+        itemTaxAmount === 0
+      ) {
+        exemptAmount += itemSubtotal;
+      }
+      continue;
+    }
+
+    for (const entry of baseRows) {
+      const ratePercent = toMoneyNumber(entry?.ratePercent);
+      if (ratePercent === 0) {
+        exemptAmount += toMoneyNumber(entry?.baseAmount ?? itemSubtotal);
+      }
+    }
+  }
+
+  if (exemptAmount <= 0 && subtotal > 0 && taxAmount === 0) {
+    exemptAmount = subtotal;
+  }
+
+  return roundMoney(Math.min(exemptAmount, subtotal || exemptAmount));
 }
 
 function getInvoiceRequestNumbers(row: any) {
@@ -1211,8 +1282,13 @@ export default function Facturas() {
     receiptDate: "",
     emissionDeadline: "",
     retentionReceiptNumber: "",
+    hasOceExemption: false,
+    oceResolutionNumber: "",
+    oceResolutionDate: "",
+    oceExemptAmount: "",
     notes: "",
   });
+  const oceExemptAmountTouchedRef = useRef(false);
   const fiscalRangeAutofillRef = useRef<FiscalRangeAutofill | null>(null);
   const lastFiscalRangeLookupKeyRef = useRef("");
   const [retentionDrafts, setRetentionDrafts] = useState<RetentionDraft[]>([]);
@@ -1457,6 +1533,7 @@ export default function Facturas() {
   }, [selectedId]);
   useEffect(() => {
     if (!detail?.invoice) return;
+    oceExemptAmountTouchedRef.current = false;
     fiscalRangeAutofillRef.current = null;
     lastFiscalRangeLookupKeyRef.current = "";
     setInvoiceDraft({
@@ -1471,6 +1548,10 @@ export default function Facturas() {
       receiptDate: dateInputValue(detail.invoice.receiptDate),
       emissionDeadline: dateInputValue(detail.invoice.emissionDeadline),
       retentionReceiptNumber: detail.invoice.retentionReceiptNumber ?? "",
+      hasOceExemption: detail.invoice.hasOceExemption === true,
+      oceResolutionNumber: detail.invoice.oceResolutionNumber ?? "",
+      oceResolutionDate: dateInputValue(detail.invoice.oceResolutionDate),
+      oceExemptAmount: formatMoneyInput(detail.invoice.oceExemptAmount),
       notes: detail.invoice.notes ?? "",
     });
     setRetentionDrafts(
@@ -2219,6 +2300,26 @@ export default function Facturas() {
       toast.error("Ingrese el número de comprobante de retención");
       return false;
     }
+    if (invoiceDraft.hasOceExemption) {
+      const exemptAmount = toMoneyNumber(invoiceDraft.oceExemptAmount);
+      const invoiceSubtotal = toMoneyNumber(detail?.invoice?.subtotal);
+      if (!invoiceDraft.oceResolutionNumber.trim()) {
+        toast.error("Ingrese el número de resolución OCE");
+        return false;
+      }
+      if (!invoiceDraft.oceResolutionDate) {
+        toast.error("Seleccione la fecha de resolución OCE");
+        return false;
+      }
+      if (exemptAmount <= 0) {
+        toast.error("Ingrese un importe exento mayor que cero");
+        return false;
+      }
+      if (invoiceSubtotal > 0 && exemptAmount > invoiceSubtotal) {
+        toast.error("El importe exento no puede exceder el subtotal");
+        return false;
+      }
+    }
 
     return true;
   };
@@ -2253,6 +2354,16 @@ export default function Facturas() {
     emissionDeadline: invoiceDraft.emissionDeadline,
     retentionReceiptNumber:
       invoiceDraft.retentionReceiptNumber.trim() || undefined,
+    hasOceExemption: invoiceDraft.hasOceExemption,
+    oceResolutionNumber: invoiceDraft.hasOceExemption
+      ? invoiceDraft.oceResolutionNumber.trim()
+      : undefined,
+    oceResolutionDate: invoiceDraft.hasOceExemption
+      ? invoiceDraft.oceResolutionDate
+      : undefined,
+    oceExemptAmount: invoiceDraft.hasOceExemption
+      ? String(toMoneyNumber(invoiceDraft.oceExemptAmount))
+      : "0",
     notes: invoiceDraft.notes,
   });
 
@@ -3226,6 +3337,100 @@ export default function Facturas() {
                       <Label htmlFor="invoice-fiscal-document">
                         Documento fiscal
                       </Label>
+                    </div>
+                    <div className="rounded-md border border-border/70 bg-muted/10 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <Label htmlFor="invoice-oce-exemption">
+                            Compra con OCE / Exenta
+                          </Label>
+                          <p className="text-xs text-muted-foreground">
+                            Orden de compra exenta para compras no gravadas con
+                            ISV.
+                          </p>
+                        </div>
+                        <Switch
+                          id="invoice-oce-exemption"
+                          checked={invoiceDraft.hasOceExemption}
+                          disabled={!canEditSelectedInvoice}
+                          onCheckedChange={checked => {
+                            const enabled = checked === true;
+                            if (!enabled) {
+                              oceExemptAmountTouchedRef.current = false;
+                            }
+                            const suggestedAmount = formatMoneyInput(
+                              calculateOceExemptAmountSuggestion(detail)
+                            );
+                            updateInvoiceDraft(current => ({
+                              ...current,
+                              hasOceExemption: enabled,
+                              oceResolutionNumber: enabled
+                                ? current.oceResolutionNumber
+                                : "",
+                              oceResolutionDate: enabled
+                                ? current.oceResolutionDate
+                                : "",
+                              oceExemptAmount: enabled
+                                ? !oceExemptAmountTouchedRef.current &&
+                                  toMoneyNumber(current.oceExemptAmount) <= 0
+                                  ? suggestedAmount
+                                  : current.oceExemptAmount
+                                : "",
+                            }));
+                          }}
+                        />
+                      </div>
+                      {invoiceDraft.hasOceExemption ? (
+                        <div className="mt-4 grid min-w-0 gap-3 md:grid-cols-3">
+                          <div className="space-y-2">
+                            <Label>No. resolución</Label>
+                            <Input
+                              value={invoiceDraft.oceResolutionNumber}
+                              disabled={!canEditSelectedInvoice}
+                              onChange={event =>
+                                updateInvoiceDraft(current => ({
+                                  ...current,
+                                  oceResolutionNumber: event.target.value,
+                                }))
+                              }
+                              placeholder="No. resolución OCE"
+                              maxLength={100}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Fecha de la resolución</Label>
+                            <Input
+                              type="date"
+                              value={invoiceDraft.oceResolutionDate}
+                              disabled={!canEditSelectedInvoice}
+                              onChange={event =>
+                                updateInvoiceDraft(current => ({
+                                  ...current,
+                                  oceResolutionDate: event.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Importe exento</Label>
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={invoiceDraft.oceExemptAmount}
+                              disabled={!canEditSelectedInvoice}
+                              onChange={event => {
+                                oceExemptAmountTouchedRef.current = true;
+                                updateInvoiceDraft(current => ({
+                                  ...current,
+                                  oceExemptAmount: event.target.value,
+                                }));
+                              }}
+                              placeholder="0.00"
+                            />
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                     <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                       <div className="space-y-2">
