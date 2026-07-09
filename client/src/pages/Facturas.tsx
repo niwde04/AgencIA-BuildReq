@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   AlertTriangle,
   CheckCircle2,
+  Download,
   Printer,
   RotateCcw,
   Search,
@@ -1265,6 +1267,7 @@ export default function Facturas() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [accountingComment, setAccountingComment] = useState("");
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectionComment, setRejectionComment] = useState("");
@@ -2857,6 +2860,137 @@ export default function Facturas() {
     });
   };
 
+  const exportInvoicesExcel = async () => {
+    if (isLoading || isExportingExcel) return;
+
+    if (filteredInvoices.length === 0) {
+      toast.error("No hay facturas para exportar");
+      return;
+    }
+
+    setIsExportingExcel(true);
+    try {
+      await downloadExcel(
+        buildDatedExcelFileName("facturas"),
+        "Facturas",
+        [
+          {
+            header: "Documento interno",
+            value: (row: any) => row.invoice.invoiceDocumentNumber,
+            width: 18,
+          },
+          {
+            header: "Número factura",
+            value: (row: any) => row.invoice.invoiceNumber || "",
+            width: 24,
+          },
+          {
+            header: "Proveedor",
+            value: (row: any) =>
+              row.supplier
+                ? `${row.supplier.supplierCode} - ${row.supplier.name}`
+                : "Proveedor pendiente",
+            width: 42,
+          },
+          {
+            header: "RTN proveedor",
+            value: (row: any) =>
+              row.supplier ? formatSupplierRtnLabel(row.supplier) : "",
+            width: 18,
+          },
+          {
+            header: "Orden de compra",
+            value: (row: any) => row.purchaseOrder?.orderNumber || "",
+            width: 18,
+          },
+          {
+            header: "Recepción",
+            value: (row: any) => row.receipt?.receiptNumber || "",
+            width: 18,
+          },
+          {
+            header: "Requisición",
+            value: (row: any) => formatInvoiceRequestNumbers(row),
+            width: 22,
+          },
+          {
+            header: "Requiriente",
+            value: (row: any) => formatInvoiceRequestedBy(row),
+            width: 32,
+          },
+          {
+            header: "Creada por",
+            value: (row: any) => formatInvoiceCreatedBy(row),
+            width: 32,
+          },
+          {
+            header: "Proyecto",
+            value: (row: any) =>
+              row.project ? `${row.project.code} - ${row.project.name}` : "",
+            width: 36,
+          },
+          {
+            header: "Fecha documento",
+            value: (row: any) => formatDateLabel(row.invoice.documentDate),
+            width: 16,
+          },
+          {
+            header: "Fecha vencimiento",
+            value: (row: any) => formatDateLabel(row.invoice.documentDueDate),
+            width: 16,
+          },
+          {
+            header: "Fecha recepción",
+            value: (row: any) => formatDateLabel(row.invoice.receiptDate),
+            width: 16,
+          },
+          {
+            header: "Límite emisión",
+            value: (row: any) => formatDateLabel(row.invoice.emissionDeadline),
+            width: 16,
+          },
+          {
+            header: "Total",
+            value: (row: any) => toMoneyNumber(row.invoice.total),
+            width: 14,
+            numFmt: '"L" #,##0.00',
+          },
+          {
+            header: "Retenciones",
+            value: (row: any) => toMoneyNumber(row.invoice.retentionTotal),
+            width: 14,
+            numFmt: '"L" #,##0.00',
+          },
+          {
+            header: "Neto",
+            value: (row: any) => toMoneyNumber(row.invoice.netPayable),
+            width: 14,
+            numFmt: '"L" #,##0.00',
+          },
+          {
+            header: "Estado",
+            value: (row: any) => getInvoiceStatusLabel(row.invoice),
+            width: 20,
+          },
+          {
+            header: "Comentario estado",
+            value: (row: any) => getInvoiceStatusNote(row.invoice)?.text || "",
+            width: 42,
+          },
+        ],
+        filteredInvoices
+      );
+
+      toast.success(
+        `Se exportaron ${filteredInvoices.length.toLocaleString("es-HN")} factura(s)`
+      );
+    } catch {
+      toast.error("No se pudo exportar el archivo Excel");
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2866,6 +3000,18 @@ export default function Facturas() {
             Documentos generados desde recepciones de órdenes de compra.
           </p>
         </div>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => void exportInvoicesExcel()}
+          disabled={
+            isLoading || filteredInvoices.length === 0 || isExportingExcel
+          }
+          className="gap-2"
+        >
+          <Download className="h-4 w-4" />
+          {isExportingExcel ? "Exportando..." : "Exportar Excel"}
+        </Button>
       </div>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
