@@ -1912,6 +1912,12 @@ export const sapCatalog = pgTable(
       .notNull(),
     isActive: boolean("isActive").default(true).notNull(),
     demoBatchKey: varchar("demoBatchKey", { length: 64 }),
+    createdById: integer("createdById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    updatedById: integer("updatedById").references(() => users.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
@@ -1922,6 +1928,8 @@ export const sapCatalog = pgTable(
     partNumberIdx: index("sap_cat_part_number_idx").on(table.partNumber),
     tipoArticuloIdx: index("sap_cat_tipo_articulo_idx").on(table.tipoArticulo),
     projectIdx: index("sap_cat_project_idx").on(table.projectId),
+    createdByIdx: index("sap_cat_created_by_idx").on(table.createdById),
+    updatedByIdx: index("sap_cat_updated_by_idx").on(table.updatedById),
     fixedAssetStatusIdx: index("sap_cat_fixed_asset_status_idx").on(
       table.fixedAssetStatus
     ),
@@ -1956,12 +1964,20 @@ export const suppliers = pgTable(
       .notNull(),
     isActive: boolean("isActive").default(true).notNull(),
     demoBatchKey: varchar("demoBatchKey", { length: 64 }),
+    createdById: integer("createdById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    updatedById: integer("updatedById").references(() => users.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   },
   table => ({
     codeIdx: index("sup_code_idx").on(table.supplierCode),
     demoBatchIdx: index("sup_demo_batch_idx").on(table.demoBatchKey),
+    createdByIdx: index("sup_created_by_idx").on(table.createdById),
+    updatedByIdx: index("sup_updated_by_idx").on(table.updatedById),
   })
 );
 

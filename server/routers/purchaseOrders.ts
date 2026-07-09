@@ -1325,7 +1325,11 @@ export const purchaseOrdersRouter = router({
       assertPurchaseOrderMutable(itemDetail.purchaseOrder.status);
 
       try {
-        return await db.savePurchaseOrderFixedAssetDraftLine(input);
+        return await db.savePurchaseOrderFixedAssetDraftLine({
+          ...input,
+          createdById: ctx.user.id,
+          updatedById: ctx.user.id,
+        });
       } catch (error) {
         throw new TRPCError({
           code: "BAD_REQUEST",

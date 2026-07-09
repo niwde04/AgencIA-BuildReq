@@ -53,6 +53,18 @@ type SupplierRecord = {
   allowsTaxWithholding: boolean;
   subjectToAccountPayments: boolean;
   isActive: boolean;
+  createdAt?: string | Date | null;
+  updatedAt?: string | Date | null;
+  createdById?: number | null;
+  updatedById?: number | null;
+  createdBy?: AuditUser | null;
+  updatedBy?: AuditUser | null;
+};
+
+type AuditUser = {
+  id: number;
+  name?: string | null;
+  email?: string | null;
 };
 
 type ContactType =
@@ -173,6 +185,20 @@ function formatDateLabel(value?: string | Date | null) {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
   return date.toLocaleDateString("es-HN");
+}
+
+function formatDateTimeLabel(value?: string | Date | null) {
+  if (!value) return "-";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("es-HN", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
+
+function formatAuditUserLabel(user?: AuditUser | null) {
+  return user?.name?.trim?.() || user?.email?.trim?.() || "-";
 }
 
 function getFriendlyMutationError(message?: string | null) {
@@ -812,6 +838,9 @@ export default function Proveedores() {
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Pagos a cuenta
                       </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Auditoría
+                      </th>
                       {canManageSupplierContacts ? (
                         <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Acciones
@@ -873,6 +902,22 @@ export default function Proveedores() {
                               ? "Sujeto"
                               : "No sujeto"}
                           </Badge>
+                        </td>
+                        <td className="min-w-[220px] p-3 text-xs text-muted-foreground">
+                          <div>
+                            <span className="font-medium text-foreground/70">
+                              Creado:
+                            </span>{" "}
+                            {formatAuditUserLabel(supplier.createdBy)}
+                          </div>
+                          <div>{formatDateTimeLabel(supplier.createdAt)}</div>
+                          <div className="mt-1">
+                            <span className="font-medium text-foreground/70">
+                              Última mod.:
+                            </span>{" "}
+                            {formatAuditUserLabel(supplier.updatedBy)}
+                          </div>
+                          <div>{formatDateTimeLabel(supplier.updatedAt)}</div>
                         </td>
                         {canManageSupplierContacts ? (
                           <td className="p-3 text-right">
@@ -1491,6 +1536,33 @@ export default function Proveedores() {
                   </div>
                 )}
               </div>
+              ) : null}
+
+              {isExistingSupplier ? (
+                <div className="grid gap-3 rounded-md border p-4 text-sm md:grid-cols-2">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Creado por
+                    </p>
+                    <p className="font-medium">
+                      {formatAuditUserLabel(selectedSupplier?.createdBy)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDateTimeLabel(selectedSupplier?.createdAt)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Última modificación
+                    </p>
+                    <p className="font-medium">
+                      {formatAuditUserLabel(selectedSupplier?.updatedBy)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDateTimeLabel(selectedSupplier?.updatedAt)}
+                    </p>
+                  </div>
+                </div>
               ) : null}
 
               {canManageSupplierFiscalProfile || isCreatingSupplier ? (

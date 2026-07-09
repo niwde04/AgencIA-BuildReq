@@ -50,6 +50,12 @@ import { toast } from "sonner";
 
 type ArticleType = 1 | 2 | 3;
 
+type AuditUser = {
+  id: number;
+  name?: string | null;
+  email?: string | null;
+};
+
 type ArticleRecord = {
   id: number;
   itemCode: string;
@@ -73,6 +79,12 @@ type ArticleRecord = {
   fixedAssetObservation?: string | null;
   allowsTaxWithholding: boolean;
   isActive: boolean;
+  createdAt?: string | Date | null;
+  updatedAt?: string | Date | null;
+  createdById?: number | null;
+  updatedById?: number | null;
+  createdBy?: AuditUser | null;
+  updatedBy?: AuditUser | null;
 };
 
 type ProjectOption = {
@@ -168,6 +180,20 @@ function getArticleTypeLabel(value: number | null | undefined) {
     return ARTICLE_TYPE_LABELS[value];
   }
   return "Sin tipo";
+}
+
+function formatAuditUserLabel(user?: AuditUser | null) {
+  return user?.name?.trim?.() || user?.email?.trim?.() || "-";
+}
+
+function formatAuditDateTime(value?: string | Date | null) {
+  if (!value) return "-";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("es-HN", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
 }
 
 function getProjectLabel(project: ProjectOption) {
@@ -636,6 +662,26 @@ export default function Articulos() {
             value: row => (row.allowsTaxWithholding ? "Permite" : "No permite"),
           },
           {
+            header: "Creado por",
+            value: row => formatAuditUserLabel(row.createdBy),
+            width: 28,
+          },
+          {
+            header: "Fecha creación",
+            value: row => formatAuditDateTime(row.createdAt),
+            width: 18,
+          },
+          {
+            header: "Última modificación por",
+            value: row => formatAuditUserLabel(row.updatedBy),
+            width: 28,
+          },
+          {
+            header: "Fecha última modificación",
+            value: row => formatAuditDateTime(row.updatedAt),
+            width: 22,
+          },
+          {
             header: "Estado activo fijo",
             value: row => getFixedAssetStatusLabel(row.fixedAssetStatus) || "",
           },
@@ -868,6 +914,9 @@ export default function Articulos() {
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Retención
                       </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Auditoría
+                      </th>
                       {canViewArticleAttributes ? (
                         <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Acciones
@@ -978,6 +1027,22 @@ export default function Articulos() {
                               ? "Permite"
                               : "No permite"}
                           </Badge>
+                        </td>
+                        <td className="min-w-[220px] p-3 text-xs text-muted-foreground">
+                          <div>
+                            <span className="font-medium text-foreground/70">
+                              Creado:
+                            </span>{" "}
+                            {formatAuditUserLabel(article.createdBy)}
+                          </div>
+                          <div>{formatAuditDateTime(article.createdAt)}</div>
+                          <div className="mt-1">
+                            <span className="font-medium text-foreground/70">
+                              Última mod.:
+                            </span>{" "}
+                            {formatAuditUserLabel(article.updatedBy)}
+                          </div>
+                          <div>{formatAuditDateTime(article.updatedAt)}</div>
                         </td>
                         {canViewArticleAttributes ? (
                           <td className="p-3 text-right">
@@ -1583,6 +1648,31 @@ export default function Articulos() {
                   ) : null}
                 </div>
               ) : null}
+
+              <div className="grid gap-3 rounded-md border p-4 text-sm md:grid-cols-2">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Creado por
+                  </p>
+                  <p className="font-medium">
+                    {formatAuditUserLabel(selectedArticle.createdBy)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatAuditDateTime(selectedArticle.createdAt)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Última modificación
+                  </p>
+                  <p className="font-medium">
+                    {formatAuditUserLabel(selectedArticle.updatedBy)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatAuditDateTime(selectedArticle.updatedAt)}
+                  </p>
+                </div>
+              </div>
 
               <div className="flex justify-end gap-2 border-t pt-4">
                 <Button

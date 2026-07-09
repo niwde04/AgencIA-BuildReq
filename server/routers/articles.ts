@@ -160,6 +160,7 @@ export const articlesRouter = router({
         projectId,
         isActive: input.isActive,
         allowsTaxWithholding: input.allowsTaxWithholding,
+        updatedById: ctx.user.id,
       };
       if (!("brand" in input)) {
         delete updateData.brand;
@@ -210,6 +211,8 @@ export const articlesRouter = router({
           projectId,
           allowsTaxWithholding: input.allowsTaxWithholding,
           isActive: input.isActive,
+          createdById: ctx.user.id,
+          updatedById: ctx.user.id,
         });
       } catch (error) {
         throw new TRPCError({
@@ -239,6 +242,7 @@ export const articlesRouter = router({
         return await db.resolveFixedAssetArticleCode({
           id: input.id,
           itemCode: input.itemCode,
+          updatedById: ctx.user.id,
         });
       } catch (error) {
         throw new TRPCError({
@@ -269,7 +273,10 @@ export const articlesRouter = router({
       }
 
       try {
-        return await db.updateFixedAssetArticleDetails(input);
+        return await db.updateFixedAssetArticleDetails({
+          ...input,
+          updatedById: ctx.user.id,
+        });
       } catch (error) {
         throw new TRPCError({
           code: "BAD_REQUEST",

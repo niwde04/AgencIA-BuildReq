@@ -177,6 +177,15 @@ export async function getDb() {
   return _db;
 }
 
+function toAuditUser(user: Pick<User, "id" | "name" | "email"> | null | undefined) {
+  if (!user) return null;
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+  };
+}
+
 export type BuildReqRole =
   | "ingeniero_residente"
   | "jefe_bodega_central"
@@ -16948,13 +16957,33 @@ export async function listArticles(filters?: ArticleListFilters) {
   const page = Math.min(requestedPage, totalPages);
   const offset = (page - 1) * pageSize;
 
-  const items = await db
-    .select()
+  const articleCreatedByUsers = alias(users, "article_created_by_users");
+  const articleUpdatedByUsers = alias(users, "article_updated_by_users");
+
+  const rows = await db
+    .select({
+      article: sapCatalog,
+      createdBy: articleCreatedByUsers,
+      updatedBy: articleUpdatedByUsers,
+    })
     .from(sapCatalog)
+    .leftJoin(
+      articleCreatedByUsers,
+      eq(sapCatalog.createdById, articleCreatedByUsers.id)
+    )
+    .leftJoin(
+      articleUpdatedByUsers,
+      eq(sapCatalog.updatedById, articleUpdatedByUsers.id)
+    )
     .where(where)
     .orderBy(asc(sapCatalog.itemCode))
     .limit(pageSize)
     .offset(offset);
+  const items = rows.map(row => ({
+    ...row.article,
+    createdBy: toAuditUser(row.createdBy),
+    updatedBy: toAuditUser(row.updatedBy),
+  }));
 
   return {
     items,
@@ -16977,6 +17006,7 @@ export async function updateArticle(
     projectId?: number | null;
     isActive?: boolean;
     allowsTaxWithholding?: boolean;
+    updatedById?: number | null;
   }
 ) {
   const db = await getDb();
@@ -17005,6 +17035,8 @@ export async function createArticle(data: {
   projectId?: number | null;
   allowsTaxWithholding?: boolean;
   isActive?: boolean;
+  createdById?: number | null;
+  updatedById?: number | null;
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -17037,6 +17069,8 @@ export async function createArticle(data: {
       projectId: data.tipoArticulo === 3 ? (data.projectId ?? null) : null,
       allowsTaxWithholding: data.allowsTaxWithholding ?? true,
       isActive: data.isActive ?? true,
+      createdById: data.createdById ?? null,
+      updatedById: data.updatedById ?? data.createdById ?? null,
     })
     .returning();
 
@@ -17142,6 +17176,8 @@ export async function savePurchaseOrderFixedAssetDraftLine(params: {
   isLeasing?: boolean;
   lineObservation?: string | null;
   assetDetails: FixedAssetDetail[];
+  createdById?: number | null;
+  updatedById?: number | null;
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -17236,6 +17272,7 @@ export async function savePurchaseOrderFixedAssetDraftLine(params: {
         throw new Error("No se pudo generar el código temporal del activo");
       }
 
+      const auditUserId = params.updatedById ?? params.createdById ?? null;
       const articleValues = {
         itemCode: temporaryCode,
         temporaryItemCode: temporaryCode,
@@ -17260,14 +17297,25 @@ export async function savePurchaseOrderFixedAssetDraftLine(params: {
         isActive: true,
         updatedAt: now,
       };
+      const articleUpdateValues =
+        auditUserId !== null
+          ? { ...articleValues, updatedById: auditUserId }
+          : articleValues;
 
       const [article] = existingArticle
         ? await tx
             .update(sapCatalog)
-            .set(articleValues)
+            .set(articleUpdateValues)
             .where(eq(sapCatalog.id, existingArticle.id))
             .returning()
-        : await tx.insert(sapCatalog).values(articleValues).returning();
+        : await tx
+            .insert(sapCatalog)
+            .values({
+              ...articleValues,
+              createdById: auditUserId,
+              updatedById: auditUserId,
+            })
+            .returning();
       if (!article) {
         throw new Error("No se pudo crear el artículo temporal");
       }
@@ -17279,9 +17327,14 @@ export async function savePurchaseOrderFixedAssetDraftLine(params: {
       .filter(article => article.fixedAssetStatus !== "resuelto")
       .map(article => article.id);
     if (extraArticleIds.length > 0) {
+      const auditUserId = params.updatedById ?? params.createdById ?? null;
       await tx
         .update(sapCatalog)
-        .set({ isActive: false, updatedAt: now })
+        .set(
+          auditUserId !== null
+            ? { isActive: false, updatedAt: now, updatedById: auditUserId }
+            : { isActive: false, updatedAt: now }
+        )
         .where(inArray(sapCatalog.id, extraArticleIds));
     }
 
@@ -17312,6 +17365,7 @@ export async function savePurchaseOrderFixedAssetDraftLine(params: {
 export async function resolveFixedAssetArticleCode(params: {
   id: number;
   itemCode: string;
+  updatedById?: number | null;
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -17356,6 +17410,9 @@ export async function resolveFixedAssetArticleCode(params: {
         itemCode: nextItemCode,
         fixedAssetStatus: "resuelto",
         updatedAt: new Date(),
+        ...(params.updatedById !== undefined && params.updatedById !== null
+          ? { updatedById: params.updatedById }
+          : {}),
       })
       .where(eq(sapCatalog.id, article.id))
       .returning();
@@ -17416,6 +17473,7 @@ export async function updateFixedAssetArticleDetails(params: {
   isLeasing?: boolean;
   observation?: string | null;
   assetDetail: FixedAssetDetail;
+  updatedById?: number | null;
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -17467,6 +17525,9 @@ export async function updateFixedAssetArticleDetails(params: {
         fixedAssetIsLeasing: isLeasing,
         fixedAssetObservation: observation,
         updatedAt: new Date(),
+        ...(params.updatedById !== undefined && params.updatedById !== null
+          ? { updatedById: params.updatedById }
+          : {}),
       })
       .where(eq(sapCatalog.id, article.id))
       .returning();
@@ -17728,13 +17789,33 @@ export async function listSupplierCatalog(filters?: SupplierListFilters) {
   const page = Math.min(requestedPage, totalPages);
   const offset = (page - 1) * pageSize;
 
-  const items = await db
-    .select()
+  const supplierCreatedByUsers = alias(users, "supplier_created_by_users");
+  const supplierUpdatedByUsers = alias(users, "supplier_updated_by_users");
+
+  const rows = await db
+    .select({
+      supplier: suppliers,
+      createdBy: supplierCreatedByUsers,
+      updatedBy: supplierUpdatedByUsers,
+    })
     .from(suppliers)
+    .leftJoin(
+      supplierCreatedByUsers,
+      eq(suppliers.createdById, supplierCreatedByUsers.id)
+    )
+    .leftJoin(
+      supplierUpdatedByUsers,
+      eq(suppliers.updatedById, supplierUpdatedByUsers.id)
+    )
     .where(where)
     .orderBy(asc(suppliers.name))
     .limit(pageSize)
     .offset(offset);
+  const items = rows.map(row => ({
+    ...row.supplier,
+    createdBy: toAuditUser(row.createdBy),
+    updatedBy: toAuditUser(row.updatedBy),
+  }));
 
   return {
     items,
@@ -17780,6 +17861,7 @@ export async function updateSupplier(
     address?: string | null;
     allowsTaxWithholding?: boolean;
     subjectToAccountPayments?: boolean;
+    updatedById?: number | null;
   }
 ) {
   const db = await getDb();
@@ -17828,7 +17910,10 @@ export async function analyzeSupplierExcelImport(
   return summarizeSupplierExcelImportAnalysis(analysis);
 }
 
-export async function importSupplierExcel(input: SupplierExcelFileInput) {
+export async function importSupplierExcel(
+  input: SupplierExcelFileInput,
+  options?: { userId?: number | null }
+) {
   const { db, analysis } = await buildSupplierExcelImportAnalysisFromDb(input);
 
   if (analysis.errors.length > 0) {
@@ -17838,6 +17923,21 @@ export async function importSupplierExcel(input: SupplierExcelFileInput) {
   }
 
   const now = new Date();
+  const auditUserId = options?.userId ?? null;
+  const supplierConflictUpdateSet = {
+    name: sql`excluded."name"`,
+    email: sql`excluded."email"`,
+    rtn: sql`excluded."rtn"`,
+    address: sql`excluded."address"`,
+    allowsTaxWithholding: sql`excluded."allowsTaxWithholding"`,
+    subjectToAccountPayments: sql`excluded."subjectToAccountPayments"`,
+    isActive: sql`excluded."isActive"`,
+    demoBatchKey: sql`excluded."demoBatchKey"`,
+    updatedAt: sql`excluded."updatedAt"`,
+    ...(auditUserId !== null
+      ? { updatedById: sql`excluded."updatedById"` }
+      : {}),
+  };
 
   for (const supplierChunk of chunkItems(
     analysis.rows,
@@ -17859,21 +17959,13 @@ export async function importSupplierExcel(input: SupplierExcelFileInput) {
           isActive: true,
           demoBatchKey: null,
           updatedAt: now,
+          createdById: auditUserId,
+          updatedById: auditUserId,
         }))
       )
       .onConflictDoUpdate({
         target: suppliers.supplierCode,
-        set: {
-          name: sql`excluded."name"`,
-          email: sql`excluded."email"`,
-          rtn: sql`excluded."rtn"`,
-          address: sql`excluded."address"`,
-          allowsTaxWithholding: sql`excluded."allowsTaxWithholding"`,
-          subjectToAccountPayments: sql`excluded."subjectToAccountPayments"`,
-          isActive: sql`excluded."isActive"`,
-          demoBatchKey: sql`excluded."demoBatchKey"`,
-          updatedAt: sql`excluded."updatedAt"`,
-        },
+        set: supplierConflictUpdateSet,
       });
   }
 

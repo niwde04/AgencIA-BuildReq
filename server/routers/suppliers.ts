@@ -394,7 +394,7 @@ export const suppliersRouter = router({
     .input(supplierExcelImportSchema)
     .mutation(async ({ ctx, input }) => {
       assertCanManageSupplierCatalog(ctx.user);
-      return db.importSupplierExcel(input);
+      return db.importSupplierExcel(input, { userId: ctx.user.id });
     }),
 
   create: protectedProcedure
@@ -411,6 +411,8 @@ export const suppliersRouter = router({
         subjectToAccountPayments: input.subjectToAccountPayments,
         isActive: input.isActive,
         demoBatchKey: null,
+        createdById: ctx.user.id,
+        updatedById: ctx.user.id,
       });
     }),
 
@@ -448,6 +450,7 @@ export const suppliersRouter = router({
       if (input.subjectToAccountPayments !== undefined) {
         data.subjectToAccountPayments = input.subjectToAccountPayments;
       }
+      data.updatedById = ctx.user.id;
       return db.updateSupplier(input.id, {
         ...data,
       });

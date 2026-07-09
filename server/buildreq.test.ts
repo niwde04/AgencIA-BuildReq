@@ -855,23 +855,43 @@ describe("BuildReq - Articles catalog", () => {
     expect(createArticleSpy).toHaveBeenCalledTimes(5);
     expect(createArticleSpy).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ itemCode: "ADM-001" })
+      expect.objectContaining({
+        itemCode: "ADM-001",
+        createdById: 1,
+        updatedById: 1,
+      })
     );
     expect(createArticleSpy).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ itemCode: "BC-001" })
+      expect.objectContaining({
+        itemCode: "BC-001",
+        createdById: 3,
+        updatedById: 3,
+      })
     );
     expect(createArticleSpy).toHaveBeenNthCalledWith(
       3,
-      expect.objectContaining({ itemCode: "AC-001" })
+      expect.objectContaining({
+        itemCode: "AC-001",
+        createdById: 4,
+        updatedById: 4,
+      })
     );
     expect(createArticleSpy).toHaveBeenNthCalledWith(
       4,
-      expect.objectContaining({ itemCode: "AP-001" })
+      expect.objectContaining({
+        itemCode: "AP-001",
+        createdById: 5,
+        updatedById: 5,
+      })
     );
     expect(createArticleSpy).toHaveBeenNthCalledWith(
       5,
-      expect.objectContaining({ itemCode: "CT-001" })
+      expect.objectContaining({
+        itemCode: "CT-001",
+        createdById: 7,
+        updatedById: 7,
+      })
     );
 
     createArticleSpy.mockRestore();
@@ -926,6 +946,7 @@ describe("BuildReq - Articles catalog", () => {
     expect(resolveFixedAssetArticleCodeSpy).toHaveBeenCalledWith({
       id: 10,
       itemCode: "12120100014",
+      updatedById: 7,
     });
 
     resolveFixedAssetArticleCodeSpy.mockRestore();
@@ -969,6 +990,7 @@ describe("BuildReq - Articles catalog", () => {
       id: 10,
       isLeasing: true,
       observation: "Equipo verificado",
+      updatedById: 7,
       assetDetail: expect.objectContaining({
         serialNumber: "SN-EDIT",
         condition: "usado_buen_estado",
@@ -1063,6 +1085,7 @@ describe("BuildReq - Articles catalog", () => {
       projectId: null,
       isActive: false,
       allowsTaxWithholding: false,
+      updatedById: expect.any(Number),
     });
 
     updateArticleSpy.mockRestore();
@@ -1253,6 +1276,8 @@ describe("BuildReq - Suppliers catalog", () => {
       subjectToAccountPayments: false,
       isActive: true,
       demoBatchKey: null,
+      createdById: 4,
+      updatedById: 4,
     });
 
     createSupplierSpy.mockRestore();
@@ -1309,6 +1334,7 @@ describe("BuildReq - Suppliers catalog", () => {
       address: "Tegucigalpa",
       allowsTaxWithholding: false,
       subjectToAccountPayments: false,
+      updatedById: 4,
     });
 
     updateSupplierSpy.mockRestore();
@@ -1343,6 +1369,7 @@ describe("BuildReq - Suppliers catalog", () => {
       address: "Tegucigalpa",
       allowsTaxWithholding: false,
       subjectToAccountPayments: false,
+      updatedById: 5,
     });
     updateSupplierSpy.mockRestore();
   });
@@ -1466,10 +1493,13 @@ describe("BuildReq - Suppliers catalog", () => {
       updated: 1,
     });
 
-    expect(importSupplierExcelSpy).toHaveBeenCalledWith({
-      fileName: "proveedores.xlsx",
-      fileBase64: "ZXhjZWw=",
-    });
+    expect(importSupplierExcelSpy).toHaveBeenCalledWith(
+      {
+        fileName: "proveedores.xlsx",
+        fileBase64: "ZXhjZWw=",
+      },
+      { userId: 4 }
+    );
 
     importSupplierExcelSpy.mockRestore();
   });
@@ -9182,6 +9212,8 @@ describe("BuildReq - Purchase Orders", () => {
       purchaseOrderItemId: 15,
       isLeasing: true,
       lineObservation: "Equipo asignado a gerencia",
+      createdById: 6,
+      updatedById: 6,
       assetDetails: [
         expect.objectContaining({
           serialNumber: "SN-001",
