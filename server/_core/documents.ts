@@ -1101,6 +1101,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   supplierLabel: string;
   createdDateLabel: string;
   deliveryDateLabel: string;
+  paymentMethodLabel?: string | null;
   requestedByLabel: string;
   preparedByLabel?: string | null;
   originalRequestLabel: string;
@@ -1329,7 +1330,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
         labelWidth: 58,
         valueWidth: 66,
         label: "F Pago:",
-        value: "CREDITO",
+        value: params.paymentMethodLabel?.trim() || "-",
       }) + 3;
     middleTop +=
       drawLabelValue({

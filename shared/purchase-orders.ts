@@ -11,6 +11,16 @@ export type SalesTaxType = "base" | "additional";
 
 export type SalesTaxFiscalCategory = "exento" | "exonerado" | "gravado";
 
+export function formatPurchaseOrderPaymentMethodPrintLabel(
+  value?: string | null
+) {
+  if (value === "linea_credito") return "CREDITO";
+  if (value === "fondo_proyecto" || value === "caja_chica") {
+    return "FONDO DEL PROYECTO";
+  }
+  return "-";
+}
+
 export type SalesTaxCatalogItem = {
   id?: number;
   taxCode: string;

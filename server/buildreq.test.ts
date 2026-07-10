@@ -10300,6 +10300,55 @@ describe("BuildReq - Purchase Orders", () => {
     expect(pdfText).toContain("/Subtype /Image");
   });
 
+  it("prints the actual direct purchase payment method on purchase orders", () => {
+    const pdf = buildPurchaseOrderPrintPdfBase64({
+      orderNumber: "CD-010-00000011",
+      orderId: "11",
+      projectLabel: "010 SISTEMA DE AGUA POTABLE SAN JOSE",
+      supplierLabel: "OPERADORA DEL ORIENTE SA CV",
+      createdDateLabel: "10/07/2026",
+      destinationLabel: "010 SISTEMA DE AGUA POTABLE SAN JOSE",
+      deliveryDateLabel: "13/07/2026",
+      paymentMethodLabel: "FONDO DEL PROYECTO",
+      requestedByLabel: "WILSON OSWALDO MOLINA VARGAS",
+      preparedByLabel: "EDWIN BARAHONA",
+      originalRequestLabel: "REQ-010-00000016",
+      salesAdvisorLabel: "-",
+      observations: "COMPRA DE VIVERES",
+      quoteLabel: "-",
+      items: [
+        {
+          itemNumber: "1",
+          description: "SUMINISTRO DE VIVERES",
+          destinationLabel: "Subproyecto: 010-17 - 0201 ALIMENTACION",
+          partNumber: "999-02-0201-020199-02019901",
+          quantityLabel: "1",
+          unitPriceLabel: "57,269.02",
+          subtotalLabel: "57,269.02",
+        },
+      ],
+      summaryRows: [
+        { label: "Sub-total L.", value: "57,269.02" },
+        { label: "Total a pagar L.", value: "57,269.02", emphasized: true },
+      ],
+    });
+
+    const pdfText = Buffer.from(pdf, "base64").toString("latin1");
+    const encodedFundPrefix = Buffer.from("FONDO DEL", "latin1")
+      .toString("hex")
+      .toUpperCase();
+    const encodedFundSuffix = Buffer.from("PROYECTO", "latin1")
+      .toString("hex")
+      .toUpperCase();
+    const encodedCredit = Buffer.from("CREDITO", "latin1")
+      .toString("hex")
+      .toUpperCase();
+
+    expect(pdfText).toContain(`<${encodedFundPrefix}> Tj`);
+    expect(pdfText).toContain(`<${encodedFundSuffix}> Tj`);
+    expect(pdfText).not.toContain(`<${encodedCredit}> Tj`);
+  });
+
   it("prints the purchase order preparer above the prepared-by signature", () => {
     const requestedByLabel = "WILSON MOLINA";
     const preparedByLabel = "EDWIN BARAHONA";

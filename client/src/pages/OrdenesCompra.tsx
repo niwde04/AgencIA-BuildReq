@@ -81,6 +81,7 @@ import {
   calculatePurchaseOrderLineAmounts,
   DEFAULT_SALES_TAXES,
   formatPurchaseOrderCurrency,
+  formatPurchaseOrderPaymentMethodPrintLabel,
   getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderContractSummary,
   normalizePurchaseOrderAdditionalTaxCodes,
@@ -2126,6 +2127,9 @@ export default function OrdenesCompra() {
     const deliveryDate = purchaseOrder.neededBy
       ? formatPrintDate(purchaseOrder.neededBy)
       : "INMEDIATA";
+    const paymentMethodLabel = formatPurchaseOrderPaymentMethodPrintLabel(
+      purchaseOrder.paymentMethod ?? detail.directPurchasePaymentMethod
+    );
     const observations = purchaseOrder.notes?.trim() || "-";
     const quoteLabel = detail.purchaseRequest?.quoteAttachmentId
       ? String(detail.purchaseRequest.quoteAttachmentId)
@@ -2422,7 +2426,7 @@ export default function OrdenesCompra() {
                 </div>
                 <div class="field">
                   <div class="label">F Pago:</div>
-                  <div class="value">CREDITO</div>
+                  <div class="value">${escapeHtml(paymentMethodLabel)}</div>
                 </div>
                 <div class="field">
                   <div class="label">Moneda:</div>

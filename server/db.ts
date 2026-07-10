@@ -130,6 +130,7 @@ import {
   calculatePurchaseOrderLineAmounts,
   DEFAULT_SALES_TAXES,
   formatPurchaseOrderCurrency,
+  formatPurchaseOrderPaymentMethodPrintLabel,
   getPurchaseOrderContractSummary,
   getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderTaxSelectionError,
@@ -5082,6 +5083,7 @@ function buildPurchaseOrderDocument(params: {
   originalRequestLabel?: string | null;
   salesAdvisorLabel?: string | null;
   observations?: string | null;
+  paymentMethodLabel?: string | null;
   quoteLabel?: string | null;
   items: Array<{
     itemName: string;
@@ -5139,6 +5141,7 @@ function buildPurchaseOrderDocument(params: {
       "-",
     originalRequestLabel: params.originalRequestLabel?.trim() || "-",
     salesAdvisorLabel: params.salesAdvisorLabel?.trim() || "-",
+    paymentMethodLabel: params.paymentMethodLabel?.trim() || "-",
     observations: params.observations?.trim() || "-",
     quoteLabel: params.quoteLabel?.trim() || "-",
     items: params.items.map((item, index) => {
@@ -6134,6 +6137,9 @@ export async function createPurchaseOrder(
     requestedByLabel: createdBy?.name ?? "-",
     preparedByLabel: createdBy?.name ?? createdBy?.email ?? "-",
     salesAdvisorLabel: formatSupplierContactReference(preferredSupplierContact),
+    paymentMethodLabel: formatPurchaseOrderPaymentMethodPrintLabel(
+      data.paymentMethod
+    ),
     observations: data.notes,
     quoteLabel: sourcePurchaseRequest?.quoteAttachmentId
       ? String(sourcePurchaseRequest.quoteAttachmentId)
@@ -6723,6 +6729,9 @@ export async function getPurchaseOrderById(id: number) {
         ? originalRequestNumbers.join(", ")
         : "-",
     salesAdvisorLabel: formatSupplierContactReference(preferredSupplierContact),
+    paymentMethodLabel: formatPurchaseOrderPaymentMethodPrintLabel(
+      directPurchasePaymentMethod
+    ),
     observations: rows[0].purchaseOrder.notes,
     quoteLabel: rows[0].purchaseRequest?.quoteAttachmentId
       ? String(rows[0].purchaseRequest.quoteAttachmentId)
