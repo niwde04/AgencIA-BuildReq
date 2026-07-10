@@ -297,15 +297,11 @@ export default function Articulos() {
   const canManage =
     user?.role === "admin" ||
     buildreqRole === "jefe_bodega_central" ||
-    buildreqRole === "administracion_central" ||
-    buildreqRole === "administrador_proyecto" ||
-    buildreqRole === "contable";
+    buildreqRole === "administracion_central";
   const canCreate =
     user?.role === "admin" ||
     buildreqRole === "jefe_bodega_central" ||
-    buildreqRole === "administracion_central" ||
-    buildreqRole === "administrador_proyecto" ||
-    buildreqRole === "contable";
+    buildreqRole === "administracion_central";
   const canResolveFixedAssets =
     user?.role === "admin" ||
     buildreqRole === "jefe_bodega_central" ||

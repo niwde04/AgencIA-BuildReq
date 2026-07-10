@@ -13,7 +13,9 @@ function canReadSuppliers(user: {
 }) {
   return (
     canManageSupplierCatalog(user) ||
-    user.buildreqRole === "administrador_proyecto"
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto" ||
+    user.buildreqRole === "contable"
   );
 }
 
@@ -386,14 +388,14 @@ export const suppliersRouter = router({
   analyzeExcelImport: protectedProcedure
     .input(supplierExcelImportSchema)
     .mutation(async ({ ctx, input }) => {
-      assertCanManageSupplierCatalog(ctx.user);
+      assertCanCreateSupplierCatalog(ctx.user);
       return db.analyzeSupplierExcelImport(input);
     }),
 
   importExcel: protectedProcedure
     .input(supplierExcelImportSchema)
     .mutation(async ({ ctx, input }) => {
-      assertCanManageSupplierCatalog(ctx.user);
+      assertCanCreateSupplierCatalog(ctx.user);
       return db.importSupplierExcel(input, { userId: ctx.user.id });
     }),
 

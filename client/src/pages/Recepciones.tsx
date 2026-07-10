@@ -1008,6 +1008,13 @@ export default function Recepciones() {
   const utils = trpc.useUtils();
   const [location, setLocation] = useLocation();
   const { user } = useAuth();
+  const userRole = (user as any)?.buildreqRole;
+  const canManageReceipts =
+    user?.role === "admin" ||
+    userRole === "jefe_bodega_central" ||
+    userRole === "administracion_central" ||
+    userRole === "administrador_proyecto" ||
+    userRole === "bodeguero_proyecto";
   const receiptAttachmentInputRef = useRef<HTMLInputElement>(null);
   const fiscalRangeAutofillRef = useRef<ReceiptFiscalRangeAutofill | null>(
     null
@@ -1118,16 +1125,22 @@ export default function Recepciones() {
   );
   const { data: editingDraftReceiptDetail } = trpc.receipts.getById.useQuery(
     { id: editingDraftReceiptId ?? 0 },
-    { enabled: editingDraftReceiptId !== null }
+    { enabled: canManageReceipts && editingDraftReceiptId !== null }
   );
-  const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery();
-  const { data: transfers } = trpc.transfers.list.useQuery({
-    receivableOnly: true,
-  });
+  const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery(
+    undefined,
+    { enabled: canManageReceipts }
+  );
+  const { data: transfers } = trpc.transfers.list.useQuery(
+    {
+      receivableOnly: true,
+    },
+    { enabled: canManageReceipts }
+  );
   const { data: receiptProjects } = trpc.projects.list.useQuery(
     { status: "activo" },
     {
-      enabled: dialogOpen && Boolean(sourceId),
+      enabled: canManageReceipts && dialogOpen && Boolean(sourceId),
     }
   );
   const { data: salesTaxes } = trpc.taxes.activeOptions.useQuery(undefined, {
@@ -1149,14 +1162,21 @@ export default function Recepciones() {
     { id: Number(sourceId) },
     {
       enabled:
-        dialogOpen && sourceType === "purchase_order" && Boolean(sourceId),
+        canManageReceipts &&
+        dialogOpen &&
+        sourceType === "purchase_order" &&
+        Boolean(sourceId),
     }
   );
   const { data: transferDetail, isLoading: transferDetailLoading } =
     trpc.transfers.getById.useQuery(
       { id: Number(sourceId) },
       {
-        enabled: dialogOpen && sourceType === "transfer" && Boolean(sourceId),
+        enabled:
+          canManageReceipts &&
+          dialogOpen &&
+          sourceType === "transfer" &&
+          Boolean(sourceId),
       }
     );
 
@@ -1263,12 +1283,18 @@ export default function Recepciones() {
     const editReceiptId = Number(new URLSearchParams(query).get("editar"));
     if (!Number.isFinite(editReceiptId) || editReceiptId <= 0) return;
 
+    if (!canManageReceipts) {
+      toast.error("No tiene permisos para editar recepciones");
+      setLocation("/recepciones");
+      return;
+    }
+
     resetForm();
     setViewReceiptId(null);
     setEditingDraftReceiptId(editReceiptId);
     setDialogOpen(true);
     setLocation("/recepciones");
-  }, [location, setLocation]);
+  }, [canManageReceipts, location, setLocation]);
 
   useEffect(() => {
     if (viewReceiptId !== null) return;
@@ -1313,6 +1339,7 @@ export default function Recepciones() {
     },
     {
       enabled:
+        canManageReceipts &&
         dialogOpen &&
         Boolean(sourceId),
     }
@@ -1449,6 +1476,7 @@ export default function Recepciones() {
       },
       {
         enabled:
+          canManageReceipts &&
           dialogOpen &&
           sourceType === "purchase_order" &&
           Boolean(selectedReceiptProjectId),
@@ -1459,6 +1487,7 @@ export default function Recepciones() {
       { search: manualItemSearch.trim() },
       {
         enabled:
+          canManageReceipts &&
           dialogOpen &&
           sourceType === "purchase_order" &&
           Boolean(sourceId) &&
@@ -1855,6 +1884,7 @@ export default function Recepciones() {
   useEffect(() => {
     if (
       !dialogOpen ||
+      !canManageReceipts ||
       sourceType !== "purchase_order" ||
       !sourceId ||
       !isFiscalDocument ||
@@ -1888,6 +1918,7 @@ export default function Recepciones() {
       invoiceNumber: lookupInvoiceNumber,
     });
   }, [
+    canManageReceipts,
     dialogOpen,
     fiscalRangeLookupMutation,
     invoiceNumber,
@@ -2092,6 +2123,7 @@ export default function Recepciones() {
   );
 
   const canCloseTransferLines =
+    canManageReceipts &&
     sourceType === "transfer" &&
     ((user as any)?.buildreqRole === "administracion_central" ||
       (() => {
@@ -2111,13 +2143,7 @@ export default function Recepciones() {
           assignedProjectIds.includes(sourceProjectId)
         );
       })());
-  const userRole = (user as any)?.buildreqRole;
-  const canManageReceiptAttachments =
-    user?.role === "admin" ||
-    userRole === "jefe_bodega_central" ||
-    userRole === "administracion_central" ||
-    userRole === "administrador_proyecto" ||
-    userRole === "bodeguero_proyecto";
+  const canManageReceiptAttachments = canManageReceipts;
 
   const sourceProjectLabel =
     sourceType === "purchase_order"
@@ -2222,6 +2248,7 @@ export default function Recepciones() {
       : "";
   const storageLocationSuggestionsEnabled =
     dialogOpen &&
+    canManageReceipts &&
     Boolean(storageLocationSuggestionItem) &&
     Boolean(storageLocationSuggestionSapCode) &&
     Boolean(selectedReceiptProjectId) &&
@@ -3090,6 +3117,10 @@ export default function Recepciones() {
     assetDrafts[itemId] ?? emptyReceiptAssetDraft();
 
   const openReceiptFixedAssetArticleDialog = (article: any) => {
+    if (!canManageReceipts) {
+      toast.error("No tiene permisos para modificar recepciones");
+      return;
+    }
     if (!article?.id) {
       toast.error("Este activo fijo aún no tiene artículo temporal");
       return;
@@ -3101,6 +3132,10 @@ export default function Recepciones() {
   };
 
   const submitReceiptFixedAssetCode = () => {
+    if (!canManageReceipts) {
+      toast.error("No tiene permisos para modificar recepciones");
+      return;
+    }
     if (!selectedReceiptFixedAssetArticle) return;
     if (selectedReceiptFixedAssetArticle.fixedAssetStatus !== "pendiente") {
       setSelectedReceiptFixedAssetArticle(null);
@@ -3258,6 +3293,10 @@ export default function Recepciones() {
   };
 
   const handleSaveFixedAssetDraft = (item: any) => {
+    if (!canManageReceipts) {
+      toast.error("No tiene permisos para modificar recepciones");
+      return;
+    }
     if (sourceType !== "purchase_order") {
       toast.error("Seleccione una orden de compra para guardar el activo fijo");
       return;
@@ -3408,6 +3447,10 @@ export default function Recepciones() {
   };
 
   const handleRegisterReceipt = () => {
+    if (!canManageReceipts) {
+      toast.error("No tiene permisos para registrar recepciones");
+      return;
+    }
     const receiptProjectForSubmit = selectedReceiptProjectId;
     if (!sourceId) {
       toast.error("Selecciona un documento origen válido");
@@ -4545,6 +4588,10 @@ export default function Recepciones() {
     );
   };
   const openDraftReceiptForEdit = (row: any) => {
+    if (!canManageReceipts) {
+      toast.error("No tiene permisos para editar recepciones");
+      return;
+    }
     resetForm();
     setViewReceiptId(null);
     setEditingDraftReceiptId(row.receipt.id);
@@ -4607,8 +4654,12 @@ export default function Recepciones() {
           </Button>
 
           <Dialog
-            open={dialogOpen}
+            open={canManageReceipts && dialogOpen}
             onOpenChange={open => {
+              if (!canManageReceipts) {
+                setDialogOpen(false);
+                return;
+              }
               setDialogOpen(open);
               if (open) {
                 setPostingDate(todayDateValue());
@@ -4618,12 +4669,14 @@ export default function Recepciones() {
               }
             }}
           >
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" />
-                Nueva recepción
-              </Button>
-            </DialogTrigger>
+            {canManageReceipts ? (
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Nueva recepción
+                </Button>
+              </DialogTrigger>
+            ) : null}
             <DialogContent className="scrollbar-visible max-h-[calc(100vh-0.5rem)] w-[calc(100vw-0.25rem)] max-w-[calc(100vw-0.25rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1rem)] sm:w-[calc(100vw-0.75rem)] sm:max-w-[1920px] sm:p-6 lg:p-7">
               <DialogHeader className="border-b border-border/70 pb-4 pr-10">
                 <div className="flex flex-wrap items-center gap-3">
@@ -7074,7 +7127,8 @@ export default function Recepciones() {
                         </p>
                       ) : null}
                     </div>
-                    {receiptDetail.receipt.replacementReceiptId ? (
+                    {canManageReceipts &&
+                    receiptDetail.receipt.replacementReceiptId ? (
                       <Button
                         type="button"
                         variant="outline"
@@ -7699,6 +7753,10 @@ export default function Recepciones() {
                 </thead>
                 <tbody>
                   {filteredReceipts.map((row: any) => (
+                    (() => {
+                      const canEditDraft =
+                        canManageReceipts && row.receipt.status === "borrador";
+                      return (
                     <tr
                       key={row.receipt.id}
                       className="border-b border-border last:border-0"
@@ -7752,20 +7810,22 @@ export default function Recepciones() {
                           size="sm"
                           className="gap-2"
                           onClick={() =>
-                            row.receipt.status === "borrador"
+                            canEditDraft
                               ? openDraftReceiptForEdit(row)
                               : setViewReceiptId(row.receipt.id)
                           }
                         >
-                          {row.receipt.status === "borrador" ? (
+                          {canEditDraft ? (
                             <Pencil className="h-4 w-4" />
                           ) : (
                             <Eye className="h-4 w-4" />
                           )}
-                          {row.receipt.status === "borrador" ? "Editar" : "Ver"}
+                          {canEditDraft ? "Editar" : "Ver"}
                         </Button>
                       </td>
                     </tr>
+                      );
+                    })()
                   ))}
                 </tbody>
               </table>

@@ -818,7 +818,9 @@ describe("BuildReq - Articles catalog", () => {
     const updateArticleSpy = vi.spyOn(db, "updateArticle");
 
     for (const { ctx } of [
+      createProjectAdminContext(),
       createProjectBodegueroContext(),
+      createContableContext(),
       createSuperintendentContext(),
       createIngenieroContext(),
     ]) {
@@ -840,17 +842,19 @@ describe("BuildReq - Articles catalog", () => {
       ).rejects.toThrow("No tiene permisos para modificar artículos");
     }
 
-    expect(listArticlesSpy).toHaveBeenCalledTimes(3);
+    expect(listArticlesSpy).toHaveBeenCalledTimes(5);
     expect(listArticlesSpy).toHaveBeenNthCalledWith(1, {});
     expect(listArticlesSpy).toHaveBeenNthCalledWith(2, {});
     expect(listArticlesSpy).toHaveBeenNthCalledWith(3, {});
+    expect(listArticlesSpy).toHaveBeenNthCalledWith(4, {});
+    expect(listArticlesSpy).toHaveBeenNthCalledWith(5, {});
     expect(updateArticleSpy).not.toHaveBeenCalled();
 
     listArticlesSpy.mockRestore();
     updateArticleSpy.mockRestore();
   });
 
-  it("Admin, Bodega Central, Administración Central, Project Admin and Contable can create articles", async () => {
+  it("Admin, Bodega Central and Administración Central can create articles", async () => {
     const createArticleSpy = vi.spyOn(db, "createArticle").mockImplementation(
       async (data: Parameters<typeof db.createArticle>[0]) =>
         ({
@@ -869,8 +873,6 @@ describe("BuildReq - Articles catalog", () => {
       },
       { ctx: createBodegaContext().ctx, itemCode: "BC-001" },
       { ctx: createAdminCentralContext().ctx, itemCode: "AC-001" },
-      { ctx: createProjectAdminContext().ctx, itemCode: "AP-001" },
-      { ctx: createContableContext().ctx, itemCode: "CT-001" },
     ]) {
       const caller = appRouter.createCaller(ctx);
 
@@ -885,7 +887,7 @@ describe("BuildReq - Articles catalog", () => {
       ).resolves.toEqual(expect.objectContaining({ itemCode }));
     }
 
-    expect(createArticleSpy).toHaveBeenCalledTimes(5);
+    expect(createArticleSpy).toHaveBeenCalledTimes(3);
     expect(createArticleSpy).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -910,23 +912,6 @@ describe("BuildReq - Articles catalog", () => {
         updatedById: 4,
       })
     );
-    expect(createArticleSpy).toHaveBeenNthCalledWith(
-      4,
-      expect.objectContaining({
-        itemCode: "AP-001",
-        createdById: 5,
-        updatedById: 5,
-      })
-    );
-    expect(createArticleSpy).toHaveBeenNthCalledWith(
-      5,
-      expect.objectContaining({
-        itemCode: "CT-001",
-        createdById: 7,
-        updatedById: 7,
-      })
-    );
-
     createArticleSpy.mockRestore();
   });
 
@@ -934,7 +919,9 @@ describe("BuildReq - Articles catalog", () => {
     const createArticleSpy = vi.spyOn(db, "createArticle");
 
     for (const { ctx } of [
+      createProjectAdminContext(),
       createProjectBodegueroContext(),
+      createContableContext(),
       createSuperintendentContext(),
       createIngenieroContext(),
     ]) {
@@ -1084,7 +1071,7 @@ describe("BuildReq - Articles catalog", () => {
     ).toBe("OC-006-0008");
   });
 
-  it("Catalog manager roles can update article type and status", async () => {
+  it("Article creator roles can update article type and status", async () => {
     const updateArticleSpy = vi.spyOn(db, "updateArticle").mockResolvedValue({
       id: 1,
       tipoArticulo: 3,
@@ -1097,8 +1084,6 @@ describe("BuildReq - Articles catalog", () => {
       createUserContext({ role: "admin", buildreqRole: null }),
       createBodegaContext(),
       createAdminCentralContext(),
-      createProjectAdminContext(),
-      createContableContext(),
     ]) {
       const caller = appRouter.createCaller(ctx);
 
@@ -1112,7 +1097,7 @@ describe("BuildReq - Articles catalog", () => {
       ).resolves.toEqual(expect.objectContaining({ tipoArticulo: 3 }));
     }
 
-    expect(updateArticleSpy).toHaveBeenCalledTimes(5);
+    expect(updateArticleSpy).toHaveBeenCalledTimes(3);
     expect(updateArticleSpy).toHaveBeenCalledWith(1, {
       tipoArticulo: 3,
       projectId: null,
@@ -1146,7 +1131,9 @@ describe("BuildReq - Articles catalog", () => {
     const updateArticleSpy = vi.spyOn(db, "updateArticle");
 
     for (const { ctx } of [
+      createProjectAdminContext(),
       createProjectBodegueroContext(),
+      createContableContext(),
       createSuperintendentContext(),
       createIngenieroContext(),
     ]) {
@@ -1231,9 +1218,7 @@ describe("BuildReq - Suppliers catalog", () => {
     listSupplierCatalogSpy.mockRestore();
   });
 
-  it("Project Administrator can list suppliers to manage project contacts", async () => {
-    const { ctx } = createProjectAdminContext();
-    const caller = appRouter.createCaller(ctx);
+  it("Project Administrator, Project Warehouse and Contable can list suppliers", async () => {
     const listSupplierCatalogSpy = vi
       .spyOn(db, "listSupplierCatalog")
       .mockResolvedValue({
@@ -1254,14 +1239,24 @@ describe("BuildReq - Suppliers catalog", () => {
         totalPages: 1,
       } as any);
 
-    await expect(
-      caller.suppliers.list({ page: 1, pageSize: 25 })
-    ).resolves.toEqual(
-      expect.objectContaining({
-        total: 1,
-        items: [expect.objectContaining({ supplierCode: "PL-00005" })],
-      })
-    );
+    for (const { ctx } of [
+      createProjectAdminContext(),
+      createProjectBodegueroContext(),
+      createContableContext(),
+    ]) {
+      const caller = appRouter.createCaller(ctx);
+
+      await expect(
+        caller.suppliers.list({ page: 1, pageSize: 25 })
+      ).resolves.toEqual(
+        expect.objectContaining({
+          total: 1,
+          items: [expect.objectContaining({ supplierCode: "PL-00005" })],
+        })
+      );
+    }
+
+    expect(listSupplierCatalogSpy).toHaveBeenCalledTimes(3);
 
     listSupplierCatalogSpy.mockRestore();
   });
@@ -1456,6 +1451,35 @@ describe("BuildReq - Suppliers catalog", () => {
 
     expect(analyzeSupplierExcelImportSpy).not.toHaveBeenCalled();
     analyzeSupplierExcelImportSpy.mockRestore();
+  });
+
+  it("Jefe de Bodega Central cannot create suppliers through Excel import", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const analyzeSupplierExcelImportSpy = vi.spyOn(
+      db,
+      "analyzeSupplierExcelImport"
+    );
+    const importSupplierExcelSpy = vi.spyOn(db, "importSupplierExcel");
+
+    await expect(
+      caller.suppliers.analyzeExcelImport({
+        fileName: "proveedores.xlsx",
+        fileBase64: "ZXhjZWw=",
+      })
+    ).rejects.toThrow("Solo Administración Central puede crear proveedores");
+
+    await expect(
+      caller.suppliers.importExcel({
+        fileName: "proveedores.xlsx",
+        fileBase64: "ZXhjZWw=",
+      })
+    ).rejects.toThrow("Solo Administración Central puede crear proveedores");
+
+    expect(analyzeSupplierExcelImportSpy).not.toHaveBeenCalled();
+    expect(importSupplierExcelSpy).not.toHaveBeenCalled();
+    analyzeSupplierExcelImportSpy.mockRestore();
+    importSupplierExcelSpy.mockRestore();
   });
 
   it("Authorized users can analyze supplier Excel without importing", async () => {
@@ -2479,6 +2503,54 @@ describe("BuildReq - Project subprojects", () => {
         isActive: true,
       })
     ).rejects.toThrow("La fecha de fin no puede ser anterior");
+  });
+
+  it("Project Administrator, Project Warehouse and Contable can consult projects and subprojects", async () => {
+    const project = {
+      id: 1,
+      code: "001",
+      name: "Proyecto",
+      status: "activo",
+    };
+    const getProjectByIdSpy = vi
+      .spyOn(db, "getProjectById")
+      .mockResolvedValue(project as any);
+    const listProjectsSpy = vi
+      .spyOn(db, "listProjects")
+      .mockResolvedValue([project] as any);
+    const listProjectSubprojectsSpy = vi
+      .spyOn(db, "listProjectSubprojects")
+      .mockResolvedValue([
+        {
+          id: 10,
+          projectId: 1,
+          code: "SP-001",
+          name: "Etapa 1",
+          isActive: true,
+        },
+      ] as any);
+
+    for (const { ctx } of [
+      createProjectAdminContext(),
+      createProjectBodegueroContext(),
+      createContableContext(),
+    ]) {
+      const caller = appRouter.createCaller(ctx);
+
+      await expect(caller.projects.list({ status: "activo" })).resolves.toEqual(
+        [expect.objectContaining({ id: 1 })]
+      );
+      await expect(
+        caller.projects.listSubprojects({ projectId: 1 })
+      ).resolves.toEqual([expect.objectContaining({ code: "SP-001" })]);
+    }
+
+    expect(listProjectsSpy).toHaveBeenCalledWith("activo");
+    expect(listProjectSubprojectsSpy).toHaveBeenCalledTimes(3);
+
+    getProjectByIdSpy.mockRestore();
+    listProjectsSpy.mockRestore();
+    listProjectSubprojectsSpy.mockRestore();
   });
 
   it("Blocks non-admin users from creating or editing subprojects", async () => {
@@ -3912,6 +3984,88 @@ describe("BuildReq - Role-based Access Control", () => {
     listReceiptsSpy.mockRestore();
   });
 
+  it("Contable can consult purchase orders and receipts but cannot mutate them", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const listPurchaseOrdersSpy = vi
+      .spyOn(db, "listPurchaseOrders")
+      .mockResolvedValue([] as any);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          projectId: 1,
+          status: "emitida",
+        },
+        items: [],
+      } as any);
+    const updatePurchaseOrderSpy = vi.spyOn(db, "updatePurchaseOrder");
+    const listReceiptsSpy = vi
+      .spyOn(db, "listReceipts")
+      .mockResolvedValue([] as any);
+    const getReceiptByIdSpy = vi.spyOn(db, "getReceiptById").mockResolvedValue({
+      receipt: {
+        id: 8,
+        projectId: 1,
+        status: "completa",
+      },
+      items: [],
+    } as any);
+    const saveReceiptDraftSpy = vi.spyOn(db, "saveReceiptDraft");
+
+    await expect(caller.purchaseOrders.list()).resolves.toEqual([]);
+    await expect(caller.purchaseOrders.getById({ id: 4 })).resolves.toEqual(
+      expect.objectContaining({
+        purchaseOrder: expect.objectContaining({ id: 4 }),
+      })
+    );
+    await expect(caller.receipts.list()).resolves.toEqual([]);
+    await expect(caller.receipts.getById({ id: 8 })).resolves.toEqual(
+      expect.objectContaining({
+        receipt: expect.objectContaining({ id: 8 }),
+      })
+    );
+
+    await expect(
+      caller.purchaseOrders.update({
+        id: 4,
+        notes: "Intento contable",
+      })
+    ).rejects.toThrow("No tiene permisos para editar la OC");
+    await expect(
+      caller.receipts.saveDraft({
+        sourceType: "purchase_order",
+        sourceId: 4,
+        projectId: 1,
+        postingDate: "2026-04-15",
+        receiptDate: "2026-04-15",
+        items: [
+          {
+            sourceItemId: 15,
+            warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+            itemName: "Material",
+            quantityExpected: "1.00",
+            quantityReceived: "1.00",
+            unit: "und",
+          },
+        ],
+      })
+    ).rejects.toThrow("No tiene permisos para guardar borradores de recepción");
+
+    expect(listPurchaseOrdersSpy).toHaveBeenCalledWith({});
+    expect(listReceiptsSpy).toHaveBeenCalledWith({});
+    expect(updatePurchaseOrderSpy).not.toHaveBeenCalled();
+    expect(saveReceiptDraftSpy).not.toHaveBeenCalled();
+
+    listPurchaseOrdersSpy.mockRestore();
+    getPurchaseOrderByIdSpy.mockRestore();
+    updatePurchaseOrderSpy.mockRestore();
+    listReceiptsSpy.mockRestore();
+    getReceiptByIdSpy.mockRestore();
+    saveReceiptDraftSpy.mockRestore();
+  });
+
   it("Bodeguero de Proyecto can consult project-scoped warehouse exits", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
@@ -3996,6 +4150,51 @@ describe("BuildReq - Role-based Access Control", () => {
     );
 
     getTransferByIdSpy.mockRestore();
+  });
+
+  it("Contable can read transfer detail for receipt views but cannot list or update transfers", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const listTransfersSpy = vi.spyOn(db, "listTransfers");
+    const getTransferByIdSpy = vi
+      .spyOn(db, "getTransferById")
+      .mockResolvedValue({
+        transfer: {
+          id: 18,
+          transferNumber: "TR-001-00000001",
+        },
+        transferRequest: {
+          id: 22,
+          projectId: 1,
+        },
+        items: [],
+      } as any);
+    const updateTransferPrintFieldsSpy = vi.spyOn(
+      db,
+      "updateTransferPrintFields"
+    );
+
+    await expect(caller.transfers.list()).rejects.toThrow(
+      "No tiene acceso a traslados"
+    );
+    await expect(caller.transfers.getById({ id: 18 })).resolves.toEqual(
+      expect.objectContaining({
+        transfer: expect.objectContaining({ id: 18 }),
+      })
+    );
+    await expect(
+      caller.transfers.updatePrintFields({
+        id: 18,
+        preparedByName: "Contable",
+      })
+    ).rejects.toThrow("No tiene acceso a traslados");
+
+    expect(listTransfersSpy).not.toHaveBeenCalled();
+    expect(updateTransferPrintFieldsSpy).not.toHaveBeenCalled();
+
+    listTransfersSpy.mockRestore();
+    getTransferByIdSpy.mockRestore();
+    updateTransferPrintFieldsSpy.mockRestore();
   });
 
   it("Bodeguero de Proyecto cannot edit purchase orders", async () => {
@@ -7297,7 +7496,7 @@ describe("BuildReq - Material Request Validations", () => {
           },
         ],
       })
-    ).rejects.toThrow("El activo fijo seleccionado no existe");
+    ).rejects.toThrow("El activo fijo destino MAT-001 para Mantenimiento");
 
     expect(createMaterialRequestSpy).not.toHaveBeenCalled();
 
@@ -14225,6 +14424,117 @@ describe("BuildReq - Document attachments", () => {
     expect(storagePutSpy).not.toHaveBeenCalled();
 
     getPurchaseOrderByIdSpy.mockRestore();
+    storagePutSpy.mockRestore();
+  });
+
+  it("lets Contable view purchase order attachments but not upload them", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 44,
+          projectId: 1,
+          status: "emitida",
+        },
+      } as any);
+    const getAttachmentsByEntitySpy = vi
+      .spyOn(db, "getAttachmentsByEntity")
+      .mockResolvedValue([
+        {
+          id: 99,
+          fileName: "orden.pdf",
+          fileKey: "buildreq/purchase_order/44/orden.pdf",
+        },
+      ] as any);
+    const storageGetSpy = vi.spyOn(storage, "storageGet").mockResolvedValue({
+      key: "buildreq/purchase_order/44/orden.pdf",
+      url: "https://storage.local/orden.pdf",
+    });
+    const storagePutSpy = vi.spyOn(storage, "storagePut");
+
+    await expect(
+      caller.attachments.getByEntity({
+        entityType: "purchase_order",
+        entityId: 44,
+      })
+    ).resolves.toEqual([expect.objectContaining({ id: 99 })]);
+
+    await expect(
+      caller.attachments.upload({
+        entityType: "purchase_order",
+        entityId: 44,
+        fileName: "orden.pdf",
+        fileData: pdfBuffer.toString("base64"),
+        mimeType: "application/pdf",
+        fileSize: pdfBuffer.byteLength,
+        category: "orden_compra",
+      })
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message:
+        "No tiene permisos para administrar adjuntos de órdenes de compra",
+    });
+    expect(storagePutSpy).not.toHaveBeenCalled();
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
+    storageGetSpy.mockRestore();
+    storagePutSpy.mockRestore();
+  });
+
+  it("lets Contable view receipt attachments but not upload them", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const getReceiptByIdSpy = vi.spyOn(db, "getReceiptById").mockResolvedValue({
+      receipt: {
+        id: 81,
+        projectId: 1,
+        status: "completa",
+      },
+    } as any);
+    const getAttachmentsByEntitySpy = vi
+      .spyOn(db, "getAttachmentsByEntity")
+      .mockResolvedValue([
+        {
+          id: 100,
+          fileName: "comprobante.pdf",
+          fileKey: "buildreq/receipt/81/comprobante.pdf",
+        },
+      ] as any);
+    const storageGetSpy = vi.spyOn(storage, "storageGet").mockResolvedValue({
+      key: "buildreq/receipt/81/comprobante.pdf",
+      url: "https://storage.local/comprobante.pdf",
+    });
+    const storagePutSpy = vi.spyOn(storage, "storagePut");
+
+    await expect(
+      caller.attachments.getByEntity({
+        entityType: "receipt",
+        entityId: 81,
+      })
+    ).resolves.toEqual([expect.objectContaining({ id: 100 })]);
+
+    await expect(
+      caller.attachments.upload({
+        entityType: "receipt",
+        entityId: 81,
+        fileName: "comprobante.pdf",
+        fileData: pdfBuffer.toString("base64"),
+        mimeType: "application/pdf",
+        fileSize: pdfBuffer.byteLength,
+        category: "comprobante_entrega",
+      })
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para administrar adjuntos de recepciones",
+    });
+    expect(storagePutSpy).not.toHaveBeenCalled();
+
+    getReceiptByIdSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
+    storageGetSpy.mockRestore();
     storagePutSpy.mockRestore();
   });
 

@@ -14,6 +14,10 @@ function canAccessTransfers(user: { role: string; buildreqRole?: string | null }
   );
 }
 
+function canReadTransferDetails(user: { role: string; buildreqRole?: string | null }) {
+  return canAccessTransfers(user) || user.buildreqRole === "contable";
+}
+
 function assertProjectScopedAccess(
   user: {
     role: string;
@@ -73,7 +77,7 @@ export const transfersRouter = router({
   getById: protectedProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ ctx, input }) => {
-      if (!canAccessTransfers(ctx.user)) {
+      if (!canReadTransferDetails(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene acceso a traslados",

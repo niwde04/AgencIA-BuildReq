@@ -919,8 +919,8 @@ export default function Proveedores() {
                           </div>
                           <div>{formatDateTimeLabel(supplier.updatedAt)}</div>
                         </td>
-                        {canManageSupplierContacts ? (
-                          <td className="p-3 text-right">
+                        <td className="p-3 text-right">
+                          {canManageSupplierContacts ? (
                             <Button
                               type="button"
                               size="sm"
@@ -932,8 +932,17 @@ export default function Proveedores() {
                                 ? "Editar"
                                 : "Contactos"}
                             </Button>
-                          </td>
-                        ) : null}
+                          ) : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openEditDialog(supplier)}
+                            >
+                              Ver
+                            </Button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -983,7 +992,9 @@ export default function Proveedores() {
                 ? "Nuevo proveedor"
                 : canManageSupplierFiscalProfile
                 ? "Editar proveedor"
-                : "Contactos del proveedor"}
+                : canManageSupplierContacts
+                ? "Contactos del proveedor"
+                : "Ver proveedor"}
             </DialogTitle>
           </DialogHeader>
 

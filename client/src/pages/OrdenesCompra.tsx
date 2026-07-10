@@ -593,6 +593,13 @@ function normalizeDraftMoneyValues(
   };
 }
 
+function areEditableMoneyValuesEqual(
+  left: number | string | null | undefined,
+  right: number | string | null | undefined
+) {
+  return formatMoneyDisplay(left) === formatMoneyDisplay(right);
+}
+
 function areTaxCodeArraysEqual(
   left: string[] | string | null | undefined,
   right: string[] | string | null | undefined
@@ -613,6 +620,36 @@ type PurchaseOrderItemDraft = {
   additionalTaxCodes: string[];
   itemName?: string;
 };
+
+function isPurchaseOrderItemDraftSynced(
+  item: any,
+  draft: PurchaseOrderItemDraft,
+  activeSalesTaxes: SalesTaxCatalogItem[]
+) {
+  const normalizedDraft = normalizeDraftMoneyValues(draft);
+  return (
+    Number(normalizedDraft.quantity || 0) === Number(item.quantity ?? 0) &&
+    areEditableMoneyValuesEqual(normalizedDraft.unitPrice, item.unitPrice) &&
+    areEditableMoneyValuesEqual(normalizedDraft.subtotal, item.subtotal) &&
+    normalizedDraft.taxCode ===
+      normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes) &&
+    areTaxCodeArraysEqual(
+      normalizedDraft.additionalTaxCodes,
+      item.additionalTaxCodes
+    )
+  );
+}
+
+function isPurchaseOrderContractPriceDraftSynced(
+  item: any,
+  draft: PurchaseOrderItemDraft
+) {
+  const normalizedDraft = normalizeDraftMoneyValues(draft);
+  return (
+    areEditableMoneyValuesEqual(normalizedDraft.unitPrice, item.unitPrice) &&
+    areEditableMoneyValuesEqual(normalizedDraft.subtotal, item.subtotal)
+  );
+}
 
 type ContractDraft = {
   appliesContract: boolean;
@@ -1305,6 +1342,7 @@ export default function OrdenesCompra() {
     },
     {
       enabled:
+        canManagePurchaseOrders &&
         Boolean(supplierContactProjectId) &&
         selectedSupplierIdNumber > 0,
     }
@@ -1637,17 +1675,10 @@ export default function OrdenesCompra() {
     () =>
       canEditOrderStructure &&
       items.some((item: any) => {
-        const draft = getItemDraft(item);
-        return (
-          Number(draft.quantity || 0) !== Number(item.quantity ?? 0) ||
-          Number(draft.unitPrice || 0) !== Number(item.unitPrice ?? 0) ||
-          Number(draft.subtotal || 0) !== Number(item.subtotal ?? 0) ||
-          draft.taxCode !==
-            normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes) ||
-          !areTaxCodeArraysEqual(
-            draft.additionalTaxCodes,
-            item.additionalTaxCodes
-          )
+        return !isPurchaseOrderItemDraftSynced(
+          item,
+          getItemDraft(item),
+          activeSalesTaxes
         );
       }),
     [activeSalesTaxes, canEditOrderStructure, items, itemDrafts]
@@ -1656,10 +1687,9 @@ export default function OrdenesCompra() {
     () =>
       canEditContractLinePrice &&
       items.some((item: any) => {
-        const draft = getItemDraft(item);
-        return (
-          Number(draft.unitPrice || 0) !== Number(item.unitPrice ?? 0) ||
-          Number(draft.subtotal || 0) !== Number(item.subtotal ?? 0)
+        return !isPurchaseOrderContractPriceDraftSynced(
+          item,
+          getItemDraft(item)
         );
       }),
     [canEditContractLinePrice, items, itemDrafts]
@@ -1818,12 +1848,8 @@ export default function OrdenesCompra() {
     }
     const draft = normalizeDraftMoneyValues(rawDraft);
     if (
-      Number(draft.quantity || 0) === Number(item.quantity ?? 0) &&
-      Number(draft.unitPrice || 0) === Number(item.unitPrice ?? 0) &&
-      Number(draft.subtotal || 0) === Number(item.subtotal ?? 0) &&
-      draft.taxCode === normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes) &&
-      areTaxCodeArraysEqual(draft.additionalTaxCodes, item.additionalTaxCodes)
-      && !itemNameChanged
+      isPurchaseOrderItemDraftSynced(item, draft, activeSalesTaxes) &&
+      !itemNameChanged
     ) {
       return;
     }
@@ -1866,10 +1892,7 @@ export default function OrdenesCompra() {
 
     const rawDraft = getItemDraft(item);
     const draft = normalizeDraftMoneyValues(rawDraft);
-    if (
-      Number(draft.unitPrice || 0) === Number(item.unitPrice ?? 0) &&
-      Number(draft.subtotal || 0) === Number(item.subtotal ?? 0)
-    ) {
+    if (isPurchaseOrderContractPriceDraftSynced(item, draft)) {
       return;
     }
     if (!draft.unitPrice.trim()) {

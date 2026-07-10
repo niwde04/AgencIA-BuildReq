@@ -237,6 +237,17 @@ function canReadSuppliers(user: BuildReqUser) {
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "bodeguero_proyecto" ||
+    user.buildreqRole === "contable"
+  );
+}
+
+function canManageSupplierAttachments(user: BuildReqUser) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administracion_central"
   );
 }
@@ -288,6 +299,10 @@ function canAccessPurchaseOrders(user: BuildReqUser) {
   );
 }
 
+function canReadPurchaseOrders(user: BuildReqUser) {
+  return canAccessPurchaseOrders(user) || user.buildreqRole === "contable";
+}
+
 function canManagePurchaseOrderAttachments(user: BuildReqUser) {
   return (
     user.role === "admin" ||
@@ -309,7 +324,7 @@ async function assertPurchaseOrderAttachmentAccess(
     });
   }
 
-  if (!canAccessPurchaseOrders(user)) {
+  if (!canReadPurchaseOrders(user)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene acceso a órdenes de compra",
@@ -347,6 +362,14 @@ function canAccessReceipts(user: BuildReqUser) {
   );
 }
 
+function canReadReceipts(user: BuildReqUser) {
+  return canAccessReceipts(user) || user.buildreqRole === "contable";
+}
+
+function canManageReceiptAttachments(user: BuildReqUser) {
+  return canAccessReceipts(user);
+}
+
 async function assertReceiptAttachmentAccess(
   id: number,
   user: BuildReqUser,
@@ -360,7 +383,7 @@ async function assertReceiptAttachmentAccess(
     });
   }
 
-  if (!canAccessReceipts(user)) {
+  if (!canReadReceipts(user)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene acceso a recepciones",
@@ -374,7 +397,7 @@ async function assertReceiptAttachmentAccess(
     );
   }
 
-  if (action === "manage" && !canAccessReceipts(user)) {
+  if (action === "manage" && !canManageReceiptAttachments(user)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene permisos para administrar adjuntos de recepciones",
@@ -548,7 +571,7 @@ async function assertSupplierAttachmentAccess(
     });
   }
 
-  if (action === "manage" && !canReadSuppliers(user)) {
+  if (action === "manage" && !canManageSupplierAttachments(user)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene permisos para administrar documentos del proveedor",

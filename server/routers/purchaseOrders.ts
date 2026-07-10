@@ -198,6 +198,25 @@ function canAccessPurchaseOrders(user: {
   );
 }
 
+function canReadPurchaseOrders(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return canAccessPurchaseOrders(user) || user.buildreqRole === "contable";
+}
+
+function canManagePurchaseOrders(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return (
+    user.role === "admin" ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "administrador_proyecto" ||
+    user.buildreqRole === "jefe_bodega_central"
+  );
+}
+
 function canConvertPurchaseRequestToOrder(user: {
   role: string;
   buildreqRole?: string | null;
@@ -232,6 +251,7 @@ function assertProjectScopedAccess(
 }
 
 function assertCanModifyPurchaseOrders(user: {
+  role: string;
   buildreqRole?: string | null;
 }) {
   if (user.buildreqRole === "bodeguero_proyecto") {
@@ -239,6 +259,14 @@ function assertCanModifyPurchaseOrders(user: {
       code: "FORBIDDEN",
       message:
         "El Bodeguero de Proyecto solo puede consultar órdenes de compra",
+    });
+  }
+
+  if (!canManagePurchaseOrders(user)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message:
+        "No tiene permisos para modificar órdenes de compra",
     });
   }
 }
@@ -368,7 +396,7 @@ export const purchaseOrdersRouter = router({
         .optional()
     )
     .query(async ({ ctx, input }) => {
-      if (!canAccessPurchaseOrders(ctx.user)) {
+      if (!canReadPurchaseOrders(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene acceso a órdenes de compra",
@@ -381,7 +409,7 @@ export const purchaseOrdersRouter = router({
   getById: protectedProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ ctx, input }) => {
-      if (!canAccessPurchaseOrders(ctx.user)) {
+      if (!canReadPurchaseOrders(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene acceso a órdenes de compra",
@@ -407,7 +435,7 @@ export const purchaseOrdersRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
-      if (!canAccessPurchaseOrders(ctx.user)) {
+      if (!canReadPurchaseOrders(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene acceso a órdenes de compra",

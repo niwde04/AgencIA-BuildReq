@@ -141,6 +141,7 @@ const allMenuItems: MenuItem[] = [
       "administracion_central",
       "administrador_proyecto",
       "bodeguero_proyecto",
+      "contable",
       "admin",
     ],
   },
@@ -188,6 +189,7 @@ const allMenuItems: MenuItem[] = [
       "administracion_central",
       "administrador_proyecto",
       "bodeguero_proyecto",
+      "contable",
       "admin",
     ],
   },
@@ -223,6 +225,7 @@ const allMenuItems: MenuItem[] = [
       "administracion_central",
       "administrador_proyecto",
       "bodeguero_proyecto",
+      "contable",
       "admin",
     ],
   },
@@ -419,7 +422,11 @@ function DashboardLayoutContent({
         return (
           item.path === "/articulos" ||
           item.path === "/activos-fijos-pendientes" ||
+          item.path === "/proveedores" ||
+          item.path === "/ordenes-compra" ||
+          item.path === "/recepciones" ||
           item.path === "/facturas" ||
+          item.path === "/proyectos" ||
           item.path === "/reportes" ||
           item.path === "/impuestos" ||
           item.path === "/retenciones"
@@ -439,7 +446,11 @@ function DashboardLayoutContent({
     userRole === "contable" &&
     location !== "/articulos" &&
     location !== "/activos-fijos-pendientes" &&
+    location !== "/proveedores" &&
+    location !== "/ordenes-compra" &&
+    location !== "/recepciones" &&
     location !== "/facturas" &&
+    location !== "/proyectos" &&
     location !== "/reportes" &&
     location !== "/impuestos" &&
     location !== "/retenciones";

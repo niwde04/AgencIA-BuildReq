@@ -58,6 +58,13 @@ function canReceivePurchaseOrder(purchaseOrder: any, contractSummary?: any) {
   );
 }
 
+function canReadReceipts(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  return canAccessReceipts(user) || user.buildreqRole === "contable";
+}
+
 function getFixedAssetResolutionProgress(item: any) {
   if (item?.isFixedAsset !== true) {
     return { expected: 0, resolved: 0, pending: 0 };
@@ -566,7 +573,7 @@ export const receiptsRouter = router({
         .optional()
     )
     .query(async ({ ctx, input }) => {
-      if (!canAccessReceipts(ctx.user)) {
+      if (!canReadReceipts(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene acceso a recepciones",
@@ -579,7 +586,7 @@ export const receiptsRouter = router({
   getById: protectedProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ ctx, input }) => {
-      if (!canAccessReceipts(ctx.user)) {
+      if (!canReadReceipts(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "No tiene acceso a recepciones",
