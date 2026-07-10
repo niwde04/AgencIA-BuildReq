@@ -69,6 +69,20 @@ function assertCanManageSubprojects(
     });
 }
 
+function assertCanCreateProjects(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  if (user.role === "admin" || user.buildreqRole === "administracion_central") {
+    return;
+  }
+
+  throw new TRPCError({
+    code: "FORBIDDEN",
+    message: "required permission: No tiene permisos para crear proyectos.",
+  });
+}
+
 function parseOptionalDate(value: string | null | undefined) {
   if (value === undefined) return undefined;
   if (value === null || value.trim() === "") return null;
@@ -192,7 +206,7 @@ export const projectsRouter = router({
       return project;
     }),
 
-  create: adminProcedure
+  create: protectedProcedure
     .input(
       z.object({
         code: z.string().trim().min(1).max(50),
@@ -204,7 +218,8 @@ export const projectsRouter = router({
         ...projectDateFieldsSchema,
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      assertCanCreateProjects(ctx.user);
       const startDate = parseOptionalDate(input.startDate);
       const endDate = parseOptionalDate(input.endDate);
       assertDateRange(startDate, endDate);

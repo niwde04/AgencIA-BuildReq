@@ -208,6 +208,8 @@ export default function Proyectos() {
   const isAdmin = user?.role === "admin";
   const buildreqRole = (user as any)?.buildreqRole;
   const canManageProjects = isAdmin;
+  const canCreateProjects =
+    canManageProjects || buildreqRole === "administracion_central";
   const canManageSubprojects =
     canManageProjects ||
     buildreqRole === "administracion_central" ||
@@ -489,7 +491,7 @@ export default function Proyectos() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1>Proyectos</h1>
-        {canManageProjects && (
+        {canCreateProjects && (
           <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
             <DialogTrigger asChild>
               <Button size="sm">

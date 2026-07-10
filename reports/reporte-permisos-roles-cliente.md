@@ -90,7 +90,7 @@ Convenciones usadas:
 | Reportes | AC, AP, CON. AP limitado por proyecto. | Generar/descargar reportes DMC y SAR: AC, AP, CON. ADM no tiene acceso backend ni menu en el estado actual. |
 | Impuestos | ADM, AC, BC, AP, BP, CON. | Crear/editar/desactivar impuestos: ADM, AC, CON. BC/AP/BP solo consultan. |
 | Retenciones | ADM, AC, AP, CON. | Crear/editar/desactivar retenciones: ADM, CON. AC/AP solo consultan. |
-| Proyectos | ADM, AC, BC, AP, BP, IR, SUP, CON. Roles de proyecto ven alcance asignado. | Crear/editar proyectos: ADM. Gestionar subproyectos: ADM, AC, AP. Gestionar bodegas de proyecto: ADM, AC, AP. Otros roles consultan. |
+| Proyectos | ADM, AC, BC, AP, BP, IR, SUP, CON. Roles de proyecto ven alcance asignado. | Crear proyectos: ADM, AC. Editar proyectos: ADM. Gestionar subproyectos: ADM, AC, AP. Gestionar bodegas de proyecto: ADM, AC, AP. Otros roles consultan. |
 | Usuarios | ADM, AC. | Gestionar usuarios y roles: ADM, AC. AC no puede gestionar usuarios base `admin`. Invitaciones por correo usan procedimiento de admin, por lo que quedan para ADM. |
 | Datos Demo | ADM. | Importar o borrar informacion demo: ADM. |
 | Notificaciones | ADM, AC, BC, AP, BP, IR. | Ver y marcar notificaciones propias como leidas. No aparece para CON ni SUP. |
@@ -153,7 +153,7 @@ Convenciones usadas:
 | Facturas | Adjuntos de factura | Ver: roles con acceso a factura. Gestionar: ADM, AC, AP en borrador/rechazada. | Subir/eliminar documentos. |
 | Impuestos | Nuevo/editar impuesto | ADM, AC, CON. | Crear, editar, activar o desactivar impuesto. |
 | Retenciones | Nueva/editar retencion | ADM, CON. | Crear, editar, activar o desactivar retencion. |
-| Proyectos | Nuevo proyecto | ADM. | Alta de proyecto. |
+| Proyectos | Nuevo proyecto | ADM, AC. | Alta de proyecto. |
 | Proyectos | Detalle de proyecto | Roles con consulta de proyectos. | ADM edita proyecto; ADM/AC/AP gestionan subproyectos y bodegas de proyecto. |
 | Usuarios | Nuevo usuario directo | ADM, AC. | Crear usuario y asignar rol/proyectos. |
 | Usuarios | Invitar usuario | ADM. | Crear invitacion por correo. |

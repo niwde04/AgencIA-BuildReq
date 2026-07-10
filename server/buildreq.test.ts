@@ -2351,6 +2351,63 @@ describe("BuildReq - Suppliers catalog", () => {
 // Tests: Project subprojects
 // ============================================================
 describe("BuildReq - Project subprojects", () => {
+  it("Administracion Central can create parent projects", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const createProjectSpy = vi.spyOn(db, "createProject").mockResolvedValue({
+      id: 77,
+      code: "AC-001",
+      name: "Proyecto AC",
+    } as any);
+
+    await expect(
+      caller.projects.create({
+        code: "AC-001",
+        name: "Proyecto AC",
+        description: "Proyecto creado por Administración Central",
+        location: "Tegucigalpa",
+        sapProjectCode: "SAP-AC-001",
+        startDate: "2026-07-01",
+        endDate: "2026-12-31",
+        status: "activo",
+      })
+    ).resolves.toEqual(expect.objectContaining({ id: 77, code: "AC-001" }));
+
+    expect(createProjectSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "AC-001",
+        name: "Proyecto AC",
+        description: "Proyecto creado por Administración Central",
+        location: "Tegucigalpa",
+        sapProjectCode: "SAP-AC-001",
+        startDate: expect.any(Date),
+        endDate: expect.any(Date),
+        status: "activo",
+      })
+    );
+
+    createProjectSpy.mockRestore();
+  });
+
+  it("Blocks project roles from creating parent projects", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const createProjectSpy = vi
+      .spyOn(db, "createProject")
+      .mockResolvedValue({ id: 78 } as any);
+
+    await expect(
+      caller.projects.create({
+        code: "AP-001",
+        name: "Proyecto AP",
+      })
+    ).rejects.toThrow("No tiene permisos para crear proyectos");
+
+    expect(createProjectSpy).not.toHaveBeenCalled();
+
+    createProjectSpy.mockRestore();
+  });
+
   it("Admin can create subprojects under a parent project", async () => {
     const { ctx } = createUserContext();
     const caller = appRouter.createCaller(ctx);
