@@ -16,6 +16,7 @@ import {
 export type PurchaseOrderItemTaxDraft = {
   quantity: string;
   unitPrice: string;
+  subtotal?: string;
   taxCode: PurchaseOrderTaxCode;
   additionalTaxCodes: string[];
 };

@@ -72,6 +72,14 @@ const quantityToConvertSchema = z.object({
       message: "El precio unitario debe ser un número válido",
     })
     .optional(),
+  subtotal: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0, {
+      message: "El subtotal debe ser un número válido",
+    })
+    .optional(),
   taxCode: z.string().trim().min(1).optional(),
   additionalTaxCodes: z.array(z.string().trim().min(1)).optional(),
 });
@@ -469,6 +477,7 @@ export const purchaseOrdersRouter = router({
         purchaseRequestItemId: number;
         quantity: string;
         unitPrice?: string;
+        subtotal?: string;
         taxCode?: string;
         additionalTaxCodes?: string[];
       }> =
@@ -494,7 +503,12 @@ export const purchaseOrdersRouter = router({
       const conversionQuantityByItemId = new Map<number, number>();
       const conversionDraftByItemId = new Map<
         number,
-        { unitPrice?: string; taxCode?: string; additionalTaxCodes?: string[] }
+        {
+          unitPrice?: string;
+          subtotal?: string;
+          taxCode?: string;
+          additionalTaxCodes?: string[];
+        }
       >();
       for (const conversion of requestedConversions) {
         conversionQuantityByItemId.set(
@@ -504,6 +518,7 @@ export const purchaseOrdersRouter = router({
         );
         conversionDraftByItemId.set(conversion.purchaseRequestItemId, {
           unitPrice: conversion.unitPrice,
+          subtotal: conversion.subtotal,
           taxCode: conversion.taxCode,
           additionalTaxCodes: conversion.additionalTaxCodes,
         });
@@ -540,6 +555,8 @@ export const purchaseOrdersRouter = router({
           quantityToConvert: toDecimalString(quantityToConvert),
           unitPrice: conversionDraftByItemId.get(purchaseRequestItemId)
             ?.unitPrice,
+          subtotal: conversionDraftByItemId.get(purchaseRequestItemId)
+            ?.subtotal,
           taxCode: conversionDraftByItemId.get(purchaseRequestItemId)?.taxCode,
           additionalTaxCodes:
             conversionDraftByItemId.get(purchaseRequestItemId)
@@ -673,7 +690,7 @@ export const purchaseOrdersRouter = router({
             contractExpiryNotifiedAt: null,
             createdById: ctx.user.id,
           },
-          projectItems.map(({ item, quantityToConvert, unitPrice, taxCode, additionalTaxCodes }: any) => ({
+          projectItems.map(({ item, quantityToConvert, unitPrice, subtotal, taxCode, additionalTaxCodes }: any) => ({
             purchaseRequestItemId: item.id,
             materialRequestItemId: item.materialRequestItemId,
             originalSapItemCode: item.originalSapItemCode,
@@ -683,6 +700,7 @@ export const purchaseOrdersRouter = router({
             receivedQuantity: "0.00",
             unit: item.unit,
             unitPrice: unitPrice ?? item.unitPrice ?? "0.00",
+            subtotal,
             taxCode: taxCode ?? "exe",
             additionalTaxCodes,
             notes: item.notes,
@@ -1143,6 +1161,17 @@ export const purchaseOrdersRouter = router({
               message: "El precio debe ser un numero valido",
             }
           ),
+        subtotal: z
+          .string()
+          .trim()
+          .min(1)
+          .refine(
+            value => Number.isFinite(Number(value)) && Number(value) >= 0,
+            {
+              message: "El subtotal debe ser un numero valido",
+            }
+          )
+          .optional(),
         taxCode: z.string().trim().min(1),
         additionalTaxCodes: z.array(z.string().trim().min(1)).optional(),
       })
@@ -1171,6 +1200,7 @@ export const purchaseOrdersRouter = router({
       const taxData = await db.preparePurchaseOrderTaxDataForLine({
         quantity: itemDetail.item.quantity,
         unitPrice: input.unitPrice,
+        subtotal: input.subtotal,
         taxCode: input.taxCode,
         additionalTaxCodes: input.additionalTaxCodes,
       });
@@ -1205,6 +1235,17 @@ export const purchaseOrdersRouter = router({
               message: "El precio debe ser un numero valido",
             }
           ),
+        subtotal: z
+          .string()
+          .trim()
+          .min(1)
+          .refine(
+            value => Number.isFinite(Number(value)) && Number(value) >= 0,
+            {
+              message: "El subtotal debe ser un numero valido",
+            }
+          )
+          .optional(),
         taxCode: z.string().trim().min(1),
         additionalTaxCodes: z.array(z.string().trim().min(1)).optional(),
         itemName: z.string().trim().min(1).max(500).optional(),
@@ -1266,6 +1307,7 @@ export const purchaseOrdersRouter = router({
       const taxData = await db.preparePurchaseOrderTaxDataForLine({
         quantity: input.quantity,
         unitPrice: input.unitPrice,
+        subtotal: input.subtotal,
         taxCode: input.taxCode,
         additionalTaxCodes: input.additionalTaxCodes,
       });
@@ -1355,6 +1397,17 @@ export const purchaseOrdersRouter = router({
               message: "El precio debe ser un numero valido",
             }
           ),
+        subtotal: z
+          .string()
+          .trim()
+          .min(1)
+          .refine(
+            value => Number.isFinite(Number(value)) && Number(value) >= 0,
+            {
+              message: "El subtotal debe ser un numero valido",
+            }
+          )
+          .optional(),
         note: z.string().trim().max(500).optional(),
       })
     )
@@ -1392,12 +1445,25 @@ export const purchaseOrdersRouter = router({
         });
       }
 
-      if (Number(input.unitPrice) === Number(itemDetail.item.unitPrice ?? 0)) {
+      if (
+        Number(input.unitPrice) === Number(itemDetail.item.unitPrice ?? 0) &&
+        (input.subtotal === undefined ||
+          Number(input.subtotal) === Number(itemDetail.item.subtotal ?? 0))
+      ) {
         return { success: true };
       }
 
+      const taxData = await db.preparePurchaseOrderTaxDataForLine({
+        quantity: itemDetail.item.quantity,
+        unitPrice: input.unitPrice,
+        subtotal: input.subtotal,
+        taxCode: itemDetail.item.taxCode,
+        additionalTaxCodes: itemDetail.item.additionalTaxCodes as any,
+      });
+
       await db.updatePurchaseOrderItem(input.purchaseOrderItemId, {
         unitPrice: input.unitPrice,
+        ...taxData,
       });
       await db.createPurchaseOrderAuditLog({
         purchaseOrderId: itemDetail.purchaseOrder.id,
@@ -1915,13 +1981,15 @@ export const purchaseOrdersRouter = router({
       const itemWithoutPrice = (detail.items ?? []).find(
         (item: any) =>
           !Number.isFinite(Number(item.unitPrice ?? 0)) ||
-          Number(item.unitPrice ?? 0) <= 0
+          Number(item.unitPrice ?? 0) <= 0 ||
+          !Number.isFinite(Number(item.subtotal ?? 0)) ||
+          Number(item.subtotal ?? 0) <= 0
       );
       if (itemWithoutPrice) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message:
-            "Ingrese un precio unitario mayor que cero antes de emitir la OC",
+            "Ingrese precio unitario y subtotal mayores que cero antes de emitir la OC",
         });
       }
 

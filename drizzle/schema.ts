@@ -765,9 +765,25 @@ export const purchaseOrderItems = pgTable(
     quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull(),
     receivedQuantity: decimal("receivedQuantity", { precision: 12, scale: 2 }),
     unit: varchar("unit", { length: 50 }),
-    unitPrice: decimal("unitPrice", { precision: 14, scale: 4 })
+    unitPrice: decimal("unitPrice", { precision: 16, scale: 8 })
+      .default("0.00000000")
+      .notNull(),
+    subtotal: decimal("subtotal", { precision: 14, scale: 4 })
       .default("0.0000")
       .notNull(),
+    purchaseQuantity: decimal("purchaseQuantity", {
+      precision: 12,
+      scale: 4,
+    }),
+    purchaseUnit: varchar("purchaseUnit", { length: 50 }),
+    purchaseUnitPrice: decimal("purchaseUnitPrice", {
+      precision: 14,
+      scale: 4,
+    }),
+    unitConversionFactor: decimal("unitConversionFactor", {
+      precision: 14,
+      scale: 6,
+    }),
     taxCode: varchar("taxCode", { length: 50 }).default("exe").notNull(),
     additionalTaxCodes: jsonb("additionalTaxCodes")
       .$type<string[]>()
@@ -1006,8 +1022,8 @@ export const receiptItems = pgTable(
       scale: 2,
     }).notNull(),
     unit: varchar("unit", { length: 50 }),
-    unitPrice: decimal("unitPrice", { precision: 14, scale: 4 })
-      .default("0.0000")
+    unitPrice: decimal("unitPrice", { precision: 16, scale: 8 })
+      .default("0.00000000")
       .notNull(),
     taxCode: varchar("taxCode", { length: 50 }).default("exe").notNull(),
     additionalTaxCodes: jsonb("additionalTaxCodes")
@@ -1166,8 +1182,8 @@ export const invoiceItems = pgTable(
     originalSapItemCode: varchar("originalSapItemCode", { length: 50 }),
     quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull(),
     unit: varchar("unit", { length: 50 }),
-    unitPrice: decimal("unitPrice", { precision: 14, scale: 4 })
-      .default("0.0000")
+    unitPrice: decimal("unitPrice", { precision: 16, scale: 8 })
+      .default("0.00000000")
       .notNull(),
     taxCode: varchar("taxCode", { length: 50 }).default("exe").notNull(),
     additionalTaxCodes: jsonb("additionalTaxCodes")

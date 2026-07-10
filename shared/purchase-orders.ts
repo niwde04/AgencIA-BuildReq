@@ -373,6 +373,7 @@ export function roundPurchaseOrderMoney(value: number) {
 export function calculatePurchaseOrderLineAmounts(params: {
   quantity: string | number | null | undefined;
   unitPrice?: string | number | null | undefined;
+  subtotal?: string | number | null | undefined;
   taxCode?: string | null | undefined;
   additionalTaxCodes?: string[] | string | null | undefined;
   taxBreakdown?: PurchaseOrderTaxBreakdownEntry[] | string | null | undefined;
@@ -380,6 +381,10 @@ export function calculatePurchaseOrderLineAmounts(params: {
 }) {
   const quantity = toPurchaseOrderNumber(params.quantity);
   const unitPrice = toPurchaseOrderNumber(params.unitPrice);
+  const hasExplicitSubtotal =
+    params.subtotal !== null &&
+    params.subtotal !== undefined &&
+    params.subtotal !== "";
   const catalog = normalizeCatalog(params.taxes);
   const snapshotBreakdown = parsePurchaseOrderTaxBreakdown(params.taxBreakdown);
   const useSnapshot = snapshotBreakdown.length > 0 && !params.taxes;
@@ -407,7 +412,11 @@ export function calculatePurchaseOrderLineAmounts(params: {
         tax.value,
         catalog
       );
-  const subtotal = roundPurchaseOrderMoney(quantity * unitPrice);
+  const subtotal = roundPurchaseOrderMoney(
+    hasExplicitSubtotal
+      ? toPurchaseOrderNumber(params.subtotal)
+      : quantity * unitPrice
+  );
   const appliedTaxes = useSnapshot
     ? snapshotBreakdown
     : [
@@ -470,6 +479,7 @@ export function summarizePurchaseOrderLines(
   lines: Array<{
     quantity: string | number | null | undefined;
     unitPrice?: string | number | null | undefined;
+    subtotal?: string | number | null | undefined;
     taxCode?: string | null | undefined;
     additionalTaxCodes?: string[] | string | null | undefined;
     taxBreakdown?: PurchaseOrderTaxBreakdownEntry[] | string | null | undefined;

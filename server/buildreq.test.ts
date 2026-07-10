@@ -264,6 +264,39 @@ describe("BuildReq - Purchase order tax helpers", () => {
     });
   });
 
+  it("uses explicit supplier subtotals for converted purchase units", () => {
+    const summary = summarizePurchaseOrderLines([
+      {
+        quantity: "55",
+        unitPrice: "299.81818182",
+        subtotal: "16490.00",
+        taxCode: "isv_15",
+      },
+      {
+        quantity: "800",
+        unitPrice: "71.4425",
+        subtotal: "57154.00",
+        taxCode: "isv_15",
+      },
+      {
+        quantity: "330",
+        unitPrice: "272.03636364",
+        subtotal: "89772.00",
+        taxCode: "isv_15",
+      },
+      {
+        quantity: "55",
+        unitPrice: "192.43636364",
+        subtotal: "10584.00",
+        taxCode: "isv_15",
+      },
+    ]);
+
+    expect(summary.subtotal).toBe(174000);
+    expect(summary.totalIsv15).toBe(26100);
+    expect(summary.total).toBe(200100);
+  });
+
   it("summarizes purchase orders in invoice-style fiscal rows", () => {
     const summary = summarizePurchaseOrderLines([
       { quantity: "1", unitPrice: "100.00", taxCode: "exe" },
@@ -8987,6 +9020,10 @@ describe("BuildReq - Purchase Orders", () => {
           id: 15,
           purchaseOrderId: 4,
           unitPrice: "100.00",
+          quantity: "1.00",
+          subtotal: "100.00",
+          taxCode: "exe",
+          additionalTaxCodes: [],
         } as any,
         purchaseOrder: {
           id: 4,
@@ -9010,9 +9047,14 @@ describe("BuildReq - Purchase Orders", () => {
       })
     ).resolves.toEqual({ success: true });
 
-    expect(updatePurchaseOrderItemSpy).toHaveBeenCalledWith(15, {
-      unitPrice: "125.50",
-    });
+    expect(updatePurchaseOrderItemSpy).toHaveBeenCalledWith(
+      15,
+      expect.objectContaining({
+        unitPrice: "125.50",
+        subtotal: "125.5000",
+        taxCode: "exe",
+      })
+    );
     expect(createPurchaseOrderAuditLogSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         purchaseOrderId: 4,
@@ -9689,7 +9731,14 @@ describe("BuildReq - Purchase Orders", () => {
           status: "borrador",
           supplierId: 7,
         },
-        items: [{ id: 15, unitPrice: "125.50", receivedQuantity: "0.00" }],
+        items: [
+          {
+            id: 15,
+            unitPrice: "125.50",
+            subtotal: "125.50",
+            receivedQuantity: "0.00",
+          },
+        ],
       } as any);
     const updatePurchaseOrderSpy = vi
       .spyOn(db, "updatePurchaseOrder")
@@ -9795,7 +9844,14 @@ describe("BuildReq - Purchase Orders", () => {
           status: "borrador",
           supplierId: 7,
         },
-        items: [{ id: 15, unitPrice: "0.00", receivedQuantity: "0.00" }],
+        items: [
+          {
+            id: 15,
+            unitPrice: "0.00",
+            subtotal: "0.00",
+            receivedQuantity: "0.00",
+          },
+        ],
       } as any);
     const updatePurchaseOrderSpy = vi.spyOn(db, "updatePurchaseOrder");
 
@@ -9806,7 +9862,7 @@ describe("BuildReq - Purchase Orders", () => {
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
       message:
-        "Ingrese un precio unitario mayor que cero antes de emitir la OC",
+        "Ingrese precio unitario y subtotal mayores que cero antes de emitir la OC",
     });
     expect(updatePurchaseOrderSpy).not.toHaveBeenCalled();
 

@@ -221,6 +221,10 @@ function toMoneyString4(value: string | number | null | undefined) {
   return parseDecimal(value).toFixed(4);
 }
 
+function toMoneyString8(value: string | number | null | undefined) {
+  return parseDecimal(value).toFixed(8);
+}
+
 function toRateString(value: string | number | null | undefined) {
   return parseDecimal(value).toFixed(4);
 }
@@ -473,7 +477,7 @@ async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
     if (matchedCodes.length === 0) continue;
 
     const reference: PurchaseHistoryReference = {
-      unitPrice: toMoneyString4(row.unitPrice),
+      unitPrice: toMoneyString8(row.unitPrice),
       supplierId: row.supplierId ?? null,
       supplierCode: row.supplierCode ?? null,
       supplierName: row.supplierName ?? null,
@@ -579,7 +583,7 @@ export async function getLatestSupplierPurchasePrices(params: {
     if (matchedCodes.length === 0) continue;
 
     const reference: PurchaseHistoryReference = {
-      unitPrice: toMoneyString4(row.unitPrice),
+      unitPrice: toMoneyString8(row.unitPrice),
       supplierId: row.supplierId ?? null,
       supplierCode: row.supplierCode ?? null,
       supplierName: row.supplierName ?? null,
@@ -632,6 +636,7 @@ function buildPurchaseOrderSummaryRows(
   items: Array<{
     quantity: string | number | null | undefined;
     unitPrice?: string | number | null;
+    subtotal?: string | number | null;
     taxCode?: string | null;
   }>
 ) {
@@ -5087,6 +5092,7 @@ function buildPurchaseOrderDocument(params: {
     quantity: string | number;
     unit?: string | null;
     unitPrice?: string | number | null;
+    subtotal?: string | number | null;
     taxCode?: string | null;
     additionalTaxCodes?: string[] | string | null;
     taxBreakdown?: PurchaseOrderTaxBreakdownEntry[] | string | null;
@@ -5108,6 +5114,7 @@ function buildPurchaseOrderDocument(params: {
     params.items.map(item => ({
       quantity: item.quantity,
       unitPrice: item.unitPrice,
+      subtotal: item.subtotal,
       taxCode: item.taxCode,
       additionalTaxCodes: item.additionalTaxCodes,
       taxBreakdown: item.taxBreakdown,
@@ -5138,6 +5145,7 @@ function buildPurchaseOrderDocument(params: {
       const amounts = calculatePurchaseOrderLineAmounts({
         quantity: item.quantity,
         unitPrice: item.unitPrice,
+        subtotal: item.subtotal,
         taxCode: item.taxCode,
         additionalTaxCodes: item.additionalTaxCodes,
         taxBreakdown: item.taxBreakdown,
@@ -6032,6 +6040,7 @@ export async function createPurchaseOrder(
       ...(await preparePurchaseOrderTaxDataForLine({
         quantity: item.quantity,
         unitPrice: item.unitPrice,
+        subtotal: item.subtotal,
         taxCode: item.taxCode,
         additionalTaxCodes: item.additionalTaxCodes as any,
       })),
@@ -6136,6 +6145,7 @@ export async function createPurchaseOrder(
       quantity: item.quantity,
       unit: item.unit,
       unitPrice: item.unitPrice,
+      subtotal: item.subtotal,
       taxCode: item.taxCode,
       additionalTaxCodes: item.additionalTaxCodes,
       taxBreakdown: item.taxBreakdown,
@@ -6724,6 +6734,7 @@ export async function getPurchaseOrderById(id: number) {
       quantity: item.quantity,
       unit: item.unit,
       unitPrice: item.unitPrice,
+      subtotal: item.subtotal,
       taxCode: item.taxCode,
       additionalTaxCodes: item.additionalTaxCodes as any,
       taxBreakdown: item.taxBreakdown as any,
@@ -6739,6 +6750,7 @@ export async function getPurchaseOrderById(id: number) {
     items.map(item => ({
       quantity: item.quantity,
       unitPrice: item.unitPrice,
+      subtotal: item.subtotal,
       taxCode: item.taxCode,
       additionalTaxCodes: item.additionalTaxCodes as any,
       taxBreakdown: item.taxBreakdown as any,
@@ -7780,6 +7792,20 @@ function hasReceiptItemFinancialSnapshot(
   );
 }
 
+function prorateLineSubtotal(params: {
+  sourceSubtotal?: string | number | null;
+  sourceQuantity?: string | number | null;
+  targetQuantity?: string | number | null;
+}) {
+  const sourceSubtotal = parseDecimal(params.sourceSubtotal);
+  const sourceQuantity = parseDecimal(params.sourceQuantity);
+  const targetQuantity = parseDecimal(params.targetQuantity);
+  if (sourceSubtotal <= 0 || sourceQuantity <= 0 || targetQuantity <= 0) {
+    return undefined;
+  }
+  return toMoneyString4((sourceSubtotal * targetQuantity) / sourceQuantity);
+}
+
 type ReceiptOtherChargeInput = {
   concept: string;
   amount: string | number;
@@ -7967,6 +7993,13 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
       const amounts = calculatePurchaseOrderLineAmounts({
         quantity: receiptItem.quantityReceived,
         unitPrice: receiptItem.unitPrice ?? sourceItem?.unitPrice ?? "0.00",
+        subtotal: useReceiptFinancials
+          ? receiptItem.subtotal
+          : prorateLineSubtotal({
+              sourceSubtotal: sourceItem?.subtotal,
+              sourceQuantity: sourceItem?.quantity,
+              targetQuantity: receiptItem.quantityReceived,
+            }),
         taxCode: useReceiptFinancials
           ? receiptItem.taxCode
           : sourceItem.taxCode,
@@ -8080,7 +8113,7 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
           originalSapItemCode,
           quantity: toDecimalString(receiptItem.quantityReceived),
           unit: receiptItem.unit ?? sourceItem?.unit ?? null,
-          unitPrice: toMoneyString4(
+          unitPrice: toMoneyString8(
             receiptItem.unitPrice ?? sourceItem?.unitPrice ?? "0.00"
           ),
           taxCode: amounts.taxCode,
@@ -9272,6 +9305,7 @@ export async function removeSalesTax(id: number) {
 export async function preparePurchaseOrderTaxDataForLine(params: {
   quantity: string | number | null | undefined;
   unitPrice?: string | number | null | undefined;
+  subtotal?: string | number | null | undefined;
   taxCode?: string | null | undefined;
   additionalTaxCodes?: string[] | string | null | undefined;
 }) {
@@ -9291,6 +9325,7 @@ export async function preparePurchaseOrderTaxDataForLine(params: {
   const amounts = calculatePurchaseOrderLineAmounts({
     quantity: params.quantity,
     unitPrice: params.unitPrice,
+    subtotal: params.subtotal,
     taxCode,
     additionalTaxCodes,
     taxes,
@@ -9300,12 +9335,14 @@ export async function preparePurchaseOrderTaxDataForLine(params: {
     taxCode: amounts.taxCode,
     additionalTaxCodes: amounts.additionalTaxCodes,
     taxBreakdown: amounts.taxBreakdown,
+    subtotal: toMoneyString4(amounts.subtotal),
   };
 }
 
 export function prepareReceiptItemFinancialDataForLine(params: {
   quantity: string | number | null | undefined;
   unitPrice?: string | number | null | undefined;
+  subtotal?: string | number | null | undefined;
   taxCode?: string | null | undefined;
   additionalTaxCodes?: string[] | string | null | undefined;
   taxes?: SalesTaxCatalogItem[] | null;
@@ -9326,6 +9363,7 @@ export function prepareReceiptItemFinancialDataForLine(params: {
   const amounts = calculatePurchaseOrderLineAmounts({
     quantity: params.quantity,
     unitPrice: params.unitPrice,
+    subtotal: params.subtotal,
     taxCode,
     additionalTaxCodes,
     taxes,

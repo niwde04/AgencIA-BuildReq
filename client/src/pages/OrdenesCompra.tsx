@@ -515,6 +515,11 @@ function formatMoneyPayload(value: number | string | null | undefined) {
   return Number.isFinite(parsed) ? parsed.toFixed(4) : "0.0000";
 }
 
+function formatUnitPricePayload(value: number | string | null | undefined) {
+  const parsed = toPurchaseOrderNumber(value);
+  return Number.isFinite(parsed) ? parsed.toFixed(8) : "0.00000000";
+}
+
 function formatMoneyDisplay(value: number | string | null | undefined) {
   const parsed = toPurchaseOrderNumber(value);
   return Number.isFinite(parsed) ? parsed.toFixed(2) : "0.00";
@@ -534,8 +539,10 @@ function calculateUnitPriceDraftValue(
   subtotal: number | string | null | undefined
 ) {
   const parsedQuantity = toPurchaseOrderNumber(quantity);
-  if (parsedQuantity <= 0) return "0.0000";
-  return formatMoneyPayload(toPurchaseOrderNumber(subtotal) / parsedQuantity);
+  if (parsedQuantity <= 0) return "0.00000000";
+  return formatUnitPricePayload(
+    toPurchaseOrderNumber(subtotal) / parsedQuantity
+  );
 }
 
 function withDraftQuantity(
@@ -1187,7 +1194,8 @@ export default function OrdenesCompra() {
         return {
           purchaseRequestItemId: item.id,
           quantity: formatQuantityPayload(draft.quantity),
-          unitPrice: formatMoneyPayload(draft.unitPrice),
+          unitPrice: formatUnitPricePayload(draft.unitPrice),
+          subtotal: formatMoneyPayload(draft.subtotal),
           taxCode: draft.taxCode,
           additionalTaxCodes: draft.additionalTaxCodes,
         };
@@ -1218,6 +1226,7 @@ export default function OrdenesCompra() {
           return {
             quantity: draft.quantity,
             unitPrice: draft.unitPrice,
+            subtotal: draft.subtotal,
             taxCode: draft.taxCode,
             additionalTaxCodes: draft.additionalTaxCodes,
           };
@@ -1488,10 +1497,14 @@ export default function OrdenesCompra() {
           (() => {
             const quantity = String(item.quantity ?? "0.00");
             const unitPrice = formatMoneyDisplay(item.unitPrice ?? "0.00");
+            const subtotal =
+              item.subtotal !== null && item.subtotal !== undefined
+                ? formatMoneyDisplay(item.subtotal)
+                : calculateSubtotalDraftValue(quantity, unitPrice);
             return {
               quantity,
               unitPrice,
-              subtotal: calculateSubtotalDraftValue(quantity, unitPrice),
+              subtotal,
               taxCode: normalizePurchaseOrderTaxCode(
                 item.taxCode,
                 activeSalesTaxes
@@ -1536,7 +1549,10 @@ export default function OrdenesCompra() {
       const currentDraft = itemDrafts[item.id] ?? {
         quantity: String(item.quantity ?? "0.00"),
         unitPrice: formatMoneyDisplay(item.unitPrice ?? "0.00"),
-        subtotal: calculateSubtotalDraftValue(item.quantity, item.unitPrice),
+        subtotal:
+          item.subtotal !== null && item.subtotal !== undefined
+            ? formatMoneyDisplay(item.subtotal)
+            : calculateSubtotalDraftValue(item.quantity, item.unitPrice),
         taxCode: normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes),
         additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
           item.additionalTaxCodes,
@@ -1574,6 +1590,7 @@ export default function OrdenesCompra() {
         purchaseOrderItemId: update.itemId,
         quantity: update.draft.quantity,
         unitPrice: update.draft.unitPrice,
+        subtotal: update.draft.subtotal,
         taxCode: update.draft.taxCode,
         additionalTaxCodes: update.draft.additionalTaxCodes,
       });
@@ -1584,7 +1601,10 @@ export default function OrdenesCompra() {
     itemDrafts[item.id] ?? {
       quantity: String(item.quantity ?? "0.00"),
       unitPrice: formatMoneyDisplay(item.unitPrice ?? "0.00"),
-      subtotal: calculateSubtotalDraftValue(item.quantity, item.unitPrice),
+      subtotal:
+        item.subtotal !== null && item.subtotal !== undefined
+          ? formatMoneyDisplay(item.subtotal)
+          : calculateSubtotalDraftValue(item.quantity, item.unitPrice),
       taxCode: normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes),
       additionalTaxCodes: normalizePurchaseOrderAdditionalTaxCodes(
         item.additionalTaxCodes,
@@ -1603,6 +1623,7 @@ export default function OrdenesCompra() {
           return {
             quantity: draft.quantity,
             unitPrice: draft.unitPrice,
+            subtotal: draft.subtotal,
             taxCode: draft.taxCode,
             additionalTaxCodes: draft.additionalTaxCodes,
           };
@@ -1620,6 +1641,7 @@ export default function OrdenesCompra() {
         return (
           Number(draft.quantity || 0) !== Number(item.quantity ?? 0) ||
           Number(draft.unitPrice || 0) !== Number(item.unitPrice ?? 0) ||
+          Number(draft.subtotal || 0) !== Number(item.subtotal ?? 0) ||
           draft.taxCode !==
             normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes) ||
           !areTaxCodeArraysEqual(
@@ -1635,7 +1657,10 @@ export default function OrdenesCompra() {
       canEditContractLinePrice &&
       items.some((item: any) => {
         const draft = getItemDraft(item);
-        return Number(draft.unitPrice || 0) !== Number(item.unitPrice ?? 0);
+        return (
+          Number(draft.unitPrice || 0) !== Number(item.unitPrice ?? 0) ||
+          Number(draft.subtotal || 0) !== Number(item.subtotal ?? 0)
+        );
       }),
     [canEditContractLinePrice, items, itemDrafts]
   );
@@ -1795,6 +1820,7 @@ export default function OrdenesCompra() {
     if (
       Number(draft.quantity || 0) === Number(item.quantity ?? 0) &&
       Number(draft.unitPrice || 0) === Number(item.unitPrice ?? 0) &&
+      Number(draft.subtotal || 0) === Number(item.subtotal ?? 0) &&
       draft.taxCode === normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes) &&
       areTaxCodeArraysEqual(draft.additionalTaxCodes, item.additionalTaxCodes)
       && !itemNameChanged
@@ -1813,6 +1839,7 @@ export default function OrdenesCompra() {
         purchaseOrderItemId: item.id,
         quantity: draft.quantity,
         unitPrice: draft.unitPrice,
+        subtotal: draft.subtotal,
         taxCode: draft.taxCode,
         additionalTaxCodes: draft.additionalTaxCodes,
         ...(isTemporaryFixedAsset && itemNameDraft
@@ -1839,7 +1866,10 @@ export default function OrdenesCompra() {
 
     const rawDraft = getItemDraft(item);
     const draft = normalizeDraftMoneyValues(rawDraft);
-    if (Number(draft.unitPrice || 0) === Number(item.unitPrice ?? 0)) {
+    if (
+      Number(draft.unitPrice || 0) === Number(item.unitPrice ?? 0) &&
+      Number(draft.subtotal || 0) === Number(item.subtotal ?? 0)
+    ) {
       return;
     }
     if (!draft.unitPrice.trim()) {
@@ -1853,6 +1883,7 @@ export default function OrdenesCompra() {
       {
         purchaseOrderItemId: item.id,
         unitPrice: draft.unitPrice,
+        subtotal: draft.subtotal,
       },
       {
         onSettled: () => {
@@ -2100,6 +2131,7 @@ export default function OrdenesCompra() {
         const amounts = calculatePurchaseOrderLineAmounts({
           quantity: draft.quantity,
           unitPrice: draft.unitPrice,
+          subtotal: draft.subtotal,
           taxCode: draft.taxCode,
           additionalTaxCodes: draft.additionalTaxCodes,
           taxes: activeSalesTaxes,
@@ -3504,6 +3536,7 @@ export default function OrdenesCompra() {
                         const lineAmounts = calculatePurchaseOrderLineAmounts({
                           quantity: draft.quantity,
                           unitPrice: draft.unitPrice,
+                          subtotal: draft.subtotal,
                           taxCode: draft.taxCode,
                           additionalTaxCodes: draft.additionalTaxCodes,
                           taxes: activeSalesTaxes,
@@ -4289,6 +4322,7 @@ export default function OrdenesCompra() {
                       const lineAmounts = calculatePurchaseOrderLineAmounts({
                         quantity: draft.quantity,
                         unitPrice: draft.unitPrice,
+                        subtotal: draft.subtotal,
                         taxCode: draft.taxCode,
                         additionalTaxCodes: draft.additionalTaxCodes,
                         taxes: activeSalesTaxes,

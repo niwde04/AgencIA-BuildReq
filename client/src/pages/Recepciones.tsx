@@ -514,6 +514,11 @@ function formatMoneyPayload(value: number | string | null | undefined) {
   return Number.isFinite(parsed) ? parsed.toFixed(4) : "0.0000";
 }
 
+function formatUnitPricePayload(value: number | string | null | undefined) {
+  const parsed = toPurchaseOrderNumber(value);
+  return Number.isFinite(parsed) ? parsed.toFixed(8) : "0.00000000";
+}
+
 function formatMoneyDisplay(value: number | string | null | undefined) {
   const parsed = toPurchaseOrderNumber(value);
   return Number.isFinite(parsed) ? parsed.toFixed(2) : "0.00";
@@ -533,8 +538,34 @@ function calculateReceiptUnitPriceDraftValue(
   subtotal: number | string | null | undefined
 ) {
   const parsedQuantity = toPurchaseOrderNumber(quantity);
-  if (parsedQuantity <= 0) return "0.0000";
-  return formatMoneyPayload(toPurchaseOrderNumber(subtotal) / parsedQuantity);
+  if (parsedQuantity <= 0) return "0.00000000";
+  return formatUnitPricePayload(
+    toPurchaseOrderNumber(subtotal) / parsedQuantity
+  );
+}
+
+function calculateReceiptSubtotalFromSource(
+  item: any,
+  receivedQuantity: number | string | null | undefined,
+  unitPrice: number | string | null | undefined
+) {
+  const sourceSubtotal = toPurchaseOrderNumber(item?.subtotal);
+  const sourceQuantity = toPurchaseOrderNumber(
+    item?.quantity ?? item?.quantityExpected
+  );
+  const parsedReceivedQuantity = toPurchaseOrderNumber(receivedQuantity);
+
+  if (
+    sourceSubtotal > 0 &&
+    sourceQuantity > 0 &&
+    parsedReceivedQuantity > 0
+  ) {
+    return formatMoneyDisplay(
+      (sourceSubtotal * parsedReceivedQuantity) / sourceQuantity
+    );
+  }
+
+  return calculateReceiptSubtotalDraftValue(receivedQuantity, unitPrice);
 }
 
 function escapeHtml(value: unknown) {
@@ -760,6 +791,13 @@ function getReceiptLineTaxSummaryInput(item: any, sourceItem?: any) {
   return {
     quantity: item.quantityReceived,
     unitPrice: item.unitPrice ?? sourceItem?.unitPrice ?? "0.00",
+    subtotal: useStoredFinancials
+      ? item.subtotal
+      : calculateReceiptSubtotalFromSource(
+          sourceItem,
+          item.quantityReceived,
+          item.unitPrice ?? sourceItem?.unitPrice ?? "0.00"
+        ),
     taxCode: useStoredFinancials ? item.taxCode : sourceItem?.taxCode,
     additionalTaxCodes: useStoredFinancials
       ? item.additionalTaxCodes
@@ -1621,7 +1659,8 @@ export default function Recepciones() {
       );
       nextSubtotalMap[item.id] = formatMoneyDisplay(
         draftItem?.subtotal ??
-          calculateReceiptSubtotalDraftValue(
+          calculateReceiptSubtotalFromSource(
+            item,
             nextMap[item.id],
             nextPriceMap[item.id]
           )
@@ -2143,9 +2182,10 @@ export default function Recepciones() {
       normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes);
     return {
       quantity: receivedMap[item.id] ?? "0",
-      unitPrice: formatMoneyPayload(
+      unitPrice: formatUnitPricePayload(
         priceMap[item.id] ?? String(item.unitPrice ?? "0.00")
       ),
+      subtotal: formatMoneyPayload(getReceiptLineSubtotalDraft(item)),
       taxCode,
       additionalTaxCodes:
         additionalTaxCodesByItemId[item.id] ??
@@ -2373,7 +2413,8 @@ export default function Recepciones() {
         quantityExpected: quantityReceived,
         quantityReceived,
         unit: item.unit || undefined,
-        unitPrice: formatMoneyPayload(priceMap[item.id] || item.unitPrice),
+        unitPrice: formatUnitPricePayload(priceMap[item.id] || item.unitPrice),
+        subtotal: formatMoneyPayload(getReceiptLineSubtotalDraft(item)),
         taxCode: taxDraft.taxCode,
         additionalTaxCodes: taxDraft.additionalTaxCodes,
         ...getReceiptTargetPayload(targetByItemId[item.id] ?? null),
@@ -2966,6 +3007,7 @@ export default function Recepciones() {
       receiptEditableItems,
       receivedMap,
       sourceType,
+      subtotalMap,
       taxCodeByItemId,
     ]
   );
@@ -3099,7 +3141,8 @@ export default function Recepciones() {
     if (sourceType === "purchase_order") {
       setSubtotalMap(current => ({
         ...current,
-        [itemId]: calculateReceiptSubtotalDraftValue(
+        [itemId]: calculateReceiptSubtotalFromSource(
+          item,
           nextValue,
           priceMap[itemId] ?? String(item.unitPrice ?? "0.00")
         ),
@@ -3149,7 +3192,8 @@ export default function Recepciones() {
       }));
       setSubtotalMap(current => ({
         ...current,
-        [item.id]: calculateReceiptSubtotalDraftValue(
+        [item.id]: calculateReceiptSubtotalFromSource(
+          item,
           receivedQuantity,
           priceMap[item.id] ?? String(item.unitPrice ?? "0.00")
         ),
@@ -3328,9 +3372,12 @@ export default function Recepciones() {
                 ? String(getPositiveIntegerQuantity(receivedMap[sourceItem.id]))
                 : receivedMap[sourceItem.id] || "0",
               unit: sourceItem.unit || undefined,
-              unitPrice: formatMoneyPayload(
+              unitPrice: formatUnitPricePayload(
                 priceMap[sourceItem.id] ||
                   String(sourceItem.unitPrice ?? "0.00")
+              ),
+              subtotal: formatMoneyPayload(
+                getReceiptLineSubtotalDraft(sourceItem)
               ),
               taxCode: taxDraft.taxCode,
               additionalTaxCodes: taxDraft.additionalTaxCodes,
@@ -3548,7 +3595,7 @@ export default function Recepciones() {
           unit: item.unit || undefined,
           unitPrice:
             sourceType === "purchase_order"
-              ? formatMoneyPayload(
+              ? formatUnitPricePayload(
                   priceMap[item.id] || String(item.unitPrice ?? "0.00")
                 )
               : "0.00",
@@ -3629,6 +3676,10 @@ export default function Recepciones() {
         return [{
           ...basePayload,
           sapItemCode: getSourceItemCode(item),
+          subtotal:
+            sourceType === "purchase_order"
+              ? formatMoneyPayload(getReceiptLineSubtotalDraft(item))
+              : undefined,
           assetDetails: isFixedAsset
             ? normalizeFixedAssetDetails(
                 assetDraft.assetDetails,
@@ -3994,6 +4045,7 @@ export default function Recepciones() {
     const summaryLines: Array<{
       quantity: string | number | null | undefined;
       unitPrice?: string | number | null;
+      subtotal?: string | number | null;
       taxCode?: string | null;
       additionalTaxCodes?: string[] | string | null;
       taxBreakdown?: any;
@@ -5504,6 +5556,7 @@ export default function Recepciones() {
                             ? calculatePurchaseOrderLineAmounts({
                                 quantity: taxDraft.quantity,
                                 unitPrice: taxDraft.unitPrice,
+                                subtotal: taxDraft.subtotal,
                                 taxCode: taxDraft.taxCode,
                                 additionalTaxCodes: taxDraft.additionalTaxCodes,
                                 taxes: activeSalesTaxes,
@@ -5531,6 +5584,11 @@ export default function Recepciones() {
                             ? calculatePurchaseOrderLineAmounts({
                                 quantity: "1",
                                 unitPrice: taxDraft.unitPrice,
+                                subtotal: calculateReceiptSubtotalFromSource(
+                                  item,
+                                  "1",
+                                  taxDraft.unitPrice
+                                ),
                                 taxCode: taxDraft.taxCode,
                                 additionalTaxCodes: taxDraft.additionalTaxCodes,
                                 taxes: activeSalesTaxes,

@@ -320,6 +320,13 @@ const receiptItemSchema = z
     quantityReceived: z.string().min(1),
     unit: z.string().optional(),
     unitPrice: z.string().trim().optional(),
+    subtotal: z
+      .string()
+      .trim()
+      .refine(value => value === "" || (Number.isFinite(Number(value)) && Number(value) >= 0), {
+        message: "El subtotal debe ser un número válido",
+      })
+      .optional(),
     taxCode: z.string().trim().min(1).optional(),
     additionalTaxCodes: z.array(z.string().trim().min(1)).optional(),
     targetType: z.enum(["subproyecto", "activo_fijo"]).nullable().optional(),
@@ -497,11 +504,20 @@ function preparePurchaseOrderReceiptItemFinancialData(params: {
   sourceItem: any;
   taxes: Awaited<ReturnType<typeof db.getActiveSalesTaxCatalog>>;
 }) {
+  const sourceSubtotal = Number(params.sourceItem?.subtotal ?? 0);
+  const sourceQuantity = Number(params.sourceItem?.quantity ?? 0);
+  const receivedQuantity = Number(params.item.quantityReceived ?? 0);
+  const proratedSubtotal =
+    sourceSubtotal > 0 && sourceQuantity > 0 && receivedQuantity > 0
+      ? ((sourceSubtotal * receivedQuantity) / sourceQuantity).toFixed(4)
+      : undefined;
+
   try {
     return db.prepareReceiptItemFinancialDataForLine({
       quantity: params.item.quantityReceived,
       unitPrice:
         params.item.unitPrice ?? params.sourceItem?.unitPrice ?? "0.00",
+      subtotal: params.item.subtotal || proratedSubtotal,
       taxCode: params.item.taxCode ?? params.sourceItem?.taxCode ?? "exe",
       additionalTaxCodes:
         params.item.additionalTaxCodes ??
