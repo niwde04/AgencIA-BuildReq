@@ -28,6 +28,7 @@ import {
 import { Check, ChevronsUpDown, Eye, Package, Plus, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { UNITS } from "@shared/units";
 
 type OpeningBalanceItemRow = {
   sapItemCode: string;
@@ -44,34 +45,6 @@ const EMPTY_ROW: OpeningBalanceItemRow = {
   unit: "",
   notes: "",
 };
-
-const UNITS = [
-  { value: "und", label: "Unidades (und)" },
-  { value: "m", label: "Metros (m)" },
-  { value: "m2", label: "Metros cuadrados (m2)" },
-  { value: "m3", label: "Metros cubicos (m3)" },
-  { value: "ml", label: "Metros lineales (ml)" },
-  { value: "kg", label: "Kilogramos (kg)" },
-  { value: "ton", label: "Toneladas (ton)" },
-  { value: "lb", label: "Libras (lb)" },
-  { value: "gal", label: "Galones (gal)" },
-  { value: "lt", label: "Litros (lt)" },
-  { value: "saco", label: "Sacos" },
-  { value: "bolsa", label: "Bolsas" },
-  { value: "rollo", label: "Rollos" },
-  { value: "lamina", label: "Laminas" },
-  { value: "varilla", label: "Varillas" },
-  { value: "tubo", label: "Tubos" },
-  { value: "pieza", label: "Piezas" },
-  { value: "par", label: "Pares" },
-  { value: "caja", label: "Cajas" },
-  { value: "cubeta", label: "Cubetas" },
-  { value: "quintal", label: "Quintales (qq)" },
-  { value: "pie2", label: "Pies cuadrados (ft2)" },
-  { value: "plg", label: "Pulgadas (plg)" },
-  { value: "viaje", label: "Viajes" },
-  { value: "global", label: "Global" },
-];
 
 function formatProjectLabel(project: any | null | undefined) {
   if (!project) return "Seleccione proyecto";
