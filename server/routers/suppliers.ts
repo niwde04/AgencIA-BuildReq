@@ -446,6 +446,19 @@ export const suppliersRouter = router({
       if (input.address !== undefined) {
         data.address = input.address.trim() || null;
       }
+      const hasValidAccountPaymentCertificate =
+        await db.hasValidSupplierAccountPaymentCertificate(input.id);
+      if (
+        hasValidAccountPaymentCertificate &&
+        (input.allowsTaxWithholding !== undefined ||
+          input.subjectToAccountPayments !== undefined)
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "La constancia de pagos a cuenta vigente no permite modificar estos valores fiscales",
+        });
+      }
       if (input.allowsTaxWithholding !== undefined) {
         data.allowsTaxWithholding = input.allowsTaxWithholding;
       }

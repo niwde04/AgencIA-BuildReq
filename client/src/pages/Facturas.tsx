@@ -68,6 +68,7 @@ import {
   parseFixedAssetDetails,
   type FixedAssetDetail,
 } from "@shared/fixed-assets";
+import { isAccountPaymentAllowedRetention } from "@shared/supplier-documents";
 
 const STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
@@ -147,6 +148,7 @@ type RetentionOption = {
   ratePercent: string | number;
   isActive?: boolean;
   erpCode?: string | null;
+  disabledReason?: string | null;
 };
 
 type InvoiceAssetDraft = {
@@ -455,12 +457,17 @@ function InvoiceLineRetentionCell({
                 </SelectTrigger>
                 <SelectContent>
                   {availableRetentionOptions.map(option => (
-                    <SelectItem key={option.id} value={String(option.id)}>
+                    <SelectItem
+                      key={option.id}
+                      value={String(option.id)}
+                      disabled={Boolean(option.disabledReason)}
+                    >
                       {option.taxCode} — {option.description} (
                       {Number(option.ratePercent).toLocaleString("es-HN", {
                         maximumFractionDigits: 4,
                       })}
                       %)
+                      {option.disabledReason ? " — No disponible" : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1735,17 +1742,53 @@ export default function Facturas() {
   const withholdingBase = (detail?.items ?? [])
     .filter((item: any) => item.allowsTaxWithholding !== false)
     .reduce((sum: number, item: any) => sum + toNumber(item.subtotal), 0);
+  const accountPaymentCertificate = detail?.accountPaymentCertificate ?? null;
+  const hasValidAccountPaymentCertificate =
+    accountPaymentCertificate?.status === "vigente";
+  const retentionPolicy =
+    detail?.retentionPolicy ??
+    (detail?.supplier?.allowsTaxWithholding !== false ? "manual" : "none");
   const supplierAllowsTaxWithholding =
-    detail?.supplier?.allowsTaxWithholding !== false;
+    retentionPolicy === "rt15_only"
+      ? false
+      : detail?.supplier?.allowsTaxWithholding !== false;
   const supplierSubjectToAccountPayments =
+    hasValidAccountPaymentCertificate ||
     detail?.supplier?.subjectToAccountPayments !== false;
+  const hasAvailableRt15Retention = retentionOptions.some(option =>
+    isAccountPaymentAllowedRetention(option)
+  );
   const canRetainSelectedInvoice =
-    supplierAllowsTaxWithholding && withholdingBase > 0;
-  const retentionDisabledReason = !supplierAllowsTaxWithholding
-    ? "El proveedor no permite retención de impuestos."
-    : withholdingBase <= 0
-      ? "La factura no tiene líneas habilitadas para retención."
-      : "";
+    (retentionPolicy === "rt15_only"
+      ? hasAvailableRt15Retention
+      : supplierAllowsTaxWithholding) && withholdingBase > 0;
+  const retentionDisabledReason =
+    retentionPolicy === "rt15_only" && !hasAvailableRt15Retention
+      ? "La retención RT15 (15%) no está disponible en el catálogo."
+      : retentionPolicy !== "rt15_only" && !supplierAllowsTaxWithholding
+        ? "El proveedor no permite retención de impuestos."
+        : withholdingBase <= 0
+          ? "La factura no tiene líneas habilitadas para retención."
+          : "";
+  const incompatibleAccountPaymentRetentions =
+    hasValidAccountPaymentCertificate
+      ? retentionDrafts.filter(
+          retention =>
+            !isAccountPaymentAllowedRetention({
+              taxCode: retention.retentionCode,
+              ratePercent: retention.percentage,
+            })
+        )
+      : [];
+  const accountPaymentCertificateLabel = !accountPaymentCertificate
+    ? "Sin constancia"
+    : accountPaymentCertificate.status === "vigente"
+      ? `Vigente hasta ${formatDateLabel(accountPaymentCertificate.expirationDate)}`
+      : accountPaymentCertificate.status === "futuro"
+        ? `Vigente desde ${formatDateLabel(accountPaymentCertificate.documentDate)}`
+        : accountPaymentCertificate.status === "vencido"
+          ? `Vencida el ${formatDateLabel(accountPaymentCertificate.expirationDate)}`
+          : "Sin vencimiento válido";
   const netPayable = Math.max(invoiceTotal - retentionTotal, 0);
   const handlePrintInvoiceDetail = () => {
     if (!detail?.invoice) return;
@@ -2505,9 +2548,16 @@ export default function Facturas() {
         retention => retention.retentionCatalogId
       )
     );
-    return retentionOptions.filter(
-      option => !selectedRetentionIds.has(String(option.id))
-    );
+    return retentionOptions
+      .filter(option => !selectedRetentionIds.has(String(option.id)))
+      .map(option => ({
+        ...option,
+        disabledReason:
+          hasValidAccountPaymentCertificate &&
+          !isAccountPaymentAllowedRetention(option)
+            ? "No disponible: la constancia vigente solo permite RT15"
+            : null,
+      }));
   };
 
   const sortRetentionDrafts = (drafts: RetentionDraft[]) =>
@@ -2536,6 +2586,15 @@ export default function Facturas() {
       option => String(option.id) === value
     );
     if (!selectedOption) return;
+    if (
+      hasValidAccountPaymentCertificate &&
+      !isAccountPaymentAllowedRetention(selectedOption)
+    ) {
+      toast.error(
+        "La constancia de pagos a cuenta vigente solo permite RT15 (15%)"
+      );
+      return;
+    }
 
     updateRetentionDrafts(current => {
       const currentLineRetentions = current.filter(
@@ -2567,6 +2626,12 @@ export default function Facturas() {
 
   const handleSaveRetentions = () => {
     if (!selectedId) return;
+    if (incompatibleAccountPaymentRetentions.length > 0) {
+      toast.error(
+        "Retire las retenciones incompatibles; la constancia vigente solo permite RT15 (15%)"
+      );
+      return;
+    }
     if (retentionDrafts.length > 0 && !canRetainSelectedInvoice) {
       toast.error(
         retentionDisabledReason || "La factura no permite retenciones"
@@ -3514,14 +3579,18 @@ export default function Facturas() {
                       <Badge
                         variant="outline"
                         className={`text-xs ${
-                          supplierAllowsTaxWithholding
+                          retentionPolicy === "rt15_only"
+                            ? "border-blue-300 text-blue-700"
+                            : supplierAllowsTaxWithholding
                             ? "border-emerald-300 text-emerald-700"
                             : "border-amber-300 text-amber-700"
                         }`}
                       >
-                        {supplierAllowsTaxWithholding
-                          ? "Permite retención"
-                          : "No permite retención"}
+                        {retentionPolicy === "rt15_only"
+                          ? "Solo RT15 (15%)"
+                          : supplierAllowsTaxWithholding
+                            ? "Permite retención"
+                            : "No permite retención"}
                       </Badge>
                       <Badge
                         variant="outline"
@@ -4387,6 +4456,14 @@ export default function Facturas() {
                       </div>
                     ) : null}
 
+                    {incompatibleAccountPaymentRetentions.length > 0 ? (
+                      <div className="rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm text-rose-800">
+                        Esta factura contiene retenciones incompatibles con la
+                        constancia vigente. Retírelas antes de guardar; solo se
+                        permite RT15 (15%).
+                      </div>
+                    ) : null}
+
                     {retentionDrafts.length === 0 ? (
                       <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
                         Sin retenciones aplicadas.
@@ -4437,7 +4514,15 @@ export default function Facturas() {
                                 <td className="p-3">
                                   <Badge
                                     variant="outline"
-                                    className="border-emerald-300 text-emerald-700"
+                                    className={
+                                      hasValidAccountPaymentCertificate &&
+                                      !isAccountPaymentAllowedRetention({
+                                        taxCode: retention.retentionCode,
+                                        ratePercent: retention.percentage,
+                                      })
+                                        ? "border-rose-300 text-rose-700"
+                                        : "border-emerald-300 text-emerald-700"
+                                    }
                                   >
                                     {retention.retentionCode} -{" "}
                                     {retention.description}
@@ -4500,6 +4585,7 @@ export default function Facturas() {
                         disabled={
                           replaceRetentionsMutation.isPending ||
                           retentionsSaveConfirmed ||
+                          incompatibleAccountPaymentRetentions.length > 0 ||
                           (retentionDrafts.length > 0 &&
                             !canRetainSelectedInvoice)
                         }
@@ -4542,9 +4628,11 @@ export default function Facturas() {
                       : "Proveedor no sujeto a pagos a cuenta"}
                   </p>
                   <p className="mt-1">
-                    {supplierAllowsTaxWithholding
-                      ? "Permite aplicar retenciones según normativa vigente."
-                      : "No permite retenciones para este proveedor."}
+                    {retentionPolicy === "rt15_only"
+                      ? "La constancia vigente permite únicamente la retención RT15 (15%)."
+                      : supplierAllowsTaxWithholding
+                        ? "Permite aplicar retenciones según normativa vigente."
+                        : "No permite retenciones para este proveedor."}
                   </p>
                 </section>
 
@@ -4732,17 +4820,25 @@ export default function Facturas() {
                     </div>
                     <div className="flex justify-between gap-3">
                       <span className="text-muted-foreground">
-                        Permite retención
+                        {retentionPolicy === "rt15_only"
+                          ? "Retenciones permitidas"
+                          : "Permite retención"}
                       </span>
                       <Badge
                         variant="outline"
                         className={
-                          supplierAllowsTaxWithholding
-                            ? "border-emerald-300 text-emerald-700"
-                            : "border-slate-300 text-slate-600"
+                          retentionPolicy === "rt15_only"
+                            ? "border-blue-300 text-blue-700"
+                            : supplierAllowsTaxWithholding
+                              ? "border-emerald-300 text-emerald-700"
+                              : "border-slate-300 text-slate-600"
                         }
                       >
-                        {supplierAllowsTaxWithholding ? "Sí" : "No"}
+                        {retentionPolicy === "rt15_only"
+                          ? "Solo RT15 (15%)"
+                          : supplierAllowsTaxWithholding
+                            ? "Sí"
+                            : "No"}
                       </Badge>
                     </div>
                     <div className="flex justify-between gap-3">
@@ -4772,7 +4868,15 @@ export default function Facturas() {
                     </div>
                     <div className="flex justify-between gap-3">
                       <span className="text-muted-foreground">
-                        Alerta fecha límite
+                        Vencimiento constancia
+                      </span>
+                      <span className="text-right font-medium">
+                        {accountPaymentCertificateLabel}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">
+                        Alerta límite emisión factura
                       </span>
                       <span className="font-medium">
                         {getInvoiceHasEmissionDeadlineIssue(detail.invoice)

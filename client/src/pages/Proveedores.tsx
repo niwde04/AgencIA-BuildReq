@@ -27,6 +27,10 @@ import {
 } from "@/lib/document-attachments";
 import { trpc } from "@/lib/trpc";
 import {
+  getSupplierAccountPaymentCertificateStatus,
+  isSupplierAccountPaymentCertificateCode,
+} from "../../../shared/supplier-documents";
+import {
   Building2,
   ExternalLink,
   FileText,
@@ -448,6 +452,7 @@ export default function Proveedores() {
       setSelectedDocumentFile(null);
       if (documentFileInputRef.current) documentFileInputRef.current.value = "";
       void utils.suppliers.listDocuments.invalidate();
+      void utils.suppliers.list.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -459,6 +464,7 @@ export default function Proveedores() {
       setDocumentDraft(EMPTY_DOCUMENT_DRAFT);
       setSelectedDocumentFile(null);
       void utils.suppliers.listDocuments.invalidate();
+      void utils.suppliers.list.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -466,6 +472,7 @@ export default function Proveedores() {
     onSuccess: () => {
       toast.success("Documento eliminado");
       void utils.suppliers.listDocuments.invalidate();
+      void utils.suppliers.list.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -476,6 +483,14 @@ export default function Proveedores() {
   const activeDocumentTypes = documentTypes.filter((type) => type.isActive);
   const supplierDocuments =
     (supplierDocumentsRaw ?? []) as SupplierDocumentRecord[];
+  const hasValidAccountPaymentCertificate = supplierDocuments.some(
+    document =>
+      isSupplierAccountPaymentCertificateCode(document.documentType.code) &&
+      getSupplierAccountPaymentCertificateStatus({
+        documentDate: document.documentDate,
+        expirationDate: document.expirationDate,
+      }) === "vigente"
+  );
   const selectedDocumentType = documentTypes.find(
     (type) => String(type.id) === documentDraft.documentTypeId
   );
@@ -527,7 +542,6 @@ export default function Proveedores() {
     const supplierCode = supplierDraft.supplierCode.trim().toUpperCase();
     const name = supplierDraft.name.trim();
     const email = supplierDraft.email.trim().toLowerCase();
-
     if (isCreatingSupplier) {
       if (!supplierCode) {
         toast.error("Ingrese el código del proveedor");
@@ -559,8 +573,12 @@ export default function Proveedores() {
       id: selectedSupplier.id,
       ...(canEditSupplierRtn ? { rtn: editRtn.trim() } : {}),
       address: editAddress.trim(),
-      allowsTaxWithholding: editAllowsTaxWithholding,
-      subjectToAccountPayments: editSubjectToAccountPayments,
+      ...(hasValidAccountPaymentCertificate
+        ? {}
+        : {
+            allowsTaxWithholding: editAllowsTaxWithholding,
+            subjectToAccountPayments: editSubjectToAccountPayments,
+          }),
     });
   };
 
@@ -1111,8 +1129,15 @@ export default function Proveedores() {
                   <div className="flex items-center justify-between rounded-md border p-3">
                     <Label className="text-sm">Permite retención</Label>
                     <Switch
-                      checked={editAllowsTaxWithholding}
+                      checked={
+                        hasValidAccountPaymentCertificate
+                          ? false
+                          : editAllowsTaxWithholding
+                      }
                       onCheckedChange={setEditAllowsTaxWithholding}
+                      disabled={
+                        documentsLoading || hasValidAccountPaymentCertificate
+                      }
                     />
                   </div>
 
@@ -1121,10 +1146,24 @@ export default function Proveedores() {
                       Proveedor sujeto a pagos a cuenta
                     </Label>
                     <Switch
-                      checked={editSubjectToAccountPayments}
+                      checked={
+                        hasValidAccountPaymentCertificate
+                          ? true
+                          : editSubjectToAccountPayments
+                      }
                       onCheckedChange={setEditSubjectToAccountPayments}
+                      disabled={
+                        documentsLoading || hasValidAccountPaymentCertificate
+                      }
                     />
                   </div>
+
+                  {hasValidAccountPaymentCertificate ? (
+                    <p className="text-xs text-muted-foreground">
+                      Estos valores están bloqueados por una constancia de pagos
+                      a cuenta vigente.
+                    </p>
+                  ) : null}
                 </>
               ) : null}
 

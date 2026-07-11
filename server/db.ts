@@ -121,6 +121,12 @@ import type {
   OpeningBalance,
 } from "../drizzle/schema";
 import type { DmcReportSourceInvoice } from "../shared/dmc-report";
+import {
+  getSupplierAccountPaymentCertificateStatus,
+  getSupplierRetentionPolicy,
+  isAccountPaymentAllowedRetention,
+  SUPPLIER_ACCOUNT_PAYMENT_CERTIFICATE_CODES,
+} from "../shared/supplier-documents";
 import { ENV } from "./_core/env";
 import {
   buildEmailPreview,
@@ -10072,6 +10078,18 @@ export async function getInvoiceById(id: number) {
     .limit(1);
   if (!rows[0]) return undefined;
 
+  const accountPaymentCertificate = rows[0].supplier?.id
+    ? await findSupplierAccountPaymentCertificate(
+        db,
+        rows[0].supplier.id,
+        new Date()
+      )
+    : null;
+  const retentionPolicy = getSupplierRetentionPolicy({
+    certificateStatus: accountPaymentCertificate?.status,
+    allowsTaxWithholding: rows[0].supplier?.allowsTaxWithholding,
+  });
+
   const [items, retentions, otherCharges] = await Promise.all([
     db
       .select()
@@ -10140,6 +10158,8 @@ export async function getInvoiceById(id: number) {
     items: itemsWithFixedAssetArticles,
     retentions,
     otherCharges,
+    accountPaymentCertificate,
+    retentionPolicy,
   };
 }
 
@@ -10768,6 +10788,15 @@ export async function replaceInvoiceRetentions(
     }
     const invoice = invoiceRow.invoice;
     const hasRetentions = retentions.length > 0;
+    const accountPaymentCertificate = invoiceRow.supplier?.id
+      ? await findSupplierAccountPaymentCertificate(
+          tx,
+          invoiceRow.supplier.id,
+          new Date()
+        )
+      : null;
+    const hasValidAccountPaymentCertificate =
+      accountPaymentCertificate?.status === "vigente";
     const normalizedRetentionReceiptNumber =
       retentionReceiptNumber?.trim() ||
       invoice.retentionReceiptNumber?.trim() ||
@@ -10804,10 +10833,6 @@ export async function replaceInvoiceRetentions(
         "Complete los datos fiscales del comprobante de retención antes de guardar retenciones"
       );
     }
-    if (hasRetentions && invoiceRow.supplier?.allowsTaxWithholding === false) {
-      throw new Error("El proveedor no permite retención de impuestos");
-    }
-
     const items = await tx
       .select()
       .from(invoiceItems)
@@ -10894,6 +10919,14 @@ export async function replaceInvoiceRetentions(
       ) {
         throw new Error("La retención seleccionada no existe o está inactiva");
       }
+      if (
+        hasValidAccountPaymentCertificate &&
+        !isAccountPaymentAllowedRetention(catalogRetention)
+      ) {
+        throw new Error(
+          "La constancia de pagos a cuenta vigente solo permite la retención RT15 (15%)"
+        );
+      }
 
       const allowedBase = invoiceItem
         ? roundMoney(parseDecimal(invoiceItem.subtotal))
@@ -10928,6 +10961,14 @@ export async function replaceInvoiceRetentions(
         amount: toMoneyString4(amount),
       };
     });
+
+    if (
+      hasRetentions &&
+      !hasValidAccountPaymentCertificate &&
+      invoiceRow.supplier?.allowsTaxWithholding === false
+    ) {
+      throw new Error("El proveedor no permite retención de impuestos");
+    }
 
     const retentionTotal = roundMoney(
       normalizedRetentions.reduce(
@@ -18483,6 +18524,80 @@ export async function listSupplierDocuments(supplierId: number) {
       desc(supplierDocuments.documentDate),
       desc(supplierDocuments.createdAt)
     );
+}
+
+async function findSupplierAccountPaymentCertificate(
+  database: any,
+  supplierId: number,
+  referenceDate = new Date()
+) {
+  const rows = await database
+    .select({
+      id: supplierDocuments.id,
+      documentDate: supplierDocuments.documentDate,
+      expirationDate: supplierDocuments.expirationDate,
+      createdAt: supplierDocuments.createdAt,
+    })
+    .from(supplierDocuments)
+    .innerJoin(
+      supplierDocumentTypes,
+      eq(supplierDocuments.documentTypeId, supplierDocumentTypes.id)
+    )
+    .where(
+      and(
+        eq(supplierDocuments.supplierId, supplierId),
+        inArray(
+          supplierDocumentTypes.code,
+          [...SUPPLIER_ACCOUNT_PAYMENT_CERTIFICATE_CODES]
+        )
+      )
+    )
+    .orderBy(
+      desc(supplierDocuments.documentDate),
+      desc(supplierDocuments.createdAt)
+    );
+
+  const certificates = rows.map((document: any) => ({
+    id: document.id as number,
+    documentDate: document.documentDate as Date,
+    expirationDate: (document.expirationDate ?? null) as Date | null,
+    status: getSupplierAccountPaymentCertificateStatus(
+      {
+        documentDate: document.documentDate,
+        expirationDate: document.expirationDate,
+      },
+      referenceDate
+    ),
+  }));
+
+  return (
+    certificates.find(
+      (certificate: any) => certificate.status === "vigente"
+    ) ??
+    certificates[0] ??
+    null
+  );
+}
+
+export async function getSupplierAccountPaymentCertificate(
+  supplierId: number,
+  referenceDate = new Date()
+) {
+  const db = await getDb();
+  if (!db) return null;
+  return findSupplierAccountPaymentCertificate(db, supplierId, referenceDate);
+}
+
+export async function hasValidSupplierAccountPaymentCertificate(
+  supplierId: number,
+  referenceDate = new Date()
+) {
+  const certificate = await getSupplierAccountPaymentCertificate(
+    supplierId,
+    referenceDate
+  );
+
+  return certificate?.status === "vigente";
 }
 
 export async function getSupplierDocumentById(id: number) {

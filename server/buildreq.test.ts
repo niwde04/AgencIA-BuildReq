@@ -1516,6 +1516,9 @@ describe("BuildReq - Suppliers catalog", () => {
   it("Authorized users can update supplier fiscal profile including RTN", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
+    const hasValidCertificateSpy = vi
+      .spyOn(db, "hasValidSupplierAccountPaymentCertificate")
+      .mockResolvedValue(false);
     const updateSupplierSpy = vi.spyOn(db, "updateSupplier").mockResolvedValue({
       id: 5,
       rtn: "08019999999999",
@@ -1548,6 +1551,65 @@ describe("BuildReq - Suppliers catalog", () => {
       updatedById: 4,
     });
 
+    hasValidCertificateSpy.mockRestore();
+    updateSupplierSpy.mockRestore();
+  });
+
+  it("Locks supplier fiscal flags while an account payment certificate is valid", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const hasValidCertificateSpy = vi
+      .spyOn(db, "hasValidSupplierAccountPaymentCertificate")
+      .mockResolvedValue(true);
+    const updateSupplierSpy = vi.spyOn(db, "updateSupplier");
+
+    await expect(
+      caller.suppliers.update({
+        id: 5,
+        allowsTaxWithholding: false,
+        subjectToAccountPayments: true,
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message:
+        "La constancia de pagos a cuenta vigente no permite modificar estos valores fiscales",
+    });
+
+    expect(updateSupplierSpy).not.toHaveBeenCalled();
+    hasValidCertificateSpy.mockRestore();
+    updateSupplierSpy.mockRestore();
+  });
+
+  it("Preserves manual fiscal flags when updating other supplier data", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const hasValidCertificateSpy = vi
+      .spyOn(db, "hasValidSupplierAccountPaymentCertificate")
+      .mockResolvedValue(true);
+    const updateSupplierSpy = vi.spyOn(db, "updateSupplier").mockResolvedValue({
+      id: 5,
+      address: "Tegucigalpa",
+      allowsTaxWithholding: true,
+      subjectToAccountPayments: false,
+    } as any);
+
+    await expect(
+      caller.suppliers.update({
+        id: 5,
+        address: "Tegucigalpa",
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        allowsTaxWithholding: true,
+        subjectToAccountPayments: false,
+      })
+    );
+
+    expect(updateSupplierSpy).toHaveBeenCalledWith(5, {
+      address: "Tegucigalpa",
+      updatedById: 4,
+    });
+    hasValidCertificateSpy.mockRestore();
     updateSupplierSpy.mockRestore();
   });
 
@@ -2181,6 +2243,7 @@ describe("BuildReq - Suppliers catalog", () => {
     const createSupplierDocumentSpy = vi
       .spyOn(db, "createSupplierDocument")
       .mockResolvedValue(supplierDocument as any);
+    const updateSupplierSpy = vi.spyOn(db, "updateSupplier");
     const getSupplierDocumentByIdSpy = vi
       .spyOn(db, "getSupplierDocumentById")
       .mockResolvedValue({
@@ -2238,12 +2301,14 @@ describe("BuildReq - Suppliers catalog", () => {
         expirationDate: expect.any(Date),
       })
     );
+    expect(updateSupplierSpy).not.toHaveBeenCalled();
 
     getSupplierByIdSpy.mockRestore();
     getSupplierDocumentTypeByIdSpy.mockRestore();
     storagePutSpy.mockRestore();
     createAttachmentSpy.mockRestore();
     createSupplierDocumentSpy.mockRestore();
+    updateSupplierSpy.mockRestore();
     getSupplierDocumentByIdSpy.mockRestore();
     storageGetSpy.mockRestore();
   });
@@ -2317,6 +2382,7 @@ describe("BuildReq - Suppliers catalog", () => {
     const updateSupplierDocumentSpy = vi
       .spyOn(db, "updateSupplierDocument")
       .mockResolvedValue({ id: 45 } as any);
+    const updateSupplierSpy = vi.spyOn(db, "updateSupplier");
     const storageGetSpy = vi.spyOn(storage, "storageGet").mockResolvedValue({
       key: attachment.fileKey,
       url: "https://storage.local/signed-constancia.pdf",
@@ -2348,10 +2414,12 @@ describe("BuildReq - Suppliers catalog", () => {
         description: "Vigencia actualizada",
       })
     );
+    expect(updateSupplierSpy).not.toHaveBeenCalled();
 
     getSupplierDocumentByIdSpy.mockRestore();
     getSupplierDocumentTypeByIdSpy.mockRestore();
     updateSupplierDocumentSpy.mockRestore();
+    updateSupplierSpy.mockRestore();
     storageGetSpy.mockRestore();
   });
 
