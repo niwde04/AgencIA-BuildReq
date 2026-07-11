@@ -1122,6 +1122,14 @@ export const invoices = pgTable(
     receiptDate: timestamp("receiptDate").notNull(),
     emissionDeadline: timestamp("emissionDeadline").notNull(),
     retentionReceiptNumber: varchar("retentionReceiptNumber", { length: 100 }),
+    retentionCai: varchar("retentionCai", { length: 100 }),
+    retentionDocumentRangeStart: varchar("retentionDocumentRangeStart", {
+      length: 100,
+    }),
+    retentionDocumentRangeEnd: varchar("retentionDocumentRangeEnd", {
+      length: 100,
+    }),
+    retentionEmissionDeadline: timestamp("retentionEmissionDeadline"),
     hasOceExemption: boolean("hasOceExemption").default(false).notNull(),
     oceResolutionNumber: varchar("oceResolutionNumber", { length: 100 }),
     oceResolutionDate: timestamp("oceResolutionDate"),

@@ -10243,6 +10243,10 @@ export async function updateInvoice(
       | "receiptDate"
       | "emissionDeadline"
       | "retentionReceiptNumber"
+      | "retentionCai"
+      | "retentionDocumentRangeStart"
+      | "retentionDocumentRangeEnd"
+      | "retentionEmissionDeadline"
       | "hasOceExemption"
       | "oceResolutionNumber"
       | "oceResolutionDate"
@@ -10738,7 +10742,13 @@ export async function replaceInvoiceRetentions(
     retentionCatalogId: number;
     baseAmount?: string | number | null;
   }>,
-  retentionReceiptNumber?: string | null
+  retentionReceiptNumber?: string | null,
+  retentionFiscalData?: {
+    retentionCai?: string | null;
+    retentionDocumentRangeStart?: string | null;
+    retentionDocumentRangeEnd?: string | null;
+    retentionEmissionDeadline?: Date | null;
+  }
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -10765,6 +10775,33 @@ export async function replaceInvoiceRetentions(
     if (hasRetentions && !normalizedRetentionReceiptNumber) {
       throw new Error(
         "Ingrese el número de comprobante de retención antes de guardar retenciones"
+      );
+    }
+    const normalizedRetentionCai =
+      retentionFiscalData?.retentionCai?.trim() ||
+      invoice.retentionCai?.trim() ||
+      null;
+    const normalizedRetentionRangeStart =
+      retentionFiscalData?.retentionDocumentRangeStart?.trim() ||
+      invoice.retentionDocumentRangeStart?.trim() ||
+      null;
+    const normalizedRetentionRangeEnd =
+      retentionFiscalData?.retentionDocumentRangeEnd?.trim() ||
+      invoice.retentionDocumentRangeEnd?.trim() ||
+      null;
+    const normalizedRetentionEmissionDeadline =
+      retentionFiscalData?.retentionEmissionDeadline ??
+      invoice.retentionEmissionDeadline ??
+      null;
+    if (
+      hasRetentions &&
+      (!normalizedRetentionCai ||
+        !normalizedRetentionRangeStart ||
+        !normalizedRetentionRangeEnd ||
+        !normalizedRetentionEmissionDeadline)
+    ) {
+      throw new Error(
+        "Complete los datos fiscales del comprobante de retención antes de guardar retenciones"
       );
     }
     if (hasRetentions && invoiceRow.supplier?.allowsTaxWithholding === false) {
@@ -10923,6 +10960,18 @@ export async function replaceInvoiceRetentions(
         retentionReceiptNumber: hasRetentions
           ? normalizedRetentionReceiptNumber
           : retentionReceiptNumber?.trim() || invoice.retentionReceiptNumber,
+        retentionCai: hasRetentions
+          ? normalizedRetentionCai
+          : invoice.retentionCai,
+        retentionDocumentRangeStart: hasRetentions
+          ? normalizedRetentionRangeStart
+          : invoice.retentionDocumentRangeStart,
+        retentionDocumentRangeEnd: hasRetentions
+          ? normalizedRetentionRangeEnd
+          : invoice.retentionDocumentRangeEnd,
+        retentionEmissionDeadline: hasRetentions
+          ? normalizedRetentionEmissionDeadline
+          : invoice.retentionEmissionDeadline,
         updatedAt: new Date(),
       })
       .where(eq(invoices.id, invoiceId))

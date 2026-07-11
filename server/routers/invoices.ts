@@ -223,25 +223,8 @@ function assertInvoiceReadyForReview(
       });
     }
   }
-  if (
-    (detail.retentions?.length ?? 0) > 0 &&
-    !invoice.retentionReceiptNumber?.trim()
-  ) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message:
-        "Ingrese el número de comprobante de retención antes de enviar a revisión",
-    });
-  }
-  if (
-    invoice.isFiscalDocument !== false &&
-    invoice.retentionReceiptNumber?.trim() &&
-    !isValidInvoiceNumber(invoice.retentionReceiptNumber)
-  ) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: `El comprobante de retención debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
-    });
+  if ((detail.retentions?.length ?? 0) > 0) {
+    assertRetentionFiscalData(invoice, true);
   }
 }
 
@@ -256,6 +239,119 @@ function parseMoneyInput(value?: string | number | null) {
       ? value
       : Number(String(value).replace(/,/g, "").trim());
   return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+type RetentionFiscalDataInput = {
+  retentionReceiptNumber?: string | null;
+  retentionCai?: string | null;
+  retentionDocumentRangeStart?: string | null;
+  retentionDocumentRangeEnd?: string | null;
+  retentionEmissionDeadline?: string | Date | null;
+};
+
+function assertRetentionFiscalData(
+  value: RetentionFiscalDataInput,
+  required: boolean
+) {
+  const receiptNumber = value.retentionReceiptNumber?.trim() ?? "";
+  const cai = value.retentionCai?.trim() ?? "";
+  const rangeStart = value.retentionDocumentRangeStart?.trim() ?? "";
+  const rangeEnd = value.retentionDocumentRangeEnd?.trim() ?? "";
+
+  if (required && !receiptNumber) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Ingrese el número de comprobante de retención",
+    });
+  }
+  if (receiptNumber && !isValidInvoiceNumber(receiptNumber)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `El comprobante de retención debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+    });
+  }
+  if (required && !cai) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Ingrese el CAI del comprobante de retención",
+    });
+  }
+  if (cai && !isValidCai(cai)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `El CAI del comprobante de retención debe tener el formato ${CAI_FORMAT_EXAMPLE}`,
+    });
+  }
+  if (required && !rangeStart) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Ingrese el rango autorizado inicial del comprobante de retención",
+    });
+  }
+  if (rangeStart && !isValidInvoiceNumber(rangeStart)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `El rango inicial del comprobante de retención debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+    });
+  }
+  if (required && !rangeEnd) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Ingrese el rango autorizado final del comprobante de retención",
+    });
+  }
+  if (rangeEnd && !isValidInvoiceNumber(rangeEnd)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `El rango final del comprobante de retención debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
+    });
+  }
+  if (
+    rangeStart &&
+    rangeEnd &&
+    isValidInvoiceNumber(rangeStart) &&
+    isValidInvoiceNumber(rangeEnd) &&
+    !isFiscalInvoiceRangeOrdered({
+      documentRangeStart: rangeStart,
+      documentRangeEnd: rangeEnd,
+    })
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "El rango final del comprobante de retención debe ser mayor o igual al inicial",
+    });
+  }
+  if (
+    receiptNumber &&
+    rangeStart &&
+    rangeEnd &&
+    isValidInvoiceNumber(receiptNumber) &&
+    isValidInvoiceNumber(rangeStart) &&
+    isValidInvoiceNumber(rangeEnd) &&
+    isFiscalInvoiceRangeOrdered({
+      documentRangeStart: rangeStart,
+      documentRangeEnd: rangeEnd,
+    }) &&
+    !isInvoiceNumberWithinFiscalRange({
+      invoiceNumber: receiptNumber,
+      documentRangeStart: rangeStart,
+      documentRangeEnd: rangeEnd,
+    })
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "El comprobante de retención debe estar dentro del rango autorizado",
+    });
+  }
+  if (required && !value.retentionEmissionDeadline) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "Seleccione la fecha límite de emisión del comprobante de retención",
+    });
+  }
 }
 
 const invoiceRetentionSchema = z
@@ -426,6 +522,10 @@ export const invoicesRouter = router({
           receiptDate: z.string(),
           emissionDeadline: z.string().optional(),
           retentionReceiptNumber: z.string().trim().max(100).optional(),
+          retentionCai: z.string().trim().max(100).optional(),
+          retentionDocumentRangeStart: z.string().trim().max(100).optional(),
+          retentionDocumentRangeEnd: z.string().trim().max(100).optional(),
+          retentionEmissionDeadline: z.string().optional(),
           hasOceExemption: z.boolean().optional(),
           oceResolutionNumber: z.string().trim().max(100).optional(),
           oceResolutionDate: z.string().optional(),
@@ -530,16 +630,6 @@ export const invoicesRouter = router({
                   "El número documento debe estar dentro del rango autorizado",
               });
             }
-            if (
-              value.retentionReceiptNumber?.trim() &&
-              !isValidInvoiceNumber(value.retentionReceiptNumber)
-            ) {
-              ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                path: ["retentionReceiptNumber"],
-                message: `El comprobante de retención debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
-              });
-            }
             if (!value.documentDueDate) {
               ctx.addIssue({
                 code: z.ZodIssueCode.custom,
@@ -603,17 +693,32 @@ export const invoicesRouter = router({
       const isFiscalDocument = input.isFiscalDocument !== false;
       const retentionReceiptNumber =
         input.retentionReceiptNumber?.trim() || null;
+      const hasRetentions = (detail.retentions?.length ?? 0) > 0;
+      const retentionFiscalData: RetentionFiscalDataInput = {
+        retentionReceiptNumber: hasRetentions
+          ? retentionReceiptNumber || detail.invoice.retentionReceiptNumber
+          : retentionReceiptNumber,
+        retentionCai: hasRetentions
+          ? input.retentionCai?.trim() || detail.invoice.retentionCai
+          : input.retentionCai?.trim() || null,
+        retentionDocumentRangeStart: hasRetentions
+          ? input.retentionDocumentRangeStart?.trim() ||
+            detail.invoice.retentionDocumentRangeStart
+          : input.retentionDocumentRangeStart?.trim() || null,
+        retentionDocumentRangeEnd: hasRetentions
+          ? input.retentionDocumentRangeEnd?.trim() ||
+            detail.invoice.retentionDocumentRangeEnd
+          : input.retentionDocumentRangeEnd?.trim() || null,
+        retentionEmissionDeadline: hasRetentions
+          ? input.retentionEmissionDeadline ||
+            detail.invoice.retentionEmissionDeadline
+          : input.retentionEmissionDeadline || null,
+      };
+      assertRetentionFiscalData(retentionFiscalData, hasRetentions);
       const hasOceExemption = input.hasOceExemption === true;
       const oceExemptAmount = hasOceExemption
         ? parseMoneyInput(input.oceExemptAmount)
         : 0;
-      if ((detail.retentions?.length ?? 0) > 0 && !retentionReceiptNumber) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message:
-            "Ingrese el número de comprobante de retención para esta factura",
-        });
-      }
       const invoiceSubtotal = parseMoneyInput(detail.invoice.subtotal);
       if (
         hasOceExemption &&
@@ -656,11 +761,29 @@ export const invoicesRouter = router({
           parseDateInput(input.emissionDeadline) ??
           parseDateInput(input.postingDate) ??
           new Date(),
-        retentionReceiptNumber: retentionReceiptNumber
-          ? isFiscalDocument
-            ? formatInvoiceNumberInput(retentionReceiptNumber)
-            : retentionReceiptNumber
+        retentionReceiptNumber: retentionFiscalData.retentionReceiptNumber
+          ? formatInvoiceNumberInput(retentionFiscalData.retentionReceiptNumber)
           : null,
+        retentionCai: retentionFiscalData.retentionCai
+          ? formatCaiInput(retentionFiscalData.retentionCai)
+          : null,
+        retentionDocumentRangeStart:
+          retentionFiscalData.retentionDocumentRangeStart
+            ? formatInvoiceNumberInput(
+                retentionFiscalData.retentionDocumentRangeStart
+              )
+            : null,
+        retentionDocumentRangeEnd: retentionFiscalData.retentionDocumentRangeEnd
+          ? formatInvoiceNumberInput(retentionFiscalData.retentionDocumentRangeEnd)
+          : null,
+        retentionEmissionDeadline: parseDateInput(
+          typeof retentionFiscalData.retentionEmissionDeadline === "string"
+            ? retentionFiscalData.retentionEmissionDeadline
+            : null
+        ) ??
+          (retentionFiscalData.retentionEmissionDeadline instanceof Date
+            ? retentionFiscalData.retentionEmissionDeadline
+            : null),
         hasOceExemption,
         oceResolutionNumber: hasOceExemption
           ? input.oceResolutionNumber?.trim() || null
@@ -837,6 +960,10 @@ export const invoicesRouter = router({
         id: z.number(),
         retentions: z.array(invoiceRetentionSchema),
         retentionReceiptNumber: z.string().trim().max(100).optional(),
+        retentionCai: z.string().trim().max(100).optional(),
+        retentionDocumentRangeStart: z.string().trim().max(100).optional(),
+        retentionDocumentRangeEnd: z.string().trim().max(100).optional(),
+        retentionEmissionDeadline: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -856,43 +983,75 @@ export const invoicesRouter = router({
       }
       assertProjectScopedAccess(ctx.user, detail.invoice.projectId);
       assertInvoiceDraft(detail);
-      if (
-        input.retentions.length > 0 &&
-        !(
+      const effectiveRetentionFiscalData: RetentionFiscalDataInput = {
+        retentionReceiptNumber:
           input.retentionReceiptNumber?.trim() ||
-          detail.invoice.retentionReceiptNumber?.trim()
-        )
-      ) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message:
-            "Ingrese el número de comprobante de retención para guardar retenciones",
-        });
-      }
-      const effectiveRetentionReceiptNumber =
-        input.retentionReceiptNumber?.trim() ||
-        detail.invoice.retentionReceiptNumber?.trim() ||
-        "";
-      if (
-        detail.invoice.isFiscalDocument !== false &&
-        effectiveRetentionReceiptNumber &&
-        !isValidInvoiceNumber(effectiveRetentionReceiptNumber)
-      ) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `El comprobante de retención debe tener el formato ${INVOICE_NUMBER_FORMAT_EXAMPLE}`,
-        });
-      }
+          detail.invoice.retentionReceiptNumber,
+        retentionCai:
+          input.retentionCai?.trim() || detail.invoice.retentionCai,
+        retentionDocumentRangeStart:
+          input.retentionDocumentRangeStart?.trim() ||
+          detail.invoice.retentionDocumentRangeStart,
+        retentionDocumentRangeEnd:
+          input.retentionDocumentRangeEnd?.trim() ||
+          detail.invoice.retentionDocumentRangeEnd,
+        retentionEmissionDeadline:
+          input.retentionEmissionDeadline ||
+          detail.invoice.retentionEmissionDeadline,
+      };
+      assertRetentionFiscalData(
+        effectiveRetentionFiscalData,
+        input.retentions.length > 0
+      );
+      const hasRetentionFiscalInput =
+        input.retentionCai !== undefined ||
+        input.retentionDocumentRangeStart !== undefined ||
+        input.retentionDocumentRangeEnd !== undefined ||
+        input.retentionEmissionDeadline !== undefined;
 
       try {
+        const formattedRetentionReceiptNumber = input.retentionReceiptNumber
+          ? formatInvoiceNumberInput(input.retentionReceiptNumber)
+          : undefined;
+        if (input.retentions.length === 0 || !hasRetentionFiscalInput) {
+          return await db.replaceInvoiceRetentions(
+            input.id,
+            input.retentions,
+            formattedRetentionReceiptNumber
+          );
+        }
+
         return await db.replaceInvoiceRetentions(
           input.id,
           input.retentions,
-          input.retentionReceiptNumber
-            ? detail.invoice.isFiscalDocument !== false
-              ? formatInvoiceNumberInput(input.retentionReceiptNumber)
-              : input.retentionReceiptNumber
-            : undefined
+          formattedRetentionReceiptNumber,
+          {
+            retentionCai: effectiveRetentionFiscalData.retentionCai
+              ? formatCaiInput(effectiveRetentionFiscalData.retentionCai)
+              : null,
+            retentionDocumentRangeStart:
+              effectiveRetentionFiscalData.retentionDocumentRangeStart
+                ? formatInvoiceNumberInput(
+                    effectiveRetentionFiscalData.retentionDocumentRangeStart
+                  )
+                : null,
+            retentionDocumentRangeEnd:
+              effectiveRetentionFiscalData.retentionDocumentRangeEnd
+                ? formatInvoiceNumberInput(
+                    effectiveRetentionFiscalData.retentionDocumentRangeEnd
+                  )
+                : null,
+            retentionEmissionDeadline: parseDateInput(
+              typeof effectiveRetentionFiscalData.retentionEmissionDeadline ===
+                "string"
+                ? effectiveRetentionFiscalData.retentionEmissionDeadline
+                : null
+            ) ??
+              (effectiveRetentionFiscalData.retentionEmissionDeadline instanceof
+              Date
+                ? effectiveRetentionFiscalData.retentionEmissionDeadline
+                : null),
+          }
         );
       } catch (error) {
         throw new TRPCError({

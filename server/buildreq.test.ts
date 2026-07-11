@@ -162,6 +162,9 @@ const VALID_INVOICE_NUMBER = "000-001-01-00010571";
 const VALID_INVOICE_NUMBER_ALT = "000-001-01-00010572";
 const VALID_DOCUMENT_RANGE_START = "000-001-01-00000001";
 const VALID_DOCUMENT_RANGE_END = "000-001-01-99999999";
+const VALID_RETENTION_RECEIPT_NUMBER = "001-001-11-00000999";
+const VALID_RETENTION_RANGE_START = "001-001-11-00000001";
+const VALID_RETENTION_RANGE_END = "001-001-11-99999999";
 const VALID_PDF_BASE64 = Buffer.from(
   "%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF"
 ).toString("base64");
@@ -13189,7 +13192,11 @@ describe("BuildReq - Invoices", () => {
       postingDate: new Date("2026-05-02T12:00:00"),
       receiptDate: new Date("2026-05-02T12:00:00"),
       emissionDeadline: new Date("2026-05-31T12:00:00"),
-      retentionReceiptNumber: "001-001-11-00000999",
+      retentionReceiptNumber: VALID_RETENTION_RECEIPT_NUMBER,
+      retentionCai: VALID_CAI,
+      retentionDocumentRangeStart: VALID_RETENTION_RANGE_START,
+      retentionDocumentRangeEnd: VALID_RETENTION_RANGE_END,
+      retentionEmissionDeadline: new Date("2026-12-31T12:00:00"),
       total: "1000.00",
       retentionTotal: "0.00",
       netPayable: "1000.00",
@@ -13523,6 +13530,32 @@ describe("BuildReq - Invoices", () => {
     await expect(caller.invoices.review({ id: 10 })).rejects.toMatchObject({
       code: "BAD_REQUEST",
       message: "Ingrese el CAI del documento antes de enviar a revisión",
+    });
+    expect(getAttachmentsByEntitySpy).not.toHaveBeenCalled();
+    expect(reviewInvoiceSpy).not.toHaveBeenCalled();
+
+    getInvoiceByIdSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
+    reviewInvoiceSpy.mockRestore();
+  });
+
+  it("blocks reviewing invoices with incomplete retention fiscal data", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        retentionCai: null,
+      },
+      retentions: [{ id: 1 }],
+    } as any);
+    const getAttachmentsByEntitySpy = vi.spyOn(db, "getAttachmentsByEntity");
+    const reviewInvoiceSpy = vi.spyOn(db, "reviewInvoice");
+
+    await expect(caller.invoices.review({ id: 10 })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "Ingrese el CAI del comprobante de retención",
     });
     expect(getAttachmentsByEntitySpy).not.toHaveBeenCalled();
     expect(reviewInvoiceSpy).not.toHaveBeenCalled();
@@ -14223,8 +14256,7 @@ describe("BuildReq - Invoices", () => {
       })
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
-      message:
-        "Ingrese el número de comprobante de retención para guardar retenciones",
+      message: "Ingrese el número de comprobante de retención",
     });
 
     expect(replaceInvoiceRetentionsSpy).not.toHaveBeenCalled();
@@ -14267,6 +14299,266 @@ describe("BuildReq - Invoices", () => {
     expect(replaceInvoiceRetentionsSpy).not.toHaveBeenCalled();
     getInvoiceByIdSpy.mockRestore();
     replaceInvoiceRetentionsSpy.mockRestore();
+  });
+
+  it("requires all retention fiscal fields before saving retentions", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById");
+    const replaceInvoiceRetentionsSpy = vi.spyOn(
+      db,
+      "replaceInvoiceRetentions"
+    );
+    const cases = [
+      {
+        field: "retentionCai",
+        message: "Ingrese el CAI del comprobante de retención",
+      },
+      {
+        field: "retentionDocumentRangeStart",
+        message:
+          "Ingrese el rango autorizado inicial del comprobante de retención",
+      },
+      {
+        field: "retentionDocumentRangeEnd",
+        message:
+          "Ingrese el rango autorizado final del comprobante de retención",
+      },
+      {
+        field: "retentionEmissionDeadline",
+        message:
+          "Seleccione la fecha límite de emisión del comprobante de retención",
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      getInvoiceByIdSpy.mockResolvedValue({
+        ...invoiceDetail,
+        invoice: {
+          ...invoiceDetail.invoice,
+          [testCase.field]: null,
+        },
+      } as any);
+
+      await expect(
+        caller.invoices.replaceRetentions({
+          id: 10,
+          retentions: [
+            {
+              retentionCatalogId: 1,
+              baseAmount: "1000.00",
+            },
+          ],
+        })
+      ).rejects.toThrow(testCase.message);
+    }
+
+    expect(replaceInvoiceRetentionsSpy).not.toHaveBeenCalled();
+    getInvoiceByIdSpy.mockRestore();
+    replaceInvoiceRetentionsSpy.mockRestore();
+  });
+
+  it("validates retention fiscal range and receipt independently of invoice type", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        isFiscalDocument: false,
+      },
+    } as any);
+    const replaceInvoiceRetentionsSpy = vi.spyOn(
+      db,
+      "replaceInvoiceRetentions"
+    );
+
+    await expect(
+      caller.invoices.replaceRetentions({
+        id: 10,
+        retentionReceiptNumber: VALID_RETENTION_RECEIPT_NUMBER,
+        retentionCai: VALID_CAI,
+        retentionDocumentRangeStart: "001-001-11-00001000",
+        retentionDocumentRangeEnd: "001-001-11-00002000",
+        retentionEmissionDeadline: "2026-12-31",
+        retentions: [
+          {
+            retentionCatalogId: 1,
+            baseAmount: "1000.00",
+          },
+        ],
+      })
+    ).rejects.toThrow(
+      "El comprobante de retención debe estar dentro del rango autorizado"
+    );
+
+    expect(replaceInvoiceRetentionsSpy).not.toHaveBeenCalled();
+    getInvoiceByIdSpy.mockRestore();
+    replaceInvoiceRetentionsSpy.mockRestore();
+  });
+
+  it("rejects invalid retention CAI and inverted authorized ranges", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi
+      .spyOn(db, "getInvoiceById")
+      .mockResolvedValue(invoiceDetail);
+    const replaceInvoiceRetentionsSpy = vi.spyOn(
+      db,
+      "replaceInvoiceRetentions"
+    );
+    const baseInput = {
+      id: 10,
+      retentionReceiptNumber: VALID_RETENTION_RECEIPT_NUMBER,
+      retentionCai: VALID_CAI,
+      retentionDocumentRangeStart: VALID_RETENTION_RANGE_START,
+      retentionDocumentRangeEnd: VALID_RETENTION_RANGE_END,
+      retentionEmissionDeadline: "2026-12-31",
+      retentions: [
+        {
+          retentionCatalogId: 1,
+          baseAmount: "1000.00",
+        },
+      ],
+    };
+
+    await expect(
+      caller.invoices.replaceRetentions({
+        ...baseInput,
+        retentionCai: "CAI-INVALIDO",
+      })
+    ).rejects.toThrow(
+      "El CAI del comprobante de retención debe tener el formato"
+    );
+
+    await expect(
+      caller.invoices.replaceRetentions({
+        ...baseInput,
+        retentionDocumentRangeStart: "001-001-11-00001000",
+        retentionDocumentRangeEnd: "001-001-11-00000001",
+      })
+    ).rejects.toThrow(
+      "El rango final del comprobante de retención debe ser mayor o igual al inicial"
+    );
+
+    expect(replaceInvoiceRetentionsSpy).not.toHaveBeenCalled();
+    getInvoiceByIdSpy.mockRestore();
+    replaceInvoiceRetentionsSpy.mockRestore();
+  });
+
+  it("removes retentions without clearing stored retention fiscal data", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi
+      .spyOn(db, "getInvoiceById")
+      .mockResolvedValue(invoiceDetail);
+    const replaceInvoiceRetentionsSpy = vi
+      .spyOn(db, "replaceInvoiceRetentions")
+      .mockResolvedValue(invoiceDetail.invoice as any);
+
+    await caller.invoices.replaceRetentions({
+      id: 10,
+      retentions: [],
+    });
+
+    expect(replaceInvoiceRetentionsSpy).toHaveBeenCalledWith(
+      10,
+      [],
+      undefined
+    );
+
+    getInvoiceByIdSpy.mockRestore();
+    replaceInvoiceRetentionsSpy.mockRestore();
+  });
+
+  it("persists retention fiscal data when saving retentions", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi
+      .spyOn(db, "getInvoiceById")
+      .mockResolvedValue(invoiceDetail);
+    const replaceInvoiceRetentionsSpy = vi
+      .spyOn(db, "replaceInvoiceRetentions")
+      .mockResolvedValue(invoiceDetail.invoice as any);
+
+    await caller.invoices.replaceRetentions({
+      id: 10,
+      retentionReceiptNumber: VALID_RETENTION_RECEIPT_NUMBER,
+      retentionCai: VALID_CAI,
+      retentionDocumentRangeStart: VALID_RETENTION_RANGE_START,
+      retentionDocumentRangeEnd: VALID_RETENTION_RANGE_END,
+      retentionEmissionDeadline: "2026-12-31",
+      retentions: [
+        {
+          retentionCatalogId: 1,
+          baseAmount: "1000.00",
+        },
+      ],
+    });
+
+    expect(replaceInvoiceRetentionsSpy).toHaveBeenCalledWith(
+      10,
+      [
+        expect.objectContaining({
+          retentionCatalogId: 1,
+          baseAmount: "1000.00",
+        }),
+      ],
+      VALID_RETENTION_RECEIPT_NUMBER,
+      {
+        retentionCai: VALID_CAI,
+        retentionDocumentRangeStart: VALID_RETENTION_RANGE_START,
+        retentionDocumentRangeEnd: VALID_RETENTION_RANGE_END,
+        retentionEmissionDeadline: expect.any(Date),
+      }
+    );
+
+    getInvoiceByIdSpy.mockRestore();
+    replaceInvoiceRetentionsSpy.mockRestore();
+  });
+
+  it("persists retention fiscal data when updating invoice metadata", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      retentions: [{ id: 1 }],
+    } as any);
+    const updateInvoiceSpy = vi
+      .spyOn(db, "updateInvoice")
+      .mockResolvedValue(invoiceDetail.invoice as any);
+
+    await caller.invoices.update({
+      id: 10,
+      cai: VALID_CAI,
+      invoiceNumber: VALID_INVOICE_NUMBER,
+      documentRangeStart: VALID_DOCUMENT_RANGE_START,
+      documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+      documentDate: "2026-05-01",
+      documentDueDate: "2026-06-01",
+      postingDate: "2026-05-02",
+      receiptDate: "2026-05-02",
+      emissionDeadline: "2026-05-31",
+      retentionReceiptNumber: VALID_RETENTION_RECEIPT_NUMBER,
+      retentionCai: VALID_CAI,
+      retentionDocumentRangeStart: VALID_RETENTION_RANGE_START,
+      retentionDocumentRangeEnd: VALID_RETENTION_RANGE_END,
+      retentionEmissionDeadline: "2026-12-31",
+    });
+
+    expect(updateInvoiceSpy).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        retentionReceiptNumber: VALID_RETENTION_RECEIPT_NUMBER,
+        retentionCai: VALID_CAI,
+        retentionDocumentRangeStart: VALID_RETENTION_RANGE_START,
+        retentionDocumentRangeEnd: VALID_RETENTION_RANGE_END,
+        retentionEmissionDeadline: expect.any(Date),
+      })
+    );
+
+    getInvoiceByIdSpy.mockRestore();
+    updateInvoiceSpy.mockRestore();
   });
 
   it("allows two different retentions on the same invoice line", async () => {
