@@ -1292,6 +1292,144 @@ describe("BuildReq - Articles catalog", () => {
     updateArticleSpy.mockRestore();
   });
 
+  it("Admin, Bodega Central and Administración Central can edit article master data", async () => {
+    const getArticleItemCodeSpy = vi
+      .spyOn(db, "getArticleItemCode")
+      .mockResolvedValue("SAP-OLD");
+    const getArticleIdByItemCodeSpy = vi
+      .spyOn(db, "getArticleIdByItemCode")
+      .mockResolvedValue(undefined);
+    const articleCodeHasUsageSpy = vi
+      .spyOn(db, "articleCodeHasUsage")
+      .mockResolvedValue(false);
+    const getArticleFinancialGroupCodeSpy = vi
+      .spyOn(db, "getArticleFinancialGroupCode")
+      .mockResolvedValue(null);
+    const getFinancialGroupByCodeSpy = vi
+      .spyOn(db, "getFinancialGroupByCode")
+      .mockResolvedValue({
+        financialGroupCode: "02019901",
+        isActive: true,
+      } as any);
+    const updateArticleSpy = vi
+      .spyOn(db, "updateArticle")
+      .mockImplementation(async (id, data) => ({ id, ...data }) as any);
+
+    const authorizedContexts = [
+      createUserContext({ role: "admin", buildreqRole: null }),
+      createBodegaContext(),
+      createAdminCentralContext(),
+    ];
+
+    for (const [index, { ctx }] of authorizedContexts.entries()) {
+      const caller = appRouter.createCaller(ctx);
+      const itemCode = `SAP-NEW-${index + 1}`;
+
+      await expect(
+        caller.articles.update({
+          id: 1,
+          itemCode,
+          description: "Descripción actualizada",
+          itemGroup: "Grupo actualizado",
+          financialGroupCode: "02019901",
+          tipoArticulo: 1,
+          isActive: true,
+          allowsTaxWithholding: true,
+        })
+      ).resolves.toEqual(expect.objectContaining({ itemCode }));
+    }
+
+    expect(getArticleItemCodeSpy).toHaveBeenCalledTimes(3);
+    expect(getArticleIdByItemCodeSpy).toHaveBeenCalledTimes(3);
+    expect(articleCodeHasUsageSpy).toHaveBeenCalledTimes(3);
+    expect(updateArticleSpy).toHaveBeenCalledTimes(3);
+    expect(updateArticleSpy).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        description: "Descripción actualizada",
+        itemGroup: "Grupo actualizado",
+        financialGroupCode: "02019901",
+      })
+    );
+
+    getArticleItemCodeSpy.mockRestore();
+    getArticleIdByItemCodeSpy.mockRestore();
+    articleCodeHasUsageSpy.mockRestore();
+    getArticleFinancialGroupCodeSpy.mockRestore();
+    getFinancialGroupByCodeSpy.mockRestore();
+    updateArticleSpy.mockRestore();
+  });
+
+  it("Blocks changing a SAP code that is already used", async () => {
+    const caller = appRouter.createCaller(createBodegaContext().ctx);
+    const getArticleItemCodeSpy = vi
+      .spyOn(db, "getArticleItemCode")
+      .mockResolvedValue("SAP-USED");
+    const getArticleIdByItemCodeSpy = vi
+      .spyOn(db, "getArticleIdByItemCode")
+      .mockResolvedValue(undefined);
+    const articleCodeHasUsageSpy = vi
+      .spyOn(db, "articleCodeHasUsage")
+      .mockResolvedValue(true);
+    const updateArticleSpy = vi.spyOn(db, "updateArticle");
+
+    await expect(
+      caller.articles.update({
+        id: 1,
+        itemCode: "SAP-NEW",
+        description: "Artículo existente",
+        itemGroup: "Materiales",
+        tipoArticulo: 1,
+        isActive: true,
+        allowsTaxWithholding: true,
+      })
+    ).rejects.toThrow(
+      "El código SAP no puede cambiarse porque el artículo ya está utilizado"
+    );
+
+    expect(getArticleItemCodeSpy).toHaveBeenCalledWith(1);
+    expect(getArticleIdByItemCodeSpy).toHaveBeenCalledWith("SAP-NEW");
+    expect(articleCodeHasUsageSpy).toHaveBeenCalledWith("SAP-USED");
+    expect(updateArticleSpy).not.toHaveBeenCalled();
+
+    getArticleItemCodeSpy.mockRestore();
+    getArticleIdByItemCodeSpy.mockRestore();
+    articleCodeHasUsageSpy.mockRestore();
+    updateArticleSpy.mockRestore();
+  });
+
+  it("Blocks changing a SAP code to an existing catalog code", async () => {
+    const caller = appRouter.createCaller(createBodegaContext().ctx);
+    const getArticleItemCodeSpy = vi
+      .spyOn(db, "getArticleItemCode")
+      .mockResolvedValue("SAP-OLD");
+    const getArticleIdByItemCodeSpy = vi
+      .spyOn(db, "getArticleIdByItemCode")
+      .mockResolvedValue(2);
+    const articleCodeHasUsageSpy = vi.spyOn(db, "articleCodeHasUsage");
+    const updateArticleSpy = vi.spyOn(db, "updateArticle");
+
+    await expect(
+      caller.articles.update({
+        id: 1,
+        itemCode: "SAP-DUPLICATE",
+        description: "Artículo existente",
+        itemGroup: "Materiales",
+        tipoArticulo: 1,
+        isActive: true,
+        allowsTaxWithholding: true,
+      })
+    ).rejects.toThrow("Ya existe un artículo con ese código");
+
+    expect(articleCodeHasUsageSpy).not.toHaveBeenCalled();
+    expect(updateArticleSpy).not.toHaveBeenCalled();
+
+    getArticleItemCodeSpy.mockRestore();
+    getArticleIdByItemCodeSpy.mockRestore();
+    articleCodeHasUsageSpy.mockRestore();
+    updateArticleSpy.mockRestore();
+  });
+
   it("Rejects invalid article type values", async () => {
     const { ctx } = createUserContext();
     const caller = appRouter.createCaller(ctx);

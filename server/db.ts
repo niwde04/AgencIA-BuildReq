@@ -17370,6 +17370,122 @@ export async function getArticleFinancialGroupCode(id: number) {
   return article?.financialGroupCode;
 }
 
+export async function getArticleItemCode(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const [article] = await db
+    .select({ itemCode: sapCatalog.itemCode })
+    .from(sapCatalog)
+    .where(eq(sapCatalog.id, id))
+    .limit(1);
+  return article?.itemCode;
+}
+
+export async function getArticleIdByItemCode(itemCode: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const normalizedItemCode = itemCode.trim();
+  if (!normalizedItemCode) return undefined;
+
+  const [article] = await db
+    .select({ id: sapCatalog.id })
+    .from(sapCatalog)
+    .where(eq(sapCatalog.itemCode, normalizedItemCode))
+    .limit(1);
+  return article?.id;
+}
+
+export async function articleCodeHasUsage(itemCode: string) {
+  const db = await getDb();
+  if (!db) return false;
+
+  const normalizedItemCode = itemCode.trim();
+  if (!normalizedItemCode) return false;
+
+  const usageQueries = [
+    db
+      .select({ id: requestItems.id })
+      .from(requestItems)
+      .where(
+        or(
+          eq(requestItems.sapItemCode, normalizedItemCode),
+          eq(requestItems.fixedAssetSapItemCode, normalizedItemCode)
+        )
+      )
+      .limit(1),
+    db
+      .select({ id: purchaseRequestItems.id })
+      .from(purchaseRequestItems)
+      .where(
+        or(
+          eq(purchaseRequestItems.originalSapItemCode, normalizedItemCode),
+          eq(purchaseRequestItems.currentSapItemCode, normalizedItemCode),
+          eq(purchaseRequestItems.fixedAssetSapItemCode, normalizedItemCode)
+        )
+      )
+      .limit(1),
+    db
+      .select({ id: purchaseOrderItems.id })
+      .from(purchaseOrderItems)
+      .where(
+        or(
+          eq(purchaseOrderItems.originalSapItemCode, normalizedItemCode),
+          eq(purchaseOrderItems.currentSapItemCode, normalizedItemCode)
+        )
+      )
+      .limit(1),
+    db
+      .select({ id: transferRequestItems.id })
+      .from(transferRequestItems)
+      .where(eq(transferRequestItems.sapItemCode, normalizedItemCode))
+      .limit(1),
+    db
+      .select({ id: receiptItems.id })
+      .from(receiptItems)
+      .where(
+        or(
+          eq(receiptItems.sapItemCode, normalizedItemCode),
+          eq(receiptItems.fixedAssetSapItemCode, normalizedItemCode)
+        )
+      )
+      .limit(1),
+    db
+      .select({ id: warehouseExitItems.id })
+      .from(warehouseExitItems)
+      .where(
+        or(
+          eq(warehouseExitItems.sapItemCode, normalizedItemCode),
+          eq(warehouseExitItems.fixedAssetSapItemCode, normalizedItemCode)
+        )
+      )
+      .limit(1),
+    db
+      .select({ id: openingBalanceItems.id })
+      .from(openingBalanceItems)
+      .where(eq(openingBalanceItems.sapItemCode, normalizedItemCode))
+      .limit(1),
+    db
+      .select({ id: reverseLogisticsItems.id })
+      .from(reverseLogisticsItems)
+      .where(eq(reverseLogisticsItems.sapItemCode, normalizedItemCode))
+      .limit(1),
+    db
+      .select({ id: inventoryItems.id })
+      .from(inventoryItems)
+      .where(eq(inventoryItems.sapItemCode, normalizedItemCode))
+      .limit(1),
+  ];
+
+  for (const usageQuery of usageQueries) {
+    const rows = await usageQuery;
+    if (rows.length > 0) return true;
+  }
+
+  return false;
+}
+
 export async function createArticle(data: {
   itemCode: string;
   description: string;

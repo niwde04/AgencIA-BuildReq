@@ -7,7 +7,7 @@ Este reporte resume el comportamiento actual del sistema BuildReq por rol. Inclu
 ## Resumen ejecutivo
 
 - Contabilidad puede consultar Articulos, Proveedores, Proyectos, Ordenes de Compra, Recepciones, Facturas, Reportes, Impuestos, Retenciones y Activos fijos pendientes. En Ordenes de Compra y Recepciones su acceso es de consulta; no crea, edita ni registra.
-- La creacion y edicion de articulos queda limitada a Administrador del sistema, Administracion Central y Bodega Central. Contabilidad y Superintendente pueden consultar articulos; Contabilidad tambien puede resolver activos fijos pendientes.
+- La creacion y edicion de articulos queda limitada a Administrador del sistema, Administracion Central y Bodega Central. Estos roles pueden modificar codigo SAP, descripcion, grupo y grupo financiero; el codigo SAP solo puede cambiarse cuando el articulo aun no ha sido utilizado en inventario o documentos operativos. Contabilidad y Superintendente pueden consultar articulos; Contabilidad tambien puede resolver activos fijos pendientes.
 - El catalogo de Grupos financieros solo puede ser consultado y administrado desde su pantalla por Administrador del sistema y Administracion Central. Todos los roles con acceso a Articulos pueden consultar las opciones activas; solo Administrador del sistema, Administracion Central y Bodega Central pueden asignarlas al crear o editar articulos.
 - La creacion de proveedores queda limitada a Administrador del sistema y Administracion Central. Bodega Central puede editar el catalogo; Administracion Proyecto puede gestionar contactos, fiscal/documentos y agenda del proveedor, pero no crear proveedores nuevos.
 - Los roles de proyecto se limitan a sus proyectos asignados cuando el backend usa alcance por proyecto. Si un usuario de proyecto no tiene proyectos asignados, algunas pantallas tratan ese caso como acceso a todos los proyectos para ese rol.
@@ -91,7 +91,7 @@ Convenciones usadas:
 | Logistica Inversa | Menu para AC y BC; ADM puede operar por ruta directa/API. | Crear devolucion, generar nota de credito, crear traslado a bodega central y cambiar estado: ADM, BC. AC queda como consulta visual si entra por menu. |
 | Inventario | AC, BC, AP, BP desde menu; ADM por ruta directa/API. AP/BP segun proyectos/bodegas asignadas. | Crear/editar item de inventario en backend: ADM, AC. Reasignacion masiva/clasificacion de inventario: ADM, AC, BC. Kardex y detalle: roles con consulta. IR no tiene acceso. |
 | Saldos Iniciales | ADM, AC, BC. | Crear, editar y consultar saldos iniciales: ADM, AC, BC. |
-| Articulos | ADM, AC, BC, AP, BP, IR, SUP, CON. | Crear/editar catalogo: ADM, AC, BC. Resolver activos fijos pendientes: ADM, BC, CON. AP/BP/IR/SUP consultan sin modificar. |
+| Articulos | ADM, AC, BC, AP, BP, IR, SUP, CON. | Crear/editar catalogo: ADM, AC, BC. Pueden modificar codigo SAP, descripcion, grupo, grupo financiero y demas atributos editables; el cambio de codigo se bloquea si ya existen movimientos o documentos asociados. Resolver activos fijos pendientes: ADM, BC, CON. AP/BP/IR/SUP consultan sin modificar. |
 | Grupos financieros | La pantalla y el listado completo son exclusivos de ADM y AC. Los ocho roles pueden consultar opciones activas mediante el catalogo de Articulos. | Crear, editar, activar/desactivar o eliminar grupos: ADM, AC. Asignar un grupo activo a un articulo: ADM, AC, BC, porque son los roles que pueden crear o editar Articulos. BP/AP/IR/SUP/CON solo consultan el grupo mostrado en Articulos. |
 | Activos fijos pendientes | ADM, CON. | Resolver codigo real y atributos de activo fijo: ADM, CON; BC tambien tiene permiso de resolucion desde Articulos aunque esta ruta solo aparece para ADM/CON. |
 | Proveedores | ADM, AC, BC, AP, BP, CON. | Crear proveedor: ADM, AC. Editar catalogo/RTN/estado: ADM, AC, BC. Gestionar contactos, perfil fiscal y documentos: ADM, AC, BC, AP. BP y CON solo consultan. |
@@ -133,7 +133,7 @@ Convenciones usadas:
 | Saldos Iniciales | Nuevo saldo inicial | ADM, AC, BC. | Crear saldo inicial por proyecto/bodega. |
 | Saldos Iniciales | Detalle de saldo inicial | ADM, AC, BC. | Ver o editar saldo segun estado. |
 | Articulos | Crear articulo | ADM, AC, BC. | Alta de articulo en catalogo. |
-| Articulos | Editar articulo | ADM, AC, BC. | Modificar datos de catalogo. |
+| Articulos | Editar articulo | ADM, AC, BC. | Modificar codigo SAP, descripcion, grupo, grupo financiero y datos de catalogo. Un codigo SAP utilizado no se renombra: debe crearse el codigo correcto y desactivarse el anterior. |
 | Articulos | Ver atributos del articulo | AP, BP, IR, SUP, CON y roles sin edicion. | Consulta de atributos. |
 | Articulos | Resolver codigo de activo fijo | ADM, BC, CON. | Captura codigo real y detalles de activo fijo. |
 | Grupos financieros | Crear/editar grupo | ADM, AC. | Crea o modifica codigo, descripcion, CodN2, Nivel2 y estado del grupo financiero. |
@@ -187,6 +187,7 @@ Convenciones usadas:
 - Inventario tiene una diferencia entre frontend y backend: el frontend muestra "Nuevo item de inventario" a ADM y BC, pero el backend permite crear/editar item solo a ADM y AC. La reasignacion masiva si permite ADM, AC y BC.
 - Logistica Inversa permite a AC ver la pantalla desde el menu, pero las acciones operativas principales estan protegidas para ADM y BC.
 - Grupos financieros coincide entre menu, pagina y backend: solo ADM y AC pueden abrir y administrar el catalogo completo. El endpoint de opciones activas si admite a todos los roles con acceso a Articulos; la asignacion efectiva queda limitada a ADM, AC y BC por los permisos de edicion de Articulos.
+- ADM, AC y BC pueden editar los datos maestros de un articulo. El codigo SAP solo puede renombrarse cuando no tiene referencias en requisiciones, compras, inventario, saldos iniciales, traslados, recepciones, salidas o devoluciones; esta restriccion preserva la trazabilidad historica.
 - Contabilidad puede consultar Ordenes de Compra y Recepciones, incluyendo adjuntos, pero no puede crear, modificar, registrar ni administrar adjuntos en esos modulos.
 - Los adjuntos heredan reglas por entidad: Proveedores, Ordenes de Compra, Recepciones, Facturas, Solicitudes de Compra y Requisiciones tienen validaciones backend propias para ver o administrar documentos.
 - Los roles AP, BP, IR y SUP deben interpretarse con alcance por proyecto cuando el registro pertenece a un proyecto. IR se limita principalmente a sus propias requisiciones; SUP queda en lectura para requisiciones y articulos.

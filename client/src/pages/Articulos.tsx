@@ -282,6 +282,9 @@ export default function Articulos() {
   const [selectedArticle, setSelectedArticle] = useState<ArticleRecord | null>(
     null
   );
+  const [editItemCode, setEditItemCode] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editItemGroup, setEditItemGroup] = useState("");
   const [editType, setEditType] = useState<ArticleType>(1);
   const [editBrand, setEditBrand] = useState("");
   const [editFinancialGroupCode, setEditFinancialGroupCode] = useState("");
@@ -502,6 +505,9 @@ export default function Articulos() {
 
   const openEditDialog = (article: ArticleRecord) => {
     setSelectedArticle(article);
+    setEditItemCode(article.itemCode);
+    setEditDescription(article.description);
+    setEditItemGroup(article.itemGroup ?? "");
     setEditType(parseArticleType(String(article.tipoArticulo)) ?? 1);
     setEditBrand(article.brand ?? "");
     setEditFinancialGroupCode(article.financialGroupCode ?? "");
@@ -608,12 +614,19 @@ export default function Articulos() {
       toast.error("No tiene permisos para modificar artículos");
       return;
     }
+    if (!editItemCode.trim() || !editDescription.trim()) {
+      toast.error("Código y descripción son obligatorios");
+      return;
+    }
 
     const selectedProjectId =
       editProjectId !== "none" ? Number(editProjectId) : null;
 
     updateMutation.mutate({
       id: selectedArticle.id,
+      itemCode: editItemCode.trim(),
+      description: editDescription.trim(),
+      itemGroup: editItemGroup.trim() || null,
       financialGroupCode: editFinancialGroupCode || null,
       brand: editBrand.trim() || null,
       partNumber: editPartNumber.trim() || null,
@@ -1369,16 +1382,39 @@ export default function Articulos() {
                     value={
                       isResolvingSelectedArticle
                         ? realItemCode
-                        : selectedArticle.itemCode
+                        : canEditSelectedArticleCatalog
+                          ? editItemCode
+                          : selectedArticle.itemCode
                     }
-                    onChange={(event) => setRealItemCode(event.target.value)}
-                    readOnly={!isResolvingSelectedArticle}
-                    placeholder="Ingrese el código real"
+                    onChange={(event) => {
+                      if (isResolvingSelectedArticle) {
+                        setRealItemCode(event.target.value);
+                        return;
+                      }
+                      setEditItemCode(event.target.value);
+                    }}
+                    readOnly={
+                      !isResolvingSelectedArticle &&
+                      !canEditSelectedArticleCatalog
+                    }
+                    placeholder={
+                      isResolvingSelectedArticle
+                        ? "Ingrese el código real"
+                        : "Código SAP"
+                    }
                   />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Grupo</Label>
-                  <Input value={selectedArticle.itemGroup || ""} readOnly />
+                  <Input
+                    value={
+                      canEditSelectedArticleCatalog
+                        ? editItemGroup
+                        : selectedArticle.itemGroup || ""
+                    }
+                    disabled={!canEditSelectedArticleCatalog}
+                    onChange={(event) => setEditItemGroup(event.target.value)}
+                  />
                 </div>
                 <div className="space-y-1 md:col-span-2">
                   <Label className="text-xs">Grupo financiero</Label>
@@ -1398,8 +1434,13 @@ export default function Articulos() {
                   <Label className="text-xs">Descripción</Label>
                   <Textarea
                     rows={2}
-                    value={selectedArticle.description}
-                    readOnly
+                    value={
+                      canEditSelectedArticleCatalog
+                        ? editDescription
+                        : selectedArticle.description
+                    }
+                    disabled={!canEditSelectedArticleCatalog}
+                    onChange={(event) => setEditDescription(event.target.value)}
                   />
                 </div>
                 <div className="space-y-1">

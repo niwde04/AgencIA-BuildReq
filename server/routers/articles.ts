@@ -141,6 +141,9 @@ export const articlesRouter = router({
     .input(
       z.object({
         id: z.number().int().positive(),
+        itemCode: z.string().trim().min(1).max(50).optional(),
+        description: z.string().trim().min(1).max(500).optional(),
+        itemGroup: z.string().trim().max(255).nullable().optional(),
         financialGroupCode: z.string().trim().max(20).nullable().optional(),
         brand: z.string().trim().max(120).nullable().optional(),
         partNumber: z.string().trim().max(120).nullable().optional(),
@@ -152,6 +155,33 @@ export const articlesRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       assertCanManageArticles(ctx.user);
+      if (input.itemCode) {
+        const currentItemCode = await db.getArticleItemCode(input.id);
+        if (!currentItemCode) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Artículo no encontrado",
+          });
+        }
+        if (currentItemCode !== input.itemCode) {
+          const duplicateArticleId = await db.getArticleIdByItemCode(
+            input.itemCode
+          );
+          if (duplicateArticleId && duplicateArticleId !== input.id) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Ya existe un artículo con ese código",
+            });
+          }
+          if (await db.articleCodeHasUsage(currentItemCode)) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "El código SAP no puede cambiarse porque el artículo ya está utilizado. Cree el código correcto y desactive el anterior.",
+            });
+          }
+        }
+      }
       if (input.financialGroupCode) {
         const currentFinancialGroupCode =
           await db.getArticleFinancialGroupCode(input.id);
@@ -172,6 +202,9 @@ export const articlesRouter = router({
       }
 
       const updateData: Parameters<typeof db.updateArticle>[1] = {
+        itemCode: input.itemCode,
+        description: input.description,
+        itemGroup: input.itemGroup?.trim() || null,
         brand: input.brand?.trim() || null,
         partNumber: input.partNumber?.trim() || null,
         tipoArticulo: input.tipoArticulo,
@@ -183,6 +216,15 @@ export const articlesRouter = router({
       if ("financialGroupCode" in input) {
         updateData.financialGroupCode = input.financialGroupCode || null;
       }
+      if (!("itemCode" in input)) {
+        delete updateData.itemCode;
+      }
+      if (!("description" in input)) {
+        delete updateData.description;
+      }
+      if (!("itemGroup" in input)) {
+        delete updateData.itemGroup;
+      }
       if (!("brand" in input)) {
         delete updateData.brand;
       }
@@ -190,7 +232,17 @@ export const articlesRouter = router({
         delete updateData.partNumber;
       }
 
-      return db.updateArticle(input.id, updateData);
+      try {
+        return await db.updateArticle(input.id, updateData);
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudo actualizar el artículo",
+        });
+      }
     }),
 
   create: protectedProcedure
