@@ -1,6 +1,6 @@
 # Reporte de permisos por rol
 
-Fecha de corte: 2026-07-10
+Fecha de corte: 2026-07-11
 
 Este reporte resume el comportamiento actual del sistema BuildReq por rol. Incluye acceso a pantallas, permisos funcionales, ventanas/modales principales y observaciones donde el permiso visual del frontend no es exactamente igual al permiso real del backend.
 
@@ -8,9 +8,23 @@ Este reporte resume el comportamiento actual del sistema BuildReq por rol. Inclu
 
 - Contabilidad puede consultar Articulos, Proveedores, Proyectos, Ordenes de Compra, Recepciones, Facturas, Reportes, Impuestos, Retenciones y Activos fijos pendientes. En Ordenes de Compra y Recepciones su acceso es de consulta; no crea, edita ni registra.
 - La creacion y edicion de articulos queda limitada a Administrador del sistema, Administracion Central y Bodega Central. Contabilidad y Superintendente pueden consultar articulos; Contabilidad tambien puede resolver activos fijos pendientes.
+- El catalogo de Grupos financieros solo puede ser consultado y administrado desde su pantalla por Administrador del sistema y Administracion Central. Todos los roles con acceso a Articulos pueden consultar las opciones activas; solo Administrador del sistema, Administracion Central y Bodega Central pueden asignarlas al crear o editar articulos.
 - La creacion de proveedores queda limitada a Administrador del sistema y Administracion Central. Bodega Central puede editar el catalogo; Administracion Proyecto puede gestionar contactos, fiscal/documentos y agenda del proveedor, pero no crear proveedores nuevos.
 - Los roles de proyecto se limitan a sus proyectos asignados cuando el backend usa alcance por proyecto. Si un usuario de proyecto no tiene proyectos asignados, algunas pantallas tratan ese caso como acceso a todos los proyectos para ese rol.
 - Hay diferencias puntuales entre menu y backend. Se documentan como observaciones para no confundir "aparece en el menu" con "la API permite la accion".
+
+## Resumen por rol
+
+| Rol | Alcance principal | Que puede hacer | Limites relevantes |
+| --- | --- | --- | --- |
+| ADM - Administrador del sistema | Global. | Administra la operacion general, usuarios base, catalogos, proyectos, compras, inventario, recepciones, facturas, impuestos, retenciones, grupos financieros y datos demo. Puede contabilizar o rechazar facturas. | Reportes no lo admite ni en menu ni en backend. Inventario y Logistica Inversa no aparecen en su menu, aunque el backend y las paginas permiten acceso directo. |
+| AC - Administracion Central | Global para la operacion de BuildReq. | Gestiona requisiciones, abastecimiento, inventario, compras, recepciones, facturas, proyectos, usuarios, impuestos y grupos financieros. Genera reportes y consulta Logistica Inversa. | No puede gestionar cuentas base `admin`, invitar usuarios por correo ni ejecutar las acciones operativas de Logistica Inversa reservadas a ADM/BC. |
+| BC - Bodega Central | Operacion central de bodega y abastecimiento. | Gestiona requisiciones, flujos, devoluciones, inventario, saldos iniciales, articulos, salidas, traslados, recepciones y varias acciones de compra. Puede resolver activos fijos desde Articulos. | No administra usuarios, reportes ni grupos financieros. En Facturas su acceso es de consulta. Hay diferencias de UI/backend para crear items de inventario. |
+| AP - Administracion Proyecto | Proyectos asignados. | Gestiona requisiciones y compras del proyecto, procesa flujos permitidos, administra subproyectos y bodegas, gestiona datos complementarios de proveedores, recepciones y facturas, y genera reportes de su alcance. | No administra usuarios ni catalogos centrales como grupos financieros. Las operaciones deben pertenecer a sus proyectos asignados. |
+| BP - Bodega Proyecto | Proyectos y bodegas asignados. | Crea y atiende requisiciones, consulta y opera inventario de su alcance, gestiona salidas, cotizaciones, traslados y recepciones. | Ordenes de Compra, Facturas, Proveedores y Almacenes son principalmente de lectura. No administra usuarios, reportes ni catalogos centrales. |
+| IR - Ingeniero Residente / Requiriente | Requisiciones propias y proyectos asignados. | Crea, edita y consulta sus requisiciones; consulta sus flujos, Articulos, Proyectos y notificaciones. | No aprueba, procesa ni administra inventario, compras, recepciones, facturas o catalogos. |
+| SUP - Superintendente | Proyectos asignados. | Consulta Dashboard, requisiciones de sus proyectos, Articulos y Proyectos. | Es un rol de lectura; no crea ni procesa requisiciones y no tiene acceso normal a Notificaciones ni a modulos operativos de compra o bodega. |
+| CON - Contable | Operacion contable con consulta transversal. | Gestiona Facturas en revision, contabiliza o rechaza, administra Impuestos y Retenciones, genera reportes y resuelve activos fijos pendientes. Consulta Articulos, Proveedores, Proyectos, Ordenes de Compra y Recepciones. | En Ordenes de Compra y Recepciones es solo lectura. No gestiona requisiciones, inventario, usuarios ni grupos financieros. |
 
 ## Leyenda de roles
 
@@ -41,19 +55,20 @@ Convenciones usadas:
 | Pantalla | Ruta | ADM | AC | BC | AP | BP | IR | SUP | CON |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Dashboard | `/` | Si | Si | Si | Si | Si | Si | Si | No |
-| Requisiciones | `/solicitudes` | Si | Si | Si | PA | PA | Propias | PA | No |
+| Requisiciones / detalle | `/solicitudes`, `/solicitudes/:id` | Si | Si | Si | PA | PA | Propias | PA | No |
 | Nueva / editar requisicion | `/solicitudes/nueva`, `/solicitudes/:id/editar` | Si | Si | Si | PA | PA | Propias | No | No |
 | Flujos de Abastecimiento | `/flujos` | Si | Si | Si | PA | PA | Propias lectura | No | No |
-| Logistica Inversa | `/devoluciones` | Directo/API | Si lectura | Si | No | No | No | No | No |
+| Logística Inversa | `/devoluciones`, `/devoluciones/nueva` | Directo/API | Si lectura | Si | No | No | No | No | No |
 | Inventario | `/inventario` | Directo/API | Si | Si | PA | PA | No | No | No |
 | Saldos Iniciales | `/saldos-iniciales` | Si | Si | Si | No | No | No | No | No |
-| Articulos | `/articulos` | Si | Si | Si | Si | Si | Si | Si | Si |
+| Artículos | `/articulos` | Si | Si | Si | Si | Si | Si | Si | Si |
+| Grupos financieros | `/grupos-financieros` | Si | Si | No | No | No | No | No | No |
 | Activos fijos pendientes | `/activos-fijos-pendientes` | Si | No | No | No | No | No | No | Si |
 | Proveedores | `/proveedores` | Si | Si | Si | Si | Si lectura | No | No | Si lectura |
-| Salidas de Inventario | `/salidas-inventario` | Si | Si | Si | No | PA | No | No | No |
+| Salidas de Inventario | `/salidas-inventario`, `/salidas-bodega` | Si | Si | Si | No | PA | No | No | No |
 | Almacenes | `/almacenes` | Si | Si | Si lectura | PA | PA lectura | No | No | No |
 | Solicitudes de Compra | `/solicitudes-compra` | Si | Si | Si | PA | PA lectura/cotiza | No | No | No |
-| Ordenes de Compra | `/ordenes-compra` | Si | Si | Si | PA | PA lectura | No | No | Lectura |
+| Órdenes de Compra | `/ordenes-compra` | Si | Si | Si | PA | PA lectura | No | No | Lectura |
 | Solicitudes de Traslado | `/solicitudes-traslado` | Si | Si | Si | PA | PA | No | No | No |
 | Traslados | `/traslados` | Si | Si | Si | PA | PA | No | No | Detalle por recepcion |
 | Recepciones | `/recepciones` | Si | Si | Si | PA | PA | No | No | Lectura |
@@ -77,6 +92,7 @@ Convenciones usadas:
 | Inventario | AC, BC, AP, BP desde menu; ADM por ruta directa/API. AP/BP segun proyectos/bodegas asignadas. | Crear/editar item de inventario en backend: ADM, AC. Reasignacion masiva/clasificacion de inventario: ADM, AC, BC. Kardex y detalle: roles con consulta. IR no tiene acceso. |
 | Saldos Iniciales | ADM, AC, BC. | Crear, editar y consultar saldos iniciales: ADM, AC, BC. |
 | Articulos | ADM, AC, BC, AP, BP, IR, SUP, CON. | Crear/editar catalogo: ADM, AC, BC. Resolver activos fijos pendientes: ADM, BC, CON. AP/BP/IR/SUP consultan sin modificar. |
+| Grupos financieros | La pantalla y el listado completo son exclusivos de ADM y AC. Los ocho roles pueden consultar opciones activas mediante el catalogo de Articulos. | Crear, editar, activar/desactivar o eliminar grupos: ADM, AC. Asignar un grupo activo a un articulo: ADM, AC, BC, porque son los roles que pueden crear o editar Articulos. BP/AP/IR/SUP/CON solo consultan el grupo mostrado en Articulos. |
 | Activos fijos pendientes | ADM, CON. | Resolver codigo real y atributos de activo fijo: ADM, CON; BC tambien tiene permiso de resolucion desde Articulos aunque esta ruta solo aparece para ADM/CON. |
 | Proveedores | ADM, AC, BC, AP, BP, CON. | Crear proveedor: ADM, AC. Editar catalogo/RTN/estado: ADM, AC, BC. Gestionar contactos, perfil fiscal y documentos: ADM, AC, BC, AP. BP y CON solo consultan. |
 | Salidas de Inventario | ADM, AC, BC, BP. BP limitado por proyecto asignado. | Crear/gestionar salidas: ADM, AC, BC, BP. Generar devoluciones desde salida emitida: ADM, BC. |
@@ -120,6 +136,8 @@ Convenciones usadas:
 | Articulos | Editar articulo | ADM, AC, BC. | Modificar datos de catalogo. |
 | Articulos | Ver atributos del articulo | AP, BP, IR, SUP, CON y roles sin edicion. | Consulta de atributos. |
 | Articulos | Resolver codigo de activo fijo | ADM, BC, CON. | Captura codigo real y detalles de activo fijo. |
+| Grupos financieros | Crear/editar grupo | ADM, AC. | Crea o modifica codigo, descripcion, CodN2, Nivel2 y estado del grupo financiero. |
+| Grupos financieros | Eliminar grupo | ADM, AC. | Elimina el grupo; los articulos vinculados quedan sin grupo financiero. |
 | Proveedores | Nuevo proveedor | ADM, AC. | Alta de proveedor. |
 | Proveedores | Editar proveedor | ADM, AC, BC, AP segun seccion. | Catalogo/RTN: ADM, AC, BC. Contactos/fiscal/documentos: ADM, AC, BC, AP. |
 | Proveedores | Contactos del proveedor / Ver proveedor | BP, CON o roles sin permisos de edicion. | Consulta o gestion de contactos si AP/BC/AC/ADM. |
@@ -168,6 +186,7 @@ Convenciones usadas:
 - Reportes no incluye `admin` ni en menu ni en backend; solo AC, AP y CON pueden consultar/generar reportes.
 - Inventario tiene una diferencia entre frontend y backend: el frontend muestra "Nuevo item de inventario" a ADM y BC, pero el backend permite crear/editar item solo a ADM y AC. La reasignacion masiva si permite ADM, AC y BC.
 - Logistica Inversa permite a AC ver la pantalla desde el menu, pero las acciones operativas principales estan protegidas para ADM y BC.
+- Grupos financieros coincide entre menu, pagina y backend: solo ADM y AC pueden abrir y administrar el catalogo completo. El endpoint de opciones activas si admite a todos los roles con acceso a Articulos; la asignacion efectiva queda limitada a ADM, AC y BC por los permisos de edicion de Articulos.
 - Contabilidad puede consultar Ordenes de Compra y Recepciones, incluyendo adjuntos, pero no puede crear, modificar, registrar ni administrar adjuntos en esos modulos.
 - Los adjuntos heredan reglas por entidad: Proveedores, Ordenes de Compra, Recepciones, Facturas, Solicitudes de Compra y Requisiciones tienen validaciones backend propias para ver o administrar documentos.
 - Los roles AP, BP, IR y SUP deben interpretarse con alcance por proyecto cuando el registro pertenece a un proyecto. IR se limita principalmente a sus propias requisiciones; SUP queda en lectura para requisiciones y articulos.
