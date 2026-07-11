@@ -101,6 +101,20 @@ function assertCanCreateArticles(user: {
   }
 }
 
+async function assertActiveFinancialGroup(
+  financialGroupCode?: string | null
+) {
+  if (!financialGroupCode) return;
+
+  const financialGroup = await db.getFinancialGroupByCode(financialGroupCode);
+  if (!financialGroup || !financialGroup.isActive) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "El grupo financiero seleccionado no existe o está inactivo",
+    });
+  }
+}
+
 export const articlesRouter = router({
   list: protectedProcedure
     .input(
@@ -127,6 +141,7 @@ export const articlesRouter = router({
     .input(
       z.object({
         id: z.number().int().positive(),
+        financialGroupCode: z.string().trim().max(20).nullable().optional(),
         brand: z.string().trim().max(120).nullable().optional(),
         partNumber: z.string().trim().max(120).nullable().optional(),
         tipoArticulo: articleTypeSchema,
@@ -137,6 +152,13 @@ export const articlesRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       assertCanManageArticles(ctx.user);
+      if (input.financialGroupCode) {
+        const currentFinancialGroupCode =
+          await db.getArticleFinancialGroupCode(input.id);
+        if (currentFinancialGroupCode !== input.financialGroupCode) {
+          await assertActiveFinancialGroup(input.financialGroupCode);
+        }
+      }
       const projectId = input.tipoArticulo === 3 ? input.projectId ?? null : null;
 
       if (projectId) {
@@ -158,6 +180,9 @@ export const articlesRouter = router({
         allowsTaxWithholding: input.allowsTaxWithholding,
         updatedById: ctx.user.id,
       };
+      if ("financialGroupCode" in input) {
+        updateData.financialGroupCode = input.financialGroupCode || null;
+      }
       if (!("brand" in input)) {
         delete updateData.brand;
       }
@@ -174,6 +199,7 @@ export const articlesRouter = router({
         itemCode: z.string().trim().min(1).max(50),
         description: z.string().trim().min(1).max(500),
         itemGroup: z.string().trim().max(255).nullable().optional(),
+        financialGroupCode: z.string().trim().max(20).nullable().optional(),
         brand: z.string().trim().max(120).nullable().optional(),
         partNumber: z.string().trim().max(120).nullable().optional(),
         tipoArticulo: articleTypeSchema.default(1),
@@ -184,6 +210,7 @@ export const articlesRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       assertCanCreateArticles(ctx.user);
+      await assertActiveFinancialGroup(input.financialGroupCode);
       const projectId = input.tipoArticulo === 3 ? input.projectId ?? null : null;
 
       if (projectId) {
@@ -201,6 +228,7 @@ export const articlesRouter = router({
           itemCode: input.itemCode,
           description: input.description,
           itemGroup: input.itemGroup ?? null,
+          financialGroupCode: input.financialGroupCode ?? null,
           brand: input.brand ?? null,
           partNumber: input.partNumber ?? null,
           tipoArticulo: input.tipoArticulo,

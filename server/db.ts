@@ -57,6 +57,7 @@ import {
   sapSyncLog,
   invitations,
   invitationProjectAssignments,
+  financialGroups,
   sapCatalog,
   suppliers,
   supplierFiscalDocumentRanges,
@@ -103,6 +104,7 @@ import type {
   InsertSapSyncLogEntry,
   Invitation,
   InsertInvitation,
+  InsertFinancialGroup,
   InsertSapCatalogItem,
   InsertSupplier,
   InsertSupplierFiscalDocumentRange,
@@ -16877,6 +16879,174 @@ export async function getUserByEmail(email: string) {
 }
 
 // ============================================================
+// FINANCIAL GROUPS
+// ============================================================
+export type FinancialGroupListFilters = {
+  search?: string;
+  isActive?: boolean;
+  page?: number;
+  pageSize?: number;
+};
+
+function buildFinancialGroupWhere(filters?: FinancialGroupListFilters) {
+  const conditions = [];
+
+  if (filters?.search?.trim()) {
+    const search = `%${filters.search.trim()}%`;
+    conditions.push(
+      or(
+        ilike(financialGroups.financialGroupCode, search),
+        ilike(financialGroups.financialGroupDescription, search),
+        ilike(financialGroups.codN2, search),
+        ilike(financialGroups.nivel2, search)
+      )!
+    );
+  }
+
+  if (filters?.isActive !== undefined) {
+    conditions.push(eq(financialGroups.isActive, filters.isActive));
+  }
+
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
+export async function listFinancialGroups(filters?: FinancialGroupListFilters) {
+  const db = await getDb();
+  const requestedPage = Math.max(filters?.page ?? 1, 1);
+  const pageSize = Math.min(Math.max(filters?.pageSize ?? 25, 10), 200);
+
+  if (!db) {
+    return {
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize,
+      totalPages: 1,
+    };
+  }
+
+  const where = buildFinancialGroupWhere(filters);
+  const [totalResult] = await db
+    .select({ count: count() })
+    .from(financialGroups)
+    .where(where);
+  const total = totalResult?.count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(requestedPage, totalPages);
+  const offset = (page - 1) * pageSize;
+
+  const items = await db
+    .select()
+    .from(financialGroups)
+    .where(where)
+    .orderBy(asc(financialGroups.financialGroupCode))
+    .limit(pageSize)
+    .offset(offset);
+
+  return { items, total, page, pageSize, totalPages };
+}
+
+export async function listActiveFinancialGroups() {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db
+    .select()
+    .from(financialGroups)
+    .where(eq(financialGroups.isActive, true))
+    .orderBy(asc(financialGroups.financialGroupDescription));
+}
+
+export async function getFinancialGroupByCode(financialGroupCode: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const [financialGroup] = await db
+    .select()
+    .from(financialGroups)
+    .where(eq(financialGroups.financialGroupCode, financialGroupCode.trim()))
+    .limit(1);
+  return financialGroup;
+}
+
+export async function createFinancialGroup(
+  data: Pick<
+    InsertFinancialGroup,
+    | "financialGroupCode"
+    | "financialGroupDescription"
+    | "codN2"
+    | "nivel2"
+    | "isActive"
+  >
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const financialGroupCode = data.financialGroupCode.trim();
+  const [existing] = await db
+    .select({ financialGroupCode: financialGroups.financialGroupCode })
+    .from(financialGroups)
+    .where(eq(financialGroups.financialGroupCode, financialGroupCode))
+    .limit(1);
+  if (existing) {
+    throw new Error("Ya existe un grupo financiero con ese código");
+  }
+
+  const [created] = await db
+    .insert(financialGroups)
+    .values({
+      ...data,
+      financialGroupCode,
+      financialGroupDescription: data.financialGroupDescription.trim(),
+      codN2: data.codN2.trim(),
+      nivel2: data.nivel2.trim(),
+    })
+    .returning();
+  return created;
+}
+
+export async function updateFinancialGroup(
+  financialGroupCode: string,
+  data: Pick<
+    InsertFinancialGroup,
+    "financialGroupDescription" | "codN2" | "nivel2" | "isActive"
+  >
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [updated] = await db
+    .update(financialGroups)
+    .set({
+      ...data,
+      financialGroupDescription: data.financialGroupDescription.trim(),
+      codN2: data.codN2.trim(),
+      nivel2: data.nivel2.trim(),
+      updatedAt: new Date(),
+    })
+    .where(
+      eq(financialGroups.financialGroupCode, financialGroupCode.trim())
+    )
+    .returning();
+  if (!updated) throw new Error("Grupo financiero no encontrado");
+  return updated;
+}
+
+export async function removeFinancialGroup(financialGroupCode: string) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [removed] = await db
+    .delete(financialGroups)
+    .where(
+      eq(financialGroups.financialGroupCode, financialGroupCode.trim())
+    )
+    .returning();
+  if (!removed) throw new Error("Grupo financiero no encontrado");
+  return removed;
+}
+
+// ============================================================
 // SAP CATALOG
 // ============================================================
 export type ArticleType = 1 | 2 | 3;
@@ -16898,6 +17068,7 @@ export const ARTICLE_SEARCH_FIELD_NAMES = [
   "temporaryItemCode",
   "description",
   "itemGroup",
+  "financialGroupCode",
   "brand",
   "partNumber",
   "fixedAssetSerialNumber",
@@ -17027,10 +17198,16 @@ export async function listArticles(filters?: ArticleListFilters) {
   const rows = await db
     .select({
       article: sapCatalog,
+      financialGroupDescription:
+        financialGroups.financialGroupDescription,
       createdBy: articleCreatedByUsers,
       updatedBy: articleUpdatedByUsers,
     })
     .from(sapCatalog)
+    .leftJoin(
+      financialGroups,
+      eq(sapCatalog.financialGroupCode, financialGroups.financialGroupCode)
+    )
     .leftJoin(
       articleCreatedByUsers,
       eq(sapCatalog.createdById, articleCreatedByUsers.id)
@@ -17045,6 +17222,7 @@ export async function listArticles(filters?: ArticleListFilters) {
     .offset(offset);
   const items = rows.map(row => ({
     ...row.article,
+    financialGroupDescription: row.financialGroupDescription,
     createdBy: toAuditUser(row.createdBy),
     updatedBy: toAuditUser(row.updatedBy),
   }));
@@ -17064,6 +17242,7 @@ export async function updateArticle(
     itemCode?: string;
     description?: string;
     itemGroup?: string | null;
+    financialGroupCode?: string | null;
     brand?: string | null;
     partNumber?: string | null;
     tipoArticulo?: ArticleType;
@@ -17089,10 +17268,23 @@ export async function updateArticle(
   return article;
 }
 
+export async function getArticleFinancialGroupCode(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const [article] = await db
+    .select({ financialGroupCode: sapCatalog.financialGroupCode })
+    .from(sapCatalog)
+    .where(eq(sapCatalog.id, id))
+    .limit(1);
+  return article?.financialGroupCode;
+}
+
 export async function createArticle(data: {
   itemCode: string;
   description: string;
   itemGroup?: string | null;
+  financialGroupCode?: string | null;
   brand?: string | null;
   partNumber?: string | null;
   tipoArticulo: ArticleType;
@@ -17127,6 +17319,7 @@ export async function createArticle(data: {
       itemCode,
       description,
       itemGroup: data.itemGroup?.trim() || null,
+      financialGroupCode: data.financialGroupCode?.trim() || null,
       brand: data.brand?.trim() || null,
       partNumber: data.partNumber?.trim() || null,
       tipoArticulo: data.tipoArticulo,

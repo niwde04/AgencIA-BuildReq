@@ -18,6 +18,7 @@ import Devoluciones from "./pages/Devoluciones";
 import NuevaDevolucion from "./pages/NuevaDevolucion";
 import Inventario from "./pages/Inventario";
 import Articulos from "./pages/Articulos";
+import GruposFinancieros from "./pages/GruposFinancieros";
 import Proveedores from "./pages/Proveedores";
 import OrdenesCompra from "./pages/OrdenesCompra";
 import Proyectos from "./pages/Proyectos";
@@ -176,6 +177,7 @@ function DashboardRoutes() {
       <Route path="/devoluciones/nueva" component={NuevaDevolucion} />
       <Route path="/inventario" component={Inventario} />
       <Route path="/articulos" component={Articulos} />
+      <Route path="/grupos-financieros" component={GruposFinancieros} />
       <Route path="/activos-fijos-pendientes" component={Articulos} />
       <Route path="/proveedores" component={Proveedores} />
       <Route path="/almacenes" component={Almacenes} />

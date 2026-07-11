@@ -1888,6 +1888,35 @@ export type InsertInvitationProjectAssignment =
   typeof invitationProjectAssignments.$inferInsert;
 
 // ============================================================
+// FINANCIAL GROUPS - Financial classification for articles
+// ============================================================
+export const financialGroups = pgTable(
+  "financialGroups",
+  {
+    financialGroupCode: varchar("financialGroupCode", { length: 20 })
+      .primaryKey(),
+    financialGroupDescription: varchar("financialGroupDescription", {
+      length: 500,
+    }).notNull(),
+    codN2: varchar("codN2", { length: 20 }).notNull(),
+    nivel2: varchar("nivel2", { length: 255 }).notNull(),
+    isActive: boolean("isActive").default(true).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    descriptionIdx: index("financial_group_description_idx").on(
+      table.financialGroupDescription
+    ),
+    codN2Idx: index("financial_group_cod_n2_idx").on(table.codN2),
+    activeIdx: index("financial_group_active_idx").on(table.isActive),
+  })
+);
+
+export type FinancialGroup = typeof financialGroups.$inferSelect;
+export type InsertFinancialGroup = typeof financialGroups.$inferInsert;
+
+// ============================================================
 // SAP CATALOG - Master catalog of SAP items for autocomplete
 // ============================================================
 export const sapCatalog = pgTable(
@@ -1897,6 +1926,12 @@ export const sapCatalog = pgTable(
     itemCode: varchar("itemCode", { length: 50 }).notNull().unique(),
     description: varchar("description", { length: 500 }).notNull(),
     itemGroup: varchar("itemGroup", { length: 255 }),
+    financialGroupCode: varchar("financialGroupCode", {
+      length: 20,
+    }).references(() => financialGroups.financialGroupCode, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
     brand: varchar("brand", { length: 120 }),
     partNumber: varchar("partNumber", { length: 120 }),
     tipoArticulo: integer("tipoArticulo").default(1).notNull(),
@@ -1940,6 +1975,9 @@ export const sapCatalog = pgTable(
   table => ({
     codeIdx: index("sap_cat_code_idx").on(table.itemCode),
     descIdx: index("sap_cat_desc_idx").on(table.description),
+    financialGroupIdx: index("sap_cat_financial_group_idx").on(
+      table.financialGroupCode
+    ),
     brandIdx: index("sap_cat_brand_idx").on(table.brand),
     partNumberIdx: index("sap_cat_part_number_idx").on(table.partNumber),
     tipoArticuloIdx: index("sap_cat_tipo_articulo_idx").on(table.tipoArticulo),

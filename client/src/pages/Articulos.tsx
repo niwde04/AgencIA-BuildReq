@@ -5,6 +5,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  FinancialGroupCombobox,
+  type FinancialGroupOption,
+} from "@/components/FinancialGroupCombobox";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -61,6 +65,8 @@ type ArticleRecord = {
   itemCode: string;
   description: string;
   itemGroup?: string | null;
+  financialGroupCode?: string | null;
+  financialGroupDescription?: string | null;
   brand?: string | null;
   partNumber?: string | null;
   tipoArticulo: number;
@@ -109,6 +115,7 @@ type ArticleCreateFormState = {
   itemCode: string;
   description: string;
   itemGroup: string;
+  financialGroupCode: string;
   brand: string;
   partNumber: string;
   tipoArticulo: ArticleType;
@@ -130,6 +137,7 @@ const EMPTY_CREATE_ARTICLE_FORM: ArticleCreateFormState = {
   itemCode: "",
   description: "",
   itemGroup: "",
+  financialGroupCode: "",
   brand: "",
   partNumber: "",
   tipoArticulo: 1,
@@ -276,6 +284,7 @@ export default function Articulos() {
   );
   const [editType, setEditType] = useState<ArticleType>(1);
   const [editBrand, setEditBrand] = useState("");
+  const [editFinancialGroupCode, setEditFinancialGroupCode] = useState("");
   const [editPartNumber, setEditPartNumber] = useState("");
   const [editActive, setEditActive] = useState(true);
   const [editProjectId, setEditProjectId] = useState("none");
@@ -414,6 +423,10 @@ export default function Articulos() {
     });
 
   const { data: projectsData } = trpc.projects.list.useQuery({});
+  const { data: financialGroupOptionsData } =
+    trpc.financialGroups.activeOptions.useQuery();
+  const financialGroupOptions = (financialGroupOptionsData ??
+    []) as FinancialGroupOption[];
 
   useEffect(() => {
     if (isPlaceholderData) return;
@@ -491,6 +504,7 @@ export default function Articulos() {
     setSelectedArticle(article);
     setEditType(parseArticleType(String(article.tipoArticulo)) ?? 1);
     setEditBrand(article.brand ?? "");
+    setEditFinancialGroupCode(article.financialGroupCode ?? "");
     setEditPartNumber(article.partNumber ?? "");
     setEditProjectId(article.projectId ? String(article.projectId) : "none");
     setEditActive(article.isActive);
@@ -518,6 +532,7 @@ export default function Articulos() {
       itemCode: createForm.itemCode.trim(),
       description: createForm.description.trim(),
       itemGroup: createForm.itemGroup.trim() || null,
+      financialGroupCode: createForm.financialGroupCode || null,
       brand: createForm.brand.trim() || null,
       partNumber: createForm.partNumber.trim() || null,
       tipoArticulo: createForm.tipoArticulo,
@@ -599,6 +614,7 @@ export default function Articulos() {
 
     updateMutation.mutate({
       id: selectedArticle.id,
+      financialGroupCode: editFinancialGroupCode || null,
       brand: editBrand.trim() || null,
       partNumber: editPartNumber.trim() || null,
       tipoArticulo: editType,
@@ -638,6 +654,11 @@ export default function Articulos() {
           { header: "Código", value: row => row.itemCode, width: 16 },
           { header: "Descripción", value: row => row.description, width: 42 },
           { header: "Grupo", value: row => row.itemGroup || "" },
+          {
+            header: "Grupo financiero",
+            value: row => row.financialGroupDescription || "",
+            width: 42,
+          },
           { header: "Marca", value: row => row.brand || "" },
           { header: "No. parte", value: row => row.partNumber || "" },
           {
@@ -902,6 +923,9 @@ export default function Articulos() {
                         Grupo
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Grupo financiero
+                      </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Tipo
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -992,6 +1016,9 @@ export default function Articulos() {
                         </td>
                         <td className="p-3 text-xs text-muted-foreground">
                           {article.itemGroup || "-"}
+                        </td>
+                        <td className="max-w-[360px] p-3 text-xs text-muted-foreground">
+                          {article.financialGroupDescription || "-"}
                         </td>
                         <td className="p-3">
                           <Badge variant="outline">
@@ -1161,6 +1188,19 @@ export default function Articulos() {
                     }))
                   }
                   placeholder="Familia o grupo"
+                />
+              </div>
+              <div className="space-y-1 md:col-span-2">
+                <Label className="text-xs">Grupo financiero</Label>
+                <FinancialGroupCombobox
+                  options={financialGroupOptions}
+                  value={createForm.financialGroupCode}
+                  onChange={financialGroupCode =>
+                    setCreateForm(form => ({
+                      ...form,
+                      financialGroupCode: financialGroupCode ?? "",
+                    }))
+                  }
                 />
               </div>
               <div className="space-y-1 md:col-span-2">
@@ -1339,6 +1379,20 @@ export default function Articulos() {
                 <div className="space-y-1">
                   <Label className="text-xs">Grupo</Label>
                   <Input value={selectedArticle.itemGroup || ""} readOnly />
+                </div>
+                <div className="space-y-1 md:col-span-2">
+                  <Label className="text-xs">Grupo financiero</Label>
+                  <FinancialGroupCombobox
+                    options={financialGroupOptions}
+                    value={editFinancialGroupCode}
+                    selectedDescription={
+                      selectedArticle.financialGroupDescription
+                    }
+                    disabled={!canEditSelectedArticleCatalog}
+                    onChange={financialGroupCode =>
+                      setEditFinancialGroupCode(financialGroupCode ?? "")
+                    }
+                  />
                 </div>
                 <div className="space-y-1 md:col-span-2">
                   <Label className="text-xs">Descripción</Label>

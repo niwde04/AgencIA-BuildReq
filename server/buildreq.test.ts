@@ -651,9 +651,189 @@ describe("BuildReq - Sales taxes catalog", () => {
 });
 
 // ============================================================
+// Tests: Financial groups catalog
+// ============================================================
+describe("BuildReq - Financial groups catalog", () => {
+  const financialGroup = {
+    financialGroupCode: "02019901",
+    financialGroupDescription: "02019901-Mano de obra-Alimentación",
+    codN2: "0201",
+    nivel2: "Mano de obra",
+    isActive: true,
+  };
+
+  it("Administración Central can list, create, update and remove groups", async () => {
+    const caller = appRouter.createCaller(createAdminCentralContext().ctx);
+    const listSpy = vi.spyOn(db, "listFinancialGroups").mockResolvedValue({
+      items: [financialGroup],
+      total: 1,
+      page: 1,
+      pageSize: 25,
+      totalPages: 1,
+    } as any);
+    const createSpy = vi
+      .spyOn(db, "createFinancialGroup")
+      .mockResolvedValue(financialGroup as any);
+    const updateSpy = vi
+      .spyOn(db, "updateFinancialGroup")
+      .mockResolvedValue({ ...financialGroup, isActive: false } as any);
+    const removeSpy = vi
+      .spyOn(db, "removeFinancialGroup")
+      .mockResolvedValue(financialGroup as any);
+
+    await expect(
+      caller.financialGroups.list({
+        search: "alimentación",
+        isActive: true,
+        page: 1,
+        pageSize: 25,
+      })
+    ).resolves.toEqual(expect.objectContaining({ total: 1 }));
+    await expect(
+      caller.financialGroups.create(financialGroup)
+    ).resolves.toEqual(expect.objectContaining({ financialGroupCode: "02019901" }));
+    await expect(
+      caller.financialGroups.update({ ...financialGroup, isActive: false })
+    ).resolves.toEqual(expect.objectContaining({ isActive: false }));
+    await expect(
+      caller.financialGroups.remove({ financialGroupCode: "02019901" })
+    ).resolves.toEqual(expect.objectContaining({ financialGroupCode: "02019901" }));
+
+    expect(listSpy).toHaveBeenCalledWith({
+      search: "alimentación",
+      isActive: true,
+      page: 1,
+      pageSize: 25,
+    });
+    expect(createSpy).toHaveBeenCalledWith(financialGroup);
+    expect(updateSpy).toHaveBeenCalledWith("02019901", {
+      financialGroupDescription: financialGroup.financialGroupDescription,
+      codN2: "0201",
+      nivel2: "Mano de obra",
+      isActive: false,
+    });
+    expect(removeSpy).toHaveBeenCalledWith("02019901");
+
+    listSpy.mockRestore();
+    createSpy.mockRestore();
+    updateSpy.mockRestore();
+    removeSpy.mockRestore();
+  });
+
+  it("Article catalog users can read active options but cannot maintain groups", async () => {
+    const caller = appRouter.createCaller(createBodegaContext().ctx);
+    const activeOptionsSpy = vi
+      .spyOn(db, "listActiveFinancialGroups")
+      .mockResolvedValue([financialGroup] as any);
+    const createSpy = vi.spyOn(db, "createFinancialGroup");
+
+    await expect(caller.financialGroups.activeOptions()).resolves.toEqual([
+      expect.objectContaining({ financialGroupCode: "02019901" }),
+    ]);
+    await expect(
+      caller.financialGroups.create(financialGroup)
+    ).rejects.toThrow("No tiene permisos para modificar grupos financieros");
+    expect(createSpy).not.toHaveBeenCalled();
+
+    activeOptionsSpy.mockRestore();
+    createSpy.mockRestore();
+  });
+});
+
+// ============================================================
 // Tests: Articles catalog
 // ============================================================
 describe("BuildReq - Articles catalog", () => {
+  it("Creates, updates and clears the optional financial group", async () => {
+    const caller = appRouter.createCaller(createAdminCentralContext().ctx);
+    const financialGroupSpy = vi
+      .spyOn(db, "getFinancialGroupByCode")
+      .mockResolvedValue({
+        financialGroupCode: "02019901",
+        isActive: true,
+      } as any);
+    const currentFinancialGroupSpy = vi
+      .spyOn(db, "getArticleFinancialGroupCode")
+      .mockResolvedValue(null);
+    const createArticleSpy = vi
+      .spyOn(db, "createArticle")
+      .mockImplementation(async data => ({ id: 50, ...data }) as any);
+    const updateArticleSpy = vi
+      .spyOn(db, "updateArticle")
+      .mockImplementation(async (id, data) => ({ id, ...data }) as any);
+
+    await caller.articles.create({
+      itemCode: "ART-FG-01",
+      description: "Artículo con grupo financiero",
+      financialGroupCode: "02019901",
+      tipoArticulo: 1,
+      isActive: true,
+      allowsTaxWithholding: true,
+    });
+    await caller.articles.update({
+      id: 50,
+      financialGroupCode: "02019901",
+      tipoArticulo: 1,
+      isActive: true,
+      allowsTaxWithholding: true,
+    });
+    await caller.articles.update({
+      id: 50,
+      financialGroupCode: null,
+      tipoArticulo: 1,
+      isActive: true,
+      allowsTaxWithholding: true,
+    });
+
+    expect(financialGroupSpy).toHaveBeenCalledTimes(2);
+    expect(createArticleSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ financialGroupCode: "02019901" })
+    );
+    expect(updateArticleSpy).toHaveBeenNthCalledWith(
+      1,
+      50,
+      expect.objectContaining({ financialGroupCode: "02019901" })
+    );
+    expect(updateArticleSpy).toHaveBeenNthCalledWith(
+      2,
+      50,
+      expect.objectContaining({ financialGroupCode: null })
+    );
+
+    financialGroupSpy.mockRestore();
+    currentFinancialGroupSpy.mockRestore();
+    createArticleSpy.mockRestore();
+    updateArticleSpy.mockRestore();
+  });
+
+  it("Rejects inactive financial groups on articles", async () => {
+    const caller = appRouter.createCaller(createAdminCentralContext().ctx);
+    const financialGroupSpy = vi
+      .spyOn(db, "getFinancialGroupByCode")
+      .mockResolvedValue({
+        financialGroupCode: "02019901",
+        isActive: false,
+      } as any);
+    const createArticleSpy = vi.spyOn(db, "createArticle");
+
+    await expect(
+      caller.articles.create({
+        itemCode: "ART-FG-02",
+        description: "Artículo bloqueado",
+        financialGroupCode: "02019901",
+        tipoArticulo: 1,
+        isActive: true,
+        allowsTaxWithholding: true,
+      })
+    ).rejects.toThrow(
+      "El grupo financiero seleccionado no existe o está inactivo"
+    );
+    expect(createArticleSpy).not.toHaveBeenCalled();
+
+    financialGroupSpy.mockRestore();
+    createArticleSpy.mockRestore();
+  });
+
   it("Authorized users can list articles with filters and pagination", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);

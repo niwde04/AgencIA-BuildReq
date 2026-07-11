@@ -44,6 +44,7 @@ import {
   KeyRound,
   Percent,
   Tags,
+  Landmark,
   Truck,
   UserRound,
 } from "lucide-react";
@@ -125,6 +126,12 @@ const allMenuItems: MenuItem[] = [
       "contable",
       "admin",
     ],
+  },
+  {
+    icon: Landmark,
+    label: "Grupos financieros",
+    path: "/grupos-financieros",
+    roles: ["admin", "administracion_central"],
   },
   {
     icon: KeyRound,

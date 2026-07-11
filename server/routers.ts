@@ -27,6 +27,7 @@ import { invoicesRouter } from "./routers/invoices";
 import { openingBalancesRouter } from "./routers/openingBalances";
 import { warehouseExitsRouter } from "./routers/warehouseExits";
 import { articlesRouter } from "./routers/articles";
+import { financialGroupsRouter } from "./routers/financialGroups";
 import { suppliersRouter } from "./routers/suppliers";
 import { retentionsRouter } from "./routers/retentions";
 import { taxesRouter } from "./routers/taxes";
@@ -87,6 +88,7 @@ export const appRouter = router({
   openingBalances: openingBalancesRouter,
   warehouseExits: warehouseExitsRouter,
   articles: articlesRouter,
+  financialGroups: financialGroupsRouter,
   suppliers: suppliersRouter,
   retentions: retentionsRouter,
   taxes: taxesRouter,
