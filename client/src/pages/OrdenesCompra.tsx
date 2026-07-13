@@ -78,6 +78,10 @@ import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import {
+  getReadablePrintStyles,
+  getReadablePurchaseOrderPrintStyles,
+} from "@/lib/readable-print-styles";
+import {
   calculatePurchaseOrderLineAmounts,
   DEFAULT_SALES_TAXES,
   formatPurchaseOrderCurrency,
@@ -2540,6 +2544,8 @@ export default function OrdenesCompra() {
             @media print {
               .sheet { max-width: none; padding: 0; }
             }
+            ${getReadablePrintStyles()}
+            ${getReadablePurchaseOrderPrintStyles()}
           </style>
         </head>
         <body>
@@ -5073,7 +5079,7 @@ export default function OrdenesCompra() {
                   }
                 >
                   <Printer className="mr-2 h-4 w-4" />
-                  Imprimir documento
+                  Imprimir
                 </Button>
 
                 {canEditOrderStructure ? (

@@ -21,6 +21,7 @@ import { Eye, Printer, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
+import { getReadablePrintStyles } from "@/lib/readable-print-styles";
 import { getDefaultTransferPreparedByName } from "@/lib/transfer-print";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -433,6 +434,7 @@ export default function Transfers() {
               html, body { height: auto; overflow: hidden; }
               .sheet { max-width: none; padding: 0; page-break-after: avoid; }
             }
+            ${getReadablePrintStyles()}
           </style>
         </head>
         <body>

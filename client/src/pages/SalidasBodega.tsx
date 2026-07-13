@@ -48,6 +48,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
+import { getReadablePrintStyles } from "@/lib/readable-print-styles";
 
 const STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
@@ -2310,6 +2311,7 @@ export default function SalidasBodega() {
             @media print {
               .sheet { max-width: none; padding: 0; }
             }
+            ${getReadablePrintStyles()}
           </style>
         </head>
         <body>

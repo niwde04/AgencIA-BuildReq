@@ -2,6 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
+import { getReadablePrintStyles } from "@/lib/readable-print-styles";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1949,20 +1950,28 @@ export default function Facturas() {
       )
       .join("");
 
+    const invoiceSummaryCurrency = selectedInvoiceCurrency;
     const summaryRows = [
-      { label: "Sub-total L.", value: invoice.subtotal },
+      { label: `Sub-total ${invoiceSummaryCurrency}`, value: invoice.subtotal },
       ...(invoiceOtherChargesTotal > 0
         ? [
             {
-              label: `Otros cargos ${selectedInvoiceCurrency}`,
+              label: `Otros cargos ${invoiceSummaryCurrency}`,
               value: invoiceOtherChargesTotal,
             },
           ]
         : []),
-      { label: "I.S.V. L.", value: invoice.taxAmount },
-      { label: "Total factura L.", value: invoice.total },
-      { label: "Total retenciones L.", value: retentionTotal },
-      { label: "Total a pagar L.", value: netPayable, emphasized: true },
+      { label: `I.S.V. ${invoiceSummaryCurrency}`, value: invoice.taxAmount },
+      { label: `Total factura ${invoiceSummaryCurrency}`, value: invoice.total },
+      {
+        label: `Total retenciones ${invoiceSummaryCurrency}`,
+        value: retentionTotal,
+      },
+      {
+        label: `Total a pagar ${invoiceSummaryCurrency}`,
+        value: netPayable,
+        emphasized: true,
+      },
     ]
       .map(
         row => `
@@ -2141,6 +2150,7 @@ export default function Facturas() {
             @media print {
               .sheet { max-width: none; padding: 0; }
             }
+            ${getReadablePrintStyles()}
           </style>
         </head>
         <body>
@@ -3474,7 +3484,7 @@ export default function Facturas() {
                     onClick={handlePrintInvoiceDetail}
                   >
                     <Printer className="mr-2 h-4 w-4" />
-                    Exportar PDF
+                    Imprimir
                   </Button>
                   {canCorrectSelectedReceipt ? (
                     <Button

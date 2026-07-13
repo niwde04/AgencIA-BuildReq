@@ -45,6 +45,7 @@ import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
+import { getReadablePrintStyles } from "@/lib/readable-print-styles";
 
 const RETURN_TYPE_LABELS: Record<string, string> = {
   devolucion_bodega_proyecto: "Devolución a Bodega de Proyecto",
@@ -564,6 +565,7 @@ export default function Devoluciones() {
             @media print {
               .sheet { max-width: none; padding: 0; }
             }
+            ${getReadablePrintStyles()}
           </style>
         </head>
         <body>

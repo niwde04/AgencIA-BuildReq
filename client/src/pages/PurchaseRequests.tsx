@@ -54,6 +54,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
+import { getReadablePrintStyles } from "@/lib/readable-print-styles";
 
 const STATUS_LABELS: Record<string, string> = {
   pendiente: "Pendiente",
@@ -1225,6 +1226,7 @@ export default function PurchaseRequests() {
             @media print {
               .sheet { max-width: none; padding: 0; }
             }
+            ${getReadablePrintStyles()}
           </style>
         </head>
         <body>
@@ -2119,7 +2121,7 @@ export default function PurchaseRequests() {
                     onClick={handlePrintDocument}
                   >
                     <Printer className="mr-2 h-4 w-4" />
-                    Imprimir documento
+                    Imprimir
                   </Button>
                 </div>
 

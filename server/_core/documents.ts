@@ -661,7 +661,7 @@ function drawInfoCard(
     x: params.x + 14,
     top: params.top + 14,
     text: params.label.toUpperCase(),
-    fontSize: 9,
+    fontSize: 10,
     color: [0.42, 0.46, 0.52],
     font: "F2",
   });
@@ -933,11 +933,11 @@ export function buildProcurementPdfBase64(params: {
     );
     const detailText = (item.metaLines ?? []).filter(Boolean).join(" | ");
     const detailLines = detailText
-      ? wrapText(detailText, descriptionWidth, 9.5, "F1", 4)
+      ? wrapText(detailText, descriptionWidth, 10, "F1", 4)
       : [];
     const rowHeight = Math.max(
       42,
-      descriptionLines.length * 15 + detailLines.length * 12 + 18
+      descriptionLines.length * 15 + detailLines.length * 12.5 + 18
     );
 
     if (currentTop + rowHeight > PAGE_HEIGHT - PAGE_MARGIN_BOTTOM - 26) {
@@ -973,9 +973,9 @@ export function buildProcurementPdfBase64(params: {
         top: currentTop + 14 + descriptionLines.length * 15,
         width: descriptionWidth,
         text: detailLines.join("\n"),
-        fontSize: 9.5,
+        fontSize: 10,
         color: palette.muted,
-        leading: 12,
+        leading: 12.5,
         maxLines: 4,
       });
     }
@@ -1077,7 +1077,7 @@ export function buildProcurementPdfBase64(params: {
       x: PAGE_MARGIN_X,
       top: PAGE_HEIGHT - 42,
       text: params.footerNote ?? "Documento generado automáticamente por BuildReq.",
-      fontSize: 9,
+      fontSize: 10,
       color: palette.muted,
     });
     drawText(pdfPage, {
@@ -1085,7 +1085,7 @@ export function buildProcurementPdfBase64(params: {
       top: PAGE_HEIGHT - 42,
       width: 90,
       text: `Página ${index + 1} / ${pages.length}`,
-      fontSize: 9,
+      fontSize: 10,
       color: palette.muted,
       align: "right",
     });
@@ -1183,8 +1183,8 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     fontSize?: number;
     leading?: number;
   }) {
-    const fontSize = params.fontSize ?? 9.6;
-    const leading = params.leading ?? 11.5;
+    const fontSize = params.fontSize ?? 10.4;
+    const leading = params.leading ?? 13.2;
 
     drawText(page, {
       x: params.x,
@@ -1215,7 +1215,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       });
     });
 
-    return Math.max(13, valueLines.length * leading);
+    return Math.max(15, valueLines.length * leading);
   }
 
   function drawLogo(top: number) {
@@ -1238,7 +1238,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       headerTop + 2,
       titleWidth,
       "HIDALGO E HIDALGO HONDURAS SA DE CV",
-      13.5,
+      14.5,
       "F2"
     );
     drawCenteredText(
@@ -1246,7 +1246,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       headerTop + 20,
       titleWidth,
       "RTN: 08019013549808",
-      10.5,
+      11,
       "F2"
     );
     drawCenteredText(
@@ -1254,7 +1254,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       headerTop + 36,
       titleWidth,
       "ORDEN DE COMPRA",
-      12,
+      13.2,
       "F2"
     );
     drawCenteredWrappedText(
@@ -1262,9 +1262,9 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       headerTop + 52,
       titleWidth,
       params.projectLabel,
-      10.5,
+      11.2,
       "F2",
-      12,
+      12.8,
       2
     );
 
@@ -1391,7 +1391,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
         value: params.quoteLabel,
       }) + 3;
 
-    return Math.max(190, leftTop, middleTop, rightTop) + 8;
+    return Math.max(204, leftTop, middleTop, rightTop) + 10;
   }
 
   function drawContinuationHeader() {
@@ -1427,7 +1427,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
 
   function drawTableHeader(top: number) {
     tableColumns.forEach(column => {
-      drawCenteredText(column.x, top + 6, column.width, column.label, 10, "F2");
+      drawCenteredText(column.x, top + 6, column.width, column.label, 10.5, "F2");
     });
     drawLine(
       page,
@@ -1488,29 +1488,29 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     const descriptionLines = wrapText(
       item.description || "-",
       tableColumns[1].width - 12,
-      9,
+      10.2,
       "F1",
       4
     );
     const destinationLines = wrapText(
       item.destinationLabel || "-",
       tableColumns[2].width - 12,
-      8.5,
+      10,
       "F1",
       4
     );
     const partLines = wrapText(
       item.partNumber || "-",
       tableColumns[3].width - 12,
-      8.5,
+      10,
       "F1",
       3
     );
     const rowHeight = Math.max(
-      28,
-      descriptionLines.length * 11 + 12,
-      destinationLines.length * 10 + 12,
-      partLines.length * 10 + 12
+      32,
+      descriptionLines.length * 12.4 + 14,
+      destinationLines.length * 12 + 14,
+      partLines.length * 12 + 14
     );
 
     drawWrappedCell({
@@ -1518,7 +1518,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       top: top + 8,
       width: tableColumns[0].width,
       text: item.itemNumber,
-      fontSize: 10,
+      fontSize: 10.5,
       align: "center",
       maxLines: 1,
     });
@@ -1527,8 +1527,8 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       top: top + 7,
       width: tableColumns[1].width - 12,
       text: item.description,
-      fontSize: 9,
-      leading: 11,
+      fontSize: 10.2,
+      leading: 12.4,
       maxLines: 4,
     });
     drawWrappedCell({
@@ -1536,8 +1536,8 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       top: top + 7,
       width: tableColumns[2].width - 12,
       text: item.destinationLabel,
-      fontSize: 8.5,
-      leading: 10,
+      fontSize: 10,
+      leading: 12,
       maxLines: 4,
     });
     drawWrappedCell({
@@ -1545,9 +1545,9 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       top: top + 7,
       width: tableColumns[3].width - 12,
       text: item.partNumber,
-      fontSize: 8.5,
+      fontSize: 10,
       align: "center",
-      leading: 10,
+      leading: 12,
       maxLines: 3,
     });
     drawText(page, {
@@ -1555,7 +1555,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       top: top + Math.max(8, rowHeight / 2 - 4),
       width: tableColumns[4].width - 12,
       text: item.quantityLabel,
-      fontSize: 10,
+      fontSize: 10.5,
       color: ink,
       align: "right",
     });
@@ -1564,7 +1564,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       top: top + Math.max(8, rowHeight / 2 - 4),
       width: tableColumns[5].width - 12,
       text: item.unitPriceLabel,
-      fontSize: 10,
+      fontSize: 10.5,
       color: ink,
       align: "right",
     });
@@ -1573,7 +1573,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       top: top + Math.max(8, rowHeight / 2 - 4),
       width: tableColumns[6].width - 12,
       text: item.subtotalLabel,
-      fontSize: 10,
+      fontSize: 10.5,
       color: ink,
       align: "right",
     });
@@ -1591,9 +1591,9 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   }
 
   function drawSummary(top: number) {
-    const summaryWidth = 164;
+    const summaryWidth = 190;
     const summaryX = marginX + contentWidth - summaryWidth;
-    const rowHeight = 11.5;
+    const rowHeight = 15.2;
     const height = params.summaryRows.length * rowHeight;
 
     drawRect(page, summaryX, top, summaryWidth, height, {
@@ -1616,18 +1616,18 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       }
       drawText(page, {
         x: summaryX + 6,
-        top: rowTop + 2.4,
+        top: rowTop + 3.2,
         text: row.label,
-        fontSize: row.emphasized ? 7.8 : 7.3,
+        fontSize: row.emphasized ? 10.4 : 10,
         font: row.emphasized ? "F2" : "F1",
         color: ink,
       });
       drawText(page, {
-        x: summaryX + 102,
-        top: rowTop + 2.4,
-        width: summaryWidth - 108,
+        x: summaryX + 116,
+        top: rowTop + 3.2,
+        width: summaryWidth - 124,
         text: row.value,
-        fontSize: row.emphasized ? 7.8 : 7.3,
+        fontSize: row.emphasized ? 10.4 : 10,
         font: "F2",
         color: ink,
         align: "right",
@@ -1639,21 +1639,21 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
 
   function drawLowerSection(top: number) {
     const summary = drawSummary(top);
-    const signaturesTop = top + summary.height + 30;
-    const signatureWidth = 150;
-    const firstSignatureX = marginX + 96;
-    const secondSignatureX = firstSignatureX + 190;
+    const signaturesTop = top + summary.height + 34;
+    const signatureWidth = 160;
+    const firstSignatureX = marginX + 88;
+    const secondSignatureX = firstSignatureX + 206;
     const preparedByLabel =
       params.preparedByLabel?.trim() || params.requestedByLabel || "-";
 
     drawCenteredWrappedText(
       firstSignatureX,
-      signaturesTop - 18,
+      signaturesTop - 25,
       signatureWidth,
       preparedByLabel,
-      8.4,
+      10,
       "F2",
-      9,
+      11.8,
       2
     );
 
@@ -1680,7 +1680,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       signaturesTop + 7,
       signatureWidth,
       "Elaborado por:",
-      9.2,
+      10.2,
       "F2"
     );
     drawCenteredText(
@@ -1688,27 +1688,27 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       signaturesTop + 7,
       signatureWidth,
       "Autorizado por:",
-      9.2,
+      10.2,
       "F2"
     );
 
-    const noteTop = signaturesTop + 34;
+    const noteTop = signaturesTop + 38;
     const noteX = marginX + 24;
     const noteWidth = contentWidth - 48;
-    const noteHeight = 54;
+    const noteHeight = 64;
     drawRect(page, noteX, noteTop, noteWidth, noteHeight, {
       stroke: ink,
       lineWidth: 1.2,
     });
-    drawCenteredText(noteX, noteTop + 8, noteWidth, "Tomar Nota:", 10, "F2");
+    drawCenteredText(noteX, noteTop + 8, noteWidth, "Tomar Nota:", 10.5, "F2");
     drawCenteredWrappedText(
       noteX + 18,
       noteTop + 22,
       noteWidth - 36,
       "Emitir factura a nombre de: HIDALGO e HIDALGO HONDURAS SA DE CV; RTN: 08019013549808; Dirección: Blvd. Suyapa, Edificio Metropolis, Torre 2, Piso 20, Ofi. 22004. Presentar con la factura su constancia de estar sujetos al RÉGIMEN DE PAGOS A CUENTA vigente, caso contrario se procederá con las retenciones correspondientes.",
-      8.4,
-      "F1",
       10,
+      "F1",
+      11.4,
       4
     );
   }
@@ -1734,24 +1734,29 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
 
   rows.forEach(item => {
     const rowHeight = Math.max(
-      28,
-      wrapText(item.description || "-", tableColumns[1].width - 12, 9, "F1", 4)
-        .length *
-        11 +
-        12,
+      32,
       wrapText(
-        item.destinationLabel || "-",
-        tableColumns[2].width - 12,
-        8.5,
+        item.description || "-",
+        tableColumns[1].width - 12,
+        10.2,
         "F1",
         4
       ).length *
-        10 +
-        12,
-      wrapText(item.partNumber || "-", tableColumns[3].width - 12, 8.5, "F1", 3)
+        12.4 +
+        14,
+      wrapText(
+        item.destinationLabel || "-",
+        tableColumns[2].width - 12,
+        10,
+        "F1",
+        4
+      ).length *
+        12 +
+        14,
+      wrapText(item.partNumber || "-", tableColumns[3].width - 12, 10, "F1", 3)
         .length *
-        10 +
-        12
+        12 +
+        14
     );
     if (currentTop + rowHeight > printableBottom) {
       currentTop = startNewPage(true);
@@ -1759,7 +1764,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     currentTop += drawItemRow(item, currentTop);
   });
 
-  if (currentTop + 10 + 245 > printableBottom) {
+  if (currentTop + 10 + 282 > printableBottom) {
     currentTop = startNewPage(false);
   } else {
     currentTop += 10;

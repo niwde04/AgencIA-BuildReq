@@ -89,6 +89,7 @@ import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
+import { getReadablePrintStyles } from "@/lib/readable-print-styles";
 import {
   calculatePurchaseOrderLineAmounts,
   DEFAULT_SALES_TAXES,
@@ -4395,6 +4396,7 @@ export default function Recepciones() {
             @media print {
               .sheet { max-width: none; padding: 0; }
             }
+            ${getReadablePrintStyles()}
           </style>
         </head>
         <body>
