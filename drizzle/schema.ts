@@ -5,6 +5,7 @@ import {
   pgTable,
   text,
   timestamp,
+  date,
   varchar,
   decimal,
   boolean,
@@ -14,7 +15,10 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import type { PurchaseOrderTaxBreakdownEntry } from "../shared/purchase-orders";
+import type {
+  PurchaseCurrency,
+  PurchaseOrderTaxBreakdownEntry,
+} from "../shared/purchase-orders";
 import type { FixedAssetDetail } from "../shared/fixed-assets";
 
 // ============================================================
@@ -674,6 +678,12 @@ export const purchaseOrders = pgTable(
       .default("oc")
       .notNull(),
     purchaseType: purchaseTypeEnum("purchaseType"),
+    currency: varchar("currency", { length: 3 })
+      .$type<PurchaseCurrency>()
+      .default("HNL")
+      .notNull(),
+    exchangeRate: decimal("exchangeRate", { precision: 18, scale: 8 }),
+    exchangeRateDate: date("exchangeRateDate", { mode: "date" }),
     paymentMethod: paymentMethodEnum("paymentMethod"),
     supplierId: integer("supplierId"),
     supplierEmail: varchar("supplierEmail", { length: 320 }),
@@ -719,6 +729,18 @@ export const purchaseOrders = pgTable(
       table.supplierContactId
     ),
     statusIdx: index("po_status_idx").on(table.status),
+    currencyCheck: check(
+      "po_currency_check",
+      sql`${table.currency} in ('HNL', 'USD')`
+    ),
+    exchangeRateCheck: check(
+      "po_exchange_rate_check",
+      sql`(
+        (${table.currency} = 'HNL' and ${table.exchangeRate} is null and ${table.exchangeRateDate} is null)
+        or
+        (${table.currency} = 'USD' and ${table.exchangeRate} > 0 and ${table.exchangeRateDate} is not null)
+      )`
+    ),
   })
 );
 
@@ -972,6 +994,12 @@ export const receipts = pgTable(
     sourceType: receiptSourceTypeEnum("sourceType").notNull(),
     sourceId: integer("sourceId").notNull(),
     projectId: integer("projectId"),
+    currency: varchar("currency", { length: 3 })
+      .$type<PurchaseCurrency>()
+      .default("HNL")
+      .notNull(),
+    exchangeRate: decimal("exchangeRate", { precision: 18, scale: 8 }),
+    exchangeRateDate: date("exchangeRateDate", { mode: "date" }),
     receivedById: integer("receivedById").notNull(),
     status: receiptStatusEnum("status").default("pendiente").notNull(),
     isFiscalDocument: boolean("isFiscalDocument").default(false).notNull(),
@@ -995,6 +1023,18 @@ export const receipts = pgTable(
   table => ({
     sourceIdx: index("rec_source_idx").on(table.sourceType, table.sourceId),
     projectIdx: index("rec_project_idx").on(table.projectId),
+    currencyCheck: check(
+      "receipt_currency_check",
+      sql`${table.currency} in ('HNL', 'USD')`
+    ),
+    exchangeRateCheck: check(
+      "receipt_exchange_rate_check",
+      sql`(
+        (${table.currency} = 'HNL' and ${table.exchangeRate} is null and ${table.exchangeRateDate} is null)
+        or
+        (${table.currency} = 'USD' and ${table.exchangeRate} > 0 and ${table.exchangeRateDate} is not null)
+      )`
+    ),
   })
 );
 
@@ -1110,6 +1150,12 @@ export const invoices = pgTable(
     purchaseOrderId: integer("purchaseOrderId").notNull(),
     projectId: integer("projectId").notNull(),
     supplierId: integer("supplierId"),
+    currency: varchar("currency", { length: 3 })
+      .$type<PurchaseCurrency>()
+      .default("HNL")
+      .notNull(),
+    exchangeRate: decimal("exchangeRate", { precision: 18, scale: 8 }),
+    exchangeRateDate: date("exchangeRateDate", { mode: "date" }),
     status: invoiceStatusEnum("status").default("borrador").notNull(),
     isFiscalDocument: boolean("isFiscalDocument").default(false).notNull(),
     cai: varchar("cai", { length: 100 }),
@@ -1172,6 +1218,18 @@ export const invoices = pgTable(
     projectIdx: index("invoice_project_idx").on(table.projectId),
     supplierIdx: index("inv_supplier_idx").on(table.supplierId),
     statusIdx: index("invoice_status_idx").on(table.status),
+    currencyCheck: check(
+      "invoice_currency_check",
+      sql`${table.currency} in ('HNL', 'USD')`
+    ),
+    exchangeRateCheck: check(
+      "invoice_exchange_rate_check",
+      sql`(
+        (${table.currency} = 'HNL' and ${table.exchangeRate} is null and ${table.exchangeRateDate} is null)
+        or
+        (${table.currency} = 'USD' and ${table.exchangeRate} > 0 and ${table.exchangeRateDate} is not null)
+      )`
+    ),
   })
 );
 

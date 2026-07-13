@@ -15,6 +15,7 @@ export const DMC_COLUMNS = [
   { key: "rtn", header: "RTN", width: 18 },
   { key: "razonSocial", header: "Razón Social", width: 36 },
   { key: "sistemaDePago", header: "Sistema_de_Pago", width: 18 },
+  { key: "moneda", header: "Moneda", width: 12 },
   { key: "tipoDeComprobante", header: "Tipo_de_comprobante", width: 24 },
   { key: "fechaFactura", header: "Fecha Factura", width: 14, numFmt: "yyyy-mm-dd" },
   { key: "establecimiento", header: "ESTABLECIMIENTO", width: 16 },
@@ -131,6 +132,7 @@ export type DmcReportSourceInvoice = {
   purchaseOrderNumber?: string | null;
   purchaseType?: string | null;
   purchaseOrderPaymentMethod?: string | null;
+  currency?: "HNL" | "USD" | null;
   projectCode?: string | null;
   projectName?: string | null;
   supplierCode?: string | null;
@@ -149,11 +151,15 @@ export type DmcReportSummary = {
   dateTo: Date | null;
   statusMode: DmcStatusMode;
   invoiceCount: number;
-  totalBase: number;
-  totalIsv: number;
-  totalFactura: number;
-  totalRetencion: number;
-  netoPagar: number;
+  totalsByCurrency: Array<{
+    currency: "HNL" | "USD";
+    invoiceCount: number;
+    totalBase: number;
+    totalIsv: number;
+    totalFactura: number;
+    totalRetencion: number;
+    netoPagar: number;
+  }>;
 };
 
 export type DmcReportPayload = {
@@ -458,6 +464,7 @@ function buildRow(invoice: DmcReportSourceInvoice, index: number): DmcReportRow 
     sistemaDePago: invoice.purchaseOrderPaymentMethod
       ? PAYMENT_METHOD_LABELS[invoice.purchaseOrderPaymentMethod] ?? invoice.purchaseOrderPaymentMethod
       : "",
+    moneda: invoice.currency === "USD" ? "USD" : "HNL",
     tipoDeComprobante:
       getDocumentTypeLabelFromNumber(invoice.invoiceNumber) ??
       (invoice.isFiscalDocument ? "Factura" : "Documento interno"),
@@ -534,6 +541,45 @@ export function buildDmcReportPayload(
   } = {}
 ): DmcReportPayload {
   const rows = invoices.map((invoice, index) => buildRow(invoice, index));
+  const totalsByCurrency = (["HNL", "USD"] as const)
+    .map(currency => {
+      const currencyRows = rows.filter(row => row.moneda === currency);
+      return {
+        currency,
+        invoiceCount: currencyRows.length,
+        totalBase: money(
+          currencyRows.reduce(
+            (sum, row) => sum + toNumber(row.totalBase as number),
+            0
+          )
+        ),
+        totalIsv: money(
+          currencyRows.reduce(
+            (sum, row) => sum + toNumber(row.totalIsv as number),
+            0
+          )
+        ),
+        totalFactura: money(
+          currencyRows.reduce(
+            (sum, row) => sum + toNumber(row.totalFactura as number),
+            0
+          )
+        ),
+        totalRetencion: money(
+          currencyRows.reduce(
+            (sum, row) => sum + toNumber(row.totalRetencion as number),
+            0
+          )
+        ),
+        netoPagar: money(
+          currencyRows.reduce(
+            (sum, row) => sum + toNumber(row.netoPagar as number),
+            0
+          )
+        ),
+      };
+    })
+    .filter(summary => summary.invoiceCount > 0);
 
   return {
     rows,
@@ -544,15 +590,7 @@ export function buildDmcReportPayload(
       dateTo: normalizeDate(params.dateTo),
       statusMode: params.statusMode ?? "non_void",
       invoiceCount: rows.length,
-      totalBase: money(rows.reduce((sum, row) => sum + toNumber(row.totalBase as number), 0)),
-      totalIsv: money(rows.reduce((sum, row) => sum + toNumber(row.totalIsv as number), 0)),
-      totalFactura: money(
-        rows.reduce((sum, row) => sum + toNumber(row.totalFactura as number), 0)
-      ),
-      totalRetencion: money(
-        rows.reduce((sum, row) => sum + toNumber(row.totalRetencion as number), 0)
-      ),
-      netoPagar: money(rows.reduce((sum, row) => sum + toNumber(row.netoPagar as number), 0)),
+      totalsByCurrency,
     },
   };
 }

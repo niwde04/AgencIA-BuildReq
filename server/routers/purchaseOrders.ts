@@ -3,7 +3,9 @@ import { z } from "zod";
 import * as db from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import {
+  PURCHASE_CURRENCIES,
   PURCHASE_ORDER_CONTRACT_FREQUENCIES,
+  type PurchaseCurrency,
 } from "@shared/purchase-orders";
 import { ASSET_CONDITION_VALUES } from "@shared/fixed-assets";
 import { applyProjectScope, canAccessProject, getProjectScopeIds } from "../projectAccess";
@@ -94,6 +96,68 @@ function toDecimalString(value: string | number | null | undefined) {
 
 function parseDateInput(value?: string | null) {
   return value ? new Date(`${value}T12:00:00`) : null;
+}
+
+const purchaseCurrencyInputFields = {
+  currency: z.enum(PURCHASE_CURRENCIES).optional(),
+  exchangeRate: z.string().trim().max(30).optional().nullable(),
+  exchangeRateDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional()
+    .nullable(),
+};
+
+function normalizePurchaseCurrencySnapshot(value: {
+  currency?: PurchaseCurrency | null;
+  exchangeRate?: string | number | null;
+  exchangeRateDate?: string | Date | null;
+}): {
+  currency: PurchaseCurrency;
+  exchangeRate: string | null;
+  exchangeRateDate: Date | null;
+} {
+  const currency: PurchaseCurrency = value.currency === "USD" ? "USD" : "HNL";
+  if (currency === "HNL") {
+    return {
+      currency,
+      exchangeRate: null,
+      exchangeRateDate: null,
+    };
+  }
+
+  const rawRate = String(value.exchangeRate ?? "").trim();
+  if (!/^\d{1,10}(?:\.\d{1,8})?$/.test(rawRate)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "Ingrese una tasa referencial válida, positiva y con máximo 8 decimales",
+    });
+  }
+  const rate = Number(rawRate);
+  if (!Number.isFinite(rate) || rate <= 0) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "La tasa referencial debe ser mayor que cero",
+    });
+  }
+
+  const exchangeRateDate =
+    value.exchangeRateDate instanceof Date
+      ? value.exchangeRateDate
+      : parseDateInput(value.exchangeRateDate);
+  if (!exchangeRateDate || Number.isNaN(exchangeRateDate.getTime())) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Seleccione la fecha de la tasa referencial",
+    });
+  }
+
+  return {
+    currency,
+    exchangeRate: rate.toFixed(8),
+    exchangeRateDate,
+  };
 }
 
 function dateKey(value?: string | Date | null) {
@@ -432,6 +496,7 @@ export const purchaseOrdersRouter = router({
       z.object({
         supplierId: z.number(),
         sapCodes: z.array(z.string().trim().min(1)).min(1),
+        currency: z.enum(PURCHASE_CURRENCIES).optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -445,6 +510,7 @@ export const purchaseOrdersRouter = router({
       return db.getLatestSupplierPurchasePrices({
         supplierId: input.supplierId,
         sapCodes: input.sapCodes,
+        currency: input.currency,
         projectIds: getProjectScopeIds(ctx.user),
       });
     }),
@@ -461,6 +527,7 @@ export const purchaseOrdersRouter = router({
           supplierContactId: z.number().nullable().optional(),
           supplierEmail: z.string().email().optional(),
           paymentMethod: directPurchasePaymentMethodSchema.optional(),
+          ...purchaseCurrencyInputFields,
           notes: z.string().optional(),
         })
         .merge(contractFieldsBaseSchema)
@@ -474,6 +541,8 @@ export const purchaseOrdersRouter = router({
             "Solo Administración Central o el Administrador del Proyecto puede convertir SC a OC",
         });
       }
+
+      const currencySnapshot = normalizePurchaseCurrencySnapshot(input);
 
       const detail = await db.getPurchaseRequestById(input.purchaseRequestId);
       if (!detail) {
@@ -688,6 +757,7 @@ export const purchaseOrdersRouter = router({
             projectId,
             classification: inferredClassification,
             purchaseType: detail.purchaseRequest.purchaseType,
+            ...currencySnapshot,
             paymentMethod: requiresPaymentMethod
               ? input.paymentMethod ?? null
               : null,
@@ -786,6 +856,7 @@ export const purchaseOrdersRouter = router({
           classification: z.enum(["oc", "cd"]).default("oc"),
           supplierId: z.number().optional(),
           supplierEmail: z.string().email().optional(),
+          ...purchaseCurrencyInputFields,
           notes: z.string().optional(),
         })
         .merge(contractFieldsBaseSchema)
@@ -801,6 +872,7 @@ export const purchaseOrdersRouter = router({
       }
 
       const purchaseRequestIds = Array.from(new Set(input.purchaseRequestIds));
+      const currencySnapshot = normalizePurchaseCurrencySnapshot(input);
       if (purchaseRequestIds.length < 2) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -928,6 +1000,7 @@ export const purchaseOrdersRouter = router({
           projectId: Array.from(sourceProjectIds)[0],
           classification: flowItems.length > 0 ? "cd" : input.classification,
           purchaseType: purchaseRequests[0].purchaseRequest.purchaseType,
+          ...currencySnapshot,
           supplierId: input.supplierId ?? flowItems[0]?.flow?.supplierId ?? null,
           supplierEmail: input.supplierEmail,
           status: "borrador",
@@ -1011,6 +1084,7 @@ export const purchaseOrdersRouter = router({
         supplierContactId: z.number().nullable().optional(),
         supplierEmail: z.string().email().nullable().optional(),
         paymentMethod: directPurchasePaymentMethodSchema.nullable().optional(),
+        ...purchaseCurrencyInputFields,
         notes: z.string().optional(),
       })
     )
@@ -1032,6 +1106,18 @@ export const purchaseOrdersRouter = router({
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
       assertPurchaseOrderStructureEditable(detail.purchaseOrder.status);
 
+      const currencySnapshot = normalizePurchaseCurrencySnapshot({
+        currency: input.currency ?? detail.purchaseOrder.currency,
+        exchangeRate:
+          input.exchangeRate !== undefined
+            ? input.exchangeRate
+            : detail.purchaseOrder.exchangeRate,
+        exchangeRateDate:
+          input.exchangeRateDate !== undefined
+            ? input.exchangeRateDate
+            : detail.purchaseOrder.exchangeRateDate,
+      });
+
       if (input.supplierContactId) {
         const contact = await db.getSupplierContactById(input.supplierContactId);
         if (!contact || !contact.isActive) {
@@ -1052,13 +1138,43 @@ export const purchaseOrdersRouter = router({
         }
       }
 
-      return db.updatePurchaseOrder(input.id, {
+      const result = await db.updatePurchaseOrder(input.id, {
         supplierId: input.supplierId,
         supplierContactId: input.supplierContactId,
         supplierEmail: input.supplierEmail,
         paymentMethod: input.paymentMethod,
+        ...currencySnapshot,
         notes: input.notes,
       });
+
+      const auditFields = [
+        ["currency", detail.purchaseOrder.currency, currencySnapshot.currency],
+        [
+          "exchangeRate",
+          detail.purchaseOrder.exchangeRate,
+          currencySnapshot.exchangeRate,
+        ],
+        [
+          "exchangeRateDate",
+          dateKey(detail.purchaseOrder.exchangeRateDate),
+          dateKey(currencySnapshot.exchangeRateDate),
+        ],
+      ] as const;
+      for (const [field, oldValue, newValue] of auditFields) {
+        if (String(oldValue ?? "") === String(newValue ?? "")) continue;
+        await db.createPurchaseOrderAuditLog({
+          purchaseOrderId: input.id,
+          purchaseOrderItemId: null,
+          action: "actualizacion_moneda",
+          field,
+          oldValue: oldValue == null ? null : String(oldValue),
+          newValue: newValue == null ? null : String(newValue),
+          changedById: ctx.user.id,
+          note: "Actualización de moneda referencial de la OC",
+        });
+      }
+
+      return result;
     }),
 
   updateContractTerms: protectedProcedure
@@ -1994,6 +2110,12 @@ export const purchaseOrdersRouter = router({
           message: "Seleccione un proveedor antes de emitir la OC",
         });
       }
+
+      normalizePurchaseCurrencySnapshot({
+        currency: detail.purchaseOrder.currency,
+        exchangeRate: detail.purchaseOrder.exchangeRate,
+        exchangeRateDate: detail.purchaseOrder.exchangeRateDate,
+      });
 
       if (
         detail.purchaseOrder.purchaseType === "compra_directa" &&

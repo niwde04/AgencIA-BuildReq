@@ -288,22 +288,19 @@ export default function Reportes() {
                   {lastSummary.invoiceCount}
                 </div>
               </div>
-              <div>
-                <div className="text-xs uppercase text-muted-foreground">
-                  Total factura
+              {lastSummary.totalsByCurrency.map(summary => (
+                <div key={summary.currency}>
+                  <div className="text-xs uppercase text-muted-foreground">
+                    Totales {summary.currency}
+                  </div>
+                  <div className="text-lg font-semibold">
+                    {formatMoney(summary.totalFactura)}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Neto: {formatMoney(summary.netoPagar)} · {summary.invoiceCount} factura(s)
+                  </div>
                 </div>
-                <div className="text-lg font-semibold">
-                  {formatMoney(lastSummary.totalFactura)}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs uppercase text-muted-foreground">
-                  Neto
-                </div>
-                <div className="text-lg font-semibold">
-                  {formatMoney(lastSummary.netoPagar)}
-                </div>
-              </div>
+              ))}
               <div>
                 <div className="text-xs uppercase text-muted-foreground">
                   Generado

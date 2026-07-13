@@ -1102,6 +1102,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   createdDateLabel: string;
   deliveryDateLabel: string;
   paymentMethodLabel?: string | null;
+  currencyLabel: string;
   requestedByLabel: string;
   preparedByLabel?: string | null;
   originalRequestLabel: string;
@@ -1339,7 +1340,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
         labelWidth: 58,
         valueWidth: 66,
         label: "Moneda:",
-        value: "LEMPIRA",
+        value: params.currencyLabel,
       }) + 3;
     middleTop +=
       drawLabelValue({

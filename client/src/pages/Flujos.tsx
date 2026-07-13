@@ -123,6 +123,7 @@ type PendingQueueRow = {
     sapDescription: string | null;
     lastPurchase: {
       unitPrice: string;
+      currency: "HNL" | "USD";
       supplierId: number | null;
       supplierCode: string | null;
       supplierName: string | null;
@@ -131,6 +132,7 @@ type PendingQueueRow = {
     } | null;
     minimumPurchase: {
       unitPrice: string;
+      currency: "HNL" | "USD";
       supplierId: number | null;
       supplierCode: string | null;
       supplierName: string | null;
@@ -1410,7 +1412,8 @@ export default function Flujos() {
                                       Últ. compra:{" "}
                                       <span className="font-medium text-foreground">
                                         {formatPurchaseOrderCurrency(
-                                          row.purchaseInsight.lastPurchase.unitPrice
+                                          row.purchaseInsight.lastPurchase.unitPrice,
+                                          row.purchaseInsight.lastPurchase.currency
                                         )}
                                       </span>{" "}
                                       con{" "}
@@ -1425,7 +1428,8 @@ export default function Flujos() {
                                       Mejor precio:{" "}
                                       <span className="font-medium text-foreground">
                                         {formatPurchaseOrderCurrency(
-                                          row.purchaseInsight.minimumPurchase.unitPrice
+                                          row.purchaseInsight.minimumPurchase.unitPrice,
+                                          row.purchaseInsight.minimumPurchase.currency
                                         )}
                                       </span>{" "}
                                       con{" "}

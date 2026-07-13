@@ -139,6 +139,7 @@ import {
   DEFAULT_SALES_TAXES,
   formatPurchaseOrderCurrency,
   formatPurchaseOrderPaymentMethodPrintLabel,
+  getPurchaseCurrencyLabel,
   getPurchaseOrderContractSummary,
   getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderTaxSelectionError,
@@ -146,6 +147,7 @@ import {
   parsePurchaseOrderAdditionalTaxCodes,
   summarizePurchaseOrderLines,
   type PurchaseOrderTaxBreakdownEntry,
+  type PurchaseCurrency,
   type SalesTaxCatalogItem,
 } from "@shared/purchase-orders";
 import {
@@ -362,6 +364,7 @@ function getTransferReceiptStatus(
 
 type PurchaseHistoryReference = {
   unitPrice: string;
+  currency: PurchaseCurrency;
   supplierId: number | null;
   supplierCode: string | null;
   supplierName: string | null;
@@ -373,6 +376,9 @@ type SapProcurementInsight = {
   sapDescription: string | null;
   lastPurchase: PurchaseHistoryReference | null;
   minimumPurchase: PurchaseHistoryReference | null;
+  minimumPurchasesByCurrency: Partial<
+    Record<PurchaseCurrency, PurchaseHistoryReference>
+  >;
 };
 
 async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
@@ -392,6 +398,7 @@ async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
         sapDescription: null,
         lastPurchase: null,
         minimumPurchase: null,
+        minimumPurchasesByCurrency: {},
       } satisfies SapProcurementInsight,
     ])
   ) as Record<string, SapProcurementInsight>;
@@ -427,6 +434,7 @@ async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
         currentSapItemCode: purchaseOrderItems.currentSapItemCode,
         originalSapItemCode: purchaseOrderItems.originalSapItemCode,
         unitPrice: purchaseOrderItems.unitPrice,
+        currency: purchaseOrders.currency,
         orderNumber: purchaseOrders.orderNumber,
         purchasedAt: purchaseOrders.createdAt,
         supplierId: purchaseOrders.supplierId,
@@ -487,6 +495,7 @@ async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
 
     const reference: PurchaseHistoryReference = {
       unitPrice: toMoneyString8(row.unitPrice),
+      currency: row.currency,
       supplierId: row.supplierId ?? null,
       supplierCode: row.supplierCode ?? null,
       supplierName: row.supplierName ?? null,
@@ -502,13 +511,18 @@ async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
         insight.lastPurchase = reference;
       }
 
+      const currentMinimum =
+        insight.minimumPurchasesByCurrency[reference.currency];
       if (
-        !insight.minimumPurchase ||
-        parseDecimal(reference.unitPrice) <
-          parseDecimal(insight.minimumPurchase.unitPrice)
+        !currentMinimum ||
+        parseDecimal(reference.unitPrice) < parseDecimal(currentMinimum.unitPrice)
       ) {
-        insight.minimumPurchase = reference;
+        insight.minimumPurchasesByCurrency[reference.currency] = reference;
       }
+      insight.minimumPurchase = insight.lastPurchase
+        ? insight.minimumPurchasesByCurrency[insight.lastPurchase.currency] ??
+          null
+        : null;
     }
   }
 
@@ -520,6 +534,7 @@ export async function getLatestSupplierPurchasePrices(params: {
   sapCodes: string[];
   projectId?: number;
   projectIds?: number[];
+  currency?: PurchaseCurrency;
 }) {
   const db = await getDb();
   const normalizedCodes = Array.from(
@@ -555,12 +570,16 @@ export async function getLatestSupplierPurchasePrices(params: {
   } else if (params.projectIds) {
     applyProjectScope(conditions, purchaseOrders.projectId, params.projectIds);
   }
+  if (params.currency) {
+    conditions.push(eq(purchaseOrders.currency, params.currency));
+  }
 
   const rows = await db
     .select({
       currentSapItemCode: purchaseOrderItems.currentSapItemCode,
       originalSapItemCode: purchaseOrderItems.originalSapItemCode,
       unitPrice: purchaseOrderItems.unitPrice,
+      currency: purchaseOrders.currency,
       orderNumber: purchaseOrders.orderNumber,
       purchasedAt: purchaseOrders.createdAt,
       supplierId: purchaseOrders.supplierId,
@@ -593,6 +612,7 @@ export async function getLatestSupplierPurchasePrices(params: {
 
     const reference: PurchaseHistoryReference = {
       unitPrice: toMoneyString8(row.unitPrice),
+      currency: row.currency,
       supplierId: row.supplierId ?? null,
       supplierCode: row.supplierCode ?? null,
       supplierName: row.supplierName ?? null,
@@ -5092,6 +5112,7 @@ function buildPurchaseOrderDocument(params: {
   salesAdvisorLabel?: string | null;
   observations?: string | null;
   paymentMethodLabel?: string | null;
+  currency?: PurchaseCurrency | null;
   quoteLabel?: string | null;
   items: Array<{
     itemName: string;
@@ -5150,6 +5171,7 @@ function buildPurchaseOrderDocument(params: {
     originalRequestLabel: params.originalRequestLabel?.trim() || "-",
     salesAdvisorLabel: params.salesAdvisorLabel?.trim() || "-",
     paymentMethodLabel: params.paymentMethodLabel?.trim() || "-",
+    currencyLabel: getPurchaseCurrencyLabel(params.currency),
     observations: params.observations?.trim() || "-",
     quoteLabel: params.quoteLabel?.trim() || "-",
     items: params.items.map((item, index) => {
@@ -5178,7 +5200,10 @@ function buildPurchaseOrderDocument(params: {
         subtotalLabel: formatPrintMoneyLabel(amounts.subtotal),
       };
     }),
-    summaryRows: getPurchaseOrderFiscalSummaryRows(summary).map(row => ({
+    summaryRows: getPurchaseOrderFiscalSummaryRows(
+      summary,
+      params.currency ?? "HNL"
+    ).map(row => ({
       label: row.label,
       value: formatPrintMoneyLabel(row.value),
       emphasized: row.emphasized,
@@ -6148,6 +6173,7 @@ export async function createPurchaseOrder(
     paymentMethodLabel: formatPurchaseOrderPaymentMethodPrintLabel(
       data.paymentMethod
     ),
+    currency: data.currency ?? "HNL",
     observations: data.notes,
     quoteLabel: sourcePurchaseRequest?.quoteAttachmentId
       ? String(sourcePurchaseRequest.quoteAttachmentId)
@@ -6740,6 +6766,7 @@ export async function getPurchaseOrderById(id: number) {
     paymentMethodLabel: formatPurchaseOrderPaymentMethodPrintLabel(
       directPurchasePaymentMethod
     ),
+    currency: rows[0].purchaseOrder.currency,
     observations: rows[0].purchaseOrder.notes,
     quoteLabel: rows[0].purchaseRequest?.quoteAttachmentId
       ? String(rows[0].purchaseRequest.quoteAttachmentId)
@@ -7071,7 +7098,10 @@ export async function sendPurchaseOrderEmail(id: number) {
         `Adjuntamos la Orden de Compra ${detail.purchaseOrder.orderNumber}.`,
         `Proyecto: ${detail.project?.code ?? ""} ${detail.project?.name ?? ""}`.trim(),
         `Fecha necesaria: ${formatDateLabel(detail.purchaseOrder.neededBy)}`,
-        `Total OC: ${formatPurchaseOrderCurrency(detail.summary?.total ?? 0)}`,
+        `Total OC: ${formatPurchaseOrderCurrency(
+          detail.summary?.total ?? 0,
+          detail.purchaseOrder.currency
+        )}`,
         "",
         "Saludos,",
         "Equipo BuildReq",
@@ -8086,6 +8116,9 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
       purchaseOrderId: params.purchaseOrderDetail.purchaseOrder.id,
       projectId: params.purchaseOrderDetail.purchaseOrder.projectId,
       supplierId: params.purchaseOrderDetail.purchaseOrder.supplierId ?? null,
+      currency: params.receiptData.currency ?? "HNL",
+      exchangeRate: params.receiptData.exchangeRate ?? null,
+      exchangeRateDate: params.receiptData.exchangeRateDate ?? null,
       status: "borrador",
       isFiscalDocument: params.receiptData.isFiscalDocument ?? false,
       cai: params.receiptData.cai ?? null,
@@ -10012,6 +10045,7 @@ export async function listDmcReportSourceInvoices(filters?: {
       purchaseOrderNumber: purchaseOrder?.orderNumber ?? null,
       purchaseType: purchaseOrder?.purchaseType ?? null,
       purchaseOrderPaymentMethod: purchaseOrder?.paymentMethod ?? null,
+      currency: invoice.currency,
       projectCode: project?.code ?? null,
       projectName: project?.name ?? null,
       supplierCode: supplier?.supplierCode ?? null,
@@ -10657,6 +10691,9 @@ export async function correctInvoiceReceiptFromInvoice(params: {
         sourceType: row.receipt.sourceType,
         sourceId: row.receipt.sourceId,
         projectId: row.receipt.projectId,
+        currency: row.receipt.currency,
+        exchangeRate: row.receipt.exchangeRate,
+        exchangeRateDate: row.receipt.exchangeRateDate,
         receivedById: params.correctedById,
         status: "borrador",
         isFiscalDocument: row.receipt.isFiscalDocument,

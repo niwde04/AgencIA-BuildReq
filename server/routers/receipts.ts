@@ -16,6 +16,7 @@ import {
   ASSET_CONDITION_VALUES,
   normalizeFixedAssetDetails,
 } from "@shared/fixed-assets";
+import type { PurchaseCurrency } from "@shared/purchase-orders";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
@@ -735,6 +736,9 @@ export const receiptsRouter = router({
         sourceType: input.sourceType,
         sourceId: input.sourceId,
         projectId: input.projectId,
+        currency: detail.purchaseOrder.currency,
+        exchangeRate: detail.purchaseOrder.exchangeRate,
+        exchangeRateDate: detail.purchaseOrder.exchangeRateDate,
         receivedById: ctx.user.id,
         isFiscalDocument,
         cai: input.cai?.trim()
@@ -980,6 +984,15 @@ export const receiptsRouter = router({
         });
       }
       let purchaseOrderItemsByIdForPayload = new Map<number, any>();
+      let currencySnapshot: {
+        currency: PurchaseCurrency;
+        exchangeRate: string | null;
+        exchangeRateDate: Date | null;
+      } = {
+        currency: "HNL",
+        exchangeRate: null as string | null,
+        exchangeRateDate: null as Date | null,
+      };
       let allowAnyActiveReceiptWarehouse = false;
       const nonInventoryReceiptLineIndexes = new Set<number>();
 
@@ -992,6 +1005,11 @@ export const receiptsRouter = router({
           });
         }
         assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+        currencySnapshot = {
+          currency: detail.purchaseOrder.currency,
+          exchangeRate: detail.purchaseOrder.exchangeRate,
+          exchangeRateDate: detail.purchaseOrder.exchangeRateDate,
+        };
         if (input.projectId !== detail.purchaseOrder.projectId) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -1368,6 +1386,7 @@ export const receiptsRouter = router({
         sourceType: input.sourceType,
         sourceId: input.sourceId,
         projectId: input.projectId,
+        ...currencySnapshot,
         receivedById: ctx.user.id,
         status: "pendiente" as const,
         isFiscalDocument,

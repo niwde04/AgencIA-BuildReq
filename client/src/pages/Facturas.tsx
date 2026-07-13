@@ -48,7 +48,12 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
-import { formatPurchaseOrderCurrency } from "@shared/purchase-orders";
+import {
+  formatPurchaseOrderCurrency,
+  getPurchaseCurrencyLabel,
+  getPurchaseCurrencySymbol,
+  type PurchaseCurrency,
+} from "@shared/purchase-orders";
 import {
   CAI_FORMAT_EXAMPLE,
   EMISSION_DEADLINE_ISSUE_MESSAGE,
@@ -522,6 +527,13 @@ function formatDateLabel(value: string | Date | null | undefined) {
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString("es-HN");
 }
 
+function formatExchangeRateLabel(
+  value: string | number | null | undefined
+) {
+  const raw = String(value ?? "");
+  return raw.includes(".") ? raw.replace(/0+$/, "").replace(/\.$/, "") : raw;
+}
+
 function formatDateTimeLabel(value: string | Date | null | undefined) {
   if (!value) return "Pendiente";
   const date = new Date(value);
@@ -990,12 +1002,19 @@ function integerToSpanishWords(value: number): string {
   return parts.join(" ");
 }
 
-function amountToSpanishLempiras(value: number) {
+function amountToSpanishCurrency(value: number, currency: PurchaseCurrency) {
   const centsTotal = Math.max(0, Math.round(value * 100));
-  const lempiras = Math.floor(centsTotal / 100);
+  const units = Math.floor(centsTotal / 100);
   const cents = centsTotal % 100;
-  const unitLabel = lempiras === 1 ? "LEMPIRA" : "LEMPIRAS";
-  return `${integerToSpanishWords(lempiras).toUpperCase()} ${unitLabel} CON ${String(cents).padStart(2, "0")}/100`;
+  const unitLabel =
+    currency === "USD"
+      ? units === 1
+        ? "DÓLAR"
+        : "DÓLARES"
+      : units === 1
+        ? "LEMPIRA"
+        : "LEMPIRAS";
+  return `${integerToSpanishWords(units).toUpperCase()} ${unitLabel} CON ${String(cents).padStart(2, "0")}/100`;
 }
 
 function InvoiceAssetDetailsEditor({
@@ -1373,6 +1392,11 @@ export default function Facturas() {
       { id: selectedId ?? 0 },
       { enabled: selectedId !== null }
     );
+  const selectedInvoiceCurrency: PurchaseCurrency =
+    detail?.invoice.currency ?? "HNL";
+  const formatSelectedInvoiceCurrency = (
+    value: string | number | null | undefined
+  ) => formatPurchaseOrderCurrency(value, selectedInvoiceCurrency);
   const { data: activeRetentionOptions } =
     trpc.retentions.activeOptions.useQuery(undefined, {
       enabled: selectedId !== null,
@@ -1820,7 +1844,9 @@ export default function Facturas() {
           [
             retention.retentionCode,
             retention.description,
-            `L ${formatInvoicePrintMoney(getRetentionAmount(retention))}`,
+            `${getPurchaseCurrencySymbol(
+              selectedInvoiceCurrency
+            )} ${formatInvoicePrintMoney(getRetentionAmount(retention))}`,
           ]
             .filter(Boolean)
             .join(" - ")
@@ -1926,7 +1952,12 @@ export default function Facturas() {
     const summaryRows = [
       { label: "Sub-total L.", value: invoice.subtotal },
       ...(invoiceOtherChargesTotal > 0
-        ? [{ label: "Otros cargos L.", value: invoiceOtherChargesTotal }]
+        ? [
+            {
+              label: `Otros cargos ${selectedInvoiceCurrency}`,
+              value: invoiceOtherChargesTotal,
+            },
+          ]
         : []),
       { label: "I.S.V. L.", value: invoice.taxAmount },
       { label: "Total factura L.", value: invoice.total },
@@ -2175,6 +2206,12 @@ export default function Facturas() {
                 <div class="field">
                   <div class="label">No Documento:</div>
                   <div class="value">${escapePrintHtml(invoiceDraft.invoiceNumber || invoice.invoiceNumber || "-")}</div>
+                </div>
+                <div class="field">
+                  <div class="label">Moneda:</div>
+                  <div class="value">${escapePrintHtml(
+                    getPurchaseCurrencyLabel(selectedInvoiceCurrency)
+                  )}</div>
                 </div>
                 <div class="field">
                   <div class="label">Rango Autorizado Inicial:</div>
@@ -2817,7 +2854,10 @@ export default function Facturas() {
       (sum, retention) => sum + getRetentionAmount(retention),
       0
     );
-    const amountWords = amountToSpanishLempiras(totalRetained);
+    const amountWords = amountToSpanishCurrency(
+      totalRetained,
+      selectedInvoiceCurrency
+    );
     const html = `<!doctype html>
 <html>
   <head>
@@ -2979,7 +3019,9 @@ export default function Facturas() {
       <div class="field invoice-cai">${escapePrintHtml(retentionCai)}</div>
       <div class="field supplier-address multiline">${escapePrintHtml(supplierAddress)}</div>
       ${rowsHtml}
-      <div class="field total-retained right">${formatRetentionPrintNumber(totalRetained)}</div>
+      <div class="field total-retained right">${escapePrintHtml(
+        getPurchaseCurrencySymbol(selectedInvoiceCurrency)
+      )} ${formatRetentionPrintNumber(totalRetained)}</div>
       <div class="field amount-words multiline">${escapePrintHtml(amountWords)}</div>
     </div>
     <script>
@@ -3143,22 +3185,27 @@ export default function Facturas() {
             width: 16,
           },
           {
+            header: "Moneda",
+            value: (row: any) => row.invoice.currency ?? "HNL",
+            width: 12,
+          },
+          {
             header: "Total",
             value: (row: any) => toMoneyNumber(row.invoice.total),
             width: 14,
-            numFmt: '"L" #,##0.00',
+            numFmt: "#,##0.00",
           },
           {
             header: "Retenciones",
             value: (row: any) => toMoneyNumber(row.invoice.retentionTotal),
             width: 14,
-            numFmt: '"L" #,##0.00',
+            numFmt: "#,##0.00",
           },
           {
             header: "Neto",
             value: (row: any) => toMoneyNumber(row.invoice.netPayable),
             width: 14,
-            numFmt: '"L" #,##0.00',
+            numFmt: "#,##0.00",
           },
           {
             header: "Estado",
@@ -3343,15 +3390,22 @@ export default function Facturas() {
                           </div>
                         </td>
                         <td className="p-3 text-right font-medium">
-                          {formatPurchaseOrderCurrency(row.invoice.total)}
+                          {formatPurchaseOrderCurrency(
+                            row.invoice.total,
+                            row.invoice.currency ?? "HNL"
+                          )}
                         </td>
                         <td className="p-3 text-right font-medium">
                           {formatPurchaseOrderCurrency(
-                            row.invoice.retentionTotal
+                            row.invoice.retentionTotal,
+                            row.invoice.currency ?? "HNL"
                           )}
                         </td>
                         <td className="p-3 text-right font-semibold">
-                          {formatPurchaseOrderCurrency(row.invoice.netPayable)}
+                          {formatPurchaseOrderCurrency(
+                            row.invoice.netPayable,
+                            row.invoice.currency ?? "HNL"
+                          )}
                         </td>
                         <td className="min-w-[280px] max-w-[320px] p-3 align-top">
                           <div className="max-w-72">
@@ -3626,6 +3680,23 @@ export default function Facturas() {
                         ? `${detail.project.code} — ${detail.project.name}`
                         : "Proyecto pendiente"}
                     </p>
+                  </div>
+                  <div className="min-w-0 rounded-lg border border-border/70 bg-muted/20 p-4 md:col-span-4">
+                    <Label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                      Moneda
+                    </Label>
+                    <p className="mt-2 break-words font-semibold">
+                      {getPurchaseCurrencyLabel(selectedInvoiceCurrency)}
+                    </p>
+                    {selectedInvoiceCurrency === "USD" ? (
+                      <p className="break-words text-sm text-muted-foreground">
+                        1 USD = {formatExchangeRateLabel(
+                          detail.invoice.exchangeRate
+                        )} HNL · {formatDateLabel(
+                          detail.invoice.exchangeRateDate
+                        )}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
 
@@ -4251,20 +4322,20 @@ export default function Facturas() {
                                           1.00 {item.unit || ""}
                                         </td>
                                         <td className="p-3 text-right">
-                                          {formatPurchaseOrderCurrency(unitPrice)}
+                                          {formatSelectedInvoiceCurrency(unitPrice)}
                                         </td>
                                         <td className="p-3 text-right">
-                                          {formatPurchaseOrderCurrency(
+                                          {formatSelectedInvoiceCurrency(
                                             unitSubtotal
                                           )}
                                         </td>
                                         <td className="p-3 text-right">
-                                          {formatPurchaseOrderCurrency(
+                                          {formatSelectedInvoiceCurrency(
                                             unitTaxAmount
                                           )}
                                         </td>
                                         <td className="p-3 text-right font-semibold">
-                                          {formatPurchaseOrderCurrency(unitTotal)}
+                                          {formatSelectedInvoiceCurrency(unitTotal)}
                                         </td>
                                         {index === 0 ? (
                                           <InvoiceLineRetentionCell
@@ -4360,16 +4431,16 @@ export default function Facturas() {
                                   {item.quantity} {item.unit || ""}
                                 </td>
                                 <td className="p-3 text-right">
-                                  {formatPurchaseOrderCurrency(item.unitPrice)}
+                                  {formatSelectedInvoiceCurrency(item.unitPrice)}
                                 </td>
                                 <td className="p-3 text-right">
-                                  {formatPurchaseOrderCurrency(item.subtotal)}
+                                  {formatSelectedInvoiceCurrency(item.subtotal)}
                                 </td>
                                 <td className="p-3 text-right">
-                                  {formatPurchaseOrderCurrency(item.taxAmount)}
+                                  {formatSelectedInvoiceCurrency(item.taxAmount)}
                                 </td>
                                 <td className="p-3 text-right font-semibold">
-                                  {formatPurchaseOrderCurrency(item.total)}
+                                  {formatSelectedInvoiceCurrency(item.total)}
                                 </td>
                                 <InvoiceLineRetentionCell
                                   item={item}
@@ -4412,7 +4483,7 @@ export default function Facturas() {
                               {charge.concept}
                             </span>
                             <span className="font-semibold tabular-nums">
-                              {formatPurchaseOrderCurrency(charge.amount)}
+                              {formatSelectedInvoiceCurrency(charge.amount)}
                             </span>
                           </div>
                         ))}
@@ -4422,21 +4493,21 @@ export default function Facturas() {
                   <div className="flex flex-wrap justify-end gap-5 border-t border-border/70 px-4 py-3 text-sm font-semibold">
                     <span>
                       Subtotal:{" "}
-                      {formatPurchaseOrderCurrency(detail.invoice.subtotal)}
+                      {formatSelectedInvoiceCurrency(detail.invoice.subtotal)}
                     </span>
                     <span>
                       ISV:{" "}
-                      {formatPurchaseOrderCurrency(detail.invoice.taxAmount)}
+                      {formatSelectedInvoiceCurrency(detail.invoice.taxAmount)}
                     </span>
                     {invoiceOtherChargesTotal > 0 ? (
                       <span>
                         Otros cargos:{" "}
-                        {formatPurchaseOrderCurrency(invoiceOtherChargesTotal)}
+                        {formatSelectedInvoiceCurrency(invoiceOtherChargesTotal)}
                       </span>
                     ) : null}
                     <span>
                       Total factura:{" "}
-                      {formatPurchaseOrderCurrency(detail.invoice.total)}
+                      {formatSelectedInvoiceCurrency(detail.invoice.total)}
                     </span>
                   </div>
                 </section>
@@ -4446,7 +4517,7 @@ export default function Facturas() {
                     <h3 className="font-semibold">Retenciones aplicadas</h3>
                     <span className="text-sm font-semibold">
                       Total retenciones:{" "}
-                      {formatPurchaseOrderCurrency(retentionTotal)}
+                      {formatSelectedInvoiceCurrency(retentionTotal)}
                     </span>
                   </div>
                   <div className="space-y-3 p-4">
@@ -4529,7 +4600,7 @@ export default function Facturas() {
                                   </Badge>
                                 </td>
                                 <td className="p-3 text-right">
-                                  {formatPurchaseOrderCurrency(
+                                  {formatSelectedInvoiceCurrency(
                                     retention.baseAmount
                                   )}
                                 </td>
@@ -4541,7 +4612,7 @@ export default function Facturas() {
                                   %
                                 </td>
                                 <td className="p-3 text-right font-semibold">
-                                  {formatPurchaseOrderCurrency(
+                                  {formatSelectedInvoiceCurrency(
                                     getRetentionAmount(retention)
                                   )}
                                 </td>
@@ -4657,13 +4728,13 @@ export default function Facturas() {
                     <div className="flex justify-between gap-3 text-sm">
                       <span className="text-muted-foreground">Subtotal</span>
                       <span className="font-medium">
-                        {formatPurchaseOrderCurrency(detail.invoice.subtotal)}
+                        {formatSelectedInvoiceCurrency(detail.invoice.subtotal)}
                       </span>
                     </div>
                     <div className="flex justify-between gap-3 text-sm">
                       <span className="text-muted-foreground">ISV</span>
                       <span className="font-medium">
-                        {formatPurchaseOrderCurrency(detail.invoice.taxAmount)}
+                        {formatSelectedInvoiceCurrency(detail.invoice.taxAmount)}
                       </span>
                     </div>
                     {invoiceOtherChargesTotal > 0 ? (
@@ -4672,7 +4743,7 @@ export default function Facturas() {
                           Otros cargos
                         </span>
                         <span className="font-medium">
-                          {formatPurchaseOrderCurrency(
+                          {formatSelectedInvoiceCurrency(
                             invoiceOtherChargesTotal
                           )}
                         </span>
@@ -4683,7 +4754,7 @@ export default function Facturas() {
                         Total factura
                       </span>
                       <span className="font-semibold">
-                        {formatPurchaseOrderCurrency(detail.invoice.total)}
+                        {formatSelectedInvoiceCurrency(detail.invoice.total)}
                       </span>
                     </div>
                     <div className="flex justify-between gap-3 text-sm">
@@ -4691,13 +4762,13 @@ export default function Facturas() {
                         (-) Total retenciones
                       </span>
                       <span className="font-semibold text-rose-700">
-                        {formatPurchaseOrderCurrency(retentionTotal)}
+                        {formatSelectedInvoiceCurrency(retentionTotal)}
                       </span>
                     </div>
                     <div className="flex justify-between gap-3 border-t border-border pt-3 text-base font-semibold">
                       <span>Neto a pagar</span>
                       <span className="text-emerald-700">
-                        {formatPurchaseOrderCurrency(netPayable)}
+                        {formatSelectedInvoiceCurrency(netPayable)}
                       </span>
                     </div>
                   </div>
@@ -4784,7 +4855,7 @@ export default function Facturas() {
                             </span>
                           </span>
                           <span className="shrink-0 font-semibold">
-                            {formatPurchaseOrderCurrency(
+                            {formatSelectedInvoiceCurrency(
                               getRetentionAmount(retention)
                             )}
                           </span>
@@ -4793,7 +4864,7 @@ export default function Facturas() {
                       <div className="flex justify-between border-t border-border pt-3 text-sm font-semibold">
                         <span>Total retenciones</span>
                         <span>
-                          {formatPurchaseOrderCurrency(retentionTotal)}
+                          {formatSelectedInvoiceCurrency(retentionTotal)}
                         </span>
                       </div>
                     </div>

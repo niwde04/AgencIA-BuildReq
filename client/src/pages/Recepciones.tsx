@@ -93,6 +93,7 @@ import {
   calculatePurchaseOrderLineAmounts,
   DEFAULT_SALES_TAXES,
   formatPurchaseOrderCurrency,
+  getPurchaseCurrencyLabel,
   getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderContractSummary,
   normalizePurchaseOrderAdditionalTaxCodes,
@@ -512,6 +513,13 @@ function formatPrintMoneyAmount(value: number | string | null | undefined) {
 function formatMoneyPayload(value: number | string | null | undefined) {
   const parsed = toPurchaseOrderNumber(value);
   return Number.isFinite(parsed) ? parsed.toFixed(4) : "0.0000";
+}
+
+function formatExchangeRateDraft(
+  value: string | number | null | undefined
+) {
+  const raw = String(value ?? "");
+  return raw.includes(".") ? raw.replace(/0+$/, "").replace(/\.$/, "") : raw;
 }
 
 function formatUnitPricePayload(value: number | string | null | undefined) {
@@ -4191,15 +4199,18 @@ export default function Recepciones() {
       .join("");
     const fiscalSummary = summarizePurchaseOrderLines(summaryLines);
     const otherChargesTotal = getOtherChargesTotal(receiptOtherCharges);
-    const fiscalSummaryBaseRows =
-      getPurchaseOrderFiscalSummaryRows(fiscalSummary);
+  const fiscalSummaryBaseRows =
+      getPurchaseOrderFiscalSummaryRows(
+        fiscalSummary,
+        receipt.currency ?? "HNL"
+      );
     const fiscalSummaryRowsWithCharges =
       otherChargesTotal > 0
         ? [
             ...fiscalSummaryBaseRows.filter(row => row.key !== "total"),
             {
               key: "other-charges",
-              label: "Otros cargos L.",
+              label: `Otros cargos ${receipt.currency ?? "HNL"}`,
               value: otherChargesTotal,
               emphasized: false,
             },
@@ -4459,6 +4470,12 @@ export default function Recepciones() {
                   <div class="value">${escapeHtml(referenceLabel)}</div>
                 </div>
                 <div class="field">
+                  <div class="label">Moneda:</div>
+                  <div class="value">${escapeHtml(
+                    getPurchaseCurrencyLabel(receipt.currency)
+                  )}</div>
+                </div>
+                <div class="field">
                   <div class="label">Observacion:</div>
                   <div class="value">${escapeHtml(observations)}</div>
                 </div>
@@ -4573,6 +4590,10 @@ export default function Recepciones() {
             row.receipt.sourceType === "purchase_order"
               ? SOURCE_TYPE_LABELS.purchase_order
               : SOURCE_TYPE_LABELS.transfer,
+        },
+        {
+          header: "Moneda",
+          value: (row: any) => row.receipt.currency ?? "HNL",
         },
         {
           header: "Estatus",
@@ -5755,7 +5776,8 @@ export default function Recepciones() {
                                           </td>
                                           <td className="p-4 text-right font-semibold">
                                             {formatPurchaseOrderCurrency(
-                                              receiptUnitPriceDraft
+                                              receiptUnitPriceDraft,
+                                              purchaseOrderDetail?.purchaseOrder.currency ?? "HNL"
                                             )}
                                           </td>
                                           {taxDraft &&
@@ -5768,17 +5790,20 @@ export default function Recepciones() {
                                               </td>
                                               <td className="p-4 text-right font-semibold">
                                                 {formatPurchaseOrderCurrency(
-                                                  fixedAssetUnitLineAmounts.subtotal
+                                                  fixedAssetUnitLineAmounts.subtotal,
+                                                  purchaseOrderDetail?.purchaseOrder.currency ?? "HNL"
                                                 )}
                                               </td>
                                               <td className="p-4 text-right font-semibold">
                                                 {formatPurchaseOrderCurrency(
-                                                  fixedAssetUnitLineAmounts.taxAmount
+                                                  fixedAssetUnitLineAmounts.taxAmount,
+                                                  purchaseOrderDetail?.purchaseOrder.currency ?? "HNL"
                                                 )}
                                               </td>
                                               <td className="p-4 text-right font-semibold">
                                                 {formatPurchaseOrderCurrency(
-                                                  fixedAssetUnitLineAmounts.total
+                                                  fixedAssetUnitLineAmounts.total,
+                                                  purchaseOrderDetail?.purchaseOrder.currency ?? "HNL"
                                                 )}
                                               </td>
                                             </>
@@ -6001,12 +6026,14 @@ export default function Recepciones() {
                                     </td>
                                     <td className="p-4 text-right font-semibold">
                                       {formatPurchaseOrderCurrency(
-                                        lineAmounts.taxAmount
+                                        lineAmounts.taxAmount,
+                                        purchaseOrderDetail?.purchaseOrder.currency ?? "HNL"
                                       )}
                                     </td>
                                     <td className="p-4 text-right font-semibold">
                                       {formatPurchaseOrderCurrency(
-                                        lineAmounts.total
+                                        lineAmounts.total,
+                                        purchaseOrderDetail?.purchaseOrder.currency ?? "HNL"
                                       )}
                                     </td>
                                   </>
@@ -6700,6 +6727,7 @@ export default function Recepciones() {
                     <FiscalSummaryCard
                       summary={receiptPricingSummary}
                       otherChargesTotal={receiptOtherChargesTotal}
+                      currency={purchaseOrderDetail?.purchaseOrder.currency ?? "HNL"}
                     />
                   </div>
                 ) : null}
@@ -6732,6 +6760,27 @@ export default function Recepciones() {
                     <p className="mt-2 max-w-md text-right text-xs text-amber-700">
                       Adjunta el comprobante antes de registrar la recepción.
                     </p>
+                  ) : null}
+                  {sourceType === "purchase_order" && purchaseOrderDetail ? (
+                    <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3">
+                      <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                        Moneda
+                      </Label>
+                      <p className="text-sm font-semibold leading-snug sm:text-base">
+                        {getPurchaseCurrencyLabel(
+                          purchaseOrderDetail.purchaseOrder.currency
+                        )}
+                      </p>
+                      {purchaseOrderDetail.purchaseOrder.currency === "USD" ? (
+                        <p className="text-xs text-muted-foreground">
+                          1 USD = {formatExchangeRateDraft(
+                            purchaseOrderDetail.purchaseOrder.exchangeRate
+                          )} HNL · {formatDateLabel(
+                            purchaseOrderDetail.purchaseOrder.exchangeRateDate
+                          )}
+                        </p>
+                      ) : null}
+                    </div>
                   ) : null}
                   {receiptWarehouseSelectionError ? (
                     <p className="mt-2 max-w-md text-right text-xs text-amber-700">
@@ -6985,6 +7034,23 @@ export default function Recepciones() {
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-12">
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-4">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Moneda
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {getPurchaseCurrencyLabel(receiptDetail.receipt.currency)}
+                    </p>
+                    {receiptDetail.receipt.currency === "USD" ? (
+                      <p className="text-xs text-muted-foreground">
+                        1 USD = {formatExchangeRateDraft(
+                          receiptDetail.receipt.exchangeRate
+                        )} HNL · {formatDateLabel(
+                          receiptDetail.receipt.exchangeRateDate
+                        )}
+                      </p>
+                    ) : null}
+                  </div>
                   <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-4">
                     <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                       {receiptDetail.receipt.sourceType === "purchase_order"
@@ -7321,17 +7387,20 @@ export default function Recepciones() {
                                 <>
                                   <td className="p-4 text-right font-semibold">
                                     {formatPurchaseOrderCurrency(
-                                      lineAmounts.subtotal
+                                      lineAmounts.subtotal,
+                                      receiptDetail.receipt.currency
                                     )}
                                   </td>
                                   <td className="p-4 text-right font-semibold">
                                     {formatPurchaseOrderCurrency(
-                                      lineAmounts.taxAmount
+                                      lineAmounts.taxAmount,
+                                      receiptDetail.receipt.currency
                                     )}
                                   </td>
                                   <td className="p-4 text-right font-semibold">
                                     {formatPurchaseOrderCurrency(
-                                      lineAmounts.total
+                                      lineAmounts.total,
+                                      receiptDetail.receipt.currency
                                     )}
                                   </td>
                                 </>
@@ -7361,7 +7430,10 @@ export default function Recepciones() {
                               {charge.concept}
                             </span>
                             <span className="font-semibold tabular-nums">
-                              {formatPurchaseOrderCurrency(charge.amount)}
+                              {formatPurchaseOrderCurrency(
+                                charge.amount,
+                                receiptDetail.receipt.currency
+                              )}
                             </span>
                           </div>
                         )
@@ -7375,6 +7447,7 @@ export default function Recepciones() {
                     <FiscalSummaryCard
                       summary={receiptDetailPricingSummary}
                       otherChargesTotal={receiptDetailOtherChargesTotal}
+                      currency={receiptDetail.receipt.currency}
                     />
                   </div>
                 ) : null}

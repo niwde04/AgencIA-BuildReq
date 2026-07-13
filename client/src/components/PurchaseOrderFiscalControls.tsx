@@ -9,6 +9,7 @@ import {
   getPurchaseOrderFiscalSummaryRows,
   parsePurchaseOrderAdditionalTaxCodes,
   summarizePurchaseOrderLines,
+  type PurchaseCurrency,
   type PurchaseOrderTaxCode,
   type SalesTaxCatalogItem,
 } from "@shared/purchase-orders";
@@ -133,11 +134,13 @@ export function PurchaseOrderTaxControls({
 export function FiscalSummaryCard({
   summary,
   otherChargesTotal = 0,
+  currency = "HNL",
 }: {
   summary: ReturnType<typeof summarizePurchaseOrderLines>;
   otherChargesTotal?: number | string | null;
+  currency?: PurchaseCurrency;
 }) {
-  const rows = getPurchaseOrderFiscalSummaryRows(summary);
+  const rows = getPurchaseOrderFiscalSummaryRows(summary, currency);
   const parsedOtherChargesTotal = Number(otherChargesTotal ?? 0);
   const normalizedOtherChargesTotal = Number.isFinite(parsedOtherChargesTotal)
     ? parsedOtherChargesTotal
@@ -148,7 +151,7 @@ export function FiscalSummaryCard({
           ...rows.filter(row => row.key !== "total"),
           {
             key: "other-charges",
-            label: "Otros cargos L.",
+            label: `Otros cargos ${currency}`,
             value: normalizedOtherChargesTotal,
             emphasized: false,
           },

@@ -56,7 +56,7 @@ function buildDmcSarFileName(payload: DmcSarReportPayload) {
 }
 
 function buildSummaryRows(payload: DmcReportPayload): SummaryRow[] {
-  return [
+  const headerRows: SummaryRow[] = [
     { campo: "Fecha de generación", valor: payload.summary.generatedAt },
     { campo: "Fuente", valor: payload.summary.source },
     { campo: "Fecha desde", valor: payload.summary.dateFrom },
@@ -66,11 +66,21 @@ function buildSummaryRows(payload: DmcReportPayload): SummaryRow[] {
       valor: STATUS_MODE_LABELS[payload.summary.statusMode],
     },
     { campo: "Facturas encontradas", valor: payload.summary.invoiceCount },
-    { campo: "Total base", valor: payload.summary.totalBase },
-    { campo: "Total ISV", valor: payload.summary.totalIsv },
-    { campo: "Total factura", valor: payload.summary.totalFactura },
-    { campo: "Total retención", valor: payload.summary.totalRetencion },
-    { campo: "Neto a pagar", valor: payload.summary.netoPagar },
+  ];
+  const currencyRows = payload.summary.totalsByCurrency.flatMap(summary => [
+    { campo: `Facturas ${summary.currency}`, valor: summary.invoiceCount },
+    { campo: `Total base ${summary.currency}`, valor: summary.totalBase },
+    { campo: `Total ISV ${summary.currency}`, valor: summary.totalIsv },
+    { campo: `Total factura ${summary.currency}`, valor: summary.totalFactura },
+    {
+      campo: `Total retención ${summary.currency}`,
+      valor: summary.totalRetencion,
+    },
+    { campo: `Neto a pagar ${summary.currency}`, valor: summary.netoPagar },
+  ]);
+  return [
+    ...headerRows,
+    ...currencyRows,
     {
       campo: "Nota",
       valor:

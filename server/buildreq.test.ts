@@ -13,6 +13,7 @@ import type { TrpcContext } from "./_core/context";
 import {
   calculatePurchaseOrderLineAmounts,
   calculateContractPaymentDates,
+  formatPurchaseOrderCurrency,
   getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderContractSummary,
   getPurchaseOrderTaxSelectionError,
@@ -319,17 +320,22 @@ describe("BuildReq - Purchase order tax helpers", () => {
       total: 684,
     });
     expect(rows.map(row => row.label)).toEqual([
-      "Sub-total L.",
-      "Importe exonerado L.",
-      "Importe exento L.",
-      "Importe gravado 15% L.",
-      "Importe gravado 18% L.",
-      "Importe gravado 4% L.",
-      "I.S.V. 15% L.",
-      "I.S.V. 18% L.",
-      "I.S.V. 4% L.",
-      "Total a pagar L.",
+      "Sub-total HNL",
+      "Importe exonerado HNL",
+      "Importe exento HNL",
+      "Importe gravado 15% HNL",
+      "Importe gravado 18% HNL",
+      "Importe gravado 4% HNL",
+      "I.S.V. 15% HNL",
+      "I.S.V. 18% HNL",
+      "I.S.V. 4% HNL",
+      "Total a pagar HNL",
     ]);
+    expect(
+      getPurchaseOrderFiscalSummaryRows(summary, "USD").at(-1)?.label
+    ).toBe("Total a pagar USD");
+    expect(formatPurchaseOrderCurrency("1234.5", "HNL")).toBe("L 1,234.50");
+    expect(formatPurchaseOrderCurrency("1234.5", "USD")).toBe("US$ 1,234.50");
   });
 });
 
@@ -9513,6 +9519,9 @@ describe("BuildReq - Purchase Orders", () => {
     await expect(
       caller.purchaseOrders.createFromPurchaseRequest({
         purchaseRequestId: 72,
+        currency: "USD",
+        exchangeRate: "26.12345678",
+        exchangeRateDate: "2026-04-30",
         appliesContract: true,
         itemsToConvert: [
           {
@@ -9619,6 +9628,9 @@ describe("BuildReq - Purchase Orders", () => {
     await expect(
       caller.purchaseOrders.createFromPurchaseRequest({
         purchaseRequestId: 72,
+        currency: "USD",
+        exchangeRate: "26.12345678",
+        exchangeRateDate: "2026-04-30",
         appliesContract: true,
         contractPaymentFrequency: "mensual",
         contractFirstPaymentDate: "2026-01-01",
@@ -9644,6 +9656,9 @@ describe("BuildReq - Purchase Orders", () => {
         contractFirstPaymentDate: expect.any(Date),
         contractEndDate: expect.any(Date),
         contractExpiryNotifiedAt: null,
+        currency: "USD",
+        exchangeRate: "26.12345678",
+        exchangeRateDate: expect.any(Date),
       }),
       [expect.objectContaining({ purchaseRequestItemId: 7201 })]
     );
@@ -9653,6 +9668,29 @@ describe("BuildReq - Purchase Orders", () => {
     createPurchaseOrderSpy.mockRestore();
     adjustPurchaseRequestItemConvertedQuantitySpy.mockRestore();
     syncPurchaseRequestConversionStatusSpy.mockRestore();
+  });
+
+  it("requires rate and date when creating a USD purchase order", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const createPurchaseOrderSpy = vi.spyOn(db, "createPurchaseOrder");
+
+    await expect(
+      caller.purchaseOrders.createFromPurchaseRequest({
+        purchaseRequestId: 72,
+        currency: "USD",
+        itemsToConvert: [
+          {
+            purchaseRequestItemId: 7201,
+            quantity: "1.00",
+            unitPrice: "100.00",
+          },
+        ],
+      })
+    ).rejects.toThrow(/tasa referencial/i);
+
+    expect(createPurchaseOrderSpy).not.toHaveBeenCalled();
+    createPurchaseOrderSpy.mockRestore();
   });
 
   it("updates an emitted contract line price and writes audit log", async () => {
@@ -9674,6 +9712,9 @@ describe("BuildReq - Purchase Orders", () => {
           id: 4,
           projectId: 1,
           status: "emitida",
+          currency: "USD",
+          exchangeRate: "26.12345678",
+          exchangeRateDate: new Date("2026-04-14T12:00:00"),
           appliesContract: true,
         } as any,
       });
@@ -10222,6 +10263,9 @@ describe("BuildReq - Purchase Orders", () => {
           orderNumber: "OC-2026-0005",
           projectId: 1,
           status: "emitida",
+          currency: "USD",
+          exchangeRate: "26.12345678",
+          exchangeRateDate: new Date("2026-04-14T12:00:00"),
         },
         items: [
           { id: 15, materialRequestItemId: 21, receivedQuantity: "0.00" },
@@ -12177,6 +12221,9 @@ describe("BuildReq - Receipts", () => {
           orderNumber: "OC-2026-0005",
           projectId: 1,
           status: "emitida",
+          currency: "USD",
+          exchangeRate: "26.12345678",
+          exchangeRateDate: new Date("2026-04-14T12:00:00"),
         },
         items: [
           {
@@ -12237,6 +12284,9 @@ describe("BuildReq - Receipts", () => {
     expect(receiptPayload.emissionDeadline).toBeInstanceOf(Date);
     expect(receiptPayload.postingDate).toBeInstanceOf(Date);
     expect(receiptPayload.receiptDate).toBeInstanceOf(Date);
+    expect(receiptPayload.currency).toBe("USD");
+    expect(receiptPayload.exchangeRate).toBe("26.12345678");
+    expect(receiptPayload.exchangeRateDate).toBeInstanceOf(Date);
 
     getPurchaseOrderByIdSpy.mockRestore();
     registerReceiptSpy.mockRestore();

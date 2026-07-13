@@ -82,6 +82,7 @@ import {
   DEFAULT_SALES_TAXES,
   formatPurchaseOrderCurrency,
   formatPurchaseOrderPaymentMethodPrintLabel,
+  getPurchaseCurrencyLabel,
   getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderContractSummary,
   normalizePurchaseOrderAdditionalTaxCodes,
@@ -93,6 +94,7 @@ import {
   toPurchaseOrderNumber,
   type PurchaseOrderContractFrequency,
   type PurchaseOrderTaxCode,
+  type PurchaseCurrency,
   type SalesTaxCatalogItem,
 } from "@shared/purchase-orders";
 
@@ -668,6 +670,32 @@ const DEFAULT_CONTRACT_DRAFT: ContractDraft = {
   contractNote: "",
 };
 
+type PurchaseCurrencyDraft = {
+  currency: PurchaseCurrency;
+  exchangeRate: string;
+  exchangeRateDate: string;
+};
+
+function currentDateInputValue() {
+  const now = new Date();
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function formatExchangeRateDraft(value: string | number | null | undefined) {
+  const raw = String(value ?? "");
+  return raw.includes(".") ? raw.replace(/0+$/, "").replace(/\.$/, "") : raw;
+}
+
+const DEFAULT_CURRENCY_DRAFT: PurchaseCurrencyDraft = {
+  currency: "HNL",
+  exchangeRate: "",
+  exchangeRateDate: "",
+};
+
 const EMPTY_ORIGIN_ITEMS: any[] = [];
 
 type PendingOrderAttachment = PreparedDocumentAttachment & {
@@ -753,6 +781,9 @@ export default function OrdenesCompra() {
   >({});
   const [contractDraft, setContractDraft] = useState<ContractDraft>(
     DEFAULT_CONTRACT_DRAFT
+  );
+  const [currencyDraft, setCurrencyDraft] = useState<PurchaseCurrencyDraft>(
+    DEFAULT_CURRENCY_DRAFT
   );
   const [originItemDrafts, setOriginItemDrafts] = useState<
     Record<number, PurchaseOrderItemDraft>
@@ -987,6 +1018,7 @@ export default function OrdenesCompra() {
         setSelectedSupplierContactId("");
         setOriginItemDrafts({});
         setContractDraft(DEFAULT_CONTRACT_DRAFT);
+        setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
         void Promise.all([
           utils.purchaseOrders.list.invalidate(),
           utils.purchaseRequests.list.invalidate(),
@@ -1053,6 +1085,7 @@ export default function OrdenesCompra() {
       {
         supplierId: Number(selectedSupplierId || 0),
         sapCodes: purchaseOrderSapCodes,
+        currency: detail?.purchaseOrder.currency ?? "HNL",
       },
       {
         enabled:
@@ -1291,6 +1324,21 @@ export default function OrdenesCompra() {
       }
     }
 
+    if (currencyDraft.currency === "USD") {
+      const rawRate = currencyDraft.exchangeRate.trim();
+      const rate = Number(rawRate);
+      if (
+        !/^\d{1,10}(?:\.\d{1,8})?$/.test(rawRate) ||
+        !Number.isFinite(rate) ||
+        rate <= 0
+      ) {
+        return "Ingrese una tasa referencial USD válida, positiva y con máximo 8 decimales";
+      }
+      if (!currencyDraft.exchangeRateDate) {
+        return "Seleccione la fecha de la tasa referencial";
+      }
+    }
+
     if (contractDraft.appliesContract) {
       if (!contractDraft.contractPaymentFrequency) {
         return "Seleccione la frecuencia de pago del contrato";
@@ -1325,6 +1373,9 @@ export default function OrdenesCompra() {
     contractDraft.contractEndDate,
     contractDraft.contractFirstPaymentDate,
     contractDraft.contractPaymentFrequency,
+    currencyDraft.currency,
+    currencyDraft.exchangeRate,
+    currencyDraft.exchangeRateDate,
     originItemDrafts,
     selectedOriginItems,
   ]);
@@ -1417,6 +1468,21 @@ export default function OrdenesCompra() {
       contractDraft.contractPaymentFrequency,
     ]
   );
+  const selectedCurrencyCreatePayload = useMemo(
+    () =>
+      currencyDraft.currency === "USD"
+        ? {
+            currency: "USD" as const,
+            exchangeRate: currencyDraft.exchangeRate.trim(),
+            exchangeRateDate: currencyDraft.exchangeRateDate,
+          }
+        : { currency: "HNL" as const },
+    [
+      currencyDraft.currency,
+      currencyDraft.exchangeRate,
+      currencyDraft.exchangeRateDate,
+    ]
+  );
   const canCreateFromSelectedOrigin =
     selectedOriginIdNumber > 0 &&
     !isLoadingSelectedOriginDetail &&
@@ -1492,6 +1558,17 @@ export default function OrdenesCompra() {
   }, [newOrderDialogOpen, selectedOriginItems]);
 
   useEffect(() => {
+    if (!newOrderDialogOpen || !selectedOriginDetail?.purchaseRequest) return;
+    const isForeign =
+      selectedOriginDetail.purchaseRequest.purchaseType === "extranjera";
+    setCurrencyDraft({
+      currency: isForeign ? "USD" : "HNL",
+      exchangeRate: "",
+      exchangeRateDate: isForeign ? currentDateInputValue() : "",
+    });
+  }, [newOrderDialogOpen, selectedOriginDetail?.purchaseRequest.id]);
+
+  useEffect(() => {
     setSelectedSupplierId(
       detail?.purchaseOrder.supplierId
         ? String(detail.purchaseOrder.supplierId)
@@ -1521,6 +1598,25 @@ export default function OrdenesCompra() {
     detail?.purchaseOrder.contractPaymentFrequency,
     detail?.purchaseOrder.contractFirstPaymentDate,
     detail?.purchaseOrder.contractEndDate,
+  ]);
+
+  useEffect(() => {
+    if (newOrderDialogOpen || !detail?.purchaseOrder) return;
+    setCurrencyDraft({
+      currency: detail.purchaseOrder.currency ?? "HNL",
+      exchangeRate: formatExchangeRateDraft(
+        detail.purchaseOrder.exchangeRate
+      ),
+      exchangeRateDate: dateInputValue(
+        detail.purchaseOrder.exchangeRateDate
+      ),
+    });
+  }, [
+    detail?.purchaseOrder.id,
+    detail?.purchaseOrder.currency,
+    detail?.purchaseOrder.exchangeRate,
+    detail?.purchaseOrder.exchangeRateDate,
+    newOrderDialogOpen,
   ]);
 
   useEffect(() => {
@@ -1820,6 +1916,64 @@ export default function OrdenesCompra() {
     updateMutation.mutate({
       id: detail.purchaseOrder.id,
       paymentMethod,
+    });
+  };
+
+  const handleCurrencyDraftChange = (currency: PurchaseCurrency) => {
+    if (currency === currencyDraft.currency) return;
+    const pricedItems = newOrderDialogOpen
+      ? selectedOriginItems.some(
+          (item: any) => Number(getOriginItemDraft(item).unitPrice ?? 0) > 0
+        )
+      : items.some((item: any) => Number(item.unitPrice ?? 0) > 0);
+    if (
+      pricedItems &&
+      !window.confirm(
+        "Cambiar la moneda no convertirá precios ni totales. Los valores numéricos actuales se conservarán. ¿Desea continuar?"
+      )
+    ) {
+      return;
+    }
+
+    setCurrencyDraft({
+      currency,
+      exchangeRate: "",
+      exchangeRateDate: currency === "USD" ? currentDateInputValue() : "",
+    });
+  };
+
+  const handleSaveCurrency = () => {
+    if (!detail?.purchaseOrder || !canEditOrderStructure) return;
+    if (currencyDraft.currency === "USD") {
+      const rawRate = currencyDraft.exchangeRate.trim();
+      const rate = Number(rawRate);
+      if (
+        !/^\d{1,10}(?:\.\d{1,8})?$/.test(rawRate) ||
+        !Number.isFinite(rate) ||
+        rate <= 0
+      ) {
+        toast.error(
+          "Ingrese una tasa referencial válida y con máximo 8 decimales"
+        );
+        return;
+      }
+      if (!currencyDraft.exchangeRateDate) {
+        toast.error("Seleccione la fecha de la tasa referencial");
+        return;
+      }
+    }
+
+    updateMutation.mutate({
+      id: detail.purchaseOrder.id,
+      currency: currencyDraft.currency,
+      exchangeRate:
+        currencyDraft.currency === "USD"
+          ? currencyDraft.exchangeRate.trim()
+          : null,
+      exchangeRateDate:
+        currencyDraft.currency === "USD"
+          ? currencyDraft.exchangeRateDate
+          : null,
     });
   };
 
@@ -2176,7 +2330,10 @@ export default function OrdenesCompra() {
         `;
       })
       .join("");
-    const fiscalSummaryRows = getPurchaseOrderFiscalSummaryRows(pricingSummary)
+    const fiscalSummaryRows = getPurchaseOrderFiscalSummaryRows(
+      pricingSummary,
+      purchaseOrder.currency ?? "HNL"
+    )
       .map(row => `
         <tr>
           <td>${escapeHtml(
@@ -2430,7 +2587,9 @@ export default function OrdenesCompra() {
                 </div>
                 <div class="field">
                   <div class="label">Moneda:</div>
-                  <div class="value">LEMPIRA</div>
+                  <div class="value">${escapeHtml(
+                    getPurchaseCurrencyLabel(purchaseOrder.currency)
+                  )}</div>
                 </div>
                 <div class="field">
                   <div class="label">O Compra:</div>
@@ -2528,6 +2687,10 @@ export default function OrdenesCompra() {
         {
           header: "Clasificación",
           value: (row: any) => row.purchaseOrder.classification,
+        },
+        {
+          header: "Moneda",
+          value: (row: any) => row.purchaseOrder.currency ?? "HNL",
         },
         {
           header: "Proyecto",
@@ -2992,6 +3155,7 @@ export default function OrdenesCompra() {
                 onClick={() => {
                   setNewOrderDialogOpen(false);
                   setContractDraft(DEFAULT_CONTRACT_DRAFT);
+                  setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
                 }}
                 disabled={createFromOriginMutation.isPending}
               >
@@ -3005,6 +3169,7 @@ export default function OrdenesCompra() {
                     itemsToConvert: selectedOriginItemsToConvert,
                     ...selectedSupplierCreatePayload,
                     ...selectedContractCreatePayload,
+                    ...selectedCurrencyCreatePayload,
                   })
                 }
                 disabled={!canCreateFromSelectedOrigin}
@@ -3043,6 +3208,7 @@ export default function OrdenesCompra() {
             setPendingOrderAttachments([]);
             setPreparingOrderAttachment(false);
             setContractDraft(DEFAULT_CONTRACT_DRAFT);
+            setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
             setConfirmState({ kind: null });
           }
         }}
@@ -3306,6 +3472,65 @@ export default function OrdenesCompra() {
                   <p className="text-base font-semibold leading-tight sm:text-lg">
                     Pendiente
                   </p>
+                </div>
+              </div>
+
+              <div className="space-y-3 rounded-2xl border border-border/70 bg-muted/10 p-4">
+                <div>
+                  <h3 className="font-semibold">Moneda de la orden</h3>
+                  <p className="text-sm text-muted-foreground">
+                    La tasa USD es únicamente referencial; no convierte precios ni totales.
+                  </p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label>Moneda</Label>
+                    <Select
+                      value={currencyDraft.currency}
+                      onValueChange={value =>
+                        handleCurrencyDraftChange(value as PurchaseCurrency)
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="HNL">LEMPIRA (HNL)</SelectItem>
+                        <SelectItem value="USD">DÓLAR ESTADOUNIDENSE (USD)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {currencyDraft.currency === "USD" ? (
+                    <>
+                      <div className="space-y-2">
+                        <Label>Tasa referencial</Label>
+                        <Input
+                          inputMode="decimal"
+                          value={currencyDraft.exchangeRate}
+                          onChange={event =>
+                            setCurrencyDraft(current => ({
+                              ...current,
+                              exchangeRate: event.target.value,
+                            }))
+                          }
+                          placeholder="1 USD = 26.00000000 HNL"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Fecha de la tasa</Label>
+                        <Input
+                          type="date"
+                          value={currencyDraft.exchangeRateDate}
+                          onChange={event =>
+                            setCurrencyDraft(current => ({
+                              ...current,
+                              exchangeRateDate: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               </div>
 
@@ -3705,10 +3930,16 @@ export default function OrdenesCompra() {
                               />
                             </td>
                             <td className="p-3 text-right align-middle font-semibold sm:p-4">
-                              {formatPurchaseOrderCurrency(lineAmounts.taxAmount)}
+                              {formatPurchaseOrderCurrency(
+                                lineAmounts.taxAmount,
+                                currencyDraft.currency
+                              )}
                             </td>
                             <td className="p-3 text-right align-middle font-semibold sm:p-4">
-                              {formatPurchaseOrderCurrency(lineAmounts.total)}
+                              {formatPurchaseOrderCurrency(
+                                lineAmounts.total,
+                                currencyDraft.currency
+                              )}
                             </td>
                           </tr>
                         );
@@ -3737,7 +3968,10 @@ export default function OrdenesCompra() {
               </div>
 
               <div className="flex justify-end border-t border-border bg-muted/10 px-3 py-4 sm:px-4">
-                <FiscalSummaryCard summary={originPricingSummary} />
+                <FiscalSummaryCard
+                  summary={originPricingSummary}
+                  currency={currencyDraft.currency}
+                />
               </div>
 
               <section className="min-w-0 space-y-3 rounded-2xl border border-border/70 p-4">
@@ -3835,6 +4069,7 @@ export default function OrdenesCompra() {
                     setPendingOrderAttachments([]);
                     setPreparingOrderAttachment(false);
                     setContractDraft(DEFAULT_CONTRACT_DRAFT);
+                    setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
                   }}
                   disabled={
                     createFromOriginMutation.isPending ||
@@ -3852,6 +4087,7 @@ export default function OrdenesCompra() {
                       itemsToConvert: selectedOriginItemsToConvert,
                       ...selectedSupplierCreatePayload,
                       ...selectedContractCreatePayload,
+                      ...selectedCurrencyCreatePayload,
                     })
                   }
                   disabled={!canCreateFromSelectedOrigin}
@@ -4080,6 +4316,81 @@ export default function OrdenesCompra() {
                     {EMISSION_STATUS_LABELS[detail.purchaseOrder.status] ||
                       "Pendiente"}
                   </p>
+                </div>
+              </div>
+
+              <div className="space-y-3 rounded-2xl border border-border/70 bg-muted/10 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-semibold">Moneda de la orden</h3>
+                    <p className="text-sm text-muted-foreground">
+                      {getPurchaseCurrencyLabel(currencyDraft.currency)}
+                      {currencyDraft.currency === "USD" && currencyDraft.exchangeRate
+                        ? ` · 1 USD = ${currencyDraft.exchangeRate} HNL`
+                        : ""}
+                    </p>
+                  </div>
+                  {canEditOrderStructure ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleSaveCurrency}
+                      disabled={updateMutation.isPending}
+                    >
+                      <Save className="mr-2 h-4 w-4" />
+                      Guardar moneda
+                    </Button>
+                  ) : null}
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label>Moneda</Label>
+                    <Select
+                      value={currencyDraft.currency}
+                      disabled={!canEditOrderStructure}
+                      onValueChange={value =>
+                        handleCurrencyDraftChange(value as PurchaseCurrency)
+                      }
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="HNL">LEMPIRA (HNL)</SelectItem>
+                        <SelectItem value="USD">DÓLAR ESTADOUNIDENSE (USD)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {currencyDraft.currency === "USD" ? (
+                    <>
+                      <div className="space-y-2">
+                        <Label>Tasa referencial</Label>
+                        <Input
+                          inputMode="decimal"
+                          value={currencyDraft.exchangeRate}
+                          disabled={!canEditOrderStructure}
+                          onChange={event =>
+                            setCurrencyDraft(current => ({
+                              ...current,
+                              exchangeRate: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Fecha de la tasa</Label>
+                        <Input
+                          type="date"
+                          value={currencyDraft.exchangeRateDate}
+                          disabled={!canEditOrderStructure}
+                          onChange={event =>
+                            setCurrencyDraft(current => ({
+                              ...current,
+                              exchangeRateDate: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               </div>
 
@@ -4553,13 +4864,17 @@ export default function OrdenesCompra() {
                           <td className="p-3 text-right align-middle sm:p-4">
                             <div className="whitespace-nowrap text-base font-semibold sm:text-lg">
                               {formatPurchaseOrderCurrency(
-                                lineAmounts.taxAmount
+                                lineAmounts.taxAmount,
+                                detail.purchaseOrder.currency
                               )}
                             </div>
                           </td>
                           <td className="p-3 text-right align-middle sm:p-4">
                             <div className="whitespace-nowrap text-base font-semibold sm:text-lg">
-                              {formatPurchaseOrderCurrency(lineAmounts.total)}
+                              {formatPurchaseOrderCurrency(
+                                lineAmounts.total,
+                                detail.purchaseOrder.currency
+                              )}
                             </div>
                           </td>
                           <td className="p-3 text-right align-middle sm:p-4">
@@ -4634,7 +4949,10 @@ export default function OrdenesCompra() {
               </div>
 
               <div className="flex justify-end border-t border-border bg-muted/10 px-3 py-4 sm:px-4">
-                <FiscalSummaryCard summary={pricingSummary} />
+                <FiscalSummaryCard
+                  summary={pricingSummary}
+                  currency={detail.purchaseOrder.currency}
+                />
               </div>
 
               <DocumentAttachmentsPanel

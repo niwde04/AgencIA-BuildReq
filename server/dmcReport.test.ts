@@ -98,6 +98,7 @@ function sarInvoice(
     purchaseOrderNumber: overrides.purchaseOrderNumber ?? "OC-2026-0001",
     purchaseType: overrides.purchaseType ?? "local",
     purchaseOrderPaymentMethod: overrides.purchaseOrderPaymentMethod ?? null,
+    currency: overrides.currency ?? "HNL",
     projectCode: overrides.projectCode ?? "HID",
     projectName: overrides.projectName ?? "Hidalgo",
     supplierCode: overrides.supplierCode ?? "PROV-001",
@@ -267,7 +268,37 @@ describe("DMC report mapper", () => {
     expect(row.actividadFlujo).toBe("Solicitud de compra");
     expect(row.level3).toBe("SP-01 - Cimentación");
     expect(payload.summary.invoiceCount).toBe(1);
-    expect(payload.summary.totalFactura).toBe(1400);
+    expect(row.moneda).toBe("HNL");
+    expect(payload.summary.totalsByCurrency).toEqual([
+      expect.objectContaining({
+        currency: "HNL",
+        invoiceCount: 1,
+        totalFactura: 1400,
+      }),
+    ]);
+  });
+
+  it("keeps HNL and USD totals separated without applying exchange rates", () => {
+    const payload = buildDmcReportPayload([
+      sarInvoice({
+        invoiceId: 10,
+        currency: "HNL",
+        total: "115.0000",
+        netPayable: "115.0000",
+      }),
+      sarInvoice({
+        invoiceId: 11,
+        currency: "USD",
+        total: "115.0000",
+        netPayable: "115.0000",
+      }),
+    ]);
+
+    expect(payload.rows.map(row => row.moneda)).toEqual(["HNL", "USD"]);
+    expect(payload.summary.totalsByCurrency).toEqual([
+      expect.objectContaining({ currency: "HNL", totalFactura: 115 }),
+      expect.objectContaining({ currency: "USD", totalFactura: 115 }),
+    ]);
   });
 
   it("uses OCE exempt amount as DMC base 0 and keeps resolution in observation", () => {

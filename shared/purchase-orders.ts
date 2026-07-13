@@ -5,6 +5,30 @@ export const PURCHASE_ORDER_TAX_VALUES = [
   "isv_4",
 ] as const;
 
+export const PURCHASE_CURRENCIES = ["HNL", "USD"] as const;
+
+export type PurchaseCurrency = (typeof PURCHASE_CURRENCIES)[number];
+
+export function normalizePurchaseCurrency(
+  value: string | null | undefined
+): PurchaseCurrency {
+  return value === "USD" ? "USD" : "HNL";
+}
+
+export function getPurchaseCurrencyLabel(
+  value: string | null | undefined
+) {
+  return normalizePurchaseCurrency(value) === "USD"
+    ? "DÓLAR ESTADOUNIDENSE (USD)"
+    : "LEMPIRA (HNL)";
+}
+
+export function getPurchaseCurrencySymbol(
+  value: string | null | undefined
+) {
+  return normalizePurchaseCurrency(value) === "USD" ? "US$" : "L";
+}
+
 export type PurchaseOrderTaxCode = string;
 
 export type SalesTaxType = "base" | "additional";
@@ -637,42 +661,44 @@ export function summarizePurchaseOrderLines(
 }
 
 export function getPurchaseOrderFiscalSummaryRows(
-  summary: ReturnType<typeof summarizePurchaseOrderLines>
+  summary: ReturnType<typeof summarizePurchaseOrderLines>,
+  currency: PurchaseCurrency = "HNL"
 ) {
+  const currencyCode = normalizePurchaseCurrency(currency);
   return [
     {
       key: "subtotal",
-      label: "Sub-total L.",
+      label: `Sub-total ${currencyCode}`,
       value: summary.subtotal,
       emphasized: false,
     },
     {
       key: "exonerated",
-      label: "Importe exonerado L.",
+      label: `Importe exonerado ${currencyCode}`,
       value: summary.totalExonerated,
       emphasized: false,
     },
     {
       key: "exempt",
-      label: "Importe exento L.",
+      label: `Importe exento ${currencyCode}`,
       value: summary.totalExempt,
       emphasized: false,
     },
     ...summary.taxedRows.map(row => ({
       key: `taxed-${row.taxCode}`,
-      label: `Importe gravado ${row.shortLabel.replace(/^ISV\s*/i, "")} L.`,
+      label: `Importe gravado ${row.shortLabel.replace(/^ISV\s*/i, "")} ${currencyCode}`,
       value: row.value,
       emphasized: false,
     })),
     ...summary.taxRows.map(row => ({
       key: `isv-${row.taxCode}`,
-      label: `I.S.V. ${row.shortLabel.replace(/^ISV\s*/i, "")} L.`,
+      label: `I.S.V. ${row.shortLabel.replace(/^ISV\s*/i, "")} ${currencyCode}`,
       value: row.value,
       emphasized: false,
     })),
     {
       key: "total",
-      label: "Total a pagar L.",
+      label: `Total a pagar ${currencyCode}`,
       value: summary.total,
       emphasized: true,
     },
@@ -680,14 +706,16 @@ export function getPurchaseOrderFiscalSummaryRows(
 }
 
 export function formatPurchaseOrderCurrency(
-  value: string | number | null | undefined
+  value: string | number | null | undefined,
+  currency: PurchaseCurrency = "HNL"
 ) {
-  return new Intl.NumberFormat("es-HN", {
-    style: "currency",
-    currency: "HNL",
+  const amount = toPurchaseOrderNumber(value);
+  const symbol = getPurchaseCurrencySymbol(currency);
+  const formatted = new Intl.NumberFormat("es-HN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(toPurchaseOrderNumber(value));
+  }).format(Math.abs(amount));
+  return `${amount < 0 ? "-" : ""}${symbol} ${formatted}`;
 }
 
 function toContractDate(value: string | Date | null | undefined) {
