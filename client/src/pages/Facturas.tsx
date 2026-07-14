@@ -2224,6 +2224,14 @@ export default function Facturas() {
                   )}</div>
                 </div>
                 <div class="field">
+                  <div class="label">Precios:</div>
+                  <div class="value">${
+                    invoice.pricesIncludeTax === true
+                      ? "INCLUYEN ISV"
+                      : "SIN ISV"
+                  }</div>
+                </div>
+                <div class="field">
                   <div class="label">Rango Autorizado Inicial:</div>
                   <div class="value">${escapePrintHtml(invoiceDraft.documentRangeStart || invoice.documentRangeStart || "-")}</div>
                 </div>
@@ -2252,8 +2260,14 @@ export default function Facturas() {
                   <th style="width: 13%;" class="center">No. Parte/No. Serie</th>
                   <th style="width: 7%;" class="numeric">Cantidad</th>
                   <th style="width: 7%;" class="center">U Medida</th>
-                  <th style="width: 7%;" class="numeric">Valor U</th>
-                  <th style="width: 6%;" class="numeric">Valor T</th>
+                  <th style="width: 7%;" class="numeric">${
+                    invoice.pricesIncludeTax === true
+                      ? "Valor U c/ISV"
+                      : "Valor U"
+                  }</th>
+                  <th style="width: 6%;" class="numeric">${
+                    invoice.pricesIncludeTax === true ? "Base" : "Valor T"
+                  }</th>
                 </tr>
               </thead>
               <tbody>
@@ -3707,6 +3721,11 @@ export default function Facturas() {
                         )}
                       </p>
                     ) : null}
+                    <Badge variant="outline" className="mt-2 text-xs">
+                      {detail.invoice.pricesIncludeTax === true
+                        ? "Precios incluyen ISV"
+                        : "Precios sin ISV"}
+                    </Badge>
                   </div>
                 </div>
 
@@ -4203,10 +4222,14 @@ export default function Facturas() {
                             Cantidad
                           </th>
                           <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                            Precio unitario
+                            {detail.invoice.pricesIncludeTax === true
+                              ? "Precio unitario (incluye ISV)"
+                              : "Precio unitario"}
                           </th>
                           <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                            Subtotal
+                            {detail.invoice.pricesIncludeTax === true
+                              ? "Base"
+                              : "Subtotal"}
                           </th>
                           <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             ISV

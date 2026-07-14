@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Popover,
   PopoverContent,
@@ -123,6 +124,29 @@ const PURCHASE_TYPE_LABELS: Record<string, string> = {
   extranjera: "Compra Extranjera",
   compra_directa: "Compra Directa",
 };
+
+const CONTRACT_AUDIT_FIELD_LABELS: Record<string, string> = {
+  appliesContract: "Aplica contrato",
+  contractPaymentFrequency: "Frecuencia de pago",
+  contractFirstPaymentDate: "Primera fecha de pago",
+  contractEndDate: "Fecha de terminación",
+};
+
+function formatContractAuditValue(field: string, value?: string | null) {
+  if (!value) return "-";
+  if (field === "appliesContract") return value === "true" ? "Sí" : "No";
+  if (field === "contractPaymentFrequency") {
+    return (
+      PURCHASE_ORDER_CONTRACT_FREQUENCY_LABELS[
+        value as PurchaseOrderContractFrequency
+      ] ?? value
+    );
+  }
+  if (field === "contractFirstPaymentDate" || field === "contractEndDate") {
+    return value.slice(0, 10);
+  }
+  return value;
+}
 type DirectPurchasePaymentMethod =
   | "linea_credito"
   | "fondo_proyecto"
@@ -527,6 +551,14 @@ function formatUnitPricePayload(value: number | string | null | undefined) {
   return Number.isFinite(parsed) ? parsed.toFixed(8) : "0.00000000";
 }
 
+function formatUnitPriceDisplay(value: number | string | null | undefined) {
+  const [integerPart, decimalPart = ""] = formatUnitPricePayload(value).split(
+    "."
+  );
+  const visibleDecimals = decimalPart.replace(/0+$/, "").padEnd(2, "0");
+  return `${integerPart}.${visibleDecimals}`;
+}
+
 function formatMoneyDisplay(value: number | string | null | undefined) {
   const parsed = toPurchaseOrderNumber(value);
   return Number.isFinite(parsed) ? parsed.toFixed(2) : "0.00";
@@ -546,8 +578,8 @@ function calculateUnitPriceDraftValue(
   subtotal: number | string | null | undefined
 ) {
   const parsedQuantity = toPurchaseOrderNumber(quantity);
-  if (parsedQuantity <= 0) return "0.00000000";
-  return formatUnitPricePayload(
+  if (parsedQuantity <= 0) return "0.00";
+  return formatUnitPriceDisplay(
     toPurchaseOrderNumber(subtotal) / parsedQuantity
   );
 }
@@ -586,11 +618,21 @@ function withDraftUnitPrice(
 }
 
 function normalizeDraftMoneyValues(
-  draft: PurchaseOrderItemDraft
+  draft: PurchaseOrderItemDraft,
+  pricesIncludeTax = false
 ): PurchaseOrderItemDraft {
   const quantity = draft.quantity.trim()
     ? draft.quantity
     : formatQuantityPayload(draft.quantity);
+  if (pricesIncludeTax) {
+    const unitPrice = formatUnitPriceDisplay(draft.unitPrice);
+    return {
+      ...draft,
+      quantity,
+      unitPrice,
+      subtotal: calculateSubtotalDraftValue(quantity, unitPrice),
+    };
+  }
   const subtotal = formatMoneyDisplay(draft.subtotal);
   return {
     ...draft,
@@ -605,6 +647,13 @@ function areEditableMoneyValuesEqual(
   right: number | string | null | undefined
 ) {
   return formatMoneyDisplay(left) === formatMoneyDisplay(right);
+}
+
+function areEditableUnitPricesEqual(
+  left: number | string | null | undefined,
+  right: number | string | null | undefined
+) {
+  return formatUnitPricePayload(left) === formatUnitPricePayload(right);
 }
 
 function areTaxCodeArraysEqual(
@@ -631,13 +680,23 @@ type PurchaseOrderItemDraft = {
 function isPurchaseOrderItemDraftSynced(
   item: any,
   draft: PurchaseOrderItemDraft,
-  activeSalesTaxes: SalesTaxCatalogItem[]
+  activeSalesTaxes: SalesTaxCatalogItem[],
+  pricesIncludeTax: boolean
 ) {
-  const normalizedDraft = normalizeDraftMoneyValues(draft);
+  const normalizedDraft = normalizeDraftMoneyValues(draft, pricesIncludeTax);
+  const normalizedAmounts = calculatePurchaseOrderLineAmounts({
+    quantity: normalizedDraft.quantity,
+    unitPrice: normalizedDraft.unitPrice,
+    subtotal: normalizedDraft.subtotal,
+    pricesIncludeTax,
+    taxCode: normalizedDraft.taxCode,
+    additionalTaxCodes: normalizedDraft.additionalTaxCodes,
+    taxes: activeSalesTaxes,
+  });
   return (
     Number(normalizedDraft.quantity || 0) === Number(item.quantity ?? 0) &&
-    areEditableMoneyValuesEqual(normalizedDraft.unitPrice, item.unitPrice) &&
-    areEditableMoneyValuesEqual(normalizedDraft.subtotal, item.subtotal) &&
+    areEditableUnitPricesEqual(normalizedDraft.unitPrice, item.unitPrice) &&
+    areEditableMoneyValuesEqual(normalizedAmounts.subtotal, item.subtotal) &&
     normalizedDraft.taxCode ===
       normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes) &&
     areTaxCodeArraysEqual(
@@ -649,12 +708,22 @@ function isPurchaseOrderItemDraftSynced(
 
 function isPurchaseOrderContractPriceDraftSynced(
   item: any,
-  draft: PurchaseOrderItemDraft
+  draft: PurchaseOrderItemDraft,
+  pricesIncludeTax: boolean
 ) {
-  const normalizedDraft = normalizeDraftMoneyValues(draft);
+  const normalizedDraft = normalizeDraftMoneyValues(draft, pricesIncludeTax);
+  const normalizedAmounts = calculatePurchaseOrderLineAmounts({
+    quantity: normalizedDraft.quantity,
+    unitPrice: normalizedDraft.unitPrice,
+    subtotal: normalizedDraft.subtotal,
+    pricesIncludeTax,
+    taxCode: item.taxCode,
+    additionalTaxCodes: item.additionalTaxCodes,
+    taxBreakdown: item.taxBreakdown,
+  });
   return (
-    areEditableMoneyValuesEqual(normalizedDraft.unitPrice, item.unitPrice) &&
-    areEditableMoneyValuesEqual(normalizedDraft.subtotal, item.subtotal)
+    areEditableUnitPricesEqual(normalizedDraft.unitPrice, item.unitPrice) &&
+    areEditableMoneyValuesEqual(normalizedAmounts.subtotal, item.subtotal)
   );
 }
 
@@ -743,6 +812,11 @@ type PurchaseOrderConfirmState =
       kind: "cancel-order";
       orderId: number;
       orderNumber: string;
+    }
+  | {
+      kind: "price-tax-mode";
+      orderId: number;
+      pricesIncludeTax: boolean;
     };
 
 export default function OrdenesCompra() {
@@ -789,6 +863,7 @@ export default function OrdenesCompra() {
   const [currencyDraft, setCurrencyDraft] = useState<PurchaseCurrencyDraft>(
     DEFAULT_CURRENCY_DRAFT
   );
+  const [pricesIncludeTaxDraft, setPricesIncludeTaxDraft] = useState(false);
   const [originItemDrafts, setOriginItemDrafts] = useState<
     Record<number, PurchaseOrderItemDraft>
   >({});
@@ -865,6 +940,20 @@ export default function OrdenesCompra() {
     },
     onError: error => toast.error(error.message),
   });
+
+  const updatePricesIncludeTaxMutation =
+    trpc.purchaseOrders.updatePricesIncludeTax.useMutation({
+      onSuccess: () => {
+        toast.success("Tipo de precio actualizado");
+        setItemDrafts({});
+        setConfirmState({ kind: null });
+        void utils.purchaseOrders.list.invalidate();
+        if (selectedId) {
+          void utils.purchaseOrders.getById.invalidate({ id: selectedId });
+        }
+      },
+      onError: error => toast.error(error.message),
+    });
 
   const updateItemLineMutation = trpc.purchaseOrders.updateItemLine.useMutation(
     {
@@ -1023,6 +1112,7 @@ export default function OrdenesCompra() {
         setOriginItemDrafts({});
         setContractDraft(DEFAULT_CONTRACT_DRAFT);
         setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
+        setPricesIncludeTaxDraft(false);
         void Promise.all([
           utils.purchaseOrders.list.invalidate(),
           utils.purchaseRequests.list.invalidate(),
@@ -1090,6 +1180,8 @@ export default function OrdenesCompra() {
         supplierId: Number(selectedSupplierId || 0),
         sapCodes: purchaseOrderSapCodes,
         currency: detail?.purchaseOrder.currency ?? "HNL",
+        pricesIncludeTax:
+          detail?.purchaseOrder.pricesIncludeTax === true,
       },
       {
         enabled:
@@ -1111,6 +1203,12 @@ export default function OrdenesCompra() {
       contractFirstPaymentDate: detail?.purchaseOrder.contractFirstPaymentDate,
       contractEndDate: detail?.purchaseOrder.contractEndDate,
     });
+  const contractAuditLogs = (detail?.auditLogs ?? []).filter((entry: any) =>
+    Object.prototype.hasOwnProperty.call(
+      CONTRACT_AUDIT_FIELD_LABELS,
+      entry.log.field
+    )
+  );
   const canEditOrderStructure =
     canManagePurchaseOrders && ORDER_STRUCTURE_EDITABLE_STATUSES.has(orderStatus);
   const canEditIssuedContract =
@@ -1265,7 +1363,10 @@ export default function OrdenesCompra() {
   const selectedOriginItemsToConvert = useMemo(
     () =>
       selectedOriginItems.map((item: any) => {
-        const draft = normalizeDraftMoneyValues(getOriginItemDraft(item));
+        const draft = normalizeDraftMoneyValues(
+          getOriginItemDraft(item),
+          pricesIncludeTaxDraft
+        );
         return {
           purchaseRequestItemId: item.id,
           quantity: formatQuantityPayload(draft.quantity),
@@ -1275,7 +1376,7 @@ export default function OrdenesCompra() {
           additionalTaxCodes: draft.additionalTaxCodes,
         };
       }),
-    [originItemDrafts, selectedOriginItems]
+    [originItemDrafts, pricesIncludeTaxDraft, selectedOriginItems]
   );
   const selectedOriginItemIds = useMemo(
     () =>
@@ -1297,18 +1398,27 @@ export default function OrdenesCompra() {
     () =>
       summarizePurchaseOrderLines(
         selectedOriginItems.map((item: any) => {
-          const draft = normalizeDraftMoneyValues(getOriginItemDraft(item));
+          const draft = normalizeDraftMoneyValues(
+            getOriginItemDraft(item),
+            pricesIncludeTaxDraft
+          );
           return {
             quantity: draft.quantity,
             unitPrice: draft.unitPrice,
             subtotal: draft.subtotal,
+            pricesIncludeTax: pricesIncludeTaxDraft,
             taxCode: draft.taxCode,
             additionalTaxCodes: draft.additionalTaxCodes,
           };
         }),
         activeSalesTaxes
       ),
-    [activeSalesTaxes, originItemDrafts, selectedOriginItems]
+    [
+      activeSalesTaxes,
+      originItemDrafts,
+      pricesIncludeTaxDraft,
+      selectedOriginItems,
+    ]
   );
   const originDraftValidationMessage = useMemo(() => {
     for (const item of selectedOriginItems) {
@@ -1635,9 +1745,12 @@ export default function OrdenesCompra() {
           item.id,
           (() => {
             const quantity = String(item.quantity ?? "0.00");
-            const unitPrice = formatMoneyDisplay(item.unitPrice ?? "0.00");
-            const subtotal =
-              item.subtotal !== null && item.subtotal !== undefined
+            const unitPrice = detail.purchaseOrder.pricesIncludeTax
+              ? formatUnitPriceDisplay(item.unitPrice ?? "0.00")
+              : formatMoneyDisplay(item.unitPrice ?? "0.00");
+            const subtotal = detail.purchaseOrder.pricesIncludeTax
+              ? calculateSubtotalDraftValue(quantity, unitPrice)
+              : item.subtotal !== null && item.subtotal !== undefined
                 ? formatMoneyDisplay(item.subtotal)
                 : calculateSubtotalDraftValue(quantity, unitPrice);
             return {
@@ -1661,7 +1774,12 @@ export default function OrdenesCompra() {
         ])
       )
     );
-  }, [activeSalesTaxes, detail?.items, detail?.purchaseOrder.id]);
+  }, [
+    activeSalesTaxes,
+    detail?.items,
+    detail?.purchaseOrder.id,
+    detail?.purchaseOrder.pricesIncludeTax,
+  ]);
 
   useEffect(() => {
     if (
@@ -1687,9 +1805,12 @@ export default function OrdenesCompra() {
 
       const currentDraft = itemDrafts[item.id] ?? {
         quantity: String(item.quantity ?? "0.00"),
-        unitPrice: formatMoneyDisplay(item.unitPrice ?? "0.00"),
-        subtotal:
-          item.subtotal !== null && item.subtotal !== undefined
+        unitPrice: detail.purchaseOrder.pricesIncludeTax
+          ? formatUnitPriceDisplay(item.unitPrice ?? "0.00")
+          : formatMoneyDisplay(item.unitPrice ?? "0.00"),
+        subtotal: detail.purchaseOrder.pricesIncludeTax
+          ? calculateSubtotalDraftValue(item.quantity, item.unitPrice)
+          : item.subtotal !== null && item.subtotal !== undefined
             ? formatMoneyDisplay(item.subtotal)
             : calculateSubtotalDraftValue(item.quantity, item.unitPrice),
         taxCode: normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes),
@@ -1707,7 +1828,7 @@ export default function OrdenesCompra() {
 
       const nextDraft = {
         ...currentDraft,
-        unitPrice: latestPrice.unitPrice,
+        unitPrice: formatUnitPriceDisplay(latestPrice.unitPrice),
         subtotal: calculateSubtotalDraftValue(
           currentDraft.quantity,
           latestPrice.unitPrice
@@ -1734,14 +1855,23 @@ export default function OrdenesCompra() {
         additionalTaxCodes: update.draft.additionalTaxCodes,
       });
     }
-  }, [activeSalesTaxes, canEditOrderStructure, detail?.items, latestSupplierPrices]);
+  }, [
+    activeSalesTaxes,
+    canEditOrderStructure,
+    detail?.items,
+    detail?.purchaseOrder.pricesIncludeTax,
+    latestSupplierPrices,
+  ]);
 
   const getItemDraft = (item: any): PurchaseOrderItemDraft =>
     itemDrafts[item.id] ?? {
       quantity: String(item.quantity ?? "0.00"),
-      unitPrice: formatMoneyDisplay(item.unitPrice ?? "0.00"),
-      subtotal:
-        item.subtotal !== null && item.subtotal !== undefined
+      unitPrice: detail?.purchaseOrder.pricesIncludeTax
+        ? formatUnitPriceDisplay(item.unitPrice ?? "0.00")
+        : formatMoneyDisplay(item.unitPrice ?? "0.00"),
+      subtotal: detail?.purchaseOrder.pricesIncludeTax
+        ? calculateSubtotalDraftValue(item.quantity, item.unitPrice)
+        : item.subtotal !== null && item.subtotal !== undefined
           ? formatMoneyDisplay(item.subtotal)
           : calculateSubtotalDraftValue(item.quantity, item.unitPrice),
       taxCode: normalizePurchaseOrderTaxCode(item.taxCode, activeSalesTaxes),
@@ -1758,18 +1888,28 @@ export default function OrdenesCompra() {
     () =>
       summarizePurchaseOrderLines(
         items.map((item: any) => {
-          const draft = normalizeDraftMoneyValues(getItemDraft(item));
+          const draft = normalizeDraftMoneyValues(
+            getItemDraft(item),
+            detail?.purchaseOrder.pricesIncludeTax === true
+          );
           return {
             quantity: draft.quantity,
             unitPrice: draft.unitPrice,
             subtotal: draft.subtotal,
+            pricesIncludeTax:
+              detail?.purchaseOrder.pricesIncludeTax === true,
             taxCode: draft.taxCode,
             additionalTaxCodes: draft.additionalTaxCodes,
           };
         }),
         activeSalesTaxes
       ),
-    [activeSalesTaxes, items, itemDrafts]
+    [
+      activeSalesTaxes,
+      detail?.purchaseOrder.pricesIncludeTax,
+      items,
+      itemDrafts,
+    ]
   );
 
   const hasPendingPricingChanges = useMemo(
@@ -1779,10 +1919,17 @@ export default function OrdenesCompra() {
         return !isPurchaseOrderItemDraftSynced(
           item,
           getItemDraft(item),
-          activeSalesTaxes
+          activeSalesTaxes,
+          detail?.purchaseOrder.pricesIncludeTax === true
         );
       }),
-    [activeSalesTaxes, canEditOrderStructure, items, itemDrafts]
+    [
+      activeSalesTaxes,
+      canEditOrderStructure,
+      detail?.purchaseOrder.pricesIncludeTax,
+      items,
+      itemDrafts,
+    ]
   );
   const hasPendingContractPriceChanges = useMemo(
     () =>
@@ -1790,10 +1937,16 @@ export default function OrdenesCompra() {
       items.some((item: any) => {
         return !isPurchaseOrderContractPriceDraftSynced(
           item,
-          getItemDraft(item)
+          getItemDraft(item),
+          detail?.purchaseOrder.pricesIncludeTax === true
         );
       }),
-    [canEditContractLinePrice, items, itemDrafts]
+    [
+      canEditContractLinePrice,
+      detail?.purchaseOrder.pricesIncludeTax,
+      items,
+      itemDrafts,
+    ]
   );
   const emissionBlockReason = useMemo(() => {
     if (!detail) return null;
@@ -1834,6 +1987,7 @@ export default function OrdenesCompra() {
     reopenDraftMutation.isPending ||
     closeReceiptLineMutation.isPending ||
     movePendingToPurchaseRequestMutation.isPending ||
+    updatePricesIncludeTaxMutation.isPending ||
     updateContractTermsMutation.isPending ||
     updateContractItemPriceMutation.isPending;
   const contractDraftSummary = getPurchaseOrderContractSummary({
@@ -2005,9 +2159,17 @@ export default function OrdenesCompra() {
       toast.error("Ingrese la cantidad");
       return;
     }
-    const draft = normalizeDraftMoneyValues(rawDraft);
+    const draft = normalizeDraftMoneyValues(
+      rawDraft,
+      detail?.purchaseOrder.pricesIncludeTax === true
+    );
     if (
-      isPurchaseOrderItemDraftSynced(item, draft, activeSalesTaxes) &&
+      isPurchaseOrderItemDraftSynced(
+        item,
+        draft,
+        activeSalesTaxes,
+        detail?.purchaseOrder.pricesIncludeTax === true
+      ) &&
       !itemNameChanged
     ) {
       return;
@@ -2050,8 +2212,17 @@ export default function OrdenesCompra() {
     }
 
     const rawDraft = getItemDraft(item);
-    const draft = normalizeDraftMoneyValues(rawDraft);
-    if (isPurchaseOrderContractPriceDraftSynced(item, draft)) {
+    const draft = normalizeDraftMoneyValues(
+      rawDraft,
+      detail?.purchaseOrder.pricesIncludeTax === true
+    );
+    if (
+      isPurchaseOrderContractPriceDraftSynced(
+        item,
+        draft,
+        detail?.purchaseOrder.pricesIncludeTax === true
+      )
+    ) {
       return;
     }
     if (!draft.unitPrice.trim()) {
@@ -2230,6 +2401,14 @@ export default function OrdenesCompra() {
       return;
     }
 
+    if (confirmState.kind === "price-tax-mode") {
+      updatePricesIncludeTaxMutation.mutate({
+        id: confirmState.orderId,
+        pricesIncludeTax: confirmState.pricesIncludeTax,
+      });
+      return;
+    }
+
     if (confirmState.kind === "close-receipt-line") {
       closeReceiptLineMutation.mutate({
         purchaseOrderItemId: confirmState.itemId,
@@ -2317,6 +2496,7 @@ export default function OrdenesCompra() {
           quantity: draft.quantity,
           unitPrice: draft.unitPrice,
           subtotal: draft.subtotal,
+          pricesIncludeTax: purchaseOrder.pricesIncludeTax,
           taxCode: draft.taxCode,
           additionalTaxCodes: draft.additionalTaxCodes,
           taxes: activeSalesTaxes,
@@ -2598,6 +2778,14 @@ export default function OrdenesCompra() {
                   )}</div>
                 </div>
                 <div class="field">
+                  <div class="label">Precios:</div>
+                  <div class="value">${
+                    purchaseOrder.pricesIncludeTax
+                      ? "INCLUYEN ISV"
+                      : "SIN ISV"
+                  }</div>
+                </div>
+                <div class="field">
                   <div class="label">O Compra:</div>
                   <div class="value">${escapeHtml(purchaseOrder.orderNumber)}</div>
                 </div>
@@ -2634,8 +2822,14 @@ export default function OrdenesCompra() {
                   <th style="width: 20%;">Destino</th>
                   <th style="width: 14%;">No. Parte</th>
                   <th style="width: 10%;">Cantidad</th>
-                  <th style="width: 10%;">Valor U</th>
-                  <th style="width: 10%;">Valor T</th>
+                  <th style="width: 10%;">${
+                    purchaseOrder.pricesIncludeTax
+                      ? "Valor U c/ISV"
+                      : "Valor U"
+                  }</th>
+                  <th style="width: 10%;">${
+                    purchaseOrder.pricesIncludeTax ? "Base" : "Valor T"
+                  }</th>
                 </tr>
               </thead>
               <tbody>
@@ -3162,6 +3356,7 @@ export default function OrdenesCompra() {
                   setNewOrderDialogOpen(false);
                   setContractDraft(DEFAULT_CONTRACT_DRAFT);
                   setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
+                  setPricesIncludeTaxDraft(false);
                 }}
                 disabled={createFromOriginMutation.isPending}
               >
@@ -3173,6 +3368,7 @@ export default function OrdenesCompra() {
                   createFromOriginMutation.mutate({
                     purchaseRequestId: selectedOriginIdNumber,
                     itemsToConvert: selectedOriginItemsToConvert,
+                    pricesIncludeTax: pricesIncludeTaxDraft,
                     ...selectedSupplierCreatePayload,
                     ...selectedContractCreatePayload,
                     ...selectedCurrencyCreatePayload,
@@ -3215,6 +3411,7 @@ export default function OrdenesCompra() {
             setPreparingOrderAttachment(false);
             setContractDraft(DEFAULT_CONTRACT_DRAFT);
             setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
+            setPricesIncludeTaxDraft(false);
             setConfirmState({ kind: null });
           }
         }}
@@ -3538,6 +3735,31 @@ export default function OrdenesCompra() {
                     </>
                   ) : null}
                 </div>
+                <div className="space-y-2 border-t border-border/70 pt-3">
+                  <Label>Los precios digitados</Label>
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    value={pricesIncludeTaxDraft ? "included" : "excluded"}
+                    onValueChange={value => {
+                      if (!value) return;
+                      setPricesIncludeTaxDraft(value === "included");
+                    }}
+                    className="justify-start"
+                  >
+                    <ToggleGroupItem value="excluded" className="px-4">
+                      Sin impuesto
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="included" className="px-4">
+                      Impuesto incluido
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                  <p className="text-sm text-muted-foreground">
+                    {pricesIncludeTaxDraft
+                      ? "El precio ingresado será el total con impuesto; la base y el ISV se calcularán automáticamente."
+                      : "El precio ingresado será la base; el impuesto se agregará al total."}
+                  </p>
+                </div>
               </div>
 
               <div className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-4">
@@ -3700,13 +3922,13 @@ export default function OrdenesCompra() {
                       </Button>
                     ) : null}
 
-                    {(detail?.auditLogs ?? []).length > 0 ? (
+                    {contractAuditLogs.length > 0 ? (
                       <div className="rounded-xl border border-border/70 bg-background p-3">
                         <div className="mb-2 text-sm font-semibold">
                           Bitácora del contrato
                         </div>
                         <div className="space-y-2">
-                          {(detail?.auditLogs ?? [])
+                          {contractAuditLogs
                             .slice(0, 6)
                             .map((entry: any) => (
                               <div
@@ -3714,11 +3936,19 @@ export default function OrdenesCompra() {
                                 className="grid gap-2 text-xs text-muted-foreground md:grid-cols-[1fr_1fr_1fr]"
                               >
                                 <span className="font-medium text-foreground">
-                                  {entry.log.field}
+                                  {CONTRACT_AUDIT_FIELD_LABELS[
+                                    entry.log.field
+                                  ] ?? entry.log.field}
                                 </span>
                                 <span>
-                                  {entry.log.oldValue || "-"} →{" "}
-                                  {entry.log.newValue || "-"}
+                                  {formatContractAuditValue(
+                                    entry.log.field,
+                                    entry.log.oldValue
+                                  )} →{" "}
+                                  {formatContractAuditValue(
+                                    entry.log.field,
+                                    entry.log.newValue
+                                  )}
                                 </span>
                                 <span className="md:text-right">
                                   {entry.changedBy?.name ||
@@ -3758,13 +3988,15 @@ export default function OrdenesCompra() {
                         Pendiente a convertir
                       </th>
                       <th className="whitespace-nowrap p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
-                        Precio unitario
+                        {pricesIncludeTaxDraft
+                          ? "Precio unitario (incluye ISV)"
+                          : "Precio unitario"}
                       </th>
                       <th className="whitespace-nowrap p-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
                         Impuesto
                       </th>
                       <th className="whitespace-nowrap p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
-                        Subtotal
+                        {pricesIncludeTaxDraft ? "Base" : "Subtotal"}
                       </th>
                       <th className="whitespace-nowrap p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
                         ISV
@@ -3795,6 +4027,7 @@ export default function OrdenesCompra() {
                           quantity: draft.quantity,
                           unitPrice: draft.unitPrice,
                           subtotal: draft.subtotal,
+                          pricesIncludeTax: pricesIncludeTaxDraft,
                           taxCode: draft.taxCode,
                           additionalTaxCodes: draft.additionalTaxCodes,
                           taxes: activeSalesTaxes,
@@ -3865,7 +4098,7 @@ export default function OrdenesCompra() {
                               <Input
                                 type="number"
                                 min="0"
-                                step="0.01"
+                                step={pricesIncludeTaxDraft ? "0.00000001" : "0.01"}
                                 value={draft.unitPrice}
                                 onChange={event =>
                                   setOriginItemDrafts(current => ({
@@ -3882,7 +4115,8 @@ export default function OrdenesCompra() {
                                     ...current,
                                     [item.id]: normalizeDraftMoneyValues(
                                       current[item.id] ??
-                                        getDefaultOriginItemDraft(item)
+                                        getDefaultOriginItemDraft(item),
+                                      pricesIncludeTaxDraft
                                     ),
                                   }))
                                 }
@@ -3912,7 +4146,11 @@ export default function OrdenesCompra() {
                                 type="number"
                                 min="0"
                                 step="0.01"
-                                value={draft.subtotal}
+                                value={
+                                  pricesIncludeTaxDraft
+                                    ? formatMoneyDisplay(lineAmounts.subtotal)
+                                    : draft.subtotal
+                                }
                                 onChange={event =>
                                   setOriginItemDrafts(current => ({
                                     ...current,
@@ -3928,11 +4166,13 @@ export default function OrdenesCompra() {
                                     ...current,
                                     [item.id]: normalizeDraftMoneyValues(
                                       current[item.id] ??
-                                        getDefaultOriginItemDraft(item)
+                                        getDefaultOriginItemDraft(item),
+                                      pricesIncludeTaxDraft
                                     ),
                                   }))
                                 }
                                 className="h-10 w-full min-w-[170px] text-right font-semibold"
+                                disabled={pricesIncludeTaxDraft}
                               />
                             </td>
                             <td className="p-3 text-right align-middle font-semibold sm:p-4">
@@ -4076,6 +4316,7 @@ export default function OrdenesCompra() {
                     setPreparingOrderAttachment(false);
                     setContractDraft(DEFAULT_CONTRACT_DRAFT);
                     setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
+                    setPricesIncludeTaxDraft(false);
                   }}
                   disabled={
                     createFromOriginMutation.isPending ||
@@ -4091,6 +4332,7 @@ export default function OrdenesCompra() {
                     createFromOriginMutation.mutate({
                       purchaseRequestId: selectedOriginIdNumber,
                       itemsToConvert: selectedOriginItemsToConvert,
+                      pricesIncludeTax: pricesIncludeTaxDraft,
                       ...selectedSupplierCreatePayload,
                       ...selectedContractCreatePayload,
                       ...selectedCurrencyCreatePayload,
@@ -4560,13 +4802,13 @@ export default function OrdenesCompra() {
                     </Button>
                   ) : null}
 
-                  {(detail?.auditLogs ?? []).length > 0 ? (
+                  {contractAuditLogs.length > 0 ? (
                     <div className="rounded-xl border border-border/70 bg-background p-3">
                       <div className="mb-2 text-sm font-semibold">
                         Bitácora del contrato
                       </div>
                       <div className="space-y-2">
-                        {(detail?.auditLogs ?? [])
+                        {contractAuditLogs
                           .slice(0, 6)
                           .map((entry: any) => (
                             <div
@@ -4574,11 +4816,19 @@ export default function OrdenesCompra() {
                               className="grid gap-2 text-xs text-muted-foreground md:grid-cols-[1fr_1fr_1fr]"
                             >
                               <span className="font-medium text-foreground">
-                                {entry.log.field}
+                                {CONTRACT_AUDIT_FIELD_LABELS[
+                                  entry.log.field
+                                ] ?? entry.log.field}
                               </span>
                               <span>
-                                {entry.log.oldValue || "-"} →{" "}
-                                {entry.log.newValue || "-"}
+                                {formatContractAuditValue(
+                                  entry.log.field,
+                                  entry.log.oldValue
+                                )} →{" "}
+                                {formatContractAuditValue(
+                                  entry.log.field,
+                                  entry.log.newValue
+                                )}
                               </span>
                               <span className="md:text-right">
                                 {entry.changedBy?.name ||
@@ -4592,6 +4842,72 @@ export default function OrdenesCompra() {
                   ) : null}
                 </div>
               ) : null}
+
+              <div className="flex flex-col gap-3 border-y border-border/70 bg-muted/10 px-1 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <Label className="text-sm font-semibold">
+                    Impuesto en precios
+                  </Label>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {detail.purchaseOrder.pricesIncludeTax
+                      ? "Precio digitado: total final con ISV"
+                      : "Precio digitado: base sin ISV"}
+                  </p>
+                </div>
+                <ToggleGroup
+                  type="single"
+                  variant="outline"
+                  value={
+                    detail.purchaseOrder.pricesIncludeTax
+                      ? "included"
+                      : "excluded"
+                  }
+                  disabled={
+                    !canEditOrderStructure ||
+                    updatePricesIncludeTaxMutation.isPending
+                  }
+                  onValueChange={value => {
+                    if (!value) return;
+                    const pricesIncludeTax = value === "included";
+                    if (
+                      pricesIncludeTax ===
+                      detail.purchaseOrder.pricesIncludeTax
+                    ) {
+                      return;
+                    }
+                    setConfirmState({
+                      kind: "price-tax-mode",
+                      orderId: detail.purchaseOrder.id,
+                      pricesIncludeTax,
+                    });
+                  }}
+                  aria-label="Modo de impuesto de los precios"
+                  className="justify-start sm:justify-end"
+                >
+                  <ToggleGroupItem
+                    value="excluded"
+                    className="h-10 min-w-[130px] gap-2 px-4"
+                  >
+                    {!detail.purchaseOrder.pricesIncludeTax ? (
+                      <Check className="h-4 w-4" />
+                    ) : (
+                      <span className="h-4 w-4" aria-hidden="true" />
+                    )}
+                    Sin ISV
+                  </ToggleGroupItem>
+                  <ToggleGroupItem
+                    value="included"
+                    className="h-10 min-w-[130px] gap-2 px-4"
+                  >
+                    {detail.purchaseOrder.pricesIncludeTax ? (
+                      <Check className="h-4 w-4" />
+                    ) : (
+                      <span className="h-4 w-4" aria-hidden="true" />
+                    )}
+                    Incluye ISV
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </div>
 
               <div className="overflow-x-auto rounded-2xl border border-border/70">
                 <table className="min-w-[1500px] table-auto text-sm lg:text-[15px]">
@@ -4618,13 +4934,17 @@ export default function OrdenesCompra() {
                         Cantidad
                       </th>
                       <th className="whitespace-nowrap p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
-                        Precio unitario
+                        {detail.purchaseOrder.pricesIncludeTax
+                          ? "Precio unitario (incluye ISV)"
+                          : "Precio unitario"}
                       </th>
                       <th className="whitespace-nowrap p-3 text-left text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
                         Impuesto
                       </th>
                       <th className="whitespace-nowrap p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
-                        Subtotal
+                        {detail.purchaseOrder.pricesIncludeTax
+                          ? "Base"
+                          : "Subtotal"}
                       </th>
                       <th className="whitespace-nowrap p-3 text-right text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:p-4">
                         ISV
@@ -4667,6 +4987,8 @@ export default function OrdenesCompra() {
                         quantity: draft.quantity,
                         unitPrice: draft.unitPrice,
                         subtotal: draft.subtotal,
+                        pricesIncludeTax:
+                          detail.purchaseOrder.pricesIncludeTax,
                         taxCode: draft.taxCode,
                         additionalTaxCodes: draft.additionalTaxCodes,
                         taxes: activeSalesTaxes,
@@ -4785,7 +5107,11 @@ export default function OrdenesCompra() {
                               <Input
                                 type="number"
                                 min="0"
-                                step="0.01"
+                                step={
+                                  detail.purchaseOrder.pricesIncludeTax
+                                    ? "0.00000001"
+                                    : "0.01"
+                                }
                                 value={draft.unitPrice}
                                 onChange={event => {
                                   const nextUnitPrice = event.target.value;
@@ -4846,7 +5172,11 @@ export default function OrdenesCompra() {
                               type="number"
                               min="0"
                               step="0.01"
-                              value={draft.subtotal}
+                              value={
+                                detail.purchaseOrder.pricesIncludeTax
+                                  ? formatMoneyDisplay(lineAmounts.subtotal)
+                                  : draft.subtotal
+                              }
                               onChange={event => {
                                 const nextSubtotal = event.target.value;
                                 setItemDrafts(current => ({
@@ -4861,6 +5191,7 @@ export default function OrdenesCompra() {
                               className="h-10 w-full min-w-[180px] max-w-[240px] text-right text-sm font-semibold sm:text-base"
                               placeholder="0.00"
                               disabled={
+                                detail.purchaseOrder.pricesIncludeTax ||
                                 (!canEditOrderStructure &&
                                   !canEditContractLinePrice) ||
                                 isSavingThisLine
@@ -5178,6 +5509,8 @@ export default function OrdenesCompra() {
                 className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${
                   confirmState.kind === "close-receipt-line"
                     ? "bg-amber-100 text-amber-700"
+                    : confirmState.kind === "price-tax-mode"
+                      ? "bg-blue-100 text-blue-700"
                     : "bg-destructive/10 text-destructive"
                 }`}
               >
@@ -5185,6 +5518,8 @@ export default function OrdenesCompra() {
                   <Trash2 className="h-5 w-5" />
                 ) : confirmState.kind === "close-receipt-line" ? (
                   <ShieldX className="h-5 w-5" />
+                ) : confirmState.kind === "price-tax-mode" ? (
+                  <ArrowRightLeft className="h-5 w-5" />
                 ) : (
                   <XCircle className="h-5 w-5" />
                 )}
@@ -5197,6 +5532,8 @@ export default function OrdenesCompra() {
                       : "Eliminar línea"
                     : confirmState.kind === "close-receipt-line"
                       ? "Cerrar línea para recepción"
+                      : confirmState.kind === "price-tax-mode"
+                        ? "Cambiar tipo de precio"
                       : "Cancelar orden de compra"}
                 </AlertDialogTitle>
                 <AlertDialogDescription className="text-sm leading-6 text-muted-foreground">
@@ -5214,6 +5551,12 @@ export default function OrdenesCompra() {
                         )} ${confirmState.unit || ""}. Después de eso ya no aparecerá en Recepciones. Si lo necesitas, también puedes mandar ese saldo a una nueva solicitud de compra.`
                       : confirmState.kind === "cancel-order"
                         ? `Se anulará la orden ${confirmState.orderNumber}. El detalle no se borrará, pero los ítems volverán a quedar habilitados en la requisición.`
+                        : confirmState.kind === "price-tax-mode"
+                          ? `Los precios digitados no cambiarán. Se reinterpretarán como ${
+                              confirmState.pricesIncludeTax
+                                ? "totales con impuesto incluido"
+                                : "bases sin impuesto"
+                            } y se recalcularán subtotal, ISV y total de todas las líneas.`
                         : ""}
                 </AlertDialogDescription>
               </AlertDialogHeader>
@@ -5226,6 +5569,8 @@ export default function OrdenesCompra() {
                 ? "Esta acción no se puede deshacer."
                 : confirmState.kind === "close-receipt-line"
                   ? "Puedes solo cerrar la línea o enviar el saldo pendiente a una solicitud de compra reutilizable para esta misma orden."
+                  : confirmState.kind === "price-tax-mode"
+                    ? "La OC debe permanecer en borrador. El PDF guardado se invalidará para que la próxima impresión use los nuevos valores."
                   : "La orden quedará visible como historial, pero ya no se podrá editar ni enviar al proveedor."}
             </div>
 
@@ -5260,18 +5605,26 @@ export default function OrdenesCompra() {
               <AlertDialogAction
                 onClick={handleConfirmAction}
                 disabled={confirmActionPending}
-                className="h-11 rounded-xl bg-destructive px-5 text-sm font-semibold text-destructive-foreground hover:bg-destructive/90"
+                className={`h-11 rounded-xl px-5 text-sm font-semibold ${
+                  confirmState.kind === "price-tax-mode"
+                    ? "bg-blue-700 text-white hover:bg-blue-800"
+                    : "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                }`}
               >
                 {confirmActionPending
                   ? confirmState.kind === "delete-item"
                     ? "Eliminando..."
                     : confirmState.kind === "close-receipt-line"
                       ? "Cerrando..."
+                      : confirmState.kind === "price-tax-mode"
+                        ? "Recalculando..."
                       : "Cancelando..."
                   : confirmState.kind === "delete-item"
                     ? "Confirmar eliminación"
                     : confirmState.kind === "close-receipt-line"
                       ? "Confirmar cierre"
+                      : confirmState.kind === "price-tax-mode"
+                        ? "Recalcular OC"
                       : "Confirmar cancelación"}
               </AlertDialogAction>
             </AlertDialogFooter>

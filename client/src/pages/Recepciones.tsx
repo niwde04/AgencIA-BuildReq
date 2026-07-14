@@ -528,6 +528,14 @@ function formatUnitPricePayload(value: number | string | null | undefined) {
   return Number.isFinite(parsed) ? parsed.toFixed(8) : "0.00000000";
 }
 
+function formatUnitPriceDisplay(value: number | string | null | undefined) {
+  const [integerPart, decimalPart = ""] = formatUnitPricePayload(value).split(
+    "."
+  );
+  const visibleDecimals = decimalPart.replace(/0+$/, "").padEnd(2, "0");
+  return `${integerPart}.${visibleDecimals}`;
+}
+
 function formatMoneyDisplay(value: number | string | null | undefined) {
   const parsed = toPurchaseOrderNumber(value);
   return Number.isFinite(parsed) ? parsed.toFixed(2) : "0.00";
@@ -547,8 +555,8 @@ function calculateReceiptUnitPriceDraftValue(
   subtotal: number | string | null | undefined
 ) {
   const parsedQuantity = toPurchaseOrderNumber(quantity);
-  if (parsedQuantity <= 0) return "0.00000000";
-  return formatUnitPricePayload(
+  if (parsedQuantity <= 0) return "0.00";
+  return formatUnitPriceDisplay(
     toPurchaseOrderNumber(subtotal) / parsedQuantity
   );
 }
@@ -795,7 +803,11 @@ function receiptItemHasStoredFinancials(item: any) {
   );
 }
 
-function getReceiptLineTaxSummaryInput(item: any, sourceItem?: any) {
+function getReceiptLineTaxSummaryInput(
+  item: any,
+  sourceItem?: any,
+  pricesIncludeTax = false
+) {
   const useStoredFinancials = receiptItemHasStoredFinancials(item);
   return {
     quantity: item.quantityReceived,
@@ -814,12 +826,17 @@ function getReceiptLineTaxSummaryInput(item: any, sourceItem?: any) {
     taxBreakdown: useStoredFinancials
       ? item.taxBreakdown
       : sourceItem?.taxBreakdown,
+    pricesIncludeTax,
   };
 }
 
-function calculateReceiptLineAmounts(item: any, sourceItem?: any) {
+function calculateReceiptLineAmounts(
+  item: any,
+  sourceItem?: any,
+  pricesIncludeTax = false
+) {
   return calculatePurchaseOrderLineAmounts(
-    getReceiptLineTaxSummaryInput(item, sourceItem)
+    getReceiptLineTaxSummaryInput(item, sourceItem, pricesIncludeTax)
   );
 }
 
@@ -1692,7 +1709,7 @@ export default function Recepciones() {
           ? String(savedFixedAssetQuantity)
           : String(getReceivableQuantity(item));
       }
-      nextPriceMap[item.id] = String(
+      nextPriceMap[item.id] = formatUnitPriceDisplay(
         draftItem?.unitPrice ?? (item as any).unitPrice ?? "0.00"
       );
       nextSubtotalMap[item.id] = formatMoneyDisplay(
@@ -2196,6 +2213,9 @@ export default function Recepciones() {
     sourceType === "purchase_order" && purchaseOrderDetail?.supplier
       ? formatSupplierRtnLabel(purchaseOrderDetail.supplier)
       : null;
+  const sourcePricesIncludeTax =
+    sourceType === "purchase_order" &&
+    purchaseOrderDetail?.purchaseOrder.pricesIncludeTax === true;
 
   const sourceNeededByLabel =
     sourceType === "purchase_order"
@@ -3032,7 +3052,10 @@ export default function Recepciones() {
     () =>
       sourceType === "purchase_order"
         ? summarizePurchaseOrderLines(
-            receiptEditableItems.map(item => getReceiptLineTaxDraft(item)),
+            receiptEditableItems.map(item => ({
+              ...getReceiptLineTaxDraft(item),
+              pricesIncludeTax: sourcePricesIncludeTax,
+            })),
             activeSalesTaxes
           )
         : summarizePurchaseOrderLines([], activeSalesTaxes),
@@ -3042,6 +3065,7 @@ export default function Recepciones() {
       priceMap,
       receiptEditableItems,
       receivedMap,
+      sourcePricesIncludeTax,
       sourceType,
       subtotalMap,
       taxCodeByItemId,
@@ -3994,7 +4018,8 @@ export default function Recepciones() {
       receiptDetail.items.map((item: any) =>
         getReceiptLineTaxSummaryInput(
           item,
-          receiptSourceItemsById.get(item.sourceItemId)
+          receiptSourceItemsById.get(item.sourceItemId),
+          receiptDetail.receipt.pricesIncludeTax === true
         )
       )
     );
@@ -4130,7 +4155,11 @@ export default function Recepciones() {
         const unitPrice = isPurchaseOrderReceipt
           ? (item.unitPrice ?? sourceItem?.unitPrice ?? "0.00")
           : "0.00";
-        const summaryInput = getReceiptLineTaxSummaryInput(item, sourceItem);
+        const summaryInput = getReceiptLineTaxSummaryInput(
+          item,
+          sourceItem,
+          receipt.pricesIncludeTax === true
+        );
         const amounts = calculatePurchaseOrderLineAmounts(summaryInput);
         summaryLines.push(summaryInput);
         const assetDetails = parseFixedAssetDetails(item.assetDetails);
@@ -4477,6 +4506,15 @@ export default function Recepciones() {
                     getPurchaseCurrencyLabel(receipt.currency)
                   )}</div>
                 </div>
+                ${isPurchaseOrderReceipt ? `
+                <div class="field">
+                  <div class="label">Precios:</div>
+                  <div class="value">${
+                    receipt.pricesIncludeTax === true
+                      ? "INCLUYEN ISV"
+                      : "SIN ISV"
+                  }</div>
+                </div>` : ""}
                 <div class="field">
                   <div class="label">Observacion:</div>
                   <div class="value">${escapeHtml(observations)}</div>
@@ -4494,8 +4532,14 @@ export default function Recepciones() {
                   <th style="width: 13%;" class="center">No. Parte/No. Serie</th>
                   <th style="width: 7%;" class="numeric">Cantidad</th>
                   <th style="width: 7%;" class="center">U Medida</th>
-                  <th style="width: 7%;" class="numeric">Valor U</th>
-                  <th style="width: 6%;" class="numeric">Valor T</th>
+                  <th style="width: 7%;" class="numeric">${
+                    receipt.pricesIncludeTax === true
+                      ? "Valor U c/ISV"
+                      : "Valor U"
+                  }</th>
+                  <th style="width: 6%;" class="numeric">${
+                    receipt.pricesIncludeTax === true ? "Base" : "Valor T"
+                  }</th>
                 </tr>
               </thead>
               <tbody>
@@ -5488,7 +5532,9 @@ export default function Recepciones() {
                           Recibido
                         </th>
                         <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                          Precio confirmado
+                          {sourcePricesIncludeTax
+                            ? "Precio confirmado (incluye ISV)"
+                            : "Precio confirmado"}
                         </th>
                         {sourceType === "purchase_order" ? (
                           <>
@@ -5496,7 +5542,7 @@ export default function Recepciones() {
                               Impuesto
                             </th>
                             <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                              Subtotal
+                              {sourcePricesIncludeTax ? "Base" : "Subtotal"}
                             </th>
                             <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                               ISV
@@ -5626,7 +5672,9 @@ export default function Recepciones() {
                           const receiptUnitPriceDraft =
                             sourceType === "purchase_order"
                               ? (priceMap[item.id] ??
-                                String(item.unitPrice ?? "0.00"))
+                                formatUnitPriceDisplay(
+                                  item.unitPrice ?? "0.00"
+                                ))
                               : "0.00";
                           const lineAmounts = taxDraft
                             ? calculatePurchaseOrderLineAmounts({
@@ -5636,6 +5684,7 @@ export default function Recepciones() {
                                 taxCode: taxDraft.taxCode,
                                 additionalTaxCodes: taxDraft.additionalTaxCodes,
                                 taxes: activeSalesTaxes,
+                                pricesIncludeTax: sourcePricesIncludeTax,
                               })
                             : null;
                           const fixedAssetReceivedOffset = Math.max(
@@ -5668,6 +5717,7 @@ export default function Recepciones() {
                                 taxCode: taxDraft.taxCode,
                                 additionalTaxCodes: taxDraft.additionalTaxCodes,
                                 taxes: activeSalesTaxes,
+                                pricesIncludeTax: sourcePricesIncludeTax,
                               })
                             : null;
                           const receiptLineDetailsExpanded =
@@ -5911,7 +5961,11 @@ export default function Recepciones() {
                                     <Input
                                       type="number"
                                       min="0"
-                                      step="0.01"
+                                      step={
+                                        sourcePricesIncludeTax
+                                          ? "0.00000001"
+                                          : "0.01"
+                                      }
                                       className="ml-auto w-36 text-right"
                                       value={receiptUnitPriceDraft}
                                       onChange={event => {
@@ -5932,9 +5986,13 @@ export default function Recepciones() {
                                       }}
                                       onBlur={event => {
                                         const nextUnitPrice =
-                                          formatMoneyDisplay(
-                                            event.target.value
-                                          );
+                                          sourcePricesIncludeTax
+                                            ? formatUnitPriceDisplay(
+                                                event.target.value
+                                              )
+                                            : formatMoneyDisplay(
+                                                event.target.value
+                                              );
                                         setPriceMap(current => ({
                                           ...current,
                                           [item.id]: nextUnitPrice,
@@ -5986,9 +6044,13 @@ export default function Recepciones() {
                                         min="0"
                                         step="0.01"
                                         className="ml-auto w-36 text-right font-semibold"
-                                        value={getReceiptLineSubtotalDraft(
-                                          item
-                                        )}
+                                        value={
+                                          sourcePricesIncludeTax
+                                            ? formatMoneyDisplay(
+                                                lineAmounts.subtotal
+                                              )
+                                            : getReceiptLineSubtotalDraft(item)
+                                        }
                                         onChange={event => {
                                           const nextSubtotal =
                                             event.target.value;
@@ -6023,7 +6085,10 @@ export default function Recepciones() {
                                               ),
                                           }));
                                         }}
-                                        disabled={registerMutation.isPending}
+                                        disabled={
+                                          registerMutation.isPending ||
+                                          sourcePricesIncludeTax
+                                        }
                                       />
                                     </td>
                                     <td className="p-4 text-right font-semibold">
@@ -6782,6 +6847,11 @@ export default function Recepciones() {
                           )}
                         </p>
                       ) : null}
+                      <Badge variant="outline">
+                        {sourcePricesIncludeTax
+                          ? "Precios incluyen ISV"
+                          : "Precios sin ISV"}
+                      </Badge>
                     </div>
                   ) : null}
                   {receiptWarehouseSelectionError ? (
@@ -7052,6 +7122,13 @@ export default function Recepciones() {
                         )}
                       </p>
                     ) : null}
+                    {receiptDetail.receipt.sourceType === "purchase_order" ? (
+                      <Badge variant="outline">
+                        {receiptDetail.receipt.pricesIncludeTax === true
+                          ? "Precios incluyen ISV"
+                          : "Precios sin ISV"}
+                      </Badge>
+                    ) : null}
                   </div>
                   <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-4">
                     <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
@@ -7242,13 +7319,17 @@ export default function Recepciones() {
                           Recibido
                         </th>
                         <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                          Precio confirmado
+                          {receiptDetail.receipt.pricesIncludeTax === true
+                            ? "Precio confirmado (incluye ISV)"
+                            : "Precio confirmado"}
                         </th>
                         {receiptDetail.receipt.sourceType ===
                         "purchase_order" ? (
                           <>
                             <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                              Subtotal
+                              {receiptDetail.receipt.pricesIncludeTax === true
+                                ? "Base"
+                                : "Subtotal"}
                             </th>
                             <th className="p-3 text-right text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                               ISV
@@ -7285,7 +7366,8 @@ export default function Recepciones() {
                           );
                           const lineAmounts = calculateReceiptLineAmounts(
                             item,
-                            sourceItem
+                            sourceItem,
+                            receiptDetail.receipt.pricesIncludeTax === true
                           );
                           const targetLabel =
                             receiptDetail.receipt.sourceType ===

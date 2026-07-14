@@ -408,6 +408,7 @@ export function calculatePurchaseOrderLineAmounts(params: {
   quantity: string | number | null | undefined;
   unitPrice?: string | number | null | undefined;
   subtotal?: string | number | null | undefined;
+  pricesIncludeTax?: boolean | null | undefined;
   taxCode?: string | null | undefined;
   additionalTaxCodes?: string[] | string | null | undefined;
   taxBreakdown?: PurchaseOrderTaxBreakdownEntry[] | string | null | undefined;
@@ -446,11 +447,6 @@ export function calculatePurchaseOrderLineAmounts(params: {
         tax.value,
         catalog
       );
-  const subtotal = roundPurchaseOrderMoney(
-    hasExplicitSubtotal
-      ? toPurchaseOrderNumber(params.subtotal)
-      : quantity * unitPrice
-  );
   const appliedTaxes = useSnapshot
     ? snapshotBreakdown
     : [
@@ -482,19 +478,56 @@ export function calculatePurchaseOrderLineAmounts(params: {
             displayOrder: tax.displayOrder,
           })),
       ];
-  const taxBreakdown = appliedTaxes.map(entry => ({
-    ...entry,
-    baseAmount: subtotal,
-    amount: roundPurchaseOrderMoney(subtotal * entry.rate),
-  }));
-  const taxAmount = roundPurchaseOrderMoney(
-    taxBreakdown.reduce((sum, entry) => sum + entry.amount, 0)
+  const pricesIncludeTax = params.pricesIncludeTax === true;
+  const enteredLineAmount = roundPurchaseOrderMoney(quantity * unitPrice);
+  const combinedTaxRate = appliedTaxes.reduce(
+    (sum, entry) => sum + entry.rate,
+    0
   );
-  const total = roundPurchaseOrderMoney(subtotal + taxAmount);
+  const subtotal = pricesIncludeTax
+    ? combinedTaxRate > 0
+      ? roundPurchaseOrderMoney(enteredLineAmount / (1 + combinedTaxRate))
+      : enteredLineAmount
+    : roundPurchaseOrderMoney(
+        hasExplicitSubtotal
+          ? toPurchaseOrderNumber(params.subtotal)
+          : enteredLineAmount
+      );
+  const inclusiveTaxAmount = pricesIncludeTax
+    ? roundPurchaseOrderMoney(enteredLineAmount - subtotal)
+    : 0;
+  let allocatedInclusiveTax = 0;
+  const taxBreakdown = appliedTaxes.map((entry, index) => {
+    const isLastTax = index === appliedTaxes.length - 1;
+    const amount =
+      pricesIncludeTax && isLastTax
+        ? roundPurchaseOrderMoney(
+            inclusiveTaxAmount - allocatedInclusiveTax
+          )
+        : roundPurchaseOrderMoney(subtotal * entry.rate);
+    allocatedInclusiveTax = roundPurchaseOrderMoney(
+      allocatedInclusiveTax + amount
+    );
+
+    return {
+      ...entry,
+      baseAmount: subtotal,
+      amount,
+    };
+  });
+  const taxAmount = pricesIncludeTax
+    ? inclusiveTaxAmount
+    : roundPurchaseOrderMoney(
+        taxBreakdown.reduce((sum, entry) => sum + entry.amount, 0)
+      );
+  const total = pricesIncludeTax
+    ? enteredLineAmount
+    : roundPurchaseOrderMoney(subtotal + taxAmount);
 
   return {
     quantity,
     unitPrice,
+    pricesIncludeTax,
     taxCode: tax.value,
     taxLabel: tax.label,
     taxShortLabel: tax.shortLabel,
@@ -514,13 +547,14 @@ export function summarizePurchaseOrderLines(
     quantity: string | number | null | undefined;
     unitPrice?: string | number | null | undefined;
     subtotal?: string | number | null | undefined;
+    pricesIncludeTax?: boolean | null | undefined;
     taxCode?: string | null | undefined;
     additionalTaxCodes?: string[] | string | null | undefined;
     taxBreakdown?: PurchaseOrderTaxBreakdownEntry[] | string | null | undefined;
-  }>
-  ,
+  }>,
   taxes?: SalesTaxCatalogItem[] | null
 ) {
+  const hasExplicitCatalog = Boolean(taxes?.length);
   const catalog = normalizeCatalog(taxes);
   const taxSummarySeed = catalog.map(tax => ({
     taxCode: tax.taxCode,
@@ -536,7 +570,7 @@ export function summarizePurchaseOrderLines(
     (summary, line) => {
       const amounts = calculatePurchaseOrderLineAmounts({
         ...line,
-        taxes: catalog,
+        ...(hasExplicitCatalog ? { taxes: catalog } : {}),
       });
 
       summary.subtotal = roundPurchaseOrderMoney(

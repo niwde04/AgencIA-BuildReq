@@ -682,6 +682,7 @@ export const purchaseOrders = pgTable(
       .$type<PurchaseCurrency>()
       .default("HNL")
       .notNull(),
+    pricesIncludeTax: boolean("pricesIncludeTax").default(false).notNull(),
     exchangeRate: decimal("exchangeRate", { precision: 18, scale: 8 }),
     exchangeRateDate: date("exchangeRateDate", { mode: "date" }),
     paymentMethod: paymentMethodEnum("paymentMethod"),
@@ -998,6 +999,7 @@ export const receipts = pgTable(
       .$type<PurchaseCurrency>()
       .default("HNL")
       .notNull(),
+    pricesIncludeTax: boolean("pricesIncludeTax").default(false).notNull(),
     exchangeRate: decimal("exchangeRate", { precision: 18, scale: 8 }),
     exchangeRateDate: date("exchangeRateDate", { mode: "date" }),
     receivedById: integer("receivedById").notNull(),
@@ -1154,6 +1156,7 @@ export const invoices = pgTable(
       .$type<PurchaseCurrency>()
       .default("HNL")
       .notNull(),
+    pricesIncludeTax: boolean("pricesIncludeTax").default(false).notNull(),
     exchangeRate: decimal("exchangeRate", { precision: 18, scale: 8 }),
     exchangeRateDate: date("exchangeRateDate", { mode: "date" }),
     status: invoiceStatusEnum("status").default("borrador").notNull(),

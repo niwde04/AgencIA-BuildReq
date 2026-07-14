@@ -145,6 +145,7 @@ import {
   getPurchaseOrderTaxSelectionError,
   normalizePurchaseOrderTaxCode,
   parsePurchaseOrderAdditionalTaxCodes,
+  parsePurchaseOrderTaxBreakdown,
   summarizePurchaseOrderLines,
   type PurchaseOrderTaxBreakdownEntry,
   type PurchaseCurrency,
@@ -365,6 +366,7 @@ function getTransferReceiptStatus(
 type PurchaseHistoryReference = {
   unitPrice: string;
   currency: PurchaseCurrency;
+  pricesIncludeTax: boolean;
   supplierId: number | null;
   supplierCode: string | null;
   supplierName: string | null;
@@ -435,6 +437,7 @@ async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
         originalSapItemCode: purchaseOrderItems.originalSapItemCode,
         unitPrice: purchaseOrderItems.unitPrice,
         currency: purchaseOrders.currency,
+        pricesIncludeTax: purchaseOrders.pricesIncludeTax,
         orderNumber: purchaseOrders.orderNumber,
         purchasedAt: purchaseOrders.createdAt,
         supplierId: purchaseOrders.supplierId,
@@ -496,6 +499,7 @@ async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
     const reference: PurchaseHistoryReference = {
       unitPrice: toMoneyString8(row.unitPrice),
       currency: row.currency,
+      pricesIncludeTax: row.pricesIncludeTax,
       supplierId: row.supplierId ?? null,
       supplierCode: row.supplierCode ?? null,
       supplierName: row.supplierName ?? null,
@@ -535,6 +539,7 @@ export async function getLatestSupplierPurchasePrices(params: {
   projectId?: number;
   projectIds?: number[];
   currency?: PurchaseCurrency;
+  pricesIncludeTax?: boolean;
 }) {
   const db = await getDb();
   const normalizedCodes = Array.from(
@@ -573,6 +578,11 @@ export async function getLatestSupplierPurchasePrices(params: {
   if (params.currency) {
     conditions.push(eq(purchaseOrders.currency, params.currency));
   }
+  if (params.pricesIncludeTax !== undefined) {
+    conditions.push(
+      eq(purchaseOrders.pricesIncludeTax, params.pricesIncludeTax)
+    );
+  }
 
   const rows = await db
     .select({
@@ -580,6 +590,7 @@ export async function getLatestSupplierPurchasePrices(params: {
       originalSapItemCode: purchaseOrderItems.originalSapItemCode,
       unitPrice: purchaseOrderItems.unitPrice,
       currency: purchaseOrders.currency,
+      pricesIncludeTax: purchaseOrders.pricesIncludeTax,
       orderNumber: purchaseOrders.orderNumber,
       purchasedAt: purchaseOrders.createdAt,
       supplierId: purchaseOrders.supplierId,
@@ -613,6 +624,7 @@ export async function getLatestSupplierPurchasePrices(params: {
     const reference: PurchaseHistoryReference = {
       unitPrice: toMoneyString8(row.unitPrice),
       currency: row.currency,
+      pricesIncludeTax: row.pricesIncludeTax,
       supplierId: row.supplierId ?? null,
       supplierCode: row.supplierCode ?? null,
       supplierName: row.supplierName ?? null,
@@ -5113,6 +5125,7 @@ function buildPurchaseOrderDocument(params: {
   observations?: string | null;
   paymentMethodLabel?: string | null;
   currency?: PurchaseCurrency | null;
+  pricesIncludeTax?: boolean | null;
   quoteLabel?: string | null;
   items: Array<{
     itemName: string;
@@ -5146,6 +5159,7 @@ function buildPurchaseOrderDocument(params: {
       quantity: item.quantity,
       unitPrice: item.unitPrice,
       subtotal: item.subtotal,
+      pricesIncludeTax: params.pricesIncludeTax,
       taxCode: item.taxCode,
       additionalTaxCodes: item.additionalTaxCodes,
       taxBreakdown: item.taxBreakdown,
@@ -5172,6 +5186,7 @@ function buildPurchaseOrderDocument(params: {
     salesAdvisorLabel: params.salesAdvisorLabel?.trim() || "-",
     paymentMethodLabel: params.paymentMethodLabel?.trim() || "-",
     currencyLabel: getPurchaseCurrencyLabel(params.currency),
+    pricesIncludeTax: params.pricesIncludeTax === true,
     observations: params.observations?.trim() || "-",
     quoteLabel: params.quoteLabel?.trim() || "-",
     items: params.items.map((item, index) => {
@@ -5179,6 +5194,7 @@ function buildPurchaseOrderDocument(params: {
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         subtotal: item.subtotal,
+        pricesIncludeTax: params.pricesIncludeTax,
         taxCode: item.taxCode,
         additionalTaxCodes: item.additionalTaxCodes,
         taxBreakdown: item.taxBreakdown,
@@ -6077,6 +6093,7 @@ export async function createPurchaseOrder(
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         subtotal: item.subtotal,
+        pricesIncludeTax: data.pricesIncludeTax,
         taxCode: item.taxCode,
         additionalTaxCodes: item.additionalTaxCodes as any,
       })),
@@ -6174,6 +6191,7 @@ export async function createPurchaseOrder(
       data.paymentMethod
     ),
     currency: data.currency ?? "HNL",
+    pricesIncludeTax: data.pricesIncludeTax,
     observations: data.notes,
     quoteLabel: sourcePurchaseRequest?.quoteAttachmentId
       ? String(sourcePurchaseRequest.quoteAttachmentId)
@@ -6767,6 +6785,7 @@ export async function getPurchaseOrderById(id: number) {
       directPurchasePaymentMethod
     ),
     currency: rows[0].purchaseOrder.currency,
+    pricesIncludeTax: rows[0].purchaseOrder.pricesIncludeTax,
     observations: rows[0].purchaseOrder.notes,
     quoteLabel: rows[0].purchaseRequest?.quoteAttachmentId
       ? String(rows[0].purchaseRequest.quoteAttachmentId)
@@ -6779,6 +6798,7 @@ export async function getPurchaseOrderById(id: number) {
       unit: item.unit,
       unitPrice: item.unitPrice,
       subtotal: item.subtotal,
+      pricesIncludeTax: rows[0].purchaseOrder.pricesIncludeTax,
       taxCode: item.taxCode,
       additionalTaxCodes: item.additionalTaxCodes as any,
       taxBreakdown: item.taxBreakdown as any,
@@ -6795,6 +6815,7 @@ export async function getPurchaseOrderById(id: number) {
       quantity: item.quantity,
       unitPrice: item.unitPrice,
       subtotal: item.subtotal,
+      pricesIncludeTax: rows[0].purchaseOrder.pricesIncludeTax,
       taxCode: item.taxCode,
       additionalTaxCodes: item.additionalTaxCodes as any,
       taxBreakdown: item.taxBreakdown as any,
@@ -6886,6 +6907,105 @@ export async function updatePurchaseOrderItem(
     .set({ ...data, updatedAt: new Date() })
     .where(eq(purchaseOrderItems.id, id));
   return { success: true };
+}
+
+export async function updatePurchaseOrderPricesIncludeTax(params: {
+  purchaseOrderId: number;
+  pricesIncludeTax: boolean;
+  changedById: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const [purchaseOrder] = await tx
+      .select()
+      .from(purchaseOrders)
+      .where(eq(purchaseOrders.id, params.purchaseOrderId))
+      .limit(1);
+    if (!purchaseOrder) throw new Error("Orden de compra no encontrada");
+    if (purchaseOrder.status !== "borrador") {
+      throw new Error(
+        "Solo se puede cambiar el tipo de precio en una OC borrador"
+      );
+    }
+
+    const items = await tx
+      .select()
+      .from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.purchaseOrderId, params.purchaseOrderId));
+    const [existingReceipt] = await tx
+      .select({ id: receipts.id })
+      .from(receipts)
+      .where(
+        and(
+          eq(receipts.sourceType, "purchase_order"),
+          eq(receipts.sourceId, params.purchaseOrderId)
+        )
+      )
+      .limit(1);
+    if (
+      existingReceipt ||
+      items.some(
+        item =>
+          Number(item.receivedQuantity ?? 0) > 0 || item.receiptClosed === true
+      )
+    ) {
+      throw new Error(
+        "No se puede cambiar el tipo de precio porque la OC ya tiene recepciones"
+      );
+    }
+
+    if (purchaseOrder.pricesIncludeTax === params.pricesIncludeTax) {
+      return { success: true };
+    }
+
+    for (const item of items) {
+      const amounts = calculatePurchaseOrderLineAmounts({
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        pricesIncludeTax: params.pricesIncludeTax,
+        taxCode: item.taxCode,
+        additionalTaxCodes: item.additionalTaxCodes as any,
+        taxBreakdown: item.taxBreakdown as any,
+      });
+      await tx
+        .update(purchaseOrderItems)
+        .set({
+          subtotal: toMoneyString4(amounts.subtotal),
+          taxBreakdown: amounts.taxBreakdown,
+          updatedAt: new Date(),
+        })
+        .where(eq(purchaseOrderItems.id, item.id));
+    }
+
+    await tx
+      .update(purchaseOrders)
+      .set({
+        pricesIncludeTax: params.pricesIncludeTax,
+        printedDocumentName: null,
+        printedDocumentMimeType: null,
+        printedDocumentContent: null,
+        printedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(purchaseOrders.id, params.purchaseOrderId));
+
+    await tx.insert(purchaseOrderAuditLogs).values({
+      purchaseOrderId: params.purchaseOrderId,
+      purchaseOrderItemId: null,
+      action: "actualizar_tipo_precio",
+      field: "pricesIncludeTax",
+      oldValue: String(purchaseOrder.pricesIncludeTax),
+      newValue: String(params.pricesIncludeTax),
+      changedById: params.changedById,
+      note: params.pricesIncludeTax
+        ? "Los precios digitados incluyen impuesto"
+        : "Los precios digitados no incluyen impuesto",
+    });
+
+    return { success: true };
+  });
 }
 
 export async function createPurchaseOrderAuditLog(
@@ -8040,6 +8160,7 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
       const amounts = calculatePurchaseOrderLineAmounts({
         quantity: receiptItem.quantityReceived,
         unitPrice: receiptItem.unitPrice ?? sourceItem?.unitPrice ?? "0.00",
+        pricesIncludeTax: params.receiptData.pricesIncludeTax,
         subtotal: useReceiptFinancials
           ? receiptItem.subtotal
           : prorateLineSubtotal({
@@ -8117,6 +8238,7 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
       projectId: params.purchaseOrderDetail.purchaseOrder.projectId,
       supplierId: params.purchaseOrderDetail.purchaseOrder.supplierId ?? null,
       currency: params.receiptData.currency ?? "HNL",
+      pricesIncludeTax: params.receiptData.pricesIncludeTax ?? false,
       exchangeRate: params.receiptData.exchangeRate ?? null,
       exchangeRateDate: params.receiptData.exchangeRateDate ?? null,
       status: "borrador",
@@ -9356,6 +9478,7 @@ export async function preparePurchaseOrderTaxDataForLine(params: {
   quantity: string | number | null | undefined;
   unitPrice?: string | number | null | undefined;
   subtotal?: string | number | null | undefined;
+  pricesIncludeTax?: boolean | null | undefined;
   taxCode?: string | null | undefined;
   additionalTaxCodes?: string[] | string | null | undefined;
 }) {
@@ -9376,6 +9499,7 @@ export async function preparePurchaseOrderTaxDataForLine(params: {
     quantity: params.quantity,
     unitPrice: params.unitPrice,
     subtotal: params.subtotal,
+    pricesIncludeTax: params.pricesIncludeTax,
     taxCode,
     additionalTaxCodes,
     taxes,
@@ -9393,30 +9517,45 @@ export function prepareReceiptItemFinancialDataForLine(params: {
   quantity: string | number | null | undefined;
   unitPrice?: string | number | null | undefined;
   subtotal?: string | number | null | undefined;
+  pricesIncludeTax?: boolean | null | undefined;
   taxCode?: string | null | undefined;
   additionalTaxCodes?: string[] | string | null | undefined;
+  taxBreakdown?: PurchaseOrderTaxBreakdownEntry[] | string | null | undefined;
   taxes?: SalesTaxCatalogItem[] | null;
 }) {
+  const snapshotBreakdown = parsePurchaseOrderTaxBreakdown(
+    params.taxBreakdown
+  );
+  const useSnapshot = snapshotBreakdown.length > 0 && !params.taxes;
   const taxes = params.taxes?.length ? params.taxes : DEFAULT_SALES_TAXES;
   const requestedTaxCode = String(params.taxCode ?? "").trim();
-  const taxCode = normalizePurchaseOrderTaxCode(params.taxCode, taxes);
-  const additionalTaxCodes = parsePurchaseOrderAdditionalTaxCodes(
-    params.additionalTaxCodes
-  );
-  const error = getPurchaseOrderTaxSelectionError({
-    taxCode: requestedTaxCode || taxCode,
-    additionalTaxCodes,
-    taxes,
-  });
+  const taxCode = useSnapshot
+    ? snapshotBreakdown.find(entry => entry.taxType === "base")?.taxCode ??
+      normalizePurchaseOrderTaxCode(params.taxCode, taxes)
+    : normalizePurchaseOrderTaxCode(params.taxCode, taxes);
+  const additionalTaxCodes = useSnapshot
+    ? snapshotBreakdown
+        .filter(entry => entry.taxType === "additional")
+        .map(entry => entry.taxCode)
+    : parsePurchaseOrderAdditionalTaxCodes(params.additionalTaxCodes);
+  const error = useSnapshot
+    ? null
+    : getPurchaseOrderTaxSelectionError({
+        taxCode: requestedTaxCode || taxCode,
+        additionalTaxCodes,
+        taxes,
+      });
   if (error) throw new Error(error);
 
   const amounts = calculatePurchaseOrderLineAmounts({
     quantity: params.quantity,
     unitPrice: params.unitPrice,
     subtotal: params.subtotal,
+    pricesIncludeTax: params.pricesIncludeTax,
     taxCode,
     additionalTaxCodes,
-    taxes,
+    taxBreakdown: params.taxBreakdown,
+    ...(useSnapshot ? {} : { taxes }),
   });
 
   return {
@@ -10692,6 +10831,7 @@ export async function correctInvoiceReceiptFromInvoice(params: {
         sourceId: row.receipt.sourceId,
         projectId: row.receipt.projectId,
         currency: row.receipt.currency,
+        pricesIncludeTax: row.receipt.pricesIncludeTax,
         exchangeRate: row.receipt.exchangeRate,
         exchangeRateDate: row.receipt.exchangeRateDate,
         receivedById: params.correctedById,

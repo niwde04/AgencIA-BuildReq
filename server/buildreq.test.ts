@@ -268,6 +268,114 @@ describe("BuildReq - Purchase order tax helpers", () => {
     });
   });
 
+  it("derives the net base when the entered price includes ISV", () => {
+    const amounts = calculatePurchaseOrderLineAmounts({
+      quantity: "1",
+      unitPrice: "13995.00",
+      pricesIncludeTax: true,
+      taxCode: "isv_15",
+    });
+
+    expect(amounts).toMatchObject({
+      subtotal: 12169.5652,
+      taxAmount: 1825.4348,
+      total: 13995,
+      pricesIncludeTax: true,
+    });
+    expect(amounts.subtotal.toFixed(2)).toBe("12169.57");
+    expect(amounts.taxAmount.toFixed(2)).toBe("1825.43");
+    expect(
+      Number(amounts.subtotal.toFixed(2)) +
+        Number(amounts.taxAmount.toFixed(2))
+    ).toBe(13995);
+  });
+
+  it("keeps exempt tax-inclusive lines unchanged", () => {
+    expect(
+      calculatePurchaseOrderLineAmounts({
+        quantity: "2",
+        unitPrice: "125.50",
+        pricesIncludeTax: true,
+        taxCode: "exe",
+      })
+    ).toMatchObject({
+      subtotal: 251,
+      taxAmount: 0,
+      total: 251,
+    });
+  });
+
+  it("allocates the inclusive rounding remainder to the last tax", () => {
+    const amounts = calculatePurchaseOrderLineAmounts({
+      quantity: "1",
+      unitPrice: "115.00",
+      pricesIncludeTax: true,
+      taxCode: "isv_15",
+      additionalTaxCodes: ["tasa_2"],
+      taxes: [
+        {
+          taxCode: "isv_15",
+          description: "ISV 15%",
+          ratePercent: 15,
+          taxType: "base",
+          fiscalCategory: "gravado",
+          displayOrder: 10,
+        },
+        {
+          taxCode: "tasa_2",
+          description: "Tasa adicional 2%",
+          ratePercent: 2,
+          taxType: "additional",
+          fiscalCategory: "gravado",
+          displayOrder: 20,
+          appliesToTaxCodes: ["isv_15"],
+        },
+      ],
+    });
+
+    expect(amounts.subtotal).toBe(98.2906);
+    expect(amounts.taxAmount).toBe(16.7094);
+    expect(amounts.total).toBe(115);
+    expect(
+      amounts.taxBreakdown.reduce((sum, tax) => sum + tax.amount, 0)
+    ).toBeCloseTo(amounts.taxAmount, 4);
+
+    const summary = summarizePurchaseOrderLines([
+      {
+        quantity: "1",
+        unitPrice: "115.00",
+        pricesIncludeTax: true,
+        taxCode: "isv_15",
+        additionalTaxCodes: ["tasa_2"],
+        taxBreakdown: amounts.taxBreakdown,
+      },
+    ]);
+    expect(summary).toMatchObject({
+      subtotal: 98.2906,
+      totalIsv: 16.7094,
+      total: 115,
+    });
+    expect(summary.taxRows.find(row => row.taxCode === "tasa_2")?.value).toBe(
+      1.9658
+    );
+
+    expect(
+      db.prepareReceiptItemFinancialDataForLine({
+        quantity: "1",
+        unitPrice: "115.00",
+        pricesIncludeTax: true,
+        taxCode: "isv_15",
+        additionalTaxCodes: ["tasa_2"],
+        taxBreakdown: amounts.taxBreakdown,
+      })
+    ).toMatchObject({
+      subtotal: "98.2906",
+      taxAmount: "16.7094",
+      total: "115.0000",
+      additionalTaxCodes: ["tasa_2"],
+    });
+  });
+
   it("uses explicit supplier subtotals for converted purchase units", () => {
     const summary = summarizePurchaseOrderLines([
       {
@@ -9522,6 +9630,7 @@ describe("BuildReq - Purchase Orders", () => {
         currency: "USD",
         exchangeRate: "26.12345678",
         exchangeRateDate: "2026-04-30",
+        pricesIncludeTax: true,
         appliesContract: true,
         itemsToConvert: [
           {
@@ -9631,6 +9740,7 @@ describe("BuildReq - Purchase Orders", () => {
         currency: "USD",
         exchangeRate: "26.12345678",
         exchangeRateDate: "2026-04-30",
+        pricesIncludeTax: true,
         appliesContract: true,
         contractPaymentFrequency: "mensual",
         contractFirstPaymentDate: "2026-01-01",
@@ -9659,6 +9769,7 @@ describe("BuildReq - Purchase Orders", () => {
         currency: "USD",
         exchangeRate: "26.12345678",
         exchangeRateDate: expect.any(Date),
+        pricesIncludeTax: true,
       }),
       [expect.objectContaining({ purchaseRequestItemId: 7201 })]
     );
@@ -9691,6 +9802,41 @@ describe("BuildReq - Purchase Orders", () => {
 
     expect(createPurchaseOrderSpy).not.toHaveBeenCalled();
     createPurchaseOrderSpy.mockRestore();
+  });
+
+  it("changes the tax interpretation only for an editable purchase order", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          projectId: 1,
+          status: "borrador",
+          pricesIncludeTax: false,
+        },
+        items: [],
+      } as any);
+    const updatePricesIncludeTaxSpy = vi
+      .spyOn(db, "updatePurchaseOrderPricesIncludeTax")
+      .mockResolvedValue({ success: true });
+
+    await expect(
+      caller.purchaseOrders.updatePricesIncludeTax({
+        id: 4,
+        pricesIncludeTax: true,
+      })
+    ).resolves.toEqual({ success: true });
+
+    expect(updatePricesIncludeTaxSpy).toHaveBeenCalledWith({
+      purchaseOrderId: 4,
+      pricesIncludeTax: true,
+      changedById: 4,
+    });
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    updatePricesIncludeTaxSpy.mockRestore();
   });
 
   it("updates an emitted contract line price and writes audit log", async () => {
@@ -10570,6 +10716,8 @@ describe("BuildReq - Purchase Orders", () => {
           orderNumber: "OC-2026-0005",
           projectId: 1,
           status: "emitida",
+          currency: "HNL",
+          pricesIncludeTax: true,
         },
         items: [{ id: 15, receivedQuantity: "0.00" }],
       } as any);
@@ -10862,6 +11010,8 @@ describe("BuildReq - Receipts", () => {
           orderNumber: "OC-2026-0005",
           projectId: 1,
           status: "emitida",
+          currency: "HNL",
+          pricesIncludeTax: true,
         },
         items: [
           {
@@ -10934,6 +11084,7 @@ describe("BuildReq - Receipts", () => {
         sourceId: 4,
         projectId: 1,
         receivedById: 6,
+        pricesIncludeTax: true,
       }),
       expect.arrayContaining([
         expect.objectContaining({

@@ -497,6 +497,7 @@ export const purchaseOrdersRouter = router({
         supplierId: z.number(),
         sapCodes: z.array(z.string().trim().min(1)).min(1),
         currency: z.enum(PURCHASE_CURRENCIES).optional(),
+        pricesIncludeTax: z.boolean().optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -511,6 +512,7 @@ export const purchaseOrdersRouter = router({
         supplierId: input.supplierId,
         sapCodes: input.sapCodes,
         currency: input.currency,
+        pricesIncludeTax: input.pricesIncludeTax,
         projectIds: getProjectScopeIds(ctx.user),
       });
     }),
@@ -527,6 +529,7 @@ export const purchaseOrdersRouter = router({
           supplierContactId: z.number().nullable().optional(),
           supplierEmail: z.string().email().optional(),
           paymentMethod: directPurchasePaymentMethodSchema.optional(),
+          pricesIncludeTax: z.boolean().default(false),
           ...purchaseCurrencyInputFields,
           notes: z.string().optional(),
         })
@@ -757,6 +760,7 @@ export const purchaseOrdersRouter = router({
             projectId,
             classification: inferredClassification,
             purchaseType: detail.purchaseRequest.purchaseType,
+            pricesIncludeTax: input.pricesIncludeTax,
             ...currencySnapshot,
             paymentMethod: requiresPaymentMethod
               ? input.paymentMethod ?? null
@@ -856,6 +860,7 @@ export const purchaseOrdersRouter = router({
           classification: z.enum(["oc", "cd"]).default("oc"),
           supplierId: z.number().optional(),
           supplierEmail: z.string().email().optional(),
+          pricesIncludeTax: z.boolean().default(false),
           ...purchaseCurrencyInputFields,
           notes: z.string().optional(),
         })
@@ -1000,6 +1005,7 @@ export const purchaseOrdersRouter = router({
           projectId: Array.from(sourceProjectIds)[0],
           classification: flowItems.length > 0 ? "cd" : input.classification,
           purchaseType: purchaseRequests[0].purchaseRequest.purchaseType,
+          pricesIncludeTax: input.pricesIncludeTax,
           ...currencySnapshot,
           supplierId: input.supplierId ?? flowItems[0]?.flow?.supplierId ?? null,
           supplierEmail: input.supplierEmail,
@@ -1256,6 +1262,49 @@ export const purchaseOrdersRouter = router({
       });
     }),
 
+  updatePricesIncludeTax: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        pricesIncludeTax: z.boolean(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canAccessPurchaseOrders(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para editar la OC",
+        });
+      }
+      assertCanModifyPurchaseOrders(ctx.user);
+
+      const detail = await db.getPurchaseOrderById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Orden de compra no encontrada",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+      assertPurchaseOrderStructureEditable(detail.purchaseOrder.status);
+
+      try {
+        return await db.updatePurchaseOrderPricesIncludeTax({
+          purchaseOrderId: input.id,
+          pricesIncludeTax: input.pricesIncludeTax,
+          changedById: ctx.user.id,
+        });
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudo actualizar el tipo de precio",
+        });
+      }
+    }),
+
   replaceItem: protectedProcedure
     .input(
       z.object({
@@ -1345,6 +1394,7 @@ export const purchaseOrdersRouter = router({
         quantity: itemDetail.item.quantity,
         unitPrice: input.unitPrice,
         subtotal: input.subtotal,
+        pricesIncludeTax: itemDetail.purchaseOrder.pricesIncludeTax,
         taxCode: input.taxCode,
         additionalTaxCodes: input.additionalTaxCodes,
       });
@@ -1452,6 +1502,7 @@ export const purchaseOrdersRouter = router({
         quantity: input.quantity,
         unitPrice: input.unitPrice,
         subtotal: input.subtotal,
+        pricesIncludeTax: itemDetail.purchaseOrder.pricesIncludeTax,
         taxCode: input.taxCode,
         additionalTaxCodes: input.additionalTaxCodes,
       });
@@ -1601,6 +1652,7 @@ export const purchaseOrdersRouter = router({
         quantity: itemDetail.item.quantity,
         unitPrice: input.unitPrice,
         subtotal: input.subtotal,
+        pricesIncludeTax: itemDetail.purchaseOrder.pricesIncludeTax,
         taxCode: itemDetail.item.taxCode,
         additionalTaxCodes: itemDetail.item.additionalTaxCodes as any,
       });

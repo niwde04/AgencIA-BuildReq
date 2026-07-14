@@ -1103,6 +1103,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   deliveryDateLabel: string;
   paymentMethodLabel?: string | null;
   currencyLabel: string;
+  pricesIncludeTax?: boolean;
   requestedByLabel: string;
   preparedByLabel?: string | null;
   originalRequestLabel: string;
@@ -1348,6 +1349,15 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
         top: middleTop,
         labelWidth: 58,
         valueWidth: 66,
+        label: "Precios:",
+        value: params.pricesIncludeTax ? "INCLUYEN ISV" : "SIN ISV",
+      }) + 3;
+    middleTop +=
+      drawLabelValue({
+        x: middleX,
+        top: middleTop,
+        labelWidth: 58,
+        valueWidth: 66,
         label: "O Compra:",
         value: params.orderNumber,
       }) + 3;
@@ -1421,8 +1431,18 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     { key: "destination", label: "Destino", x: marginX + 188, width: 105 },
     { key: "part", label: "No. Parte", x: marginX + 293, width: 72 },
     { key: "quantity", label: "Cant.", x: marginX + 365, width: 54 },
-    { key: "unitPrice", label: "Valor U", x: marginX + 419, width: 60 },
-    { key: "subtotal", label: "Valor T", x: marginX + 479, width: 60 },
+    {
+      key: "unitPrice",
+      label: params.pricesIncludeTax ? "Valor U c/ISV" : "Valor U",
+      x: marginX + 419,
+      width: 60,
+    },
+    {
+      key: "subtotal",
+      label: params.pricesIncludeTax ? "Base" : "Valor T",
+      x: marginX + 479,
+      width: 60,
+    },
   ];
 
   function drawTableHeader(top: number) {

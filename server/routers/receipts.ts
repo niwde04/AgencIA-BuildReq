@@ -16,7 +16,11 @@ import {
   ASSET_CONDITION_VALUES,
   normalizeFixedAssetDetails,
 } from "@shared/fixed-assets";
-import type { PurchaseCurrency } from "@shared/purchase-orders";
+import {
+  parsePurchaseOrderAdditionalTaxCodes,
+  parsePurchaseOrderTaxBreakdown,
+  type PurchaseCurrency,
+} from "@shared/purchase-orders";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
@@ -294,7 +298,7 @@ async function resolveReceiptLineTarget(params: {
   if (!fixedAssetSapItemCode) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: `Seleccione un activo fijo válido para ${params.item.itemName}`,
+      message: `Seleccione un activo fijo válido para ${params.item.itemName}; no hay código de activo fijo destino guardado`,
     });
   }
 
@@ -305,7 +309,7 @@ async function resolveReceiptLineTarget(params: {
   if (!fixedAsset) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: `El activo fijo de ${params.item.itemName} no existe, está inactivo o no pertenece al proyecto`,
+      message: `El activo fijo destino ${fixedAssetSapItemCode} de ${params.item.itemName} no existe, está inactivo o no pertenece al proyecto ${params.projectId}`,
     });
   }
 
@@ -511,6 +515,7 @@ function preparePurchaseOrderReceiptItemFinancialData(params: {
   item: z.infer<typeof receiptItemSchema>;
   sourceItem: any;
   taxes: Awaited<ReturnType<typeof db.getActiveSalesTaxCatalog>>;
+  pricesIncludeTax: boolean;
 }) {
   const sourceSubtotal = Number(params.sourceItem?.subtotal ?? 0);
   const sourceQuantity = Number(params.sourceItem?.quantity ?? 0);
@@ -519,6 +524,32 @@ function preparePurchaseOrderReceiptItemFinancialData(params: {
     sourceSubtotal > 0 && sourceQuantity > 0 && receivedQuantity > 0
       ? ((sourceSubtotal * receivedQuantity) / sourceQuantity).toFixed(4)
       : undefined;
+  const selectedTaxCode = String(
+    params.item.taxCode ?? params.sourceItem?.taxCode ?? "exe"
+  )
+    .trim()
+    .toLowerCase();
+  const sourceTaxCode = String(params.sourceItem?.taxCode ?? "exe")
+    .trim()
+    .toLowerCase();
+  const selectedAdditionalTaxCodes = parsePurchaseOrderAdditionalTaxCodes(
+    params.item.additionalTaxCodes ??
+      params.sourceItem?.additionalTaxCodes ??
+      []
+  ).sort();
+  const sourceAdditionalTaxCodes = parsePurchaseOrderAdditionalTaxCodes(
+    params.sourceItem?.additionalTaxCodes
+  ).sort();
+  const sourceTaxBreakdown = parsePurchaseOrderTaxBreakdown(
+    params.sourceItem?.taxBreakdown
+  );
+  const usesSourceTaxSnapshot =
+    sourceTaxBreakdown.length > 0 &&
+    selectedTaxCode === sourceTaxCode &&
+    selectedAdditionalTaxCodes.length === sourceAdditionalTaxCodes.length &&
+    selectedAdditionalTaxCodes.every(
+      (code, index) => code === sourceAdditionalTaxCodes[index]
+    );
 
   try {
     return db.prepareReceiptItemFinancialDataForLine({
@@ -526,12 +557,13 @@ function preparePurchaseOrderReceiptItemFinancialData(params: {
       unitPrice:
         params.item.unitPrice ?? params.sourceItem?.unitPrice ?? "0.00",
       subtotal: params.item.subtotal || proratedSubtotal,
-      taxCode: params.item.taxCode ?? params.sourceItem?.taxCode ?? "exe",
-      additionalTaxCodes:
-        params.item.additionalTaxCodes ??
-        params.sourceItem?.additionalTaxCodes ??
-        [],
-      taxes: params.taxes,
+      pricesIncludeTax: params.pricesIncludeTax,
+      taxCode: selectedTaxCode,
+      additionalTaxCodes: selectedAdditionalTaxCodes,
+      taxBreakdown: usesSourceTaxSnapshot
+        ? params.sourceItem?.taxBreakdown
+        : undefined,
+      taxes: usesSourceTaxSnapshot ? undefined : params.taxes,
     });
   } catch (error) {
     throw new TRPCError({
@@ -737,6 +769,7 @@ export const receiptsRouter = router({
         sourceId: input.sourceId,
         projectId: input.projectId,
         currency: detail.purchaseOrder.currency,
+        pricesIncludeTax: detail.purchaseOrder.pricesIncludeTax,
         exchangeRate: detail.purchaseOrder.exchangeRate,
         exchangeRateDate: detail.purchaseOrder.exchangeRateDate,
         receivedById: ctx.user.id,
@@ -791,6 +824,7 @@ export const receiptsRouter = router({
             item,
             sourceItem,
             taxes: activeSalesTaxes,
+            pricesIncludeTax: detail.purchaseOrder.pricesIncludeTax,
           });
           const isFixedAsset = item.isFixedAsset === true;
           const quantityReceived = Number(item.quantityReceived);
@@ -994,6 +1028,7 @@ export const receiptsRouter = router({
         exchangeRateDate: null as Date | null,
       };
       let allowAnyActiveReceiptWarehouse = false;
+      let pricesIncludeTax = false;
       const nonInventoryReceiptLineIndexes = new Set<number>();
 
       if (input.sourceType === "purchase_order") {
@@ -1010,6 +1045,7 @@ export const receiptsRouter = router({
           exchangeRate: detail.purchaseOrder.exchangeRate,
           exchangeRateDate: detail.purchaseOrder.exchangeRateDate,
         };
+        pricesIncludeTax = detail.purchaseOrder.pricesIncludeTax;
         if (input.projectId !== detail.purchaseOrder.projectId) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -1387,6 +1423,7 @@ export const receiptsRouter = router({
         sourceId: input.sourceId,
         projectId: input.projectId,
         ...currencySnapshot,
+        pricesIncludeTax,
         receivedById: ctx.user.id,
         status: "pendiente" as const,
         isFiscalDocument,
@@ -1445,6 +1482,7 @@ export const receiptsRouter = router({
                   item,
                   sourceItem,
                   taxes: activeSalesTaxes,
+                  pricesIncludeTax,
                 })
               : {};
           const isFixedAsset = item.isFixedAsset === true;
@@ -1554,6 +1592,7 @@ export const receiptsRouter = router({
                   item: unitInput,
                   sourceItem,
                   taxes: activeSalesTaxes,
+                  pricesIncludeTax,
                 });
               const articleCode = String(article.itemCode ?? "").trim();
               const temporaryCode = String(
