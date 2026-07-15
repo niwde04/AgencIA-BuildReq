@@ -100,12 +100,6 @@ const PROCUREMENT_APPROVER_MENU_PATHS = new Set([
 
 const allMenuItems: MenuItem[] = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
-  {
-    icon: Settings,
-    label: "Configuración",
-    path: "/configuracion",
-    roles: ["admin"],
-  },
   { icon: ClipboardList, label: "Requisiciones", path: "/solicitudes" },
   { icon: Package, label: "Flujos de Abastecimiento", path: "/flujos" },
   {
@@ -703,6 +697,36 @@ function DashboardLayoutContent({
 
             <div className="shrink-0 bg-sidebar">
               <SidebarSeparator className="my-2" />
+
+              {isAdmin ? (
+                <SidebarMenu className="px-2 pb-2">
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      isActive={location === "/configuracion"}
+                      onClick={() => setLocation("/configuracion")}
+                      tooltip="Configuración"
+                      className="h-9 transition-all font-normal text-sm"
+                    >
+                      <Settings
+                        className={`h-4 w-4 ${
+                          location === "/configuracion"
+                            ? "text-primary"
+                            : "text-muted-foreground"
+                        }`}
+                      />
+                      <span
+                        className={`flex min-w-0 flex-1 items-center justify-between gap-2 ${
+                          location === "/configuracion"
+                            ? "font-medium"
+                            : "font-normal"
+                        }`}
+                      >
+                        <span className="truncate">Configuración</span>
+                      </span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              ) : null}
 
               {userRole !== "contable" && userRole !== "superintendente" ? (
                 <SidebarMenu className="px-2 pb-2">
