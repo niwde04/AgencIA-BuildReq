@@ -4,27 +4,15 @@ import * as db from "../db";
 import { getSupabaseAdminClient } from "../_core/supabaseAdmin";
 import { TRPCError } from "@trpc/server";
 import { getAssignedProjectIds } from "../projectAccess";
+import {
+  BUILDREQ_ROLE_CODES,
+  PROJECT_MANAGER_ASSIGNABLE_ROLES,
+  PROJECT_REQUIRED_ROLES,
+  isProcurementApproverRole,
+  isProjectScopedRole,
+} from "@shared/buildreq-roles";
 
-const buildreqRoleSchema = z.enum([
-  "ingeniero_residente",
-  "jefe_bodega_central",
-  "administracion_central",
-  "administrador_proyecto",
-  "bodeguero_proyecto",
-  "superintendente",
-  "contable",
-]);
-const projectRequiredRoles = new Set([
-  "ingeniero_residente",
-  "administrador_proyecto",
-  "bodeguero_proyecto",
-  "superintendente",
-]);
-const projectManagerAssignableRoles = new Set([
-  "ingeniero_residente",
-  "bodeguero_proyecto",
-  "superintendente",
-]);
+const buildreqRoleSchema = z.enum(BUILDREQ_ROLE_CODES);
 
 type UserManager = {
   role: string;
@@ -42,6 +30,7 @@ type ManagedUser = {
 };
 
 function canManageUsers(user: UserManager) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "administracion_central"
@@ -49,6 +38,7 @@ function canManageUsers(user: UserManager) {
 }
 
 function hasGlobalUserManagement(user: UserManager) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return user.role === "admin" || user.buildreqRole === "administracion_central";
 }
 
@@ -110,7 +100,7 @@ function assertAssignableRoleAndProjects(
 ) {
   if (hasGlobalUserManagement(manager)) return;
 
-  if (!projectManagerAssignableRoles.has(buildreqRole)) {
+  if (!PROJECT_MANAGER_ASSIGNABLE_ROLES.has(buildreqRole)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message:
@@ -167,10 +157,7 @@ function normalizeAssignedProjectIds(
   const projectIds = Array.from(
     new Set((assignedProjectIds ?? []).filter(projectId => projectId > 0))
   );
-  if (buildreqRole === "administrador_proyecto") {
-    return projectIds;
-  }
-  if (projectRequiredRoles.has(buildreqRole)) {
+  if (isProjectScopedRole(buildreqRole)) {
     return projectIds;
   }
   return [];
@@ -180,7 +167,10 @@ function assertRequiredProject(
   buildreqRole: z.infer<typeof buildreqRoleSchema>,
   assignedProjectIds: number[]
 ) {
-  if (projectRequiredRoles.has(buildreqRole) && assignedProjectIds.length === 0) {
+  if (
+    PROJECT_REQUIRED_ROLES.has(buildreqRole) &&
+    assignedProjectIds.length === 0
+  ) {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message: "Debe asignar al menos un proyecto a este rol.",

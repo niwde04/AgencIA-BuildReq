@@ -1,6 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { isProcurementApproverRole } from "@shared/buildreq-roles";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -303,21 +304,25 @@ export default function Articulos() {
   const [isExportingExcel, setIsExportingExcel] = useState(false);
 
   const buildreqRole = (user as any)?.buildreqRole || "";
+  const isProcurementApprover = isProcurementApproverRole(buildreqRole);
   const isPendingFixedAssetsView = location.startsWith(
     "/activos-fijos-pendientes"
   );
   const canManage =
-    user?.role === "admin" ||
-    buildreqRole === "jefe_bodega_central" ||
-    buildreqRole === "administracion_central";
+    !isProcurementApprover &&
+    (user?.role === "admin" ||
+      buildreqRole === "jefe_bodega_central" ||
+      buildreqRole === "administracion_central");
   const canCreate =
-    user?.role === "admin" ||
-    buildreqRole === "jefe_bodega_central" ||
-    buildreqRole === "administracion_central";
+    !isProcurementApprover &&
+    (user?.role === "admin" ||
+      buildreqRole === "jefe_bodega_central" ||
+      buildreqRole === "administracion_central");
   const canResolveFixedAssets =
-    user?.role === "admin" ||
-    buildreqRole === "jefe_bodega_central" ||
-    buildreqRole === "contable";
+    !isProcurementApprover &&
+    (user?.role === "admin" ||
+      buildreqRole === "jefe_bodega_central" ||
+      buildreqRole === "contable");
   const canViewArticleAttributes = Boolean(user?.role === "admin" || buildreqRole);
   const selectedArticleIsPendingFixedAsset = Boolean(
     selectedArticle?.fixedAssetStatus === "pendiente" &&

@@ -3,6 +3,10 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { ASSET_CONDITION_VALUES } from "@shared/fixed-assets";
+import {
+  isProcurementApproverRole,
+  isSuperintendentFamilyRole,
+} from "@shared/buildreq-roles";
 
 const articleTypeSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
 const fixedAssetDetailSchema = z.object({
@@ -27,7 +31,7 @@ function canReadArticles(user: {
     user.buildreqRole === "administrador_proyecto" ||
     user.buildreqRole === "bodeguero_proyecto" ||
     user.buildreqRole === "ingeniero_residente" ||
-    user.buildreqRole === "superintendente" ||
+    isSuperintendentFamilyRole(user.buildreqRole) ||
     user.buildreqRole === "contable"
   );
 }
@@ -36,6 +40,7 @@ function canManageArticles(user: {
   role?: string | null;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -47,6 +52,7 @@ function canCreateArticles(user: {
   role?: string | null;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -58,6 +64,7 @@ function canResolveFixedAssetArticles(user: {
   role?: string | null;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||

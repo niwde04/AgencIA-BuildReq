@@ -21,10 +21,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  ToggleGroup,
-  ToggleGroupItem,
-} from "@/components/ui/toggle-group";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Select,
   SelectContent,
@@ -41,15 +38,19 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   CalendarDays,
   Check,
+  CheckCircle2,
   ChevronsUpDown,
+  Clock3,
   Download,
   Eye,
   FileText,
   FolderOpen,
   MapPin,
   Printer,
+  RotateCcw,
   Save,
   Search,
+  Send,
   ShoppingCart,
   X,
   XCircle,
@@ -59,12 +60,16 @@ import { toast } from "sonner";
 import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { getReadablePrintStyles } from "@/lib/readable-print-styles";
+import {
+  getBuildReqRoleLabel,
+  isProcurementApproverRole,
+} from "@shared/buildreq-roles";
 
 const STATUS_LABELS: Record<string, string> = {
-  pendiente: "Pendiente",
-  en_revision: "En revisión",
+  pendiente: "Borrador",
+  en_revision: "Pendiente de aprobación",
   aprobada: "Aprobada",
-  rechazada: "Anulada",
+  rechazada: "Rechazada",
   parcialmente_convertida: "Parcialmente convertida",
   convertida: "Convertida",
   anulada: "Anulada",
@@ -79,18 +84,85 @@ const STATUS_COLORS: Record<string, string> = {
   convertida: "border-emerald-300 bg-emerald-50 text-emerald-700",
   anulada: "border-red-300 bg-red-50 text-red-700",
 };
-const STATUS_FILTER_OPTIONS = Object.entries(STATUS_LABELS).filter(
-  ([value]) => value !== "rechazada"
-);
+const STATUS_FILTER_OPTIONS = Object.entries(STATUS_LABELS);
 const getEffectivePurchaseRequestStatus = (status?: string | null) =>
-  status === "rechazada" ? "anulada" : (status ?? "");
+  status ?? "";
 
 const UNIFIED_CONVERTIBLE_STATUSES = new Set([
-  "pendiente",
-  "en_revision",
   "aprobada",
   "parcialmente_convertida",
 ]);
+
+const APPROVAL_STATUS_LABELS: Record<string, string> = {
+  pendiente: "Pendiente",
+  aprobada: "Aprobada",
+  rechazada: "Rechazada",
+  no_requiere: "No requiere",
+};
+
+const APPROVAL_STATUS_COLORS: Record<string, string> = {
+  pendiente: "border-amber-300 bg-amber-50 text-amber-700",
+  aprobada: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  rechazada: "border-red-300 bg-red-50 text-red-700",
+  no_requiere: "border-slate-300 bg-slate-50 text-slate-700",
+};
+
+const APPROVAL_ACTION_LABELS: Record<string, string> = {
+  submitted: "Enviada a aprobación",
+  submit: "Enviada a aprobación",
+  enviada: "Enviada a aprobación",
+  approved: "Aprobada",
+  approve: "Aprobada",
+  aprobada: "Aprobada",
+  rejected: "Rechazada",
+  reject: "Rechazada",
+  rechazada: "Rechazada",
+  reopened: "Reabierta para corrección",
+  reopen: "Reabierta para corrección",
+  reabierta: "Reabierta para corrección",
+};
+
+function getApprovalHistory(value: any): any[] {
+  const history = value?.approvalHistory;
+  return Array.isArray(history) ? history : [];
+}
+
+function isApprovalEventApproved(event: any) {
+  const action = String(event?.action ?? "").toLowerCase();
+  return (
+    event?.newStatus === "aprobada" ||
+    action === "approved" ||
+    action === "approve" ||
+    action === "aprobada"
+  );
+}
+
+function getApprovalEventActorName(event: any) {
+  return String(event?.actorName ?? "").trim();
+}
+
+function formatApprovalStatus(value?: string | null) {
+  if (!value) return "No enviada";
+  return APPROVAL_STATUS_LABELS[value] ?? value;
+}
+
+function formatApprovalAction(value?: string | null) {
+  if (!value) return "Actualización";
+  return APPROVAL_ACTION_LABELS[value] ?? value.replaceAll("_", " ");
+}
+
+function formatApprovalEventDate(value: string | Date | null | undefined) {
+  if (!value) return "—";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("es-HN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 type PurchaseType = "local" | "extranjera" | "compra_directa";
 const PURCHASE_TYPE_LABELS: Record<PurchaseType, string> = {
   local: "Compra Local",
@@ -110,10 +182,7 @@ function getPurchaseRequestRequestNumbers(row: any) {
     : [];
   return Array.from(
     new Set(
-      [
-        row.materialRequest?.requestNumber,
-        ...requestNumbers,
-      ]
+      [row.materialRequest?.requestNumber, ...requestNumbers]
         .map(value => String(value ?? "").trim())
         .filter(Boolean)
     )
@@ -132,29 +201,20 @@ function formatPurchaseRequestRequestedBy(row: any) {
       ? [row.requestedBy]
       : [];
   const labels = Array.from(
-    new Set(
-      users
-        .map((user: any) => getUserLabel(user, ""))
-        .filter(Boolean)
-    )
+    new Set(users.map((user: any) => getUserLabel(user, "")).filter(Boolean))
   );
   return labels.length > 0 ? labels.join(", ") : "—";
 }
 
 function formatPurchaseRequestApprovedBy(row: any) {
-  const users = Array.isArray(row.approvedByUsers)
-    ? row.approvedByUsers
-    : row.approvedBy
-      ? [row.approvedBy]
-      : [];
-  const labels = Array.from(
-    new Set(
-      users
-        .map((user: any) => getUserLabel(user, ""))
-        .filter(Boolean)
-    )
-  );
-  return labels.length > 0 ? labels.join(", ") : "—";
+  const approval = [...getApprovalHistory(row)]
+    .filter(isApprovalEventApproved)
+    .sort(
+      (left, right) =>
+        new Date(right.createdAt ?? 0).getTime() -
+        new Date(left.createdAt ?? 0).getTime()
+    )[0];
+  return getApprovalEventActorName(approval) || "—";
 }
 
 type RequestTargetSelection =
@@ -178,9 +238,7 @@ type PurchaseRequestItemDraft = {
   targetSelection: RequestTargetSelection | null;
 };
 
-type PurchaseRequestItemDraftTextField =
-  | "brand"
-  | "costResponsible";
+type PurchaseRequestItemDraftTextField = "brand" | "costResponsible";
 
 function mapPurchaseRequestItemTargetToSelection(
   item: any
@@ -245,7 +303,9 @@ const formatQuantity = (value: string | number | null | undefined) =>
 const TEMPORARY_FIXED_ASSET_ITEM_NAME = "ACTIVO FIJO TEMPORAL";
 
 function normalizeItemText(value: unknown) {
-  return String(value ?? "").trim().toLocaleUpperCase("es-HN");
+  return String(value ?? "")
+    .trim()
+    .toLocaleUpperCase("es-HN");
 }
 
 function isTemporaryFixedAssetItem(item: any) {
@@ -261,7 +321,9 @@ function getRequesterItemNameForTemporaryFixedAsset(item: any) {
 
   const requestedItemName = String(item.requestedItemName ?? "").trim();
   if (!requestedItemName) return null;
-  if (normalizeItemText(requestedItemName) === normalizeItemText(item.itemName)) {
+  if (
+    normalizeItemText(requestedItemName) === normalizeItemText(item.itemName)
+  ) {
     return null;
   }
 
@@ -342,6 +404,7 @@ export default function PurchaseRequests() {
   >("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [rejectReason, setRejectReason] = useState("");
+  const [approvalComment, setApprovalComment] = useState("");
   const [emailDialog, setEmailDialog] = useState<{
     to: string;
     subject: string;
@@ -379,21 +442,23 @@ export default function PurchaseRequests() {
     { enabled: selectedProjectIdNumber > 0 }
   );
 
-  const canReject =
-    user?.role === "admin" ||
-    (user as any)?.buildreqRole === "administrador_proyecto";
   const buildreqRole = (user as any)?.buildreqRole;
+  const isProcurementApprover = isProcurementApproverRole(buildreqRole);
   const isProjectAdmin = buildreqRole === "administrador_proyecto";
   const isProjectWarehouse = buildreqRole === "bodeguero_proyecto";
   const canManagePurchaseRequests =
-    user?.role === "admin" ||
-    buildreqRole === "jefe_bodega_central" ||
-    buildreqRole === "administracion_central" ||
-    isProjectAdmin;
+    !isProcurementApprover &&
+    (user?.role === "admin" ||
+      buildreqRole === "jefe_bodega_central" ||
+      buildreqRole === "administracion_central" ||
+      isProjectAdmin);
+  const canAnnulPurchaseRequests =
+    !isProcurementApprover && (user?.role === "admin" || isProjectAdmin);
   const canConvert =
-    user?.role === "admin" ||
-    buildreqRole === "administracion_central" ||
-    isProjectAdmin;
+    !isProcurementApprover &&
+    (user?.role === "admin" ||
+      buildreqRole === "administracion_central" ||
+      isProjectAdmin);
 
   const filteredRequests = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
@@ -435,6 +500,7 @@ export default function PurchaseRequests() {
 
   const canConvertPurchaseRequestRow = (row: any) =>
     canConvert &&
+    row.purchaseRequest.approvalStatus === "aprobada" &&
     UNIFIED_CONVERTIBLE_STATUSES.has(row.purchaseRequest.status);
 
   const updateMutation = trpc.purchaseRequests.update.useMutation({
@@ -463,6 +529,58 @@ export default function PurchaseRequests() {
     },
     onError: error => toast.error(error.message),
   });
+
+  const submitForApprovalMutation =
+    trpc.purchaseRequests.submitForApproval.useMutation({
+      onSuccess: () => {
+        toast.success("Solicitud enviada a aprobación");
+        setApprovalComment("");
+        void Promise.all([
+          utils.purchaseRequests.list.invalidate(),
+          selectedId
+            ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
+            : Promise.resolve(),
+        ]);
+      },
+      onError: (error: { message: string }) => toast.error(error.message),
+    });
+
+  const reviewApprovalMutation =
+    trpc.purchaseRequests.reviewApproval.useMutation({
+      onSuccess: (
+        _result: unknown,
+        variables: { decision: "approve" | "reject" }
+      ) => {
+        toast.success(
+          variables.decision === "approve"
+            ? "Solicitud aprobada"
+            : "Solicitud rechazada"
+        );
+        setApprovalComment("");
+        void Promise.all([
+          utils.purchaseRequests.list.invalidate(),
+          selectedId
+            ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
+            : Promise.resolve(),
+        ]);
+      },
+      onError: (error: { message: string }) => toast.error(error.message),
+    });
+
+  const reopenRejectedMutation =
+    trpc.purchaseRequests.reopenRejected.useMutation({
+      onSuccess: () => {
+        toast.success("Solicitud reabierta para corrección");
+        setApprovalComment("");
+        void Promise.all([
+          utils.purchaseRequests.list.invalidate(),
+          selectedId
+            ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
+            : Promise.resolve(),
+        ]);
+      },
+      onError: (error: { message: string }) => toast.error(error.message),
+    });
 
   const convertMutation =
     trpc.purchaseOrders.createFromPurchaseRequest.useMutation({
@@ -774,21 +892,45 @@ export default function PurchaseRequests() {
   const isConvertedPurchaseRequest =
     detail?.purchaseRequest.status === "convertida";
   const isCancelledPurchaseRequest =
-    detail?.purchaseRequest.status === "anulada" ||
+    detail?.purchaseRequest.status === "anulada";
+  const isRejectedPurchaseRequest =
+    detail?.purchaseRequest.approvalStatus === "rechazada" ||
     detail?.purchaseRequest.status === "rechazada";
-  const isClosedPurchaseRequest =
-    isConvertedPurchaseRequest || isCancelledPurchaseRequest;
+  const isPendingApprovalPurchaseRequest =
+    detail?.purchaseRequest.approvalStatus === "pendiente" ||
+    detail?.purchaseRequest.status === "en_revision";
+  const isApprovedPurchaseRequest =
+    detail?.purchaseRequest.approvalStatus === "aprobada";
+  const isDraftPurchaseRequest =
+    detail?.purchaseRequest.status === "pendiente" &&
+    !detail?.purchaseRequest.approvalStatus;
   const canEditSelectedPurchaseRequest =
-    canManagePurchaseRequests && !isClosedPurchaseRequest;
+    canManagePurchaseRequests && isDraftPurchaseRequest;
   const canManagePurchaseRequestAttachments =
-    (canManagePurchaseRequests || isProjectWarehouse) && !isClosedPurchaseRequest;
+    !isProcurementApprover &&
+    (canManagePurchaseRequests || isProjectWarehouse) &&
+    isDraftPurchaseRequest;
   const canEditPurchaseRequestDestination =
     canEditSelectedPurchaseRequest &&
     (user?.role === "admin" ||
       buildreqRole === "administracion_central" ||
       isProjectAdmin);
   const canConvertSelectedPurchaseRequest =
-    canConvert && canEditSelectedPurchaseRequest;
+    canConvert &&
+    isApprovedPurchaseRequest &&
+    Boolean(
+      detail?.purchaseRequest.status &&
+        UNIFIED_CONVERTIBLE_STATUSES.has(detail.purchaseRequest.status)
+    );
+  const canSubmitSelectedPurchaseRequest =
+    canManagePurchaseRequests && isDraftPurchaseRequest;
+  const canReviewSelectedPurchaseRequest =
+    isProcurementApprover && isPendingApprovalPurchaseRequest;
+  const canReopenSelectedPurchaseRequest =
+    canManagePurchaseRequests && isRejectedPurchaseRequest;
+  const canAnnulSelectedPurchaseRequest =
+    canAnnulPurchaseRequests && isDraftPurchaseRequest;
+  const approvalHistory = getApprovalHistory(detail);
 
   const purchaseTypeLabel = getPurchaseTypeLabel(editPurchaseType);
   const printDestinationOptions = selectedProjectWarehouses ?? [];
@@ -986,6 +1128,7 @@ export default function PurchaseRequests() {
     setDebouncedTargetSearch("");
     setSelectedItemIds([]);
     setRejectReason("");
+    setApprovalComment("");
   };
 
   const toggleRequestSelection = (id: number, checked: boolean) => {
@@ -1015,12 +1158,9 @@ export default function PurchaseRequests() {
     });
   };
 
-  const handleConvertToPurchaseOrder = async () => {
-    if (!detail) return;
+  const handleSubmitForApproval = async () => {
+    if (!detail || !canSubmitSelectedPurchaseRequest) return;
     const items = buildItemUpdatePayload();
-    if (!items) return;
-    const itemsToConvert = buildConversionPayload();
-    if (!itemsToConvert || itemsToConvert.length === 0) return;
 
     try {
       await updateMutation.mutateAsync({
@@ -1031,15 +1171,43 @@ export default function PurchaseRequests() {
         notes: editNotes || undefined,
         items,
       });
-      convertMutation.mutate({
-        purchaseRequestId: detail.purchaseRequest.id,
-        selectedItemIds: itemsToConvert.map(item => item.purchaseRequestItemId),
-        itemsToConvert,
-        pricesIncludeTax: conversionPricesIncludeTax,
-      });
+      submitForApprovalMutation.mutate({ id: detail.purchaseRequest.id });
     } catch {
       // updateMutation displays the validation or server error toast.
     }
+  };
+
+  const handleReviewApproval = (decision: "approve" | "reject") => {
+    if (!detail || !canReviewSelectedPurchaseRequest) return;
+    const comment = approvalComment.trim();
+    if (decision === "reject" && comment.length < 5) {
+      toast.error("Indica un motivo de rechazo de al menos 5 caracteres");
+      return;
+    }
+
+    reviewApprovalMutation.mutate({
+      id: detail.purchaseRequest.id,
+      decision,
+      comment: comment || undefined,
+    });
+  };
+
+  const handleReopenRejected = () => {
+    if (!detail || !canReopenSelectedPurchaseRequest) return;
+    reopenRejectedMutation.mutate({ id: detail.purchaseRequest.id });
+  };
+
+  const handleConvertToPurchaseOrder = () => {
+    if (!detail) return;
+    const itemsToConvert = buildConversionPayload();
+    if (!itemsToConvert || itemsToConvert.length === 0) return;
+
+    convertMutation.mutate({
+      purchaseRequestId: detail.purchaseRequest.id,
+      selectedItemIds: itemsToConvert.map(item => item.purchaseRequestItemId),
+      itemsToConvert,
+      pricesIncludeTax: conversionPricesIncludeTax,
+    });
   };
 
   const handlePrintDocument = () => {
@@ -1369,9 +1537,7 @@ export default function PurchaseRequests() {
         {
           header: "Documento",
           value: (row: any) =>
-            row.purchaseRequest.printedDocumentContent
-              ? "Listo"
-              : "Pendiente",
+            row.purchaseRequest.printedDocumentContent ? "Listo" : "Pendiente",
         },
       ],
       filteredRequests
@@ -1399,7 +1565,8 @@ export default function PurchaseRequests() {
                 variant="outline"
                 value={conversionPricesIncludeTax ? "included" : "excluded"}
                 onValueChange={value => {
-                  if (value) setConversionPricesIncludeTax(value === "included");
+                  if (value)
+                    setConversionPricesIncludeTax(value === "included");
                 }}
                 disabled={unifiedConvertMutation.isPending}
               >
@@ -1489,7 +1656,7 @@ export default function PurchaseRequests() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1580px] text-sm">
+              <table className="w-full min-w-[1700px] text-sm">
                 <thead>
                   <tr className="border-b border-border">
                     {canConvert ? (
@@ -1535,7 +1702,10 @@ export default function PurchaseRequests() {
                       Doc SAP
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Estatus
+                      Estado SC
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Aprobación
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Fecha necesaria
@@ -1626,6 +1796,20 @@ export default function PurchaseRequests() {
                             ] || row.purchaseRequest.status}
                           </Badge>
                         </td>
+                        <td className="p-3">
+                          <Badge
+                            variant="outline"
+                            className={`text-xs ${
+                              APPROVAL_STATUS_COLORS[
+                                row.purchaseRequest.approvalStatus
+                              ] || ""
+                            }`}
+                          >
+                            {formatApprovalStatus(
+                              row.purchaseRequest.approvalStatus
+                            )}
+                          </Badge>
+                        </td>
                         <td className="p-3 text-xs">
                           {row.purchaseRequest.neededBy
                             ? new Date(
@@ -1676,8 +1860,14 @@ export default function PurchaseRequests() {
                   {isCancelledPurchaseRequest
                     ? "Esta solicitud fue anulada y se muestra en modo solo lectura."
                     : isConvertedPurchaseRequest
-                    ? "Esta solicitud ya fue convertida a orden de compra y se muestra en modo solo lectura."
-                    : "Revisa la solicitud, adjunta cotización y convierte los ítems seleccionados a orden de compra cuando ya esté lista."}
+                      ? "Esta solicitud ya fue convertida a orden de compra y se muestra en modo solo lectura."
+                      : isRejectedPurchaseRequest
+                        ? "La aprobación fue rechazada. El responsable debe reabrirla antes de corregirla y reenviarla."
+                        : isPendingApprovalPurchaseRequest
+                          ? "La solicitud está pendiente de decisión y permanece bloqueada para edición."
+                          : isApprovedPurchaseRequest
+                            ? "La solicitud fue aprobada y puede convertirse a orden de compra."
+                            : "Revisa y completa la solicitud antes de enviarla a aprobación."}
                 </p>
               </div>
               {detail && (
@@ -1704,6 +1894,19 @@ export default function PurchaseRequests() {
                   >
                     {selectedItems.length} ítem(s)
                   </Badge>
+                  <Badge
+                    variant="outline"
+                    className={`rounded-full px-3 py-1 text-xs uppercase ${
+                      APPROVAL_STATUS_COLORS[
+                        detail.purchaseRequest.approvalStatus ?? ""
+                      ] || ""
+                    }`}
+                  >
+                    Aprobación:{" "}
+                    {formatApprovalStatus(
+                      detail.purchaseRequest.approvalStatus
+                    )}
+                  </Badge>
                 </div>
               )}
             </div>
@@ -1728,7 +1931,7 @@ export default function PurchaseRequests() {
 
           {detail && (
             <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-6 lg:px-8">
-              <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr_1fr_1fr_1.1fr]">
+              <div className="grid gap-4 xl:grid-cols-3 2xl:grid-cols-6">
                 <div className="rounded-2xl border border-border/70 bg-card p-5">
                   <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
                     <FolderOpen className="h-4 w-4" />
@@ -1859,9 +2062,38 @@ export default function PurchaseRequests() {
                   <p className="mt-2 text-sm text-muted-foreground">
                     {isCancelledPurchaseRequest
                       ? "La solicitud fue anulada y ya no permite cambios."
-                      : detail.purchaseRequest.quoteAttachmentId
-                      ? "Cotización adjunta y lista para revisión."
-                      : "Todavía no tiene cotización aprobada adjunta."}
+                      : isRejectedPurchaseRequest
+                        ? "La solicitud espera corrección después del rechazo."
+                        : isPendingApprovalPurchaseRequest
+                          ? "La solicitud permanece bloqueada mientras se revisa."
+                          : detail.purchaseRequest.quoteAttachmentId
+                            ? "Cotización adjunta y lista para revisión."
+                            : "Todavía no tiene cotización aprobada adjunta."}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-border/70 bg-card p-5">
+                  <div className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                    Aprobación
+                  </div>
+                  <div className="flex min-h-[3rem] items-center">
+                    <Badge
+                      variant="outline"
+                      className={`rounded-full px-3 py-1 text-sm ${
+                        APPROVAL_STATUS_COLORS[
+                          detail.purchaseRequest.approvalStatus ?? ""
+                        ] || ""
+                      }`}
+                    >
+                      {formatApprovalStatus(
+                        detail.purchaseRequest.approvalStatus
+                      )}
+                    </Badge>
+                  </div>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {isApprovedPurchaseRequest
+                      ? `Aprobada por ${formatPurchaseRequestApprovedBy(detail)}.`
+                      : "Consulta abajo el historial completo de decisiones."}
                   </p>
                 </div>
               </div>
@@ -1879,6 +2111,97 @@ export default function PurchaseRequests() {
                   />
                 </div>
               </div>
+
+              <div className="rounded-2xl border border-border/70 bg-card p-5">
+                <div className="mb-4 flex items-center gap-2">
+                  <Clock3 className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <p className="text-base font-semibold">
+                      Historial de aprobación
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Registro de envíos, decisiones y reaperturas de esta SC.
+                    </p>
+                  </div>
+                </div>
+
+                {approvalHistory.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
+                    {detail.purchaseRequest.approvalStatus === "no_requiere"
+                      ? "Documento histórico finalizado antes de este flujo; no tiene eventos de aprobación."
+                      : detail.purchaseRequest.approvalStatus
+                        ? "No hay eventos de aprobación registrados para esta solicitud."
+                        : "Esta solicitud todavía no ha sido enviada a aprobación."}
+                  </div>
+                ) : (
+                  <ol className="space-y-4">
+                    {[...approvalHistory]
+                      .sort(
+                        (left, right) =>
+                          new Date(right.createdAt ?? 0).getTime() -
+                          new Date(left.createdAt ?? 0).getTime()
+                      )
+                      .map((event: any, index: number) => (
+                        <li
+                          key={event.id ?? `${event.createdAt}-${index}`}
+                          className="relative rounded-xl border border-border/70 bg-muted/10 p-4 pl-11"
+                        >
+                          <span
+                            className={`absolute left-4 top-5 h-3 w-3 rounded-full border ${
+                              APPROVAL_STATUS_COLORS[event.newStatus] ||
+                              "border-slate-300 bg-slate-100"
+                            }`}
+                          />
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <p className="font-semibold capitalize">
+                                {formatApprovalAction(event.action)}
+                              </p>
+                              <p className="mt-1 text-sm text-muted-foreground">
+                                {getApprovalEventActorName(event) ||
+                                  "Usuario no disponible"}
+                                {event.actorRole
+                                  ? ` · ${getBuildReqRoleLabel(event.actorRole)}`
+                                  : ""}
+                              </p>
+                            </div>
+                            <time className="text-xs text-muted-foreground">
+                              {formatApprovalEventDate(event.createdAt)}
+                            </time>
+                          </div>
+                          {(event.previousStatus || event.newStatus) && (
+                            <p className="mt-3 text-xs text-muted-foreground">
+                              {formatApprovalStatus(event.previousStatus)} →{" "}
+                              {formatApprovalStatus(event.newStatus)}
+                            </p>
+                          )}
+                          {event.comment ? (
+                            <p className="mt-3 whitespace-pre-wrap rounded-lg bg-background px-3 py-2 text-sm">
+                              {event.comment}
+                            </p>
+                          ) : null}
+                        </li>
+                      ))}
+                  </ol>
+                )}
+              </div>
+
+              {canReviewSelectedPurchaseRequest && (
+                <div className="rounded-2xl border border-blue-200 bg-blue-50/40 p-5">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold">
+                      Comentario de revisión
+                    </Label>
+                    <Textarea
+                      value={approvalComment}
+                      onChange={event => setApprovalComment(event.target.value)}
+                      placeholder="Opcional al aprobar; obligatorio y de al menos 5 caracteres al rechazar"
+                      rows={3}
+                      className="min-h-[110px] resize-y bg-background text-sm"
+                    />
+                  </div>
+                </div>
+              )}
 
               <DocumentAttachmentsPanel
                 entityType="purchase_request"
@@ -1906,10 +2229,14 @@ export default function PurchaseRequests() {
                       {isCancelledPurchaseRequest
                         ? "La solicitud fue anulada y sus ítems quedaron cerrados para edición."
                         : isConvertedPurchaseRequest
-                        ? "Los ítems ya fueron convertidos y esta solicitud quedó cerrada para edición."
-                        : canConvertSelectedPurchaseRequest
-                          ? "Marca los renglones que deseas convertir a la próxima orden de compra."
-                          : "Detalle de ítems incluidos en la solicitud."}
+                          ? "Los ítems ya fueron convertidos y esta solicitud quedó cerrada para edición."
+                          : isRejectedPurchaseRequest
+                            ? "La solicitud debe reabrirse antes de poder corregir sus ítems."
+                            : isPendingApprovalPurchaseRequest
+                              ? "Los ítems permanecen bloqueados mientras se revisa la solicitud."
+                              : canConvertSelectedPurchaseRequest
+                                ? "Marca los renglones que deseas convertir a la próxima orden de compra."
+                                : "Detalle de ítems incluidos en la solicitud."}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -1993,7 +2320,8 @@ export default function PurchaseRequests() {
                       {selectedItems.map((item: any) => {
                         const draft = getItemDraft(item);
                         const convertedQuantity = getConvertedQuantity(item);
-                        const pendingQuantity = getPendingConversionQuantity(item);
+                        const pendingQuantity =
+                          getPendingConversionQuantity(item);
                         const convertQuantity = getConvertQuantityDraft(item);
                         const canConvertItem =
                           canConvertSelectedPurchaseRequest &&
@@ -2151,8 +2479,8 @@ export default function PurchaseRequests() {
                   </Button>
                 </div>
 
-                {canEditSelectedPurchaseRequest && (
-                  <div className="flex w-full min-w-0 flex-wrap justify-end gap-3 xl:w-auto">
+                <div className="flex w-full min-w-0 flex-wrap justify-end gap-3 xl:w-auto">
+                  {canEditSelectedPurchaseRequest && (
                     <Button
                       variant="outline"
                       className="h-11 px-4"
@@ -2162,78 +2490,117 @@ export default function PurchaseRequests() {
                       <Save className="mr-2 h-4 w-4" />
                       Guardar cambios
                     </Button>
+                  )}
 
-                    {canReject && canEditSelectedPurchaseRequest && (
+                  {canSubmitSelectedPurchaseRequest && (
+                    <Button
+                      className="h-11 px-5"
+                      onClick={handleSubmitForApproval}
+                      disabled={
+                        updateMutation.isPending ||
+                        submitForApprovalMutation.isPending
+                      }
+                    >
+                      <Send className="mr-2 h-4 w-4" />
+                      Enviar a aprobación
+                    </Button>
+                  )}
+
+                  {canReviewSelectedPurchaseRequest && (
+                    <>
                       <Button
                         variant="destructive"
                         className="h-11 px-4"
-                        onClick={() => {
-                          if (rejectReason.trim().length < 5) {
-                            toast.error(
-                              "Indica un motivo de al menos 5 caracteres"
-                            );
-                            return;
-                          }
-                          rejectMutation.mutate({
-                            id: detail.purchaseRequest.id,
-                            reason: rejectReason,
-                          });
-                        }}
-                        disabled={rejectMutation.isPending}
+                        onClick={() => handleReviewApproval("reject")}
+                        disabled={reviewApprovalMutation.isPending}
                       >
                         <XCircle className="mr-2 h-4 w-4" />
-                        Anular SC
+                        Rechazar
                       </Button>
-                    )}
+                      <Button
+                        className="h-11 bg-emerald-600 px-5 text-white hover:bg-emerald-700"
+                        onClick={() => handleReviewApproval("approve")}
+                        disabled={reviewApprovalMutation.isPending}
+                      >
+                        <CheckCircle2 className="mr-2 h-4 w-4" />
+                        Aprobar
+                      </Button>
+                    </>
+                  )}
 
-                    {canConvertSelectedPurchaseRequest && (
-                      <>
-                        <ToggleGroup
-                          type="single"
-                          variant="outline"
-                          value={
-                            conversionPricesIncludeTax
-                              ? "included"
-                              : "excluded"
+                  {canReopenSelectedPurchaseRequest && (
+                    <Button
+                      className="h-11 px-5"
+                      onClick={handleReopenRejected}
+                      disabled={reopenRejectedMutation.isPending}
+                    >
+                      <RotateCcw className="mr-2 h-4 w-4" />
+                      Corregir
+                    </Button>
+                  )}
+
+                  {canAnnulSelectedPurchaseRequest && (
+                    <Button
+                      variant="destructive"
+                      className="h-11 px-4"
+                      onClick={() => {
+                        if (rejectReason.trim().length < 5) {
+                          toast.error(
+                            "Indica un motivo de al menos 5 caracteres"
+                          );
+                          return;
+                        }
+                        rejectMutation.mutate({
+                          id: detail.purchaseRequest.id,
+                          reason: rejectReason,
+                        });
+                      }}
+                      disabled={rejectMutation.isPending}
+                    >
+                      <XCircle className="mr-2 h-4 w-4" />
+                      Anular SC
+                    </Button>
+                  )}
+
+                  {canConvertSelectedPurchaseRequest && (
+                    <>
+                      <ToggleGroup
+                        type="single"
+                        variant="outline"
+                        value={
+                          conversionPricesIncludeTax ? "included" : "excluded"
+                        }
+                        onValueChange={value => {
+                          if (value) {
+                            setConversionPricesIncludeTax(value === "included");
                           }
-                          onValueChange={value => {
-                            if (value) {
-                              setConversionPricesIncludeTax(
-                                value === "included"
-                              );
-                            }
-                          }}
-                          disabled={
-                            updateMutation.isPending ||
-                            convertMutation.isPending
-                          }
-                        >
-                          <ToggleGroupItem value="excluded">
-                            Sin impuesto
-                          </ToggleGroupItem>
-                          <ToggleGroupItem value="included">
-                            Impuesto incluido
-                          </ToggleGroupItem>
-                        </ToggleGroup>
-                        <Button
-                          className="h-11 px-5"
-                          onClick={handleConvertToPurchaseOrder}
-                          disabled={
-                            updateMutation.isPending ||
-                            convertMutation.isPending ||
-                            itemIdsToConvert.length === 0
-                          }
-                        >
-                          <ShoppingCart className="mr-2 h-4 w-4" />
-                          Convertir a OC
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                )}
+                        }}
+                        disabled={convertMutation.isPending}
+                      >
+                        <ToggleGroupItem value="excluded">
+                          Sin impuesto
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="included">
+                          Impuesto incluido
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                      <Button
+                        className="h-11 px-5"
+                        onClick={handleConvertToPurchaseOrder}
+                        disabled={
+                          convertMutation.isPending ||
+                          itemIdsToConvert.length === 0
+                        }
+                      >
+                        <ShoppingCart className="mr-2 h-4 w-4" />
+                        Convertir a OC
+                      </Button>
+                    </>
+                  )}
+                </div>
               </div>
 
-              {canReject && canEditSelectedPurchaseRequest && (
+              {canAnnulSelectedPurchaseRequest && (
                 <div className="rounded-2xl border border-border/70 bg-card p-5">
                   <div className="space-y-2">
                     <Label className="text-sm font-semibold">

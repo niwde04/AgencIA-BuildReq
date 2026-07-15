@@ -1,0 +1,103 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+describe("procurement approvals migration", () => {
+  it("adds approval roles, states, history, and open-document backfills", () => {
+    const sql = readFileSync(
+      new URL("../drizzle/0110_procurement_approvals.sql", import.meta.url),
+      "utf8"
+    );
+    const statements = sql
+      .split(";")
+      .map(statement => statement.trim())
+      .filter(Boolean);
+
+    for (const role of ["superintendente_aprobador", "gerente"]) {
+      expect(sql).toContain(
+        `ALTER TYPE "buildreq_role" ADD VALUE IF NOT EXISTS '${role}'`
+      );
+    }
+
+    for (const status of ["pendiente_aprobacion", "aprobada", "rechazada"]) {
+      expect(sql).toContain(
+        `ALTER TYPE "purchase_order_status" ADD VALUE IF NOT EXISTS '${status}'`
+      );
+    }
+
+    for (const table of ["purchaseRequests", "purchaseOrders"]) {
+      const approvalColumnStatement = statements.find(
+        statement =>
+          statement.startsWith(`ALTER TABLE "${table}"`) &&
+          statement.includes(
+            'ADD COLUMN IF NOT EXISTS "approvalStatus" "approval_status"'
+          )
+      );
+      expect(approvalColumnStatement).toBeDefined();
+    }
+
+    expect(sql).toContain(
+      'CREATE TABLE IF NOT EXISTS "procurementApprovalHistory"'
+    );
+    for (const column of [
+      "documentType",
+      "documentId",
+      "action",
+      "previousStatus",
+      "newStatus",
+      "actorUserId",
+      "actorName",
+      "actorRole",
+      "comment",
+      "amount",
+      "currency",
+      "createdAt",
+    ]) {
+      expect(sql).toContain(`"${column}"`);
+    }
+    expect(sql).toContain('"proc_approval_document_date_idx"');
+    expect(sql).toContain('"proc_approval_actor_idx"');
+    expect(sql).toContain(
+      'REVOKE ALL ON TABLE "procurementApprovalHistory" FROM authenticated'
+    );
+
+    const legacyRejectedBackfill = statements.find(
+      statement =>
+        statement.includes('UPDATE "purchaseRequests"') &&
+        statement.includes("\"status\" = 'anulada'") &&
+        statement.includes("WHERE \"status\" = 'rechazada'")
+    );
+    expect(legacyRejectedBackfill).toContain(
+      "\"approvalStatus\" = 'no_requiere'"
+    );
+
+    const openRequestBackfill = statements.find(
+      statement =>
+        statement.includes('UPDATE "purchaseRequests"') &&
+        statement.includes("\"status\" = 'pendiente'") &&
+        statement.includes("WHERE \"status\" NOT IN ('convertida', 'anulada')")
+    );
+    expect(openRequestBackfill).toContain('"approvalStatus" = NULL');
+
+    const finalizedOrderBackfill = statements.find(
+      statement =>
+        statement.includes('UPDATE "purchaseOrders"') &&
+        statement.includes("\"approvalStatus\" = 'no_requiere'")
+    );
+    for (const status of [
+      "emitida",
+      "enviada",
+      "parcialmente_recibida",
+      "recibida",
+      "anulada",
+    ]) {
+      expect(finalizedOrderBackfill).toContain(`'${status}'`);
+    }
+
+    const draftOrderBackfill = statements.find(
+      statement =>
+        statement.includes('UPDATE "purchaseOrders"') &&
+        statement.includes('"approvalStatus" = NULL')
+    );
+    expect(draftOrderBackfill).toContain("WHERE \"status\" = 'borrador'");
+  });
+});

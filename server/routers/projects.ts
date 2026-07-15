@@ -7,6 +7,10 @@ import {
   getAssignedProjectIds,
   hasAllProjectAccess,
 } from "../projectAccess";
+import {
+  isProcurementApproverRole,
+  isProjectScopedRole,
+} from "@shared/buildreq-roles";
 
 const optionalDateInput = z.string().optional().nullable();
 const subprojectStatusInput = z.boolean().default(true);
@@ -16,12 +20,7 @@ function isProjectScopedUser(user: {
   assignedProjectId?: number | null;
   assignedProjectIds?: number[] | null;
 }) {
-  return (
-    user.buildreqRole === "ingeniero_residente" ||
-    user.buildreqRole === "administrador_proyecto" ||
-    user.buildreqRole === "bodeguero_proyecto" ||
-    user.buildreqRole === "superintendente"
-  );
+  return isProjectScopedRole(user.buildreqRole);
 }
 
 function assertProjectScopedAccess(
@@ -33,7 +32,9 @@ function assertProjectScopedAccess(
   },
   projectId: number
 ) {
-  if (user.role === "admin") return;
+  if (user.role === "admin" && !isProcurementApproverRole(user.buildreqRole)) {
+    return;
+  }
   if (!isProjectScopedUser(user)) return;
   if (!canAccessProject(user, projectId)) {
     throw new TRPCError({
@@ -52,6 +53,12 @@ function assertCanManageSubprojects(
   },
   projectId: number
 ) {
+  if (isProcurementApproverRole(user.buildreqRole)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para administrar subproyectos.",
+    });
+  }
   if (user.role === "admin" || user.buildreqRole === "administracion_central") {
     return;
   }
@@ -73,6 +80,12 @@ function assertCanCreateProjects(user: {
   role: string;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para crear proyectos.",
+    });
+  }
   if (user.role === "admin" || user.buildreqRole === "administracion_central") {
     return;
   }

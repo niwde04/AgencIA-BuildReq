@@ -2,6 +2,10 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
+import {
+  isProcurementApproverRole,
+  isSuperintendentFamilyRole,
+} from "@shared/buildreq-roles";
 
 function canReadArticleCatalog(user: {
   role?: string | null;
@@ -14,7 +18,7 @@ function canReadArticleCatalog(user: {
     user.buildreqRole === "administrador_proyecto" ||
     user.buildreqRole === "bodeguero_proyecto" ||
     user.buildreqRole === "ingeniero_residente" ||
-    user.buildreqRole === "superintendente" ||
+    isSuperintendentFamilyRole(user.buildreqRole) ||
     user.buildreqRole === "contable"
   );
 }
@@ -23,6 +27,7 @@ function canManageFinancialGroups(user: {
   role?: string | null;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" || user.buildreqRole === "administracion_central"
   );

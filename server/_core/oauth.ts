@@ -1,7 +1,7 @@
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import type { Express, Request, Response } from "express";
 import * as db from "../db";
-import type { BuildReqRole } from "../db";
+import type { BuildReqRole } from "@shared/buildreq-roles";
 import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
 
@@ -56,7 +56,7 @@ export function registerOAuthRoutes(app: Express) {
             const invitationProjectLog =
               (pendingInvitation.assignedProjectIds ?? []).join(",") ||
               pendingInvitation.assignedProjectId ||
-              "all";
+              "none";
             console.log(
               `[OAuth] Applied invitation for ${userEmail}: role=${pendingInvitation.buildreqRole}, projectIds=${invitationProjectLog}`
             );

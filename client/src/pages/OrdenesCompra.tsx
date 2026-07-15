@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Popover,
@@ -62,7 +63,6 @@ import {
   FileText,
   ImageIcon,
   Loader2,
-  Pencil,
   Plus,
   Printer,
   Save,
@@ -102,9 +102,17 @@ import {
   type PurchaseCurrency,
   type SalesTaxCatalogItem,
 } from "@shared/purchase-orders";
+import {
+  getBuildReqRoleLabel,
+  isProcurementApproverRole,
+} from "@shared/buildreq-roles";
+import { purchaseOrderRequiresApproval } from "@shared/procurement-approvals";
 
 const STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
+  pendiente_aprobacion: "Pendiente de aprobación",
+  aprobada: "Aprobada",
+  rechazada: "Rechazada",
   emitida: "Emitida",
   enviada: "Enviada",
   parcialmente_recibida: "Parcialmente recibida",
@@ -113,6 +121,9 @@ const STATUS_LABELS: Record<string, string> = {
 };
 const STATUS_COLORS: Record<string, string> = {
   borrador: "border-slate-300 bg-slate-50 text-slate-700",
+  pendiente_aprobacion: "border-amber-300 bg-amber-50 text-amber-800",
+  aprobada: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  rechazada: "border-rose-300 bg-rose-50 text-rose-700",
   emitida: "border-blue-300 bg-blue-50 text-blue-700",
   enviada: "border-blue-300 bg-blue-50 text-blue-700",
   parcialmente_recibida: "border-cyan-300 bg-cyan-50 text-cyan-700",
@@ -169,12 +180,85 @@ function formatDirectPurchasePaymentMethod(value?: string | null) {
 
 const EMISSION_STATUS_LABELS: Record<string, string> = {
   borrador: "Pendiente",
+  pendiente_aprobacion: "Pendiente",
+  aprobada: "Pendiente",
+  rechazada: "Pendiente",
   emitida: "Emitida",
   enviada: "Emitida",
   parcialmente_recibida: "Emitida",
   recibida: "Emitida",
   anulada: "Anulada",
 };
+
+const APPROVAL_STATUS_LABELS: Record<string, string> = {
+  pendiente: "Pendiente de aprobación",
+  aprobada: "Aprobada",
+  rechazada: "Rechazada",
+  no_requiere: "No requiere",
+};
+
+const APPROVAL_STATUS_COLORS: Record<string, string> = {
+  pendiente: "border-amber-300 bg-amber-50 text-amber-800",
+  aprobada: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  rechazada: "border-rose-300 bg-rose-50 text-rose-700",
+  no_requiere: "border-slate-300 bg-slate-50 text-slate-700",
+};
+
+const APPROVAL_ACTION_LABELS: Record<string, string> = {
+  submit: "Enviada a aprobación",
+  submitted: "Enviada a aprobación",
+  submit_for_approval: "Enviada a aprobación",
+  submitted_for_approval: "Enviada a aprobación",
+  approval_submitted: "Enviada a aprobación",
+  enviada_aprobacion: "Enviada a aprobación",
+  approve: "Aprobada",
+  approved: "Aprobada",
+  approval_approved: "Aprobada",
+  aprobada: "Aprobada",
+  reject: "Rechazada",
+  rejected: "Rechazada",
+  approval_rejected: "Rechazada",
+  rechazada: "Rechazada",
+  reopen: "Reabierta para corrección",
+  reopened: "Reabierta para corrección",
+  reopen_rejected: "Reabierta para corrección",
+  corregida: "Reabierta para corrección",
+};
+
+function getApprovalStatusLabel(status?: string | null) {
+  if (!status) return "No enviada";
+  return APPROVAL_STATUS_LABELS[status] ?? status;
+}
+
+function getApprovalStatusColor(status?: string | null) {
+  if (!status) return "border-slate-300 bg-white text-slate-600";
+  return (
+    APPROVAL_STATUS_COLORS[status] ??
+    "border-slate-300 bg-slate-50 text-slate-700"
+  );
+}
+
+function formatApprovalTimelineStatus(status?: string | null) {
+  if (!status) return "No enviada";
+  return (
+    APPROVAL_STATUS_LABELS[status] ??
+    STATUS_LABELS[status] ??
+    status.replaceAll("_", " ")
+  );
+}
+
+function formatApprovalAction(action?: string | null) {
+  if (!action) return "Actualización";
+  return (
+    APPROVAL_ACTION_LABELS[action] ??
+    action.replaceAll("_", " ").replace(/^./, value => value.toUpperCase())
+  );
+}
+
+function formatApprovalActorRole(role?: string | null) {
+  if (!role) return "Rol no disponible";
+  return getBuildReqRoleLabel(role);
+}
 
 const RECEIVED_ORDER_STATUSES = new Set(["parcialmente_recibida", "recibida"]);
 const RECEIPT_CLOSABLE_ORDER_STATUSES = new Set([
@@ -245,11 +329,7 @@ function formatPurchaseOrderRequestedBy(row: any) {
       ? [row.originalRequester]
       : [];
   const labels = Array.from(
-    new Set(
-      users
-        .map((user: any) => getUserLabel(user, ""))
-        .filter(Boolean)
-    )
+    new Set(users.map((user: any) => getUserLabel(user, "")).filter(Boolean))
   );
   return labels.length > 0 ? labels.join(", ") : "—";
 }
@@ -418,7 +498,9 @@ function SupplierContactCommandList({
 function getPurchaseRequestProjectLabel(row: any) {
   return (
     row?.projectSummary?.label ||
-    (row?.project ? `${row.project.code} — ${row.project.name}` : "Proyecto pendiente")
+    (row?.project
+      ? `${row.project.code} — ${row.project.name}`
+      : "Proyecto pendiente")
   );
 }
 
@@ -438,7 +520,8 @@ function getPurchaseRequestItemPendingConversionQuantity(item: any) {
   const convertedQuantity = Number(item?.convertedQuantity ?? 0);
   if (!Number.isFinite(requestedQuantity)) return 0;
   return Math.max(
-    requestedQuantity - (Number.isFinite(convertedQuantity) ? convertedQuantity : 0),
+    requestedQuantity -
+      (Number.isFinite(convertedQuantity) ? convertedQuantity : 0),
     0
   );
 }
@@ -500,7 +583,9 @@ function escapeHtml(value: unknown) {
 const TEMPORARY_FIXED_ASSET_ITEM_NAME = "ACTIVO FIJO TEMPORAL";
 
 function normalizeItemText(value: unknown) {
-  return String(value ?? "").trim().toLocaleUpperCase("es-HN");
+  return String(value ?? "")
+    .trim()
+    .toLocaleUpperCase("es-HN");
 }
 
 function isTemporaryFixedAssetItem(item: any) {
@@ -521,7 +606,10 @@ function getTemporaryFixedAssetRequestedName(item: any) {
   if (!isTemporaryFixedAssetItem(item)) return null;
 
   const itemName = String(item?.itemName ?? "").trim();
-  if (itemName && normalizeItemText(itemName) !== TEMPORARY_FIXED_ASSET_ITEM_NAME) {
+  if (
+    itemName &&
+    normalizeItemText(itemName) !== TEMPORARY_FIXED_ASSET_ITEM_NAME
+  ) {
     return itemName;
   }
 
@@ -552,9 +640,8 @@ function formatUnitPricePayload(value: number | string | null | undefined) {
 }
 
 function formatUnitPriceDisplay(value: number | string | null | undefined) {
-  const [integerPart, decimalPart = ""] = formatUnitPricePayload(value).split(
-    "."
-  );
+  const [integerPart, decimalPart = ""] =
+    formatUnitPricePayload(value).split(".");
   const visibleDecimals = decimalPart.replace(/0+$/, "").padEnd(2, "0");
   return `${integerPart}.${visibleDecimals}`;
 }
@@ -706,27 +793,6 @@ function isPurchaseOrderItemDraftSynced(
   );
 }
 
-function isPurchaseOrderContractPriceDraftSynced(
-  item: any,
-  draft: PurchaseOrderItemDraft,
-  pricesIncludeTax: boolean
-) {
-  const normalizedDraft = normalizeDraftMoneyValues(draft, pricesIncludeTax);
-  const normalizedAmounts = calculatePurchaseOrderLineAmounts({
-    quantity: normalizedDraft.quantity,
-    unitPrice: normalizedDraft.unitPrice,
-    subtotal: normalizedDraft.subtotal,
-    pricesIncludeTax,
-    taxCode: item.taxCode,
-    additionalTaxCodes: item.additionalTaxCodes,
-    taxBreakdown: item.taxBreakdown,
-  });
-  return (
-    areEditableUnitPricesEqual(normalizedDraft.unitPrice, item.unitPrice) &&
-    areEditableMoneyValuesEqual(normalizedAmounts.subtotal, item.subtotal)
-  );
-}
-
 type ContractDraft = {
   appliesContract: boolean;
   contractPaymentFrequency: PurchaseOrderContractFrequency;
@@ -819,25 +885,26 @@ type PurchaseOrderConfirmState =
       pricesIncludeTax: boolean;
     };
 
+type ApprovalReviewDecision = "approve" | "reject";
+
 export default function OrdenesCompra() {
   const utils = trpc.useUtils();
   const { user } = useAuth();
   const userRole = (user as any)?.buildreqRole;
+  const isProcurementApprover = isProcurementApproverRole(userRole);
   const canManagePurchaseOrders =
-    user?.role === "admin" ||
-    userRole === "jefe_bodega_central" ||
-    userRole === "administracion_central" ||
-    userRole === "administrador_proyecto";
+    !isProcurementApprover &&
+    (user?.role === "admin" ||
+      userRole === "jefe_bodega_central" ||
+      userRole === "administracion_central" ||
+      userRole === "administrador_proyecto");
   const canCreatePurchaseOrder =
-    user?.role === "admin" ||
-    userRole === "administracion_central" ||
-    userRole === "administrador_proyecto";
+    !isProcurementApprover &&
+    (user?.role === "admin" ||
+      userRole === "administracion_central" ||
+      userRole === "administrador_proyecto");
   const isProjectAdmin = userRole === "administrador_proyecto";
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const reopeningDraftOrderIdRef = useRef<number | null>(null);
-  const [reopeningDraftOrderId, setReopeningDraftOrderId] = useState<
-    number | null
-  >(null);
   const [newOrderDialogOpen, setNewOrderDialogOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -876,6 +943,9 @@ export default function OrdenesCompra() {
   const [confirmState, setConfirmState] = useState<PurchaseOrderConfirmState>({
     kind: null,
   });
+  const [approvalReviewDecision, setApprovalReviewDecision] =
+    useState<ApprovalReviewDecision | null>(null);
+  const [approvalReviewComment, setApprovalReviewComment] = useState("");
 
   const { data: orders, isLoading } = trpc.purchaseOrders.list.useQuery();
   const {
@@ -901,9 +971,9 @@ export default function OrdenesCompra() {
   const { data: salesTaxes } = trpc.taxes.activeOptions.useQuery(undefined, {
     enabled: Boolean(user),
   });
-  const activeSalesTaxes = (salesTaxes?.length
-    ? salesTaxes
-    : DEFAULT_SALES_TAXES) as SalesTaxCatalogItem[];
+  const activeSalesTaxes = (
+    salesTaxes?.length ? salesTaxes : DEFAULT_SALES_TAXES
+  ) as SalesTaxCatalogItem[];
   const {
     data: detail,
     error: detailError,
@@ -952,7 +1022,7 @@ export default function OrdenesCompra() {
           void utils.purchaseOrders.getById.invalidate({ id: selectedId });
         }
       },
-      onError: error => toast.error(error.message),
+      onError: (error: { message: string }) => toast.error(error.message),
     });
 
   const updateItemLineMutation = trpc.purchaseOrders.updateItemLine.useMutation(
@@ -970,18 +1040,6 @@ export default function OrdenesCompra() {
     trpc.purchaseOrders.updateContractTerms.useMutation({
       onSuccess: () => {
         toast.success("Contrato actualizado");
-        void utils.purchaseOrders.list.invalidate();
-        if (selectedId) {
-          void utils.purchaseOrders.getById.invalidate({ id: selectedId });
-        }
-      },
-      onError: error => toast.error(error.message),
-    });
-
-  const updateContractItemPriceMutation =
-    trpc.purchaseOrders.updateContractItemPrice.useMutation({
-      onSuccess: () => {
-        toast.success("Precio de contrato actualizado");
         void utils.purchaseOrders.list.invalidate();
         if (selectedId) {
           void utils.purchaseOrders.getById.invalidate({ id: selectedId });
@@ -1053,20 +1111,47 @@ export default function OrdenesCompra() {
     onError: error => toast.error(error.message),
   });
 
-  const reopenDraftMutation = trpc.purchaseOrders.reopenDraft.useMutation({
-    onSuccess: () => {
-      toast.success("OC reabierta para edición");
-      void utils.purchaseOrders.list.invalidate();
-      if (selectedId) {
-        void utils.purchaseOrders.getById.invalidate({ id: selectedId });
-      }
-    },
-    onError: error => toast.error(error.message),
-    onSettled: () => {
-      reopeningDraftOrderIdRef.current = null;
-      setReopeningDraftOrderId(null);
-    },
-  });
+  const submitForApprovalMutation =
+    trpc.purchaseOrders.submitForApproval.useMutation({
+      onSuccess: () => {
+        toast.success("OC enviada a aprobación");
+        void utils.purchaseOrders.list.invalidate();
+        if (selectedId) {
+          void utils.purchaseOrders.getById.invalidate({ id: selectedId });
+        }
+      },
+      onError: (error: { message: string }) => toast.error(error.message),
+    });
+
+  const reviewApprovalMutation = trpc.purchaseOrders.reviewApproval.useMutation(
+    {
+      onSuccess: () => {
+        toast.success(
+          approvalReviewDecision === "approve" ? "OC aprobada" : "OC rechazada"
+        );
+        setApprovalReviewDecision(null);
+        setApprovalReviewComment("");
+        void utils.purchaseOrders.list.invalidate();
+        if (selectedId) {
+          void utils.purchaseOrders.getById.invalidate({ id: selectedId });
+        }
+      },
+      onError: (error: { message: string }) => toast.error(error.message),
+    }
+  );
+
+  const reopenRejectedMutation = trpc.purchaseOrders.reopenRejected.useMutation(
+    {
+      onSuccess: () => {
+        toast.success("OC reabierta para corrección");
+        void utils.purchaseOrders.list.invalidate();
+        if (selectedId) {
+          void utils.purchaseOrders.getById.invalidate({ id: selectedId });
+        }
+      },
+      onError: (error: { message: string }) => toast.error(error.message),
+    }
+  );
 
   const sendMutation = trpc.purchaseOrders.sendToSupplier.useMutation({
     onSuccess: () => {
@@ -1145,7 +1230,9 @@ export default function OrdenesCompra() {
                 entityId: purchaseOrderId,
               });
             } catch {
-              toast.error("La OC fue creada, pero no se pudieron subir todos los adjuntos");
+              toast.error(
+                "La OC fue creada, pero no se pudieron subir todos los adjuntos"
+              );
             }
           }
         }
@@ -1164,7 +1251,7 @@ export default function OrdenesCompra() {
             )
             .filter((value): value is string => Boolean(value))
         )
-    ),
+      ),
     [items]
   );
   const selectedSupplier = useMemo(
@@ -1180,8 +1267,7 @@ export default function OrdenesCompra() {
         supplierId: Number(selectedSupplierId || 0),
         sapCodes: purchaseOrderSapCodes,
         currency: detail?.purchaseOrder.currency ?? "HNL",
-        pricesIncludeTax:
-          detail?.purchaseOrder.pricesIncludeTax === true,
+        pricesIncludeTax: detail?.purchaseOrder.pricesIncludeTax === true,
       },
       {
         enabled:
@@ -1194,7 +1280,20 @@ export default function OrdenesCompra() {
   const currentSupplierEmail =
     detail?.purchaseOrder.supplierEmail ?? detail?.supplier?.email ?? "";
   const orderStatus = detail?.purchaseOrder.status ?? "";
-  const isContractOrder = detail?.purchaseOrder.appliesContract === true;
+  const orderApprovalStatus = detail?.purchaseOrder.approvalStatus ?? null;
+  const approvalHistory = (detail as any)?.approvalHistory ?? [];
+  const orderTotal = Number(detail?.summary?.total ?? 0);
+  const orderCurrency = detail?.purchaseOrder.currency ?? "HNL";
+  const orderRequiresApproval =
+    Number.isFinite(orderTotal) &&
+    purchaseOrderRequiresApproval(orderCurrency, orderTotal);
+  const isApprovalWorkflowState = [
+    "pendiente_aprobacion",
+    "aprobada",
+    "rechazada",
+  ].includes(orderStatus);
+  const isPostApprovalLocked =
+    orderApprovalStatus === "aprobada" && orderStatus !== "aprobada";
   const contractSummary =
     detail?.contractSummary ??
     getPurchaseOrderContractSummary({
@@ -1210,43 +1309,48 @@ export default function OrdenesCompra() {
     )
   );
   const canEditOrderStructure =
-    canManagePurchaseOrders && ORDER_STRUCTURE_EDITABLE_STATUSES.has(orderStatus);
-  const canEditIssuedContract =
     canManagePurchaseOrders &&
-    isContractOrder &&
-    ["emitida", "enviada", "parcialmente_recibida"].includes(orderStatus);
-  const canEditContractTerms = canEditOrderStructure || canEditIssuedContract;
-  const canEditContractLinePrice =
-    canEditIssuedContract && !canEditOrderStructure;
+    ORDER_STRUCTURE_EDITABLE_STATUSES.has(orderStatus);
+  const canEditContractTerms = canEditOrderStructure;
   const canEditNewOrderContract = newOrderDialogOpen && canCreatePurchaseOrder;
-  const canEditContractSetup =
-    canEditNewOrderContract || canEditOrderStructure;
+  const canEditContractSetup = canEditNewOrderContract || canEditOrderStructure;
   const canEditContractEndDate =
     canEditNewOrderContract || canEditContractTerms;
   const isOrderCancelled = orderStatus === "anulada";
   const isOrderReceived = orderStatus === "recibida";
   const isOrderReadOnly = Boolean(
-    !canManagePurchaseOrders || isOrderCancelled || isOrderReceived
+    !canManagePurchaseOrders ||
+      isOrderCancelled ||
+      isOrderReceived ||
+      isApprovalWorkflowState ||
+      isPostApprovalLocked
   );
   const canManagePurchaseOrderAttachments =
+    !isProcurementApprover &&
     (user?.role === "admin" ||
       userRole === "administracion_central" ||
       userRole === "administrador_proyecto") &&
     !isOrderCancelled &&
-    !isOrderReceived;
+    !isOrderReceived &&
+    !isApprovalWorkflowState &&
+    !isPostApprovalLocked;
   const hasReceivedItems = items.some(
     (item: any) => Number(item.receivedQuantity ?? 0) > 0
   );
   const hasOrderReceipts =
     hasReceivedItems || RECEIVED_ORDER_STATUSES.has(orderStatus);
-  const canReopenDraft =
+  const canSubmitForApproval =
     canManagePurchaseOrders &&
-    ["emitida", "enviada"].includes(orderStatus) &&
-    !hasOrderReceipts;
-  const isReopeningSelectedDraft =
-    detail?.purchaseOrder.id !== undefined &&
-    (reopeningDraftOrderId === detail.purchaseOrder.id ||
-      reopenDraftMutation.isPending);
+    orderStatus === "borrador" &&
+    orderRequiresApproval;
+  const canReviewApproval =
+    isProcurementApprover && orderStatus === "pendiente_aprobacion";
+  const canCorrectRejectedOrder =
+    canManagePurchaseOrders && orderStatus === "rechazada";
+  const canEmitOrder =
+    canManagePurchaseOrders &&
+    ((orderStatus === "borrador" && !orderRequiresApproval) ||
+      orderStatus === "aprobada");
   const filteredOrders = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
 
@@ -1306,13 +1410,12 @@ export default function OrdenesCompra() {
       return [
         purchaseRequest.requestNumber,
         purchaseRequest.sapDocumentNumber,
-        PURCHASE_TYPE_LABELS[purchaseRequest.purchaseType] || purchaseRequest.purchaseType,
+        PURCHASE_TYPE_LABELS[purchaseRequest.purchaseType] ||
+          purchaseRequest.purchaseType,
         getPurchaseRequestProjectLabel(row),
       ]
         .filter(Boolean)
-        .some(value =>
-          String(value).toLowerCase().includes(normalizedSearch)
-        );
+        .some(value => String(value).toLowerCase().includes(normalizedSearch));
     });
   }, [isProjectAdmin, originSearch, purchaseRequestOrigins]);
   const selectedOriginRow = useMemo(
@@ -1354,7 +1457,8 @@ export default function OrdenesCompra() {
       if (!isProjectAdmin) return true;
       if (canUseAllProjects) return true;
       const itemProjectId =
-        item.sourceProject?.id ?? selectedOriginDetail.purchaseRequest.projectId;
+        item.sourceProject?.id ??
+        selectedOriginDetail.purchaseRequest.projectId;
       return assignedProjectIds.includes(itemProjectId);
     });
   }, [isProjectAdmin, selectedOriginAllItems, selectedOriginDetail, user]);
@@ -1425,7 +1529,8 @@ export default function OrdenesCompra() {
       const draft = getOriginItemDraft(item);
       const quantity = Number(draft.quantity);
       const unitPrice = Number(draft.unitPrice);
-      const pendingQuantity = getPurchaseRequestItemPendingConversionQuantity(item);
+      const pendingQuantity =
+        getPurchaseRequestItemPendingConversionQuantity(item);
 
       if (!Number.isFinite(quantity) || quantity <= 0) {
         return `Ingrese una cantidad mayor que cero para ${item.itemName}`;
@@ -1531,9 +1636,9 @@ export default function OrdenesCompra() {
     const selectedContactId = String(
       newOrderDialogOpen
         ? selectedSupplierContactId
-        : detail?.preferredSupplierContact?.id ??
+        : (detail?.preferredSupplierContact?.id ??
             detail?.purchaseOrder.supplierContactId ??
-            ""
+            "")
     );
 
     return (
@@ -1563,7 +1668,11 @@ export default function OrdenesCompra() {
               : {}),
           }
         : {},
-    [selectedSupplier?.email, selectedSupplierContactId, selectedSupplierIdNumber]
+    [
+      selectedSupplier?.email,
+      selectedSupplierContactId,
+      selectedSupplierIdNumber,
+    ]
   );
   const selectedContractCreatePayload = useMemo(
     () =>
@@ -1636,7 +1745,9 @@ export default function OrdenesCompra() {
       );
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "No se pudo preparar el adjunto"
+        error instanceof Error
+          ? error.message
+          : "No se pudo preparar el adjunto"
       );
     } finally {
       setPreparingOrderAttachment(false);
@@ -1718,12 +1829,8 @@ export default function OrdenesCompra() {
     if (newOrderDialogOpen || !detail?.purchaseOrder) return;
     setCurrencyDraft({
       currency: detail.purchaseOrder.currency ?? "HNL",
-      exchangeRate: formatExchangeRateDraft(
-        detail.purchaseOrder.exchangeRate
-      ),
-      exchangeRateDate: dateInputValue(
-        detail.purchaseOrder.exchangeRateDate
-      ),
+      exchangeRate: formatExchangeRateDraft(detail.purchaseOrder.exchangeRate),
+      exchangeRateDate: dateInputValue(detail.purchaseOrder.exchangeRateDate),
     });
   }, [
     detail?.purchaseOrder.id,
@@ -1820,7 +1927,8 @@ export default function OrdenesCompra() {
           activeSalesTaxes
         ),
         itemName:
-          getTemporaryFixedAssetRequestedName(item) ?? String(item.itemName ?? ""),
+          getTemporaryFixedAssetRequestedName(item) ??
+          String(item.itemName ?? ""),
       };
 
       if (Number(item.unitPrice ?? 0) > 0) continue;
@@ -1881,7 +1989,8 @@ export default function OrdenesCompra() {
         activeSalesTaxes
       ),
       itemName:
-        getTemporaryFixedAssetRequestedName(item) ?? String(item.itemName ?? ""),
+        getTemporaryFixedAssetRequestedName(item) ??
+        String(item.itemName ?? ""),
     };
 
   const pricingSummary = useMemo(
@@ -1896,8 +2005,7 @@ export default function OrdenesCompra() {
             quantity: draft.quantity,
             unitPrice: draft.unitPrice,
             subtotal: draft.subtotal,
-            pricesIncludeTax:
-              detail?.purchaseOrder.pricesIncludeTax === true,
+            pricesIncludeTax: detail?.purchaseOrder.pricesIncludeTax === true,
             taxCode: draft.taxCode,
             additionalTaxCodes: draft.additionalTaxCodes,
           };
@@ -1931,23 +2039,6 @@ export default function OrdenesCompra() {
       itemDrafts,
     ]
   );
-  const hasPendingContractPriceChanges = useMemo(
-    () =>
-      canEditContractLinePrice &&
-      items.some((item: any) => {
-        return !isPurchaseOrderContractPriceDraftSynced(
-          item,
-          getItemDraft(item),
-          detail?.purchaseOrder.pricesIncludeTax === true
-        );
-      }),
-    [
-      canEditContractLinePrice,
-      detail?.purchaseOrder.pricesIncludeTax,
-      items,
-      itemDrafts,
-    ]
-  );
   const emissionBlockReason = useMemo(() => {
     if (!detail) return null;
     if (!selectedSupplierId && !detail.purchaseOrder.supplierId) {
@@ -1960,6 +2051,24 @@ export default function OrdenesCompra() {
     });
     if (itemWithoutPrice) {
       return `Ingrese un precio unitario mayor que cero para ${itemWithoutPrice.itemName}`;
+    }
+    const itemWithoutValidQuantity = items.find((item: any) => {
+      const quantity = Number(getItemDraft(item).quantity || 0);
+      return !Number.isFinite(quantity) || quantity <= 0;
+    });
+    if (itemWithoutValidQuantity) {
+      return `Ingrese una cantidad mayor que cero para ${itemWithoutValidQuantity.itemName}`;
+    }
+    if (!Number.isFinite(orderTotal) || orderTotal <= 0) {
+      return "El total final de la orden debe ser mayor que cero";
+    }
+    if (
+      detail.purchaseOrder.currency === "USD" &&
+      (!detail.purchaseOrder.exchangeRate ||
+        Number(detail.purchaseOrder.exchangeRate) <= 0 ||
+        !detail.purchaseOrder.exchangeRateDate)
+    ) {
+      return "Complete la tasa referencial USD y su fecha";
     }
     if (
       detail.purchaseOrder.purchaseType === "compra_directa" &&
@@ -1979,17 +2088,22 @@ export default function OrdenesCompra() {
     }
 
     return null;
-  }, [contractSummary.expectedInvoiceCount, detail, items, itemDrafts, selectedSupplierId]);
+  }, [
+    contractSummary.expectedInvoiceCount,
+    detail,
+    items,
+    itemDrafts,
+    orderTotal,
+    selectedSupplierId,
+  ]);
 
   const confirmActionPending =
     deleteItemMutation.isPending ||
     cancelOrderMutation.isPending ||
-    reopenDraftMutation.isPending ||
     closeReceiptLineMutation.isPending ||
     movePendingToPurchaseRequestMutation.isPending ||
     updatePricesIncludeTaxMutation.isPending ||
-    updateContractTermsMutation.isPending ||
-    updateContractItemPriceMutation.isPending;
+    updateContractTermsMutation.isPending;
   const contractDraftSummary = getPurchaseOrderContractSummary({
     appliesContract: contractDraft.appliesContract,
     contractPaymentFrequency: contractDraft.contractPaymentFrequency,
@@ -2135,7 +2249,10 @@ export default function OrdenesCompra() {
     });
   };
 
-  const handleSaveItemLine = (item: any, draftOverride?: PurchaseOrderItemDraft) => {
+  const handleSaveItemLine = (
+    item: any,
+    draftOverride?: PurchaseOrderItemDraft
+  ) => {
     if (!canEditOrderStructure) {
       toast.error("La OC ya fue emitida y no se puede actualizar");
       return;
@@ -2192,51 +2309,6 @@ export default function OrdenesCompra() {
         ...(isTemporaryFixedAsset && itemNameDraft
           ? { itemName: itemNameDraft }
           : {}),
-      },
-      {
-        onSettled: () => {
-          setSavingItemId(current => (current === item.id ? null : current));
-        },
-      }
-    );
-  };
-
-  const handleSaveContractItemPrice = (item: any) => {
-    if (canEditOrderStructure) {
-      handleSaveItemLine(item);
-      return;
-    }
-    if (!canEditContractLinePrice) {
-      toast.error("Solo se puede editar precio en una OC contrato emitida");
-      return;
-    }
-
-    const rawDraft = getItemDraft(item);
-    const draft = normalizeDraftMoneyValues(
-      rawDraft,
-      detail?.purchaseOrder.pricesIncludeTax === true
-    );
-    if (
-      isPurchaseOrderContractPriceDraftSynced(
-        item,
-        draft,
-        detail?.purchaseOrder.pricesIncludeTax === true
-      )
-    ) {
-      return;
-    }
-    if (!draft.unitPrice.trim()) {
-      toast.error("Ingrese el precio unitario");
-      return;
-    }
-
-    setSavingItemId(item.id);
-    setItemDrafts(current => ({ ...current, [item.id]: draft }));
-    updateContractItemPriceMutation.mutate(
-      {
-        purchaseOrderItemId: item.id,
-        unitPrice: draft.unitPrice,
-        subtotal: draft.subtotal,
       },
       {
         onSettled: () => {
@@ -2427,7 +2499,13 @@ export default function OrdenesCompra() {
     if (!detail) return;
 
     const purchaseOrder = detail.purchaseOrder;
-    const shouldPrintDraftWatermark = purchaseOrder.status === "borrador";
+    const shouldPrintDraftWatermark = ![
+      "emitida",
+      "enviada",
+      "parcialmente_recibida",
+      "recibida",
+      "anulada",
+    ].includes(purchaseOrder.status);
     const supplierName = detail.supplier?.name ?? "Proveedor pendiente";
     const supplierRtn = detail.supplier?.rtn || "-";
     const projectLabel = detail.project
@@ -2518,14 +2596,19 @@ export default function OrdenesCompra() {
       pricingSummary,
       purchaseOrder.currency ?? "HNL"
     )
-      .map(row => `
+      .map(
+        row => `
         <tr>
           <td>${escapeHtml(
-            row.label.replace(/\blempiras\b/gi, "").replace(/\s+/g, " ").trim()
+            row.label
+              .replace(/\blempiras\b/gi, "")
+              .replace(/\s+/g, " ")
+              .trim()
           )}</td>
           <td class="numeric">${escapeHtml(formatPrintMoney(row.value))}</td>
         </tr>
-      `)
+      `
+      )
       .join("");
 
     const printWindow = window.open("", "_blank", "width=840,height=1000");
@@ -2729,7 +2812,7 @@ export default function OrdenesCompra() {
           </style>
         </head>
         <body>
-          ${shouldPrintDraftWatermark ? '<div class="draft-watermark">BORRADOR</div>' : ""}
+          ${shouldPrintDraftWatermark ? '<div class="draft-watermark">NO OFICIAL</div>' : ""}
           <main class="sheet">
             <section class="header">
               ${getPrintLogoMarkup()}
@@ -2780,9 +2863,7 @@ export default function OrdenesCompra() {
                 <div class="field">
                   <div class="label">Precios:</div>
                   <div class="value">${
-                    purchaseOrder.pricesIncludeTax
-                      ? "INCLUYEN ISV"
-                      : "SIN ISV"
+                    purchaseOrder.pricesIncludeTax ? "INCLUYEN ISV" : "SIN ISV"
                   }</div>
                 </div>
                 <div class="field">
@@ -2823,9 +2904,7 @@ export default function OrdenesCompra() {
                   <th style="width: 14%;">No. Parte</th>
                   <th style="width: 10%;">Cantidad</th>
                   <th style="width: 10%;">${
-                    purchaseOrder.pricesIncludeTax
-                      ? "Valor U c/ISV"
-                      : "Valor U"
+                    purchaseOrder.pricesIncludeTax ? "Valor U c/ISV" : "Valor U"
                   }</th>
                   <th style="width: 10%;">${
                     purchaseOrder.pricesIncludeTax ? "Base" : "Valor T"
@@ -2891,6 +2970,10 @@ export default function OrdenesCompra() {
         {
           header: "Moneda",
           value: (row: any) => row.purchaseOrder.currency ?? "HNL",
+        },
+        {
+          header: "Total OC",
+          value: (row: any) => Number(row.totalAmount ?? 0).toFixed(2),
         },
         {
           header: "Proyecto",
@@ -2969,7 +3052,10 @@ export default function OrdenesCompra() {
             className="h-10 pl-9"
           />
         </div>
-        <Select value={purchaseTypeFilter} onValueChange={setPurchaseTypeFilter}>
+        <Select
+          value={purchaseTypeFilter}
+          onValueChange={setPurchaseTypeFilter}
+        >
           <SelectTrigger className="h-10 w-full lg:w-56">
             <SelectValue placeholder="Tipo de compra" />
           </SelectTrigger>
@@ -3011,7 +3097,7 @@ export default function OrdenesCompra() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1500px] text-sm">
+              <table className="w-full min-w-[1720px] text-sm">
                 <thead>
                   <tr className="border-b border-border">
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -3040,6 +3126,12 @@ export default function OrdenesCompra() {
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Estatus
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Aprobación
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Contrato
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Emisión
@@ -3076,7 +3168,8 @@ export default function OrdenesCompra() {
                         {formatPurchaseOrderCreatedBy(row)}
                       </td>
                       <td className="p-3 text-xs">
-                        {PURCHASE_TYPE_LABELS[row.purchaseOrder.purchaseType] || "—"}
+                        {PURCHASE_TYPE_LABELS[row.purchaseOrder.purchaseType] ||
+                          "—"}
                       </td>
                       <td className="p-3 text-xs">
                         {row.supplier ? (
@@ -3096,20 +3189,44 @@ export default function OrdenesCompra() {
                         <Badge
                           variant="outline"
                           className={`text-xs ${
-                            row.purchaseOrder.appliesContract
-                              ? row.contractSummary?.isExpired
+                            STATUS_COLORS[row.purchaseOrder.status] || ""
+                          }`}
+                        >
+                          {STATUS_LABELS[row.purchaseOrder.status] ||
+                            row.purchaseOrder.status}
+                        </Badge>
+                      </td>
+                      <td className="p-3">
+                        <Badge
+                          variant="outline"
+                          className={`text-xs ${getApprovalStatusColor(
+                            row.purchaseOrder.approvalStatus
+                          )}`}
+                        >
+                          {getApprovalStatusLabel(
+                            row.purchaseOrder.approvalStatus
+                          )}
+                        </Badge>
+                      </td>
+                      <td className="p-3">
+                        {row.purchaseOrder.appliesContract ? (
+                          <Badge
+                            variant="outline"
+                            className={`text-xs ${
+                              row.contractSummary?.isExpired
                                 ? "border-rose-300 bg-rose-50 text-rose-700"
                                 : row.contractSummary?.expiresSoon
                                   ? "border-amber-300 bg-amber-50 text-amber-800"
                                   : "border-cyan-300 bg-cyan-50 text-cyan-700"
-                              : STATUS_COLORS[row.purchaseOrder.status] || ""
-                          }`}
-                        >
-                          {row.purchaseOrder.appliesContract
-                            ? row.contractSummary?.statusLabel || "Contrato"
-                            : STATUS_LABELS[row.purchaseOrder.status] ||
-                              row.purchaseOrder.status}
-                        </Badge>
+                            }`}
+                          >
+                            {row.contractSummary?.statusLabel || "Contrato"}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            No aplica
+                          </span>
+                        )}
                       </td>
                       <td className="p-3 text-xs">
                         {EMISSION_STATUS_LABELS[row.purchaseOrder.status] ||
@@ -3193,7 +3310,9 @@ export default function OrdenesCompra() {
                           </div>
                         ) : (
                           <>
-                            <CommandEmpty>No hay orígenes disponibles.</CommandEmpty>
+                            <CommandEmpty>
+                              No hay orígenes disponibles.
+                            </CommandEmpty>
                             <CommandGroup heading="Solicitudes de compra">
                               {purchaseRequestOriginRows.map((row: any) => {
                                 const originId = String(row.purchaseRequest.id);
@@ -3322,7 +3441,9 @@ export default function OrdenesCompra() {
                             </td>
                             <td className="p-3 text-right font-medium">
                               {formatQuantity(
-                                getPurchaseRequestItemPendingConversionQuantity(item)
+                                getPurchaseRequestItemPendingConversionQuantity(
+                                  item
+                                )
                               )}{" "}
                               {item.unit || ""}
                             </td>
@@ -3413,6 +3534,8 @@ export default function OrdenesCompra() {
             setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
             setPricesIncludeTaxDraft(false);
             setConfirmState({ kind: null });
+            setApprovalReviewDecision(null);
+            setApprovalReviewComment("");
           }
         }}
       >
@@ -3432,23 +3555,42 @@ export default function OrdenesCompra() {
                   Borrador
                 </Badge>
               ) : detail?.purchaseOrder.status ? (
+                <>
                   <Badge
                     variant="outline"
                     className={`text-sm ${
-                      detail.purchaseOrder.appliesContract
-                        ? contractSummary.isExpired
+                      STATUS_COLORS[detail.purchaseOrder.status] || ""
+                    }`}
+                  >
+                    {STATUS_LABELS[detail.purchaseOrder.status] ||
+                      detail.purchaseOrder.status}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className={`text-sm ${getApprovalStatusColor(
+                      detail.purchaseOrder.approvalStatus
+                    )}`}
+                  >
+                    Aprobación:{" "}
+                    {getApprovalStatusLabel(
+                      detail.purchaseOrder.approvalStatus
+                    )}
+                  </Badge>
+                  {detail.purchaseOrder.appliesContract ? (
+                    <Badge
+                      variant="outline"
+                      className={`text-sm ${
+                        contractSummary.isExpired
                           ? "border-rose-300 bg-rose-50 text-rose-700"
                           : contractSummary.expiresSoon
                             ? "border-amber-300 bg-amber-50 text-amber-800"
                             : "border-cyan-300 bg-cyan-50 text-cyan-700"
-                        : STATUS_COLORS[detail.purchaseOrder.status] || ""
-                    }`}
-                  >
-                    {detail.purchaseOrder.appliesContract
-                      ? contractSummary.statusLabel
-                      : STATUS_LABELS[detail.purchaseOrder.status] ||
-                        detail.purchaseOrder.status}
-                  </Badge>
+                      }`}
+                    >
+                      Contrato: {contractSummary.statusLabel}
+                    </Badge>
+                  ) : null}
+                </>
               ) : null}
             </div>
           </DialogHeader>
@@ -3497,11 +3639,16 @@ export default function OrdenesCompra() {
                             </div>
                           ) : (
                             <>
-                              <CommandEmpty>No hay orígenes disponibles.</CommandEmpty>
+                              <CommandEmpty>
+                                No hay orígenes disponibles.
+                              </CommandEmpty>
                               <CommandGroup heading="Solicitudes de compra">
                                 {purchaseRequestOriginRows.map((row: any) => {
-                                  const originId = String(row.purchaseRequest.id);
-                                  const selected = selectedOriginId === originId;
+                                  const originId = String(
+                                    row.purchaseRequest.id
+                                  );
+                                  const selected =
+                                    selectedOriginId === originId;
 
                                   return (
                                     <CommandItem
@@ -3535,7 +3682,7 @@ export default function OrdenesCompra() {
                   <p className="text-sm leading-relaxed text-muted-foreground">
                     {selectedOriginDetail
                       ? getPurchaseRequestProjectLabel(selectedOriginRow)
-                    : "Selecciona el origen para cargar los ítems."}
+                      : "Selecciona el origen para cargar los ítems."}
                   </p>
                 </div>
 
@@ -3568,7 +3715,7 @@ export default function OrdenesCompra() {
                       <SupplierCommandList
                         suppliers={suppliersList || []}
                         selectedSupplierId={selectedSupplierId}
-                        onSelect={(supplierId) => {
+                        onSelect={supplierId => {
                           setSelectedSupplierId(supplierId);
                           setSelectedSupplierContactId("");
                           setSupplierPopoverOpen(false);
@@ -3682,7 +3829,8 @@ export default function OrdenesCompra() {
                 <div>
                   <h3 className="font-semibold">Moneda de la orden</h3>
                   <p className="text-sm text-muted-foreground">
-                    La tasa USD es únicamente referencial; no convierte precios ni totales.
+                    La tasa USD es únicamente referencial; no convierte precios
+                    ni totales.
                   </p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-3">
@@ -3699,7 +3847,9 @@ export default function OrdenesCompra() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="HNL">LEMPIRA (HNL)</SelectItem>
-                        <SelectItem value="USD">DÓLAR ESTADOUNIDENSE (USD)</SelectItem>
+                        <SelectItem value="USD">
+                          DÓLAR ESTADOUNIDENSE (USD)
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -3928,35 +4078,33 @@ export default function OrdenesCompra() {
                           Bitácora del contrato
                         </div>
                         <div className="space-y-2">
-                          {contractAuditLogs
-                            .slice(0, 6)
-                            .map((entry: any) => (
-                              <div
-                                key={entry.log.id}
-                                className="grid gap-2 text-xs text-muted-foreground md:grid-cols-[1fr_1fr_1fr]"
-                              >
-                                <span className="font-medium text-foreground">
-                                  {CONTRACT_AUDIT_FIELD_LABELS[
-                                    entry.log.field
-                                  ] ?? entry.log.field}
-                                </span>
-                                <span>
-                                  {formatContractAuditValue(
-                                    entry.log.field,
-                                    entry.log.oldValue
-                                  )} →{" "}
-                                  {formatContractAuditValue(
-                                    entry.log.field,
-                                    entry.log.newValue
-                                  )}
-                                </span>
-                                <span className="md:text-right">
-                                  {entry.changedBy?.name ||
-                                    entry.changedBy?.email ||
-                                    `Usuario #${entry.log.changedById}`}
-                                </span>
-                              </div>
-                            ))}
+                          {contractAuditLogs.slice(0, 6).map((entry: any) => (
+                            <div
+                              key={entry.log.id}
+                              className="grid gap-2 text-xs text-muted-foreground md:grid-cols-[1fr_1fr_1fr]"
+                            >
+                              <span className="font-medium text-foreground">
+                                {CONTRACT_AUDIT_FIELD_LABELS[entry.log.field] ??
+                                  entry.log.field}
+                              </span>
+                              <span>
+                                {formatContractAuditValue(
+                                  entry.log.field,
+                                  entry.log.oldValue
+                                )}{" "}
+                                →{" "}
+                                {formatContractAuditValue(
+                                  entry.log.field,
+                                  entry.log.newValue
+                                )}
+                              </span>
+                              <span className="md:text-right">
+                                {entry.changedBy?.name ||
+                                  entry.changedBy?.email ||
+                                  `Usuario #${entry.log.changedById}`}
+                              </span>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     ) : null}
@@ -4016,7 +4164,8 @@ export default function OrdenesCompra() {
                           Cargando ítems...
                         </td>
                       </tr>
-                    ) : selectedOriginDetail && selectedOriginItems.length > 0 ? (
+                    ) : selectedOriginDetail &&
+                      selectedOriginItems.length > 0 ? (
                       selectedOriginItems.map((item: any) => {
                         const draft = getOriginItemDraft(item);
                         const pendingQuantity =
@@ -4098,7 +4247,9 @@ export default function OrdenesCompra() {
                               <Input
                                 type="number"
                                 min="0"
-                                step={pricesIncludeTaxDraft ? "0.00000001" : "0.01"}
+                                step={
+                                  pricesIncludeTaxDraft ? "0.00000001" : "0.01"
+                                }
                                 value={draft.unitPrice}
                                 onChange={event =>
                                   setOriginItemDrafts(current => ({
@@ -4235,7 +4386,9 @@ export default function OrdenesCompra() {
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={() => newOrderAttachmentInputRef.current?.click()}
+                      onClick={() =>
+                        newOrderAttachmentInputRef.current?.click()
+                      }
                       disabled={
                         preparingOrderAttachment ||
                         createFromOriginMutation.isPending ||
@@ -4255,7 +4408,9 @@ export default function OrdenesCompra() {
                 ) : (
                   <div className="space-y-2">
                     {pendingOrderAttachments.map(attachment => {
-                      const AttachmentIcon = attachment.mimeType.startsWith("image/")
+                      const AttachmentIcon = attachment.mimeType.startsWith(
+                        "image/"
+                      )
                         ? ImageIcon
                         : FileText;
                       return (
@@ -4301,52 +4456,54 @@ export default function OrdenesCompra() {
                   {originDraftValidationMessage ?? ""}
                 </p>
                 <div className="flex flex-wrap justify-end gap-3">
-                <Button
-                  variant="outline"
-                  size="lg"
-                  className="h-10 min-w-[180px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
-                  onClick={() => {
-                    setNewOrderDialogOpen(false);
-                    setOriginPopoverOpen(false);
-                    setOriginSearch("");
-                    setSelectedOriginId("");
-                    setSelectedSupplierContactId("");
-                    setOriginItemDrafts({});
-                    setPendingOrderAttachments([]);
-                    setPreparingOrderAttachment(false);
-                    setContractDraft(DEFAULT_CONTRACT_DRAFT);
-                    setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
-                    setPricesIncludeTaxDraft(false);
-                  }}
-                  disabled={
-                    createFromOriginMutation.isPending ||
-                    uploadPendingAttachmentMutation.isPending
-                  }
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  size="lg"
-                  className="h-10 min-w-[220px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
-                  onClick={() =>
-                    createFromOriginMutation.mutate({
-                      purchaseRequestId: selectedOriginIdNumber,
-                      itemsToConvert: selectedOriginItemsToConvert,
-                      pricesIncludeTax: pricesIncludeTaxDraft,
-                      ...selectedSupplierCreatePayload,
-                      ...selectedContractCreatePayload,
-                      ...selectedCurrencyCreatePayload,
-                    })
-                  }
-                  disabled={!canCreateFromSelectedOrigin}
-                >
-                  {createFromOriginMutation.isPending ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <ShoppingCart className="mr-2 h-4 w-4" />
-                  )}
-                  {createFromOriginMutation.isPending ? "Creando..." : "Crear OC"}
-                </Button>
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    className="h-10 min-w-[180px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
+                    onClick={() => {
+                      setNewOrderDialogOpen(false);
+                      setOriginPopoverOpen(false);
+                      setOriginSearch("");
+                      setSelectedOriginId("");
+                      setSelectedSupplierContactId("");
+                      setOriginItemDrafts({});
+                      setPendingOrderAttachments([]);
+                      setPreparingOrderAttachment(false);
+                      setContractDraft(DEFAULT_CONTRACT_DRAFT);
+                      setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
+                      setPricesIncludeTaxDraft(false);
+                    }}
+                    disabled={
+                      createFromOriginMutation.isPending ||
+                      uploadPendingAttachmentMutation.isPending
+                    }
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    size="lg"
+                    className="h-10 min-w-[220px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
+                    onClick={() =>
+                      createFromOriginMutation.mutate({
+                        purchaseRequestId: selectedOriginIdNumber,
+                        itemsToConvert: selectedOriginItemsToConvert,
+                        pricesIncludeTax: pricesIncludeTaxDraft,
+                        ...selectedSupplierCreatePayload,
+                        ...selectedContractCreatePayload,
+                        ...selectedCurrencyCreatePayload,
+                      })
+                    }
+                    disabled={!canCreateFromSelectedOrigin}
+                  >
+                    {createFromOriginMutation.isPending ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <ShoppingCart className="mr-2 h-4 w-4" />
+                    )}
+                    {createFromOriginMutation.isPending
+                      ? "Creando..."
+                      : "Crear OC"}
+                  </Button>
                 </div>
               </div>
             </div>
@@ -4447,7 +4604,7 @@ export default function OrdenesCompra() {
                       <SupplierCommandList
                         suppliers={suppliersList || []}
                         selectedSupplierId={selectedSupplierId}
-                        onSelect={(supplierId) => {
+                        onSelect={supplierId => {
                           handleSupplierChange(supplierId);
                           setSupplierPopoverOpen(false);
                         }}
@@ -4460,9 +4617,9 @@ export default function OrdenesCompra() {
                         {updateMutation.isPending
                           ? "Guardando proveedor..."
                           : selectedSupplier
-                          ? selectedSupplier.email ||
-                            "Proveedor sin correo configurado"
-                          : detail.supplier?.name || "Proveedor pendiente"}
+                            ? selectedSupplier.email ||
+                              "Proveedor sin correo configurado"
+                            : detail.supplier?.name || "Proveedor pendiente"}
                       </p>
                       {selectedSupplier || detail.supplier ? (
                         <p>
@@ -4567,13 +4724,57 @@ export default function OrdenesCompra() {
                 </div>
               </div>
 
+              <div className="grid gap-3 rounded-2xl border border-border/70 bg-muted/10 p-4 md:grid-cols-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Total final
+                  </p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {formatPurchaseOrderCurrency(orderTotal, orderCurrency)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Regla de aprobación
+                  </p>
+                  <p className="mt-1 text-sm font-medium">
+                    {orderRequiresApproval
+                      ? "Requiere aprobación"
+                      : "Puede emitirse directamente"}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Límite:{" "}
+                    {orderCurrency === "USD" ? "USD 10,000.00" : "L 250,000.00"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Aprobación
+                  </p>
+                  <Badge
+                    variant="outline"
+                    className={`mt-1 ${getApprovalStatusColor(orderApprovalStatus)}`}
+                  >
+                    {getApprovalStatusLabel(orderApprovalStatus)}
+                  </Badge>
+                </div>
+                {isPostApprovalLocked ? (
+                  <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:col-span-3">
+                    Esta OC pasó por aprobación y quedó bloqueada después de su
+                    emisión. No admite cambios, adjuntos, cancelación ni
+                    operaciones posteriores.
+                  </div>
+                ) : null}
+              </div>
+
               <div className="space-y-3 rounded-2xl border border-border/70 bg-muted/10 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h3 className="font-semibold">Moneda de la orden</h3>
                     <p className="text-sm text-muted-foreground">
                       {getPurchaseCurrencyLabel(currencyDraft.currency)}
-                      {currencyDraft.currency === "USD" && currencyDraft.exchangeRate
+                      {currencyDraft.currency === "USD" &&
+                      currencyDraft.exchangeRate
                         ? ` · 1 USD = ${currencyDraft.exchangeRate} HNL`
                         : ""}
                     </p>
@@ -4600,10 +4801,14 @@ export default function OrdenesCompra() {
                         handleCurrencyDraftChange(value as PurchaseCurrency)
                       }
                     >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="HNL">LEMPIRA (HNL)</SelectItem>
-                        <SelectItem value="USD">DÓLAR ESTADOUNIDENSE (USD)</SelectItem>
+                        <SelectItem value="USD">
+                          DÓLAR ESTADOUNIDENSE (USD)
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -4808,35 +5013,33 @@ export default function OrdenesCompra() {
                         Bitácora del contrato
                       </div>
                       <div className="space-y-2">
-                        {contractAuditLogs
-                          .slice(0, 6)
-                          .map((entry: any) => (
-                            <div
-                              key={entry.log.id}
-                              className="grid gap-2 text-xs text-muted-foreground md:grid-cols-[1fr_1fr_1fr]"
-                            >
-                              <span className="font-medium text-foreground">
-                                {CONTRACT_AUDIT_FIELD_LABELS[
-                                  entry.log.field
-                                ] ?? entry.log.field}
-                              </span>
-                              <span>
-                                {formatContractAuditValue(
-                                  entry.log.field,
-                                  entry.log.oldValue
-                                )} →{" "}
-                                {formatContractAuditValue(
-                                  entry.log.field,
-                                  entry.log.newValue
-                                )}
-                              </span>
-                              <span className="md:text-right">
-                                {entry.changedBy?.name ||
-                                  entry.changedBy?.email ||
-                                  `Usuario #${entry.log.changedById}`}
-                              </span>
-                            </div>
-                          ))}
+                        {contractAuditLogs.slice(0, 6).map((entry: any) => (
+                          <div
+                            key={entry.log.id}
+                            className="grid gap-2 text-xs text-muted-foreground md:grid-cols-[1fr_1fr_1fr]"
+                          >
+                            <span className="font-medium text-foreground">
+                              {CONTRACT_AUDIT_FIELD_LABELS[entry.log.field] ??
+                                entry.log.field}
+                            </span>
+                            <span>
+                              {formatContractAuditValue(
+                                entry.log.field,
+                                entry.log.oldValue
+                              )}{" "}
+                              →{" "}
+                              {formatContractAuditValue(
+                                entry.log.field,
+                                entry.log.newValue
+                              )}
+                            </span>
+                            <span className="md:text-right">
+                              {entry.changedBy?.name ||
+                                entry.changedBy?.email ||
+                                `Usuario #${entry.log.changedById}`}
+                            </span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ) : null}
@@ -4870,8 +5073,7 @@ export default function OrdenesCompra() {
                     if (!value) return;
                     const pricesIncludeTax = value === "included";
                     if (
-                      pricesIncludeTax ===
-                      detail.purchaseOrder.pricesIncludeTax
+                      pricesIncludeTax === detail.purchaseOrder.pricesIncludeTax
                     ) {
                       return;
                     }
@@ -4987,8 +5189,7 @@ export default function OrdenesCompra() {
                         quantity: draft.quantity,
                         unitPrice: draft.unitPrice,
                         subtotal: draft.subtotal,
-                        pricesIncludeTax:
-                          detail.purchaseOrder.pricesIncludeTax,
+                        pricesIncludeTax: detail.purchaseOrder.pricesIncludeTax,
                         taxCode: draft.taxCode,
                         additionalTaxCodes: draft.additionalTaxCodes,
                         taxes: activeSalesTaxes,
@@ -5073,7 +5274,9 @@ export default function OrdenesCompra() {
                                 onBlur={() => handleSaveItemLine(item)}
                                 className="h-10 w-full max-w-[190px] text-right text-sm sm:max-w-[200px] sm:text-base"
                                 placeholder="0.00"
-                                disabled={!canEditOrderStructure || isSavingThisLine}
+                                disabled={
+                                  !canEditOrderStructure || isSavingThisLine
+                                }
                               />
                               <span className="min-w-[56px] text-right text-xs font-medium text-muted-foreground sm:min-w-[64px] sm:text-sm">
                                 {item.unit || "—"}
@@ -5123,13 +5326,11 @@ export default function OrdenesCompra() {
                                     ),
                                   }));
                                 }}
-                                onBlur={() => handleSaveContractItemPrice(item)}
+                                onBlur={() => handleSaveItemLine(item)}
                                 className="h-10 w-full text-right text-sm sm:text-base"
                                 placeholder="0.00"
                                 disabled={
-                                  (!canEditOrderStructure &&
-                                    !canEditContractLinePrice) ||
-                                  isSavingThisLine
+                                  !canEditOrderStructure || isSavingThisLine
                                 }
                               />
                               {shouldShowMissingHistoryHint && (
@@ -5187,13 +5388,12 @@ export default function OrdenesCompra() {
                                   ),
                                 }));
                               }}
-                              onBlur={() => handleSaveContractItemPrice(item)}
+                              onBlur={() => handleSaveItemLine(item)}
                               className="h-10 w-full min-w-[180px] max-w-[240px] text-right text-sm font-semibold sm:text-base"
                               placeholder="0.00"
                               disabled={
                                 detail.purchaseOrder.pricesIncludeTax ||
-                                (!canEditOrderStructure &&
-                                  !canEditContractLinePrice) ||
+                                !canEditOrderStructure ||
                                 isSavingThisLine
                               }
                             />
@@ -5292,6 +5492,69 @@ export default function OrdenesCompra() {
                 />
               </div>
 
+              <div className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-4 sm:p-5">
+                <div>
+                  <h3 className="font-semibold">Historial de aprobación</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Envíos, decisiones y correcciones registradas para esta OC.
+                  </p>
+                </div>
+                {approvalHistory.length > 0 ? (
+                  <div className="space-y-0">
+                    {approvalHistory.map((entry: any, index: number) => (
+                      <div
+                        key={entry.id ?? `${entry.createdAt}-${index}`}
+                        className="relative border-l-2 border-border pb-5 pl-5 last:pb-0"
+                      >
+                        <span className="absolute -left-[5px] top-1.5 h-2 w-2 rounded-full bg-primary" />
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <p className="font-semibold">
+                              {formatApprovalAction(entry.action)}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {entry.actorName || "Usuario no disponible"} ·{" "}
+                              {formatApprovalActorRole(entry.actorRole)}
+                            </p>
+                          </div>
+                          <time className="text-xs text-muted-foreground">
+                            {entry.createdAt
+                              ? new Date(entry.createdAt).toLocaleString(
+                                  "es-HN"
+                                )
+                              : "Fecha no disponible"}
+                          </time>
+                        </div>
+                        {entry.previousStatus || entry.newStatus ? (
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            {formatApprovalTimelineStatus(entry.previousStatus)} →{" "}
+                            {formatApprovalTimelineStatus(entry.newStatus)}
+                          </p>
+                        ) : null}
+                        {entry.amount !== null && entry.amount !== undefined ? (
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            Monto registrado:{" "}
+                            {formatPurchaseOrderCurrency(
+                              Number(entry.amount),
+                              entry.currency ?? detail.purchaseOrder.currency
+                            )}
+                          </p>
+                        ) : null}
+                        {entry.comment ? (
+                          <p className="mt-2 rounded-lg border border-border/70 bg-background px-3 py-2 text-sm">
+                            {entry.comment}
+                          </p>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
+                    Esta orden todavía no tiene movimientos de aprobación.
+                  </p>
+                )}
+              </div>
+
               <DocumentAttachmentsPanel
                 entityType="purchase_order"
                 entityId={detail.purchaseOrder.id}
@@ -5348,23 +5611,22 @@ export default function OrdenesCompra() {
 
               {hasPendingPricingChanges ? (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                  Hay cambios de cantidad, precio o impuesto pendientes de guardado automático. Sal del campo para terminar la actualización antes de descargar o emitir la OC.
+                  Hay cambios de cantidad, precio o impuesto pendientes de
+                  guardado automático. Sal del campo para terminar la
+                  actualización antes de descargar o emitir la OC.
                 </div>
               ) : null}
-              {hasPendingContractPriceChanges ? (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                  Hay cambios de precio del contrato pendientes. Sal del campo
-                  para guardar la actualización.
-                </div>
-              ) : null}
-              {canEditOrderStructure && emissionBlockReason ? (
+              {(canSubmitForApproval || canEmitOrder) && emissionBlockReason ? (
                 <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
                   {emissionBlockReason}
                 </div>
               ) : null}
 
               <div className="flex flex-wrap justify-end gap-3 border-t border-border/70 pt-1">
-                {canManagePurchaseOrders && !isOrderReceived ? (
+                {canManagePurchaseOrders &&
+                !isOrderReceived &&
+                !isApprovalWorkflowState &&
+                !isPostApprovalLocked ? (
                   <Button
                     variant="outline"
                     size="lg"
@@ -5379,11 +5641,10 @@ export default function OrdenesCompra() {
                       updateMutation.isPending ||
                       updateItemLineMutation.isPending ||
                       updateContractTermsMutation.isPending ||
-                      updateContractItemPriceMutation.isPending ||
                       deleteItemMutation.isPending ||
-                      reopenDraftMutation.isPending ||
-                      hasPendingPricingChanges ||
-                      hasPendingContractPriceChanges
+                      submitForApprovalMutation.isPending ||
+                      reopenRejectedMutation.isPending ||
+                      hasPendingPricingChanges
                     }
                   >
                     <XCircle className="mr-2 h-4 w-4" />
@@ -5402,18 +5663,104 @@ export default function OrdenesCompra() {
                     items.length === 0 ||
                     updateItemLineMutation.isPending ||
                     updateContractTermsMutation.isPending ||
-                    updateContractItemPriceMutation.isPending ||
                     deleteItemMutation.isPending ||
                     updateMutation.isPending ||
-                    cancelOrderMutation.isPending ||
-                    reopenDraftMutation.isPending
+                    cancelOrderMutation.isPending
                   }
                 >
                   <Printer className="mr-2 h-4 w-4" />
                   Imprimir
                 </Button>
 
-                {canEditOrderStructure ? (
+                {canSubmitForApproval ? (
+                  <Button
+                    size="lg"
+                    className="h-10 min-w-[220px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
+                    onClick={() => {
+                      if (emissionBlockReason) {
+                        toast.error(emissionBlockReason);
+                        return;
+                      }
+                      submitForApprovalMutation.mutate({
+                        id: detail.purchaseOrder.id,
+                      });
+                    }}
+                    disabled={
+                      items.length === 0 ||
+                      submitForApprovalMutation.isPending ||
+                      updateMutation.isPending ||
+                      updateItemLineMutation.isPending ||
+                      updateContractTermsMutation.isPending ||
+                      deleteItemMutation.isPending ||
+                      cancelOrderMutation.isPending ||
+                      hasOrderReceipts ||
+                      hasPendingPricingChanges
+                    }
+                  >
+                    {submitForApprovalMutation.isPending ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="mr-2 h-4 w-4" />
+                    )}
+                    {submitForApprovalMutation.isPending
+                      ? "Enviando..."
+                      : "Enviar a aprobación"}
+                  </Button>
+                ) : null}
+
+                {canReviewApproval ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      className="h-10 min-w-[160px] border-destructive/40 px-5 text-sm font-semibold text-destructive sm:h-11 sm:text-base"
+                      onClick={() => {
+                        setApprovalReviewComment("");
+                        setApprovalReviewDecision("reject");
+                      }}
+                      disabled={reviewApprovalMutation.isPending}
+                    >
+                      <XCircle className="mr-2 h-4 w-4" />
+                      Rechazar
+                    </Button>
+                    <Button
+                      size="lg"
+                      className="h-10 min-w-[160px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
+                      onClick={() => {
+                        setApprovalReviewComment("");
+                        setApprovalReviewDecision("approve");
+                      }}
+                      disabled={reviewApprovalMutation.isPending}
+                    >
+                      <Check className="mr-2 h-4 w-4" />
+                      Aprobar
+                    </Button>
+                  </>
+                ) : null}
+
+                {canCorrectRejectedOrder ? (
+                  <Button
+                    size="lg"
+                    className="h-10 min-w-[220px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
+                    onClick={() =>
+                      reopenRejectedMutation.mutate({
+                        id: detail.purchaseOrder.id,
+                      })
+                    }
+                    disabled={reopenRejectedMutation.isPending}
+                  >
+                    {reopenRejectedMutation.isPending ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <ArrowRightLeft className="mr-2 h-4 w-4" />
+                    )}
+                    {reopenRejectedMutation.isPending
+                      ? "Reabriendo..."
+                      : "Corregir"}
+                  </Button>
+                ) : null}
+
+                {canEmitOrder ? (
                   <Button
                     size="lg"
                     className="h-10 min-w-[220px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
@@ -5430,67 +5777,131 @@ export default function OrdenesCompra() {
                       updateMutation.isPending ||
                       updateItemLineMutation.isPending ||
                       updateContractTermsMutation.isPending ||
-                      updateContractItemPriceMutation.isPending ||
                       deleteItemMutation.isPending ||
                       cancelOrderMutation.isPending ||
-                      reopenDraftMutation.isPending ||
                       hasOrderReceipts ||
-                      hasPendingPricingChanges ||
-                      hasPendingContractPriceChanges
+                      hasPendingPricingChanges
                     }
                   >
                     <Send className="mr-2 h-4 w-4" />
                     {sendMutation.isPending ? "Emitiendo..." : "Emitir orden"}
                   </Button>
                 ) : null}
-
-                {canReopenDraft && !canEditOrderStructure ? (
-                  <Button
-                    size="lg"
-                    className={`h-10 min-w-[220px] px-5 text-sm font-semibold transition-colors sm:h-11 sm:text-base ${
-                      isReopeningSelectedDraft
-                        ? "bg-amber-500 text-white hover:bg-amber-500 disabled:bg-amber-500 disabled:text-white disabled:opacity-100"
-                        : "bg-sky-700 text-white hover:bg-sky-800"
-                    }`}
-                    onClick={() => {
-                      const orderId = detail.purchaseOrder.id;
-                      if (
-                        reopeningDraftOrderIdRef.current !== null ||
-                        reopenDraftMutation.isPending
-                      ) {
-                        return;
-                      }
-                      reopeningDraftOrderIdRef.current = orderId;
-                      setReopeningDraftOrderId(orderId);
-                      reopenDraftMutation.mutate({
-                        id: orderId,
-                      });
-                    }}
-                    disabled={
-                      isReopeningSelectedDraft ||
-                      reopenDraftMutation.isPending ||
-                      updateMutation.isPending ||
-                      updateItemLineMutation.isPending ||
-                      updateContractTermsMutation.isPending ||
-                      updateContractItemPriceMutation.isPending ||
-                      deleteItemMutation.isPending ||
-                      cancelOrderMutation.isPending ||
-                      sendMutation.isPending
-                    }
-                  >
-                    {isReopeningSelectedDraft ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Pencil className="mr-2 h-4 w-4" />
-                    )}
-                    {isReopeningSelectedDraft
-                      ? "Reabriendo..."
-                      : "Volver a edición"}
-                  </Button>
-                ) : null}
               </div>
             </div>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={approvalReviewDecision !== null}
+        onOpenChange={open => {
+          if (!open && !reviewApprovalMutation.isPending) {
+            setApprovalReviewDecision(null);
+            setApprovalReviewComment("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              {approvalReviewDecision === "approve"
+                ? "Aprobar orden de compra"
+                : "Rechazar orden de compra"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-xl border border-border/70 bg-muted/20 p-4 text-sm">
+              <p className="font-semibold">
+                {detail?.purchaseOrder.orderNumber || "Orden de compra"}
+              </p>
+              <p className="mt-1 text-muted-foreground">
+                Total: {formatPurchaseOrderCurrency(orderTotal, orderCurrency)}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="purchase-order-approval-comment">
+                Comentario
+                {approvalReviewDecision === "reject"
+                  ? " (obligatorio)"
+                  : " (opcional)"}
+              </Label>
+              <Textarea
+                id="purchase-order-approval-comment"
+                value={approvalReviewComment}
+                onChange={event => setApprovalReviewComment(event.target.value)}
+                placeholder={
+                  approvalReviewDecision === "reject"
+                    ? "Explique el motivo del rechazo"
+                    : "Agregue una observación si lo necesita"
+                }
+                rows={4}
+                disabled={reviewApprovalMutation.isPending}
+              />
+              {approvalReviewDecision === "reject" ? (
+                <p className="text-xs text-muted-foreground">
+                  El motivo debe tener al menos 5 caracteres.
+                </p>
+              ) : null}
+            </div>
+            <div className="flex justify-end gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setApprovalReviewDecision(null);
+                  setApprovalReviewComment("");
+                }}
+                disabled={reviewApprovalMutation.isPending}
+              >
+                Volver
+              </Button>
+              <Button
+                type="button"
+                variant={
+                  approvalReviewDecision === "reject"
+                    ? "destructive"
+                    : "default"
+                }
+                onClick={() => {
+                  if (!selectedId || !approvalReviewDecision) return;
+                  const comment = approvalReviewComment.trim();
+                  if (
+                    approvalReviewDecision === "reject" &&
+                    comment.length < 5
+                  ) {
+                    toast.error(
+                      "Ingrese un motivo de rechazo de al menos 5 caracteres"
+                    );
+                    return;
+                  }
+                  reviewApprovalMutation.mutate({
+                    id: selectedId,
+                    decision: approvalReviewDecision,
+                    ...(comment ? { comment } : {}),
+                  });
+                }}
+                disabled={
+                  reviewApprovalMutation.isPending ||
+                  (approvalReviewDecision === "reject" &&
+                    approvalReviewComment.trim().length < 5)
+                }
+              >
+                {reviewApprovalMutation.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : approvalReviewDecision === "approve" ? (
+                  <Check className="mr-2 h-4 w-4" />
+                ) : (
+                  <XCircle className="mr-2 h-4 w-4" />
+                )}
+                {reviewApprovalMutation.isPending
+                  ? "Guardando..."
+                  : approvalReviewDecision === "approve"
+                    ? "Confirmar aprobación"
+                    : "Confirmar rechazo"}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -5511,7 +5922,7 @@ export default function OrdenesCompra() {
                     ? "bg-amber-100 text-amber-700"
                     : confirmState.kind === "price-tax-mode"
                       ? "bg-blue-100 text-blue-700"
-                    : "bg-destructive/10 text-destructive"
+                      : "bg-destructive/10 text-destructive"
                 }`}
               >
                 {confirmState.kind === "delete-item" ? (
@@ -5534,7 +5945,7 @@ export default function OrdenesCompra() {
                       ? "Cerrar línea para recepción"
                       : confirmState.kind === "price-tax-mode"
                         ? "Cambiar tipo de precio"
-                      : "Cancelar orden de compra"}
+                        : "Cancelar orden de compra"}
                 </AlertDialogTitle>
                 <AlertDialogDescription className="text-sm leading-6 text-muted-foreground">
                   {confirmState.kind === "delete-item"
@@ -5557,7 +5968,7 @@ export default function OrdenesCompra() {
                                 ? "totales con impuesto incluido"
                                 : "bases sin impuesto"
                             } y se recalcularán subtotal, ISV y total de todas las líneas.`
-                        : ""}
+                          : ""}
                 </AlertDialogDescription>
               </AlertDialogHeader>
             </div>
@@ -5571,7 +5982,7 @@ export default function OrdenesCompra() {
                   ? "Puedes solo cerrar la línea o enviar el saldo pendiente a una solicitud de compra reutilizable para esta misma orden."
                   : confirmState.kind === "price-tax-mode"
                     ? "La OC debe permanecer en borrador. El PDF guardado se invalidará para que la próxima impresión use los nuevos valores."
-                  : "La orden quedará visible como historial, pero ya no se podrá editar ni enviar al proveedor."}
+                    : "La orden quedará visible como historial, pero ya no se podrá editar ni enviar al proveedor."}
             </div>
 
             <AlertDialogFooter className="gap-3 sm:justify-end">
@@ -5618,14 +6029,14 @@ export default function OrdenesCompra() {
                       ? "Cerrando..."
                       : confirmState.kind === "price-tax-mode"
                         ? "Recalculando..."
-                      : "Cancelando..."
+                        : "Cancelando..."
                   : confirmState.kind === "delete-item"
                     ? "Confirmar eliminación"
                     : confirmState.kind === "close-receipt-line"
                       ? "Confirmar cierre"
                       : confirmState.kind === "price-tax-mode"
                         ? "Recalcular OC"
-                      : "Confirmar cancelación"}
+                        : "Confirmar cancelación"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </div>

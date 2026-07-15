@@ -21,6 +21,10 @@ import {
   parsePurchaseOrderTaxBreakdown,
   type PurchaseCurrency,
 } from "@shared/purchase-orders";
+import {
+  isProcurementApproverRole,
+  isProjectScopedRole,
+} from "@shared/buildreq-roles";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
@@ -38,6 +42,8 @@ function canAccessReceipts(user: {
   role: string;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
+
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -48,18 +54,20 @@ function canAccessReceipts(user: {
 }
 
 function canReceivePurchaseOrder(purchaseOrder: any, contractSummary?: any) {
-  if (RECEIVABLE_PURCHASE_ORDER_STATUSES.has(purchaseOrder.status)) {
-    return true;
+  if (purchaseOrder.approvalStatus === "aprobada") return false;
+  if (!purchaseOrder.appliesContract) {
+    return RECEIVABLE_PURCHASE_ORDER_STATUSES.has(purchaseOrder.status);
   }
-
-  if (!purchaseOrder.appliesContract) return false;
-  if (purchaseOrder.status === "anulada") return false;
+  if (
+    !RECEIVABLE_PURCHASE_ORDER_STATUSES.has(purchaseOrder.status) &&
+    purchaseOrder.status !== "recibida"
+  ) {
+    return false;
+  }
 
   return Boolean(
     contractSummary &&
-      contractSummary.expectedInvoiceCount > 0 &&
-      !contractSummary.isExpired &&
-      !contractSummary.isFullyInvoiced
+      contractSummary.expectedInvoiceCount > 0
   );
 }
 
@@ -124,11 +132,7 @@ function assertProjectScopedAccess(
   },
   projectId: number
 ) {
-  if (user.role === "admin") return;
-  if (
-    user.buildreqRole !== "administrador_proyecto" &&
-    user.buildreqRole !== "bodeguero_proyecto"
-  ) {
+  if (!isProjectScopedRole(user.buildreqRole)) {
     return;
   }
   if (!canAccessProject(user, projectId)) {
@@ -715,6 +719,27 @@ export const receiptsRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+      if (!canReceivePurchaseOrder(detail.purchaseOrder, detail.contractSummary)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            detail.purchaseOrder.approvalStatus === "aprobada"
+              ? "Una OC que pasó por aprobación queda bloqueada y no puede recibirse"
+              : "La orden no está disponible para recepción",
+        });
+      }
+      if (
+        detail.purchaseOrder.appliesContract &&
+        (detail.contractSummary?.isExpired ||
+          detail.contractSummary?.isFullyInvoiced)
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: detail.contractSummary?.isExpired
+            ? "El contrato está vencido y ya no permite agregar facturas"
+            : "La OC de contrato ya alcanzó el total de facturas programadas",
+        });
+      }
       if (input.projectId !== detail.purchaseOrder.projectId) {
         throw new TRPCError({
           code: "BAD_REQUEST",

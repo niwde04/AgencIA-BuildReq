@@ -119,6 +119,10 @@ const COUNT_QUERIES: Array<{ key: string; query: string }> = [
     query: `SELECT count(*)::int AS "count" FROM "purchaseOrders"`,
   },
   {
+    key: "procurementApprovalHistory",
+    query: `SELECT count(*)::int AS "count" FROM "procurementApprovalHistory"`,
+  },
+  {
     key: "purchaseOrderAuditLogs",
     query: `SELECT count(*)::int AS "count" FROM "purchaseOrderAuditLogs"`,
   },
@@ -218,6 +222,7 @@ const CLEANUP_STATEMENTS = [
   `DELETE FROM "transfers"`,
   `DELETE FROM "transferRequestItems"`,
   `DELETE FROM "transferRequests"`,
+  `DELETE FROM "procurementApprovalHistory"`,
   `DELETE FROM "purchaseOrderAuditLogs"`,
   `DELETE FROM "purchaseOrderItems"`,
   `DELETE FROM "purchaseOrders"`,

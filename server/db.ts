@@ -30,6 +30,7 @@ import {
   purchaseRequests,
   purchaseRequestItems,
   purchaseOrders,
+  procurementApprovalHistory,
   purchaseOrderAuditLogs,
   purchaseOrderItems,
   transferRequests,
@@ -76,6 +77,7 @@ import type {
   InsertPurchaseRequest,
   InsertPurchaseRequestItem,
   InsertPurchaseOrder,
+  InsertProcurementApprovalHistory,
   InsertPurchaseOrderAuditLog,
   InsertPurchaseOrderItem,
   InsertTransferRequest,
@@ -121,6 +123,13 @@ import type {
   OpeningBalance,
 } from "../drizzle/schema";
 import type { DmcReportSourceInvoice } from "../shared/dmc-report";
+import type { BuildReqRole } from "@shared/buildreq-roles";
+export type { BuildReqRole } from "@shared/buildreq-roles";
+import {
+  formatApprovalSnapshotAmount,
+  getPurchaseOrderApprovalReadinessError,
+  purchaseOrderRequiresApproval,
+} from "@shared/procurement-approvals";
 import {
   getSupplierAccountPaymentCertificateStatus,
   getSupplierRetentionPolicy,
@@ -197,15 +206,6 @@ function toAuditUser(user: Pick<User, "id" | "name" | "email"> | null | undefine
     email: user.email,
   };
 }
-
-export type BuildReqRole =
-  | "ingeniero_residente"
-  | "jefe_bodega_central"
-  | "administracion_central"
-  | "administrador_proyecto"
-  | "bodeguero_proyecto"
-  | "superintendente"
-  | "contable";
 
 type AttachmentEntityType =
   | "material_request"
@@ -452,7 +452,7 @@ async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
       .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
       .where(
         and(
-          sql`${purchaseOrders.status} NOT IN ('borrador', 'anulada')`,
+          sql`${purchaseOrders.status} IN ('emitida', 'enviada', 'parcialmente_recibida', 'recibida')`,
           sql`${purchaseOrderItems.unitPrice} > 0`,
           or(
             and(
@@ -556,7 +556,7 @@ export async function getLatestSupplierPurchasePrices(params: {
 
   const conditions = [
     eq(purchaseOrders.supplierId, params.supplierId),
-    sql`${purchaseOrders.status} NOT IN ('borrador', 'anulada')`,
+    sql`${purchaseOrders.status} IN ('emitida', 'enviada', 'parcialmente_recibida', 'recibida')`,
     sql`${purchaseOrderItems.unitPrice} > 0`,
     or(
       and(
@@ -5243,6 +5243,162 @@ function normalizeOptionalText(value: string | null | undefined) {
   return value?.trim() || null;
 }
 
+export type ProcurementApprovalActor = {
+  id: number;
+  name?: string | null;
+  email?: string | null;
+  role?: string | null;
+  buildreqRole?: string | null;
+};
+
+function getApprovalActorSnapshot(actor: ProcurementApprovalActor) {
+  return {
+    actorUserId: actor.id,
+    actorName:
+      actor.name?.trim() || actor.email?.trim() || `Usuario ${actor.id}`,
+    actorRole: actor.buildreqRole?.trim() || actor.role?.trim() || "sin_rol",
+  };
+}
+
+async function listProcurementApprovalHistoryForDocuments(
+  database: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  documentType: "purchase_request" | "purchase_order",
+  documentIds: number[]
+) {
+  if (documentIds.length === 0) return [];
+
+  return database
+    .select()
+    .from(procurementApprovalHistory)
+    .where(
+      and(
+        eq(procurementApprovalHistory.documentType, documentType),
+        inArray(procurementApprovalHistory.documentId, documentIds)
+      )
+    )
+    .orderBy(
+      asc(procurementApprovalHistory.createdAt),
+      asc(procurementApprovalHistory.id)
+    );
+}
+
+export async function getProcurementApprovalHistory(
+  documentType: "purchase_request" | "purchase_order",
+  documentId: number
+) {
+  const db = await getDb();
+  if (!db) return [];
+  return listProcurementApprovalHistoryForDocuments(db, documentType, [
+    documentId,
+  ]);
+}
+
+function mapApprovalActorFromHistory(
+  history: Awaited<ReturnType<typeof getProcurementApprovalHistory>>
+) {
+  const approved = [...history]
+    .reverse()
+    .find(entry => entry.action === "approved");
+  if (!approved) return null;
+
+  return {
+    id: approved.actorUserId,
+    name: approved.actorName,
+    email: null,
+    buildreqRole: approved.actorRole,
+  };
+}
+
+function summarizePersistedPurchaseOrder(
+  purchaseOrder: Pick<
+    typeof purchaseOrders.$inferSelect,
+    "pricesIncludeTax" | "currency"
+  >,
+  items: Array<
+    Pick<
+      typeof purchaseOrderItems.$inferSelect,
+      | "quantity"
+      | "unitPrice"
+      | "subtotal"
+      | "taxCode"
+      | "additionalTaxCodes"
+      | "taxBreakdown"
+    >
+  >
+) {
+  const summary = summarizePurchaseOrderLines(
+    items.map(item => ({
+      ...item,
+      pricesIncludeTax: purchaseOrder.pricesIncludeTax,
+    }))
+  );
+  const amount = formatApprovalSnapshotAmount(summary.total);
+  return {
+    summary,
+    amount,
+    currency: purchaseOrder.currency,
+    requiresApproval: purchaseOrderRequiresApproval(
+      purchaseOrder.currency,
+      amount
+    ),
+  };
+}
+
+async function lockPurchaseOrderForUpdate(database: any, id: number) {
+  const [purchaseOrder] = await database
+    .select()
+    .from(purchaseOrders)
+    .where(eq(purchaseOrders.id, id))
+    .for("update");
+  if (!purchaseOrder) throw new Error("Orden de compra no encontrada");
+  return purchaseOrder as typeof purchaseOrders.$inferSelect;
+}
+
+function assertDraftPurchaseOrderState(
+  purchaseOrder: Pick<
+    typeof purchaseOrders.$inferSelect,
+    "status" | "approvalStatus"
+  >
+) {
+  if (
+    purchaseOrder.status !== "borrador" ||
+    purchaseOrder.approvalStatus !== null
+  ) {
+    throw new Error(
+      "La orden debe estar en borrador y sin aprobación para modificarse"
+    );
+  }
+}
+
+async function assertPersistedPurchaseOrderApprovalReadiness(
+  database: any,
+  purchaseOrder: typeof purchaseOrders.$inferSelect,
+  items: Array<typeof purchaseOrderItems.$inferSelect>
+) {
+  const [directPurchasePayment] = await database
+    .select({ paymentMethod: supplyFlowRecords.paymentMethod })
+    .from(supplyFlowRecords)
+    .where(
+      and(
+        eq(supplyFlowRecords.flowType, "compra_directa"),
+        eq(
+          supplyFlowRecords.purchaseOrderNumber,
+          purchaseOrder.orderNumber
+        ),
+        isNotNull(supplyFlowRecords.paymentMethod),
+        sql`${supplyFlowRecords.status} <> 'cancelado'`
+      )
+    )
+    .limit(1);
+
+  const error = getPurchaseOrderApprovalReadinessError({
+    ...purchaseOrder,
+    directPurchasePaymentMethod: directPurchasePayment?.paymentMethod ?? null,
+    items,
+  });
+  if (error) throw new Error(error);
+}
+
 function getPurchaseRequestItemCatalogCodes(
   item: PurchaseRequestItemInsertInput
 ) {
@@ -5407,6 +5563,23 @@ export async function listPurchaseRequests(filters?: {
 
   if (purchaseRequestIds.length === 0) {
     return rows;
+  }
+
+  const approvalHistoryRows =
+    await listProcurementApprovalHistoryForDocuments(
+      db,
+      "purchase_request",
+      purchaseRequestIds
+    );
+  const approvalHistoryByPurchaseRequestId = new Map<
+    number,
+    typeof approvalHistoryRows
+  >();
+  for (const historyEntry of approvalHistoryRows) {
+    const history =
+      approvalHistoryByPurchaseRequestId.get(historyEntry.documentId) ?? [];
+    history.push(historyEntry);
+    approvalHistoryByPurchaseRequestId.set(historyEntry.documentId, history);
   }
 
   const sourceRows = await db
@@ -5610,6 +5783,9 @@ export async function listPurchaseRequests(filters?: {
     const approvedByUsers = approvedByIds
       .map(id => approvedByUsersById.get(id))
       .filter((user): user is User => Boolean(user));
+    const approvalHistory =
+      approvalHistoryByPurchaseRequestId.get(row.purchaseRequest.id) ?? [];
+    const approvalActor = mapApprovalActorFromHistory(approvalHistory);
 
     return {
       ...row,
@@ -5617,8 +5793,9 @@ export async function listPurchaseRequests(filters?: {
         requestNumbersByPurchaseRequestId.get(row.purchaseRequest.id) ?? [],
       requestedBy: row.requestedBy ?? requestedByUsers[0] ?? null,
       requestedByUsers,
-      approvedBy: approvedByUsers[0] ?? null,
-      approvedByUsers,
+      approvedBy: approvalActor,
+      approvedByUsers: approvalActor ? [approvalActor] : [],
+      approvalHistory,
       createdBy: row.createdBy,
       projectSummary,
       sourceProjects,
@@ -5814,6 +5991,10 @@ export async function getPurchaseRequestById(id: number) {
       unitPrice: item.unitPrice,
     })),
   });
+  const approvalHistory = await getProcurementApprovalHistory(
+    "purchase_request",
+    id
+  );
 
   return {
     ...rows[0],
@@ -5834,8 +6015,192 @@ export async function getPurchaseRequestById(id: number) {
         ? (usersById.get(sourceRequestedById) ?? null)
         : null,
     createdBy: usersById.get(rows[0].purchaseRequest.createdById) ?? null,
+    approvedBy: mapApprovalActorFromHistory(approvalHistory),
+    approvalHistory,
     items,
   };
+}
+
+export async function submitPurchaseRequestForApproval(params: {
+  id: number;
+  actor: ProcurementApprovalActor;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const [updated] = await tx
+      .update(purchaseRequests)
+      .set({
+        status: "en_revision",
+        approvalStatus: "pendiente",
+        rejectionReason: null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(purchaseRequests.id, params.id),
+          eq(purchaseRequests.status, "pendiente"),
+          isNull(purchaseRequests.approvalStatus)
+        )
+      )
+      .returning();
+
+    if (!updated) {
+      throw new Error(
+        "La solicitud debe estar en borrador y no enviada para solicitar aprobación"
+      );
+    }
+
+    await tx.insert(procurementApprovalHistory).values({
+      documentType: "purchase_request",
+      documentId: params.id,
+      action: "submitted",
+      previousStatus: null,
+      newStatus: "pendiente",
+      ...getApprovalActorSnapshot(params.actor),
+      comment: null,
+      amount: null,
+      currency: null,
+    });
+
+    return {
+      success: true,
+      status: updated.status,
+      approvalStatus: updated.approvalStatus,
+    };
+  });
+}
+
+export async function reviewPurchaseRequestApproval(params: {
+  id: number;
+  decision: "approve" | "reject";
+  comment?: string | null;
+  actor: ProcurementApprovalActor;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const comment = params.comment?.trim() || null;
+  if (params.decision === "reject" && (!comment || comment.length < 5)) {
+    throw new Error("El motivo de rechazo debe tener al menos 5 caracteres");
+  }
+
+  return db.transaction(async tx => {
+    let nextDocumentStatus: "aprobada" | "parcialmente_convertida" | "convertida" | "rechazada" =
+      "rechazada";
+    if (params.decision === "approve") {
+      const items = await tx
+        .select({
+          quantity: purchaseRequestItems.quantity,
+          convertedQuantity: purchaseRequestItems.convertedQuantity,
+        })
+        .from(purchaseRequestItems)
+        .where(eq(purchaseRequestItems.purchaseRequestId, params.id));
+      const allConverted =
+        items.length > 0 &&
+        items.every(item => getPendingConversionQuantity(item) <= 0);
+      const hasConverted = items.some(
+        item => parseDecimal(item.convertedQuantity) > 0
+      );
+      nextDocumentStatus = allConverted
+        ? "convertida"
+        : hasConverted
+          ? "parcialmente_convertida"
+          : "aprobada";
+    }
+
+    const nextApprovalStatus =
+      params.decision === "approve" ? "aprobada" : "rechazada";
+    const [updated] = await tx
+      .update(purchaseRequests)
+      .set({
+        status: nextDocumentStatus,
+        approvalStatus: nextApprovalStatus,
+        rejectionReason: params.decision === "reject" ? comment : null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(purchaseRequests.id, params.id),
+          eq(purchaseRequests.status, "en_revision"),
+          eq(purchaseRequests.approvalStatus, "pendiente")
+        )
+      )
+      .returning();
+
+    if (!updated) {
+      throw new Error(
+        "La solicitud ya no está pendiente o fue decidida por otro aprobador"
+      );
+    }
+
+    await tx.insert(procurementApprovalHistory).values({
+      documentType: "purchase_request",
+      documentId: params.id,
+      action: params.decision === "approve" ? "approved" : "rejected",
+      previousStatus: "pendiente",
+      newStatus: nextApprovalStatus,
+      ...getApprovalActorSnapshot(params.actor),
+      comment,
+      amount: null,
+      currency: null,
+    });
+
+    return {
+      success: true,
+      status: updated.status,
+      approvalStatus: updated.approvalStatus,
+    };
+  });
+}
+
+export async function reopenRejectedPurchaseRequest(params: {
+  id: number;
+  actor: ProcurementApprovalActor;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const [updated] = await tx
+      .update(purchaseRequests)
+      .set({
+        status: "pendiente",
+        approvalStatus: null,
+        rejectionReason: null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(purchaseRequests.id, params.id),
+          eq(purchaseRequests.status, "rechazada"),
+          eq(purchaseRequests.approvalStatus, "rechazada")
+        )
+      )
+      .returning();
+
+    if (!updated) {
+      throw new Error("Solo se puede corregir una solicitud rechazada");
+    }
+
+    await tx.insert(procurementApprovalHistory).values({
+      documentType: "purchase_request",
+      documentId: params.id,
+      action: "reopened",
+      previousStatus: "rechazada",
+      newStatus: null,
+      ...getApprovalActorSnapshot(params.actor),
+      comment: null,
+      amount: null,
+      currency: null,
+    });
+
+    return {
+      success: true,
+      status: updated.status,
+      approvalStatus: updated.approvalStatus,
+    };
+  });
 }
 
 export async function getActivePurchaseRequestByMaterialRequestItemId(
@@ -5857,7 +6222,7 @@ export async function getActivePurchaseRequestByMaterialRequestItemId(
     .where(
       and(
         eq(purchaseRequestItems.materialRequestItemId, materialRequestItemId),
-        sql`${purchaseRequests.status} NOT IN ('rechazada', 'anulada')`
+        sql`${purchaseRequests.status} <> 'anulada'`
       )
     )
     .orderBy(desc(purchaseRequests.createdAt))
@@ -5966,18 +6331,32 @@ export async function syncPurchaseRequestConversionStatus(id: number) {
   const hasConverted = items.some(
     item => parseDecimal(item.convertedQuantity) > 0
   );
-  const nextStatus = allConverted
-    ? "convertida"
-    : hasConverted
-      ? "parcialmente_convertida"
-      : ["convertida", "parcialmente_convertida"].includes(
-            purchaseRequest.status
-          )
-        ? "pendiente"
-        : purchaseRequest.status;
+  const historicalConversionReopened =
+    purchaseRequest.status === "convertida" &&
+    purchaseRequest.approvalStatus === "no_requiere" &&
+    !allConverted;
+  const nextStatus = historicalConversionReopened
+    ? "pendiente"
+    : allConverted
+      ? "convertida"
+      : hasConverted
+        ? "parcialmente_convertida"
+        : ["convertida", "parcialmente_convertida"].includes(
+              purchaseRequest.status
+            )
+          ? purchaseRequest.approvalStatus === "aprobada"
+            ? "aprobada"
+            : "pendiente"
+          : purchaseRequest.status;
 
-  if (nextStatus !== purchaseRequest.status) {
-    await updatePurchaseRequest(id, { status: nextStatus as any });
+  if (
+    nextStatus !== purchaseRequest.status ||
+    historicalConversionReopened
+  ) {
+    await updatePurchaseRequest(id, {
+      status: nextStatus as any,
+      ...(historicalConversionReopened ? { approvalStatus: null } : {}),
+    });
   }
 
   return nextStatus;
@@ -5992,21 +6371,36 @@ export async function addPurchaseRequestItems(
 
   const resolvedItems = await resolvePurchaseRequestItemBrands(db, items);
 
-  if (resolvedItems.length > 0) {
-    await db.insert(purchaseRequestItems).values(
-      resolvedItems.map(item => ({
-        ...item,
-        purchaseRequestId,
-      }))
-    );
-  }
+  return db.transaction(async tx => {
+    const [lockedDraft] = await tx
+      .update(purchaseRequests)
+      .set({ updatedAt: new Date() })
+      .where(
+        and(
+          eq(purchaseRequests.id, purchaseRequestId),
+          eq(purchaseRequests.status, "pendiente"),
+          isNull(purchaseRequests.approvalStatus)
+        )
+      )
+      .returning({ id: purchaseRequests.id });
 
-  await db
-    .update(purchaseRequests)
-    .set({ updatedAt: new Date() })
-    .where(eq(purchaseRequests.id, purchaseRequestId));
+    if (!lockedDraft) {
+      throw new Error(
+        "Solo se pueden agregar ítems a una solicitud de compra en borrador"
+      );
+    }
 
-  return { success: true };
+    if (resolvedItems.length > 0) {
+      await tx.insert(purchaseRequestItems).values(
+        resolvedItems.map(item => ({
+          ...item,
+          purchaseRequestId,
+        }))
+      );
+    }
+
+    return { success: true };
+  });
 }
 
 export async function getReusablePurchaseRequestBySourcePurchaseOrderId(
@@ -6021,7 +6415,8 @@ export async function getReusablePurchaseRequestBySourcePurchaseOrderId(
     .where(
       and(
         eq(purchaseRequests.sourcePurchaseOrderId, sourcePurchaseOrderId),
-        sql`${purchaseRequests.status} NOT IN ('rechazada', 'anulada', 'convertida')`
+        eq(purchaseRequests.status, "pendiente"),
+        isNull(purchaseRequests.approvalStatus)
       )
     )
     .orderBy(desc(purchaseRequests.createdAt))
@@ -6044,10 +6439,32 @@ export async function cancelPurchaseRequest(
   id: number,
   cancellationReason: string
 ) {
-  return updatePurchaseRequest(id, {
-    status: "anulada",
-    rejectionReason: cancellationReason,
-  });
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [updated] = await db
+    .update(purchaseRequests)
+    .set({
+      status: "anulada",
+      rejectionReason: cancellationReason,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(purchaseRequests.id, id),
+        eq(purchaseRequests.status, "pendiente"),
+        isNull(purchaseRequests.approvalStatus)
+      )
+    )
+    .returning({ id: purchaseRequests.id });
+
+  if (!updated) {
+    throw new Error(
+      "La solicitud cambió de estado y ya no puede anularse"
+    );
+  }
+
+  return { success: true };
 }
 
 export async function createPurchaseOrder(
@@ -6178,7 +6595,7 @@ export async function createPurchaseOrder(
     orderNumber,
     orderId: orderNumber,
     classification: data.classification ?? "oc",
-    status: data.status ?? "emitida",
+    status: data.status ?? "borrador",
     projectLabel,
     supplierLabel: supplier?.name ?? "Proveedor pendiente",
     createdAt: printedAt,
@@ -6229,7 +6646,7 @@ export async function createPurchaseOrder(
       printedDocumentContent,
       printedAt,
       supplierEmail: data.supplierEmail ?? supplier?.email ?? null,
-      status: data.status ?? "emitida",
+      status: "borrador",
     })
     .returning({ id: purchaseOrders.id });
 
@@ -6337,8 +6754,35 @@ export async function listPurchaseOrders(filters?: {
   const purchaseOrderIds = rows
     .map(row => row.purchaseOrder.id)
     .filter((value): value is number => typeof value === "number");
+  const approvalHistoryRows =
+    await listProcurementApprovalHistoryForDocuments(
+      db,
+      "purchase_order",
+      purchaseOrderIds
+    );
+  const approvalHistoryByPurchaseOrderId = new Map<
+    number,
+    typeof approvalHistoryRows
+  >();
+  for (const historyEntry of approvalHistoryRows) {
+    const history =
+      approvalHistoryByPurchaseOrderId.get(historyEntry.documentId) ?? [];
+    history.push(historyEntry);
+    approvalHistoryByPurchaseOrderId.set(historyEntry.documentId, history);
+  }
   const requestNumbersByOrderId = new Map<number, string[]>();
   const requestedByIdsByOrderId = new Map<number, number[]>();
+  const purchaseOrderLinesByOrderId = new Map<
+    number,
+    Array<{
+      quantity: string | number | null;
+      unitPrice: string | number | null;
+      subtotal: string | number | null;
+      taxCode: string | null;
+      additionalTaxCodes: string[];
+      taxBreakdown: PurchaseOrderTaxBreakdownEntry[];
+    }>
+  >();
   const addRequestNumber = (
     purchaseOrderId: number,
     requestNumber: string | null | undefined,
@@ -6387,6 +6831,12 @@ export async function listPurchaseOrders(filters?: {
     const sourceRows = await db
       .select({
         purchaseOrderId: purchaseOrderItems.purchaseOrderId,
+        quantity: purchaseOrderItems.quantity,
+        unitPrice: purchaseOrderItems.unitPrice,
+        subtotal: purchaseOrderItems.subtotal,
+        taxCode: purchaseOrderItems.taxCode,
+        additionalTaxCodes: purchaseOrderItems.additionalTaxCodes,
+        taxBreakdown: purchaseOrderItems.taxBreakdown,
         purchaseRequestRequestNumber:
           purchaseRequestSourceRequests.requestNumber,
         purchaseRequestRequestedById:
@@ -6425,6 +6875,16 @@ export async function listPurchaseOrders(filters?: {
 
     for (const row of sourceRows) {
       if (!row.purchaseOrderId) continue;
+      const lines = purchaseOrderLinesByOrderId.get(row.purchaseOrderId) ?? [];
+      lines.push({
+        quantity: row.quantity,
+        unitPrice: row.unitPrice,
+        subtotal: row.subtotal,
+        taxCode: row.taxCode,
+        additionalTaxCodes: row.additionalTaxCodes,
+        taxBreakdown: row.taxBreakdown,
+      });
+      purchaseOrderLinesByOrderId.set(row.purchaseOrderId, lines);
       addRequestNumber(row.purchaseOrderId, row.purchaseRequestRequestNumber);
       addRequestNumber(row.purchaseOrderId, row.directRequestNumber);
       addRequestedById(row.purchaseOrderId, row.purchaseRequestRequestedById);
@@ -6474,9 +6934,22 @@ export async function listPurchaseOrders(filters?: {
     const requestedByUsers = requestedByIds
       .map(id => requestedByUsersById.get(id))
       .filter((user): user is User => Boolean(user));
+    const totalAmount = summarizePurchaseOrderLines(
+      (purchaseOrderLinesByOrderId.get(row.purchaseOrder.id) ?? []).map(
+        item => ({
+          ...item,
+          pricesIncludeTax: row.purchaseOrder.pricesIncludeTax,
+        })
+      )
+    ).total;
+    const approvalHistory =
+      approvalHistoryByPurchaseOrderId.get(row.purchaseOrder.id) ?? [];
 
     return {
       ...row,
+      totalAmount,
+      hasApprovalHistory: approvalHistory.length > 0,
+      approvalHistory,
       originalRequestNumbers:
         requestNumbersByOrderId.get(row.purchaseOrder.id) ?? [],
       originalRequester: requestedByUsers[0] ?? null,
@@ -6821,6 +7294,10 @@ export async function getPurchaseOrderById(id: number) {
       taxBreakdown: item.taxBreakdown as any,
     }))
   );
+  const approvalHistory = await getProcurementApprovalHistory(
+    "purchase_order",
+    id
+  );
 
   return {
     ...rows[0],
@@ -6835,6 +7312,7 @@ export async function getPurchaseOrderById(id: number) {
     },
     items,
     summary,
+    approvalHistory,
     contractSummary: buildPurchaseOrderContractSummary(
       rows[0].purchaseOrder,
       invoiceCountMap.get(id) ?? 0
@@ -6847,9 +7325,379 @@ export async function getPurchaseOrderById(id: number) {
   };
 }
 
+export async function submitPurchaseOrderForApproval(params: {
+  id: number;
+  actor: ProcurementApprovalActor;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const purchaseOrder = await lockPurchaseOrderForUpdate(tx, params.id);
+    const items = await tx
+      .select()
+      .from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.purchaseOrderId, params.id));
+    await assertPersistedPurchaseOrderApprovalReadiness(
+      tx,
+      purchaseOrder,
+      items
+    );
+    const snapshot = summarizePersistedPurchaseOrder(purchaseOrder, items);
+    if (!snapshot.requiresApproval) {
+      throw new Error(
+        "La orden no supera el límite y puede emitirse sin aprobación"
+      );
+    }
+
+    const [updated] = await tx
+      .update(purchaseOrders)
+      .set({
+        status: "pendiente_aprobacion",
+        approvalStatus: "pendiente",
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(purchaseOrders.id, params.id),
+          eq(purchaseOrders.status, "borrador"),
+          isNull(purchaseOrders.approvalStatus)
+        )
+      )
+      .returning();
+    if (!updated) {
+      throw new Error(
+        "La orden debe estar en borrador y no enviada para solicitar aprobación"
+      );
+    }
+
+    await tx.insert(procurementApprovalHistory).values({
+      documentType: "purchase_order",
+      documentId: params.id,
+      action: "submitted",
+      previousStatus: null,
+      newStatus: "pendiente",
+      ...getApprovalActorSnapshot(params.actor),
+      comment: null,
+      amount: snapshot.amount,
+      currency: snapshot.currency,
+    });
+
+    return {
+      success: true,
+      status: updated.status,
+      approvalStatus: updated.approvalStatus,
+      totalAmount: Number(snapshot.amount),
+      currency: snapshot.currency,
+    };
+  });
+}
+
+export async function reviewPurchaseOrderApproval(params: {
+  id: number;
+  decision: "approve" | "reject";
+  comment?: string | null;
+  actor: ProcurementApprovalActor;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const comment = params.comment?.trim() || null;
+  if (params.decision === "reject" && (!comment || comment.length < 5)) {
+    throw new Error("El motivo de rechazo debe tener al menos 5 caracteres");
+  }
+
+  return db.transaction(async tx => {
+    const purchaseOrder = await lockPurchaseOrderForUpdate(tx, params.id);
+    const items = await tx
+      .select()
+      .from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.purchaseOrderId, params.id));
+    const snapshot = summarizePersistedPurchaseOrder(purchaseOrder, items);
+    if (params.decision === "approve") {
+      await assertPersistedPurchaseOrderApprovalReadiness(
+        tx,
+        purchaseOrder,
+        items
+      );
+      if (!snapshot.requiresApproval) {
+        throw new Error("La orden ya no supera el límite de aprobación");
+      }
+
+      const [submittedSnapshot] = await tx
+        .select()
+        .from(procurementApprovalHistory)
+        .where(
+          and(
+            eq(procurementApprovalHistory.documentType, "purchase_order"),
+            eq(procurementApprovalHistory.documentId, params.id),
+            eq(procurementApprovalHistory.action, "submitted")
+          )
+        )
+        .orderBy(
+          desc(procurementApprovalHistory.createdAt),
+          desc(procurementApprovalHistory.id)
+        )
+        .limit(1);
+      if (
+        !submittedSnapshot ||
+        submittedSnapshot.currency !== snapshot.currency ||
+        formatApprovalSnapshotAmount(submittedSnapshot.amount) !==
+          snapshot.amount
+      ) {
+        throw new Error(
+          "El monto o la moneda cambió después del envío; corrija y reenvíe la orden"
+        );
+      }
+    }
+
+    const nextApprovalStatus =
+      params.decision === "approve" ? "aprobada" : "rechazada";
+    const [updated] = await tx
+      .update(purchaseOrders)
+      .set({
+        status:
+          params.decision === "approve" ? "aprobada" : "rechazada",
+        approvalStatus: nextApprovalStatus,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(purchaseOrders.id, params.id),
+          eq(purchaseOrders.status, "pendiente_aprobacion"),
+          eq(purchaseOrders.approvalStatus, "pendiente")
+        )
+      )
+      .returning();
+    if (!updated) {
+      throw new Error(
+        "La orden ya no está pendiente o fue decidida por otro aprobador"
+      );
+    }
+
+    await tx.insert(procurementApprovalHistory).values({
+      documentType: "purchase_order",
+      documentId: params.id,
+      action: params.decision === "approve" ? "approved" : "rejected",
+      previousStatus: "pendiente",
+      newStatus: nextApprovalStatus,
+      ...getApprovalActorSnapshot(params.actor),
+      comment,
+      amount: snapshot.amount,
+      currency: snapshot.currency,
+    });
+
+    return {
+      success: true,
+      status: updated.status,
+      approvalStatus: updated.approvalStatus,
+      totalAmount: Number(snapshot.amount),
+      currency: snapshot.currency,
+    };
+  });
+}
+
+export async function reopenRejectedPurchaseOrder(params: {
+  id: number;
+  actor: ProcurementApprovalActor;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const [updated] = await tx
+      .update(purchaseOrders)
+      .set({
+        status: "borrador",
+        approvalStatus: null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(purchaseOrders.id, params.id),
+          eq(purchaseOrders.status, "rechazada"),
+          eq(purchaseOrders.approvalStatus, "rechazada")
+        )
+      )
+      .returning();
+    if (!updated) {
+      throw new Error("Solo se puede corregir una orden rechazada");
+    }
+
+    await tx.insert(procurementApprovalHistory).values({
+      documentType: "purchase_order",
+      documentId: params.id,
+      action: "reopened",
+      previousStatus: "rechazada",
+      newStatus: null,
+      ...getApprovalActorSnapshot(params.actor),
+      comment: null,
+      amount: null,
+      currency: null,
+    });
+
+    return {
+      success: true,
+      status: updated.status,
+      approvalStatus: updated.approvalStatus,
+    };
+  });
+}
+
+export async function issuePurchaseOrder(params: {
+  id: number;
+  actor: ProcurementApprovalActor;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const purchaseOrder = await lockPurchaseOrderForUpdate(tx, params.id);
+    const items = await tx
+      .select()
+      .from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.purchaseOrderId, params.id));
+    await assertPersistedPurchaseOrderApprovalReadiness(
+      tx,
+      purchaseOrder,
+      items
+    );
+    const snapshot = summarizePersistedPurchaseOrder(purchaseOrder, items);
+
+    if (
+      purchaseOrder.status === "borrador" &&
+      purchaseOrder.approvalStatus === null
+    ) {
+      if (snapshot.requiresApproval) {
+        throw new Error(
+          "La orden supera el límite y debe aprobarse antes de emitirse"
+        );
+      }
+
+      const [updated] = await tx
+        .update(purchaseOrders)
+        .set({
+          status: "emitida",
+          approvalStatus: "no_requiere",
+          emailStatus: "pendiente",
+          emailedAt: null,
+          emailError: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(purchaseOrders.id, params.id),
+            eq(purchaseOrders.status, "borrador"),
+            isNull(purchaseOrders.approvalStatus)
+          )
+        )
+        .returning();
+      if (!updated) {
+        throw new Error("La orden cambió mientras se intentaba emitir");
+      }
+
+      await tx.insert(procurementApprovalHistory).values({
+        documentType: "purchase_order",
+        documentId: params.id,
+        action: "issued_without_approval",
+        previousStatus: null,
+        newStatus: "no_requiere",
+        ...getApprovalActorSnapshot(params.actor),
+        comment: null,
+        amount: snapshot.amount,
+        currency: snapshot.currency,
+      });
+
+      return {
+        success: true,
+        status: updated.status,
+        approvalStatus: updated.approvalStatus,
+        totalAmount: Number(snapshot.amount),
+        currency: snapshot.currency,
+      };
+    }
+
+    if (
+      purchaseOrder.status === "aprobada" &&
+      purchaseOrder.approvalStatus === "aprobada"
+    ) {
+      const [approvedSnapshot] = await tx
+        .select()
+        .from(procurementApprovalHistory)
+        .where(
+          and(
+            eq(procurementApprovalHistory.documentType, "purchase_order"),
+            eq(procurementApprovalHistory.documentId, params.id),
+            eq(procurementApprovalHistory.action, "approved")
+          )
+        )
+        .orderBy(
+          desc(procurementApprovalHistory.createdAt),
+          desc(procurementApprovalHistory.id)
+        )
+        .limit(1);
+      if (
+        !approvedSnapshot ||
+        approvedSnapshot.currency !== snapshot.currency ||
+        formatApprovalSnapshotAmount(approvedSnapshot.amount) !==
+          snapshot.amount
+      ) {
+        throw new Error(
+          "El monto o la moneda no coincide con el snapshot aprobado"
+        );
+      }
+
+      const [updated] = await tx
+        .update(purchaseOrders)
+        .set({
+          status: "emitida",
+          emailStatus: "pendiente",
+          emailedAt: null,
+          emailError: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(purchaseOrders.id, params.id),
+            eq(purchaseOrders.status, "aprobada"),
+            eq(purchaseOrders.approvalStatus, "aprobada")
+          )
+        )
+        .returning();
+      if (!updated) {
+        throw new Error("La orden cambió mientras se intentaba emitir");
+      }
+
+      await tx.insert(procurementApprovalHistory).values({
+        documentType: "purchase_order",
+        documentId: params.id,
+        action: "issued",
+        previousStatus: "aprobada",
+        newStatus: "aprobada",
+        ...getApprovalActorSnapshot(params.actor),
+        comment: null,
+        amount: snapshot.amount,
+        currency: snapshot.currency,
+      });
+
+      return {
+        success: true,
+        status: updated.status,
+        approvalStatus: updated.approvalStatus,
+        totalAmount: Number(snapshot.amount),
+        currency: snapshot.currency,
+      };
+    }
+
+    throw new Error(
+      "La orden debe estar en borrador sin aprobación o aprobada para emitirse"
+    );
+  });
+}
+
 export async function updatePurchaseOrder(
   id: number,
-  data: Partial<InsertPurchaseOrder>
+  data: Partial<InsertPurchaseOrder>,
+  options?: { requireDraft?: boolean }
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -6889,24 +7737,187 @@ export async function updatePurchaseOrder(
     );
   }
 
-  await db
-    .update(purchaseOrders)
-    .set(nextData)
-    .where(eq(purchaseOrders.id, id));
+  if (options?.requireDraft) {
+    await db.transaction(async tx => {
+      const purchaseOrder = await lockPurchaseOrderForUpdate(tx, id);
+      assertDraftPurchaseOrderState(purchaseOrder);
+      const [updated] = await tx
+        .update(purchaseOrders)
+        .set(nextData)
+        .where(
+          and(
+            eq(purchaseOrders.id, id),
+            eq(purchaseOrders.status, "borrador"),
+            isNull(purchaseOrders.approvalStatus)
+          )
+        )
+        .returning({ id: purchaseOrders.id });
+      if (!updated) {
+        throw new Error(
+          "La orden cambió de estado y ya no puede modificarse"
+        );
+      }
+    });
+  } else {
+    await db
+      .update(purchaseOrders)
+      .set(nextData)
+      .where(eq(purchaseOrders.id, id));
+  }
   return { success: true };
+}
+
+export async function cancelPurchaseOrder(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const purchaseOrder = await lockPurchaseOrderForUpdate(tx, id);
+    if (
+      ![null, "no_requiere"].includes(purchaseOrder.approvalStatus) ||
+      [
+        "anulada",
+        "pendiente_aprobacion",
+        "aprobada",
+        "rechazada",
+        "recibida",
+      ].includes(purchaseOrder.status)
+    ) {
+      throw new Error(
+        "La orden de compra no permite esta operación en su estado actual"
+      );
+    }
+
+    const items = await tx
+      .select({ receivedQuantity: purchaseOrderItems.receivedQuantity })
+      .from(purchaseOrderItems)
+      .where(eq(purchaseOrderItems.purchaseOrderId, id));
+    if (items.some(item => Number(item.receivedQuantity ?? 0) > 0)) {
+      throw new Error(
+        "No se puede cancelar una orden que ya tiene recepciones registradas"
+      );
+    }
+
+    const approvalCondition =
+      purchaseOrder.approvalStatus === null
+        ? isNull(purchaseOrders.approvalStatus)
+        : eq(purchaseOrders.approvalStatus, purchaseOrder.approvalStatus);
+    const [updated] = await tx
+      .update(purchaseOrders)
+      .set({
+        status: "anulada",
+        emailStatus: "pendiente",
+        emailedAt: null,
+        emailError: "Orden anulada manualmente",
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(purchaseOrders.id, id),
+          eq(purchaseOrders.status, purchaseOrder.status),
+          approvalCondition
+        )
+      )
+      .returning({ id: purchaseOrders.id });
+    if (!updated) throw new Error("La orden cambió mientras se intentaba anular");
+
+    return { success: true };
+  });
 }
 
 export async function updatePurchaseOrderItem(
   id: number,
-  data: Partial<InsertPurchaseOrderItem>
+  data: Partial<InsertPurchaseOrderItem>,
+  options?: { requireDraft?: boolean }
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  await db
-    .update(purchaseOrderItems)
-    .set({ ...data, updatedAt: new Date() })
-    .where(eq(purchaseOrderItems.id, id));
+  if (options?.requireDraft) {
+    await db.transaction(async tx => {
+      const [item] = await tx
+        .select({ purchaseOrderId: purchaseOrderItems.purchaseOrderId })
+        .from(purchaseOrderItems)
+        .where(eq(purchaseOrderItems.id, id))
+        .limit(1);
+      if (!item) throw new Error("Item de OC no encontrado");
+
+      const purchaseOrder = await lockPurchaseOrderForUpdate(
+        tx,
+        item.purchaseOrderId
+      );
+      assertDraftPurchaseOrderState(purchaseOrder);
+      const [updated] = await tx
+        .update(purchaseOrderItems)
+        .set({ ...data, updatedAt: new Date() })
+        .where(
+          and(
+            eq(purchaseOrderItems.id, id),
+            eq(purchaseOrderItems.purchaseOrderId, item.purchaseOrderId)
+          )
+        )
+        .returning({ id: purchaseOrderItems.id });
+      if (!updated) throw new Error("Item de OC no encontrado");
+    });
+  } else {
+    await db
+      .update(purchaseOrderItems)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(purchaseOrderItems.id, id));
+  }
   return { success: true };
+}
+
+export async function updateDraftPurchaseRequest(params: {
+  id: number;
+  data: Partial<InsertPurchaseRequest>;
+  itemUpdates?: Array<{
+    id: number;
+    data: Partial<InsertPurchaseRequestItem>;
+  }>;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const [updatedRequest] = await tx
+      .update(purchaseRequests)
+      .set({ ...params.data, updatedAt: new Date() })
+      .where(
+        and(
+          eq(purchaseRequests.id, params.id),
+          eq(purchaseRequests.status, "pendiente"),
+          isNull(purchaseRequests.approvalStatus)
+        )
+      )
+      .returning({ id: purchaseRequests.id });
+
+    if (!updatedRequest) {
+      throw new Error(
+        "La solicitud cambió de estado y ya no puede modificarse"
+      );
+    }
+
+    for (const itemUpdate of params.itemUpdates ?? []) {
+      const [updatedItem] = await tx
+        .update(purchaseRequestItems)
+        .set({ ...itemUpdate.data, updatedAt: new Date() })
+        .where(
+          and(
+            eq(purchaseRequestItems.id, itemUpdate.id),
+            eq(purchaseRequestItems.purchaseRequestId, params.id)
+          )
+        )
+        .returning({ id: purchaseRequestItems.id });
+
+      if (!updatedItem) {
+        throw new Error(
+          "Uno de los ítems ya no pertenece a la solicitud de compra"
+        );
+      }
+    }
+
+    return { success: true };
+  });
 }
 
 export async function updatePurchaseOrderPricesIncludeTax(params: {
@@ -6918,17 +7929,11 @@ export async function updatePurchaseOrderPricesIncludeTax(params: {
   if (!db) throw new Error("DB not available");
 
   return db.transaction(async tx => {
-    const [purchaseOrder] = await tx
-      .select()
-      .from(purchaseOrders)
-      .where(eq(purchaseOrders.id, params.purchaseOrderId))
-      .limit(1);
-    if (!purchaseOrder) throw new Error("Orden de compra no encontrada");
-    if (purchaseOrder.status !== "borrador") {
-      throw new Error(
-        "Solo se puede cambiar el tipo de precio en una OC borrador"
-      );
-    }
+    const purchaseOrder = await lockPurchaseOrderForUpdate(
+      tx,
+      params.purchaseOrderId
+    );
+    assertDraftPurchaseOrderState(purchaseOrder);
 
     const items = await tx
       .select()
@@ -6989,7 +7994,13 @@ export async function updatePurchaseOrderPricesIncludeTax(params: {
         printedAt: null,
         updatedAt: new Date(),
       })
-      .where(eq(purchaseOrders.id, params.purchaseOrderId));
+      .where(
+        and(
+          eq(purchaseOrders.id, params.purchaseOrderId),
+          eq(purchaseOrders.status, "borrador"),
+          isNull(purchaseOrders.approvalStatus)
+        )
+      );
 
     await tx.insert(purchaseOrderAuditLogs).values({
       purchaseOrderId: params.purchaseOrderId,
@@ -7033,12 +8044,11 @@ export async function updatePurchaseOrderContractTerms(params: {
   if (!db) throw new Error("DB not available");
 
   return db.transaction(async tx => {
-    const [current] = await tx
-      .select()
-      .from(purchaseOrders)
-      .where(eq(purchaseOrders.id, params.purchaseOrderId))
-      .limit(1);
-    if (!current) throw new Error("Orden de compra no encontrada");
+    const current = await lockPurchaseOrderForUpdate(
+      tx,
+      params.purchaseOrderId
+    );
+    assertDraftPurchaseOrderState(current);
 
     const nextData: Partial<InsertPurchaseOrder> = {
       appliesContract: params.appliesContract,
@@ -7063,7 +8073,13 @@ export async function updatePurchaseOrderContractTerms(params: {
     await tx
       .update(purchaseOrders)
       .set(nextData)
-      .where(eq(purchaseOrders.id, params.purchaseOrderId));
+      .where(
+        and(
+          eq(purchaseOrders.id, params.purchaseOrderId),
+          eq(purchaseOrders.status, "borrador"),
+          isNull(purchaseOrders.approvalStatus)
+        )
+      );
 
     const auditFields: Array<keyof typeof nextData> = [
       "appliesContract",
@@ -7165,11 +8181,41 @@ export async function countPurchaseOrderItems(purchaseOrderId: number) {
   return result?.count ?? 0;
 }
 
-export async function deletePurchaseOrderItem(id: number) {
+export async function deletePurchaseOrderItem(
+  id: number,
+  options?: { requireDraft?: boolean }
+) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  await db.delete(purchaseOrderItems).where(eq(purchaseOrderItems.id, id));
+  if (options?.requireDraft) {
+    await db.transaction(async tx => {
+      const [item] = await tx
+        .select({ purchaseOrderId: purchaseOrderItems.purchaseOrderId })
+        .from(purchaseOrderItems)
+        .where(eq(purchaseOrderItems.id, id))
+        .limit(1);
+      if (!item) throw new Error("Item de OC no encontrado");
+
+      const purchaseOrder = await lockPurchaseOrderForUpdate(
+        tx,
+        item.purchaseOrderId
+      );
+      assertDraftPurchaseOrderState(purchaseOrder);
+      const [deleted] = await tx
+        .delete(purchaseOrderItems)
+        .where(
+          and(
+            eq(purchaseOrderItems.id, id),
+            eq(purchaseOrderItems.purchaseOrderId, item.purchaseOrderId)
+          )
+        )
+        .returning({ id: purchaseOrderItems.id });
+      if (!deleted) throw new Error("Item de OC no encontrado");
+    });
+  } else {
+    await db.delete(purchaseOrderItems).where(eq(purchaseOrderItems.id, id));
+  }
   return { success: true };
 }
 
@@ -7178,6 +8224,14 @@ export async function sendPurchaseOrderEmail(id: number) {
   if (!db) throw new Error("DB not available");
   const detail = await getPurchaseOrderById(id);
   if (!detail) throw new Error("Orden de compra no encontrada");
+  if (detail.purchaseOrder.approvalStatus === "aprobada") {
+    throw new Error(
+      "Una OC que pasó por aprobación no permite operaciones posteriores a la emisión"
+    );
+  }
+  if (!["emitida", "enviada"].includes(detail.purchaseOrder.status)) {
+    throw new Error("Solo se puede enviar por correo una orden ya emitida");
+  }
 
   const supplierEmail =
     detail.purchaseOrder.supplierEmail ?? detail.supplier?.email ?? null;
@@ -13585,6 +14639,89 @@ export async function generateSupplierReturnCreditNote(
 // ============================================================
 // ATTACHMENTS
 // ============================================================
+type ProcurementAttachmentEntityType =
+  | "purchase_request"
+  | "purchase_order";
+
+export class ProcurementAttachmentMutationError extends Error {
+  constructor(
+    public readonly reason: "not_found" | "locked",
+    message: string
+  ) {
+    super(message);
+    this.name = "ProcurementAttachmentMutationError";
+  }
+}
+
+const LOCKED_PURCHASE_ORDER_ATTACHMENT_STATUSES = new Set<string>([
+  "pendiente_aprobacion",
+  "aprobada",
+  "rechazada",
+  "recibida",
+  "anulada",
+]);
+
+async function lockMutableProcurementAttachmentDocument(
+  tx: any,
+  entityType: ProcurementAttachmentEntityType,
+  entityId: number
+) {
+  if (entityType === "purchase_request") {
+    const [purchaseRequest] = await tx
+      .select({
+        id: purchaseRequests.id,
+        status: purchaseRequests.status,
+        approvalStatus: purchaseRequests.approvalStatus,
+      })
+      .from(purchaseRequests)
+      .where(eq(purchaseRequests.id, entityId))
+      .for("update");
+
+    if (!purchaseRequest) {
+      throw new ProcurementAttachmentMutationError(
+        "not_found",
+        "Solicitud de compra no encontrada"
+      );
+    }
+    if (
+      purchaseRequest.status !== "pendiente" ||
+      purchaseRequest.approvalStatus !== null
+    ) {
+      throw new ProcurementAttachmentMutationError(
+        "locked",
+        "La solicitud de compra ya no permite modificar adjuntos"
+      );
+    }
+    return;
+  }
+
+  const [purchaseOrder] = await tx
+    .select({
+      id: purchaseOrders.id,
+      status: purchaseOrders.status,
+      approvalStatus: purchaseOrders.approvalStatus,
+    })
+    .from(purchaseOrders)
+    .where(eq(purchaseOrders.id, entityId))
+    .for("update");
+
+  if (!purchaseOrder) {
+    throw new ProcurementAttachmentMutationError(
+      "not_found",
+      "Orden de compra no encontrada"
+    );
+  }
+  if (
+    purchaseOrder.approvalStatus === "aprobada" ||
+    LOCKED_PURCHASE_ORDER_ATTACHMENT_STATUSES.has(purchaseOrder.status)
+  ) {
+    throw new ProcurementAttachmentMutationError(
+      "locked",
+      "La orden ya no permite modificar adjuntos"
+    );
+  }
+}
+
 export async function createAttachment(data: InsertAttachment) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -13593,6 +14730,27 @@ export async function createAttachment(data: InsertAttachment) {
     .values(data)
     .returning({ id: attachments.id });
   return { id: attachment.id };
+}
+
+export async function createProcurementDocumentAttachmentIfMutable(
+  data: InsertAttachment & { entityType: ProcurementAttachmentEntityType }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    await lockMutableProcurementAttachmentDocument(
+      tx,
+      data.entityType,
+      data.entityId
+    );
+    const [attachment] = await tx
+      .insert(attachments)
+      .values(data)
+      .returning({ id: attachments.id });
+    if (!attachment) throw new Error("No se pudo registrar el adjunto");
+    return { id: attachment.id };
+  });
 }
 
 export async function getAttachmentsByEntity(
@@ -13629,6 +14787,39 @@ export async function deleteAttachment(id: number) {
   if (!db) throw new Error("DB not available");
   await db.delete(attachments).where(eq(attachments.id, id));
   return { success: true };
+}
+
+export async function deleteProcurementDocumentAttachmentIfMutable(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const [attachment] = await tx
+      .select()
+      .from(attachments)
+      .where(eq(attachments.id, id))
+      .for("update");
+    if (!attachment) {
+      throw new ProcurementAttachmentMutationError(
+        "not_found",
+        "Adjunto no encontrado"
+      );
+    }
+    if (
+      attachment.entityType !== "purchase_request" &&
+      attachment.entityType !== "purchase_order"
+    ) {
+      throw new Error("El adjunto no pertenece a un documento de compras");
+    }
+
+    await lockMutableProcurementAttachmentDocument(
+      tx,
+      attachment.entityType,
+      attachment.entityId
+    );
+    await tx.delete(attachments).where(eq(attachments.id, id));
+    return { success: true as const, attachment };
+  });
 }
 
 // ============================================================
@@ -13704,7 +14895,8 @@ export async function notifyExpiringPurchaseOrderContracts(now = new Date()) {
       and(
         eq(purchaseOrders.appliesContract, true),
         sql`${purchaseOrders.contractExpiryNotifiedAt} IS NULL`,
-        sql`${purchaseOrders.status} <> 'anulada'`
+        sql`${purchaseOrders.approvalStatus} IS DISTINCT FROM 'aprobada'`,
+        sql`${purchaseOrders.status} IN ('emitida', 'enviada', 'parcialmente_recibida', 'recibida')`
       )
     );
 
@@ -17811,6 +19003,55 @@ function getFixedAssetDetailFromArticle(article: {
   };
 }
 
+async function assertFixedAssetPurchaseOrderUnlocked(
+  tx: any,
+  params: {
+    purchaseOrderItemId?: number | null;
+    fixedAssetArticleId?: number | null;
+  }
+) {
+  const itemCondition = params.purchaseOrderItemId
+    ? eq(purchaseOrderItems.id, params.purchaseOrderItemId)
+    : params.fixedAssetArticleId
+      ? eq(purchaseOrderItems.fixedAssetArticleId, params.fixedAssetArticleId)
+      : null;
+
+  if (!itemCondition) return;
+
+  const linkedPurchaseOrders = await tx
+    .select({
+      status: purchaseOrders.status,
+      approvalStatus: purchaseOrders.approvalStatus,
+    })
+    .from(purchaseOrderItems)
+    .innerJoin(
+      purchaseOrders,
+      eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id)
+    )
+    .where(itemCondition)
+    .for("update");
+
+  if (
+    linkedPurchaseOrders.some(
+      (purchaseOrder: { status: string; approvalStatus: string | null }) =>
+        purchaseOrder.approvalStatus === "pendiente" ||
+        purchaseOrder.approvalStatus === "aprobada" ||
+        purchaseOrder.approvalStatus === "rechazada" ||
+        [
+          "pendiente_aprobacion",
+          "aprobada",
+          "rechazada",
+          "recibida",
+          "anulada",
+        ].includes(purchaseOrder.status)
+    )
+  ) {
+    throw new Error(
+      "La OC no permite modificar activos fijos en su estado actual"
+    );
+  }
+}
+
 export async function savePurchaseOrderFixedAssetDraftLine(params: {
   purchaseOrderItemId: number;
   isLeasing?: boolean;
@@ -17841,6 +19082,10 @@ export async function savePurchaseOrderFixedAssetDraftLine(params: {
     if (!itemDetail) {
       throw new Error("Línea de OC no encontrada");
     }
+
+    await assertFixedAssetPurchaseOrderUnlocked(tx, {
+      purchaseOrderItemId: itemDetail.item.id,
+    });
 
     const normalizedDetails = normalizeFixedAssetDetails(
       params.assetDetails,
@@ -18030,6 +19275,11 @@ export async function resolveFixedAssetArticleCode(params: {
       throw new Error("Este activo fijo ya fue resuelto");
     }
 
+    await assertFixedAssetPurchaseOrderUnlocked(tx, {
+      purchaseOrderItemId: article.fixedAssetSourcePurchaseOrderItemId,
+      fixedAssetArticleId: article.id,
+    });
+
     const [duplicate] = await tx
       .select({ id: sapCatalog.id })
       .from(sapCatalog)
@@ -18150,6 +19400,11 @@ export async function updateFixedAssetArticleDetails(params: {
     if (article.tipoArticulo !== 3) {
       throw new Error("El artículo no es un activo fijo");
     }
+
+    await assertFixedAssetPurchaseOrderUnlocked(tx, {
+      purchaseOrderItemId: article.fixedAssetSourcePurchaseOrderItemId,
+      fixedAssetArticleId: article.id,
+    });
 
     const [updatedArticle] = await tx
       .update(sapCatalog)

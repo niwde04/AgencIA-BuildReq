@@ -1,4 +1,8 @@
-import type { BuildReqRole } from "./db";
+import {
+  isProcurementApproverRole,
+  isProjectScopedRole,
+  type BuildReqRole,
+} from "@shared/buildreq-roles";
 
 export type ProjectScopedUser = {
   role: string;
@@ -7,15 +11,8 @@ export type ProjectScopedUser = {
   assignedProjectIds?: number[] | null;
 };
 
-const PROJECT_ASSIGNABLE_ROLES = new Set([
-  "ingeniero_residente",
-  "administrador_proyecto",
-  "bodeguero_proyecto",
-  "superintendente",
-]);
-
 export function isProjectAssignableRole(role?: string | null) {
-  return Boolean(role && PROJECT_ASSIGNABLE_ROLES.has(role));
+  return isProjectScopedRole(role);
 }
 
 export function getAssignedProjectIds(user?: ProjectScopedUser | null) {
@@ -38,6 +35,7 @@ export function getAssignedProjectIds(user?: ProjectScopedUser | null) {
 
 export function hasAllProjectAccess(user?: ProjectScopedUser | null) {
   if (!user) return false;
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   if (user.role === "admin") return true;
   if (user.buildreqRole === "administrador_proyecto") return false;
   return !isProjectAssignableRole(user.buildreqRole);

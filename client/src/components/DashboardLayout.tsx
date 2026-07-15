@@ -57,6 +57,10 @@ import Home from "@/pages/Home";
 import UnassignedRoleScreen from "./UnassignedRoleScreen";
 import { ChangePasswordDialog } from "./ChangePasswordDialog";
 import { UserProfileDialog } from "./UserProfileDialog";
+import {
+  BUILDREQ_ROLE_LABELS,
+  isProcurementApproverRole,
+} from "@shared/buildreq-roles";
 
 type MenuItem = {
   icon: any;
@@ -84,6 +88,13 @@ const MENU_COUNT_KEYS: Partial<Record<string, SidebarCountKey>> = {
   "/activos-fijos-pendientes": "fixedAssetsPending",
 };
 const MENU_ALWAYS_SHOW_COUNT_PATHS = new Set(["/solicitudes"]);
+const PROCUREMENT_APPROVER_MENU_PATHS = new Set([
+  "/",
+  "/solicitudes",
+  "/articulos",
+  "/solicitudes-compra",
+  "/ordenes-compra",
+]);
 
 const allMenuItems: MenuItem[] = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
@@ -123,6 +134,8 @@ const allMenuItems: MenuItem[] = [
       "bodeguero_proyecto",
       "ingeniero_residente",
       "superintendente",
+      "superintendente_aprobador",
+      "gerente",
       "contable",
       "admin",
     ],
@@ -184,6 +197,8 @@ const allMenuItems: MenuItem[] = [
       "administracion_central",
       "administrador_proyecto",
       "bodeguero_proyecto",
+      "superintendente_aprobador",
+      "gerente",
       "admin",
     ],
   },
@@ -196,6 +211,8 @@ const allMenuItems: MenuItem[] = [
       "administracion_central",
       "administrador_proyecto",
       "bodeguero_proyecto",
+      "superintendente_aprobador",
+      "gerente",
       "contable",
       "admin",
     ],
@@ -425,6 +442,9 @@ function DashboardLayoutContent({
           item.path === "/articulos"
         );
       }
+      if (isProcurementApproverRole(userRole)) {
+        return PROCUREMENT_APPROVER_MENU_PATHS.has(item.path);
+      }
       if (userRole === "contable") {
         return (
           item.path === "/articulos" ||
@@ -468,6 +488,17 @@ function DashboardLayoutContent({
     /^\/solicitudes\/\d+$/.test(location);
   const shouldRedirectSuperintendent =
     userRole === "superintendente" && !isSuperintendentAllowedPath;
+  const isProcurementApproverAllowedPath =
+    location === "/" ||
+    location === "/articulos" ||
+    location === "/solicitudes" ||
+    /^\/solicitudes\/\d+$/.test(location) ||
+    location === "/solicitudes-compra" ||
+    location === "/ordenes-compra" ||
+    location === "/notificaciones";
+  const shouldRedirectProcurementApprover =
+    isProcurementApproverRole(userRole) &&
+    !isProcurementApproverAllowedPath;
   const shouldRedirectUserManagement =
     location.startsWith("/usuarios") &&
     !isAdmin &&
@@ -488,6 +519,12 @@ function DashboardLayoutContent({
       setLocation(location.startsWith("/solicitudes") ? "/solicitudes" : "/");
     }
   }, [location, setLocation, shouldRedirectSuperintendent]);
+
+  useEffect(() => {
+    if (shouldRedirectProcurementApprover) {
+      setLocation(location.startsWith("/solicitudes") ? "/solicitudes" : "/");
+    }
+  }, [location, setLocation, shouldRedirectProcurementApprover]);
 
   useEffect(() => {
     if (shouldRedirectUserManagement) {
@@ -521,19 +558,10 @@ function DashboardLayoutContent({
     };
   }, [isResizing, setSidebarWidth]);
 
-  const roleLabels: Record<string, string> = {
-    ingeniero_residente: "Requiriente",
-    jefe_bodega_central: "Bodega Central",
-    administracion_central: "Administración Central",
-    administrador_proyecto: "Administración Proyecto",
-    bodeguero_proyecto: "Bodega Proyecto",
-    superintendente: "Superintendente",
-    contable: "Contable",
-  };
-
   if (
     shouldRedirectContable ||
     shouldRedirectSuperintendent ||
+    shouldRedirectProcurementApprover ||
     shouldRedirectUserManagement
   ) {
     return null;
@@ -702,7 +730,7 @@ function DashboardLayoutContent({
                       {user?.name || "—"}
                     </p>
                     <p className="text-xs text-muted-foreground truncate mt-1">
-                      {roleLabels[userRole] || (user?.role === "admin" ? "Administrador" : "Sin rol asignado")}
+                      {BUILDREQ_ROLE_LABELS[userRole] || (user?.role === "admin" ? "Administrador" : "Sin rol asignado")}
                     </p>
                   </div>
                 </button>

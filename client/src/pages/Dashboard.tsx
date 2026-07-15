@@ -7,8 +7,12 @@ import {
   RotateCcw,
   AlertCircle,
   ArrowRight,
+  FileCheck2,
+  ShoppingCart,
 } from "lucide-react";
 import { useLocation } from "wouter";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { isProcurementApproverRole } from "@shared/buildreq-roles";
 import {
   BarChart,
   Bar,
@@ -66,7 +70,15 @@ const FLOW_LABELS: Record<string, string> = {
 const FLOW_COLORS = ["#dc2626", "#991b1b", "#ef4444", "#b91c1c"];
 
 export default function Dashboard() {
+  const { user } = useAuth();
   const { data: stats, isLoading } = trpc.dashboard.stats.useQuery();
+  const isProcurementApprover = isProcurementApproverRole(
+    (user as any)?.buildreqRole
+  );
+  const { data: approvalCounts } = trpc.dashboard.sidebarCounts.useQuery(
+    undefined,
+    { enabled: isProcurementApprover }
+  );
   const [, setLocation] = useLocation();
 
   if (isLoading) {
@@ -117,6 +129,48 @@ export default function Dashboard() {
         <h1>Dashboard</h1>
         <div className="w-8 h-8 bg-primary" />
       </div>
+
+      {isProcurementApprover ? (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Card
+            className="cursor-pointer border-amber-200 transition-colors hover:border-amber-400"
+            onClick={() => setLocation("/solicitudes-compra")}
+          >
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    SC pendientes de aprobación
+                  </p>
+                  <p className="mt-1 text-3xl font-bold">
+                    {approvalCounts?.purchaseRequestsPending ?? 0}
+                  </p>
+                </div>
+                <FileCheck2 className="h-8 w-8 text-amber-500/70" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card
+            className="cursor-pointer border-amber-200 transition-colors hover:border-amber-400"
+            onClick={() => setLocation("/ordenes-compra")}
+          >
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    OC pendientes de aprobación
+                  </p>
+                  <p className="mt-1 text-3xl font-bold">
+                    {approvalCounts?.purchaseOrdersEmitted ?? 0}
+                  </p>
+                </div>
+                <ShoppingCart className="h-8 w-8 text-amber-500/70" />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

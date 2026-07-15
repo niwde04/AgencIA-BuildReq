@@ -32,6 +32,8 @@ export const buildreqRoleEnum = pgEnum("buildreq_role", [
   "administrador_proyecto",
   "bodeguero_proyecto",
   "superintendente",
+  "superintendente_aprobador",
+  "gerente",
   "contable",
 ]);
 export const projectStatusEnum = pgEnum("project_status", [
@@ -156,6 +158,9 @@ export const contractPaymentFrequencyEnum = pgEnum(
 );
 export const purchaseOrderStatusEnum = pgEnum("purchase_order_status", [
   "borrador",
+  "pendiente_aprobacion",
+  "aprobada",
+  "rechazada",
   "emitida",
   "enviada",
   "parcialmente_recibida",
@@ -587,6 +592,7 @@ export const purchaseRequests = pgTable(
     createdById: integer("createdById").notNull(),
     purchaseType: purchaseTypeEnum("purchaseType").notNull(),
     status: purchaseRequestStatusEnum("status").default("pendiente").notNull(),
+    approvalStatus: approvalStatusEnum("approvalStatus"),
     neededBy: timestamp("neededBy"),
     sapDocumentNumber: varchar("sapDocumentNumber", { length: 64 }),
     printDestination: varchar("printDestination", { length: 500 }),
@@ -696,6 +702,7 @@ export const purchaseOrders = pgTable(
     salesAdvisorPhone: varchar("salesAdvisorPhone", { length: 80 }),
     salesAdvisorEmail: varchar("salesAdvisorEmail", { length: 320 }),
     status: purchaseOrderStatusEnum("status").default("borrador").notNull(),
+    approvalStatus: approvalStatusEnum("approvalStatus"),
     neededBy: timestamp("neededBy"),
     sapDocumentNumber: varchar("sapDocumentNumber", { length: 64 }),
     notes: text("notes"),
@@ -747,6 +754,51 @@ export const purchaseOrders = pgTable(
 
 export type PurchaseOrder = typeof purchaseOrders.$inferSelect;
 export type InsertPurchaseOrder = typeof purchaseOrders.$inferInsert;
+
+// ============================================================
+// PROCUREMENT APPROVAL HISTORY - Append-only SC/OC decisions
+// ============================================================
+export const procurementApprovalHistory = pgTable(
+  "procurementApprovalHistory",
+  {
+    id: serial("id").primaryKey(),
+    documentType: varchar("documentType", { length: 32 })
+      .$type<"purchase_request" | "purchase_order">()
+      .notNull(),
+    documentId: integer("documentId").notNull(),
+    action: varchar("action", { length: 50 }).notNull(),
+    previousStatus: approvalStatusEnum("previousStatus"),
+    newStatus: approvalStatusEnum("newStatus"),
+    actorUserId: integer("actorUserId").notNull(),
+    actorName: varchar("actorName", { length: 255 }).notNull(),
+    actorRole: varchar("actorRole", { length: 80 }).notNull(),
+    comment: text("comment"),
+    amount: decimal("amount", { precision: 18, scale: 2 }),
+    currency: varchar("currency", { length: 3 }).$type<PurchaseCurrency>(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => ({
+    documentDateIdx: index("proc_approval_document_date_idx").on(
+      table.documentType,
+      table.documentId,
+      table.createdAt
+    ),
+    actorIdx: index("proc_approval_actor_idx").on(table.actorUserId),
+    documentTypeCheck: check(
+      "proc_approval_document_type_check",
+      sql`${table.documentType} in ('purchase_request', 'purchase_order')`
+    ),
+    currencyCheck: check(
+      "proc_approval_currency_check",
+      sql`${table.currency} is null or ${table.currency} in ('HNL', 'USD')`
+    ),
+  })
+);
+
+export type ProcurementApprovalHistory =
+  typeof procurementApprovalHistory.$inferSelect;
+export type InsertProcurementApprovalHistory =
+  typeof procurementApprovalHistory.$inferInsert;
 
 export const purchaseOrderAuditLogs = pgTable(
   "purchaseOrderAuditLogs",

@@ -20,6 +20,7 @@ import {
   getNeededByDate,
   PURCHASE_URGENCY_LABELS,
 } from "@shared/material-requests";
+import { isSuperintendentFamilyRole } from "@shared/buildreq-roles";
 
 const STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
@@ -123,7 +124,7 @@ export default function Solicitudes() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
   const userRole = (user as any)?.buildreqRole || "";
-  const isSuperintendent = userRole === "superintendente";
+  const isSuperintendent = isSuperintendentFamilyRole(userRole);
   const canCreateRequest = !isSuperintendent;
 
   const { data: requests, isLoading, error } = trpc.materialRequests.list.useQuery(

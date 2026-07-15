@@ -13,6 +13,7 @@ import { trpc } from "@/lib/trpc";
 import { KeyRound, Loader2, UserRound } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { getBuildReqRoleLabel } from "@shared/buildreq-roles";
 
 type ProfileUser = {
   id: number;
@@ -30,16 +31,6 @@ type UserProfileDialogProps = {
   onOpenChange: (open: boolean) => void;
   user: ProfileUser | null | undefined;
   onOpenPassword: () => void;
-};
-
-const roleLabels: Record<string, string> = {
-  ingeniero_residente: "Requiriente",
-  jefe_bodega_central: "Bodega Central",
-  administracion_central: "Administración Central",
-  administrador_proyecto: "Administración Proyecto",
-  bodeguero_proyecto: "Bodega Proyecto",
-  superintendente: "Superintendente",
-  contable: "Contable",
 };
 
 export function UserProfileDialog({
@@ -74,9 +65,7 @@ export function UserProfileDialog({
   });
 
   const systemRoleLabel = user?.role === "admin" ? "Administrador" : "Usuario";
-  const buildReqRoleLabel = user?.buildreqRole
-    ? roleLabels[user.buildreqRole] ?? user.buildreqRole
-    : "Sin rol asignado";
+  const buildReqRoleLabel = getBuildReqRoleLabel(user?.buildreqRole);
   const projectLabel = useMemo(() => {
     const assignedProjectIds =
       Array.isArray(user?.assignedProjectIds) && user.assignedProjectIds.length > 0
@@ -86,12 +75,6 @@ export function UserProfileDialog({
           : [];
     const assignedProjects = user?.assignedProjects ?? [];
 
-    if (
-      user?.buildreqRole === "administrador_proyecto" &&
-      assignedProjectIds.length === 0
-    ) {
-      return "Todos los proyectos";
-    }
     if (assignedProjects.length > 0) {
       return assignedProjects
         .map((project) => `${project.code} - ${project.name}`)

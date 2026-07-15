@@ -3,21 +3,15 @@ import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { nanoid } from "nanoid";
 import { TRPCError } from "@trpc/server";
+import {
+  BUILDREQ_ROLE_CODES,
+  BUILDREQ_ROLE_LABELS,
+  PROJECT_REQUIRED_ROLES,
+  isProcurementApproverRole,
+  isProjectScopedRole,
+} from "@shared/buildreq-roles";
 
-const buildreqRoleSchema = z.enum([
-  "ingeniero_residente",
-  "jefe_bodega_central",
-  "administracion_central",
-  "administrador_proyecto",
-  "bodeguero_proyecto",
-  "superintendente",
-  "contable",
-]);
-const projectRequiredRoles = new Set([
-  "ingeniero_residente",
-  "bodeguero_proyecto",
-  "superintendente",
-]);
+const buildreqRoleSchema = z.enum(BUILDREQ_ROLE_CODES);
 
 function normalizeAssignedProjectIds(
   buildreqRole: z.infer<typeof buildreqRoleSchema>,
@@ -26,10 +20,7 @@ function normalizeAssignedProjectIds(
   const projectIds = Array.from(
     new Set((assignedProjectIds ?? []).filter(projectId => projectId > 0))
   );
-  if (buildreqRole === "administrador_proyecto") {
-    return projectIds;
-  }
-  if (projectRequiredRoles.has(buildreqRole)) {
+  if (isProjectScopedRole(buildreqRole)) {
     return projectIds;
   }
   return [];
@@ -45,9 +36,19 @@ function resolveAssignedProjectIdsInput(input: {
   return input.assignedProjectId ? [input.assignedProjectId] : [];
 }
 
+function assertCanManageInvitations(user: { buildreqRole?: string | null }) {
+  if (isProcurementApproverRole(user.buildreqRole)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para gestionar invitaciones.",
+    });
+  }
+}
+
 export const invitationsRouter = router({
   /** List all invitations (admin only) */
-  list: adminProcedure.query(async () => {
+  list: adminProcedure.query(async ({ ctx }) => {
+    assertCanManageInvitations(ctx.user);
     return db.listInvitations();
   }),
 
@@ -64,12 +65,13 @@ export const invitationsRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
+      assertCanManageInvitations(ctx.user);
       const assignedProjectIds = normalizeAssignedProjectIds(
         input.buildreqRole,
         resolveAssignedProjectIdsInput(input)
       );
       if (
-        projectRequiredRoles.has(input.buildreqRole) &&
+        PROJECT_REQUIRED_ROLES.has(input.buildreqRole) &&
         assignedProjectIds.length === 0
       ) {
         throw new TRPCError({
@@ -95,16 +97,8 @@ export const invitationsRouter = router({
       });
 
       // Build the role label for the email
-      const roleLabels: Record<string, string> = {
-        ingeniero_residente: "Requiriente",
-        jefe_bodega_central: "Bodega Central",
-        administracion_central: "Administración Central",
-        administrador_proyecto: "Administración Proyecto",
-        bodeguero_proyecto: "Bodega Proyecto",
-        superintendente: "Superintendente",
-        contable: "Contable",
-      };
-      const roleLabel = roleLabels[input.buildreqRole] || input.buildreqRole;
+      const roleLabel =
+        BUILDREQ_ROLE_LABELS[input.buildreqRole] || input.buildreqRole;
 
       // Get project name if assigned
       let projectInfo = "";
@@ -119,8 +113,6 @@ export const invitationsRouter = router({
             .map(project => `${project!.code} - ${project!.name}`)
             .join(", ")}`;
         }
-      } else if (input.buildreqRole === "administrador_proyecto") {
-        projectInfo = "\nProyectos asignados: Todos los proyectos";
       }
 
       // Return email data for the frontend to trigger via Gmail MCP or show link
@@ -140,7 +132,8 @@ export const invitationsRouter = router({
   /** Cancel a pending invitation (admin only) */
   cancel: adminProcedure
     .input(z.object({ invitationId: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      assertCanManageInvitations(ctx.user);
       return db.cancelInvitation(input.invitationId);
     }),
 
@@ -152,7 +145,8 @@ export const invitationsRouter = router({
         origin: z.string(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      assertCanManageInvitations(ctx.user);
       const invitationsList = await db.listInvitations();
       const found = invitationsList.find(
         (i) => i.invitation.id === input.invitationId
@@ -160,21 +154,15 @@ export const invitationsRouter = router({
       if (!found) throw new Error("Invitación no encontrada");
 
       const inv = found.invitation;
-      const roleLabels: Record<string, string> = {
-        ingeniero_residente: "Requiriente",
-        jefe_bodega_central: "Bodega Central",
-        administracion_central: "Administración Central",
-        administrador_proyecto: "Administración Proyecto",
-        bodeguero_proyecto: "Bodega Proyecto",
-        superintendente: "Superintendente",
-        contable: "Contable",
-      };
-      const roleLabel = roleLabels[inv.buildreqRole] || inv.buildreqRole;
-      const projectInfo = found.project
-        ? `\nProyecto asignado: ${found.project.code} - ${found.project.name}`
-        : inv.buildreqRole === "administrador_proyecto"
-          ? "\nProyecto asignado: Todos los proyectos"
-        : "";
+      const roleLabel =
+        BUILDREQ_ROLE_LABELS[inv.buildreqRole] || inv.buildreqRole;
+      const assignedProjects = found.assignedProjects ?? [];
+      const projectInfo =
+        assignedProjects.length > 0
+          ? `\nProyectos asignados: ${assignedProjects
+              .map(project => `${project.code} - ${project.name}`)
+              .join(", ")}`
+          : "";
 
       return {
         emailData: {

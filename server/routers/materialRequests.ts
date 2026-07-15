@@ -11,6 +11,11 @@ import {
   STANDARD_PURCHASE_LEAD_DAYS,
 } from "@shared/material-requests";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
+import {
+  isProcurementApproverRole,
+  isProjectScopedRole,
+  isSuperintendentFamilyRole,
+} from "@shared/buildreq-roles";
 
 const requestItemSchema = z.object({
   itemName: z.string().max(500).optional(),
@@ -208,6 +213,9 @@ function canAccessRequest(
   },
   request: { requestedById: number; projectId: number }
 ) {
+  if (isProcurementApproverRole(user.buildreqRole)) {
+    return canAccessProject(user, request.projectId);
+  }
   if (user.role === "admin") return true;
   if (user.buildreqRole === "ingeniero_residente") {
     return request.requestedById === user.id;
@@ -218,7 +226,7 @@ function canAccessRequest(
   if (user.buildreqRole === "bodeguero_proyecto") {
     return canAccessProject(user, request.projectId);
   }
-  if (user.buildreqRole === "superintendente") {
+  if (isSuperintendentFamilyRole(user.buildreqRole)) {
     return canAccessProject(user, request.projectId);
   }
   return true;
@@ -237,7 +245,7 @@ function hideWarehouseStockQuantities<T extends { items: any[] }>(detail: T): T 
 }
 
 function assertNotSuperintendentReadOnly(user: { buildreqRole?: string | null }) {
-  if (user.buildreqRole === "superintendente") {
+  if (isSuperintendentFamilyRole(user.buildreqRole)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "El Superintendente solo puede consultar requisiciones",
@@ -254,13 +262,10 @@ function assertProjectScopedCreation(
   },
   projectId: number
 ) {
-  if (user.role === "admin") return;
-  if (
-    user.buildreqRole !== "ingeniero_residente" &&
-    user.buildreqRole !== "administrador_proyecto" &&
-    user.buildreqRole !== "bodeguero_proyecto" &&
-    user.buildreqRole !== "superintendente"
-  ) {
+  if (user.role === "admin" && !isProcurementApproverRole(user.buildreqRole)) {
+    return;
+  }
+  if (!isProjectScopedRole(user.buildreqRole)) {
     return;
   }
   if (!canAccessProject(user, projectId)) {
@@ -273,6 +278,7 @@ function assertProjectScopedCreation(
 
 async function resolveMaterialRequestTarget(input: {
   projectId: number;
+  itemName?: string | null;
   targetType?: "subproyecto" | "activo_fijo" | null;
   subProjectId?: number | null;
   fixedAssetSapItemCode?: string | null;
@@ -315,10 +321,13 @@ async function resolveMaterialRequestTarget(input: {
   }
 
   const fixedAssetSapItemCode = input.fixedAssetSapItemCode?.trim();
+  const itemLabel = input.itemName?.trim()
+    ? ` para ${input.itemName.trim()}`
+    : "";
   if (!fixedAssetSapItemCode) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "Seleccione un activo fijo válido",
+      message: `Seleccione un activo fijo válido${itemLabel}; no hay código de activo fijo destino guardado`,
     });
   }
 
@@ -329,8 +338,7 @@ async function resolveMaterialRequestTarget(input: {
   if (!fixedAsset) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message:
-        "El activo fijo seleccionado no existe, está inactivo, no es activo fijo o no pertenece al proyecto",
+      message: `El activo fijo destino ${fixedAssetSapItemCode}${itemLabel} no existe, está inactivo, no es activo fijo o no pertenece al proyecto ${input.projectId}`,
     });
   }
 
@@ -351,6 +359,7 @@ async function resolveRequestItemTargets(
   for (const item of items) {
     const targetData = await resolveMaterialRequestTarget({
       projectId,
+      itemName: item.itemName,
       targetType: item.targetType,
       subProjectId: item.subProjectId,
       fixedAssetSapItemCode: item.fixedAssetSapItemCode,
@@ -558,7 +567,7 @@ export const materialRequestsRouter = router({
           await db.listMaterialRequests(applyProjectScope(input ?? {}, user))
         );
       }
-      if (user.buildreqRole === "superintendente") {
+      if (isSuperintendentFamilyRole(user.buildreqRole)) {
         return syncVisibleRows(
           await db.listMaterialRequests(applyProjectScope(input ?? {}, user))
         );

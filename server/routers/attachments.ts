@@ -5,6 +5,12 @@ import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { storageDelete, storageGet, storagePut } from "../storage";
 import { canAccessProject } from "../projectAccess";
+import {
+  isProcurementApproverRole,
+  isProjectScopedRole,
+  isSuperintendentFamilyRole,
+} from "@shared/buildreq-roles";
+import { purchaseOrderRequiresApproval } from "@shared/procurement-approvals";
 
 const PDF_MAX_BYTES = 10 * 1000 * 1000;
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
@@ -69,6 +75,24 @@ function isDocumentAttachmentEntityType(
   entityType: AttachmentEntityType
 ): entityType is DocumentAttachmentEntityType {
   return DOCUMENT_ATTACHMENT_ENTITY_TYPES.has(entityType);
+}
+
+function isProcurementDocumentAttachmentEntityType(
+  entityType: AttachmentEntityType
+): entityType is "purchase_request" | "purchase_order" {
+  return (
+    entityType === "purchase_request" || entityType === "purchase_order"
+  );
+}
+
+function throwProcurementAttachmentMutationError(error: unknown): never {
+  if (error instanceof db.ProcurementAttachmentMutationError) {
+    throw new TRPCError({
+      code: error.reason === "not_found" ? "NOT_FOUND" : "BAD_REQUEST",
+      message: error.message,
+    });
+  }
+  throw error;
 }
 
 function normalizeMimeType(value: string) {
@@ -210,14 +234,10 @@ function assertProjectScopedAccess(
   projectId: number,
   message: string
 ) {
-  if (user.role === "admin") return;
   if (
-    user.buildreqRole !== "administrador_proyecto" &&
-    user.buildreqRole !== "bodeguero_proyecto"
+    isProjectScopedRole(user.buildreqRole) &&
+    !canAccessProject(user, projectId)
   ) {
-    return;
-  }
-  if (!canAccessProject(user, projectId)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message,
@@ -226,6 +246,8 @@ function assertProjectScopedAccess(
 }
 
 function canManageInvoiceAttachments(user: BuildReqUser) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
+
   return (
     user.role === "admin" ||
     user.buildreqRole === "administracion_central" ||
@@ -245,6 +267,8 @@ function canReadSuppliers(user: BuildReqUser) {
 }
 
 function canManageSupplierAttachments(user: BuildReqUser) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
+
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -291,6 +315,7 @@ async function assertInvoiceAttachmentAccess(
 
 function canAccessPurchaseOrders(user: BuildReqUser) {
   return (
+    isProcurementApproverRole(user.buildreqRole) ||
     user.role === "admin" ||
     user.buildreqRole === "administracion_central" ||
     user.buildreqRole === "administrador_proyecto" ||
@@ -304,6 +329,7 @@ function canReadPurchaseOrders(user: BuildReqUser) {
 }
 
 function canManagePurchaseOrderAttachments(user: BuildReqUser) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "administracion_central" ||
@@ -335,6 +361,19 @@ async function assertPurchaseOrderAttachmentAccess(
     detail.purchaseOrder.projectId,
     "No tiene acceso a adjuntos de órdenes de compra de otro proyecto"
   );
+  if (
+    isProcurementApproverRole(user.buildreqRole) &&
+    detail.approvalHistory.length === 0 &&
+    !purchaseOrderRequiresApproval(
+      detail.purchaseOrder.currency,
+      detail.summary.total
+    )
+  ) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Esta orden no requiere aprobación",
+    });
+  }
 
   if (action === "manage") {
     if (!canManagePurchaseOrderAttachments(user)) {
@@ -343,16 +382,27 @@ async function assertPurchaseOrderAttachmentAccess(
         message: "No tiene permisos para administrar adjuntos de órdenes de compra",
       });
     }
-    if (["recibida", "anulada"].includes(detail.purchaseOrder.status)) {
+    if (
+      detail.purchaseOrder.approvalStatus === "aprobada" ||
+      [
+        "pendiente_aprobacion",
+        "aprobada",
+        "rechazada",
+        "recibida",
+        "anulada",
+      ].includes(detail.purchaseOrder.status)
+    ) {
       throw new TRPCError({
         code: "BAD_REQUEST",
-        message: "No se pueden modificar adjuntos de órdenes recibidas o anuladas",
+        message: "La orden ya no permite modificar adjuntos",
       });
     }
   }
 }
 
 function canAccessReceipts(user: BuildReqUser) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
+
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -435,12 +485,18 @@ async function mirrorReceiptAttachmentToInvoice(params: {
 
 function canAccessPurchaseRequests(user: BuildReqUser) {
   return (
+    isProcurementApproverRole(user.buildreqRole) ||
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administracion_central" ||
     user.buildreqRole === "administrador_proyecto" ||
     user.buildreqRole === "bodeguero_proyecto"
   );
+}
+
+function canManagePurchaseRequestAttachments(user: BuildReqUser) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
+  return canAccessPurchaseRequests(user);
 }
 
 async function assertPurchaseRequestAttachmentAccess(
@@ -462,20 +518,36 @@ async function assertPurchaseRequestAttachmentAccess(
       message: "No tiene acceso a solicitudes de compra",
     });
   }
-  if (
-    user.role !== "admin" &&
-    (user.buildreqRole === "administrador_proyecto" ||
-      user.buildreqRole === "bodeguero_proyecto") &&
-    !canAccessProject(user, detail.purchaseRequest.projectId)
-  ) {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: "No tiene acceso a adjuntos de solicitudes de compra de otro proyecto",
-    });
+  const purchaseRequestProjectIds = Array.from(
+    new Set([
+      detail.purchaseRequest.projectId,
+      ...(detail.sourceProjects ?? []).map((project: any) => project?.id),
+      ...(detail.items ?? []).map((item: any) => item?.sourceProject?.id),
+    ])
+  ).filter(
+    (projectId): projectId is number =>
+      Number.isInteger(projectId) && Number(projectId) > 0
+  );
+  for (const projectId of purchaseRequestProjectIds) {
+    assertProjectScopedAccess(
+      user,
+      projectId,
+      "No tiene acceso a adjuntos de solicitudes de compra de otro proyecto"
+    );
   }
 
   if (action === "manage") {
-    if (["convertida", "anulada", "rechazada"].includes(detail.purchaseRequest.status)) {
+    if (!canManagePurchaseRequestAttachments(user)) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message:
+          "No tiene permisos para administrar adjuntos de solicitudes de compra",
+      });
+    }
+    if (
+      detail.purchaseRequest.status !== "pendiente" ||
+      detail.purchaseRequest.approvalStatus !== null
+    ) {
       throw new TRPCError({
         code: "BAD_REQUEST",
         message: "La solicitud de compra ya no permite modificar adjuntos",
@@ -485,17 +557,17 @@ async function assertPurchaseRequestAttachmentAccess(
 }
 
 function canAccessMaterialRequest(user: BuildReqUser, request: any) {
-  if (user.role === "admin") return true;
   if (user.buildreqRole === "ingeniero_residente") {
     return request.requestedById === user.id;
   }
   if (
+    isSuperintendentFamilyRole(user.buildreqRole) ||
     user.buildreqRole === "administrador_proyecto" ||
-    user.buildreqRole === "bodeguero_proyecto" ||
-    user.buildreqRole === "superintendente"
+    user.buildreqRole === "bodeguero_proyecto"
   ) {
     return canAccessProject(user, request.projectId);
   }
+  if (user.role === "admin") return true;
   return (
     user.buildreqRole === "jefe_bodega_central" ||
     user.buildreqRole === "administracion_central"
@@ -503,6 +575,7 @@ function canAccessMaterialRequest(user: BuildReqUser, request: any) {
 }
 
 function canManageMaterialRequestAttachment(user: BuildReqUser, request: any) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   if (!canAccessMaterialRequest(user, request)) return false;
   return ![
     "anulada",
@@ -541,12 +614,23 @@ async function assertMaterialRequestAttachmentAccess(
   }
 }
 
-async function assertTransferRequestAttachmentAccess(id: number) {
+async function assertTransferRequestAttachmentAccess(
+  id: number,
+  user: BuildReqUser,
+  action: "view" | "manage"
+) {
   const detail = await db.getTransferRequestById(id);
   if (!detail) {
     throw new TRPCError({
       code: "NOT_FOUND",
       message: "Solicitud de traslado no encontrada",
+    });
+  }
+  if (action === "manage" && isProcurementApproverRole(user.buildreqRole)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message:
+        "No tiene permisos para administrar adjuntos de solicitudes de traslado",
     });
   }
 }
@@ -597,7 +681,11 @@ async function assertDocumentAttachmentAccess(
     case "material_request":
       return assertMaterialRequestAttachmentAccess(entityId, user, action);
     case "transfer_request":
-      return assertTransferRequestAttachmentAccess(entityId);
+      return assertTransferRequestAttachmentAccess(
+        entityId,
+        user,
+        action
+      );
     case "supplier":
       return assertSupplierAttachmentAccess(entityId, user, action);
     default:
@@ -625,6 +713,14 @@ async function assertAttachmentRecordAccess(
       user,
       action
     );
+  } else if (
+    action === "manage" &&
+    isProcurementApproverRole(user.buildreqRole)
+  ) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para administrar este adjunto",
+    });
   }
   if (
     action === "manage" &&
@@ -725,8 +821,7 @@ export const attachmentsRouter = router({
       const fileKey = `buildreq/${input.entityType}/${input.entityId}/${nanoid()}-${validated.fileName}`;
 
       const { url } = await storagePut(fileKey, buffer, validated.mimeType);
-
-      const result = await db.createAttachment({
+      const attachmentData = {
         entityType: input.entityType,
         entityId: input.entityId,
         fileName: validated.fileName,
@@ -736,7 +831,29 @@ export const attachmentsRouter = router({
         fileSize: validated.fileSize,
         category: input.category,
         uploadedById: ctx.user.id,
-      });
+      };
+      let result: { id: number };
+      try {
+        result = isProcurementDocumentAttachmentEntityType(input.entityType)
+          ? await db.createProcurementDocumentAttachmentIfMutable({
+              ...attachmentData,
+              entityType: input.entityType,
+            })
+          : await db.createAttachment(attachmentData);
+      } catch (error) {
+        try {
+          await storageDelete(fileKey);
+        } catch (cleanupError) {
+          console.error(
+            `[Attachments] No se pudo limpiar el objeto ${fileKey} tras fallar el registro`,
+            cleanupError
+          );
+        }
+        if (error instanceof db.ProcurementAttachmentMutationError) {
+          throwProcurementAttachmentMutationError(error);
+        }
+        throw error;
+      }
 
       if (input.entityType === "receipt") {
         await mirrorReceiptAttachmentToInvoice({
@@ -760,6 +877,20 @@ export const attachmentsRouter = router({
         ctx.user,
         "manage"
       );
+      if (
+        isProcurementDocumentAttachmentEntityType(
+          attachment.entityType as AttachmentEntityType
+        )
+      ) {
+        try {
+          const deleted =
+            await db.deleteProcurementDocumentAttachmentIfMutable(input.id);
+          await storageDelete(deleted.attachment.fileKey);
+          return { success: true };
+        } catch (error) {
+          throwProcurementAttachmentMutationError(error);
+        }
+      }
       await storageDelete(attachment.fileKey);
       return db.deleteAttachment(input.id);
     }),

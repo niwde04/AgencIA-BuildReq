@@ -9,6 +9,14 @@ import {
 } from "@shared/purchase-orders";
 import { ASSET_CONDITION_VALUES } from "@shared/fixed-assets";
 import { applyProjectScope, canAccessProject, getProjectScopeIds } from "../projectAccess";
+import {
+  isProcurementApproverRole,
+  isProjectScopedRole,
+} from "@shared/buildreq-roles";
+import {
+  getPurchaseOrderApprovalReadinessError,
+  purchaseOrderRequiresApproval,
+} from "@shared/procurement-approvals";
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
   "emitida",
@@ -17,8 +25,6 @@ const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
 ]);
 
 const UNIFIED_PURCHASE_REQUEST_STATUSES = new Set([
-  "pendiente",
-  "en_revision",
   "aprobada",
   "parcialmente_convertida",
 ]);
@@ -254,6 +260,7 @@ function canAccessPurchaseOrders(user: {
   buildreqRole?: string | null;
 }) {
   return (
+    isProcurementApproverRole(user.buildreqRole) ||
     user.role === "admin" ||
     user.buildreqRole === "administracion_central" ||
     user.buildreqRole === "administrador_proyecto" ||
@@ -273,6 +280,7 @@ function canManagePurchaseOrders(user: {
   role: string;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "administracion_central" ||
@@ -285,6 +293,7 @@ function canConvertPurchaseRequestToOrder(user: {
   role: string;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "administracion_central" ||
@@ -301,10 +310,8 @@ function assertProjectScopedAccess(
   },
   projectId: number
 ) {
-  if (user.role === "admin") return;
   if (
-    (user.buildreqRole === "administrador_proyecto" ||
-      user.buildreqRole === "bodeguero_proyecto") &&
+    isProjectScopedRole(user.buildreqRole) &&
     !canAccessProject(user, projectId)
   ) {
     throw new TRPCError({
@@ -336,10 +343,26 @@ function assertCanModifyPurchaseOrders(user: {
 }
 
 function assertPurchaseOrderEditable(status: string) {
-  if (status === "anulada") {
+  if (
+    ["anulada", "pendiente_aprobacion", "aprobada", "rechazada"].includes(
+      status
+    )
+  ) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "La orden de compra ya está anulada",
+      message: "La orden de compra no permite esta operación en su estado actual",
+    });
+  }
+}
+
+function assertPurchaseOrderApprovalUnlocked(purchaseOrder: {
+  approvalStatus?: string | null;
+}) {
+  if (purchaseOrder.approvalStatus === "aprobada") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "Una OC que pasó por aprobación queda bloqueada; solo puede ejecutarse su emisión inmediata",
     });
   }
 }
@@ -376,6 +399,66 @@ function assertPurchaseOrderStructureEditable(status?: string | null) {
     message:
       "La orden de compra ya fue emitida y no permite editar lineas ni proveedor",
   });
+}
+
+function validatePurchaseOrderApprovalReadiness(detail: any) {
+  const error = getPurchaseOrderApprovalReadinessError({
+    ...detail.purchaseOrder,
+    directPurchasePaymentMethod: detail.directPurchasePaymentMethod,
+    items: detail.items,
+  });
+  if (error) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: error,
+    });
+  }
+}
+
+const approvalDecisionSchema = z
+  .object({
+    id: z.number(),
+    decision: z.enum(["approve", "reject"]),
+    comment: z.string().trim().max(1000).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.decision === "reject" && (value.comment?.trim().length ?? 0) < 5) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["comment"],
+        message: "El motivo de rechazo debe tener al menos 5 caracteres",
+      });
+    }
+  });
+
+async function notifyProjectProcurementApprovers(params: {
+  projectId: number;
+  title: string;
+  message: string;
+  entityId: number;
+}) {
+  const roleUsers = await Promise.all([
+    db.getUsersByBuildreqRoleAndProject(
+      "superintendente_aprobador",
+      params.projectId
+    ),
+    db.getUsersByBuildreqRoleAndProject("gerente", params.projectId),
+  ]);
+  const usersById = new Map(
+    roleUsers.flat().map(user => [user.id, user] as const)
+  );
+  await Promise.all(
+    Array.from(usersById.values()).map(user =>
+      db.createNotification({
+        userId: user.id,
+        title: params.title,
+        message: params.message,
+        type: "orden_compra",
+        relatedEntityType: "purchase_order",
+        relatedEntityId: params.entityId,
+      })
+    )
+  );
 }
 
 async function releaseDirectPurchaseRequestItems(
@@ -467,7 +550,18 @@ export const purchaseOrdersRouter = router({
         });
       }
 
-      return db.listPurchaseOrders(applyProjectScope(input ?? {}, ctx.user));
+      const rows = await db.listPurchaseOrders(
+        applyProjectScope(input ?? {}, ctx.user)
+      );
+      if (!isProcurementApproverRole(ctx.user.buildreqRole)) return rows;
+      return rows.filter(
+        row =>
+          row.hasApprovalHistory ||
+          purchaseOrderRequiresApproval(
+            row.purchaseOrder.currency,
+            row.totalAmount
+          )
+      );
     }),
 
   getById: protectedProcedure
@@ -488,6 +582,19 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+      if (
+        isProcurementApproverRole(ctx.user.buildreqRole) &&
+        detail.approvalHistory.length === 0 &&
+        !purchaseOrderRequiresApproval(
+          detail.purchaseOrder.currency,
+          detail.summary.total
+        )
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Esta orden no requiere aprobación",
+        });
+      }
       return detail;
     }),
 
@@ -556,17 +663,29 @@ export const purchaseOrdersRouter = router({
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseRequest.projectId);
 
+      if (detail.purchaseRequest.status === "anulada") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "La solicitud de compra está anulada y no puede convertirse a orden de compra",
+        });
+      }
+      if (detail.purchaseRequest.status === "convertida") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "La solicitud de compra ya fue convertida y solo está disponible en modo lectura",
+        });
+      }
+
       if (
-        ["convertida", "anulada", "rechazada"].includes(
-          detail.purchaseRequest.status
-        )
+        detail.purchaseRequest.approvalStatus !== "aprobada" ||
+        !UNIFIED_PURCHASE_REQUEST_STATUSES.has(detail.purchaseRequest.status)
       ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message:
-            detail.purchaseRequest.status === "convertida"
-              ? "La solicitud de compra ya fue convertida y solo está disponible en modo lectura"
-              : "La solicitud de compra está anulada y no puede convertirse a orden de compra",
+            "La solicitud de compra debe estar aprobada antes de convertirse en orden de compra",
         });
       }
 
@@ -689,6 +808,7 @@ export const purchaseOrdersRouter = router({
       }
       const requiresPaymentMethod =
         detail.purchaseRequest.purchaseType === "compra_directa" ||
+        input.classification === "cd" ||
         directPurchaseFlowItems.length > 0;
 
       const selectedItemsByProject = new Map<number, any[]>();
@@ -860,6 +980,7 @@ export const purchaseOrdersRouter = router({
           classification: z.enum(["oc", "cd"]).default("oc"),
           supplierId: z.number().optional(),
           supplierEmail: z.string().email().optional(),
+          paymentMethod: directPurchasePaymentMethodSchema.optional(),
           pricesIncludeTax: z.boolean().default(false),
           ...purchaseCurrencyInputFields,
           notes: z.string().optional(),
@@ -904,6 +1025,7 @@ export const purchaseOrdersRouter = router({
 
       const blockedRequest = purchaseRequests.find(
         (detail) =>
+          detail.purchaseRequest.approvalStatus !== "aprobada" ||
           !UNIFIED_PURCHASE_REQUEST_STATUSES.has(
             detail.purchaseRequest.status
           )
@@ -991,6 +1113,12 @@ export const purchaseOrdersRouter = router({
             [])
           : []
       );
+      const requiresPaymentMethod =
+        input.classification === "cd" ||
+        flowItems.length > 0 ||
+        purchaseRequests.some(
+          detail => detail.purchaseRequest.purchaseType === "compra_directa"
+        );
       const earliestNeededBy = purchaseRequests
         .map((detail) => detail.purchaseRequest.neededBy)
         .filter((value): value is Date => Boolean(value))
@@ -1007,6 +1135,9 @@ export const purchaseOrdersRouter = router({
           purchaseType: purchaseRequests[0].purchaseRequest.purchaseType,
           pricesIncludeTax: input.pricesIncludeTax,
           ...currencySnapshot,
+          paymentMethod: requiresPaymentMethod
+            ? input.paymentMethod ?? null
+            : null,
           supplierId: input.supplierId ?? flowItems[0]?.flow?.supplierId ?? null,
           supplierEmail: input.supplierEmail,
           status: "borrador",
@@ -1057,6 +1188,7 @@ export const purchaseOrdersRouter = router({
         await db.updateSupplyFlowRecord(linkedFlowItem.flow.id, {
           purchaseOrderNumber: created.orderNumber,
           sapDocumentType: "orden_compra",
+          paymentMethod: input.paymentMethod,
           status: "en_proceso",
           notes: input.notes ?? linkedFlowItem.flow.notes ?? undefined,
         });
@@ -1080,6 +1212,149 @@ export const purchaseOrdersRouter = router({
         purchaseRequestIds,
         unifiedPurchaseRequestCount: purchaseRequestIds.length,
       };
+    }),
+
+  submitForApproval: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      assertCanModifyPurchaseOrders(ctx.user);
+      const detail = await db.getPurchaseOrderById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Orden de compra no encontrada",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+      assertPurchaseOrderStructureEditable(detail.purchaseOrder.status);
+      validatePurchaseOrderApprovalReadiness(detail);
+
+      let result: Awaited<
+        ReturnType<typeof db.submitPurchaseOrderForApproval>
+      >;
+      try {
+        result = await db.submitPurchaseOrderForApproval({
+          id: input.id,
+          actor: ctx.user,
+        });
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudo enviar la orden a aprobación",
+        });
+      }
+
+      try {
+        await notifyProjectProcurementApprovers({
+          projectId: detail.purchaseOrder.projectId,
+          title: "Orden de compra pendiente de aprobación",
+          message: `${detail.purchaseOrder.orderNumber} por ${result.currency} ${result.totalAmount.toFixed(2)} espera su decisión.`,
+          entityId: input.id,
+        });
+      } catch (error) {
+        console.error(
+          "[PurchaseOrders] No se pudo notificar el envío a aprobación",
+          error
+        );
+      }
+
+      return result;
+    }),
+
+  reviewApproval: protectedProcedure
+    .input(approvalDecisionSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!isProcurementApproverRole(ctx.user.buildreqRole)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Solo los roles aprobadores pueden decidir órdenes",
+        });
+      }
+      const detail = await db.getPurchaseOrderById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Orden de compra no encontrada",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+      if (input.decision === "approve") {
+        validatePurchaseOrderApprovalReadiness(detail);
+      }
+
+      let result: Awaited<ReturnType<typeof db.reviewPurchaseOrderApproval>>;
+      try {
+        result = await db.reviewPurchaseOrderApproval({
+          id: input.id,
+          decision: input.decision,
+          comment: input.comment,
+          actor: ctx.user,
+        });
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudo registrar la decisión",
+        });
+      }
+
+      try {
+        await db.createNotification({
+          userId: detail.purchaseOrder.createdById,
+          title:
+            input.decision === "approve"
+              ? "Orden de compra aprobada"
+              : "Orden de compra rechazada",
+          message:
+            input.decision === "approve"
+              ? `${detail.purchaseOrder.orderNumber} fue aprobada.`
+              : `${detail.purchaseOrder.orderNumber} fue rechazada: ${input.comment?.trim()}`,
+          type: "orden_compra",
+          relatedEntityType: "purchase_order",
+          relatedEntityId: input.id,
+        });
+      } catch (error) {
+        console.error(
+          "[PurchaseOrders] No se pudo notificar la decisión de aprobación",
+          error
+        );
+      }
+
+      return result;
+    }),
+
+  reopenRejected: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      assertCanModifyPurchaseOrders(ctx.user);
+      const detail = await db.getPurchaseOrderById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Orden de compra no encontrada",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+
+      try {
+        return await db.reopenRejectedPurchaseOrder({
+          id: input.id,
+          actor: ctx.user,
+        });
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudo reabrir la orden",
+        });
+      }
     }),
 
   update: protectedProcedure
@@ -1110,6 +1385,7 @@ export const purchaseOrdersRouter = router({
       }
       assertCanModifyPurchaseOrders(ctx.user);
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+      assertPurchaseOrderApprovalUnlocked(detail.purchaseOrder);
       assertPurchaseOrderStructureEditable(detail.purchaseOrder.status);
 
       const currencySnapshot = normalizePurchaseCurrencySnapshot({
@@ -1144,14 +1420,18 @@ export const purchaseOrdersRouter = router({
         }
       }
 
-      const result = await db.updatePurchaseOrder(input.id, {
-        supplierId: input.supplierId,
-        supplierContactId: input.supplierContactId,
-        supplierEmail: input.supplierEmail,
-        paymentMethod: input.paymentMethod,
-        ...currencySnapshot,
-        notes: input.notes,
-      });
+      const result = await db.updatePurchaseOrder(
+        input.id,
+        {
+          supplierId: input.supplierId,
+          supplierContactId: input.supplierContactId,
+          supplierEmail: input.supplierEmail,
+          paymentMethod: input.paymentMethod,
+          ...currencySnapshot,
+          notes: input.notes,
+        },
+        { requireDraft: true }
+      );
 
       const auditFields = [
         ["currency", detail.purchaseOrder.currency, currencySnapshot.currency],
@@ -1208,42 +1488,8 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
-      assertPurchaseOrderEditable(detail.purchaseOrder.status);
-
-      const isDraft = detail.purchaseOrder.status === "borrador";
-      const isContractEditableAfterIssue =
-        detail.purchaseOrder.appliesContract &&
-        ["emitida", "enviada", "parcialmente_recibida"].includes(
-          detail.purchaseOrder.status
-        );
-      if (!isDraft && !isContractEditableAfterIssue) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message:
-            "Solo se puede editar contrato en borrador o la fecha de vencimiento de una OC contrato emitida",
-        });
-      }
-
-      if (!isDraft) {
-        const firstPaymentDate = parseDateInput(input.contractFirstPaymentDate);
-        const sameFrequency =
-          input.contractPaymentFrequency ===
-          detail.purchaseOrder.contractPaymentFrequency;
-        const sameFirstPaymentDate =
-          dateKey(firstPaymentDate) ===
-          dateKey(detail.purchaseOrder.contractFirstPaymentDate);
-        if (
-          input.appliesContract !== true ||
-          !sameFrequency ||
-          !sameFirstPaymentDate
-        ) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message:
-              "En una OC contrato emitida solo se puede cambiar la fecha de terminación",
-          });
-        }
-      }
+      assertPurchaseOrderApprovalUnlocked(detail.purchaseOrder);
+      assertPurchaseOrderStructureEditable(detail.purchaseOrder.status);
 
       return db.updatePurchaseOrderContractTerms({
         purchaseOrderId: input.id,
@@ -1286,6 +1532,7 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+      assertPurchaseOrderApprovalUnlocked(detail.purchaseOrder);
       assertPurchaseOrderStructureEditable(detail.purchaseOrder.status);
 
       try {
@@ -1332,12 +1579,17 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
+      assertPurchaseOrderApprovalUnlocked(itemDetail.purchaseOrder);
       assertPurchaseOrderStructureEditable(itemDetail.purchaseOrder.status);
 
-      return db.updatePurchaseOrderItem(input.purchaseOrderItemId, {
-        currentSapItemCode: input.currentSapItemCode,
-        itemName: input.itemName,
-      });
+      return db.updatePurchaseOrderItem(
+        input.purchaseOrderItemId,
+        {
+          currentSapItemCode: input.currentSapItemCode,
+          itemName: input.itemName,
+        },
+        { requireDraft: true }
+      );
     }),
 
   updateItemPricing: protectedProcedure
@@ -1388,6 +1640,7 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
+      assertPurchaseOrderApprovalUnlocked(itemDetail.purchaseOrder);
       assertPurchaseOrderStructureEditable(itemDetail.purchaseOrder.status);
 
       const taxData = await db.preparePurchaseOrderTaxDataForLine({
@@ -1399,10 +1652,14 @@ export const purchaseOrdersRouter = router({
         additionalTaxCodes: input.additionalTaxCodes,
       });
 
-      return db.updatePurchaseOrderItem(input.purchaseOrderItemId, {
-        unitPrice: input.unitPrice,
-        ...taxData,
-      });
+      return db.updatePurchaseOrderItem(
+        input.purchaseOrderItemId,
+        {
+          unitPrice: input.unitPrice,
+          ...taxData,
+        },
+        { requireDraft: true }
+      );
     }),
 
   updateItemLine: protectedProcedure
@@ -1464,6 +1721,7 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
+      assertPurchaseOrderApprovalUnlocked(itemDetail.purchaseOrder);
       assertPurchaseOrderStructureEditable(itemDetail.purchaseOrder.status);
 
       const receivedQuantity = Number(itemDetail.item.receivedQuantity ?? 0);
@@ -1507,12 +1765,16 @@ export const purchaseOrdersRouter = router({
         additionalTaxCodes: input.additionalTaxCodes,
       });
 
-      await db.updatePurchaseOrderItem(input.purchaseOrderItemId, {
-        quantity: input.quantity,
-        unitPrice: input.unitPrice,
-        itemName: input.itemName?.trim(),
-        ...taxData,
-      });
+      await db.updatePurchaseOrderItem(
+        input.purchaseOrderItemId,
+        {
+          quantity: input.quantity,
+          unitPrice: input.unitPrice,
+          itemName: input.itemName?.trim(),
+          ...taxData,
+        },
+        { requireDraft: true }
+      );
 
       if (
         itemDetail.item.purchaseRequestItemId &&
@@ -1549,6 +1811,13 @@ export const purchaseOrdersRouter = router({
         });
       }
 
+      if (isProcurementApproverRole(ctx.user.buildreqRole)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Los aprobadores solo pueden consultar y decidir aprobaciones",
+        });
+      }
+
       const itemDetail = await db.getPurchaseOrderItemById(
         input.purchaseOrderItemId
       );
@@ -1559,6 +1828,7 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
+      assertPurchaseOrderApprovalUnlocked(itemDetail.purchaseOrder);
       assertPurchaseOrderMutable(itemDetail.purchaseOrder.status);
 
       try {
@@ -1625,54 +1895,10 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
-      assertPurchaseOrderEditable(itemDetail.purchaseOrder.status);
-
-      if (
-        !itemDetail.purchaseOrder.appliesContract ||
-        !["emitida", "enviada", "parcialmente_recibida"].includes(
-          itemDetail.purchaseOrder.status
-        )
-      ) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message:
-            "Solo se puede editar el precio en una OC contrato emitida",
-        });
-      }
-
-      if (
-        Number(input.unitPrice) === Number(itemDetail.item.unitPrice ?? 0) &&
-        (input.subtotal === undefined ||
-          Number(input.subtotal) === Number(itemDetail.item.subtotal ?? 0))
-      ) {
-        return { success: true };
-      }
-
-      const taxData = await db.preparePurchaseOrderTaxDataForLine({
-        quantity: itemDetail.item.quantity,
-        unitPrice: input.unitPrice,
-        subtotal: input.subtotal,
-        pricesIncludeTax: itemDetail.purchaseOrder.pricesIncludeTax,
-        taxCode: itemDetail.item.taxCode,
-        additionalTaxCodes: itemDetail.item.additionalTaxCodes as any,
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "La edición comercial de contratos emitidos fue retirada",
       });
-
-      await db.updatePurchaseOrderItem(input.purchaseOrderItemId, {
-        unitPrice: input.unitPrice,
-        ...taxData,
-      });
-      await db.createPurchaseOrderAuditLog({
-        purchaseOrderId: itemDetail.purchaseOrder.id,
-        purchaseOrderItemId: itemDetail.item.id,
-        action: "actualizar_precio_contrato",
-        field: "unitPrice",
-        oldValue: String(itemDetail.item.unitPrice ?? "0.00"),
-        newValue: input.unitPrice,
-        changedById: ctx.user.id,
-        note: input.note?.trim() || null,
-      });
-
-      return { success: true };
     }),
 
   closeReceiptLine: protectedProcedure
@@ -1702,6 +1928,7 @@ export const purchaseOrdersRouter = router({
       }
 
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
+      assertPurchaseOrderApprovalUnlocked(itemDetail.purchaseOrder);
       assertPurchaseOrderMutable(itemDetail.purchaseOrder.status);
 
       if (
@@ -1777,6 +2004,7 @@ export const purchaseOrdersRouter = router({
       }
 
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
+      assertPurchaseOrderApprovalUnlocked(itemDetail.purchaseOrder);
       assertPurchaseOrderMutable(itemDetail.purchaseOrder.status);
 
       if (
@@ -1920,6 +2148,7 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
+      assertPurchaseOrderApprovalUnlocked(itemDetail.purchaseOrder);
       assertPurchaseOrderStructureEditable(itemDetail.purchaseOrder.status);
 
       if (Number(itemDetail.item.receivedQuantity ?? 0) > 0) {
@@ -1933,7 +2162,9 @@ export const purchaseOrdersRouter = router({
       const itemCount = await db.countPurchaseOrderItems(
         itemDetail.item.purchaseOrderId
       );
-      await db.deletePurchaseOrderItem(input.purchaseOrderItemId);
+      await db.deletePurchaseOrderItem(input.purchaseOrderItemId, {
+        requireDraft: true,
+      });
 
       if (itemDetail.item.purchaseRequestItemId) {
         const purchaseRequestItem =
@@ -1967,12 +2198,16 @@ export const purchaseOrdersRouter = router({
       }
 
       if (itemCount <= 1) {
-        await db.updatePurchaseOrder(itemDetail.item.purchaseOrderId, {
-          status: "anulada",
-          emailStatus: "pendiente",
-          emailedAt: null,
-          emailError: "Orden anulada por eliminar su ultima linea",
-        });
+        await db.updatePurchaseOrder(
+          itemDetail.item.purchaseOrderId,
+          {
+            status: "anulada",
+            emailStatus: "pendiente",
+            emailedAt: null,
+            emailError: "Orden anulada por eliminar su ultima linea",
+          },
+          { requireDraft: true }
+        );
       }
 
       return { success: true, orderCancelled: itemCount <= 1 };
@@ -1997,6 +2232,7 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+      assertPurchaseOrderApprovalUnlocked(detail.purchaseOrder);
       assertPurchaseOrderEditable(detail.purchaseOrder.status);
 
       const receivedItem = (detail.items ?? []).find(
@@ -2009,6 +2245,8 @@ export const purchaseOrdersRouter = router({
             "No se puede cancelar una orden que ya tiene recepciones registradas",
         });
       }
+
+      await db.cancelPurchaseOrder(input.id);
 
       if (detail.purchaseOrder.classification === "cd") {
         await releaseDirectPurchaseOrderItems({
@@ -2035,13 +2273,6 @@ export const purchaseOrdersRouter = router({
         affectedPurchaseRequestIds.add(purchaseRequestItem.purchaseRequestId);
       }
 
-      await db.updatePurchaseOrder(input.id, {
-        status: "anulada",
-        emailStatus: "pendiente",
-        emailedAt: null,
-        emailError: "Orden anulada manualmente",
-      });
-
       for (const purchaseRequestId of Array.from(affectedPurchaseRequestIds)) {
         await db.syncPurchaseRequestConversionStatus(purchaseRequestId);
       }
@@ -2051,53 +2282,11 @@ export const purchaseOrdersRouter = router({
 
   reopenDraft: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ ctx, input }) => {
-      if (
-        ctx.user.role !== "admin" &&
-        ctx.user.buildreqRole !== "administracion_central"
-      ) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Solo Administración Central puede reabrir una OC",
-        });
-      }
-
-      const detail = await db.getPurchaseOrderById(input.id);
-      if (!detail) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Orden de compra no encontrada",
-        });
-      }
-      assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
-
-      if (!["emitida", "enviada"].includes(detail.purchaseOrder.status)) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Solo se puede reabrir una OC emitida sin recepciones",
-        });
-      }
-
-      const hasReceipts = (detail.items ?? []).some(
-        (item: any) =>
-          Number(item.receivedQuantity ?? 0) > 0 || item.receiptClosed
-      );
-      if (hasReceipts) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message:
-            "No se puede reabrir una OC que ya tiene recepciones registradas",
-        });
-      }
-
-      await db.updatePurchaseOrder(input.id, {
-        status: "borrador",
-        emailStatus: "pendiente",
-        emailedAt: null,
-        emailError: null,
+    .mutation(() => {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "La reapertura de órdenes emitidas fue retirada",
       });
-
-      return { success: true };
     }),
 
   sendToSupplier: protectedProcedure
@@ -2119,89 +2308,49 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
-      assertPurchaseOrderEditable(detail.purchaseOrder.status);
-
       if (
-        detail.purchaseOrder.status === "anulada" ||
-        (detail.items?.length ?? 0) === 0
-      ) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "No se puede emitir una orden anulada o sin lineas",
-        });
-      }
-
-      const hasReceipts =
-        detail.purchaseOrder.status === "recibida" ||
-        detail.purchaseOrder.status === "parcialmente_recibida" ||
-        (detail.items ?? []).some(
-          (item: any) => Number(item.receivedQuantity ?? 0) > 0
-        );
-
-      if (hasReceipts) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message:
-            "No se puede emitir una orden que ya tiene recepciones registradas",
-        });
-      }
-
-      if (
-        detail.purchaseOrder.status &&
-        detail.purchaseOrder.status !== "borrador"
+        ["emitida", "enviada"].includes(detail.purchaseOrder.status)
       ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "La orden de compra ya fue emitida",
         });
       }
-
-      if (!detail.purchaseOrder.supplierId) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Seleccione un proveedor antes de emitir la OC",
-        });
-      }
-
-      normalizePurchaseCurrencySnapshot({
-        currency: detail.purchaseOrder.currency,
-        exchangeRate: detail.purchaseOrder.exchangeRate,
-        exchangeRateDate: detail.purchaseOrder.exchangeRateDate,
-      });
-
       if (
-        detail.purchaseOrder.purchaseType === "compra_directa" &&
-        !detail.purchaseOrder.paymentMethod &&
-        !detail.directPurchasePaymentMethod
+        ["parcialmente_recibida", "recibida"].includes(
+          detail.purchaseOrder.status
+        ) ||
+        (detail.items ?? []).some(
+          (item: any) => Number(item.receivedQuantity ?? 0) > 0
+        )
       ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "Seleccione el método de pago para la orden de compra",
+          message:
+            "No se puede emitir una orden que ya tiene recepciones registradas",
         });
       }
+      if (!["borrador", "aprobada"].includes(detail.purchaseOrder.status)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "La orden no está lista para emitirse",
+        });
+      }
+      validatePurchaseOrderApprovalReadiness(detail);
 
-      const itemWithoutPrice = (detail.items ?? []).find(
-        (item: any) =>
-          !Number.isFinite(Number(item.unitPrice ?? 0)) ||
-          Number(item.unitPrice ?? 0) <= 0 ||
-          !Number.isFinite(Number(item.subtotal ?? 0)) ||
-          Number(item.subtotal ?? 0) <= 0
-      );
-      if (itemWithoutPrice) {
+      try {
+        return await db.issuePurchaseOrder({
+          id: input.id,
+          actor: ctx.user,
+        });
+      } catch (error) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message:
-            "Ingrese precio unitario y subtotal mayores que cero antes de emitir la OC",
+            error instanceof Error
+              ? error.message
+              : "No se pudo emitir la orden de compra",
         });
       }
-
-      await db.updatePurchaseOrder(input.id, {
-        status: "emitida",
-        emailStatus: "pendiente",
-        emailedAt: null,
-        emailError: null,
-      });
-
-      return { success: true };
     }),
 });

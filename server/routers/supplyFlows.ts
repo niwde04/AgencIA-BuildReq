@@ -3,8 +3,14 @@ import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { TRPCError } from "@trpc/server";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
+import {
+  isProcurementApproverRole,
+  isProjectScopedRole,
+  isSuperintendentFamilyRole,
+} from "@shared/buildreq-roles";
 
 function canManageSupply(user: { role: string; buildreqRole?: string | null }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -16,6 +22,7 @@ function canManageDirectPurchase(user: {
   role: string;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -29,6 +36,7 @@ function canManagePurchaseRequestFlow(user: {
   role: string;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -57,6 +65,7 @@ function canConvertToPurchaseOrder(user: {
   role: string;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "administracion_central" ||
@@ -73,9 +82,8 @@ function assertProjectScopedConversionAccess(
   },
   projectId: number
 ) {
-  if (user.role === "admin") return;
   if (
-    user.buildreqRole === "administrador_proyecto" &&
+    isProjectScopedRole(user.buildreqRole) &&
     !canAccessProject(user, projectId)
   ) {
     throw new TRPCError({
@@ -89,6 +97,7 @@ function canManageWarehouseOrTransfers(user: {
   role: string;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -101,6 +110,7 @@ function canManageWarehouseDispatch(user: {
   role: string;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -119,17 +129,17 @@ function canViewSupplyFlowRequest(
   },
   request: { requestedById: number; projectId: number }
 ) {
-  if (user.role === "admin") return true;
   if (user.buildreqRole === "ingeniero_residente") {
     return request.requestedById === user.id;
   }
   if (
+    isSuperintendentFamilyRole(user.buildreqRole) ||
     user.buildreqRole === "administrador_proyecto" ||
-    user.buildreqRole === "bodeguero_proyecto" ||
-    user.buildreqRole === "superintendente"
+    user.buildreqRole === "bodeguero_proyecto"
   ) {
     return canAccessProject(user, request.projectId);
   }
+  if (user.role === "admin") return true;
   return true;
 }
 
@@ -154,20 +164,16 @@ function scopeSupplyFlowFilters(
     projectIds?: number[];
   } = { ...(filters ?? {}) };
 
-  if (user.role === "admin") {
-    return scopedFilters;
-  }
-
   if (user.buildreqRole === "ingeniero_residente") {
     return { ...scopedFilters, requestedById: user.id };
   }
 
-  if (
-    user.buildreqRole === "administrador_proyecto" ||
-    user.buildreqRole === "bodeguero_proyecto" ||
-    user.buildreqRole === "superintendente"
-  ) {
+  if (isProjectScopedRole(user.buildreqRole)) {
     return applyProjectScope(scopedFilters, user);
+  }
+
+  if (user.role === "admin") {
+    return scopedFilters;
   }
 
   return scopedFilters;
@@ -511,39 +517,33 @@ export const supplyFlowsRouter = router({
         status: "pendiente",
       });
 
-      const purchaseOrder = await db.createPurchaseOrder(
+      const purchaseRequest = await db.createPurchaseRequest(
         {
-          purchaseRequestId: null,
+          materialRequestId: detail.request.id,
+          sourcePurchaseOrderId: null,
           projectId: detail.request.projectId,
-          classification: "cd",
           purchaseType: "compra_directa",
-          paymentMethod: input.paymentMethod,
-          supplierId: input.supplierId,
-          supplierEmail: null,
-          status: "emitida",
+          status: "pendiente",
           neededBy: detail.request.neededBy,
           sapDocumentNumber: null,
           notes:
             input.notes ??
             `Compra directa por ${getPaymentMethodLabel(input.paymentMethod)}`,
+          rejectionReason: null,
           printedDocumentName: null,
           printedDocumentMimeType: null,
           printedDocumentContent: null,
           printedAt: null,
-          emailStatus: "pendiente",
-          emailedAt: null,
-          emailError: null,
+          quoteAttachmentId: null,
           createdById: ctx.user.id,
         },
         [
           {
-            purchaseRequestItemId: null,
             materialRequestItemId: item.id,
             originalSapItemCode: item.sapItemCode,
             currentSapItemCode: item.sapItemCode,
             itemName: item.sapItemDescription || item.itemName,
             quantity: item.quantity,
-            receivedQuantity: "0.00",
             unit: item.unit,
             notes: input.notes,
           },
@@ -556,19 +556,19 @@ export const supplyFlowsRouter = router({
         flowType: "compra_directa",
         paymentMethod: input.paymentMethod,
         supplierId: input.supplierId,
-        purchaseOrderNumber: purchaseOrder.orderNumber,
-        sapDocumentType: "orden_compra",
+        purchaseOrderNumber: purchaseRequest.requestNumber,
+        sapDocumentType: "solicitud_compra",
         processedById: ctx.user.id,
         notes: input.notes,
-        status: "en_proceso",
+        status: "pendiente",
       });
 
       await checkAndUpdateRequestStatus(input.requestId, ctx.user.id);
 
       return {
         ...result,
-        purchaseOrderId: purchaseOrder.id,
-        purchaseOrderNumber: purchaseOrder.orderNumber,
+        purchaseRequestId: purchaseRequest.id,
+        purchaseRequestNumber: purchaseRequest.requestNumber,
       };
     }),
 
@@ -1573,16 +1573,15 @@ export const supplyFlowsRouter = router({
           detail.purchaseRequest.projectId
         );
         if (
-          ["convertida", "anulada", "rechazada"].includes(
+          detail.purchaseRequest.approvalStatus !== "aprobada" ||
+          !["aprobada", "parcialmente_convertida"].includes(
             detail.purchaseRequest.status
           )
         ) {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message:
-              detail.purchaseRequest.status === "convertida"
-                ? "La solicitud de compra ya fue convertida y solo está disponible en modo lectura"
-                : "La solicitud de compra está anulada y no puede convertirse a orden de compra",
+              "La solicitud de compra debe estar aprobada antes de convertirse en orden de compra",
           });
         }
         const directPurchaseRequestItemIds = detail.items
@@ -1610,12 +1609,26 @@ export const supplyFlowsRouter = router({
 
         const itemsByProject = new Map<number, any[]>();
         for (const item of detail.items) {
+          const pendingQuantity = Math.max(
+            Number(item.quantity ?? 0) - Number(item.convertedQuantity ?? 0),
+            0
+          );
+          if (pendingQuantity <= 0) continue;
           const sourceProjectId =
             item.sourceProject?.id ?? detail.purchaseRequest.projectId;
           assertProjectScopedConversionAccess(ctx.user, sourceProjectId);
           const current = itemsByProject.get(sourceProjectId) ?? [];
-          current.push(item);
+          current.push({
+            ...item,
+            pendingConversionQuantity: pendingQuantity.toFixed(2),
+          });
           itemsByProject.set(sourceProjectId, current);
+        }
+        if (itemsByProject.size === 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "La solicitud no tiene cantidades pendientes por convertir",
+          });
         }
 
         const createdOrders: Array<{
@@ -1662,7 +1675,7 @@ export const supplyFlowsRouter = router({
               originalSapItemCode: item.originalSapItemCode,
               currentSapItemCode: item.currentSapItemCode,
               itemName: item.itemName,
-              quantity: item.quantity,
+              quantity: item.pendingConversionQuantity,
               receivedQuantity: item.receivedQuantity ?? "0.00",
               unit: item.unit,
               notes: item.notes,
@@ -1689,9 +1702,15 @@ export const supplyFlowsRouter = router({
           }
         }
 
-        await db.updatePurchaseRequest(detail.purchaseRequest.id, {
-          status: "convertida",
-        });
+        for (const projectItems of Array.from(itemsByProject.values())) {
+          for (const item of projectItems) {
+            await db.adjustPurchaseRequestItemConvertedQuantity(
+              item.id,
+              item.pendingConversionQuantity
+            );
+          }
+        }
+        await db.syncPurchaseRequestConversionStatus(detail.purchaseRequest.id);
 
         if (createdOrders.length === 1) {
           return {
@@ -1707,41 +1726,11 @@ export const supplyFlowsRouter = router({
         };
       }
 
-      if (ctx.user.buildreqRole === "administrador_proyecto") {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message:
-            "El Administrador del Proyecto debe crear la OC desde una solicitud de compra",
-        });
-      }
-
-      const flowDetail = await db.getSupplyFlowRecordById(input.flowId!);
-      if (!flowDetail?.request) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Flujo origen no encontrado",
-        });
-      }
-      assertProjectScopedConversionAccess(
-        ctx.user,
-        flowDetail.request.projectId
-      );
-
-      const purchaseOrderNumber = await db.generatePurchaseOrderNumber(
-        flowDetail.request.projectId,
-        flowDetail.flow.flowType === "compra_directa" ? "cd" : "oc"
-      );
-      const result = await db.updateSupplyFlowRecord(input.flowId!, {
-        purchaseOrderNumber,
-        sapDocumentType: "orden_compra",
-        status: "en_proceso",
-        notes: input.notes,
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message:
+          "La conversión heredada por flujo fue cerrada; seleccione una solicitud de compra aprobada",
       });
-
-      return {
-        ...result,
-        purchaseOrderNumber,
-      };
     }),
 
   updateStatus: protectedProcedure
@@ -1752,12 +1741,18 @@ export const supplyFlowsRouter = router({
         notes: z.string().optional(),
       })
     )
-    .mutation(async ({ input }) =>
-      db.updateSupplyFlowRecord(input.id, {
+    .mutation(async ({ ctx, input }) => {
+      if (isProcurementApproverRole(ctx.user.buildreqRole)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Los aprobadores no pueden modificar flujos de suministro",
+        });
+      }
+      return db.updateSupplyFlowRecord(input.id, {
         status: input.status,
         notes: input.notes,
-      })
-    ),
+      });
+    }),
 });
 
 async function checkAndUpdateRequestStatus(requestId: number, userId: number) {

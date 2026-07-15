@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { isSuperintendentFamilyRole } from "@shared/buildreq-roles";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -809,7 +810,7 @@ export default function SolicitudDetalle() {
   const [bulkRejectReason, setBulkRejectReason] = useState("");
 
   const isAdmin = user?.role === "admin";
-  const isSuperintendent = userRole === "superintendente";
+  const isSuperintendent = isSuperintendentFamilyRole(userRole);
   const canViewWarehouseQuantities = userRole !== "ingeniero_residente";
   const canManageProcessing =
     userRole === "jefe_bodega_central" ||

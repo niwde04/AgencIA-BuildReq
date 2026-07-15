@@ -32,6 +32,7 @@ const OPERATIONAL_ZERO_TABLES = [
   "purchaseRequests",
   "purchaseRequestItems",
   "purchaseOrders",
+  "procurementApprovalHistory",
   "purchaseOrderAuditLogs",
   "purchaseOrderItems",
   "transferRequests",

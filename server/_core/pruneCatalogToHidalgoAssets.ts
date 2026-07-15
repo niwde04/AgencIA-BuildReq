@@ -66,6 +66,7 @@ const OPERATIONAL_ZERO_COUNT_KEYS = [
   "purchaseRequests",
   "purchaseRequestItems",
   "purchaseOrders",
+  "procurementApprovalHistory",
   "purchaseOrderAuditLogs",
   "purchaseOrderItems",
   "transferRequests",

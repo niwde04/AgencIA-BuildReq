@@ -3,8 +3,13 @@ import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { TRPCError } from "@trpc/server";
 import { canAccessProject } from "../projectAccess";
+import {
+  isProcurementApproverRole,
+  isSuperintendentFamilyRole,
+} from "@shared/buildreq-roles";
 
 function canAssignFlows(user: { role: string; buildreqRole?: string | null }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -18,6 +23,7 @@ function canManageSapTranslation(user: {
   role: string;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -31,6 +37,7 @@ function canRejectApprovedItems(user: {
   role: string;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "administrador_proyecto" ||
@@ -42,6 +49,7 @@ function canManageWarehouseDispatch(user: {
   role: string;
   buildreqRole?: string | null;
 }) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   return (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -78,6 +86,7 @@ function canReturnQueuedFlowToRequisition(
   user: { role: string; buildreqRole?: string | null },
   flowType: (typeof QUEUE_FLOW_TYPES)[number]
 ) {
+  if (isProcurementApproverRole(user.buildreqRole)) return false;
   if (
     user.role === "admin" ||
     user.buildreqRole === "jefe_bodega_central" ||
@@ -107,6 +116,9 @@ function canAccessRequest(
   },
   request: { requestedById: number; projectId: number }
 ) {
+  if (isProcurementApproverRole(user.buildreqRole)) {
+    return canAccessProject(user, request.projectId);
+  }
   if (user.role === "admin") return true;
   if (user.buildreqRole === "ingeniero_residente") {
     return request.requestedById === user.id;
@@ -117,7 +129,7 @@ function canAccessRequest(
   if (user.buildreqRole === "bodeguero_proyecto") {
     return canAccessProject(user, request.projectId);
   }
-  if (user.buildreqRole === "superintendente") {
+  if (isSuperintendentFamilyRole(user.buildreqRole)) {
     return canAccessProject(user, request.projectId);
   }
   return true;
@@ -682,7 +694,7 @@ export const requestItemsRouter = router({
     .mutation(async ({ ctx, input }) => {
       if (
         ctx.user.buildreqRole === "ingeniero_residente" ||
-        ctx.user.buildreqRole === "superintendente"
+        isSuperintendentFamilyRole(ctx.user.buildreqRole)
       ) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -970,9 +982,10 @@ export const requestItemsRouter = router({
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
       if (
-        ctx.user.buildreqRole !== "jefe_bodega_central" &&
-        ctx.user.buildreqRole !== "administracion_central" &&
-        ctx.user.role !== "admin"
+        isProcurementApproverRole(ctx.user.buildreqRole) ||
+        (ctx.user.buildreqRole !== "jefe_bodega_central" &&
+          ctx.user.buildreqRole !== "administracion_central" &&
+          ctx.user.role !== "admin")
       ) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -1007,9 +1020,10 @@ export const requestItemsRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       if (
-        ctx.user.buildreqRole !== "jefe_bodega_central" &&
-        ctx.user.buildreqRole !== "administracion_central" &&
-        ctx.user.role !== "admin"
+        isProcurementApproverRole(ctx.user.buildreqRole) ||
+        (ctx.user.buildreqRole !== "jefe_bodega_central" &&
+          ctx.user.buildreqRole !== "administracion_central" &&
+          ctx.user.role !== "admin")
       ) {
         throw new TRPCError({
           code: "FORBIDDEN",

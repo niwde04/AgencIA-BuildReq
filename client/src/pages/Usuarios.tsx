@@ -53,38 +53,16 @@ import {
   Search,
 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  BUILDREQ_ROLE_LABELS,
+  BUILDREQ_ROLE_OPTIONS,
+  PROJECT_MANAGER_ASSIGNABLE_ROLES,
+  PROJECT_REQUIRED_ROLES,
+  isProjectScopedRole,
+} from "@shared/buildreq-roles";
 
-const ROLE_LABELS: Record<string, string> = {
-  ingeniero_residente: "Requiriente",
-  jefe_bodega_central: "Bodega Central",
-  administracion_central: "Administración Central",
-  administrador_proyecto: "Administración Proyecto",
-  bodeguero_proyecto: "Bodega Proyecto",
-  superintendente: "Superintendente",
-  contable: "Contable",
-};
-
-const PROJECT_ASSIGNABLE_ROLES = new Set([
-  "ingeniero_residente",
-  "administrador_proyecto",
-  "bodeguero_proyecto",
-  "superintendente",
-]);
-const PROJECT_REQUIRED_ROLES = new Set([
-  "ingeniero_residente",
-  "administrador_proyecto",
-  "bodeguero_proyecto",
-  "superintendente",
-]);
-const PROJECT_MANAGER_ASSIGNABLE_ROLES = new Set([
-  "ingeniero_residente",
-  "bodeguero_proyecto",
-  "superintendente",
-]);
-const ROLE_OPTIONS = Object.entries(ROLE_LABELS).map(([value, label]) => ({
-  value,
-  label,
-}));
+const ROLE_LABELS = BUILDREQ_ROLE_LABELS;
+const ROLE_OPTIONS = [...BUILDREQ_ROLE_OPTIONS];
 
 const nameCollator = new Intl.Collator("es-HN", {
   numeric: true,
@@ -108,7 +86,7 @@ function canAssignAllProjects(role?: string | null) {
 }
 
 function isProjectAssignableRole(role?: string | null) {
-  return Boolean(role && PROJECT_ASSIGNABLE_ROLES.has(role));
+  return isProjectScopedRole(role);
 }
 
 function normalizeProjectIds(value: unknown) {
@@ -141,7 +119,7 @@ function formatAssignedProjects(entity: any) {
   }
   const ids = getAssignedProjectIds(entity);
   if (ids.length > 0) return ids.map((projectId) => `Proyecto #${projectId}`).join(", ");
-  if (entity?.buildreqRole === "administrador_proyecto") {
+  if (isProjectAssignableRole(entity?.buildreqRole)) {
     return "Sin proyectos asignados";
   }
   return "N/A";

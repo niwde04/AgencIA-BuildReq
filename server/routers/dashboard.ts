@@ -2,6 +2,7 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { getProjectScopeIds, hasAllProjectAccess } from "../projectAccess";
+import { isProcurementApproverRole } from "@shared/buildreq-roles";
 
 export const dashboardRouter = router({
   stats: protectedProcedure.query(async ({ ctx }) => {
@@ -67,7 +68,8 @@ export const dashboardRouter = router({
       isAdmin ||
       userRole === "jefe_bodega_central" ||
       userRole === "administracion_central" ||
-      userRole === "administrador_proyecto";
+      userRole === "administrador_proyecto" ||
+      isProcurementApproverRole(userRole);
     const canAccessPurchaseRequests =
       canAccessProcurement || userRole === "bodeguero_proyecto";
     const canAccessPurchaseOrders =
@@ -129,13 +131,17 @@ export const dashboardRouter = router({
       pendingFlowRowsPromise,
       canAccessPurchaseRequests
         ? db.listPurchaseRequests({
-            status: "pendiente",
+            status: isProcurementApproverRole(userRole)
+              ? "en_revision"
+              : "pendiente",
             ...purchaseFilters,
           })
         : Promise.resolve([]),
       canAccessPurchaseOrders
         ? db.listPurchaseOrders({
-            status: "emitida",
+            status: isProcurementApproverRole(userRole)
+              ? "pendiente_aprobacion"
+              : "emitida",
             ...purchaseFilters,
           })
         : Promise.resolve([]),
