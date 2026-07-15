@@ -2,6 +2,7 @@ import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
+import * as db from "../db";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -26,6 +27,15 @@ const requireUser = t.middleware(async opts => {
 });
 
 export const protectedProcedure = t.procedure.use(requireUser);
+
+const loadProcurementApprovalSettings = t.middleware(async opts => {
+  await db.getProcurementApprovalSettings();
+  return opts.next();
+});
+
+export const procurementProcedure = protectedProcedure.use(
+  loadProcurementApprovalSettings
+);
 
 export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {

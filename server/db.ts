@@ -19,6 +19,7 @@ import {
   InsertUser,
   User,
   users,
+  systemSettings,
   userProjectAssignments,
   warehouseUserAssignments,
   projectWarehouseAssignments,
@@ -130,9 +131,13 @@ import {
   getPurchaseOrderApprovalReadinessError,
   isPurchaseOrderDraftLike,
   isPurchaseRequestDraftLike,
+  isPurchaseOrderApprovalEnabled,
+  isPurchaseRequestApprovalEnabled,
   PROCUREMENT_APPROVALS_DISABLED_MESSAGE,
-  PROCUREMENT_APPROVALS_ENABLED,
+  DEFAULT_PROCUREMENT_APPROVAL_SETTINGS,
   purchaseOrderRequiresApproval,
+  setRuntimeProcurementApprovalSettings,
+  type ProcurementApprovalSettings,
 } from "@shared/procurement-approvals";
 import {
   getSupplierAccountPaymentCertificateStatus,
@@ -200,6 +205,73 @@ export async function getDb() {
     }
   }
   return _db;
+}
+
+function toProcurementApprovalSettings(
+  settings?: typeof systemSettings.$inferSelect | null
+): ProcurementApprovalSettings {
+  if (!settings) return { ...DEFAULT_PROCUREMENT_APPROVAL_SETTINGS };
+  return {
+    purchaseRequestApprovalsEnabled:
+      settings.purchaseRequestApprovalsEnabled === true,
+    purchaseOrderApprovalsEnabled: settings.purchaseOrderApprovalsEnabled === true,
+    updatedAt: settings.updatedAt,
+  };
+}
+
+export async function getProcurementApprovalSettings() {
+  const db = await getDb();
+  if (!db) return { ...DEFAULT_PROCUREMENT_APPROVAL_SETTINGS };
+
+  try {
+    const [settings] = await db
+      .select()
+      .from(systemSettings)
+      .where(eq(systemSettings.id, 1));
+    return setRuntimeProcurementApprovalSettings(
+      toProcurementApprovalSettings(settings)
+    );
+  } catch {
+    // During deployment the feature stays safely disabled until migration 0112
+    // has been applied.
+    return { ...DEFAULT_PROCUREMENT_APPROVAL_SETTINGS };
+  }
+}
+
+export async function updateProcurementApprovalSettings(params: {
+  purchaseRequestApprovalsEnabled: boolean;
+  purchaseOrderApprovalsEnabled: boolean;
+  updatedByUserId: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const updatedAt = new Date();
+  const [settings] = await db
+    .insert(systemSettings)
+    .values({
+      id: 1,
+      purchaseRequestApprovalsEnabled:
+        params.purchaseRequestApprovalsEnabled,
+      purchaseOrderApprovalsEnabled: params.purchaseOrderApprovalsEnabled,
+      updatedByUserId: params.updatedByUserId,
+      updatedAt,
+    })
+    .onConflictDoUpdate({
+      target: systemSettings.id,
+      set: {
+        purchaseRequestApprovalsEnabled:
+          params.purchaseRequestApprovalsEnabled,
+        purchaseOrderApprovalsEnabled: params.purchaseOrderApprovalsEnabled,
+        updatedByUserId: params.updatedByUserId,
+        updatedAt,
+      },
+    })
+    .returning();
+
+  return setRuntimeProcurementApprovalSettings(
+    toProcurementApprovalSettings(settings)
+  );
 }
 
 function toAuditUser(
@@ -5259,8 +5331,14 @@ export type ProcurementApprovalActor = {
   buildreqRole?: string | null;
 };
 
-function assertProcurementApprovalWorkflowEnabled() {
-  if (!PROCUREMENT_APPROVALS_ENABLED) {
+function assertProcurementApprovalWorkflowEnabled(
+  documentType: "purchase_request" | "purchase_order"
+) {
+  const enabled =
+    documentType === "purchase_request"
+      ? isPurchaseRequestApprovalEnabled()
+      : isPurchaseOrderApprovalEnabled();
+  if (!enabled) {
     throw new Error(PROCUREMENT_APPROVALS_DISABLED_MESSAGE);
   }
 }
@@ -5367,7 +5445,7 @@ async function lockPurchaseOrderForUpdate(database: any, id: number) {
   if (!purchaseOrder) throw new Error("Orden de compra no encontrada");
 
   if (
-    !PROCUREMENT_APPROVALS_ENABLED &&
+    !isPurchaseOrderApprovalEnabled() &&
     isPurchaseOrderDraftLike(
       purchaseOrder.status,
       purchaseOrder.approvalStatus
@@ -5407,7 +5485,7 @@ async function normalizePurchaseRequestDraftForDisabledApprovals(
   database: any,
   id: number
 ) {
-  if (PROCUREMENT_APPROVALS_ENABLED) return;
+  if (isPurchaseRequestApprovalEnabled()) return;
 
   const [purchaseRequest] = await database
     .select()
@@ -6121,7 +6199,7 @@ export async function submitPurchaseRequestForApproval(params: {
   id: number;
   actor: ProcurementApprovalActor;
 }) {
-  assertProcurementApprovalWorkflowEnabled();
+  assertProcurementApprovalWorkflowEnabled("purchase_request");
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
@@ -6175,7 +6253,7 @@ export async function reviewPurchaseRequestApproval(params: {
   comment?: string | null;
   actor: ProcurementApprovalActor;
 }) {
-  assertProcurementApprovalWorkflowEnabled();
+  assertProcurementApprovalWorkflowEnabled("purchase_request");
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const comment = params.comment?.trim() || null;
@@ -6416,7 +6494,7 @@ export async function syncPurchaseRequestConversionStatus(id: number) {
   if (
     purchaseRequest.status === "anulada" ||
     (purchaseRequest.status === "rechazada" &&
-      (PROCUREMENT_APPROVALS_ENABLED ||
+      (isPurchaseRequestApprovalEnabled() ||
         purchaseRequest.approvalStatus === null))
   ) {
     return purchaseRequest.status;
@@ -6457,7 +6535,7 @@ export async function syncPurchaseRequestConversionStatus(id: number) {
   const nextApprovalStatus =
     purchaseRequest.approvalStatus === "aprobada"
       ? "aprobada"
-      : !PROCUREMENT_APPROVALS_ENABLED
+      : !isPurchaseRequestApprovalEnabled()
         ? ["convertida", "parcialmente_convertida"].includes(nextStatus)
           ? "no_requiere"
           : null
@@ -7447,7 +7525,7 @@ export async function submitPurchaseOrderForApproval(params: {
   id: number;
   actor: ProcurementApprovalActor;
 }) {
-  assertProcurementApprovalWorkflowEnabled();
+  assertProcurementApprovalWorkflowEnabled("purchase_order");
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
@@ -7518,7 +7596,7 @@ export async function reviewPurchaseOrderApproval(params: {
   comment?: string | null;
   actor: ProcurementApprovalActor;
 }) {
-  assertProcurementApprovalWorkflowEnabled();
+  assertProcurementApprovalWorkflowEnabled("purchase_order");
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const comment = params.comment?.trim() || null;

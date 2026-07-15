@@ -7,6 +7,57 @@ import type { PurchaseCurrency } from "./purchase-orders";
  */
 export const PROCUREMENT_APPROVALS_ENABLED = false;
 
+export type ProcurementApprovalSettings = {
+  purchaseRequestApprovalsEnabled: boolean;
+  purchaseOrderApprovalsEnabled: boolean;
+  updatedAt?: Date | string | null;
+};
+
+export const DEFAULT_PROCUREMENT_APPROVAL_SETTINGS: ProcurementApprovalSettings = {
+  purchaseRequestApprovalsEnabled: false,
+  purchaseOrderApprovalsEnabled: false,
+};
+
+let runtimeProcurementApprovalSettings: ProcurementApprovalSettings = {
+  ...DEFAULT_PROCUREMENT_APPROVAL_SETTINGS,
+};
+
+export function setRuntimeProcurementApprovalSettings(
+  settings: ProcurementApprovalSettings
+) {
+  const currentUpdatedAt = runtimeProcurementApprovalSettings.updatedAt
+    ? new Date(runtimeProcurementApprovalSettings.updatedAt).getTime()
+    : 0;
+  const nextUpdatedAt = settings.updatedAt
+    ? new Date(settings.updatedAt).getTime()
+    : Date.now();
+
+  if (Number.isFinite(currentUpdatedAt) && nextUpdatedAt < currentUpdatedAt) {
+    return runtimeProcurementApprovalSettings;
+  }
+
+  runtimeProcurementApprovalSettings = {
+    purchaseRequestApprovalsEnabled:
+      settings.purchaseRequestApprovalsEnabled === true,
+    purchaseOrderApprovalsEnabled:
+      settings.purchaseOrderApprovalsEnabled === true,
+    updatedAt: settings.updatedAt ?? new Date(nextUpdatedAt),
+  };
+  return runtimeProcurementApprovalSettings;
+}
+
+export function getRuntimeProcurementApprovalSettings() {
+  return runtimeProcurementApprovalSettings;
+}
+
+export function isPurchaseRequestApprovalEnabled() {
+  return runtimeProcurementApprovalSettings.purchaseRequestApprovalsEnabled;
+}
+
+export function isPurchaseOrderApprovalEnabled() {
+  return runtimeProcurementApprovalSettings.purchaseOrderApprovalsEnabled;
+}
+
 export const PROCUREMENT_APPROVALS_DISABLED_MESSAGE =
   "El flujo de aprobación de Solicitudes y Órdenes de Compra está deshabilitado temporalmente";
 
@@ -47,9 +98,10 @@ const PURCHASE_ORDER_DRAFT_LIKE_STATUSES_WITH_APPROVALS_DISABLED = new Set([
 
 export function isPurchaseRequestDraftLike(
   status?: string | null,
-  approvalStatus?: string | null
+  approvalStatus?: string | null,
+  approvalsEnabled = isPurchaseRequestApprovalEnabled()
 ) {
-  if (PROCUREMENT_APPROVALS_ENABLED) {
+  if (approvalsEnabled) {
     return status === "pendiente" && approvalStatus == null;
   }
   return (
@@ -63,9 +115,10 @@ export function isPurchaseRequestDraftLike(
 
 export function isPurchaseRequestConversionReady(
   status?: string | null,
-  approvalStatus?: string | null
+  approvalStatus?: string | null,
+  approvalsEnabled = isPurchaseRequestApprovalEnabled()
 ) {
-  if (PROCUREMENT_APPROVALS_ENABLED) {
+  if (approvalsEnabled) {
     return (
       (approvalStatus === "aprobada" &&
         PURCHASE_REQUEST_CONVERTIBLE_STATUSES.has(status ?? "")) ||
@@ -84,9 +137,10 @@ export function isPurchaseRequestConversionReady(
 
 export function isPurchaseOrderDraftLike(
   status?: string | null,
-  approvalStatus?: string | null
+  approvalStatus?: string | null,
+  approvalsEnabled = isPurchaseOrderApprovalEnabled()
 ) {
-  if (PROCUREMENT_APPROVALS_ENABLED) {
+  if (approvalsEnabled) {
     return status === "borrador" && approvalStatus == null;
   }
   return (
@@ -203,10 +257,11 @@ export function purchaseOrderExceedsApprovalLimit(
 
 export function purchaseOrderRequiresApproval(
   currency: PurchaseCurrency,
-  total: unknown
+  total: unknown,
+  approvalsEnabled = isPurchaseOrderApprovalEnabled()
 ) {
   return (
-    PROCUREMENT_APPROVALS_ENABLED &&
+    approvalsEnabled &&
     purchaseOrderExceedsApprovalLimit(currency, total)
   );
 }

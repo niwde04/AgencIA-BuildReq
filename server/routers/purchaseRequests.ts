@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
-import { protectedProcedure, router } from "../_core/trpc";
+import { procurementProcedure as protectedProcedure, router } from "../_core/trpc";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 import {
   isProcurementApproverRole,
@@ -9,8 +9,8 @@ import {
 } from "@shared/buildreq-roles";
 import {
   isPurchaseRequestDraftLike,
+  isPurchaseRequestApprovalEnabled,
   PROCUREMENT_APPROVALS_DISABLED_MESSAGE,
-  PROCUREMENT_APPROVALS_ENABLED,
 } from "@shared/procurement-approvals";
 
 function canReadPurchaseRequests(user: {
@@ -82,7 +82,7 @@ function assertProjectScopedAccess(
 }
 
 function assertProcurementApprovalsEnabled() {
-  if (!PROCUREMENT_APPROVALS_ENABLED) {
+  if (!isPurchaseRequestApprovalEnabled()) {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message: PROCUREMENT_APPROVALS_DISABLED_MESSAGE,

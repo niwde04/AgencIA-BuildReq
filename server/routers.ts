@@ -32,6 +32,7 @@ import { suppliersRouter } from "./routers/suppliers";
 import { retentionsRouter } from "./routers/retentions";
 import { taxesRouter } from "./routers/taxes";
 import { reportsRouter } from "./routers/reports";
+import { systemSettingsRouter } from "./routers/systemSettings";
 
 export const appRouter = router({
   system: systemRouter,
@@ -93,6 +94,7 @@ export const appRouter = router({
   retentions: retentionsRouter,
   taxes: taxesRouter,
   reports: reportsRouter,
+  systemSettings: systemSettingsRouter,
 });
 
 export type AppRouter = typeof appRouter;

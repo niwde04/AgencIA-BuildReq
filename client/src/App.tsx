@@ -37,6 +37,7 @@ import Reportes from "./pages/Reportes";
 import SaldosIniciales from "./pages/SaldosIniciales";
 import SalidasBodega from "./pages/SalidasBodega";
 import ActualizarContrasena from "./pages/ActualizarContrasena";
+import Configuracion from "./pages/Configuracion";
 
 const UPPERCASE_TEXT_INPUT_TYPES = new Set([
   "",
@@ -195,6 +196,7 @@ function DashboardRoutes() {
       <Route path="/saldos-iniciales" component={SaldosIniciales} />
       <Route path="/proyectos" component={Proyectos} />
       <Route path="/usuarios" component={Usuarios} />
+      <Route path="/configuracion" component={Configuracion} />
       <Route path="/datos-demo" component={DatosDemo} />
       <Route path="/notificaciones" component={Notificaciones} />
       <Route path="/404" component={NotFound} />

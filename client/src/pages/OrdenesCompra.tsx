@@ -82,6 +82,7 @@ import {
   getReadablePrintStyles,
   getReadablePurchaseOrderPrintStyles,
 } from "@/lib/readable-print-styles";
+import { useProcurementApprovalSettings } from "@/hooks/useProcurementApprovalSettings";
 import {
   calculatePurchaseOrderLineAmounts,
   DEFAULT_SALES_TAXES,
@@ -108,8 +109,8 @@ import {
 } from "@shared/buildreq-roles";
 import {
   isPurchaseOrderDraftLike,
+  isPurchaseOrderApprovalEnabled,
   isPurchaseRequestConversionReady,
-  PROCUREMENT_APPROVALS_ENABLED,
   purchaseOrderRequiresApproval,
 } from "@shared/procurement-approvals";
 
@@ -136,9 +137,9 @@ const STATUS_COLORS: Record<string, string> = {
   anulada: "border-rose-300 bg-rose-50 text-rose-700",
 };
 
-const STATUS_FILTER_OPTIONS = Object.entries(STATUS_LABELS).filter(
+const getStatusFilterOptions = (approvalsEnabled: boolean) => Object.entries(STATUS_LABELS).filter(
   ([status]) =>
-    PROCUREMENT_APPROVALS_ENABLED ||
+    approvalsEnabled ||
     !["pendiente_aprobacion", "rechazada"].includes(status)
 );
 
@@ -146,7 +147,7 @@ function getEffectivePurchaseOrderStatus(
   status?: string | null,
   approvalStatus?: string | null
 ) {
-  return !PROCUREMENT_APPROVALS_ENABLED &&
+  return !isPurchaseOrderApprovalEnabled() &&
     isPurchaseOrderDraftLike(status, approvalStatus)
     ? "borrador"
     : (status ?? "");
@@ -904,6 +905,8 @@ type ApprovalReviewDecision = "approve" | "reject";
 export default function OrdenesCompra() {
   const utils = trpc.useUtils();
   const { user } = useAuth();
+  const { purchaseOrderApprovalsEnabled: PROCUREMENT_APPROVALS_ENABLED } =
+    useProcurementApprovalSettings();
   const userRole = (user as any)?.buildreqRole;
   const isProcurementApprover = isProcurementApproverRole(userRole);
   const canManagePurchaseOrders =
@@ -3104,7 +3107,7 @@ export default function OrdenesCompra() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos los estados</SelectItem>
-            {STATUS_FILTER_OPTIONS.map(([value, label]) => (
+            {getStatusFilterOptions(PROCUREMENT_APPROVALS_ENABLED).map(([value, label]) => (
               <SelectItem key={value} value={value}>
                 {label}
               </SelectItem>

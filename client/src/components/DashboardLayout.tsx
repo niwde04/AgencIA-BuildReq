@@ -47,6 +47,7 @@ import {
   Landmark,
   Truck,
   UserRound,
+  Settings,
 } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -61,7 +62,7 @@ import {
   BUILDREQ_ROLE_LABELS,
   isProcurementApproverRole,
 } from "@shared/buildreq-roles";
-import { PROCUREMENT_APPROVALS_ENABLED } from "@shared/procurement-approvals";
+import { useProcurementApprovalSettings } from "@/hooks/useProcurementApprovalSettings";
 
 type MenuItem = {
   icon: any;
@@ -305,6 +306,12 @@ const allMenuItems: MenuItem[] = [
     roles: ["admin", "administracion_central"],
   },
   {
+    icon: Settings,
+    label: "Configuración",
+    path: "/configuracion",
+    roles: ["admin"],
+  },
+  {
     icon: Database,
     label: "Datos Demo",
     path: "/datos-demo",
@@ -417,6 +424,10 @@ function DashboardLayoutContent({
   const isMobile = useIsMobile();
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
+  const {
+    purchaseRequestApprovalsEnabled,
+    purchaseOrderApprovalsEnabled,
+  } = useProcurementApprovalSettings();
 
   const { data: unreadCount } = trpc.notifications.unreadCount.useQuery(
     undefined,
@@ -610,11 +621,11 @@ function DashboardLayoutContent({
                       ? location === "/"
                       : location.startsWith(item.path);
                   const countKey =
-                    !PROCUREMENT_APPROVALS_ENABLED &&
                     isProcurementApproverRole(userRole) &&
-                    ["/solicitudes-compra", "/ordenes-compra"].includes(
-                      item.path
-                    )
+                    ((item.path === "/solicitudes-compra" &&
+                      !purchaseRequestApprovalsEnabled) ||
+                      (item.path === "/ordenes-compra" &&
+                        !purchaseOrderApprovalsEnabled))
                       ? undefined
                       : MENU_COUNT_KEYS[item.path];
                   const badgeCount = countKey

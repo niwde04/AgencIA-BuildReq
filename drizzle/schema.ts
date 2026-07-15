@@ -318,6 +318,26 @@ export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
 // ============================================================
+// SYSTEM SETTINGS - server-managed global application switches
+// ============================================================
+export const systemSettings = pgTable("systemSettings", {
+  id: integer("id").primaryKey().default(1),
+  purchaseRequestApprovalsEnabled: boolean("purchaseRequestApprovalsEnabled")
+    .default(false)
+    .notNull(),
+  purchaseOrderApprovalsEnabled: boolean("purchaseOrderApprovalsEnabled")
+    .default(false)
+    .notNull(),
+  updatedByUserId: integer("updatedByUserId").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export type SystemSettings = typeof systemSettings.$inferSelect;
+export type InsertSystemSettings = typeof systemSettings.$inferInsert;
+
+// ============================================================
 // PROJECTS - Construction projects (up to 20 active)
 // ============================================================
 export const projects = pgTable(

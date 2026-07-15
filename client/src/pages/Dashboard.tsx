@@ -13,7 +13,7 @@ import {
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { isProcurementApproverRole } from "@shared/buildreq-roles";
-import { PROCUREMENT_APPROVALS_ENABLED } from "@shared/procurement-approvals";
+import { useProcurementApprovalSettings } from "@/hooks/useProcurementApprovalSettings";
 import {
   BarChart,
   Bar,
@@ -76,9 +76,17 @@ export default function Dashboard() {
   const isProcurementApprover = isProcurementApproverRole(
     (user as any)?.buildreqRole
   );
+  const {
+    purchaseRequestApprovalsEnabled,
+    purchaseOrderApprovalsEnabled,
+  } = useProcurementApprovalSettings();
   const { data: approvalCounts } = trpc.dashboard.sidebarCounts.useQuery(
     undefined,
-    { enabled: PROCUREMENT_APPROVALS_ENABLED && isProcurementApprover }
+    {
+      enabled:
+        (purchaseRequestApprovalsEnabled || purchaseOrderApprovalsEnabled) &&
+        isProcurementApprover,
+    }
   );
   const [, setLocation] = useLocation();
 
@@ -133,9 +141,10 @@ export default function Dashboard() {
         <div className="w-8 h-8 bg-primary" />
       </div>
 
-      {PROCUREMENT_APPROVALS_ENABLED && isProcurementApprover ? (
+      {(purchaseRequestApprovalsEnabled || purchaseOrderApprovalsEnabled) &&
+      isProcurementApprover ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Card
+          {purchaseRequestApprovalsEnabled ? <Card
             className="cursor-pointer border-amber-200 transition-colors hover:border-amber-400"
             onClick={() => setLocation("/solicitudes-compra")}
           >
@@ -152,9 +161,9 @@ export default function Dashboard() {
                 <FileCheck2 className="h-8 w-8 text-amber-500/70" />
               </div>
             </CardContent>
-          </Card>
+          </Card> : null}
 
-          <Card
+          {purchaseOrderApprovalsEnabled ? <Card
             className="cursor-pointer border-amber-200 transition-colors hover:border-amber-400"
             onClick={() => setLocation("/ordenes-compra")}
           >
@@ -171,7 +180,7 @@ export default function Dashboard() {
                 <ShoppingCart className="h-8 w-8 text-amber-500/70" />
               </div>
             </CardContent>
-          </Card>
+          </Card> : null}
         </div>
       ) : null}
 

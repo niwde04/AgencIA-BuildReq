@@ -1,9 +1,12 @@
 import { z } from "zod";
-import { protectedProcedure, router } from "../_core/trpc";
+import { procurementProcedure as protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { getProjectScopeIds, hasAllProjectAccess } from "../projectAccess";
 import { isProcurementApproverRole } from "@shared/buildreq-roles";
-import { PROCUREMENT_APPROVALS_ENABLED } from "@shared/procurement-approvals";
+import {
+  isPurchaseOrderApprovalEnabled,
+  isPurchaseRequestApprovalEnabled,
+} from "@shared/procurement-approvals";
 
 export const dashboardRouter = router({
   stats: protectedProcedure.query(async ({ ctx }) => {
@@ -131,7 +134,8 @@ export const dashboardRouter = router({
       }),
       pendingFlowRowsPromise,
       canAccessPurchaseRequests &&
-      (!isProcurementApproverRole(userRole) || PROCUREMENT_APPROVALS_ENABLED)
+      (!isProcurementApproverRole(userRole) ||
+        isPurchaseRequestApprovalEnabled())
         ? db.listPurchaseRequests({
             status: isProcurementApproverRole(userRole)
               ? "en_revision"
@@ -140,7 +144,8 @@ export const dashboardRouter = router({
           })
         : Promise.resolve([]),
       canAccessPurchaseOrders &&
-      (!isProcurementApproverRole(userRole) || PROCUREMENT_APPROVALS_ENABLED)
+      (!isProcurementApproverRole(userRole) ||
+        isPurchaseOrderApprovalEnabled())
         ? db.listPurchaseOrders({
             status: isProcurementApproverRole(userRole)
               ? "pendiente_aprobacion"

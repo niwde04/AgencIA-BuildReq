@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
-import { protectedProcedure, router } from "../_core/trpc";
+import { procurementProcedure as protectedProcedure, router } from "../_core/trpc";
 import {
   PURCHASE_CURRENCIES,
   PURCHASE_ORDER_CONTRACT_FREQUENCIES,
@@ -20,9 +20,9 @@ import {
 import {
   getPurchaseOrderApprovalReadinessError,
   isPurchaseOrderDraftLike,
+  isPurchaseOrderApprovalEnabled,
   isPurchaseRequestConversionReady,
   PROCUREMENT_APPROVALS_DISABLED_MESSAGE,
-  PROCUREMENT_APPROVALS_ENABLED,
   purchaseOrderExceedsApprovalLimit,
 } from "@shared/procurement-approvals";
 
@@ -354,7 +354,7 @@ type PurchaseOrderState = {
 };
 
 function assertProcurementApprovalsEnabled() {
-  if (!PROCUREMENT_APPROVALS_ENABLED) {
+  if (!isPurchaseOrderApprovalEnabled()) {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message: PROCUREMENT_APPROVALS_DISABLED_MESSAGE,
