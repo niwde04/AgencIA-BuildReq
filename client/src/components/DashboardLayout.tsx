@@ -100,6 +100,12 @@ const PROCUREMENT_APPROVER_MENU_PATHS = new Set([
 
 const allMenuItems: MenuItem[] = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
+  {
+    icon: Settings,
+    label: "Configuración",
+    path: "/configuracion",
+    roles: ["admin"],
+  },
   { icon: ClipboardList, label: "Requisiciones", path: "/solicitudes" },
   { icon: Package, label: "Flujos de Abastecimiento", path: "/flujos" },
   {
@@ -304,12 +310,6 @@ const allMenuItems: MenuItem[] = [
     label: "Usuarios",
     path: "/usuarios",
     roles: ["admin", "administracion_central"],
-  },
-  {
-    icon: Settings,
-    label: "Configuración",
-    path: "/configuracion",
-    roles: ["admin"],
   },
   {
     icon: Database,
