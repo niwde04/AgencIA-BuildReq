@@ -21,7 +21,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Select,
   SelectContent,
@@ -406,8 +405,6 @@ export default function PurchaseRequests() {
   const [debouncedTargetSearch, setDebouncedTargetSearch] = useState("");
   const [selectedRequestIds, setSelectedRequestIds] = useState<number[]>([]);
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
-  const [conversionPricesIncludeTax, setConversionPricesIncludeTax] =
-    useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [purchaseTypeFilter, setPurchaseTypeFilter] = useState<
     PurchaseType | "all"
@@ -611,7 +608,6 @@ export default function PurchaseRequests() {
             : `Se generaron ${purchaseOrderNumbers.length} órdenes de compra`
         );
         setSelectedItemIds([]);
-        setConversionPricesIncludeTax(false);
         void Promise.all([
           utils.purchaseRequests.list.invalidate(),
           utils.purchaseOrders.list.invalidate(),
@@ -642,7 +638,6 @@ export default function PurchaseRequests() {
         );
         toast.success(`OC unificada ${result.purchaseOrderNumber} generada`);
         setSelectedRequestIds([]);
-        setConversionPricesIncludeTax(false);
         await Promise.all([
           utils.purchaseRequests.list.invalidate(),
           utils.purchaseOrders.list.invalidate(),
@@ -1227,7 +1222,6 @@ export default function PurchaseRequests() {
       purchaseRequestId: detail.purchaseRequest.id,
       selectedItemIds: itemsToConvert.map(item => item.purchaseRequestItemId),
       itemsToConvert,
-      pricesIncludeTax: conversionPricesIncludeTax,
     });
   };
 
@@ -1584,26 +1578,10 @@ export default function PurchaseRequests() {
           </Button>
           {canConvert && selectedRequestIds.length > 1 ? (
             <div className="flex flex-wrap items-center gap-2">
-              <ToggleGroup
-                type="single"
-                variant="outline"
-                value={conversionPricesIncludeTax ? "included" : "excluded"}
-                onValueChange={value => {
-                  if (value)
-                    setConversionPricesIncludeTax(value === "included");
-                }}
-                disabled={unifiedConvertMutation.isPending}
-              >
-                <ToggleGroupItem value="excluded">Sin impuesto</ToggleGroupItem>
-                <ToggleGroupItem value="included">
-                  Impuesto incluido
-                </ToggleGroupItem>
-              </ToggleGroup>
               <Button
                 onClick={() =>
                   unifiedConvertMutation.mutate({
                     purchaseRequestIds: selectedRequestIds,
-                    pricesIncludeTax: conversionPricesIncludeTax,
                   })
                 }
                 disabled={unifiedConvertMutation.isPending}
@@ -2617,39 +2595,17 @@ export default function PurchaseRequests() {
                   )}
 
                   {canConvertSelectedPurchaseRequest && (
-                    <>
-                      <ToggleGroup
-                        type="single"
-                        variant="outline"
-                        value={
-                          conversionPricesIncludeTax ? "included" : "excluded"
-                        }
-                        onValueChange={value => {
-                          if (value) {
-                            setConversionPricesIncludeTax(value === "included");
-                          }
-                        }}
-                        disabled={convertMutation.isPending}
-                      >
-                        <ToggleGroupItem value="excluded">
-                          Sin impuesto
-                        </ToggleGroupItem>
-                        <ToggleGroupItem value="included">
-                          Impuesto incluido
-                        </ToggleGroupItem>
-                      </ToggleGroup>
-                      <Button
-                        className="h-11 px-5"
-                        onClick={handleConvertToPurchaseOrder}
-                        disabled={
-                          convertMutation.isPending ||
-                          itemIdsToConvert.length === 0
-                        }
-                      >
-                        <ShoppingCart className="mr-2 h-4 w-4" />
-                        Convertir a OC
-                      </Button>
-                    </>
+                    <Button
+                      className="h-11 px-5"
+                      onClick={handleConvertToPurchaseOrder}
+                      disabled={
+                        convertMutation.isPending ||
+                        itemIdsToConvert.length === 0
+                      }
+                    >
+                      <ShoppingCart className="mr-2 h-4 w-4" />
+                      Convertir a OC
+                    </Button>
                   )}
                 </div>
               </div>
