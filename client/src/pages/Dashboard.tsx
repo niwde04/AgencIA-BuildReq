@@ -13,6 +13,7 @@ import {
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { isProcurementApproverRole } from "@shared/buildreq-roles";
+import { PROCUREMENT_APPROVALS_ENABLED } from "@shared/procurement-approvals";
 import {
   BarChart,
   Bar,
@@ -77,7 +78,7 @@ export default function Dashboard() {
   );
   const { data: approvalCounts } = trpc.dashboard.sidebarCounts.useQuery(
     undefined,
-    { enabled: isProcurementApprover }
+    { enabled: PROCUREMENT_APPROVALS_ENABLED && isProcurementApprover }
   );
   const [, setLocation] = useLocation();
 
@@ -86,7 +87,7 @@ export default function Dashboard() {
       <div className="space-y-6">
         <h1>Dashboard</h1>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map((i) => (
+          {[1, 2, 3, 4].map(i => (
             <Card key={i}>
               <CardContent className="p-6">
                 <div className="h-20 animate-pulse bg-muted rounded" />
@@ -101,7 +102,9 @@ export default function Dashboard() {
   if (!stats) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">No se pudieron cargar las estadísticas</p>
+        <p className="text-muted-foreground">
+          No se pudieron cargar las estadísticas
+        </p>
       </div>
     );
   }
@@ -130,7 +133,7 @@ export default function Dashboard() {
         <div className="w-8 h-8 bg-primary" />
       </div>
 
-      {isProcurementApprover ? (
+      {PROCUREMENT_APPROVALS_ENABLED && isProcurementApprover ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Card
             className="cursor-pointer border-amber-200 transition-colors hover:border-amber-400"
@@ -198,7 +201,9 @@ export default function Dashboard() {
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                   Proyectos Activos
                 </p>
-                <p className="text-3xl font-bold mt-1">{stats.totalActiveProjects}</p>
+                <p className="text-3xl font-bold mt-1">
+                  {stats.totalActiveProjects}
+                </p>
               </div>
               <FolderKanban className="h-8 w-8 text-primary/60" />
             </div>
@@ -226,7 +231,9 @@ export default function Dashboard() {
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                   Devoluciones Pendientes
                 </p>
-                <p className="text-3xl font-bold mt-1">{stats.pendingReturns}</p>
+                <p className="text-3xl font-bold mt-1">
+                  {stats.pendingReturns}
+                </p>
               </div>
               <AlertCircle className="h-8 w-8 text-amber-500/60" />
             </div>
@@ -321,10 +328,18 @@ export default function Dashboard() {
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={projectData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" />
-                <XAxis dataKey="name" tick={{ fontSize: 12 }} stroke="#737373" />
+                <XAxis
+                  dataKey="name"
+                  tick={{ fontSize: 12 }}
+                  stroke="#737373"
+                />
                 <YAxis tick={{ fontSize: 12 }} stroke="#737373" />
                 <Tooltip />
-                <Bar dataKey="solicitudes" fill="#dc2626" radius={[2, 2, 0, 0]} />
+                <Bar
+                  dataKey="solicitudes"
+                  fill="#dc2626"
+                  radius={[2, 2, 0, 0]}
+                />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -356,8 +371,12 @@ export default function Dashboard() {
                   <div className="flex items-center gap-3">
                     <div className="w-1 h-8 bg-primary rounded-full" />
                     <div>
-                      <p className="text-sm font-medium">{r.request.requestNumber}</p>
-                      <p className="text-xs text-muted-foreground">{r.project?.name || "\u2014"}</p>
+                      <p className="text-sm font-medium">
+                        {r.request.requestNumber}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {r.project?.name || "\u2014"}
+                      </p>
                     </div>
                   </div>
                   <Badge

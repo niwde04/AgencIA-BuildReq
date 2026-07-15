@@ -128,6 +128,10 @@ export type { BuildReqRole } from "@shared/buildreq-roles";
 import {
   formatApprovalSnapshotAmount,
   getPurchaseOrderApprovalReadinessError,
+  isPurchaseOrderDraftLike,
+  isPurchaseRequestDraftLike,
+  PROCUREMENT_APPROVALS_DISABLED_MESSAGE,
+  PROCUREMENT_APPROVALS_ENABLED,
   purchaseOrderRequiresApproval,
 } from "@shared/procurement-approvals";
 import {
@@ -198,7 +202,9 @@ export async function getDb() {
   return _db;
 }
 
-function toAuditUser(user: Pick<User, "id" | "name" | "email"> | null | undefined) {
+function toAuditUser(
+  user: Pick<User, "id" | "name" | "email"> | null | undefined
+) {
   if (!user) return null;
   return {
     id: user.id,
@@ -519,13 +525,14 @@ async function getSapProcurementInsightsByCodes(sapCodes: string[]) {
         insight.minimumPurchasesByCurrency[reference.currency];
       if (
         !currentMinimum ||
-        parseDecimal(reference.unitPrice) < parseDecimal(currentMinimum.unitPrice)
+        parseDecimal(reference.unitPrice) <
+          parseDecimal(currentMinimum.unitPrice)
       ) {
         insight.minimumPurchasesByCurrency[reference.currency] = reference;
       }
       insight.minimumPurchase = insight.lastPurchase
-        ? insight.minimumPurchasesByCurrency[insight.lastPurchase.currency] ??
-          null
+        ? (insight.minimumPurchasesByCurrency[insight.lastPurchase.currency] ??
+          null)
         : null;
     }
   }
@@ -1831,7 +1838,9 @@ async function buildFixedAssetTargetDiagnostic(params: {
   const reasons: string[] = [];
   if (!catalogItem.isActive) reasons.push("está inactivo");
   if (catalogItem.tipoArticulo !== 3) {
-    reasons.push(`es tipo de artículo ${catalogItem.tipoArticulo}, no activo fijo`);
+    reasons.push(
+      `es tipo de artículo ${catalogItem.tipoArticulo}, no activo fijo`
+    );
   }
   if (catalogItem.projectId !== params.projectId) {
     const catalogProject = catalogItem.projectId
@@ -2578,7 +2587,10 @@ export async function listVisibleWarehouseStockForItems(params: {
         projectWarehouseAssignments,
         eq(projectWarehouseAssignments.warehouseId, warehouses.id)
       )
-      .leftJoin(projects, eq(projectWarehouseAssignments.projectId, projects.id))
+      .leftJoin(
+        projects,
+        eq(projectWarehouseAssignments.projectId, projects.id)
+      )
       .where(inArray(warehouses.id, warehouseIds))
       .orderBy(
         asc(warehouses.displayName),
@@ -2792,8 +2804,8 @@ export async function listVisibleWarehouseStockForItems(params: {
       storageLocationsByScope.set(scopeKey, scopeStorageLocations);
     }
 
-    const options = Array.from(optionsByScope.entries()).map(
-      ([scopeKey, option]) => ({
+    const options = Array.from(optionsByScope.entries())
+      .map(([scopeKey, option]) => ({
         ...option,
         storageLocations: Array.from(
           storageLocationsByScope.get(scopeKey)?.values() ?? []
@@ -2804,16 +2816,16 @@ export async function listVisibleWarehouseStockForItems(params: {
             if (!left.storageLocation && right.storageLocation) return 1;
             return left.label.localeCompare(right.label);
           }),
-      })
-    ).sort((left, right) => {
-      const leftProject = left.projectCode ?? "";
-      const rightProject = right.projectCode ?? "";
-      return (
-        leftProject.localeCompare(rightProject) ||
-        (left.displayName ?? "").localeCompare(right.displayName ?? "") ||
-        left.warehouseId - right.warehouseId
-      );
-    });
+      }))
+      .sort((left, right) => {
+        const leftProject = left.projectCode ?? "";
+        const rightProject = right.projectCode ?? "";
+        return (
+          leftProject.localeCompare(rightProject) ||
+          (left.displayName ?? "").localeCompare(right.displayName ?? "") ||
+          left.warehouseId - right.warehouseId
+        );
+      });
     const total = options.reduce(
       (sum, row) => sum + parseDecimal(row.quantity),
       0
@@ -2943,7 +2955,9 @@ export async function getMaterialRequestById(id: number) {
     const nextValue = {
       sourceProjectId: row.sourceProjectId ?? null,
       sourceWarehouseId: row.sourceWarehouseId ?? null,
-      receiptProjectId: hasReceiptWarehouse ? (row.receiptProjectId ?? null) : null,
+      receiptProjectId: hasReceiptWarehouse
+        ? (row.receiptProjectId ?? null)
+        : null,
       receiptWarehouseId: hasReceiptWarehouse ? row.receiptWarehouseId : null,
       receiptItemId: hasReceiptWarehouse ? (row.receiptItemId ?? null) : null,
     };
@@ -3015,8 +3029,7 @@ export async function getMaterialRequestById(id: number) {
         projectStockWarehouses: projectStock?.warehouses ?? [],
         warehouseStock: warehouseStock?.quantity ?? null,
         warehouseStockWarehouses: warehouseStock?.warehouses ?? [],
-        transferSourceWarehouseId:
-          transferWarehouse?.sourceWarehouseId ?? null,
+        transferSourceWarehouseId: transferWarehouse?.sourceWarehouseId ?? null,
         transferSourceProjectId: transferWarehouse?.sourceProjectId ?? null,
         transferReceiptProjectId: transferWarehouse?.receiptProjectId ?? null,
         transferReceiptWarehouseId:
@@ -4131,10 +4144,7 @@ export async function recordWarehouseExitBatch(params: {
       transferSourceScopesByItemId.get(row.materialRequestItemId) ??
       new Set<string>();
     sourceScopes.add(`${sourceProjectId}:${row.sourceWarehouseId}`);
-    transferSourceScopesByItemId.set(
-      row.materialRequestItemId,
-      sourceScopes
-    );
+    transferSourceScopesByItemId.set(row.materialRequestItemId, sourceScopes);
   }
 
   for (const requestItemId of uniqueRequestItemIds) {
@@ -5179,9 +5189,7 @@ function buildPurchaseOrderDocument(params: {
       : "INMEDIATA",
     requestedByLabel: params.requestedByLabel?.trim() || "-",
     preparedByLabel:
-      params.preparedByLabel?.trim() ||
-      params.requestedByLabel?.trim() ||
-      "-",
+      params.preparedByLabel?.trim() || params.requestedByLabel?.trim() || "-",
     originalRequestLabel: params.originalRequestLabel?.trim() || "-",
     salesAdvisorLabel: params.salesAdvisorLabel?.trim() || "-",
     paymentMethodLabel: params.paymentMethodLabel?.trim() || "-",
@@ -5250,6 +5258,12 @@ export type ProcurementApprovalActor = {
   role?: string | null;
   buildreqRole?: string | null;
 };
+
+function assertProcurementApprovalWorkflowEnabled() {
+  if (!PROCUREMENT_APPROVALS_ENABLED) {
+    throw new Error(PROCUREMENT_APPROVALS_DISABLED_MESSAGE);
+  }
+}
 
 function getApprovalActorSnapshot(actor: ProcurementApprovalActor) {
   return {
@@ -5351,7 +5365,93 @@ async function lockPurchaseOrderForUpdate(database: any, id: number) {
     .where(eq(purchaseOrders.id, id))
     .for("update");
   if (!purchaseOrder) throw new Error("Orden de compra no encontrada");
+
+  if (
+    !PROCUREMENT_APPROVALS_ENABLED &&
+    isPurchaseOrderDraftLike(
+      purchaseOrder.status,
+      purchaseOrder.approvalStatus
+    ) &&
+    (purchaseOrder.status !== "borrador" ||
+      purchaseOrder.approvalStatus !== null)
+  ) {
+    const approvalCondition =
+      purchaseOrder.approvalStatus === null
+        ? isNull(purchaseOrders.approvalStatus)
+        : eq(purchaseOrders.approvalStatus, purchaseOrder.approvalStatus);
+    const [normalized] = await database
+      .update(purchaseOrders)
+      .set({
+        status: "borrador",
+        approvalStatus: null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(purchaseOrders.id, id),
+          eq(purchaseOrders.status, purchaseOrder.status),
+          approvalCondition
+        )
+      )
+      .returning();
+    if (!normalized) {
+      throw new Error("La orden cambió mientras se intentaba reabrir");
+    }
+    return normalized as typeof purchaseOrders.$inferSelect;
+  }
+
   return purchaseOrder as typeof purchaseOrders.$inferSelect;
+}
+
+async function normalizePurchaseRequestDraftForDisabledApprovals(
+  database: any,
+  id: number
+) {
+  if (PROCUREMENT_APPROVALS_ENABLED) return;
+
+  const [purchaseRequest] = await database
+    .select()
+    .from(purchaseRequests)
+    .where(eq(purchaseRequests.id, id))
+    .for("update");
+  if (!purchaseRequest) throw new Error("Solicitud de compra no encontrada");
+  if (
+    purchaseRequest.status === "pendiente" &&
+    purchaseRequest.approvalStatus === null
+  ) {
+    return;
+  }
+  if (
+    !isPurchaseRequestDraftLike(
+      purchaseRequest.status,
+      purchaseRequest.approvalStatus
+    )
+  ) {
+    return;
+  }
+
+  const approvalCondition =
+    purchaseRequest.approvalStatus === null
+      ? isNull(purchaseRequests.approvalStatus)
+      : eq(purchaseRequests.approvalStatus, purchaseRequest.approvalStatus);
+  const [normalized] = await database
+    .update(purchaseRequests)
+    .set({
+      status: "pendiente",
+      approvalStatus: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(purchaseRequests.id, id),
+        eq(purchaseRequests.status, purchaseRequest.status),
+        approvalCondition
+      )
+    )
+    .returning({ id: purchaseRequests.id });
+  if (!normalized) {
+    throw new Error("La solicitud cambió mientras se intentaba reabrir");
+  }
 }
 
 function assertDraftPurchaseOrderState(
@@ -5381,10 +5481,7 @@ async function assertPersistedPurchaseOrderApprovalReadiness(
     .where(
       and(
         eq(supplyFlowRecords.flowType, "compra_directa"),
-        eq(
-          supplyFlowRecords.purchaseOrderNumber,
-          purchaseOrder.orderNumber
-        ),
+        eq(supplyFlowRecords.purchaseOrderNumber, purchaseOrder.orderNumber),
         isNotNull(supplyFlowRecords.paymentMethod),
         sql`${supplyFlowRecords.status} <> 'cancelado'`
       )
@@ -5565,12 +5662,11 @@ export async function listPurchaseRequests(filters?: {
     return rows;
   }
 
-  const approvalHistoryRows =
-    await listProcurementApprovalHistoryForDocuments(
-      db,
-      "purchase_request",
-      purchaseRequestIds
-    );
+  const approvalHistoryRows = await listProcurementApprovalHistoryForDocuments(
+    db,
+    "purchase_request",
+    purchaseRequestIds
+  );
   const approvalHistoryByPurchaseRequestId = new Map<
     number,
     typeof approvalHistoryRows
@@ -6025,6 +6121,7 @@ export async function submitPurchaseRequestForApproval(params: {
   id: number;
   actor: ProcurementApprovalActor;
 }) {
+  assertProcurementApprovalWorkflowEnabled();
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
@@ -6078,6 +6175,7 @@ export async function reviewPurchaseRequestApproval(params: {
   comment?: string | null;
   actor: ProcurementApprovalActor;
 }) {
+  assertProcurementApprovalWorkflowEnabled();
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const comment = params.comment?.trim() || null;
@@ -6086,8 +6184,11 @@ export async function reviewPurchaseRequestApproval(params: {
   }
 
   return db.transaction(async tx => {
-    let nextDocumentStatus: "aprobada" | "parcialmente_convertida" | "convertida" | "rechazada" =
-      "rechazada";
+    let nextDocumentStatus:
+      | "aprobada"
+      | "parcialmente_convertida"
+      | "convertida"
+      | "rechazada" = "rechazada";
     if (params.decision === "approve") {
       const items = await tx
         .select({
@@ -6312,7 +6413,12 @@ export async function syncPurchaseRequestConversionStatus(id: number) {
   if (!purchaseRequest) {
     throw new Error("Solicitud de compra no encontrada");
   }
-  if (["rechazada", "anulada"].includes(purchaseRequest.status)) {
+  if (
+    purchaseRequest.status === "anulada" ||
+    (purchaseRequest.status === "rechazada" &&
+      (PROCUREMENT_APPROVALS_ENABLED ||
+        purchaseRequest.approvalStatus === null))
+  ) {
     return purchaseRequest.status;
   }
 
@@ -6348,14 +6454,23 @@ export async function syncPurchaseRequestConversionStatus(id: number) {
             ? "aprobada"
             : "pendiente"
           : purchaseRequest.status;
+  const nextApprovalStatus =
+    purchaseRequest.approvalStatus === "aprobada"
+      ? "aprobada"
+      : !PROCUREMENT_APPROVALS_ENABLED
+        ? ["convertida", "parcialmente_convertida"].includes(nextStatus)
+          ? "no_requiere"
+          : null
+        : purchaseRequest.approvalStatus;
 
   if (
     nextStatus !== purchaseRequest.status ||
-    historicalConversionReopened
+    historicalConversionReopened ||
+    nextApprovalStatus !== purchaseRequest.approvalStatus
   ) {
     await updatePurchaseRequest(id, {
       status: nextStatus as any,
-      ...(historicalConversionReopened ? { approvalStatus: null } : {}),
+      approvalStatus: nextApprovalStatus,
     });
   }
 
@@ -6372,6 +6487,10 @@ export async function addPurchaseRequestItems(
   const resolvedItems = await resolvePurchaseRequestItemBrands(db, items);
 
   return db.transaction(async tx => {
+    await normalizePurchaseRequestDraftForDisabledApprovals(
+      tx,
+      purchaseRequestId
+    );
     const [lockedDraft] = await tx
       .update(purchaseRequests)
       .set({ updatedAt: new Date() })
@@ -6442,29 +6561,30 @@ export async function cancelPurchaseRequest(
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  const [updated] = await db
-    .update(purchaseRequests)
-    .set({
-      status: "anulada",
-      rejectionReason: cancellationReason,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(purchaseRequests.id, id),
-        eq(purchaseRequests.status, "pendiente"),
-        isNull(purchaseRequests.approvalStatus)
+  return db.transaction(async tx => {
+    await normalizePurchaseRequestDraftForDisabledApprovals(tx, id);
+    const [updated] = await tx
+      .update(purchaseRequests)
+      .set({
+        status: "anulada",
+        rejectionReason: cancellationReason,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(purchaseRequests.id, id),
+          eq(purchaseRequests.status, "pendiente"),
+          isNull(purchaseRequests.approvalStatus)
+        )
       )
-    )
-    .returning({ id: purchaseRequests.id });
+      .returning({ id: purchaseRequests.id });
 
-  if (!updated) {
-    throw new Error(
-      "La solicitud cambió de estado y ya no puede anularse"
-    );
-  }
+    if (!updated) {
+      throw new Error("La solicitud cambió de estado y ya no puede anularse");
+    }
 
-  return { success: true };
+    return { success: true };
+  });
 }
 
 export async function createPurchaseOrder(
@@ -6754,12 +6874,11 @@ export async function listPurchaseOrders(filters?: {
   const purchaseOrderIds = rows
     .map(row => row.purchaseOrder.id)
     .filter((value): value is number => typeof value === "number");
-  const approvalHistoryRows =
-    await listProcurementApprovalHistoryForDocuments(
-      db,
-      "purchase_order",
-      purchaseOrderIds
-    );
+  const approvalHistoryRows = await listProcurementApprovalHistoryForDocuments(
+    db,
+    "purchase_order",
+    purchaseOrderIds
+  );
   const approvalHistoryByPurchaseOrderId = new Map<
     number,
     typeof approvalHistoryRows
@@ -7247,8 +7366,7 @@ export async function getPurchaseOrderById(id: number) {
       originalRequester?.email ??
       rows[0].createdBy?.name ??
       "-",
-    preparedByLabel:
-      rows[0].createdBy?.name ?? rows[0].createdBy?.email ?? "-",
+    preparedByLabel: rows[0].createdBy?.name ?? rows[0].createdBy?.email ?? "-",
     originalRequestLabel:
       originalRequestNumbers.length > 0
         ? originalRequestNumbers.join(", ")
@@ -7329,6 +7447,7 @@ export async function submitPurchaseOrderForApproval(params: {
   id: number;
   actor: ProcurementApprovalActor;
 }) {
+  assertProcurementApprovalWorkflowEnabled();
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
@@ -7399,6 +7518,7 @@ export async function reviewPurchaseOrderApproval(params: {
   comment?: string | null;
   actor: ProcurementApprovalActor;
 }) {
+  assertProcurementApprovalWorkflowEnabled();
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const comment = params.comment?.trim() || null;
@@ -7455,8 +7575,7 @@ export async function reviewPurchaseOrderApproval(params: {
     const [updated] = await tx
       .update(purchaseOrders)
       .set({
-        status:
-          params.decision === "approve" ? "aprobada" : "rechazada",
+        status: params.decision === "approve" ? "aprobada" : "rechazada",
         approvalStatus: nextApprovalStatus,
         updatedAt: new Date(),
       })
@@ -7753,9 +7872,7 @@ export async function updatePurchaseOrder(
         )
         .returning({ id: purchaseOrders.id });
       if (!updated) {
-        throw new Error(
-          "La orden cambió de estado y ya no puede modificarse"
-        );
+        throw new Error("La orden cambió de estado y ya no puede modificarse");
       }
     });
   } else {
@@ -7819,7 +7936,8 @@ export async function cancelPurchaseOrder(id: number) {
         )
       )
       .returning({ id: purchaseOrders.id });
-    if (!updated) throw new Error("La orden cambió mientras se intentaba anular");
+    if (!updated)
+      throw new Error("La orden cambió mientras se intentaba anular");
 
     return { success: true };
   });
@@ -7879,6 +7997,7 @@ export async function updateDraftPurchaseRequest(params: {
   if (!db) throw new Error("DB not available");
 
   return db.transaction(async tx => {
+    await normalizePurchaseRequestDraftForDisabledApprovals(tx, params.id);
     const [updatedRequest] = await tx
       .update(purchaseRequests)
       .set({ ...params.data, updatedAt: new Date() })
@@ -8484,67 +8603,69 @@ export async function createTransferFromRequest(
   }
 
   const requestedItems = detail.items || [];
-  const transferItems = await Promise.all(requestedItems.map(async item => {
-    const requestedQuantity = parseDecimal(item.quantity);
-    const transferQuantity = itemQuantities
-      ? (quantityByItemId.get(item.id) ?? 0)
-      : requestedQuantity;
-    const pendingQuantity = Math.max(requestedQuantity - transferQuantity, 0);
-    const selectedSource = sourceByItemId.get(item.id);
-    const sourceProjectId = selectedSource
-      ? (selectedSource.sourceProjectId ?? null)
-      : item.sourceWarehouseId
-        ? (item.sourceProjectId ?? null)
-        : detail.transferRequest.projectId;
-    const sourceWarehouseId =
-      selectedSource?.sourceWarehouseId ?? item.sourceWarehouseId ?? null;
-    const sourceStorageLocation = selectedSource
-      ? (selectedSource.sourceStorageLocation ?? null)
-      : item.sourceWarehouseId
-        ? (item.sourceStorageLocation ?? null)
-        : null;
+  const transferItems = await Promise.all(
+    requestedItems.map(async item => {
+      const requestedQuantity = parseDecimal(item.quantity);
+      const transferQuantity = itemQuantities
+        ? (quantityByItemId.get(item.id) ?? 0)
+        : requestedQuantity;
+      const pendingQuantity = Math.max(requestedQuantity - transferQuantity, 0);
+      const selectedSource = sourceByItemId.get(item.id);
+      const sourceProjectId = selectedSource
+        ? (selectedSource.sourceProjectId ?? null)
+        : item.sourceWarehouseId
+          ? (item.sourceProjectId ?? null)
+          : detail.transferRequest.projectId;
+      const sourceWarehouseId =
+        selectedSource?.sourceWarehouseId ?? item.sourceWarehouseId ?? null;
+      const sourceStorageLocation = selectedSource
+        ? (selectedSource.sourceStorageLocation ?? null)
+        : item.sourceWarehouseId
+          ? (item.sourceStorageLocation ?? null)
+          : null;
 
-    if (transferQuantity < 0) {
-      throw new Error("La cantidad a trasladar no puede ser negativa");
-    }
-    if (transferQuantity - requestedQuantity > 0.000001) {
-      throw new Error(
-        `La cantidad a trasladar de ${item.itemName} no puede exceder lo solicitado`
-      );
-    }
-    if (transferQuantity > 0 && !sourceWarehouseId) {
-      throw new Error(`Seleccione almacén origen para ${item.itemName}`);
-    }
-    if (transferQuantity > 0) {
-      const availableQuantity = parseDecimal(
-        await getStockByItem({
-          sapItemCode: item.sapItemCode,
-          itemName: item.itemName,
-          projectId: sourceProjectId ?? null,
-          warehouseId: sourceWarehouseId,
-          storageLocation: sourceStorageLocation ?? null,
-        })
-      );
-      if (availableQuantity + 0.0001 < transferQuantity) {
+      if (transferQuantity < 0) {
+        throw new Error("La cantidad a trasladar no puede ser negativa");
+      }
+      if (transferQuantity - requestedQuantity > 0.000001) {
         throw new Error(
-          `Stock insuficiente para ${item.itemName} en ${
-            sourceStorageLocation ?? "Sin ubicación"
-          }. Disponible: ${toDecimalString(
-            availableQuantity
-          )}, solicitado: ${toDecimalString(transferQuantity)}.`
+          `La cantidad a trasladar de ${item.itemName} no puede exceder lo solicitado`
         );
       }
-    }
-    return {
-      item,
-      requestedQuantity,
-      transferQuantity,
-      pendingQuantity,
-      sourceProjectId,
-      sourceWarehouseId,
-      sourceStorageLocation,
-    };
-  }));
+      if (transferQuantity > 0 && !sourceWarehouseId) {
+        throw new Error(`Seleccione almacén origen para ${item.itemName}`);
+      }
+      if (transferQuantity > 0) {
+        const availableQuantity = parseDecimal(
+          await getStockByItem({
+            sapItemCode: item.sapItemCode,
+            itemName: item.itemName,
+            projectId: sourceProjectId ?? null,
+            warehouseId: sourceWarehouseId,
+            storageLocation: sourceStorageLocation ?? null,
+          })
+        );
+        if (availableQuantity + 0.0001 < transferQuantity) {
+          throw new Error(
+            `Stock insuficiente para ${item.itemName} en ${
+              sourceStorageLocation ?? "Sin ubicación"
+            }. Disponible: ${toDecimalString(
+              availableQuantity
+            )}, solicitado: ${toDecimalString(transferQuantity)}.`
+          );
+        }
+      }
+      return {
+        item,
+        requestedQuantity,
+        transferQuantity,
+        pendingQuantity,
+        sourceProjectId,
+        sourceWarehouseId,
+        sourceStorageLocation,
+      };
+    })
+  );
 
   if (!transferItems.some(entry => entry.transferQuantity > 0)) {
     throw new Error("Debe trasladar al menos una cantidad mayor que cero");
@@ -9833,7 +9954,8 @@ export async function registerReceipt(
         transferDetail.transferRequest?.destinationType === "proyecto"
           ? transferDetail.transferRequest.destinationProjectId
           : null;
-      const destinationInventoryProjectId = destinationProjectId ?? data.projectId;
+      const destinationInventoryProjectId =
+        destinationProjectId ?? data.projectId;
       const affectedRequestIds = new Set<number>();
 
       for (const item of items) {
@@ -10095,7 +10217,8 @@ export async function saveReceiptDraft(
         purchaseOrderDetail?.purchaseOrder.projectId ?? null;
     } else {
       const transferDetail = await getTransferById(data.sourceId);
-      receiptNumberProjectId = transferDetail?.transferRequest?.projectId ?? null;
+      receiptNumberProjectId =
+        transferDetail?.transferRequest?.projectId ?? null;
     }
   }
   if (!receiptNumberProjectId) {
@@ -10577,15 +10700,13 @@ export function prepareReceiptItemFinancialDataForLine(params: {
   taxBreakdown?: PurchaseOrderTaxBreakdownEntry[] | string | null | undefined;
   taxes?: SalesTaxCatalogItem[] | null;
 }) {
-  const snapshotBreakdown = parsePurchaseOrderTaxBreakdown(
-    params.taxBreakdown
-  );
+  const snapshotBreakdown = parsePurchaseOrderTaxBreakdown(params.taxBreakdown);
   const useSnapshot = snapshotBreakdown.length > 0 && !params.taxes;
   const taxes = params.taxes?.length ? params.taxes : DEFAULT_SALES_TAXES;
   const requestedTaxCode = String(params.taxCode ?? "").trim();
   const taxCode = useSnapshot
-    ? snapshotBreakdown.find(entry => entry.taxType === "base")?.taxCode ??
-      normalizePurchaseOrderTaxCode(params.taxCode, taxes)
+    ? (snapshotBreakdown.find(entry => entry.taxType === "base")?.taxCode ??
+      normalizePurchaseOrderTaxCode(params.taxCode, taxes))
     : normalizePurchaseOrderTaxCode(params.taxCode, taxes);
   const additionalTaxCodes = useSnapshot
     ? snapshotBreakdown
@@ -11120,7 +11241,10 @@ export async function listDmcReportSourceInvoices(filters?: {
     )
     .leftJoin(
       purchaseRequestSourceItems,
-      eq(purchaseRequestItems.materialRequestItemId, purchaseRequestSourceItems.id)
+      eq(
+        purchaseRequestItems.materialRequestItemId,
+        purchaseRequestSourceItems.id
+      )
     )
     .leftJoin(
       purchaseRequestSourceRequests,
@@ -11199,7 +11323,11 @@ export async function listDmcReportSourceInvoices(filters?: {
       row.invoiceSubprojectCode,
       row.invoiceSubprojectName
     );
-    addSubproject(row.invoiceId, row.directSubprojectCode, row.directSubprojectName);
+    addSubproject(
+      row.invoiceId,
+      row.directSubprojectCode,
+      row.directSubprojectName
+    );
     addSubproject(
       row.invoiceId,
       row.purchaseRequestSubprojectCode,
@@ -12577,28 +12705,35 @@ export async function getWarehouseExitById(id: number) {
     .where(eq(warehouseExitItems.warehouseExitId, id))
     .orderBy(asc(warehouseExitItems.id));
   const items = itemRows.map(
-    ({ item, warehouse, destinationProject, destinationWarehouse, subproject }) => ({
-    ...item,
-    warehouse: warehouse ? mapWarehouseSummary(warehouse) : null,
-    destinationProject: destinationProject
-      ? {
-          id: destinationProject.id,
-          code: destinationProject.code,
-          name: destinationProject.name,
-        }
-      : null,
-    destinationWarehouse: destinationWarehouse
-      ? mapWarehouseSummary(destinationWarehouse)
-      : null,
-    subproject: subproject
-      ? {
-          id: subproject.id,
-          code: subproject.code,
-          name: subproject.name,
-          description: subproject.description,
-        }
-      : null,
-  }));
+    ({
+      item,
+      warehouse,
+      destinationProject,
+      destinationWarehouse,
+      subproject,
+    }) => ({
+      ...item,
+      warehouse: warehouse ? mapWarehouseSummary(warehouse) : null,
+      destinationProject: destinationProject
+        ? {
+            id: destinationProject.id,
+            code: destinationProject.code,
+            name: destinationProject.name,
+          }
+        : null,
+      destinationWarehouse: destinationWarehouse
+        ? mapWarehouseSummary(destinationWarehouse)
+        : null,
+      subproject: subproject
+        ? {
+            id: subproject.id,
+            code: subproject.code,
+            name: subproject.name,
+            description: subproject.description,
+          }
+        : null,
+    })
+  );
 
   const returnedQuantityByExitItemId = new Map<number, number>();
   const warehouseExitItemIds = items.map(item => item.id);
@@ -12736,7 +12871,10 @@ export async function getWarehouseExitById(id: number) {
       })
       .from(materialRequests)
       .leftJoin(users, eq(materialRequests.requestedById, users.id))
-      .leftJoin(requestProjects, eq(materialRequests.projectId, requestProjects.id))
+      .leftJoin(
+        requestProjects,
+        eq(materialRequests.projectId, requestProjects.id)
+      )
       .where(eq(materialRequests.id, rows[0].warehouseExit.materialRequestId))
       .limit(1);
 
@@ -12982,7 +13120,8 @@ export async function createWarehouseExit(
         throw new Error("Debe seleccionar almacén para todos los ítems");
       }
       const hasItemDestinationScope =
-        item.destinationProjectId != null || item.destinationWarehouseId != null;
+        item.destinationProjectId != null ||
+        item.destinationWarehouseId != null;
       const itemDestinationAssignment = hasItemDestinationScope
         ? await resolveProjectAssignment(
             item.destinationProjectId ?? null,
@@ -13043,11 +13182,11 @@ export async function createWarehouseExit(
   const headerDestinationProjectId =
     itemDestinationProjectIds.length === 1
       ? itemDestinationProjectIds[0]
-      : destinationAssignment?.projectId ?? null;
+      : (destinationAssignment?.projectId ?? null);
   const headerDestinationWarehouseId =
     itemDestinationWarehouseIds.length === 1
       ? itemDestinationWarehouseIds[0]
-      : destinationAssignment?.warehouseId ?? null;
+      : (destinationAssignment?.warehouseId ?? null);
   const [created] = await db
     .insert(warehouseExits)
     .values({
@@ -14639,9 +14778,7 @@ export async function generateSupplierReturnCreditNote(
 // ============================================================
 // ATTACHMENTS
 // ============================================================
-type ProcurementAttachmentEntityType =
-  | "purchase_request"
-  | "purchase_order";
+type ProcurementAttachmentEntityType = "purchase_request" | "purchase_order";
 
 export class ProcurementAttachmentMutationError extends Error {
   constructor(
@@ -14684,8 +14821,10 @@ async function lockMutableProcurementAttachmentDocument(
       );
     }
     if (
-      purchaseRequest.status !== "pendiente" ||
-      purchaseRequest.approvalStatus !== null
+      !isPurchaseRequestDraftLike(
+        purchaseRequest.status,
+        purchaseRequest.approvalStatus
+      )
     ) {
       throw new ProcurementAttachmentMutationError(
         "locked",
@@ -14712,8 +14851,12 @@ async function lockMutableProcurementAttachmentDocument(
     );
   }
   if (
-    purchaseOrder.approvalStatus === "aprobada" ||
-    LOCKED_PURCHASE_ORDER_ATTACHMENT_STATUSES.has(purchaseOrder.status)
+    !isPurchaseOrderDraftLike(
+      purchaseOrder.status,
+      purchaseOrder.approvalStatus
+    ) &&
+    (purchaseOrder.approvalStatus === "aprobada" ||
+      LOCKED_PURCHASE_ORDER_ATTACHMENT_STATUSES.has(purchaseOrder.status))
   ) {
     throw new ProcurementAttachmentMutationError(
       "locked",
@@ -15278,7 +15421,10 @@ async function consumeInventoryStockWithClient(
       warehouseId: projectWarehouseAssignments.warehouseId,
     })
     .from(projectWarehouseAssignments)
-    .innerJoin(warehouses, eq(projectWarehouseAssignments.warehouseId, warehouses.id))
+    .innerJoin(
+      warehouses,
+      eq(projectWarehouseAssignments.warehouseId, warehouses.id)
+    )
     .where(
       and(
         eq(projectWarehouseAssignments.projectId, params.projectId),
@@ -17506,10 +17652,7 @@ export async function getInventoryKardex(params: {
         transfers,
         eq(transfers.transferRequestId, transferRequests.id)
       )
-      .leftJoin(
-        projects,
-        eq(transferRequestItems.sourceProjectId, projects.id)
-      )
+      .leftJoin(projects, eq(transferRequestItems.sourceProjectId, projects.id))
       .leftJoin(
         warehouses,
         eq(transferRequestItems.sourceWarehouseId, warehouses.id)
@@ -17771,7 +17914,8 @@ export async function updateInventoryItem(
       currentItem.projectId,
       data.warehouseId
     );
-    nextData.projectId = warehouseAssignment?.projectId ?? currentItem.projectId;
+    nextData.projectId =
+      warehouseAssignment?.projectId ?? currentItem.projectId;
     nextData.warehouseId = warehouseAssignment?.warehouseId ?? null;
     nextData.warehouseLocation = warehouseAssignment?.warehouseLocation ?? null;
   }
@@ -18483,9 +18627,7 @@ export async function updateFinancialGroup(
       nivel2: data.nivel2.trim(),
       updatedAt: new Date(),
     })
-    .where(
-      eq(financialGroups.financialGroupCode, financialGroupCode.trim())
-    )
+    .where(eq(financialGroups.financialGroupCode, financialGroupCode.trim()))
     .returning();
   if (!updated) throw new Error("Grupo financiero no encontrado");
   return updated;
@@ -18497,9 +18639,7 @@ export async function removeFinancialGroup(financialGroupCode: string) {
 
   const [removed] = await db
     .delete(financialGroups)
-    .where(
-      eq(financialGroups.financialGroupCode, financialGroupCode.trim())
-    )
+    .where(eq(financialGroups.financialGroupCode, financialGroupCode.trim()))
     .returning();
   if (!removed) throw new Error("Grupo financiero no encontrado");
   return removed;
@@ -18576,13 +18716,12 @@ function buildArticleWhere(filters?: ArticleListFilters) {
     const compactSearchColumns = ARTICLE_COMPACT_SEARCH_FIELD_NAMES.map(
       fieldName => sapCatalog[fieldName]
     );
-    const compactAssetIdentifierConditions =
-      compactSearch
-        ? compactSearchColumns.map(
-            column =>
-              sql`regexp_replace(coalesce(${column}, ''), '[[:space:]\\-_/\\.]', '', 'g') ilike ${`%${compactSearch}%`}`
-          )
-        : [];
+    const compactAssetIdentifierConditions = compactSearch
+      ? compactSearchColumns.map(
+          column =>
+            sql`regexp_replace(coalesce(${column}, ''), '[[:space:]\\-_/\\.]', '', 'g') ilike ${`%${compactSearch}%`}`
+        )
+      : [];
 
     conditions.push(
       or(
@@ -18657,8 +18796,7 @@ export async function listArticles(filters?: ArticleListFilters) {
   const rows = await db
     .select({
       article: sapCatalog,
-      financialGroupDescription:
-        financialGroups.financialGroupDescription,
+      financialGroupDescription: financialGroups.financialGroupDescription,
       createdBy: articleCreatedByUsers,
       updatedBy: articleUpdatedByUsers,
     })
@@ -20094,10 +20232,9 @@ async function findSupplierAccountPaymentCertificate(
     .where(
       and(
         eq(supplierDocuments.supplierId, supplierId),
-        inArray(
-          supplierDocumentTypes.code,
-          [...SUPPLIER_ACCOUNT_PAYMENT_CERTIFICATE_CODES]
-        )
+        inArray(supplierDocumentTypes.code, [
+          ...SUPPLIER_ACCOUNT_PAYMENT_CERTIFICATE_CODES,
+        ])
       )
     )
     .orderBy(
@@ -20119,9 +20256,7 @@ async function findSupplierAccountPaymentCertificate(
   }));
 
   return (
-    certificates.find(
-      (certificate: any) => certificate.status === "vigente"
-    ) ??
+    certificates.find((certificate: any) => certificate.status === "vigente") ??
     certificates[0] ??
     null
   );

@@ -7,6 +7,11 @@ import {
   isProcurementApproverRole,
   isProjectScopedRole,
 } from "@shared/buildreq-roles";
+import {
+  isPurchaseRequestDraftLike,
+  PROCUREMENT_APPROVALS_DISABLED_MESSAGE,
+  PROCUREMENT_APPROVALS_ENABLED,
+} from "@shared/procurement-approvals";
 
 function canReadPurchaseRequests(user: {
   role: string;
@@ -65,7 +70,10 @@ function assertProjectScopedAccess(
   },
   projectId: number
 ) {
-  if (isProjectScopedRole(user.buildreqRole) && !canAccessProject(user, projectId)) {
+  if (
+    isProjectScopedRole(user.buildreqRole) &&
+    !canAccessProject(user, projectId)
+  ) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "No tiene acceso a solicitudes de compra de otro proyecto",
@@ -73,8 +81,25 @@ function assertProjectScopedAccess(
   }
 }
 
-function assertPurchaseRequestMutable(status: string) {
-  if (status !== "pendiente") {
+function assertProcurementApprovalsEnabled() {
+  if (!PROCUREMENT_APPROVALS_ENABLED) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: PROCUREMENT_APPROVALS_DISABLED_MESSAGE,
+    });
+  }
+}
+
+function assertPurchaseRequestMutable(purchaseRequest: {
+  status: string;
+  approvalStatus?: string | null;
+}) {
+  if (
+    !isPurchaseRequestDraftLike(
+      purchaseRequest.status,
+      purchaseRequest.approvalStatus
+    )
+  ) {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message:
@@ -151,9 +176,7 @@ async function validatePurchaseRequestSources(params: {
         message: "Un ítem no pertenece a la requisición origen indicada",
       });
     }
-    const sourceRequest = await db.getMaterialRequestById(
-      sourceItem.requestId
-    );
+    const sourceRequest = await db.getMaterialRequestById(sourceItem.requestId);
     if (!sourceRequest) {
       throw new TRPCError({
         code: "NOT_FOUND",
@@ -164,10 +187,7 @@ async function validatePurchaseRequestSources(params: {
     assertProjectScopedAccess(params.user, sourceRequest.request.projectId);
   }
 
-  if (
-    sourceProjectIds.size > 0 &&
-    !sourceProjectIds.has(params.projectId)
-  ) {
+  if (sourceProjectIds.size > 0 && !sourceProjectIds.has(params.projectId)) {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message:
@@ -183,7 +203,10 @@ const approvalDecisionSchema = z
     comment: z.string().trim().max(1000).optional(),
   })
   .superRefine((value, ctx) => {
-    if (value.decision === "reject" && (value.comment?.trim().length ?? 0) < 5) {
+    if (
+      value.decision === "reject" &&
+      (value.comment?.trim().length ?? 0) < 5
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["comment"],
@@ -279,7 +302,9 @@ async function releasePurchaseRequestFlowItems(
       }
 
       const requestItems = await db.getRequestItemsByRequestId(requestId);
-      const someAssigned = requestItems.some(item => item.assignedFlow !== null);
+      const someAssigned = requestItems.some(
+        item => item.assignedFlow !== null
+      );
       await db.updateMaterialRequestStatus(
         requestId,
         someAssigned ? "en_proceso" : "en_espera",
@@ -574,7 +599,7 @@ export const purchaseRequestsRouter = router({
         });
       }
       assertPurchaseRequestProjectScope(ctx.user, detail);
-      assertPurchaseRequestMutable(detail.purchaseRequest.status);
+      assertPurchaseRequestMutable(detail.purchaseRequest);
 
       const itemUpdates = input.items ?? [];
       const itemById = new Map(
@@ -608,7 +633,6 @@ export const purchaseRequestsRouter = router({
               "Solo el Administrador del Proyecto o Administración Central puede cambiar el destino",
           });
         }
-
       }
 
       const resolvedItemUpdates = await Promise.all(
@@ -671,6 +695,7 @@ export const purchaseRequestsRouter = router({
   submitForApproval: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
+      assertProcurementApprovalsEnabled();
       if (!canManagePurchaseRequests(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -685,7 +710,7 @@ export const purchaseRequestsRouter = router({
         });
       }
       assertPurchaseRequestProjectScope(ctx.user, detail);
-      assertPurchaseRequestMutable(detail.purchaseRequest.status);
+      assertPurchaseRequestMutable(detail.purchaseRequest);
       if ((detail.items?.length ?? 0) === 0) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -731,6 +756,7 @@ export const purchaseRequestsRouter = router({
   reviewApproval: protectedProcedure
     .input(approvalDecisionSchema)
     .mutation(async ({ ctx, input }) => {
+      assertProcurementApprovalsEnabled();
       if (!isProcurementApproverRole(ctx.user.buildreqRole)) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -746,9 +772,7 @@ export const purchaseRequestsRouter = router({
       }
       assertPurchaseRequestProjectScope(ctx.user, detail);
 
-      let result: Awaited<
-        ReturnType<typeof db.reviewPurchaseRequestApproval>
-      >;
+      let result: Awaited<ReturnType<typeof db.reviewPurchaseRequestApproval>>;
       try {
         result = await db.reviewPurchaseRequestApproval({
           id: input.id,
@@ -847,7 +871,7 @@ export const purchaseRequestsRouter = router({
       }
 
       assertPurchaseRequestProjectScope(ctx.user, detail);
-      assertPurchaseRequestMutable(detail.purchaseRequest.status);
+      assertPurchaseRequestMutable(detail.purchaseRequest);
       try {
         await db.cancelPurchaseRequest(input.id, input.reason);
       } catch (error) {
@@ -884,7 +908,7 @@ export const purchaseRequestsRouter = router({
         });
       }
       assertPurchaseRequestProjectScope(ctx.user, detail);
-      assertPurchaseRequestMutable(detail.purchaseRequest.status);
+      assertPurchaseRequestMutable(detail.purchaseRequest);
       try {
         return await db.updateDraftPurchaseRequest({
           id: input.id,

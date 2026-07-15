@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   formatApprovalSnapshotAmount,
   getPurchaseOrderApprovalReadinessError,
+  isPurchaseOrderDraftLike,
+  isPurchaseRequestConversionReady,
+  PROCUREMENT_APPROVALS_ENABLED,
+  purchaseOrderExceedsApprovalLimit,
   purchaseOrderRequiresApproval,
   roundProcurementAmount,
 } from "@shared/procurement-approvals";
@@ -16,8 +20,35 @@ describe("procurement approval limits", () => {
     ["USD", 10_000.004, false],
     ["USD", 10_000.005, true],
     ["USD", 10_000.01, true],
-  ] as const)("uses the strict %s limit for %s", (currency, total, expected) => {
-    expect(purchaseOrderRequiresApproval(currency, total)).toBe(expected);
+  ] as const)(
+    "uses the strict %s limit for %s",
+    (currency, total, expected) => {
+      expect(purchaseOrderExceedsApprovalLimit(currency, total)).toBe(expected);
+    }
+  );
+
+  it("keeps the approval policy disabled without removing the thresholds", () => {
+    expect(PROCUREMENT_APPROVALS_ENABLED).toBe(false);
+    expect(purchaseOrderExceedsApprovalLimit("HNL", 300_000)).toBe(true);
+    expect(purchaseOrderExceedsApprovalLimit("USD", 12_000)).toBe(true);
+    expect(purchaseOrderRequiresApproval("HNL", 300_000)).toBe(false);
+    expect(purchaseOrderRequiresApproval("USD", 12_000)).toBe(false);
+  });
+
+  it("allows open procurement documents to continue while disabled", () => {
+    expect(isPurchaseRequestConversionReady("pendiente", null)).toBe(true);
+    expect(isPurchaseRequestConversionReady("en_revision", "pendiente")).toBe(
+      true
+    );
+    expect(
+      isPurchaseRequestConversionReady("parcialmente_convertida", "no_requiere")
+    ).toBe(true);
+    expect(isPurchaseOrderDraftLike("borrador", null)).toBe(true);
+    expect(isPurchaseOrderDraftLike("pendiente_aprobacion", "pendiente")).toBe(
+      true
+    );
+    expect(isPurchaseOrderDraftLike("rechazada", "rechazada")).toBe(true);
+    expect(isPurchaseOrderDraftLike("aprobada", "aprobada")).toBe(false);
   });
 
   it("normalizes approval snapshots to cents", () => {

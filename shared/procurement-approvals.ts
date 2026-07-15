@@ -1,5 +1,15 @@
 import type { PurchaseCurrency } from "./purchase-orders";
 
+/**
+ * Interruptor temporal del flujo de aprobación de Solicitudes y Órdenes de
+ * Compra. Mantener la lógica detrás de este flag permite reactivarla sin
+ * reconstruir el flujo.
+ */
+export const PROCUREMENT_APPROVALS_ENABLED = false;
+
+export const PROCUREMENT_APPROVALS_DISABLED_MESSAGE =
+  "El flujo de aprobación de Solicitudes y Órdenes de Compra está deshabilitado temporalmente";
+
 export const PURCHASE_ORDER_APPROVAL_LIMITS = {
   HNL: 250_000,
   USD: 10_000,
@@ -9,6 +19,84 @@ export type ProcurementApprovalDecision = "approve" | "reject";
 export type ProcurementApprovalDocumentType =
   | "purchase_request"
   | "purchase_order";
+
+const PURCHASE_REQUEST_DRAFT_LIKE_STATUSES_WITH_APPROVALS_DISABLED = new Set([
+  "pendiente",
+  "en_revision",
+  "rechazada",
+]);
+
+const PURCHASE_REQUEST_CONVERTIBLE_STATUSES = new Set([
+  "aprobada",
+  "parcialmente_convertida",
+]);
+
+const PURCHASE_REQUEST_CONVERTIBLE_STATUSES_WITH_APPROVALS_DISABLED = new Set([
+  "pendiente",
+  "en_revision",
+  "aprobada",
+  "rechazada",
+  "parcialmente_convertida",
+]);
+
+const PURCHASE_ORDER_DRAFT_LIKE_STATUSES_WITH_APPROVALS_DISABLED = new Set([
+  "borrador",
+  "pendiente_aprobacion",
+  "rechazada",
+]);
+
+export function isPurchaseRequestDraftLike(
+  status?: string | null,
+  approvalStatus?: string | null
+) {
+  if (PROCUREMENT_APPROVALS_ENABLED) {
+    return status === "pendiente" && approvalStatus == null;
+  }
+  return (
+    status === "pendiente" ||
+    (approvalStatus != null &&
+      PURCHASE_REQUEST_DRAFT_LIKE_STATUSES_WITH_APPROVALS_DISABLED.has(
+        status ?? ""
+      ))
+  );
+}
+
+export function isPurchaseRequestConversionReady(
+  status?: string | null,
+  approvalStatus?: string | null
+) {
+  if (PROCUREMENT_APPROVALS_ENABLED) {
+    return (
+      (approvalStatus === "aprobada" &&
+        PURCHASE_REQUEST_CONVERTIBLE_STATUSES.has(status ?? "")) ||
+      (status === "parcialmente_convertida" && approvalStatus === "no_requiere")
+    );
+  }
+  return (
+    status === "pendiente" ||
+    status === "parcialmente_convertida" ||
+    (approvalStatus != null &&
+      PURCHASE_REQUEST_CONVERTIBLE_STATUSES_WITH_APPROVALS_DISABLED.has(
+        status ?? ""
+      ))
+  );
+}
+
+export function isPurchaseOrderDraftLike(
+  status?: string | null,
+  approvalStatus?: string | null
+) {
+  if (PROCUREMENT_APPROVALS_ENABLED) {
+    return status === "borrador" && approvalStatus == null;
+  }
+  return (
+    status === "borrador" ||
+    (approvalStatus != null &&
+      PURCHASE_ORDER_DRAFT_LIKE_STATUSES_WITH_APPROVALS_DISABLED.has(
+        status ?? ""
+      ))
+  );
+}
 
 export type PurchaseOrderApprovalReadinessInput = {
   supplierId?: number | null;
@@ -104,12 +192,22 @@ export function roundProcurementAmount(value: unknown) {
   return Math.round((numeric + tolerance) * 100) / 100;
 }
 
-export function purchaseOrderRequiresApproval(
+export function purchaseOrderExceedsApprovalLimit(
   currency: PurchaseCurrency,
   total: unknown
 ) {
   return (
     roundProcurementAmount(total) > PURCHASE_ORDER_APPROVAL_LIMITS[currency]
+  );
+}
+
+export function purchaseOrderRequiresApproval(
+  currency: PurchaseCurrency,
+  total: unknown
+) {
+  return (
+    PROCUREMENT_APPROVALS_ENABLED &&
+    purchaseOrderExceedsApprovalLimit(currency, total)
   );
 }
 

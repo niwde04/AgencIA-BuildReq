@@ -3,6 +3,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { getProjectScopeIds, hasAllProjectAccess } from "../projectAccess";
 import { isProcurementApproverRole } from "@shared/buildreq-roles";
+import { PROCUREMENT_APPROVALS_ENABLED } from "@shared/procurement-approvals";
 
 export const dashboardRouter = router({
   stats: protectedProcedure.query(async ({ ctx }) => {
@@ -23,10 +24,10 @@ export const dashboardRouter = router({
     const scopedProjectIds = getProjectScopeIds(user);
 
     return db.getDashboardStats({
-      ...(userRole === "ingeniero_residente"
-        ? { requestedById: user.id }
+      ...(userRole === "ingeniero_residente" ? { requestedById: user.id } : {}),
+      ...(scopedProjectIds !== undefined
+        ? { projectIds: scopedProjectIds }
         : {}),
-      ...(scopedProjectIds !== undefined ? { projectIds: scopedProjectIds } : {}),
     });
   }),
 
@@ -101,13 +102,13 @@ export const dashboardRouter = router({
           : null;
     const pendingFlowRowsPromise = visibleFlowTypes
       ? Promise.all(
-          visibleFlowTypes.map((flowType) =>
+          visibleFlowTypes.map(flowType =>
             db.listPendingFlowQueueItems({
               ...(flowQueueScope ?? {}),
               flowType,
             })
           )
-        ).then((rows) => rows.flat())
+        ).then(rows => rows.flat())
       : db.listPendingFlowQueueItems(flowQueueScope);
 
     const [
@@ -129,7 +130,8 @@ export const dashboardRouter = router({
         ...scopedFilters,
       }),
       pendingFlowRowsPromise,
-      canAccessPurchaseRequests
+      canAccessPurchaseRequests &&
+      (!isProcurementApproverRole(userRole) || PROCUREMENT_APPROVALS_ENABLED)
         ? db.listPurchaseRequests({
             status: isProcurementApproverRole(userRole)
               ? "en_revision"
@@ -137,7 +139,8 @@ export const dashboardRouter = router({
             ...purchaseFilters,
           })
         : Promise.resolve([]),
-      canAccessPurchaseOrders
+      canAccessPurchaseOrders &&
+      (!isProcurementApproverRole(userRole) || PROCUREMENT_APPROVALS_ENABLED)
         ? db.listPurchaseOrders({
             status: isProcurementApproverRole(userRole)
               ? "pendiente_aprobacion"
@@ -182,8 +185,7 @@ export const dashboardRouter = router({
     ]);
 
     return {
-      materialRequestsPendingApproval:
-        materialRequestsPendingApproval.length,
+      materialRequestsPendingApproval: materialRequestsPendingApproval.length,
       supplyFlowsPending: pendingFlowRows.length,
       purchaseRequestsPending: pendingPurchaseRequests.length,
       purchaseOrdersEmitted: emittedPurchaseOrders.length,

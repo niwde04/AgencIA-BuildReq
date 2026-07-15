@@ -61,6 +61,7 @@ import {
   BUILDREQ_ROLE_LABELS,
   isProcurementApproverRole,
 } from "@shared/buildreq-roles";
+import { PROCUREMENT_APPROVALS_ENABLED } from "@shared/procurement-approvals";
 
 type MenuItem = {
   icon: any;
@@ -270,11 +271,7 @@ const allMenuItems: MenuItem[] = [
     icon: FileSpreadsheet,
     label: "Reportes",
     path: "/reportes",
-    roles: [
-      "administracion_central",
-      "administrador_proyecto",
-      "contable",
-    ],
+    roles: ["administracion_central", "administrador_proyecto", "contable"],
   },
   {
     icon: Percent,
@@ -434,7 +431,7 @@ function DashboardLayoutContent({
   const isAdmin = user?.role === "admin";
 
   const menuItems = useMemo(() => {
-    return allMenuItems.filter((item) => {
+    return allMenuItems.filter(item => {
       if (userRole === "superintendente") {
         return (
           item.path === "/" ||
@@ -465,7 +462,7 @@ function DashboardLayoutContent({
     });
   }, [userRole, isAdmin]);
 
-  const activeMenuItem = menuItems.find((item) => {
+  const activeMenuItem = menuItems.find(item => {
     if (item.path === "/") return location === "/";
     return location.startsWith(item.path);
   });
@@ -497,8 +494,7 @@ function DashboardLayoutContent({
     location === "/ordenes-compra" ||
     location === "/notificaciones";
   const shouldRedirectProcurementApprover =
-    isProcurementApproverRole(userRole) &&
-    !isProcurementApproverAllowedPath;
+    isProcurementApproverRole(userRole) && !isProcurementApproverAllowedPath;
   const shouldRedirectUserManagement =
     location.startsWith("/usuarios") &&
     !isAdmin &&
@@ -535,8 +531,7 @@ function DashboardLayoutContent({
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing) return;
-      const sidebarLeft =
-        sidebarRef.current?.getBoundingClientRect().left ?? 0;
+      const sidebarLeft = sidebarRef.current?.getBoundingClientRect().left ?? 0;
       const newWidth = e.clientX - sidebarLeft;
       if (newWidth >= MIN_WIDTH && newWidth <= MAX_WIDTH) {
         setSidebarWidth(newWidth);
@@ -609,23 +604,33 @@ function DashboardLayoutContent({
           <SidebarContent className="gap-0 overflow-hidden">
             <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
               <SidebarMenu className="px-2 py-2">
-                {menuItems.map((item) => {
+                {menuItems.map(item => {
                   const isActive =
                     item.path === "/"
                       ? location === "/"
                       : location.startsWith(item.path);
-                  const countKey = MENU_COUNT_KEYS[item.path];
-                  const badgeCount = countKey ? sidebarCounts?.[countKey] ?? 0 : 0;
+                  const countKey =
+                    !PROCUREMENT_APPROVALS_ENABLED &&
+                    isProcurementApproverRole(userRole) &&
+                    ["/solicitudes-compra", "/ordenes-compra"].includes(
+                      item.path
+                    )
+                      ? undefined
+                      : MENU_COUNT_KEYS[item.path];
+                  const badgeCount = countKey
+                    ? (sidebarCounts?.[countKey] ?? 0)
+                    : 0;
                   const invoicePendingCount =
                     item.path === "/facturas"
-                      ? sidebarCounts?.invoicesPendingAttention ?? 0
+                      ? (sidebarCounts?.invoicesPendingAttention ?? 0)
                       : 0;
                   const invoiceReviewedCount =
                     item.path === "/facturas"
-                      ? sidebarCounts?.invoicesReviewed ?? 0
+                      ? (sidebarCounts?.invoicesReviewed ?? 0)
                       : 0;
                   const showBadge =
-                    badgeCount > 0 || MENU_ALWAYS_SHOW_COUNT_PATHS.has(item.path);
+                    badgeCount > 0 ||
+                    MENU_ALWAYS_SHOW_COUNT_PATHS.has(item.path);
                   const showInvoiceBadges =
                     item.path === "/facturas" &&
                     (invoicePendingCount > 0 || invoiceReviewedCount > 0);
@@ -669,7 +674,9 @@ function DashboardLayoutContent({
                             </span>
                           ) : showBadge ? (
                             <Badge
-                              variant={badgeCount > 0 ? "destructive" : "outline"}
+                              variant={
+                                badgeCount > 0 ? "destructive" : "outline"
+                              }
                               className="h-5 min-w-5 shrink-0 rounded-sm px-1 text-xs"
                             >
                               {badgeCount}
@@ -730,7 +737,10 @@ function DashboardLayoutContent({
                       {user?.name || "—"}
                     </p>
                     <p className="text-xs text-muted-foreground truncate mt-1">
-                      {BUILDREQ_ROLE_LABELS[userRole] || (user?.role === "admin" ? "Administrador" : "Sin rol asignado")}
+                      {BUILDREQ_ROLE_LABELS[userRole] ||
+                        (user?.role === "admin"
+                          ? "Administrador"
+                          : "Sin rol asignado")}
                     </p>
                   </div>
                 </button>
@@ -790,7 +800,9 @@ function DashboardLayoutContent({
         <div className="border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm text-amber-900">
           <span className="font-semibold">Versión beta</span>
           <span className="mx-2 text-amber-700">-</span>
-          <span>Queremos que pruebes BuildReq y nos compartas tus comentarios.</span>
+          <span>
+            Queremos que pruebes BuildReq y nos compartas tus comentarios.
+          </span>
         </div>
         <main className="flex-1 p-6">{children}</main>
       </SidebarInset>

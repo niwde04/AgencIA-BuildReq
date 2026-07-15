@@ -64,6 +64,11 @@ import {
   getBuildReqRoleLabel,
   isProcurementApproverRole,
 } from "@shared/buildreq-roles";
+import {
+  isPurchaseRequestConversionReady,
+  isPurchaseRequestDraftLike,
+  PROCUREMENT_APPROVALS_ENABLED,
+} from "@shared/procurement-approvals";
 
 const STATUS_LABELS: Record<string, string> = {
   pendiente: "Borrador",
@@ -84,14 +89,19 @@ const STATUS_COLORS: Record<string, string> = {
   convertida: "border-emerald-300 bg-emerald-50 text-emerald-700",
   anulada: "border-red-300 bg-red-50 text-red-700",
 };
-const STATUS_FILTER_OPTIONS = Object.entries(STATUS_LABELS);
-const getEffectivePurchaseRequestStatus = (status?: string | null) =>
-  status ?? "";
-
-const UNIFIED_CONVERTIBLE_STATUSES = new Set([
-  "aprobada",
-  "parcialmente_convertida",
-]);
+const STATUS_FILTER_OPTIONS = Object.entries(STATUS_LABELS).filter(
+  ([status]) =>
+    PROCUREMENT_APPROVALS_ENABLED ||
+    !["en_revision", "rechazada"].includes(status)
+);
+const getEffectivePurchaseRequestStatus = (
+  status?: string | null,
+  approvalStatus?: string | null
+) =>
+  !PROCUREMENT_APPROVALS_ENABLED &&
+  isPurchaseRequestDraftLike(status, approvalStatus)
+    ? "pendiente"
+    : (status ?? "");
 
 const APPROVAL_STATUS_LABELS: Record<string, string> = {
   pendiente: "Pendiente",
@@ -469,7 +479,8 @@ export default function PurchaseRequests() {
         purchaseTypeFilter === "all" ||
         purchaseRequest.purchaseType === purchaseTypeFilter;
       const effectiveStatus = getEffectivePurchaseRequestStatus(
-        purchaseRequest.status
+        purchaseRequest.status,
+        purchaseRequest.approvalStatus
       );
       const matchesStatus =
         statusFilter === "all" || effectiveStatus === statusFilter;
@@ -500,8 +511,10 @@ export default function PurchaseRequests() {
 
   const canConvertPurchaseRequestRow = (row: any) =>
     canConvert &&
-    row.purchaseRequest.approvalStatus === "aprobada" &&
-    UNIFIED_CONVERTIBLE_STATUSES.has(row.purchaseRequest.status);
+    isPurchaseRequestConversionReady(
+      row.purchaseRequest.status,
+      row.purchaseRequest.approvalStatus
+    );
 
   const updateMutation = trpc.purchaseRequests.update.useMutation({
     onSuccess: () => {
@@ -894,16 +907,19 @@ export default function PurchaseRequests() {
   const isCancelledPurchaseRequest =
     detail?.purchaseRequest.status === "anulada";
   const isRejectedPurchaseRequest =
-    detail?.purchaseRequest.approvalStatus === "rechazada" ||
-    detail?.purchaseRequest.status === "rechazada";
+    PROCUREMENT_APPROVALS_ENABLED &&
+    (detail?.purchaseRequest.approvalStatus === "rechazada" ||
+      detail?.purchaseRequest.status === "rechazada");
   const isPendingApprovalPurchaseRequest =
-    detail?.purchaseRequest.approvalStatus === "pendiente" ||
-    detail?.purchaseRequest.status === "en_revision";
+    PROCUREMENT_APPROVALS_ENABLED &&
+    (detail?.purchaseRequest.approvalStatus === "pendiente" ||
+      detail?.purchaseRequest.status === "en_revision");
   const isApprovedPurchaseRequest =
     detail?.purchaseRequest.approvalStatus === "aprobada";
-  const isDraftPurchaseRequest =
-    detail?.purchaseRequest.status === "pendiente" &&
-    !detail?.purchaseRequest.approvalStatus;
+  const isDraftPurchaseRequest = isPurchaseRequestDraftLike(
+    detail?.purchaseRequest.status,
+    detail?.purchaseRequest.approvalStatus
+  );
   const canEditSelectedPurchaseRequest =
     canManagePurchaseRequests && isDraftPurchaseRequest;
   const canManagePurchaseRequestAttachments =
@@ -917,17 +933,22 @@ export default function PurchaseRequests() {
       isProjectAdmin);
   const canConvertSelectedPurchaseRequest =
     canConvert &&
-    isApprovedPurchaseRequest &&
-    Boolean(
-      detail?.purchaseRequest.status &&
-        UNIFIED_CONVERTIBLE_STATUSES.has(detail.purchaseRequest.status)
+    isPurchaseRequestConversionReady(
+      detail?.purchaseRequest.status,
+      detail?.purchaseRequest.approvalStatus
     );
   const canSubmitSelectedPurchaseRequest =
-    canManagePurchaseRequests && isDraftPurchaseRequest;
+    PROCUREMENT_APPROVALS_ENABLED &&
+    canManagePurchaseRequests &&
+    isDraftPurchaseRequest;
   const canReviewSelectedPurchaseRequest =
-    isProcurementApprover && isPendingApprovalPurchaseRequest;
+    PROCUREMENT_APPROVALS_ENABLED &&
+    isProcurementApprover &&
+    isPendingApprovalPurchaseRequest;
   const canReopenSelectedPurchaseRequest =
-    canManagePurchaseRequests && isRejectedPurchaseRequest;
+    PROCUREMENT_APPROVALS_ENABLED &&
+    canManagePurchaseRequests &&
+    isRejectedPurchaseRequest;
   const canAnnulSelectedPurchaseRequest =
     canAnnulPurchaseRequests && isDraftPurchaseRequest;
   const approvalHistory = getApprovalHistory(detail);
@@ -1522,7 +1543,10 @@ export default function PurchaseRequests() {
           header: "Estatus",
           value: (row: any) =>
             STATUS_LABELS[
-              getEffectivePurchaseRequestStatus(row.purchaseRequest.status)
+              getEffectivePurchaseRequestStatus(
+                row.purchaseRequest.status,
+                row.purchaseRequest.approvalStatus
+              )
             ] || row.purchaseRequest.status,
         },
         {
@@ -1600,7 +1624,11 @@ export default function PurchaseRequests() {
           <Input
             value={searchTerm}
             onChange={event => setSearchTerm(event.target.value)}
-            placeholder="Buscar por SC, REQ, proyecto, requiriente, aprobador o documento..."
+            placeholder={
+              PROCUREMENT_APPROVALS_ENABLED
+                ? "Buscar por SC, REQ, proyecto, requiriente, aprobador o documento..."
+                : "Buscar por SC, REQ, proyecto, requiriente o documento..."
+            }
             className="h-10 pl-9"
           />
         </div>
@@ -1689,9 +1717,11 @@ export default function PurchaseRequests() {
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Requiriente
                     </th>
-                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Aprobado por
-                    </th>
+                    {PROCUREMENT_APPROVALS_ENABLED ? (
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Aprobado por
+                      </th>
+                    ) : null}
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Tipo de Compra
                     </th>
@@ -1704,9 +1734,11 @@ export default function PurchaseRequests() {
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Estado SC
                     </th>
-                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Aprobación
-                    </th>
+                    {PROCUREMENT_APPROVALS_ENABLED ? (
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Aprobación
+                      </th>
+                    ) : null}
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Fecha necesaria
                     </th>
@@ -1760,9 +1792,11 @@ export default function PurchaseRequests() {
                         <td className="p-3 text-xs">
                           {formatPurchaseRequestRequestedBy(row)}
                         </td>
-                        <td className="p-3 text-xs">
-                          {formatPurchaseRequestApprovedBy(row)}
-                        </td>
+                        {PROCUREMENT_APPROVALS_ENABLED ? (
+                          <td className="p-3 text-xs">
+                            {formatPurchaseRequestApprovedBy(row)}
+                          </td>
+                        ) : null}
                         <td className="p-3 text-xs">
                           {getPurchaseTypeLabel(
                             row.purchaseRequest.purchaseType
@@ -1784,32 +1818,36 @@ export default function PurchaseRequests() {
                             className={`text-xs ${
                               STATUS_COLORS[
                                 getEffectivePurchaseRequestStatus(
-                                  row.purchaseRequest.status
+                                  row.purchaseRequest.status,
+                                  row.purchaseRequest.approvalStatus
                                 )
                               ] || ""
                             }`}
                           >
                             {STATUS_LABELS[
                               getEffectivePurchaseRequestStatus(
-                                row.purchaseRequest.status
+                                row.purchaseRequest.status,
+                                row.purchaseRequest.approvalStatus
                               )
                             ] || row.purchaseRequest.status}
                           </Badge>
                         </td>
-                        <td className="p-3">
-                          <Badge
-                            variant="outline"
-                            className={`text-xs ${
-                              APPROVAL_STATUS_COLORS[
+                        {PROCUREMENT_APPROVALS_ENABLED ? (
+                          <td className="p-3">
+                            <Badge
+                              variant="outline"
+                              className={`text-xs ${
+                                APPROVAL_STATUS_COLORS[
+                                  row.purchaseRequest.approvalStatus
+                                ] || ""
+                              }`}
+                            >
+                              {formatApprovalStatus(
                                 row.purchaseRequest.approvalStatus
-                              ] || ""
-                            }`}
-                          >
-                            {formatApprovalStatus(
-                              row.purchaseRequest.approvalStatus
-                            )}
-                          </Badge>
-                        </td>
+                              )}
+                            </Badge>
+                          </td>
+                        ) : null}
                         <td className="p-3 text-xs">
                           {row.purchaseRequest.neededBy
                             ? new Date(
@@ -1861,13 +1899,15 @@ export default function PurchaseRequests() {
                     ? "Esta solicitud fue anulada y se muestra en modo solo lectura."
                     : isConvertedPurchaseRequest
                       ? "Esta solicitud ya fue convertida a orden de compra y se muestra en modo solo lectura."
-                      : isRejectedPurchaseRequest
-                        ? "La aprobación fue rechazada. El responsable debe reabrirla antes de corregirla y reenviarla."
-                        : isPendingApprovalPurchaseRequest
-                          ? "La solicitud está pendiente de decisión y permanece bloqueada para edición."
-                          : isApprovedPurchaseRequest
-                            ? "La solicitud fue aprobada y puede convertirse a orden de compra."
-                            : "Revisa y completa la solicitud antes de enviarla a aprobación."}
+                      : !PROCUREMENT_APPROVALS_ENABLED
+                        ? "Revisa la solicitud y conviértela directamente en orden de compra cuando esté lista."
+                        : isRejectedPurchaseRequest
+                          ? "La aprobación fue rechazada. El responsable debe reabrirla antes de corregirla y reenviarla."
+                          : isPendingApprovalPurchaseRequest
+                            ? "La solicitud está pendiente de decisión y permanece bloqueada para edición."
+                            : isApprovedPurchaseRequest
+                              ? "La solicitud fue aprobada y puede convertirse a orden de compra."
+                              : "Revisa y completa la solicitud antes de enviarla a aprobación."}
                 </p>
               </div>
               {detail && (
@@ -1877,14 +1917,16 @@ export default function PurchaseRequests() {
                     className={`rounded-full px-3 py-1 text-xs uppercase ${
                       STATUS_COLORS[
                         getEffectivePurchaseRequestStatus(
-                          detail.purchaseRequest.status
+                          detail.purchaseRequest.status,
+                          detail.purchaseRequest.approvalStatus
                         )
                       ] || ""
                     }`}
                   >
                     {STATUS_LABELS[
                       getEffectivePurchaseRequestStatus(
-                        detail.purchaseRequest.status
+                        detail.purchaseRequest.status,
+                        detail.purchaseRequest.approvalStatus
                       )
                     ] || detail.purchaseRequest.status}
                   </Badge>
@@ -1894,19 +1936,21 @@ export default function PurchaseRequests() {
                   >
                     {selectedItems.length} ítem(s)
                   </Badge>
-                  <Badge
-                    variant="outline"
-                    className={`rounded-full px-3 py-1 text-xs uppercase ${
-                      APPROVAL_STATUS_COLORS[
-                        detail.purchaseRequest.approvalStatus ?? ""
-                      ] || ""
-                    }`}
-                  >
-                    Aprobación:{" "}
-                    {formatApprovalStatus(
-                      detail.purchaseRequest.approvalStatus
-                    )}
-                  </Badge>
+                  {PROCUREMENT_APPROVALS_ENABLED ? (
+                    <Badge
+                      variant="outline"
+                      className={`rounded-full px-3 py-1 text-xs uppercase ${
+                        APPROVAL_STATUS_COLORS[
+                          detail.purchaseRequest.approvalStatus ?? ""
+                        ] || ""
+                      }`}
+                    >
+                      Aprobación:{" "}
+                      {formatApprovalStatus(
+                        detail.purchaseRequest.approvalStatus
+                      )}
+                    </Badge>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -2047,14 +2091,16 @@ export default function PurchaseRequests() {
                       className={`rounded-full px-3 py-1 text-sm ${
                         STATUS_COLORS[
                           getEffectivePurchaseRequestStatus(
-                            detail.purchaseRequest.status
+                            detail.purchaseRequest.status,
+                            detail.purchaseRequest.approvalStatus
                           )
                         ] || ""
                       }`}
                     >
                       {STATUS_LABELS[
                         getEffectivePurchaseRequestStatus(
-                          detail.purchaseRequest.status
+                          detail.purchaseRequest.status,
+                          detail.purchaseRequest.approvalStatus
                         )
                       ] || detail.purchaseRequest.status}
                     </Badge>
@@ -2062,40 +2108,46 @@ export default function PurchaseRequests() {
                   <p className="mt-2 text-sm text-muted-foreground">
                     {isCancelledPurchaseRequest
                       ? "La solicitud fue anulada y ya no permite cambios."
-                      : isRejectedPurchaseRequest
-                        ? "La solicitud espera corrección después del rechazo."
-                        : isPendingApprovalPurchaseRequest
-                          ? "La solicitud permanece bloqueada mientras se revisa."
-                          : detail.purchaseRequest.quoteAttachmentId
-                            ? "Cotización adjunta y lista para revisión."
-                            : "Todavía no tiene cotización aprobada adjunta."}
+                      : !PROCUREMENT_APPROVALS_ENABLED
+                        ? detail.purchaseRequest.quoteAttachmentId
+                          ? "Cotización adjunta y lista para convertir."
+                          : "Puedes completar la solicitud y convertirla sin aprobación."
+                        : isRejectedPurchaseRequest
+                          ? "La solicitud espera corrección después del rechazo."
+                          : isPendingApprovalPurchaseRequest
+                            ? "La solicitud permanece bloqueada mientras se revisa."
+                            : detail.purchaseRequest.quoteAttachmentId
+                              ? "Cotización adjunta y lista para revisión."
+                              : "Todavía no tiene cotización aprobada adjunta."}
                   </p>
                 </div>
 
-                <div className="rounded-2xl border border-border/70 bg-card p-5">
-                  <div className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                    Aprobación
+                {PROCUREMENT_APPROVALS_ENABLED ? (
+                  <div className="rounded-2xl border border-border/70 bg-card p-5">
+                    <div className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+                      Aprobación
+                    </div>
+                    <div className="flex min-h-[3rem] items-center">
+                      <Badge
+                        variant="outline"
+                        className={`rounded-full px-3 py-1 text-sm ${
+                          APPROVAL_STATUS_COLORS[
+                            detail.purchaseRequest.approvalStatus ?? ""
+                          ] || ""
+                        }`}
+                      >
+                        {formatApprovalStatus(
+                          detail.purchaseRequest.approvalStatus
+                        )}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {isApprovedPurchaseRequest
+                        ? `Aprobada por ${formatPurchaseRequestApprovedBy(detail)}.`
+                        : "Consulta abajo el historial completo de decisiones."}
+                    </p>
                   </div>
-                  <div className="flex min-h-[3rem] items-center">
-                    <Badge
-                      variant="outline"
-                      className={`rounded-full px-3 py-1 text-sm ${
-                        APPROVAL_STATUS_COLORS[
-                          detail.purchaseRequest.approvalStatus ?? ""
-                        ] || ""
-                      }`}
-                    >
-                      {formatApprovalStatus(
-                        detail.purchaseRequest.approvalStatus
-                      )}
-                    </Badge>
-                  </div>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {isApprovedPurchaseRequest
-                      ? `Aprobada por ${formatPurchaseRequestApprovedBy(detail)}.`
-                      : "Consulta abajo el historial completo de decisiones."}
-                  </p>
-                </div>
+                ) : null}
               </div>
 
               <div className="rounded-2xl border border-border/70 bg-card p-5">
@@ -2112,79 +2164,81 @@ export default function PurchaseRequests() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-border/70 bg-card p-5">
-                <div className="mb-4 flex items-center gap-2">
-                  <Clock3 className="h-4 w-4 text-muted-foreground" />
-                  <div>
-                    <p className="text-base font-semibold">
-                      Historial de aprobación
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      Registro de envíos, decisiones y reaperturas de esta SC.
-                    </p>
+              {PROCUREMENT_APPROVALS_ENABLED ? (
+                <div className="rounded-2xl border border-border/70 bg-card p-5">
+                  <div className="mb-4 flex items-center gap-2">
+                    <Clock3 className="h-4 w-4 text-muted-foreground" />
+                    <div>
+                      <p className="text-base font-semibold">
+                        Historial de aprobación
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        Registro de envíos, decisiones y reaperturas de esta SC.
+                      </p>
+                    </div>
                   </div>
-                </div>
 
-                {approvalHistory.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
-                    {detail.purchaseRequest.approvalStatus === "no_requiere"
-                      ? "Documento histórico finalizado antes de este flujo; no tiene eventos de aprobación."
-                      : detail.purchaseRequest.approvalStatus
-                        ? "No hay eventos de aprobación registrados para esta solicitud."
-                        : "Esta solicitud todavía no ha sido enviada a aprobación."}
-                  </div>
-                ) : (
-                  <ol className="space-y-4">
-                    {[...approvalHistory]
-                      .sort(
-                        (left, right) =>
-                          new Date(right.createdAt ?? 0).getTime() -
-                          new Date(left.createdAt ?? 0).getTime()
-                      )
-                      .map((event: any, index: number) => (
-                        <li
-                          key={event.id ?? `${event.createdAt}-${index}`}
-                          className="relative rounded-xl border border-border/70 bg-muted/10 p-4 pl-11"
-                        >
-                          <span
-                            className={`absolute left-4 top-5 h-3 w-3 rounded-full border ${
-                              APPROVAL_STATUS_COLORS[event.newStatus] ||
-                              "border-slate-300 bg-slate-100"
-                            }`}
-                          />
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div>
-                              <p className="font-semibold capitalize">
-                                {formatApprovalAction(event.action)}
-                              </p>
-                              <p className="mt-1 text-sm text-muted-foreground">
-                                {getApprovalEventActorName(event) ||
-                                  "Usuario no disponible"}
-                                {event.actorRole
-                                  ? ` · ${getBuildReqRoleLabel(event.actorRole)}`
-                                  : ""}
-                              </p>
+                  {approvalHistory.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
+                      {detail.purchaseRequest.approvalStatus === "no_requiere"
+                        ? "Documento histórico finalizado antes de este flujo; no tiene eventos de aprobación."
+                        : detail.purchaseRequest.approvalStatus
+                          ? "No hay eventos de aprobación registrados para esta solicitud."
+                          : "Esta solicitud todavía no ha sido enviada a aprobación."}
+                    </div>
+                  ) : (
+                    <ol className="space-y-4">
+                      {[...approvalHistory]
+                        .sort(
+                          (left, right) =>
+                            new Date(right.createdAt ?? 0).getTime() -
+                            new Date(left.createdAt ?? 0).getTime()
+                        )
+                        .map((event: any, index: number) => (
+                          <li
+                            key={event.id ?? `${event.createdAt}-${index}`}
+                            className="relative rounded-xl border border-border/70 bg-muted/10 p-4 pl-11"
+                          >
+                            <span
+                              className={`absolute left-4 top-5 h-3 w-3 rounded-full border ${
+                                APPROVAL_STATUS_COLORS[event.newStatus] ||
+                                "border-slate-300 bg-slate-100"
+                              }`}
+                            />
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div>
+                                <p className="font-semibold capitalize">
+                                  {formatApprovalAction(event.action)}
+                                </p>
+                                <p className="mt-1 text-sm text-muted-foreground">
+                                  {getApprovalEventActorName(event) ||
+                                    "Usuario no disponible"}
+                                  {event.actorRole
+                                    ? ` · ${getBuildReqRoleLabel(event.actorRole)}`
+                                    : ""}
+                                </p>
+                              </div>
+                              <time className="text-xs text-muted-foreground">
+                                {formatApprovalEventDate(event.createdAt)}
+                              </time>
                             </div>
-                            <time className="text-xs text-muted-foreground">
-                              {formatApprovalEventDate(event.createdAt)}
-                            </time>
-                          </div>
-                          {(event.previousStatus || event.newStatus) && (
-                            <p className="mt-3 text-xs text-muted-foreground">
-                              {formatApprovalStatus(event.previousStatus)} →{" "}
-                              {formatApprovalStatus(event.newStatus)}
-                            </p>
-                          )}
-                          {event.comment ? (
-                            <p className="mt-3 whitespace-pre-wrap rounded-lg bg-background px-3 py-2 text-sm">
-                              {event.comment}
-                            </p>
-                          ) : null}
-                        </li>
-                      ))}
-                  </ol>
-                )}
-              </div>
+                            {(event.previousStatus || event.newStatus) && (
+                              <p className="mt-3 text-xs text-muted-foreground">
+                                {formatApprovalStatus(event.previousStatus)} →{" "}
+                                {formatApprovalStatus(event.newStatus)}
+                              </p>
+                            )}
+                            {event.comment ? (
+                              <p className="mt-3 whitespace-pre-wrap rounded-lg bg-background px-3 py-2 text-sm">
+                                {event.comment}
+                              </p>
+                            ) : null}
+                          </li>
+                        ))}
+                    </ol>
+                  )}
+                </div>
+              ) : null}
 
               {canReviewSelectedPurchaseRequest && (
                 <div className="rounded-2xl border border-blue-200 bg-blue-50/40 p-5">

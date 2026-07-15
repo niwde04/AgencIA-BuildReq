@@ -106,7 +106,12 @@ import {
   getBuildReqRoleLabel,
   isProcurementApproverRole,
 } from "@shared/buildreq-roles";
-import { purchaseOrderRequiresApproval } from "@shared/procurement-approvals";
+import {
+  isPurchaseOrderDraftLike,
+  isPurchaseRequestConversionReady,
+  PROCUREMENT_APPROVALS_ENABLED,
+  purchaseOrderRequiresApproval,
+} from "@shared/procurement-approvals";
 
 const STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
@@ -130,6 +135,22 @@ const STATUS_COLORS: Record<string, string> = {
   recibida: "border-emerald-300 bg-emerald-50 text-emerald-700",
   anulada: "border-rose-300 bg-rose-50 text-rose-700",
 };
+
+const STATUS_FILTER_OPTIONS = Object.entries(STATUS_LABELS).filter(
+  ([status]) =>
+    PROCUREMENT_APPROVALS_ENABLED ||
+    !["pendiente_aprobacion", "rechazada"].includes(status)
+);
+
+function getEffectivePurchaseOrderStatus(
+  status?: string | null,
+  approvalStatus?: string | null
+) {
+  return !PROCUREMENT_APPROVALS_ENABLED &&
+    isPurchaseOrderDraftLike(status, approvalStatus)
+    ? "borrador"
+    : (status ?? "");
+}
 const PURCHASE_TYPE_LABELS: Record<string, string> = {
   local: "Compra Local",
   extranjera: "Compra Extranjera",
@@ -265,13 +286,6 @@ const RECEIPT_CLOSABLE_ORDER_STATUSES = new Set([
   "emitida",
   "enviada",
   "parcialmente_recibida",
-]);
-const ORDER_STRUCTURE_EDITABLE_STATUSES = new Set(["borrador"]);
-const PURCHASE_REQUEST_ORIGIN_STATUSES = new Set([
-  "pendiente",
-  "en_revision",
-  "aprobada",
-  "parcialmente_convertida",
 ]);
 
 function formatSupplierOptionLabel(supplier?: any | null) {
@@ -1287,11 +1301,9 @@ export default function OrdenesCompra() {
   const orderRequiresApproval =
     Number.isFinite(orderTotal) &&
     purchaseOrderRequiresApproval(orderCurrency, orderTotal);
-  const isApprovalWorkflowState = [
-    "pendiente_aprobacion",
-    "aprobada",
-    "rechazada",
-  ].includes(orderStatus);
+  const isApprovalWorkflowState = PROCUREMENT_APPROVALS_ENABLED
+    ? ["pendiente_aprobacion", "aprobada", "rechazada"].includes(orderStatus)
+    : orderStatus === "aprobada" && orderApprovalStatus === "aprobada";
   const isPostApprovalLocked =
     orderApprovalStatus === "aprobada" && orderStatus !== "aprobada";
   const contractSummary =
@@ -1310,7 +1322,7 @@ export default function OrdenesCompra() {
   );
   const canEditOrderStructure =
     canManagePurchaseOrders &&
-    ORDER_STRUCTURE_EDITABLE_STATUSES.has(orderStatus);
+    isPurchaseOrderDraftLike(orderStatus, orderApprovalStatus);
   const canEditContractTerms = canEditOrderStructure;
   const canEditNewOrderContract = newOrderDialogOpen && canCreatePurchaseOrder;
   const canEditContractSetup = canEditNewOrderContract || canEditOrderStructure;
@@ -1340,17 +1352,23 @@ export default function OrdenesCompra() {
   const hasOrderReceipts =
     hasReceivedItems || RECEIVED_ORDER_STATUSES.has(orderStatus);
   const canSubmitForApproval =
+    PROCUREMENT_APPROVALS_ENABLED &&
     canManagePurchaseOrders &&
     orderStatus === "borrador" &&
     orderRequiresApproval;
   const canReviewApproval =
-    isProcurementApprover && orderStatus === "pendiente_aprobacion";
+    PROCUREMENT_APPROVALS_ENABLED &&
+    isProcurementApprover &&
+    orderStatus === "pendiente_aprobacion";
   const canCorrectRejectedOrder =
-    canManagePurchaseOrders && orderStatus === "rechazada";
+    PROCUREMENT_APPROVALS_ENABLED &&
+    canManagePurchaseOrders &&
+    orderStatus === "rechazada";
   const canEmitOrder =
     canManagePurchaseOrders &&
-    ((orderStatus === "borrador" && !orderRequiresApproval) ||
-      orderStatus === "aprobada");
+    ((isPurchaseOrderDraftLike(orderStatus, orderApprovalStatus) &&
+      !orderRequiresApproval) ||
+      (orderStatus === "aprobada" && orderApprovalStatus === "aprobada"));
   const filteredOrders = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
 
@@ -1381,7 +1399,11 @@ export default function OrdenesCompra() {
             String(value).toLowerCase().includes(normalizedSearch)
           );
       const matchesStatus =
-        statusFilter === "all" || purchaseOrder.status === statusFilter;
+        statusFilter === "all" ||
+        getEffectivePurchaseOrderStatus(
+          purchaseOrder.status,
+          purchaseOrder.approvalStatus
+        ) === statusFilter;
       const matchesType =
         purchaseTypeFilter === "all" ||
         purchaseOrder.purchaseType === purchaseTypeFilter;
@@ -1394,7 +1416,12 @@ export default function OrdenesCompra() {
 
     return (purchaseRequestOrigins ?? []).filter((row: any) => {
       const purchaseRequest = row.purchaseRequest;
-      if (!PURCHASE_REQUEST_ORIGIN_STATUSES.has(purchaseRequest.status)) {
+      if (
+        !isPurchaseRequestConversionReady(
+          purchaseRequest.status,
+          purchaseRequest.approvalStatus
+        )
+      ) {
         return false;
       }
       if (
@@ -1434,8 +1461,9 @@ export default function OrdenesCompra() {
   const selectedOriginItems = useMemo(() => {
     if (!selectedOriginDetail) return [];
     if (
-      !PURCHASE_REQUEST_ORIGIN_STATUSES.has(
-        selectedOriginDetail.purchaseRequest.status
+      !isPurchaseRequestConversionReady(
+        selectedOriginDetail.purchaseRequest.status,
+        selectedOriginDetail.purchaseRequest.approvalStatus
       )
     ) {
       return [];
@@ -3006,8 +3034,12 @@ export default function OrdenesCompra() {
           value: (row: any) =>
             row.purchaseOrder.appliesContract
               ? row.contractSummary?.statusLabel || "Contrato"
-              : STATUS_LABELS[row.purchaseOrder.status] ||
-                row.purchaseOrder.status,
+              : STATUS_LABELS[
+                  getEffectivePurchaseOrderStatus(
+                    row.purchaseOrder.status,
+                    row.purchaseOrder.approvalStatus
+                  )
+                ] || row.purchaseOrder.status,
         },
         {
           header: "Emisión",
@@ -3072,7 +3104,7 @@ export default function OrdenesCompra() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos los estados</SelectItem>
-            {Object.entries(STATUS_LABELS).map(([value, label]) => (
+            {STATUS_FILTER_OPTIONS.map(([value, label]) => (
               <SelectItem key={value} value={value}>
                 {label}
               </SelectItem>
@@ -3127,9 +3159,11 @@ export default function OrdenesCompra() {
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Estatus
                     </th>
-                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Aprobación
-                    </th>
+                    {PROCUREMENT_APPROVALS_ENABLED ? (
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Aprobación
+                      </th>
+                    ) : null}
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Contrato
                     </th>
@@ -3189,25 +3223,36 @@ export default function OrdenesCompra() {
                         <Badge
                           variant="outline"
                           className={`text-xs ${
-                            STATUS_COLORS[row.purchaseOrder.status] || ""
+                            STATUS_COLORS[
+                              getEffectivePurchaseOrderStatus(
+                                row.purchaseOrder.status,
+                                row.purchaseOrder.approvalStatus
+                              )
+                            ] || ""
                           }`}
                         >
-                          {STATUS_LABELS[row.purchaseOrder.status] ||
-                            row.purchaseOrder.status}
+                          {STATUS_LABELS[
+                            getEffectivePurchaseOrderStatus(
+                              row.purchaseOrder.status,
+                              row.purchaseOrder.approvalStatus
+                            )
+                          ] || row.purchaseOrder.status}
                         </Badge>
                       </td>
-                      <td className="p-3">
-                        <Badge
-                          variant="outline"
-                          className={`text-xs ${getApprovalStatusColor(
-                            row.purchaseOrder.approvalStatus
-                          )}`}
-                        >
-                          {getApprovalStatusLabel(
-                            row.purchaseOrder.approvalStatus
-                          )}
-                        </Badge>
-                      </td>
+                      {PROCUREMENT_APPROVALS_ENABLED ? (
+                        <td className="p-3">
+                          <Badge
+                            variant="outline"
+                            className={`text-xs ${getApprovalStatusColor(
+                              row.purchaseOrder.approvalStatus
+                            )}`}
+                          >
+                            {getApprovalStatusLabel(
+                              row.purchaseOrder.approvalStatus
+                            )}
+                          </Badge>
+                        </td>
+                      ) : null}
                       <td className="p-3">
                         {row.purchaseOrder.appliesContract ? (
                           <Badge
@@ -3559,23 +3604,34 @@ export default function OrdenesCompra() {
                   <Badge
                     variant="outline"
                     className={`text-sm ${
-                      STATUS_COLORS[detail.purchaseOrder.status] || ""
+                      STATUS_COLORS[
+                        getEffectivePurchaseOrderStatus(
+                          detail.purchaseOrder.status,
+                          detail.purchaseOrder.approvalStatus
+                        )
+                      ] || ""
                     }`}
                   >
-                    {STATUS_LABELS[detail.purchaseOrder.status] ||
-                      detail.purchaseOrder.status}
+                    {STATUS_LABELS[
+                      getEffectivePurchaseOrderStatus(
+                        detail.purchaseOrder.status,
+                        detail.purchaseOrder.approvalStatus
+                      )
+                    ] || detail.purchaseOrder.status}
                   </Badge>
-                  <Badge
-                    variant="outline"
-                    className={`text-sm ${getApprovalStatusColor(
-                      detail.purchaseOrder.approvalStatus
-                    )}`}
-                  >
-                    Aprobación:{" "}
-                    {getApprovalStatusLabel(
-                      detail.purchaseOrder.approvalStatus
-                    )}
-                  </Badge>
+                  {PROCUREMENT_APPROVALS_ENABLED ? (
+                    <Badge
+                      variant="outline"
+                      className={`text-sm ${getApprovalStatusColor(
+                        detail.purchaseOrder.approvalStatus
+                      )}`}
+                    >
+                      Aprobación:{" "}
+                      {getApprovalStatusLabel(
+                        detail.purchaseOrder.approvalStatus
+                      )}
+                    </Badge>
+                  ) : null}
                   {detail.purchaseOrder.appliesContract ? (
                     <Badge
                       variant="outline"
@@ -4724,7 +4780,11 @@ export default function OrdenesCompra() {
                 </div>
               </div>
 
-              <div className="grid gap-3 rounded-2xl border border-border/70 bg-muted/10 p-4 md:grid-cols-3">
+              <div
+                className={`grid gap-3 rounded-2xl border border-border/70 bg-muted/10 p-4 ${
+                  PROCUREMENT_APPROVALS_ENABLED ? "md:grid-cols-3" : ""
+                }`}
+              >
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Total final
@@ -4733,36 +4793,42 @@ export default function OrdenesCompra() {
                     {formatPurchaseOrderCurrency(orderTotal, orderCurrency)}
                   </p>
                 </div>
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Regla de aprobación
-                  </p>
-                  <p className="mt-1 text-sm font-medium">
-                    {orderRequiresApproval
-                      ? "Requiere aprobación"
-                      : "Puede emitirse directamente"}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Límite:{" "}
-                    {orderCurrency === "USD" ? "USD 10,000.00" : "L 250,000.00"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Aprobación
-                  </p>
-                  <Badge
-                    variant="outline"
-                    className={`mt-1 ${getApprovalStatusColor(orderApprovalStatus)}`}
-                  >
-                    {getApprovalStatusLabel(orderApprovalStatus)}
-                  </Badge>
-                </div>
+                {PROCUREMENT_APPROVALS_ENABLED ? (
+                  <>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Regla de aprobación
+                      </p>
+                      <p className="mt-1 text-sm font-medium">
+                        {orderRequiresApproval
+                          ? "Requiere aprobación"
+                          : "Puede emitirse directamente"}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Límite:{" "}
+                        {orderCurrency === "USD"
+                          ? "USD 10,000.00"
+                          : "L 250,000.00"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Aprobación
+                      </p>
+                      <Badge
+                        variant="outline"
+                        className={`mt-1 ${getApprovalStatusColor(orderApprovalStatus)}`}
+                      >
+                        {getApprovalStatusLabel(orderApprovalStatus)}
+                      </Badge>
+                    </div>
+                  </>
+                ) : null}
                 {isPostApprovalLocked ? (
                   <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:col-span-3">
-                    Esta OC pasó por aprobación y quedó bloqueada después de su
-                    emisión. No admite cambios, adjuntos, cancelación ni
-                    operaciones posteriores.
+                    Esta OC conserva un bloqueo histórico después de su emisión.
+                    No admite cambios, adjuntos, cancelación ni operaciones
+                    posteriores.
                   </div>
                 ) : null}
               </div>
@@ -5492,68 +5558,74 @@ export default function OrdenesCompra() {
                 />
               </div>
 
-              <div className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-4 sm:p-5">
-                <div>
-                  <h3 className="font-semibold">Historial de aprobación</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Envíos, decisiones y correcciones registradas para esta OC.
-                  </p>
-                </div>
-                {approvalHistory.length > 0 ? (
-                  <div className="space-y-0">
-                    {approvalHistory.map((entry: any, index: number) => (
-                      <div
-                        key={entry.id ?? `${entry.createdAt}-${index}`}
-                        className="relative border-l-2 border-border pb-5 pl-5 last:pb-0"
-                      >
-                        <span className="absolute -left-[5px] top-1.5 h-2 w-2 rounded-full bg-primary" />
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div>
-                            <p className="font-semibold">
-                              {formatApprovalAction(entry.action)}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {entry.actorName || "Usuario no disponible"} ·{" "}
-                              {formatApprovalActorRole(entry.actorRole)}
-                            </p>
-                          </div>
-                          <time className="text-xs text-muted-foreground">
-                            {entry.createdAt
-                              ? new Date(entry.createdAt).toLocaleString(
-                                  "es-HN"
-                                )
-                              : "Fecha no disponible"}
-                          </time>
-                        </div>
-                        {entry.previousStatus || entry.newStatus ? (
-                          <p className="mt-2 text-sm text-muted-foreground">
-                            {formatApprovalTimelineStatus(entry.previousStatus)} →{" "}
-                            {formatApprovalTimelineStatus(entry.newStatus)}
-                          </p>
-                        ) : null}
-                        {entry.amount !== null && entry.amount !== undefined ? (
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            Monto registrado:{" "}
-                            {formatPurchaseOrderCurrency(
-                              Number(entry.amount),
-                              entry.currency ?? detail.purchaseOrder.currency
-                            )}
-                          </p>
-                        ) : null}
-                        {entry.comment ? (
-                          <p className="mt-2 rounded-lg border border-border/70 bg-background px-3 py-2 text-sm">
-                            {entry.comment}
-                          </p>
-                        ) : null}
-                      </div>
-                    ))}
+              {PROCUREMENT_APPROVALS_ENABLED ? (
+                <div className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-4 sm:p-5">
+                  <div>
+                    <h3 className="font-semibold">Historial de aprobación</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Envíos, decisiones y correcciones registradas para esta
+                      OC.
+                    </p>
                   </div>
-                ) : (
-                  <p className="rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
-                    Esta orden todavía no tiene movimientos de aprobación.
-                  </p>
-                )}
-              </div>
+                  {approvalHistory.length > 0 ? (
+                    <div className="space-y-0">
+                      {approvalHistory.map((entry: any, index: number) => (
+                        <div
+                          key={entry.id ?? `${entry.createdAt}-${index}`}
+                          className="relative border-l-2 border-border pb-5 pl-5 last:pb-0"
+                        >
+                          <span className="absolute -left-[5px] top-1.5 h-2 w-2 rounded-full bg-primary" />
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <p className="font-semibold">
+                                {formatApprovalAction(entry.action)}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {entry.actorName || "Usuario no disponible"} ·{" "}
+                                {formatApprovalActorRole(entry.actorRole)}
+                              </p>
+                            </div>
+                            <time className="text-xs text-muted-foreground">
+                              {entry.createdAt
+                                ? new Date(entry.createdAt).toLocaleString(
+                                    "es-HN"
+                                  )
+                                : "Fecha no disponible"}
+                            </time>
+                          </div>
+                          {entry.previousStatus || entry.newStatus ? (
+                            <p className="mt-2 text-sm text-muted-foreground">
+                              {formatApprovalTimelineStatus(
+                                entry.previousStatus
+                              )}{" "}
+                              → {formatApprovalTimelineStatus(entry.newStatus)}
+                            </p>
+                          ) : null}
+                          {entry.amount !== null &&
+                          entry.amount !== undefined ? (
+                            <p className="mt-1 text-sm text-muted-foreground">
+                              Monto registrado:{" "}
+                              {formatPurchaseOrderCurrency(
+                                Number(entry.amount),
+                                entry.currency ?? detail.purchaseOrder.currency
+                              )}
+                            </p>
+                          ) : null}
+                          {entry.comment ? (
+                            <p className="mt-2 rounded-lg border border-border/70 bg-background px-3 py-2 text-sm">
+                              {entry.comment}
+                            </p>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
+                      Esta orden todavía no tiene movimientos de aprobación.
+                    </p>
+                  )}
+                </div>
+              ) : null}
 
               <DocumentAttachmentsPanel
                 entityType="purchase_order"

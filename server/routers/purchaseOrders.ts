@@ -8,14 +8,22 @@ import {
   type PurchaseCurrency,
 } from "@shared/purchase-orders";
 import { ASSET_CONDITION_VALUES } from "@shared/fixed-assets";
-import { applyProjectScope, canAccessProject, getProjectScopeIds } from "../projectAccess";
+import {
+  applyProjectScope,
+  canAccessProject,
+  getProjectScopeIds,
+} from "../projectAccess";
 import {
   isProcurementApproverRole,
   isProjectScopedRole,
 } from "@shared/buildreq-roles";
 import {
   getPurchaseOrderApprovalReadinessError,
-  purchaseOrderRequiresApproval,
+  isPurchaseOrderDraftLike,
+  isPurchaseRequestConversionReady,
+  PROCUREMENT_APPROVALS_DISABLED_MESSAGE,
+  PROCUREMENT_APPROVALS_ENABLED,
+  purchaseOrderExceedsApprovalLimit,
 } from "@shared/procurement-approvals";
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
@@ -24,15 +32,12 @@ const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
   "parcialmente_recibida",
 ]);
 
-const UNIFIED_PURCHASE_REQUEST_STATUSES = new Set([
-  "aprobada",
-  "parcialmente_convertida",
-]);
-
 const TEMPORARY_FIXED_ASSET_ITEM_NAME = "ACTIVO FIJO TEMPORAL";
 
 function normalizeItemText(value: unknown) {
-  return String(value ?? "").trim().toUpperCase();
+  return String(value ?? "")
+    .trim()
+    .toUpperCase();
 }
 
 function isTemporaryFixedAssetItem(item: {
@@ -69,14 +74,14 @@ const quantityToConvertSchema = z.object({
     .string()
     .trim()
     .min(1)
-    .refine((value) => Number.isFinite(Number(value)) && Number(value) > 0, {
+    .refine(value => Number.isFinite(Number(value)) && Number(value) > 0, {
       message: "La cantidad a convertir debe ser mayor que cero",
     }),
   unitPrice: z
     .string()
     .trim()
     .min(1)
-    .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0, {
+    .refine(value => Number.isFinite(Number(value)) && Number(value) >= 0, {
       message: "El precio unitario debe ser un número válido",
     })
     .optional(),
@@ -84,7 +89,7 @@ const quantityToConvertSchema = z.object({
     .string()
     .trim()
     .min(1)
-    .refine((value) => Number.isFinite(Number(value)) && Number(value) >= 0, {
+    .refine(value => Number.isFinite(Number(value)) && Number(value) >= 0, {
       message: "El subtotal debe ser un número válido",
     })
     .optional(),
@@ -94,9 +99,7 @@ const quantityToConvertSchema = z.object({
 
 function toDecimalString(value: string | number | null | undefined) {
   const parsed =
-    value === null || value === undefined || value === ""
-      ? 0
-      : Number(value);
+    value === null || value === undefined || value === "" ? 0 : Number(value);
   return (Number.isFinite(parsed) ? parsed : 0).toFixed(2);
 }
 
@@ -221,8 +224,9 @@ function validateContractFields(
   }
 }
 
-const contractFieldsSchema =
-  contractFieldsBaseSchema.superRefine(validateContractFields);
+const contractFieldsSchema = contractFieldsBaseSchema.superRefine(
+  validateContractFields
+);
 
 const fixedAssetDetailSchema = z.object({
   serialNumber: z.string().trim().min(1).max(120),
@@ -246,7 +250,10 @@ function getPendingConversionQuantity(item: {
   convertedQuantity?: string | number | null | undefined;
   pendingConversionQuantity?: string | number | null | undefined;
 }) {
-  if (item.pendingConversionQuantity !== undefined && item.pendingConversionQuantity !== null) {
+  if (
+    item.pendingConversionQuantity !== undefined &&
+    item.pendingConversionQuantity !== null
+  ) {
     return Math.max(Number(item.pendingConversionQuantity), 0);
   }
   return Math.max(
@@ -336,13 +343,30 @@ function assertCanModifyPurchaseOrders(user: {
   if (!canManagePurchaseOrders(user)) {
     throw new TRPCError({
       code: "FORBIDDEN",
-      message:
-        "No tiene permisos para modificar órdenes de compra",
+      message: "No tiene permisos para modificar órdenes de compra",
     });
   }
 }
 
-function assertPurchaseOrderEditable(status: string) {
+type PurchaseOrderState = {
+  status?: string | null;
+  approvalStatus?: string | null;
+};
+
+function assertProcurementApprovalsEnabled() {
+  if (!PROCUREMENT_APPROVALS_ENABLED) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: PROCUREMENT_APPROVALS_DISABLED_MESSAGE,
+    });
+  }
+}
+
+function assertPurchaseOrderEditable(purchaseOrder: PurchaseOrderState) {
+  const status = purchaseOrder.status ?? "borrador";
+  if (isPurchaseOrderDraftLike(status, purchaseOrder.approvalStatus)) {
+    return;
+  }
   if (
     ["anulada", "pendiente_aprobacion", "aprobada", "rechazada"].includes(
       status
@@ -350,7 +374,8 @@ function assertPurchaseOrderEditable(status: string) {
   ) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "La orden de compra no permite esta operación en su estado actual",
+      message:
+        "La orden de compra no permite esta operación en su estado actual",
     });
   }
 }
@@ -367,8 +392,9 @@ function assertPurchaseOrderApprovalUnlocked(purchaseOrder: {
   }
 }
 
-function assertPurchaseOrderMutable(status: string) {
-  assertPurchaseOrderEditable(status);
+function assertPurchaseOrderMutable(purchaseOrder: PurchaseOrderState) {
+  const status = purchaseOrder.status ?? "borrador";
+  assertPurchaseOrderEditable(purchaseOrder);
 
   if (status === "recibida") {
     throw new TRPCError({
@@ -379,10 +405,16 @@ function assertPurchaseOrderMutable(status: string) {
   }
 }
 
-function assertPurchaseOrderStructureEditable(status?: string | null) {
-  assertPurchaseOrderEditable(status ?? "borrador");
+function assertPurchaseOrderStructureEditable(
+  purchaseOrder: PurchaseOrderState
+) {
+  const status = purchaseOrder.status ?? "borrador";
+  assertPurchaseOrderEditable(purchaseOrder);
 
-  if (!status || status === "borrador") {
+  if (
+    !status ||
+    isPurchaseOrderDraftLike(status, purchaseOrder.approvalStatus)
+  ) {
     return;
   }
 
@@ -422,7 +454,10 @@ const approvalDecisionSchema = z
     comment: z.string().trim().max(1000).optional(),
   })
   .superRefine((value, ctx) => {
-    if (value.decision === "reject" && (value.comment?.trim().length ?? 0) < 5) {
+    if (
+      value.decision === "reject" &&
+      (value.comment?.trim().length ?? 0) < 5
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["comment"],
@@ -503,7 +538,9 @@ async function releaseDirectPurchaseRequestItems(
       }
 
       const requestItems = await db.getRequestItemsByRequestId(requestId);
-      const someAssigned = requestItems.some(item => item.assignedFlow !== null);
+      const someAssigned = requestItems.some(
+        item => item.assignedFlow !== null
+      );
       await db.updateMaterialRequestStatus(
         requestId,
         someAssigned ? "en_proceso" : "en_espera",
@@ -557,7 +594,7 @@ export const purchaseOrdersRouter = router({
       return rows.filter(
         row =>
           row.hasApprovalHistory ||
-          purchaseOrderRequiresApproval(
+          purchaseOrderExceedsApprovalLimit(
             row.purchaseOrder.currency,
             row.totalAmount
           )
@@ -585,7 +622,7 @@ export const purchaseOrdersRouter = router({
       if (
         isProcurementApproverRole(ctx.user.buildreqRole) &&
         detail.approvalHistory.length === 0 &&
-        !purchaseOrderRequiresApproval(
+        !purchaseOrderExceedsApprovalLimit(
           detail.purchaseOrder.currency,
           detail.summary.total
         )
@@ -679,8 +716,10 @@ export const purchaseOrdersRouter = router({
       }
 
       if (
-        detail.purchaseRequest.approvalStatus !== "aprobada" ||
-        !UNIFIED_PURCHASE_REQUEST_STATUSES.has(detail.purchaseRequest.status)
+        !isPurchaseRequestConversionReady(
+          detail.purchaseRequest.status,
+          detail.purchaseRequest.approvalStatus
+        )
       ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -702,7 +741,7 @@ export const purchaseOrdersRouter = router({
       }> =
         input.itemsToConvert && input.itemsToConvert.length > 0
           ? input.itemsToConvert
-          : (input.selectedItemIds ?? []).map((id) => {
+          : (input.selectedItemIds ?? []).map(id => {
               const item = itemById.get(id);
               return {
                 purchaseRequestItemId: id,
@@ -777,9 +816,8 @@ export const purchaseOrdersRouter = router({
           subtotal: conversionDraftByItemId.get(purchaseRequestItemId)
             ?.subtotal,
           taxCode: conversionDraftByItemId.get(purchaseRequestItemId)?.taxCode,
-          additionalTaxCodes:
-            conversionDraftByItemId.get(purchaseRequestItemId)
-              ?.additionalTaxCodes,
+          additionalTaxCodes: conversionDraftByItemId.get(purchaseRequestItemId)
+            ?.additionalTaxCodes,
         };
       });
 
@@ -883,7 +921,7 @@ export const purchaseOrdersRouter = router({
             pricesIncludeTax: input.pricesIncludeTax,
             ...currencySnapshot,
             paymentMethod: requiresPaymentMethod
-              ? input.paymentMethod ?? null
+              ? (input.paymentMethod ?? null)
               : null,
             supplierId: inferredSupplierId,
             supplierContactId: selectedSupplierContact?.id ?? null,
@@ -912,21 +950,30 @@ export const purchaseOrdersRouter = router({
             contractExpiryNotifiedAt: null,
             createdById: ctx.user.id,
           },
-          projectItems.map(({ item, quantityToConvert, unitPrice, subtotal, taxCode, additionalTaxCodes }: any) => ({
-            purchaseRequestItemId: item.id,
-            materialRequestItemId: item.materialRequestItemId,
-            originalSapItemCode: item.originalSapItemCode,
-            currentSapItemCode: item.currentSapItemCode,
-            itemName: getPurchaseOrderItemName(item),
-            quantity: quantityToConvert,
-            receivedQuantity: "0.00",
-            unit: item.unit,
-            unitPrice: unitPrice ?? item.unitPrice ?? "0.00",
-            subtotal,
-            taxCode: taxCode ?? "exe",
-            additionalTaxCodes,
-            notes: item.notes,
-          }))
+          projectItems.map(
+            ({
+              item,
+              quantityToConvert,
+              unitPrice,
+              subtotal,
+              taxCode,
+              additionalTaxCodes,
+            }: any) => ({
+              purchaseRequestItemId: item.id,
+              materialRequestItemId: item.materialRequestItemId,
+              originalSapItemCode: item.originalSapItemCode,
+              currentSapItemCode: item.currentSapItemCode,
+              itemName: getPurchaseOrderItemName(item),
+              quantity: quantityToConvert,
+              receivedQuantity: "0.00",
+              unit: item.unit,
+              unitPrice: unitPrice ?? item.unitPrice ?? "0.00",
+              subtotal,
+              taxCode: taxCode ?? "exe",
+              additionalTaxCodes,
+              notes: item.notes,
+            })
+          )
         );
 
         createdOrders.push({
@@ -1007,10 +1054,10 @@ export const purchaseOrdersRouter = router({
       }
 
       const details = await Promise.all(
-        purchaseRequestIds.map((id) => db.getPurchaseRequestById(id))
+        purchaseRequestIds.map(id => db.getPurchaseRequestById(id))
       );
 
-      const missingIndex = details.findIndex((detail) => !detail);
+      const missingIndex = details.findIndex(detail => !detail);
       if (missingIndex >= 0) {
         throw new TRPCError({
           code: "NOT_FOUND",
@@ -1018,16 +1065,18 @@ export const purchaseOrdersRouter = router({
         });
       }
 
-      const purchaseRequests = details as Array<NonNullable<typeof details[number]>>;
+      const purchaseRequests = details as Array<
+        NonNullable<(typeof details)[number]>
+      >;
       for (const detail of purchaseRequests) {
         assertProjectScopedAccess(ctx.user, detail.purchaseRequest.projectId);
       }
 
       const blockedRequest = purchaseRequests.find(
-        (detail) =>
-          detail.purchaseRequest.approvalStatus !== "aprobada" ||
-          !UNIFIED_PURCHASE_REQUEST_STATUSES.has(
-            detail.purchaseRequest.status
+        detail =>
+          !isPurchaseRequestConversionReady(
+            detail.purchaseRequest.status,
+            detail.purchaseRequest.approvalStatus
           )
       );
       if (blockedRequest) {
@@ -1038,7 +1087,7 @@ export const purchaseOrdersRouter = router({
       }
 
       const purchaseTypes = new Set(
-        purchaseRequests.map((detail) => detail.purchaseRequest.purchaseType)
+        purchaseRequests.map(detail => detail.purchaseRequest.purchaseType)
       );
       if (purchaseTypes.size > 1) {
         throw new TRPCError({
@@ -1048,13 +1097,15 @@ export const purchaseOrdersRouter = router({
         });
       }
 
-      const allItems = purchaseRequests.flatMap((detail) =>
+      const allItems = purchaseRequests.flatMap(detail =>
         (detail.items ?? [])
           .filter((item: any) => getPendingConversionQuantity(item) > 0)
           .map((item: any) => ({
             detail,
             item,
-            quantityToConvert: toDecimalString(getPendingConversionQuantity(item)),
+            quantityToConvert: toDecimalString(
+              getPendingConversionQuantity(item)
+            ),
             sourceProjectId:
               item.sourceProject?.id ?? detail.purchaseRequest.projectId,
           }))
@@ -1067,7 +1118,7 @@ export const purchaseOrdersRouter = router({
       }
 
       const sourceProjectIds = new Set(
-        allItems.map((entry) => entry.sourceProjectId)
+        allItems.map(entry => entry.sourceProjectId)
       );
       for (const projectId of Array.from(sourceProjectIds)) {
         assertProjectScopedAccess(ctx.user, projectId);
@@ -1109,8 +1160,9 @@ export const purchaseOrdersRouter = router({
 
       const flowItems = allItems.flatMap(({ item }) =>
         item.materialRequestItemId
-          ? (directPurchaseFlowByRequestItemId.get(item.materialRequestItemId) ??
-            [])
+          ? (directPurchaseFlowByRequestItemId.get(
+              item.materialRequestItemId
+            ) ?? [])
           : []
       );
       const requiresPaymentMethod =
@@ -1119,12 +1171,13 @@ export const purchaseOrdersRouter = router({
         purchaseRequests.some(
           detail => detail.purchaseRequest.purchaseType === "compra_directa"
         );
-      const earliestNeededBy = purchaseRequests
-        .map((detail) => detail.purchaseRequest.neededBy)
-        .filter((value): value is Date => Boolean(value))
-        .sort((left, right) => left.getTime() - right.getTime())[0] ?? null;
+      const earliestNeededBy =
+        purchaseRequests
+          .map(detail => detail.purchaseRequest.neededBy)
+          .filter((value): value is Date => Boolean(value))
+          .sort((left, right) => left.getTime() - right.getTime())[0] ?? null;
       const requestNumbers = purchaseRequests
-        .map((detail) => detail.purchaseRequest.requestNumber)
+        .map(detail => detail.purchaseRequest.requestNumber)
         .join(", ");
 
       const created = await db.createPurchaseOrder(
@@ -1136,9 +1189,10 @@ export const purchaseOrdersRouter = router({
           pricesIncludeTax: input.pricesIncludeTax,
           ...currencySnapshot,
           paymentMethod: requiresPaymentMethod
-            ? input.paymentMethod ?? null
+            ? (input.paymentMethod ?? null)
             : null,
-          supplierId: input.supplierId ?? flowItems[0]?.flow?.supplierId ?? null,
+          supplierId:
+            input.supplierId ?? flowItems[0]?.flow?.supplierId ?? null,
           supplierEmail: input.supplierEmail,
           status: "borrador",
           neededBy: earliestNeededBy,
@@ -1217,6 +1271,7 @@ export const purchaseOrdersRouter = router({
   submitForApproval: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
+      assertProcurementApprovalsEnabled();
       assertCanModifyPurchaseOrders(ctx.user);
       const detail = await db.getPurchaseOrderById(input.id);
       if (!detail) {
@@ -1226,12 +1281,10 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
-      assertPurchaseOrderStructureEditable(detail.purchaseOrder.status);
+      assertPurchaseOrderStructureEditable(detail.purchaseOrder);
       validatePurchaseOrderApprovalReadiness(detail);
 
-      let result: Awaited<
-        ReturnType<typeof db.submitPurchaseOrderForApproval>
-      >;
+      let result: Awaited<ReturnType<typeof db.submitPurchaseOrderForApproval>>;
       try {
         result = await db.submitPurchaseOrderForApproval({
           id: input.id,
@@ -1267,6 +1320,7 @@ export const purchaseOrdersRouter = router({
   reviewApproval: protectedProcedure
     .input(approvalDecisionSchema)
     .mutation(async ({ ctx, input }) => {
+      assertProcurementApprovalsEnabled();
       if (!isProcurementApproverRole(ctx.user.buildreqRole)) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -1386,7 +1440,7 @@ export const purchaseOrdersRouter = router({
       assertCanModifyPurchaseOrders(ctx.user);
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
       assertPurchaseOrderApprovalUnlocked(detail.purchaseOrder);
-      assertPurchaseOrderStructureEditable(detail.purchaseOrder.status);
+      assertPurchaseOrderStructureEditable(detail.purchaseOrder);
 
       const currencySnapshot = normalizePurchaseCurrencySnapshot({
         currency: input.currency ?? detail.purchaseOrder.currency,
@@ -1401,7 +1455,9 @@ export const purchaseOrdersRouter = router({
       });
 
       if (input.supplierContactId) {
-        const contact = await db.getSupplierContactById(input.supplierContactId);
+        const contact = await db.getSupplierContactById(
+          input.supplierContactId
+        );
         if (!contact || !contact.isActive) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -1489,14 +1545,14 @@ export const purchaseOrdersRouter = router({
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
       assertPurchaseOrderApprovalUnlocked(detail.purchaseOrder);
-      assertPurchaseOrderStructureEditable(detail.purchaseOrder.status);
+      assertPurchaseOrderStructureEditable(detail.purchaseOrder);
 
       return db.updatePurchaseOrderContractTerms({
         purchaseOrderId: input.id,
         changedById: ctx.user.id,
         appliesContract: input.appliesContract ?? false,
         contractPaymentFrequency: input.appliesContract
-          ? input.contractPaymentFrequency ?? null
+          ? (input.contractPaymentFrequency ?? null)
           : null,
         contractFirstPaymentDate: input.appliesContract
           ? parseDateInput(input.contractFirstPaymentDate)
@@ -1533,7 +1589,7 @@ export const purchaseOrdersRouter = router({
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
       assertPurchaseOrderApprovalUnlocked(detail.purchaseOrder);
-      assertPurchaseOrderStructureEditable(detail.purchaseOrder.status);
+      assertPurchaseOrderStructureEditable(detail.purchaseOrder);
 
       try {
         return await db.updatePurchaseOrderPricesIncludeTax({
@@ -1580,7 +1636,7 @@ export const purchaseOrdersRouter = router({
       }
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
       assertPurchaseOrderApprovalUnlocked(itemDetail.purchaseOrder);
-      assertPurchaseOrderStructureEditable(itemDetail.purchaseOrder.status);
+      assertPurchaseOrderStructureEditable(itemDetail.purchaseOrder);
 
       return db.updatePurchaseOrderItem(
         input.purchaseOrderItemId,
@@ -1641,7 +1697,7 @@ export const purchaseOrdersRouter = router({
       }
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
       assertPurchaseOrderApprovalUnlocked(itemDetail.purchaseOrder);
-      assertPurchaseOrderStructureEditable(itemDetail.purchaseOrder.status);
+      assertPurchaseOrderStructureEditable(itemDetail.purchaseOrder);
 
       const taxData = await db.preparePurchaseOrderTaxDataForLine({
         quantity: itemDetail.item.quantity,
@@ -1722,7 +1778,7 @@ export const purchaseOrdersRouter = router({
       }
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
       assertPurchaseOrderApprovalUnlocked(itemDetail.purchaseOrder);
-      assertPurchaseOrderStructureEditable(itemDetail.purchaseOrder.status);
+      assertPurchaseOrderStructureEditable(itemDetail.purchaseOrder);
 
       const receivedQuantity = Number(itemDetail.item.receivedQuantity ?? 0);
       const nextQuantity = Number(input.quantity);
@@ -1814,7 +1870,8 @@ export const purchaseOrdersRouter = router({
       if (isProcurementApproverRole(ctx.user.buildreqRole)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Los aprobadores solo pueden consultar y decidir aprobaciones",
+          message:
+            "Los aprobadores solo pueden consultar y decidir aprobaciones",
         });
       }
 
@@ -1829,7 +1886,7 @@ export const purchaseOrdersRouter = router({
       }
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
       assertPurchaseOrderApprovalUnlocked(itemDetail.purchaseOrder);
-      assertPurchaseOrderMutable(itemDetail.purchaseOrder.status);
+      assertPurchaseOrderMutable(itemDetail.purchaseOrder);
 
       try {
         return await db.savePurchaseOrderFixedAssetDraftLine({
@@ -1929,7 +1986,7 @@ export const purchaseOrdersRouter = router({
 
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
       assertPurchaseOrderApprovalUnlocked(itemDetail.purchaseOrder);
-      assertPurchaseOrderMutable(itemDetail.purchaseOrder.status);
+      assertPurchaseOrderMutable(itemDetail.purchaseOrder);
 
       if (
         !RECEIVABLE_PURCHASE_ORDER_STATUSES.has(itemDetail.purchaseOrder.status)
@@ -2005,7 +2062,7 @@ export const purchaseOrdersRouter = router({
 
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
       assertPurchaseOrderApprovalUnlocked(itemDetail.purchaseOrder);
-      assertPurchaseOrderMutable(itemDetail.purchaseOrder.status);
+      assertPurchaseOrderMutable(itemDetail.purchaseOrder);
 
       if (
         !RECEIVABLE_PURCHASE_ORDER_STATUSES.has(itemDetail.purchaseOrder.status)
@@ -2149,7 +2206,7 @@ export const purchaseOrdersRouter = router({
       }
       assertProjectScopedAccess(ctx.user, itemDetail.purchaseOrder.projectId);
       assertPurchaseOrderApprovalUnlocked(itemDetail.purchaseOrder);
-      assertPurchaseOrderStructureEditable(itemDetail.purchaseOrder.status);
+      assertPurchaseOrderStructureEditable(itemDetail.purchaseOrder);
 
       if (Number(itemDetail.item.receivedQuantity ?? 0) > 0) {
         throw new TRPCError({
@@ -2233,7 +2290,7 @@ export const purchaseOrdersRouter = router({
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
       assertPurchaseOrderApprovalUnlocked(detail.purchaseOrder);
-      assertPurchaseOrderEditable(detail.purchaseOrder.status);
+      assertPurchaseOrderEditable(detail.purchaseOrder);
 
       const receivedItem = (detail.items ?? []).find(
         (item: any) => Number(item.receivedQuantity ?? 0) > 0
@@ -2308,9 +2365,7 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
-      if (
-        ["emitida", "enviada"].includes(detail.purchaseOrder.status)
-      ) {
+      if (["emitida", "enviada"].includes(detail.purchaseOrder.status)) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "La orden de compra ya fue emitida",
@@ -2330,7 +2385,16 @@ export const purchaseOrdersRouter = router({
             "No se puede emitir una orden que ya tiene recepciones registradas",
         });
       }
-      if (!["borrador", "aprobada"].includes(detail.purchaseOrder.status)) {
+      if (
+        !isPurchaseOrderDraftLike(
+          detail.purchaseOrder.status,
+          detail.purchaseOrder.approvalStatus
+        ) &&
+        !(
+          detail.purchaseOrder.status === "aprobada" &&
+          detail.purchaseOrder.approvalStatus === "aprobada"
+        )
+      ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "La orden no está lista para emitirse",

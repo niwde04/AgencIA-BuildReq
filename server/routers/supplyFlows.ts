@@ -8,6 +8,7 @@ import {
   isProjectScopedRole,
   isSuperintendentFamilyRole,
 } from "@shared/buildreq-roles";
+import { isPurchaseRequestConversionReady } from "@shared/procurement-approvals";
 
 function canManageSupply(user: { role: string; buildreqRole?: string | null }) {
   if (isProcurementApproverRole(user.buildreqRole)) return false;
@@ -1502,8 +1503,7 @@ export const supplyFlowsRouter = router({
           sapDocumentNumber: purchaseRequest.requestNumber,
           processedById: ctx.user.id,
           notes:
-            joinUniqueNotes([input.notes, item.notes]) ??
-            purchaseRequestNotes,
+            joinUniqueNotes([input.notes, item.notes]) ?? purchaseRequestNotes,
           status: "pendiente",
         });
         flowResults.push(result);
@@ -1573,9 +1573,9 @@ export const supplyFlowsRouter = router({
           detail.purchaseRequest.projectId
         );
         if (
-          detail.purchaseRequest.approvalStatus !== "aprobada" ||
-          !["aprobada", "parcialmente_convertida"].includes(
-            detail.purchaseRequest.status
+          !isPurchaseRequestConversionReady(
+            detail.purchaseRequest.status,
+            detail.purchaseRequest.approvalStatus
           )
         ) {
           throw new TRPCError({
@@ -1627,7 +1627,8 @@ export const supplyFlowsRouter = router({
         if (itemsByProject.size === 0) {
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message: "La solicitud no tiene cantidades pendientes por convertir",
+            message:
+              "La solicitud no tiene cantidades pendientes por convertir",
           });
         }
 

@@ -100,4 +100,28 @@ describe("procurement approvals migration", () => {
     );
     expect(draftOrderBackfill).toContain("WHERE \"status\" = 'borrador'");
   });
+
+  it("reopens only pending or rejected documents during the temporary pause", () => {
+    const sql = readFileSync(
+      new URL(
+        "../drizzle/0111_temporarily_disable_procurement_approvals.sql",
+        import.meta.url
+      ),
+      "utf8"
+    );
+
+    expect(sql).toContain('UPDATE "purchaseRequests"');
+    expect(sql).toContain(
+      "\"status\" = 'en_revision' AND \"approvalStatus\" = 'pendiente'"
+    );
+    expect(sql).toContain(
+      "\"status\" = 'rechazada' AND \"approvalStatus\" = 'rechazada'"
+    );
+    expect(sql).toContain('UPDATE "purchaseOrders"');
+    expect(sql).toContain(
+      "\"status\" = 'pendiente_aprobacion' AND \"approvalStatus\" = 'pendiente'"
+    );
+    expect(sql).not.toContain("\"status\" = 'aprobada'");
+    expect(sql).not.toContain('DELETE FROM "procurementApprovalHistory"');
+  });
 });

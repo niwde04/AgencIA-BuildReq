@@ -10,7 +10,11 @@ import {
   isProjectScopedRole,
   isSuperintendentFamilyRole,
 } from "@shared/buildreq-roles";
-import { purchaseOrderRequiresApproval } from "@shared/procurement-approvals";
+import {
+  isPurchaseOrderDraftLike,
+  isPurchaseRequestDraftLike,
+  purchaseOrderExceedsApprovalLimit,
+} from "@shared/procurement-approvals";
 
 const PDF_MAX_BYTES = 10 * 1000 * 1000;
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
@@ -80,9 +84,7 @@ function isDocumentAttachmentEntityType(
 function isProcurementDocumentAttachmentEntityType(
   entityType: AttachmentEntityType
 ): entityType is "purchase_request" | "purchase_order" {
-  return (
-    entityType === "purchase_request" || entityType === "purchase_order"
-  );
+  return entityType === "purchase_request" || entityType === "purchase_order";
 }
 
 function throwProcurementAttachmentMutationError(error: unknown): never {
@@ -100,7 +102,10 @@ function normalizeMimeType(value: string) {
 }
 
 function getFileExtension(fileName: string) {
-  const match = fileName.trim().toLowerCase().match(/\.([a-z0-9]+)$/);
+  const match = fileName
+    .trim()
+    .toLowerCase()
+    .match(/\.([a-z0-9]+)$/);
   return match?.[1] ?? "";
 }
 
@@ -189,7 +194,10 @@ export function validateDocumentAttachmentFile(input: {
   }
 
   if (mimeType === "image/jpeg") {
-    if (!["jpg", "jpeg"].includes(extension) || !hasJpegSignature(input.buffer)) {
+    if (
+      !["jpg", "jpeg"].includes(extension) ||
+      !hasJpegSignature(input.buffer)
+    ) {
       throw new TRPCError({
         code: "BAD_REQUEST",
         message: "El archivo no parece ser una imagen JPG valida",
@@ -307,7 +315,8 @@ async function assertInvoiceAttachmentAccess(
     ) {
       throw new TRPCError({
         code: "BAD_REQUEST",
-        message: "Solo se pueden modificar adjuntos de facturas en borrador o rechazadas",
+        message:
+          "Solo se pueden modificar adjuntos de facturas en borrador o rechazadas",
       });
     }
   }
@@ -364,7 +373,7 @@ async function assertPurchaseOrderAttachmentAccess(
   if (
     isProcurementApproverRole(user.buildreqRole) &&
     detail.approvalHistory.length === 0 &&
-    !purchaseOrderRequiresApproval(
+    !purchaseOrderExceedsApprovalLimit(
       detail.purchaseOrder.currency,
       detail.summary.total
     )
@@ -379,18 +388,23 @@ async function assertPurchaseOrderAttachmentAccess(
     if (!canManagePurchaseOrderAttachments(user)) {
       throw new TRPCError({
         code: "FORBIDDEN",
-        message: "No tiene permisos para administrar adjuntos de órdenes de compra",
+        message:
+          "No tiene permisos para administrar adjuntos de órdenes de compra",
       });
     }
     if (
-      detail.purchaseOrder.approvalStatus === "aprobada" ||
-      [
-        "pendiente_aprobacion",
-        "aprobada",
-        "rechazada",
-        "recibida",
-        "anulada",
-      ].includes(detail.purchaseOrder.status)
+      !isPurchaseOrderDraftLike(
+        detail.purchaseOrder.status,
+        detail.purchaseOrder.approvalStatus
+      ) &&
+      (detail.purchaseOrder.approvalStatus === "aprobada" ||
+        [
+          "pendiente_aprobacion",
+          "aprobada",
+          "rechazada",
+          "recibida",
+          "anulada",
+        ].includes(detail.purchaseOrder.status))
     ) {
       throw new TRPCError({
         code: "BAD_REQUEST",
@@ -545,8 +559,10 @@ async function assertPurchaseRequestAttachmentAccess(
       });
     }
     if (
-      detail.purchaseRequest.status !== "pendiente" ||
-      detail.purchaseRequest.approvalStatus !== null
+      !isPurchaseRequestDraftLike(
+        detail.purchaseRequest.status,
+        detail.purchaseRequest.approvalStatus
+      )
     ) {
       throw new TRPCError({
         code: "BAD_REQUEST",
@@ -606,10 +622,14 @@ async function assertMaterialRequestAttachmentAccess(
     });
   }
 
-  if (action === "manage" && !canManageMaterialRequestAttachment(user, detail.request)) {
+  if (
+    action === "manage" &&
+    !canManageMaterialRequestAttachment(user, detail.request)
+  ) {
     throw new TRPCError({
       code: "FORBIDDEN",
-      message: "No tiene permisos para administrar adjuntos de esta requisicion",
+      message:
+        "No tiene permisos para administrar adjuntos de esta requisicion",
     });
   }
 }
@@ -681,11 +701,7 @@ async function assertDocumentAttachmentAccess(
     case "material_request":
       return assertMaterialRequestAttachmentAccess(entityId, user, action);
     case "transfer_request":
-      return assertTransferRequestAttachmentAccess(
-        entityId,
-        user,
-        action
-      );
+      return assertTransferRequestAttachmentAccess(entityId, user, action);
     case "supplier":
       return assertSupplierAttachmentAccess(entityId, user, action);
     default:
@@ -706,7 +722,11 @@ async function assertAttachmentRecordAccess(
     });
   }
 
-  if (isDocumentAttachmentEntityType(attachment.entityType as AttachmentEntityType)) {
+  if (
+    isDocumentAttachmentEntityType(
+      attachment.entityType as AttachmentEntityType
+    )
+  ) {
     await assertDocumentAttachmentAccess(
       attachment.entityType as DocumentAttachmentEntityType,
       attachment.entityId,
@@ -730,7 +750,8 @@ async function assertAttachmentRecordAccess(
   ) {
     throw new TRPCError({
       code: "FORBIDDEN",
-      message: "Solo puede eliminar adjuntos de traslado subidos por su usuario",
+      message:
+        "Solo puede eliminar adjuntos de traslado subidos por su usuario",
     });
   }
 
@@ -794,7 +815,8 @@ export const attachmentsRouter = router({
       if (input.entityType === "supplier") {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "Use la seccion de documentos del proveedor para subir este adjunto",
+          message:
+            "Use la seccion de documentos del proveedor para subir este adjunto",
         });
       }
 
@@ -883,8 +905,9 @@ export const attachmentsRouter = router({
         )
       ) {
         try {
-          const deleted =
-            await db.deleteProcurementDocumentAttachmentIfMutable(input.id);
+          const deleted = await db.deleteProcurementDocumentAttachmentIfMutable(
+            input.id
+          );
           await storageDelete(deleted.attachment.fileKey);
           return { success: true };
         } catch (error) {
