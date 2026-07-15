@@ -2816,8 +2816,6 @@ export default function Facturas() {
       invoiceDraft.retentionReceiptNumber.trim() ||
       detail.invoice.retentionReceiptNumber ||
       "";
-    const retentionCai =
-      invoiceDraft.retentionCai.trim() || detail.invoice.retentionCai || "";
     if (!retentionReceiptNumber.trim()) {
       toast.error("Ingrese el número de comprobante de retención");
       return;
@@ -2933,28 +2931,28 @@ export default function Facturas() {
       }
       .supplier-name {
         left: 19mm;
-        top: 41.7mm;
+        top: 29.7mm;
         width: 126mm;
         font-weight: 600;
       }
       .supplier-rtn {
         left: 158mm;
-        top: 41.7mm;
+        top: 29.7mm;
         width: 47mm;
       }
       .print-date {
         left: 148mm;
-        top: 29.7mm;
+        top: 17.7mm;
         width: 48mm;
       }
       .invoice-cai {
         left: 56mm;
-        top: 49.8mm;
+        top: 37.8mm;
         width: 143mm;
       }
       .supplier-address {
         left: 25mm;
-        top: 57.5mm;
+        top: 45.5mm;
         width: 174mm;
       }
       .row-date {
@@ -3035,12 +3033,12 @@ export default function Facturas() {
     </style>
   </head>
   <body>
-    <div class="screen-toolbar">Vista de impresión para formato preimpreso carta. Si el navegador pregunta, usa tamaño Carta y escala 100%.</div>
+    <div class="screen-toolbar">Vista de impresión para formato preimpreso carta. Si el navegador pregunta, usa tamaño Carta, orientación vertical, márgenes ninguno y escala 100%.</div>
     <div class="page">
       <div class="field print-date">${escapePrintHtml(documentDate)}</div>
       <div class="field supplier-name">${escapePrintHtml(supplierName)}</div>
       <div class="field supplier-rtn">${escapePrintHtml(supplierRtn)}</div>
-      <div class="field invoice-cai">${escapePrintHtml(retentionCai)}</div>
+      <div class="field invoice-cai">${escapePrintHtml(invoice.cai || "")}</div>
       <div class="field supplier-address multiline">${escapePrintHtml(supplierAddress)}</div>
       ${rowsHtml}
       <div class="field total-retained right">${escapePrintHtml(
