@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { getAppSiteUrl } from "@/lib/supabase";
+import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -50,6 +51,7 @@ import {
   Eye,
   EyeOff,
   ChevronDown,
+  Download,
   Search,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -366,6 +368,7 @@ export default function Usuarios() {
   const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [emailData, setEmailData] = useState<{ to: string; subject: string; content: string } | null>(null);
   const [userSearchTerm, setUserSearchTerm] = useState("");
+  const [isExportingUsers, setIsExportingUsers] = useState(false);
 
   // Form state
   const [invName, setInvName] = useState("");
@@ -401,6 +404,61 @@ export default function Usuarios() {
     });
   }, [sortedUsers, userSearchTerm]);
   const hasUserSearch = userSearchTerm.trim().length > 0;
+
+  async function exportUsersExcel() {
+    if (isExportingUsers || filteredUsers.length === 0) return;
+
+    setIsExportingUsers(true);
+    try {
+      await downloadExcel(
+        buildDatedExcelFileName("usuarios-buildreq"),
+        "Usuarios",
+        [
+          { header: "Nombre", value: (entry: any) => entry.name || "—" },
+          {
+            header: "Correo electrónico",
+            value: (entry: any) => entry.email || "—",
+          },
+          {
+            header: "Rol del sistema",
+            value: (entry: any) =>
+              entry.role === "admin" ? "Administrador" : "Usuario",
+          },
+          {
+            header: "Rol BuildReq",
+            value: (entry: any) =>
+              ROLE_LABELS[entry.buildreqRole] ||
+              entry.buildreqRole ||
+              "Sin rol asignado",
+          },
+          {
+            header: "Proyectos asignados",
+            value: (entry: any) => formatAssignedProjects(entry),
+            width: 48,
+          },
+          {
+            header: "Cambio de contraseña",
+            value: (entry: any) =>
+              entry.mustChangePassword ? "Pendiente" : "No",
+          },
+          {
+            header: "Último acceso",
+            value: (entry: any) =>
+              entry.lastSignedIn
+                ? new Date(entry.lastSignedIn).toLocaleDateString("es-HN")
+                : "—",
+          },
+        ],
+        filteredUsers
+      );
+      toast.success(`Se exportaron ${filteredUsers.length} usuarios`);
+    } catch (error) {
+      console.error("No se pudo exportar el listado de usuarios", error);
+      toast.error("No se pudo exportar el listado de usuarios");
+    } finally {
+      setIsExportingUsers(false);
+    }
+  }
 
   const updateRoleMutation = trpc.userManagement.updateRole.useMutation({
     onSuccess: () => {
@@ -692,9 +750,26 @@ export default function Usuarios() {
               ) : null}
             </div>
             {sortedUsers.length > 0 ? (
-              <p className="text-xs text-muted-foreground">
-                {filteredUsers.length} de {sortedUsers.length} usuarios
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs text-muted-foreground">
+                  {filteredUsers.length} de {sortedUsers.length} usuarios
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() => void exportUsersExcel()}
+                  disabled={
+                    usersLoading ||
+                    filteredUsers.length === 0 ||
+                    isExportingUsers
+                  }
+                >
+                  <Download className="h-4 w-4" />
+                  {isExportingUsers ? "Exportando..." : "Exportar Excel"}
+                </Button>
+              </div>
             ) : null}
           </div>
           <Card>
