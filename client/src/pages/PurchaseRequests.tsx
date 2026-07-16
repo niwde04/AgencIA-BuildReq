@@ -74,6 +74,7 @@ import {
 } from "@shared/procurement-approvals";
 
 const PAGE_SIZE = 50;
+const EMPTY_PURCHASE_REQUESTS: any[] = [];
 
 const STATUS_LABELS: Record<string, string> = {
   pendiente: "Borrador",
@@ -446,7 +447,7 @@ export default function PurchaseRequests() {
     },
     { placeholderData: previousData => previousData }
   );
-  const requests = requestsPage?.items ?? [];
+  const requests = requestsPage?.items ?? EMPTY_PURCHASE_REQUESTS;
   const {
     data: detail,
     isLoading: isLoadingDetail,
@@ -881,15 +882,17 @@ export default function PurchaseRequests() {
     ) && !allConvertibleSelected;
 
   useEffect(() => {
-    setSelectedRequestIds(current =>
-      current.filter(id => convertibleRequestIds.includes(id))
-    );
+    setSelectedRequestIds(current => {
+      const next = current.filter(id => convertibleRequestIds.includes(id));
+      return next.length === current.length ? current : next;
+    });
   }, [convertibleRequestIds]);
 
   useEffect(() => {
-    setSelectedItemIds(current =>
-      current.filter(id => convertibleItemIdSet.has(id))
-    );
+    setSelectedItemIds(current => {
+      const next = current.filter(id => convertibleItemIdSet.has(id));
+      return next.length === current.length ? current : next;
+    });
   }, [convertibleItemIdSet]);
 
   const projectLabel =
