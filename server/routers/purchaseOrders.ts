@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
+import { listPurchaseOrdersPage } from "../paginatedLists";
 import { procurementProcedure as protectedProcedure, router } from "../_core/trpc";
 import {
   PURCHASE_CURRENCIES,
@@ -569,6 +570,32 @@ async function releaseDirectPurchaseOrderItems(params: {
 }
 
 export const purchaseOrdersRouter = router({
+  listPage: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.number().optional(),
+        classification: z.enum(["oc", "cd"]).optional(),
+        purchaseType: z.string().optional(),
+        status: z.string().optional(),
+        search: z.string().trim().optional(),
+        page: z.number().int().min(1).optional(),
+        pageSize: z.number().int().min(10).max(200).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      if (!canReadPurchaseOrders(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a órdenes de compra",
+        });
+      }
+      return listPurchaseOrdersPage({
+        ...applyProjectScope(input, ctx.user),
+        approvalsEnabled: isPurchaseOrderApprovalEnabled(),
+        approverOnly: isProcurementApproverRole(ctx.user.buildreqRole),
+      });
+    }),
+
   list: protectedProcedure
     .input(
       z

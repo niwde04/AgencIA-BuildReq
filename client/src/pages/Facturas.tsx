@@ -1,8 +1,17 @@
 import { trpc } from "@/lib/trpc";
+import { DataPagination } from "@/components/DataPagination";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
+import { fetchAllFilteredPages } from "@/lib/paginated-export";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { getReadablePrintStyles } from "@/lib/readable-print-styles";
+import {
+  calculateRetentionPrintAmount,
+  formatRetentionCalendarDate,
+  getRetentionCurrencyWord,
+  getPrintableRetentionConcepts,
+} from "@/lib/retention-print";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -76,6 +85,7 @@ import {
 } from "@shared/fixed-assets";
 import { isAccountPaymentAllowedRetention } from "@shared/supplier-documents";
 
+const PAGE_SIZE = 50;
 const STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
   revisada: "Enviada a revisión",
@@ -523,9 +533,7 @@ function dateInputValue(value: string | Date | null | undefined) {
 }
 
 function formatDateLabel(value: string | Date | null | undefined) {
-  if (!value) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString("es-HN");
+  return formatRetentionCalendarDate(value) || "—";
 }
 
 function formatExchangeRateLabel(
@@ -659,13 +667,7 @@ function formatInvoiceCreatedBy(row: any) {
 }
 
 function getRetentionAmount(draft: RetentionDraft) {
-  return (
-    Math.round(
-      ((toNumber(draft.baseAmount) * toNumber(draft.percentage)) / 100 +
-        Number.EPSILON) *
-        10000
-    ) / 10000
-  );
+  return calculateRetentionPrintAmount(draft.baseAmount, draft.percentage);
 }
 
 function getInvoiceHasEmissionDeadlineIssue(invoice: any) {
@@ -851,30 +853,8 @@ function escapePrintHtml(value: unknown) {
     .replaceAll("'", "&#039;");
 }
 
-function parsePrintDate(value: string | Date | null | undefined) {
-  if (!value) return null;
-  if (value instanceof Date) return value;
-
-  const normalized = String(value).trim();
-  const dateOnlyMatch = normalized.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|[T\s])/);
-  if (dateOnlyMatch) {
-    const [, year, month, day] = dateOnlyMatch;
-    return new Date(Number(year), Number(month) - 1, Number(day));
-  }
-
-  return new Date(normalized);
-}
-
 function formatRetentionPrintDate(value: string | Date | null | undefined) {
-  if (!value) return "";
-  const date = parsePrintDate(value);
-  if (!date) return "";
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString("es-HN", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
+  return formatRetentionCalendarDate(value);
 }
 
 function formatRetentionPrintNumber(value: string | number | null | undefined) {
@@ -1007,14 +987,7 @@ function amountToSpanishCurrency(value: number, currency: PurchaseCurrency) {
   const centsTotal = Math.max(0, Math.round(value * 100));
   const units = Math.floor(centsTotal / 100);
   const cents = centsTotal % 100;
-  const unitLabel =
-    currency === "USD"
-      ? units === 1
-        ? "DÓLAR"
-        : "DÓLARES"
-      : units === 1
-        ? "LEMPIRA"
-        : "LEMPIRAS";
+  const unitLabel = getRetentionCurrencyWord(currency, units);
   return `${integerToSpanishWords(units).toUpperCase()} ${unitLabel} CON ${String(cents).padStart(2, "0")}/100`;
 }
 
@@ -1038,7 +1011,7 @@ function InvoiceAssetDetailsEditor({
     trpc.invoices.updateItemAssetDetails.useMutation({
       onSuccess: () => {
         toast.success("Datos de activo actualizados");
-        void utils.invoices.list.invalidate();
+        void utils.invoices.invalidate();
         void utils.invoices.getById.invalidate({ id: invoiceId });
       },
       onError: error => toast.error(getFriendlyMutationError(error.message)),
@@ -1301,6 +1274,10 @@ export default function Facturas() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [page, setPage] = useState(1);
+  const debouncedSearchTerm = useDebouncedValue(searchTerm);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [accountingComment, setAccountingComment] = useState("");
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
@@ -1381,13 +1358,23 @@ export default function Facturas() {
               | "rechazada"
               | "registrada"
               | "anulada"),
-      search: searchTerm.trim() || undefined,
+      search: debouncedSearchTerm.trim() || undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+      page,
+      pageSize: PAGE_SIZE,
     }),
-    [searchTerm, statusFilter]
+    [dateFrom, dateTo, debouncedSearchTerm, page, statusFilter]
   );
 
-  const { data: invoices, isLoading } =
-    trpc.invoices.list.useQuery(listFilters);
+  const {
+    data: invoicesPage,
+    isLoading,
+    isPlaceholderData,
+  } = trpc.invoices.listPage.useQuery(listFilters, {
+    placeholderData: previousData => previousData,
+  });
+  const invoices = invoicesPage?.items ?? [];
   const { data: detail, isLoading: detailLoading } =
     trpc.invoices.getById.useQuery(
       { id: selectedId ?? 0 },
@@ -1414,7 +1401,7 @@ export default function Facturas() {
         ...current,
         invoiceSavedId: variables.id,
       }));
-      void utils.invoices.list.invalidate();
+      void utils.invoices.invalidate();
       void utils.invoices.getById.invalidate({ id: variables.id });
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
@@ -1500,7 +1487,7 @@ export default function Facturas() {
           ...current,
           retentionsSavedId: variables.id,
         }));
-        void utils.invoices.list.invalidate();
+        void utils.invoices.invalidate();
         void utils.invoices.getById.invalidate({ id: variables.id });
       },
       onError: error => toast.error(getFriendlyMutationError(error.message)),
@@ -1513,7 +1500,7 @@ export default function Facturas() {
         ...current,
         reviewSentId: variables.id,
       }));
-      void utils.invoices.list.invalidate();
+      void utils.invoices.invalidate();
       void utils.invoices.getById.invalidate({ id: variables.id });
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
@@ -1522,7 +1509,7 @@ export default function Facturas() {
     onSuccess: () => {
       toast.success("Factura contabilizada");
       setAccountingComment("");
-      void utils.invoices.list.invalidate();
+      void utils.invoices.invalidate();
       if (selectedId)
         void utils.invoices.getById.invalidate({ id: selectedId });
       setSelectedId(null);
@@ -1534,7 +1521,7 @@ export default function Facturas() {
       toast.success("Factura rechazada");
       setRejectDialogOpen(false);
       setRejectionComment("");
-      void utils.invoices.list.invalidate();
+      void utils.invoices.invalidate();
       if (selectedId)
         void utils.invoices.getById.invalidate({ id: selectedId });
       setSelectedId(null);
@@ -1552,10 +1539,10 @@ export default function Facturas() {
       setCorrectionDialogOpen(false);
       setCorrectionReason("");
       void Promise.all([
-        utils.invoices.list.invalidate(),
-        utils.receipts.list.invalidate(),
-        utils.purchaseOrders.list.invalidate(),
-        utils.materialRequests.list.invalidate(),
+        utils.invoices.invalidate(),
+        utils.receipts.invalidate(),
+        utils.purchaseOrders.invalidate(),
+        utils.materialRequests.invalidate(),
         selectedId
           ? utils.invoices.getById.invalidate({ id: selectedId })
           : Promise.resolve(),
@@ -1694,41 +1681,17 @@ export default function Facturas() {
     updateInvoiceDraft,
   ]);
 
-  const filteredInvoices = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
-    return (invoices ?? []).filter((row: any) => {
-      const invoice = row.invoice;
-      const matchesStatus =
-        statusFilter === "all" || invoice.status === statusFilter;
-      const requestNumbers = formatInvoiceRequestNumbers(row);
-      const requestedByLabel = formatInvoiceRequestedBy(row);
-      const createdByLabel = formatInvoiceCreatedBy(row);
-      const matchesSearch =
-        !normalizedSearch ||
-        [
-          invoice.invoiceDocumentNumber,
-          invoice.invoiceNumber,
-          invoice.documentRangeStart,
-          invoice.documentRangeEnd,
-          invoice.cai,
-          row.purchaseOrder?.orderNumber,
-          row.receipt?.receiptNumber,
-          requestNumbers,
-          requestedByLabel,
-          createdByLabel,
-          row.supplier?.name,
-          row.supplier?.supplierCode,
-          row.supplier?.rtn,
-          row.project ? `${row.project.code} ${row.project.name}` : "",
-        ]
-          .filter(Boolean)
-          .some(value =>
-            String(value).toLowerCase().includes(normalizedSearch)
-          );
+  const filteredInvoices = invoices;
 
-      return matchesStatus && matchesSearch;
-    });
-  }, [invoices, searchTerm, statusFilter]);
+  useEffect(
+    () => setPage(1),
+    [dateFrom, dateTo, debouncedSearchTerm, statusFilter]
+  );
+  useEffect(() => {
+    if (!isPlaceholderData && invoicesPage?.page && invoicesPage.page !== page) {
+      setPage(invoicesPage.page);
+    }
+  }, [invoicesPage?.page, isPlaceholderData, page]);
 
   const retentionOptions = useMemo(() => {
     const optionMap = new Map<number, RetentionOption>();
@@ -2845,35 +2808,39 @@ export default function Facturas() {
     const documentDate = formatRetentionPrintDate(
       invoice.documentDate ?? invoice.receiptDate ?? invoice.postingDate
     );
-    const printableRetentions = retentionDrafts.slice(0, 8);
+    const { printableConcepts, truncated } =
+      getPrintableRetentionConcepts(retentionDrafts);
 
-    if (retentionDrafts.length > printableRetentions.length) {
+    if (truncated) {
       toast.warning(
-        "El formato preimpreso solo tiene espacio para las primeras 8 retenciones"
+        "El formato preimpreso solo tiene espacio para los primeros 8 conceptos de retención"
       );
     }
 
-    const rowsHtml = printableRetentions
-      .map((retention, index) => {
-        const top = 75.5 + index * 7.7;
-        const rate = toNumber(retention.percentage).toLocaleString("es-HN", {
-          minimumFractionDigits: 0,
-          maximumFractionDigits: 4,
-        });
+    const rowsHtml = printableConcepts
+      .map((retentionConcept, index) => {
+        const top = 52 + index * 7.7;
+        const rate = toNumber(retentionConcept.percentage).toLocaleString(
+          "es-HN",
+          {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 4,
+          }
+        );
         return `
           <div class="cell row-date" style="top:${top}mm">${escapePrintHtml(documentDate)}</div>
-          <div class="cell row-desc" style="top:${top}mm">${escapePrintHtml(retention.description || retention.retentionCode || "Retencion")}</div>
+          <div class="cell row-desc" style="top:${top}mm">${escapePrintHtml(retentionConcept.description || retentionConcept.retentionCode || "Retención")}</div>
           <div class="cell row-type" style="top:${top}mm">Factura</div>
           <div class="cell row-doc" style="top:${top}mm">${escapePrintHtml(documentNumber)}</div>
-          <div class="cell row-base" style="top:${top}mm">${formatRetentionPrintNumber(retention.baseAmount)}</div>
+          <div class="cell row-base" style="top:${top}mm">${formatRetentionPrintNumber(retentionConcept.baseAmount)}</div>
           <div class="cell row-rate" style="top:${top}mm">${escapePrintHtml(rate)}%</div>
-          <div class="cell row-amount" style="top:${top}mm">${formatRetentionPrintNumber(getRetentionAmount(retention))}</div>
+          <div class="cell row-amount" style="top:${top}mm">${formatRetentionPrintNumber(retentionConcept.amount)}</div>
         `;
       })
       .join("");
 
-    const totalRetained = printableRetentions.reduce(
-      (sum, retention) => sum + getRetentionAmount(retention),
+    const totalRetained = printableConcepts.reduce(
+      (sum, retentionConcept) => sum + retentionConcept.amount,
       0
     );
     const amountWords = amountToSpanishCurrency(
@@ -2884,25 +2851,26 @@ export default function Facturas() {
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Comprobante de retención ${escapePrintHtml(retentionReceiptNumber || invoice.invoiceDocumentNumber)}</title>
+    <title>&#8203;</title>
     <style>
       @page {
         size: letter;
-        margin: 0;
+        margin: 0 !important;
       }
       * {
         box-sizing: border-box;
       }
+      html,
       body {
         margin: 0;
+        padding: 0;
+        width: 216mm;
+        height: 279mm;
+      }
+      body {
         font-family: Arial, Helvetica, sans-serif;
         color: #000;
-        background: #f3f4f6;
-      }
-      .screen-toolbar {
-        padding: 10px 14px;
-        font-size: 12px;
-        color: #000;
+        background: white;
       }
       .page {
         position: relative;
@@ -2931,99 +2899,97 @@ export default function Facturas() {
       }
       .supplier-name {
         left: 19mm;
-        top: 29.7mm;
+        top: 16.5mm;
         width: 126mm;
         font-weight: 600;
       }
       .supplier-rtn {
         left: 158mm;
-        top: 29.7mm;
+        top: 14.5mm;
         width: 47mm;
       }
       .print-date {
-        left: 148mm;
-        top: 17.7mm;
-        width: 48mm;
+        left: 170mm;
+        top: 4.8mm;
+        width: 32mm;
       }
       .invoice-cai {
         left: 56mm;
-        top: 37.8mm;
+        top: 23.3mm;
         width: 143mm;
       }
       .supplier-address {
         left: 25mm;
-        top: 45.5mm;
+        top: 30mm;
         width: 174mm;
       }
       .row-date {
-        left: 9mm;
+        left: 5mm;
         width: 19mm;
         text-align: center;
         font-size: 8.4pt;
       }
       .row-desc {
-        left: 31mm;
+        left: 27mm;
         width: 32mm;
         white-space: normal;
         font-size: 8.2pt;
       }
       .row-type {
-        left: 65mm;
+        left: 61mm;
         width: 24mm;
         text-align: center;
         font-size: 8.3pt;
       }
       .row-doc {
-        left: 91mm;
+        left: 87mm;
         width: 39mm;
         text-align: center;
         font-size: 8.2pt;
       }
       .row-base {
-        left: 132mm;
+        left: 128mm;
         width: 24mm;
         text-align: right;
         font-size: 8.4pt;
       }
       .row-rate {
-        left: 159mm;
+        left: 155mm;
         width: 17mm;
         text-align: center;
         font-size: 8.4pt;
       }
       .row-amount {
-        left: 178mm;
+        left: 174mm;
         width: 28mm;
         text-align: right;
         font-size: 8.4pt;
         font-weight: 600;
       }
       .total-retained {
-        left: 178mm;
-        top: 125.8mm;
+        left: 171mm;
+        top: 102mm;
         width: 28mm;
         font-size: 9.4pt;
         font-weight: 700;
       }
       .amount-words {
-        left: 36mm;
-        top: 138.8mm;
-        width: 92mm;
+        left: 35mm;
+        top: 109mm;
+        width: 98mm;
         font-size: 8.8pt;
         line-height: 1.18;
         font-weight: 600;
       }
       @media screen {
         .page {
+          margin: 0 auto;
           box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
         }
       }
       @media print {
         body {
           background: white;
-        }
-        .screen-toolbar {
-          display: none;
         }
         .page {
           margin: 0;
@@ -3033,7 +2999,6 @@ export default function Facturas() {
     </style>
   </head>
   <body>
-    <div class="screen-toolbar">Vista de impresión para formato preimpreso carta. Si el navegador pregunta, usa tamaño Carta, orientación vertical, márgenes ninguno y escala 100%.</div>
     <div class="page">
       <div class="field print-date">${escapePrintHtml(documentDate)}</div>
       <div class="field supplier-name">${escapePrintHtml(supplierName)}</div>
@@ -3119,14 +3084,30 @@ export default function Facturas() {
 
   const exportInvoicesExcel = async () => {
     if (isLoading || isExportingExcel) return;
-
-    if (filteredInvoices.length === 0) {
-      toast.error("No hay facturas para exportar");
-      return;
-    }
-
     setIsExportingExcel(true);
     try {
+      const exportRows = await fetchAllFilteredPages((exportPage, pageSize) =>
+        utils.invoices.listPage.fetch({
+          status:
+            statusFilter === "all"
+              ? undefined
+              : (statusFilter as
+                  | "borrador"
+                  | "revisada"
+                  | "rechazada"
+                  | "registrada"
+                  | "anulada"),
+          search: debouncedSearchTerm.trim() || undefined,
+          dateFrom: dateFrom || undefined,
+          dateTo: dateTo || undefined,
+          page: exportPage,
+          pageSize,
+        })
+      );
+      if (exportRows.length === 0) {
+        toast.error("No hay facturas para exportar");
+        return;
+      }
       await downloadExcel(
         buildDatedExcelFileName("facturas"),
         "Facturas",
@@ -3240,11 +3221,11 @@ export default function Facturas() {
             width: 42,
           },
         ],
-        filteredInvoices
+        exportRows
       );
 
       toast.success(
-        `Se exportaron ${filteredInvoices.length.toLocaleString("es-HN")} factura(s)`
+        `Se exportaron ${exportRows.length.toLocaleString("es-HN")} factura(s)`
       );
     } catch {
       toast.error("No se pudo exportar el archivo Excel");
@@ -3267,7 +3248,7 @@ export default function Facturas() {
           variant="outline"
           onClick={() => void exportInvoicesExcel()}
           disabled={
-            isLoading || filteredInvoices.length === 0 || isExportingExcel
+            isLoading || !invoicesPage?.total || isExportingExcel
           }
           className="gap-2"
         >
@@ -3276,7 +3257,7 @@ export default function Facturas() {
         </Button>
       </div>
 
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -3285,6 +3266,42 @@ export default function Facturas() {
             placeholder="Buscar por factura, OC, recepción, REQ, requiriente, creador, proveedor o proyecto..."
             className="h-10 pl-9"
           />
+        </div>
+        <div className="grid w-full grid-cols-2 gap-2 lg:w-[330px]">
+          <div className="space-y-1">
+            <Label htmlFor="invoice-date-from" className="text-xs">
+              Desde
+            </Label>
+            <Input
+              id="invoice-date-from"
+              type="date"
+              value={dateFrom}
+              max={dateTo || undefined}
+              onChange={event => {
+                const value = event.target.value;
+                setDateFrom(value);
+                if (value && dateTo && value > dateTo) setDateTo(value);
+              }}
+              className="h-10"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="invoice-date-to" className="text-xs">
+              Hasta
+            </Label>
+            <Input
+              id="invoice-date-to"
+              type="date"
+              value={dateTo}
+              min={dateFrom || undefined}
+              onChange={event => {
+                const value = event.target.value;
+                setDateTo(value);
+                if (value && dateFrom && value < dateFrom) setDateFrom(value);
+              }}
+              className="h-10"
+            />
+          </div>
         </div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="h-10 w-full lg:w-56">
@@ -3463,6 +3480,15 @@ export default function Facturas() {
               </table>
             </div>
           )}
+          {invoicesPage ? (
+            <DataPagination
+              page={invoicesPage.page}
+              pageSize={invoicesPage.pageSize}
+              total={invoicesPage.total}
+              totalPages={invoicesPage.totalPages}
+              onPageChange={setPage}
+            />
+          ) : null}
         </CardContent>
       </Card>
 

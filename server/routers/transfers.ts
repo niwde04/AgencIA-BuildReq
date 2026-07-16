@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
+import { listTransfersPage } from "../paginatedLists";
 import { protectedProcedure, router } from "../_core/trpc";
 import { canAccessProject, getProjectScopeIds } from "../projectAccess";
 
@@ -47,6 +48,31 @@ function assertProjectScopedAccess(
 }
 
 export const transfersRouter = router({
+  listPage: protectedProcedure
+    .input(
+      z.object({
+        status: z.string().optional(),
+        receivableOnly: z.boolean().optional(),
+        sourceProjectId: z.number().optional(),
+        destinationProjectId: z.number().optional(),
+        search: z.string().trim().optional(),
+        page: z.number().int().min(1).optional(),
+        pageSize: z.number().int().min(10).max(200).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      if (!canAccessTransfers(ctx.user)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "No tiene acceso a traslados" });
+      }
+      const scopedProjectIds = getProjectScopeIds(ctx.user);
+      return listTransfersPage({
+        ...input,
+        ...(scopedProjectIds !== undefined
+          ? { projectIds: scopedProjectIds }
+          : {}),
+      });
+    }),
+
   list: protectedProcedure
     .input(
       z

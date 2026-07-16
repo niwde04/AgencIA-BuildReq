@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
+import { listTransferRequestsPage } from "../paginatedLists";
 import { protectedProcedure, router } from "../_core/trpc";
 import {
   applyProjectScope,
@@ -142,6 +143,28 @@ const transferItemSchema = z.object({
 });
 
 export const transferRequestsRouter = router({
+  listPage: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.number().optional(),
+        status: z.string().optional(),
+        search: z.string().trim().optional(),
+        page: z.number().int().min(1).optional(),
+        pageSize: z.number().int().min(10).max(200).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      if (!canAccessTransfers(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a solicitudes de traslado",
+        });
+      }
+      return listTransferRequestsPage(
+        applyProjectScope(input, ctx.user)
+      );
+    }),
+
   list: protectedProcedure
     .input(
       z

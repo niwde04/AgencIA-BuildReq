@@ -22,7 +22,6 @@ const REQUIRED_HEADERS = [
 const KNOWN_UNMAPPED_HEADERS = [
   "Codigo de almacen",
   "Nombre de almacen",
-  "Descripcion del articulo completa",
   "Unidad",
   "Categoria inventario",
   "En stock",
@@ -552,7 +551,7 @@ export function parseRows(
     const fullDescription = normalizeCell(
       row["Descripcion del articulo completa"]
     );
-    const description = shortDescription || fullDescription;
+    const description = fullDescription || shortDescription;
     const itemGroup = normalizeCell(row["Grupo SAP"]);
     const tipoArticuloRaw = normalizeCell(row["Tipo de articulo"]);
     const tipoArticulo = normalizeLookup(tipoArticuloRaw);

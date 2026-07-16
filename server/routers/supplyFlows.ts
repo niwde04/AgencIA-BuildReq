@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { procurementProcedure as protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
+import { listSupplyFlowsPage } from "../paginatedLists";
 import { TRPCError } from "@trpc/server";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 import {
@@ -178,6 +179,30 @@ function scopeSupplyFlowFilters(
   }
 
   return scopedFilters;
+}
+
+function getAllowedHistoryFlowTypes(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  if (
+    user.role === "admin" ||
+    user.buildreqRole === "jefe_bodega_central" ||
+    user.buildreqRole === "administracion_central" ||
+    user.buildreqRole === "ingeniero_residente" ||
+    user.buildreqRole === "bodeguero_proyecto"
+  ) {
+    return [
+      "despacho_bodega",
+      "compra_directa",
+      "traslado_proyecto",
+      "solicitud_compra",
+    ];
+  }
+  if (user.buildreqRole === "administrador_proyecto") {
+    return ["compra_directa", "solicitud_compra"];
+  }
+  return [];
 }
 
 async function getRequestAndItem(requestId: number, requestItemId: number) {
@@ -381,6 +406,24 @@ async function resolvePurchaseRequestPrintDestination(params: {
 }
 
 export const supplyFlowsRouter = router({
+  listPage: protectedProcedure
+    .input(
+      z.object({
+        flowType: z.string().optional(),
+        status: z.string().optional(),
+        page: z.number().int().min(1).optional(),
+        pageSize: z.number().int().min(10).max(200).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) =>
+      listSupplyFlowsPage({
+        ...scopeSupplyFlowFilters(ctx.user, input),
+        flowTypes: getAllowedHistoryFlowTypes(ctx.user),
+        page: input.page,
+        pageSize: input.pageSize,
+      })
+    ),
+
   list: protectedProcedure
     .input(
       z

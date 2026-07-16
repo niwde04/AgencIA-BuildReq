@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
+import { listReceiptsPage } from "../paginatedLists";
 import { protectedProcedure, router } from "../_core/trpc";
 import {
   CAI_FORMAT_EXAMPLE,
@@ -590,6 +591,33 @@ function normalizeReceiptOtherCharges(
 }
 
 export const receiptsRouter = router({
+  listPage: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.number().optional(),
+        sourceType: z.enum(["purchase_order", "transfer"]).optional(),
+        status: z
+          .enum([
+            "borrador",
+            "pendiente",
+            "parcial",
+            "completa",
+            "cierre_incompleto",
+            "anulada",
+          ])
+          .optional(),
+        search: z.string().trim().optional(),
+        page: z.number().int().min(1).optional(),
+        pageSize: z.number().int().min(10).max(200).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      if (!canReadReceipts(ctx.user)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "No tiene acceso a recepciones" });
+      }
+      return listReceiptsPage(applyProjectScope(input, ctx.user));
+    }),
+
   list: protectedProcedure
     .input(
       z

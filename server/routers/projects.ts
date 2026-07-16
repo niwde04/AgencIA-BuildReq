@@ -8,6 +8,7 @@ import {
   hasAllProjectAccess,
 } from "../projectAccess";
 import {
+  canCreateProjectSubprojects,
   isProcurementApproverRole,
   isProjectScopedRole,
 } from "@shared/buildreq-roles";
@@ -93,6 +94,19 @@ function assertCanCreateProjects(user: {
   throw new TRPCError({
     code: "FORBIDDEN",
     message: "required permission: No tiene permisos para crear proyectos.",
+  });
+}
+
+function assertCanCreateSubprojects(user: {
+  role: string;
+  buildreqRole?: string | null;
+}) {
+  if (canCreateProjectSubprojects(user)) return;
+
+  throw new TRPCError({
+    code: "FORBIDDEN",
+    message:
+      "required permission: Solo el administrador del sistema o Administración Central pueden crear subproyectos.",
   });
 }
 
@@ -298,7 +312,7 @@ export const projectsRouter = router({
   createSubproject: protectedProcedure
     .input(subprojectInputSchema)
     .mutation(async ({ ctx, input }) => {
-      assertCanManageSubprojects(ctx.user, input.projectId);
+      assertCanCreateSubprojects(ctx.user);
       const startDate = parseOptionalDate(input.startDate);
       const endDate = parseOptionalDate(input.endDate);
       assertDateRange(startDate, endDate);

@@ -1,4 +1,6 @@
 import { trpc } from "@/lib/trpc";
+import { DataPagination } from "@/components/DataPagination";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,6 +21,8 @@ import {
 } from "@/components/ui/dialog";
 import { Eye, Printer, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+
+const PAGE_SIZE = 50;
 import { toast } from "sonner";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { getReadablePrintStyles } from "@/lib/readable-print-styles";
@@ -125,9 +129,24 @@ export default function Transfers() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const debouncedSearchTerm = useDebouncedValue(searchTerm);
   const [preparedByName, setPreparedByName] = useState("");
   const [deliveredToName, setDeliveredToName] = useState("");
-  const { data: transfers, isLoading } = trpc.transfers.list.useQuery();
+  const {
+    data: transfersPage,
+    isLoading,
+    isPlaceholderData,
+  } = trpc.transfers.listPage.useQuery(
+    {
+      search: debouncedSearchTerm.trim() || undefined,
+      status: statusFilter === "all" ? undefined : statusFilter,
+      page,
+      pageSize: PAGE_SIZE,
+    },
+    { placeholderData: previousData => previousData }
+  );
+  const transfers = transfersPage?.items ?? [];
   const { data: detail } = trpc.transfers.getById.useQuery(
     { id: selectedId ?? 0 },
     { enabled: Boolean(selectedId) }
@@ -147,7 +166,7 @@ export default function Transfers() {
             }
           : current
       );
-      void utils.transfers.list.invalidate();
+      void utils.transfers.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -163,34 +182,14 @@ export default function Transfers() {
     detail?.confirmedBy?.name,
   ]);
 
-  const filteredTransfers = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredTransfers = transfers;
 
-    return (transfers ?? []).filter((row: any) => {
-      const projectLabel = row.project
-        ? `${row.project.code} ${row.project.name}`
-        : "";
-      const destinationLabel = getDestinationLabel(row);
-      const matchesSearch =
-        !normalizedSearch ||
-        [
-          row.transfer.transferNumber,
-          row.transferRequest?.requestNumber,
-          row.transfer.remissionGuideNumber,
-          row.transfer.sapCorrelative,
-          projectLabel,
-          destinationLabel,
-        ]
-          .filter(Boolean)
-          .some(value =>
-            String(value).toLowerCase().includes(normalizedSearch)
-          );
-      const matchesStatus =
-        statusFilter === "all" || row.transfer.status === statusFilter;
-
-      return matchesSearch && matchesStatus;
-    });
-  }, [searchTerm, statusFilter, transfers]);
+  useEffect(() => setPage(1), [debouncedSearchTerm, statusFilter]);
+  useEffect(() => {
+    if (!isPlaceholderData && transfersPage?.page && transfersPage.page !== page) {
+      setPage(transfersPage.page);
+    }
+  }, [isPlaceholderData, page, transfersPage?.page]);
 
   const savePrintFields = async (options?: { silent?: boolean }) => {
     if (!detail?.transfer?.id) return false;
@@ -637,6 +636,15 @@ export default function Transfers() {
               </table>
             </div>
           )}
+          {transfersPage ? (
+            <DataPagination
+              page={transfersPage.page}
+              pageSize={transfersPage.pageSize}
+              total={transfersPage.total}
+              totalPages={transfersPage.totalPages}
+              onPageChange={setPage}
+            />
+          ) : null}
         </CardContent>
       </Card>
 

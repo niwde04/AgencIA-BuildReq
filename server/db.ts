@@ -2130,6 +2130,7 @@ export async function replaceRequestItems(
 }
 
 export async function listMaterialRequests(filters?: {
+  ids?: number[];
   projectId?: number;
   projectIds?: number[];
   status?: string;
@@ -2141,6 +2142,12 @@ export async function listMaterialRequests(filters?: {
   if (!db) return [];
 
   const conditions = [];
+  if (filters?.ids)
+    conditions.push(
+      filters.ids.length > 0
+        ? inArray(materialRequests.id, filters.ids)
+        : sql`false`
+    );
   if (filters?.projectId)
     conditions.push(eq(materialRequests.projectId, filters.projectId));
   if (filters?.projectIds) {
@@ -2176,7 +2183,7 @@ export async function listMaterialRequests(filters?: {
     .leftJoin(projects, eq(materialRequests.projectId, projects.id))
     .leftJoin(users, eq(materialRequests.requestedById, users.id))
     .where(where)
-    .orderBy(desc(materialRequests.createdAt));
+    .orderBy(desc(materialRequests.createdAt), desc(materialRequests.id));
 
   if (rows.length === 0) {
     return rows;
@@ -4580,6 +4587,7 @@ export async function updateSupplyFlowRecord(
 }
 
 export async function listSupplyFlowRecords(filters?: {
+  ids?: number[];
   flowType?: string;
   status?: string;
   requestedById?: number;
@@ -4590,6 +4598,12 @@ export async function listSupplyFlowRecords(filters?: {
   if (!db) return [];
 
   const conditions = [];
+  if (filters?.ids)
+    conditions.push(
+      filters.ids.length > 0
+        ? inArray(supplyFlowRecords.id, filters.ids)
+        : sql`false`
+    );
   if (filters?.flowType)
     conditions.push(eq(supplyFlowRecords.flowType, filters.flowType as any));
   if (filters?.status)
@@ -4623,7 +4637,7 @@ export async function listSupplyFlowRecords(filters?: {
     )
     .leftJoin(projects, eq(materialRequests.projectId, projects.id))
     .where(where)
-    .orderBy(desc(supplyFlowRecords.createdAt));
+    .orderBy(desc(supplyFlowRecords.createdAt), desc(supplyFlowRecords.id));
 }
 
 export async function listPendingFlowQueueItems(filters?: {
@@ -5679,6 +5693,7 @@ export async function createPurchaseRequest(
 }
 
 export async function listPurchaseRequests(filters?: {
+  ids?: number[];
   projectId?: number;
   projectIds?: number[];
   status?: string;
@@ -5694,6 +5709,12 @@ export async function listPurchaseRequests(filters?: {
     "purchase_request_material_request_requested_by_users"
   );
   const conditions = [];
+  if (filters?.ids)
+    conditions.push(
+      filters.ids.length > 0
+        ? inArray(purchaseRequests.id, filters.ids)
+        : sql`false`
+    );
   if (filters?.projectId)
     conditions.push(eq(purchaseRequests.projectId, filters.projectId));
   if (filters?.projectIds) {
@@ -5730,7 +5751,7 @@ export async function listPurchaseRequests(filters?: {
       eq(purchaseRequests.createdById, purchaseRequestCreatedByUsers.id)
     )
     .where(where)
-    .orderBy(desc(purchaseRequests.createdAt));
+    .orderBy(desc(purchaseRequests.createdAt), desc(purchaseRequests.id));
 
   const purchaseRequestIds = rows
     .map(row => row.purchaseRequest.id)
@@ -6895,6 +6916,7 @@ function buildPurchaseOrderContractSummary(
 }
 
 export async function listPurchaseOrders(filters?: {
+  ids?: number[];
   projectId?: number;
   projectIds?: number[];
   classification?: string;
@@ -6908,6 +6930,12 @@ export async function listPurchaseOrders(filters?: {
     "po_list_material_requests"
   );
   const conditions = [];
+  if (filters?.ids)
+    conditions.push(
+      filters.ids.length > 0
+        ? inArray(purchaseOrders.id, filters.ids)
+        : sql`false`
+    );
   if (filters?.projectId)
     conditions.push(eq(purchaseOrders.projectId, filters.projectId));
   if (filters?.projectIds) {
@@ -6947,7 +6975,7 @@ export async function listPurchaseOrders(filters?: {
       eq(purchaseOrders.createdById, purchaseOrderCreatedByUsers.id)
     )
     .where(where)
-    .orderBy(desc(purchaseOrders.createdAt));
+    .orderBy(desc(purchaseOrders.createdAt), desc(purchaseOrders.id));
 
   const purchaseOrderIds = rows
     .map(row => row.purchaseOrder.id)
@@ -8506,6 +8534,7 @@ export async function createTransferRequest(
 }
 
 export async function listTransferRequests(filters?: {
+  ids?: number[];
   projectId?: number;
   projectIds?: number[];
   status?: string;
@@ -8513,6 +8542,12 @@ export async function listTransferRequests(filters?: {
   const db = await getDb();
   if (!db) return [];
   const conditions = [];
+  if (filters?.ids)
+    conditions.push(
+      filters.ids.length > 0
+        ? inArray(transferRequests.id, filters.ids)
+        : sql`false`
+    );
   if (filters?.projectId)
     conditions.push(eq(transferRequests.projectId, filters.projectId));
   if (filters?.projectIds) {
@@ -8544,7 +8579,7 @@ export async function listTransferRequests(filters?: {
       eq(transferRequests.materialRequestId, materialRequests.id)
     )
     .where(where)
-    .orderBy(desc(transferRequests.createdAt));
+    .orderBy(desc(transferRequests.createdAt), desc(transferRequests.id));
 }
 
 export async function getTransferRequestById(id: number) {
@@ -8954,6 +8989,7 @@ export async function createTransferFromRequest(
 }
 
 export async function listTransfers(filters?: {
+  ids?: number[];
   status?: string;
   receivableOnly?: boolean;
   sourceProjectId?: number;
@@ -8963,6 +8999,10 @@ export async function listTransfers(filters?: {
   const db = await getDb();
   if (!db) return [];
   const conditions = [];
+  if (filters?.ids)
+    conditions.push(
+      filters.ids.length > 0 ? inArray(transfers.id, filters.ids) : sql`false`
+    );
   if (filters?.status)
     conditions.push(eq(transfers.status, filters.status as any));
   if (filters?.receivableOnly) {
@@ -9008,7 +9048,7 @@ export async function listTransfers(filters?: {
     )
     .leftJoin(projects, eq(transferRequests.projectId, projects.id))
     .where(where)
-    .orderBy(desc(transfers.createdAt));
+    .orderBy(desc(transfers.createdAt), desc(transfers.id));
 
   const destinationProjectIds = Array.from(
     new Set(
@@ -10362,6 +10402,7 @@ export async function saveReceiptDraft(
 }
 
 export async function listReceipts(filters?: {
+  ids?: number[];
   projectId?: number;
   projectIds?: number[];
   sourceType?: string;
@@ -10370,6 +10411,10 @@ export async function listReceipts(filters?: {
   const db = await getDb();
   if (!db) return [];
   const conditions = [];
+  if (filters?.ids)
+    conditions.push(
+      filters.ids.length > 0 ? inArray(receipts.id, filters.ids) : sql`false`
+    );
   if (filters?.projectId)
     conditions.push(eq(receipts.projectId, filters.projectId));
   if (filters?.projectIds) {
@@ -10400,7 +10445,7 @@ export async function listReceipts(filters?: {
     .leftJoin(invoices, eq(invoices.receiptId, receipts.id))
     .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
     .where(where)
-    .orderBy(desc(receipts.createdAt));
+    .orderBy(desc(receipts.createdAt), desc(receipts.id));
 }
 
 export async function getReceiptById(id: number) {
@@ -10963,6 +11008,7 @@ export async function updateTaxRetention(
 }
 
 export async function listInvoices(filters?: {
+  ids?: number[];
   projectId?: number;
   projectIds?: number[];
   status?: string;
@@ -10975,6 +11021,10 @@ export async function listInvoices(filters?: {
   if (!db) return [];
   const invoiceCreatedByUsers = alias(users, "invoice_list_created_by_users");
   const conditions = [];
+  if (filters?.ids)
+    conditions.push(
+      filters.ids.length > 0 ? inArray(invoices.id, filters.ids) : sql`false`
+    );
   if (filters?.projectId)
     conditions.push(eq(invoices.projectId, filters.projectId));
   if (filters?.projectIds) {
@@ -11068,7 +11118,7 @@ export async function listInvoices(filters?: {
       eq(receipts.receivedById, invoiceCreatedByUsers.id)
     )
     .where(where)
-    .orderBy(desc(invoices.createdAt));
+    .orderBy(desc(invoices.createdAt), desc(invoices.id));
 
   const invoiceIds = rows.map(row => row.invoice.id);
   if (invoiceIds.length === 0) return rows;

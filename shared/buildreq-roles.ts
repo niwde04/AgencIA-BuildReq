@@ -85,6 +85,17 @@ export function isProjectScopedRole(value?: string | null) {
   return Boolean(value && PROJECT_SCOPED_ROLES.has(value));
 }
 
+export function canCreateProjectSubprojects(
+  user?: {
+    role?: string | null;
+    buildreqRole?: string | null;
+  } | null
+) {
+  return Boolean(
+    user?.role === "admin" || user?.buildreqRole === "administracion_central"
+  );
+}
+
 export function requiresAssignedProject(value?: string | null) {
   return Boolean(value && PROJECT_REQUIRED_ROLES.has(value));
 }

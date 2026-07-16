@@ -1,4 +1,7 @@
 import { trpc } from "@/lib/trpc";
+import { DataPagination } from "@/components/DataPagination";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { fetchAllFilteredPages } from "@/lib/paginated-export";
 import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import {
@@ -124,6 +127,8 @@ import {
   parseFixedAssetDetails,
   type FixedAssetDetail,
 } from "@shared/fixed-assets";
+
+const PAGE_SIZE = 50;
 
 const STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
@@ -1129,6 +1134,9 @@ export default function Recepciones() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sourceTypeFilter, setSourceTypeFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const debouncedSearchTerm = useDebouncedValue(searchTerm);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
   const [pendingReceiptAttachments, setPendingReceiptAttachments] = useState<
     PendingReceiptAttachment[]
   >([]);
@@ -1138,7 +1146,33 @@ export default function Recepciones() {
     useState(false);
   const [receiptCorrectionReason, setReceiptCorrectionReason] = useState("");
 
-  const { data: receipts, isLoading } = trpc.receipts.list.useQuery();
+  const {
+    data: receiptsPage,
+    isLoading,
+    isPlaceholderData,
+  } = trpc.receipts.listPage.useQuery(
+    {
+      search: debouncedSearchTerm.trim() || undefined,
+      sourceType:
+        sourceTypeFilter === "all"
+          ? undefined
+          : (sourceTypeFilter as "purchase_order" | "transfer"),
+      status:
+        statusFilter === "all"
+          ? undefined
+          : (statusFilter as
+              | "borrador"
+              | "pendiente"
+              | "parcial"
+              | "completa"
+              | "cierre_incompleto"
+              | "anulada"),
+      page,
+      pageSize: PAGE_SIZE,
+    },
+    { placeholderData: previousData => previousData }
+  );
+  const receipts = receiptsPage?.items ?? [];
   const {
     data: receiptDetail,
     isLoading: receiptDetailLoading,
@@ -1155,13 +1189,13 @@ export default function Recepciones() {
   );
   const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery(
     undefined,
-    { enabled: canManageReceipts }
+    { enabled: canManageReceipts && dialogOpen }
   );
   const { data: transfers } = trpc.transfers.list.useQuery(
     {
       receivableOnly: true,
     },
-    { enabled: canManageReceipts }
+    { enabled: canManageReceipts && dialogOpen }
   );
   const { data: receiptProjects } = trpc.projects.list.useQuery(
     { status: "activo" },
@@ -1965,12 +1999,12 @@ export default function Recepciones() {
       setDialogOpen(false);
       resetForm();
       void Promise.all([
-        utils.receipts.list.invalidate(),
-        utils.purchaseOrders.list.invalidate(),
-        utils.transfers.list.invalidate(),
-        utils.materialRequests.list.invalidate(),
+        utils.receipts.invalidate(),
+        utils.purchaseOrders.invalidate(),
+        utils.transfers.invalidate(),
+        utils.materialRequests.invalidate(),
         utils.supplyFlows.pendingQueue.invalidate(),
-        utils.supplyFlows.list.invalidate(),
+        utils.supplyFlows.invalidate(),
         sourceType === "transfer" && sourceId
           ? utils.transfers.getById.invalidate({ id: Number(sourceId) })
           : Promise.resolve(),
@@ -2038,10 +2072,10 @@ export default function Recepciones() {
       setReceiptCorrectionDialogOpen(false);
       setReceiptCorrectionReason("");
       void Promise.all([
-        utils.receipts.list.invalidate(),
-        utils.invoices.list.invalidate(),
-        utils.purchaseOrders.list.invalidate(),
-        utils.materialRequests.list.invalidate(),
+        utils.receipts.invalidate(),
+        utils.invoices.invalidate(),
+        utils.purchaseOrders.invalidate(),
+        utils.materialRequests.invalidate(),
         utils.inventory.list.invalidate(),
         originalReceiptId
           ? utils.receipts.getById.invalidate({ id: originalReceiptId })
@@ -2074,7 +2108,7 @@ export default function Recepciones() {
             id: Number(sourceId),
           });
         }
-        void utils.purchaseOrders.list.invalidate();
+        void utils.purchaseOrders.invalidate();
         void utils.articles.list.invalidate();
       },
       onError: error => toast.error(error.message),
@@ -2088,8 +2122,8 @@ export default function Recepciones() {
           : `Recepción borrador creada: ${result.receiptNumber}`
       );
       void utils.receipts.getById.invalidate({ id: result.id });
-      void utils.receipts.list.invalidate();
-      void utils.purchaseOrders.list.invalidate();
+      void utils.receipts.invalidate();
+      void utils.purchaseOrders.invalidate();
       if (sourceType === "purchase_order" && sourceId) {
         void utils.purchaseOrders.getById.invalidate({ id: Number(sourceId) });
       }
@@ -2104,7 +2138,7 @@ export default function Recepciones() {
         setSelectedReceiptFixedAssetArticle(null);
         setReceiptFixedAssetRealCode("");
         void utils.articles.list.invalidate();
-        void utils.purchaseOrders.list.invalidate();
+        void utils.purchaseOrders.invalidate();
         if (sourceType === "purchase_order" && sourceId) {
           void utils.purchaseOrders.getById.invalidate({ id: Number(sourceId) });
           void refetchPurchaseOrderDetail();
@@ -2127,7 +2161,7 @@ export default function Recepciones() {
             id: Number(sourceId),
           });
         }
-        void utils.purchaseOrders.list.invalidate();
+        void utils.purchaseOrders.invalidate();
       },
       onError: error => toast.error(error.message),
     });
@@ -4567,46 +4601,54 @@ export default function Recepciones() {
     printWindowWhenReady(printWindow);
   };
 
-  const filteredReceipts = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredReceipts = receipts;
 
-    return (receipts ?? []).filter((row: any) => {
-      const receipt = row.receipt;
-      const sourceTypeLabel =
-        receipt.sourceType === "purchase_order"
-          ? SOURCE_TYPE_LABELS.purchase_order
-          : SOURCE_TYPE_LABELS.transfer;
-      const projectLabel = row.project
-        ? `${row.project.code} ${row.project.name}`
-        : "";
-      const matchesSearch =
-        !normalizedSearch ||
-        [
-          receipt.receiptNumber,
-          receipt.invoiceNumber,
-          receipt.documentRangeStart,
-          receipt.documentRangeEnd,
-          row.purchaseOrder?.orderNumber,
-          row.supplier?.name,
-          row.supplier?.supplierCode,
-          row.supplier?.rtn,
-          sourceTypeLabel,
-          projectLabel,
-        ]
-          .filter(Boolean)
-          .some(value =>
-            String(value).toLowerCase().includes(normalizedSearch)
-          );
-      const matchesStatus =
-        statusFilter === "all" || receipt.status === statusFilter;
-      const matchesSourceType =
-        sourceTypeFilter === "all" || receipt.sourceType === sourceTypeFilter;
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearchTerm, sourceTypeFilter, statusFilter]);
 
-      return matchesSearch && matchesStatus && matchesSourceType;
-    });
-  }, [receipts, searchTerm, sourceTypeFilter, statusFilter]);
+  useEffect(() => {
+    if (!isPlaceholderData && receiptsPage?.page && receiptsPage.page !== page) {
+      setPage(receiptsPage.page);
+    }
+  }, [isPlaceholderData, page, receiptsPage?.page]);
 
-  const exportReceiptsCsv = () => {
+  const exportReceiptsCsv = async () => {
+    if (isExportingCsv) return;
+    setIsExportingCsv(true);
+    let exportRows: any[];
+    try {
+      exportRows = await fetchAllFilteredPages((exportPage, pageSize) =>
+        utils.receipts.listPage.fetch({
+          search: debouncedSearchTerm.trim() || undefined,
+          sourceType:
+            sourceTypeFilter === "all"
+              ? undefined
+              : (sourceTypeFilter as "purchase_order" | "transfer"),
+          status:
+            statusFilter === "all"
+              ? undefined
+              : (statusFilter as
+                  | "borrador"
+                  | "pendiente"
+                  | "parcial"
+                  | "completa"
+                  | "cierre_incompleto"
+                  | "anulada"),
+          page: exportPage,
+          pageSize,
+        })
+      );
+    } catch {
+      toast.error("No se pudo exportar el archivo CSV");
+      setIsExportingCsv(false);
+      return;
+    }
+    if (exportRows.length === 0) {
+      toast.error("No hay recepciones para exportar");
+      setIsExportingCsv(false);
+      return;
+    }
     downloadCsv(
       buildDatedCsvFileName("recepciones"),
       [
@@ -4651,8 +4693,9 @@ export default function Recepciones() {
             formatDateLabel(row.receipt.receiptDate || row.receipt.createdAt),
         },
       ],
-      filteredReceipts
+      exportRows
     );
+    setIsExportingCsv(false);
   };
   const openDraftReceiptForEdit = (row: any) => {
     if (!canManageReceipts) {
@@ -4713,11 +4756,11 @@ export default function Recepciones() {
           <Button
             type="button"
             variant="outline"
-            onClick={exportReceiptsCsv}
-            disabled={!filteredReceipts.length}
+            onClick={() => void exportReceiptsCsv()}
+            disabled={!receiptsPage?.total || isExportingCsv}
           >
             <Download className="mr-2 h-4 w-4" />
-            Exportar CSV
+            {isExportingCsv ? "Exportando..." : "Exportar CSV"}
           </Button>
 
           <Dialog
@@ -7988,6 +8031,15 @@ export default function Recepciones() {
               </table>
             </div>
           )}
+          {receiptsPage ? (
+            <DataPagination
+              page={receiptsPage.page}
+              pageSize={receiptsPage.pageSize}
+              total={receiptsPage.total}
+              totalPages={receiptsPage.totalPages}
+              onPageChange={setPage}
+            />
+          ) : null}
         </CardContent>
       </Card>
     </div>

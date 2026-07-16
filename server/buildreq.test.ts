@@ -2980,6 +2980,93 @@ describe("BuildReq - Project subprojects", () => {
     createProjectSubprojectSpy.mockRestore();
   });
 
+  it("Administracion Central can create subprojects", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getProjectByIdSpy = vi
+      .spyOn(db, "getProjectById")
+      .mockResolvedValue({ id: 1, code: "001", name: "Proyecto" } as any);
+    const getProjectSubprojectByCodeSpy = vi
+      .spyOn(db, "getProjectSubprojectByCode")
+      .mockResolvedValue(undefined);
+    const createProjectSubprojectSpy = vi
+      .spyOn(db, "createProjectSubproject")
+      .mockResolvedValue({ id: 14, projectId: 1, code: "SP-AC" } as any);
+
+    await expect(
+      caller.projects.createSubproject({
+        projectId: 1,
+        code: "SP-AC",
+        name: "Etapa Administración Central",
+        isActive: true,
+      })
+    ).resolves.toEqual(expect.objectContaining({ id: 14, code: "SP-AC" }));
+
+    expect(createProjectSubprojectSpy).toHaveBeenCalledOnce();
+
+    getProjectByIdSpy.mockRestore();
+    getProjectSubprojectByCodeSpy.mockRestore();
+    createProjectSubprojectSpy.mockRestore();
+  });
+
+  it("Blocks Project Administrator from creating subprojects", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const createProjectSubprojectSpy = vi.spyOn(db, "createProjectSubproject");
+
+    await expect(
+      caller.projects.createSubproject({
+        projectId: 1,
+        code: "SP-AP",
+        name: "Etapa Administración Proyecto",
+        isActive: true,
+      })
+    ).rejects.toThrow(
+      "Solo el administrador del sistema o Administración Central"
+    );
+
+    expect(createProjectSubprojectSpy).not.toHaveBeenCalled();
+
+    createProjectSubprojectSpy.mockRestore();
+  });
+
+  it("Project Administrator can still edit assigned subprojects", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getProjectSubprojectByIdSpy = vi
+      .spyOn(db, "getProjectSubprojectById")
+      .mockResolvedValue({ id: 15, projectId: 1, code: "SP-AP" } as any);
+    const getProjectByIdSpy = vi
+      .spyOn(db, "getProjectById")
+      .mockResolvedValue({ id: 1, code: "001", name: "Proyecto" } as any);
+    const getProjectSubprojectByCodeSpy = vi
+      .spyOn(db, "getProjectSubprojectByCode")
+      .mockResolvedValue({ id: 15, projectId: 1, code: "SP-AP" } as any);
+    const updateProjectSubprojectSpy = vi
+      .spyOn(db, "updateProjectSubproject")
+      .mockResolvedValue({ id: 15, projectId: 1, code: "SP-AP" } as any);
+
+    await expect(
+      caller.projects.updateSubproject({
+        id: 15,
+        projectId: 1,
+        code: "SP-AP",
+        name: "Etapa actualizada",
+        isActive: true,
+      })
+    ).resolves.toEqual(expect.objectContaining({ id: 15 }));
+
+    expect(updateProjectSubprojectSpy).toHaveBeenCalledWith(
+      15,
+      expect.objectContaining({ name: "Etapa actualizada" })
+    );
+
+    getProjectSubprojectByIdSpy.mockRestore();
+    getProjectByIdSpy.mockRestore();
+    getProjectSubprojectByCodeSpy.mockRestore();
+    updateProjectSubprojectSpy.mockRestore();
+  });
+
   it("Rejects duplicate subproject codes within the same project", async () => {
     const { ctx } = createUserContext();
     const caller = appRouter.createCaller(ctx);

@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
+import { DataPagination } from "@/components/DataPagination";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,7 +25,9 @@ import {
   ShoppingCart,
   Truck,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+const PAGE_SIZE = 50;
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 
@@ -301,6 +304,7 @@ export default function Flujos() {
   const utils = trpc.useUtils();
   const [flowFilter, setFlowFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [historyPageNumber, setHistoryPageNumber] = useState(1);
   const [processingFlowType, setProcessingFlowType] = useState<QueueFlowType | null>(null);
   const [returningQueuedFlowType, setReturningQueuedFlowType] =
     useState<QueueFlowType | null>(null);
@@ -390,8 +394,30 @@ export default function Flujos() {
 
   const { data: pendingQueue, isLoading: pendingQueueLoading } =
     trpc.supplyFlows.pendingQueue.useQuery(pendingQueueQueryInput);
-  const { data: flowHistory, isLoading: historyLoading } =
-    trpc.supplyFlows.list.useQuery(historyQueryInput);
+  const {
+    data: flowHistoryPage,
+    isLoading: historyLoading,
+    isPlaceholderData: historyIsPlaceholderData,
+  } = trpc.supplyFlows.listPage.useQuery(
+    {
+      ...historyQueryInput,
+      page: historyPageNumber,
+      pageSize: PAGE_SIZE,
+    },
+    { placeholderData: previousData => previousData }
+  );
+  const flowHistory = flowHistoryPage?.items ?? [];
+
+  useEffect(() => setHistoryPageNumber(1), [flowFilter, statusFilter]);
+  useEffect(() => {
+    if (
+      !historyIsPlaceholderData &&
+      flowHistoryPage?.page &&
+      flowHistoryPage.page !== historyPageNumber
+    ) {
+      setHistoryPageNumber(flowHistoryPage.page);
+    }
+  }, [flowHistoryPage?.page, historyIsPlaceholderData, historyPageNumber]);
   const directPurchaseMutation = trpc.supplyFlows.createDirectPurchaseBatch.useMutation();
   const projectTransferBatchMutation =
     trpc.supplyFlows.createProjectTransferBatch.useMutation();
@@ -408,13 +434,13 @@ export default function Flujos() {
 
   const invalidateAll = () =>
     Promise.all([
-      utils.materialRequests.list.invalidate(),
+      utils.materialRequests.invalidate(),
       utils.supplyFlows.pendingQueue.invalidate(),
-      utils.supplyFlows.list.invalidate(),
-      utils.purchaseOrders.list.invalidate(),
-      utils.purchaseRequests.list.invalidate(),
-      utils.transferRequests.list.invalidate(),
-      utils.transfers.list.invalidate(),
+      utils.supplyFlows.invalidate(),
+      utils.purchaseOrders.invalidate(),
+      utils.purchaseRequests.invalidate(),
+      utils.transferRequests.invalidate(),
+      utils.transfers.invalidate(),
       utils.warehouseExits.list.invalidate(),
       utils.inventory.list.invalidate(),
       utils.inventory.projectStockForItems.invalidate(),
@@ -467,10 +493,10 @@ export default function Flujos() {
       Object.fromEntries(
         FLOW_ORDER.map((flowType) => [
           flowType,
-          visibleHistoryRows.filter((row: any) => row.flow.flowType === flowType).length,
+          flowHistoryPage?.countsByFlow?.[flowType] ?? 0,
         ])
       ) as Record<QueueFlowType, number>,
-    [visibleHistoryRows]
+    [flowHistoryPage?.countsByFlow]
   );
 
   const visibleFlowSections = useMemo(
@@ -1982,6 +2008,15 @@ export default function Flujos() {
                 })}
             </div>
           )}
+          {flowHistoryPage ? (
+            <DataPagination
+              page={flowHistoryPage.page}
+              pageSize={flowHistoryPage.pageSize}
+              total={flowHistoryPage.total}
+              totalPages={flowHistoryPage.totalPages}
+              onPageChange={setHistoryPageNumber}
+            />
+          ) : null}
         </CardContent>
       </Card>
     </div>

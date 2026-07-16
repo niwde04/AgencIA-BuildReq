@@ -1,4 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { DataPagination } from "@/components/DataPagination";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { fetchAllFilteredPages } from "@/lib/paginated-export";
 import { trpc } from "@/lib/trpc";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import { Badge } from "@/components/ui/badge";
@@ -69,6 +72,8 @@ import {
   isPurchaseRequestDraftLike,
   isPurchaseRequestApprovalEnabled,
 } from "@shared/procurement-approvals";
+
+const PAGE_SIZE = 50;
 
 const STATUS_LABELS: Record<string, string> = {
   pendiente: "Borrador",
@@ -409,6 +414,9 @@ export default function PurchaseRequests() {
   const [selectedRequestIds, setSelectedRequestIds] = useState<number[]>([]);
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [page, setPage] = useState(1);
+  const debouncedSearchTerm = useDebouncedValue(searchTerm);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
   const [purchaseTypeFilter, setPurchaseTypeFilter] = useState<
     PurchaseType | "all"
   >("all");
@@ -422,11 +430,23 @@ export default function PurchaseRequests() {
   } | null>(null);
 
   const {
-    data: requests,
+    data: requestsPage,
     isLoading,
     error: requestsError,
     refetch: refetchPurchaseRequests,
-  } = trpc.purchaseRequests.list.useQuery();
+    isPlaceholderData,
+  } = trpc.purchaseRequests.listPage.useQuery(
+    {
+      search: debouncedSearchTerm.trim() || undefined,
+      purchaseType:
+        purchaseTypeFilter === "all" ? undefined : purchaseTypeFilter,
+      status: statusFilter === "all" ? undefined : statusFilter,
+      page,
+      pageSize: PAGE_SIZE,
+    },
+    { placeholderData: previousData => previousData }
+  );
+  const requests = requestsPage?.items ?? [];
   const {
     data: detail,
     isLoading: isLoadingDetail,
@@ -470,44 +490,26 @@ export default function PurchaseRequests() {
       buildreqRole === "administracion_central" ||
       isProjectAdmin);
 
-  const filteredRequests = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredRequests = requests;
 
-    return (requests ?? []).filter((row: any) => {
-      const purchaseRequest = row.purchaseRequest;
-      const matchesType =
-        purchaseTypeFilter === "all" ||
-        purchaseRequest.purchaseType === purchaseTypeFilter;
-      const effectiveStatus = getEffectivePurchaseRequestStatus(
-        purchaseRequest.status,
-        purchaseRequest.approvalStatus
-      );
-      const matchesStatus =
-        statusFilter === "all" || effectiveStatus === statusFilter;
-      const projectLabel =
-        row.projectSummary?.label ||
-        (row.project ? `${row.project.code} ${row.project.name}` : "");
-      const requestNumbers = formatPurchaseRequestRequestNumbers(row);
-      const requestedByLabel = formatPurchaseRequestRequestedBy(row);
-      const approvedByLabel = formatPurchaseRequestApprovedBy(row);
-      const matchesSearch =
-        !normalizedSearch ||
-        [
-          purchaseRequest.requestNumber,
-          requestNumbers,
-          purchaseRequest.sapDocumentNumber,
-          projectLabel,
-          requestedByLabel,
-          approvedByLabel,
-        ]
-          .filter(Boolean)
-          .some(value =>
-            String(value).toLowerCase().includes(normalizedSearch)
-          );
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearchTerm, purchaseTypeFilter, statusFilter]);
 
-      return matchesType && matchesStatus && matchesSearch;
-    });
-  }, [purchaseTypeFilter, requests, searchTerm, statusFilter]);
+  useEffect(() => {
+    setSelectedRequestIds([]);
+    setSelectedItemIds([]);
+  }, [page, debouncedSearchTerm, purchaseTypeFilter, statusFilter]);
+
+  useEffect(() => {
+    if (
+      !isPlaceholderData &&
+      requestsPage?.page &&
+      requestsPage.page !== page
+    ) {
+      setPage(requestsPage.page);
+    }
+  }, [isPlaceholderData, page, requestsPage?.page]);
 
   const canConvertPurchaseRequestRow = (row: any) =>
     canConvert &&
@@ -520,7 +522,7 @@ export default function PurchaseRequests() {
     onSuccess: () => {
       toast.success("Solicitud de compra actualizada");
       void Promise.all([
-        utils.purchaseRequests.list.invalidate(),
+        utils.purchaseRequests.invalidate(),
         selectedId
           ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
           : Promise.resolve(),
@@ -534,7 +536,7 @@ export default function PurchaseRequests() {
       toast.success("Solicitud de compra anulada");
       setRejectReason("");
       void Promise.all([
-        utils.purchaseRequests.list.invalidate(),
+        utils.purchaseRequests.invalidate(),
         selectedId
           ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
           : Promise.resolve(),
@@ -549,7 +551,7 @@ export default function PurchaseRequests() {
         toast.success("Solicitud enviada a aprobación");
         setApprovalComment("");
         void Promise.all([
-          utils.purchaseRequests.list.invalidate(),
+          utils.purchaseRequests.invalidate(),
           selectedId
             ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
             : Promise.resolve(),
@@ -571,7 +573,7 @@ export default function PurchaseRequests() {
         );
         setApprovalComment("");
         void Promise.all([
-          utils.purchaseRequests.list.invalidate(),
+          utils.purchaseRequests.invalidate(),
           selectedId
             ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
             : Promise.resolve(),
@@ -586,7 +588,7 @@ export default function PurchaseRequests() {
         toast.success("Solicitud reabierta para corrección");
         setApprovalComment("");
         void Promise.all([
-          utils.purchaseRequests.list.invalidate(),
+          utils.purchaseRequests.invalidate(),
           selectedId
             ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
             : Promise.resolve(),
@@ -612,8 +614,8 @@ export default function PurchaseRequests() {
         );
         setSelectedItemIds([]);
         void Promise.all([
-          utils.purchaseRequests.list.invalidate(),
-          utils.purchaseOrders.list.invalidate(),
+          utils.purchaseRequests.invalidate(),
+          utils.purchaseOrders.invalidate(),
           selectedId
             ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
             : Promise.resolve(),
@@ -642,8 +644,8 @@ export default function PurchaseRequests() {
         toast.success(`OC unificada ${result.purchaseOrderNumber} generada`);
         setSelectedRequestIds([]);
         await Promise.all([
-          utils.purchaseRequests.list.invalidate(),
-          utils.purchaseOrders.list.invalidate(),
+          utils.purchaseRequests.invalidate(),
+          utils.purchaseOrders.invalidate(),
           refetchPurchaseRequests(),
         ]);
       },
@@ -654,7 +656,7 @@ export default function PurchaseRequests() {
     onSuccess: () => {
       toast.success("Cotización aprobada adjuntada");
       void Promise.all([
-        utils.purchaseRequests.list.invalidate(),
+        utils.purchaseRequests.invalidate(),
         selectedId
           ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
           : Promise.resolve(),
@@ -1492,7 +1494,31 @@ export default function PurchaseRequests() {
     printWindowWhenReady(printWindow);
   };
 
-  const exportPurchaseRequestsCsv = () => {
+  const exportPurchaseRequestsCsv = async () => {
+    if (isExportingCsv) return;
+    setIsExportingCsv(true);
+    let exportRows: any[];
+    try {
+      exportRows = await fetchAllFilteredPages((exportPage, pageSize) =>
+        utils.purchaseRequests.listPage.fetch({
+          search: debouncedSearchTerm.trim() || undefined,
+          purchaseType:
+            purchaseTypeFilter === "all" ? undefined : purchaseTypeFilter,
+          status: statusFilter === "all" ? undefined : statusFilter,
+          page: exportPage,
+          pageSize,
+        })
+      );
+    } catch {
+      toast.error("No se pudo exportar el archivo CSV");
+      setIsExportingCsv(false);
+      return;
+    }
+    if (exportRows.length === 0) {
+      toast.error("No hay solicitudes de compra para exportar");
+      setIsExportingCsv(false);
+      return;
+    }
     downloadCsv(
       buildDatedCsvFileName("solicitudes-compra"),
       [
@@ -1561,8 +1587,9 @@ export default function PurchaseRequests() {
             row.purchaseRequest.printedDocumentContent ? "Listo" : "Pendiente",
         },
       ],
-      filteredRequests
+      exportRows
     );
+    setIsExportingCsv(false);
   };
 
   return (
@@ -1573,11 +1600,11 @@ export default function PurchaseRequests() {
           <Button
             type="button"
             variant="outline"
-            onClick={exportPurchaseRequestsCsv}
-            disabled={!filteredRequests.length}
+            onClick={() => void exportPurchaseRequestsCsv()}
+            disabled={!requestsPage?.total || isExportingCsv}
           >
             <Download className="mr-2 h-4 w-4" />
-            Exportar CSV
+            {isExportingCsv ? "Exportando..." : "Exportar CSV"}
           </Button>
           {canConvert && selectedRequestIds.length > 1 ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -1858,6 +1885,15 @@ export default function PurchaseRequests() {
               </table>
             </div>
           )}
+          {requestsPage ? (
+            <DataPagination
+              page={requestsPage.page}
+              pageSize={requestsPage.pageSize}
+              total={requestsPage.total}
+              totalPages={requestsPage.totalPages}
+              onPageChange={setPage}
+            />
+          ) : null}
         </CardContent>
       </Card>
 

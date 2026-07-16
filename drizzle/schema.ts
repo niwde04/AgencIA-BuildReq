@@ -473,6 +473,10 @@ export const materialRequests = pgTable(
     projectIdx: index("mr_project_idx").on(table.projectId),
     statusIdx: index("mr_status_idx").on(table.status),
     requestedByIdx: index("mr_requested_by_idx").on(table.requestedById),
+    createdPageIdx: index("mr_created_page_idx").on(
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
   })
 );
 
@@ -592,6 +596,11 @@ export const supplyFlowRecords = pgTable(
   table => ({
     requestIdx: index("sfr_request_idx").on(table.requestId),
     flowTypeIdx: index("sfr_flow_type_idx").on(table.flowType),
+    statusIdx: index("sfr_status_idx").on(table.status),
+    createdPageIdx: index("sfr_created_page_idx").on(
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
   })
 );
 
@@ -637,6 +646,10 @@ export const purchaseRequests = pgTable(
       table.sourcePurchaseOrderId
     ),
     statusIdx: index("pr_status_idx").on(table.status),
+    createdPageIdx: index("pr_created_page_idx").on(
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
   })
 );
 
@@ -757,6 +770,10 @@ export const purchaseOrders = pgTable(
       table.supplierContactId
     ),
     statusIdx: index("po_status_idx").on(table.status),
+    createdPageIdx: index("po_created_page_idx").on(
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
     currencyCheck: check(
       "po_currency_check",
       sql`${table.currency} in ('HNL', 'USD')`
@@ -950,6 +967,10 @@ export const transferRequests = pgTable(
       table.destinationWarehouseId
     ),
     statusIdx: index("tr_status_idx").on(table.status),
+    createdPageIdx: index("tr_created_page_idx").on(
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
   })
 );
 
@@ -1030,6 +1051,10 @@ export const transfers = pgTable(
       table.transferRequestId
     ),
     statusIdx: index("tf_status_idx").on(table.status),
+    createdPageIdx: index("tf_created_page_idx").on(
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
   })
 );
 
@@ -1097,6 +1122,11 @@ export const receipts = pgTable(
   table => ({
     sourceIdx: index("rec_source_idx").on(table.sourceType, table.sourceId),
     projectIdx: index("rec_project_idx").on(table.projectId),
+    statusIdx: index("rec_status_idx").on(table.status),
+    createdPageIdx: index("rec_created_page_idx").on(
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
     currencyCheck: check(
       "receipt_currency_check",
       sql`${table.currency} in ('HNL', 'USD')`
@@ -1293,6 +1323,10 @@ export const invoices = pgTable(
     projectIdx: index("invoice_project_idx").on(table.projectId),
     supplierIdx: index("inv_supplier_idx").on(table.supplierId),
     statusIdx: index("invoice_status_idx").on(table.status),
+    createdPageIdx: index("inv_created_page_idx").on(
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
     currencyCheck: check(
       "invoice_currency_check",
       sql`${table.currency} in ('HNL', 'USD')`

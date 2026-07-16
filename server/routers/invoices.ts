@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
+import { listInvoicesPage } from "../paginatedLists";
 import { protectedProcedure, router } from "../_core/trpc";
 import {
   CAI_FORMAT_EXAMPLE,
@@ -395,6 +396,44 @@ const invoiceItemAssetSchema = z.object({
 });
 
 export const invoicesRouter = router({
+  listPage: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.number().optional(),
+        status: z
+          .enum(["borrador", "revisada", "rechazada", "registrada", "anulada"])
+          .optional(),
+        supplierId: z.number().optional(),
+        search: z.string().trim().optional(),
+        dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        page: z.number().int().min(1).optional(),
+        pageSize: z.number().int().min(10).max(200).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      if (!canAccessInvoices(ctx.user)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "No tiene acceso a facturas" });
+      }
+      const status = input.status;
+      const excludeStatus =
+        !canAccessReviewedInvoices(ctx.user) && status !== "revisada"
+          ? "revisada"
+          : undefined;
+      if (!canAccessReviewedInvoices(ctx.user) && status === "revisada") {
+        return {
+          items: [],
+          total: 0,
+          page: 1,
+          pageSize: input.pageSize ?? 50,
+          totalPages: 1,
+        };
+      }
+      return listInvoicesPage(
+        applyProjectScope({ ...input, status, excludeStatus }, ctx.user)
+      );
+    }),
+
   list: protectedProcedure
     .input(
       z

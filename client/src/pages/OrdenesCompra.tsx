@@ -1,4 +1,7 @@
 import { trpc } from "@/lib/trpc";
+import { DataPagination } from "@/components/DataPagination";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { fetchAllFilteredPages } from "@/lib/paginated-export";
 import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import {
@@ -113,6 +116,8 @@ import {
   isPurchaseRequestConversionReady,
   purchaseOrderRequiresApproval,
 } from "@shared/procurement-approvals";
+
+const PAGE_SIZE = 50;
 
 const STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
@@ -924,6 +929,9 @@ export default function OrdenesCompra() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [newOrderDialogOpen, setNewOrderDialogOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [page, setPage] = useState(1);
+  const debouncedSearchTerm = useDebouncedValue(searchTerm);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [purchaseTypeFilter, setPurchaseTypeFilter] = useState("all");
   const [originPopoverOpen, setOriginPopoverOpen] = useState(false);
@@ -964,7 +972,22 @@ export default function OrdenesCompra() {
     useState<ApprovalReviewDecision | null>(null);
   const [approvalReviewComment, setApprovalReviewComment] = useState("");
 
-  const { data: orders, isLoading } = trpc.purchaseOrders.list.useQuery();
+  const {
+    data: ordersPage,
+    isLoading,
+    isPlaceholderData,
+  } = trpc.purchaseOrders.listPage.useQuery(
+    {
+      search: debouncedSearchTerm.trim() || undefined,
+      purchaseType:
+        purchaseTypeFilter === "all" ? undefined : purchaseTypeFilter,
+      status: statusFilter === "all" ? undefined : statusFilter,
+      page,
+      pageSize: PAGE_SIZE,
+    },
+    { placeholderData: previousData => previousData }
+  );
+  const orders = ordersPage?.items ?? [];
   const {
     data: purchaseRequestOrigins,
     isLoading: isLoadingPurchaseRequestOrigins,
@@ -1020,7 +1043,7 @@ export default function OrdenesCompra() {
   const updateMutation = trpc.purchaseOrders.update.useMutation({
     onSuccess: () => {
       toast.success("OC actualizada");
-      void utils.purchaseOrders.list.invalidate();
+      void utils.purchaseOrders.invalidate();
       if (selectedId) {
         void utils.purchaseOrders.getById.invalidate({ id: selectedId });
       }
@@ -1034,7 +1057,7 @@ export default function OrdenesCompra() {
         toast.success("Tipo de precio actualizado");
         setItemDrafts({});
         setConfirmState({ kind: null });
-        void utils.purchaseOrders.list.invalidate();
+        void utils.purchaseOrders.invalidate();
         if (selectedId) {
           void utils.purchaseOrders.getById.invalidate({ id: selectedId });
         }
@@ -1057,7 +1080,7 @@ export default function OrdenesCompra() {
     trpc.purchaseOrders.updateContractTerms.useMutation({
       onSuccess: () => {
         toast.success("Contrato actualizado");
-        void utils.purchaseOrders.list.invalidate();
+        void utils.purchaseOrders.invalidate();
         if (selectedId) {
           void utils.purchaseOrders.getById.invalidate({ id: selectedId });
         }
@@ -1076,7 +1099,7 @@ export default function OrdenesCompra() {
         if (selectedId) {
           void utils.purchaseOrders.getById.invalidate({ id: selectedId });
         }
-        void utils.purchaseOrders.list.invalidate();
+        void utils.purchaseOrders.invalidate();
         setConfirmState({ kind: null });
       },
       onError: error => toast.error(error.message),
@@ -1094,8 +1117,8 @@ export default function OrdenesCompra() {
           void utils.purchaseOrders.getById.invalidate({ id: selectedId });
         }
         void Promise.all([
-          utils.purchaseOrders.list.invalidate(),
-          utils.purchaseRequests.list.invalidate(),
+          utils.purchaseOrders.invalidate(),
+          utils.purchaseRequests.invalidate(),
         ]);
         setConfirmState({ kind: null });
       },
@@ -1111,7 +1134,7 @@ export default function OrdenesCompra() {
       );
       if (selectedId) {
         void utils.purchaseOrders.getById.invalidate({ id: selectedId });
-        void utils.purchaseOrders.list.invalidate();
+        void utils.purchaseOrders.invalidate();
       }
     },
     onError: error => toast.error(error.message),
@@ -1120,7 +1143,7 @@ export default function OrdenesCompra() {
   const cancelOrderMutation = trpc.purchaseOrders.cancelOrder.useMutation({
     onSuccess: () => {
       toast.success("Orden de compra anulada");
-      void utils.purchaseOrders.list.invalidate();
+      void utils.purchaseOrders.invalidate();
       if (selectedId) {
         void utils.purchaseOrders.getById.invalidate({ id: selectedId });
       }
@@ -1132,7 +1155,7 @@ export default function OrdenesCompra() {
     trpc.purchaseOrders.submitForApproval.useMutation({
       onSuccess: () => {
         toast.success("OC enviada a aprobación");
-        void utils.purchaseOrders.list.invalidate();
+        void utils.purchaseOrders.invalidate();
         if (selectedId) {
           void utils.purchaseOrders.getById.invalidate({ id: selectedId });
         }
@@ -1148,7 +1171,7 @@ export default function OrdenesCompra() {
         );
         setApprovalReviewDecision(null);
         setApprovalReviewComment("");
-        void utils.purchaseOrders.list.invalidate();
+        void utils.purchaseOrders.invalidate();
         if (selectedId) {
           void utils.purchaseOrders.getById.invalidate({ id: selectedId });
         }
@@ -1161,7 +1184,7 @@ export default function OrdenesCompra() {
     {
       onSuccess: () => {
         toast.success("OC reabierta para corrección");
-        void utils.purchaseOrders.list.invalidate();
+        void utils.purchaseOrders.invalidate();
         if (selectedId) {
           void utils.purchaseOrders.getById.invalidate({ id: selectedId });
         }
@@ -1173,7 +1196,7 @@ export default function OrdenesCompra() {
   const sendMutation = trpc.purchaseOrders.sendToSupplier.useMutation({
     onSuccess: () => {
       toast.success("OC emitida");
-      void utils.purchaseOrders.list.invalidate();
+      void utils.purchaseOrders.invalidate();
       if (selectedId) {
         void utils.purchaseOrders.getById.invalidate({ id: selectedId });
       }
@@ -1216,8 +1239,8 @@ export default function OrdenesCompra() {
         setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
         setPricesIncludeTaxDraft(false);
         void Promise.all([
-          utils.purchaseOrders.list.invalidate(),
-          utils.purchaseRequests.list.invalidate(),
+          utils.purchaseOrders.invalidate(),
+          utils.purchaseRequests.invalidate(),
         ]);
         if (purchaseOrderId) {
           setSelectedId(purchaseOrderId);
@@ -1372,48 +1395,17 @@ export default function OrdenesCompra() {
     ((isPurchaseOrderDraftLike(orderStatus, orderApprovalStatus) &&
       !orderRequiresApproval) ||
       (orderStatus === "aprobada" && orderApprovalStatus === "aprobada"));
-  const filteredOrders = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredOrders = orders;
 
-    return (orders ?? []).filter((row: any) => {
-      const purchaseOrder = row.purchaseOrder;
-      const projectLabel = row.project
-        ? `${row.project.code} ${row.project.name}`
-        : "";
-      const requestNumbers = formatPurchaseOrderRequestNumbers(row);
-      const requestedByLabel = formatPurchaseOrderRequestedBy(row);
-      const createdByLabel = formatPurchaseOrderCreatedBy(row);
-      const matchesSearch =
-        !normalizedSearch ||
-        [
-          purchaseOrder.orderNumber,
-          requestNumbers,
-          purchaseOrder.classification,
-          PURCHASE_TYPE_LABELS[purchaseOrder.purchaseType],
-          row.supplier?.name,
-          row.supplier?.supplierCode,
-          row.supplier?.rtn,
-          projectLabel,
-          requestedByLabel,
-          createdByLabel,
-        ]
-          .filter(Boolean)
-          .some(value =>
-            String(value).toLowerCase().includes(normalizedSearch)
-          );
-      const matchesStatus =
-        statusFilter === "all" ||
-        getEffectivePurchaseOrderStatus(
-          purchaseOrder.status,
-          purchaseOrder.approvalStatus
-        ) === statusFilter;
-      const matchesType =
-        purchaseTypeFilter === "all" ||
-        purchaseOrder.purchaseType === purchaseTypeFilter;
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearchTerm, purchaseTypeFilter, statusFilter]);
 
-      return matchesSearch && matchesStatus && matchesType;
-    });
-  }, [orders, purchaseTypeFilter, searchTerm, statusFilter]);
+  useEffect(() => {
+    if (!isPlaceholderData && ordersPage?.page && ordersPage.page !== page) {
+      setPage(ordersPage.page);
+    }
+  }, [isPlaceholderData, ordersPage?.page, page]);
   const purchaseRequestOriginRows = useMemo(() => {
     const normalizedSearch = originSearch.trim().toLowerCase();
 
@@ -2982,7 +2974,31 @@ export default function OrdenesCompra() {
     printWindowWhenReady(printWindow);
   };
 
-  const exportPurchaseOrdersCsv = () => {
+  const exportPurchaseOrdersCsv = async () => {
+    if (isExportingCsv) return;
+    setIsExportingCsv(true);
+    let exportRows: any[];
+    try {
+      exportRows = await fetchAllFilteredPages((exportPage, pageSize) =>
+        utils.purchaseOrders.listPage.fetch({
+          search: debouncedSearchTerm.trim() || undefined,
+          purchaseType:
+            purchaseTypeFilter === "all" ? undefined : purchaseTypeFilter,
+          status: statusFilter === "all" ? undefined : statusFilter,
+          page: exportPage,
+          pageSize,
+        })
+      );
+    } catch {
+      toast.error("No se pudo exportar el archivo CSV");
+      setIsExportingCsv(false);
+      return;
+    }
+    if (exportRows.length === 0) {
+      toast.error("No hay órdenes de compra para exportar");
+      setIsExportingCsv(false);
+      return;
+    }
     downloadCsv(
       buildDatedCsvFileName("ordenes-compra"),
       [
@@ -3050,8 +3066,9 @@ export default function OrdenesCompra() {
             EMISSION_STATUS_LABELS[row.purchaseOrder.status] || "Pendiente",
         },
       ],
-      filteredOrders
+      exportRows
     );
+    setIsExportingCsv(false);
   };
 
   return (
@@ -3062,11 +3079,11 @@ export default function OrdenesCompra() {
           <Button
             type="button"
             variant="outline"
-            onClick={exportPurchaseOrdersCsv}
-            disabled={!filteredOrders.length}
+            onClick={() => void exportPurchaseOrdersCsv()}
+            disabled={!ordersPage?.total || isExportingCsv}
           >
             <Download className="mr-2 h-4 w-4" />
-            Exportar CSV
+            {isExportingCsv ? "Exportando..." : "Exportar CSV"}
           </Button>
           {canCreatePurchaseOrder ? (
             <Button onClick={() => setNewOrderDialogOpen(true)}>
@@ -3295,6 +3312,15 @@ export default function OrdenesCompra() {
               </table>
             </div>
           )}
+          {ordersPage ? (
+            <DataPagination
+              page={ordersPage.page}
+              pageSize={ordersPage.pageSize}
+              total={ordersPage.total}
+              totalPages={ordersPage.totalPages}
+              onPageChange={setPage}
+            />
+          ) : null}
         </CardContent>
       </Card>
 

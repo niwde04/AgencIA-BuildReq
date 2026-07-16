@@ -33,6 +33,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { canCreateProjectSubprojects } from "@shared/buildreq-roles";
 
 type ProjectRecord = {
   id: number;
@@ -210,6 +211,7 @@ export default function Proyectos() {
   const canManageProjects = isAdmin;
   const canCreateProjects =
     canManageProjects || buildreqRole === "administracion_central";
+  const canCreateSubprojects = canCreateProjectSubprojects(user);
   const canManageSubprojects =
     canManageProjects ||
     buildreqRole === "administracion_central" ||
@@ -465,6 +467,13 @@ export default function Proyectos() {
 
   const submitSubproject = () => {
     if (!selectedProject || !validateSubprojectForm()) return;
+
+    if (!editingSubproject && !canCreateSubprojects) {
+      toast.error(
+        "Solo el administrador del sistema o Administración Central pueden crear subproyectos."
+      );
+      return;
+    }
 
     const payload = {
       projectId: selectedProject.id,
@@ -1088,7 +1097,9 @@ export default function Proyectos() {
                   </div>
                 )}
 
-                {canManageSubprojects && (
+                {(editingSubproject
+                  ? canManageSubprojects
+                  : canCreateSubprojects) && (
                   <div className="rounded-md border p-3 space-y-3">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <h3 className="text-sm font-semibold">

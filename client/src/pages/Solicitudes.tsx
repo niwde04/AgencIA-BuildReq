@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Search, Eye, Pencil } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Input } from "@/components/ui/input";
 import {
@@ -21,6 +21,10 @@ import {
   PURCHASE_URGENCY_LABELS,
 } from "@shared/material-requests";
 import { isSuperintendentFamilyRole } from "@shared/buildreq-roles";
+import { DataPagination } from "@/components/DataPagination";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+
+const PAGE_SIZE = 50;
 
 const STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
@@ -123,28 +127,30 @@ export default function Solicitudes() {
   const [, setLocation] = useLocation();
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const debouncedSearch = useDebouncedValue(search);
   const userRole = (user as any)?.buildreqRole || "";
   const isSuperintendent = isSuperintendentFamilyRole(userRole);
   const canCreateRequest = !isSuperintendent;
 
-  const { data: requests, isLoading, error } = trpc.materialRequests.list.useQuery(
-    statusFilter !== "all" ? { status: statusFilter } : undefined
-  );
-
-  const filteredRequests = (requests || []).filter((r: any) => {
-    if (!search) return true;
-    const searchLower = search.toLowerCase();
-    return (
-      r.request.requestNumber.toLowerCase().includes(searchLower) ||
-      r.project?.name?.toLowerCase().includes(searchLower) ||
-      r.project?.code?.toLowerCase().includes(searchLower) ||
-      r.requestedBy?.name?.toLowerCase().includes(searchLower) ||
-      r.requestedBy?.email?.toLowerCase().includes(searchLower) ||
-      (r.itemTargets ?? []).some((target: any) =>
-        target.label?.toLowerCase().includes(searchLower)
-      )
+  const { data, isLoading, error, isPlaceholderData } =
+    trpc.materialRequests.listPage.useQuery(
+      {
+        status: statusFilter !== "all" ? statusFilter : undefined,
+        search: debouncedSearch.trim() || undefined,
+        page,
+        pageSize: PAGE_SIZE,
+      },
+      { placeholderData: previousData => previousData }
     );
-  });
+  const filteredRequests = data?.items ?? [];
+
+  useEffect(() => setPage(1), [debouncedSearch, statusFilter]);
+  useEffect(() => {
+    if (!isPlaceholderData && data?.page && data.page !== page) {
+      setPage(data.page);
+    }
+  }, [data?.page, isPlaceholderData, page]);
 
   return (
     <div className="space-y-6">
@@ -342,6 +348,15 @@ export default function Solicitudes() {
               </table>
             </div>
           )}
+          {data ? (
+            <DataPagination
+              page={data.page}
+              pageSize={data.pageSize}
+              total={data.total}
+              totalPages={data.totalPages}
+              onPageChange={setPage}
+            />
+          ) : null}
         </CardContent>
       </Card>
     </div>

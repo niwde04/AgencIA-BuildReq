@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
+import { listMaterialRequestsPage } from "../paginatedLists";
 import { TRPCError } from "@trpc/server";
 import {
   calculateDefaultNeededBy,
@@ -573,6 +574,63 @@ export const materialRequestsRouter = router({
         );
       }
       return syncVisibleRows(await db.listMaterialRequests(input ?? undefined));
+    }),
+
+  listPage: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.number().optional(),
+        status: z.string().optional(),
+        requestedById: z.number().optional(),
+        requestType: z.string().optional(),
+        workflowStage: z.string().optional(),
+        search: z.string().trim().optional(),
+        page: z.number().int().min(1).optional(),
+        pageSize: z.number().int().min(10).max(200).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const user = ctx.user;
+      let filters = { ...input };
+      if (user.buildreqRole === "ingeniero_residente") {
+        filters = {
+          ...applyProjectScope(filters, user),
+          requestedById: user.id,
+        };
+      } else if (
+        user.buildreqRole === "administrador_proyecto" ||
+        user.buildreqRole === "bodeguero_proyecto" ||
+        isSuperintendentFamilyRole(user.buildreqRole)
+      ) {
+        filters = applyProjectScope(filters, user);
+      }
+
+      let result = await listMaterialRequestsPage(filters);
+      const syncRows = async (rows: typeof result.items) =>
+        Promise.all(
+          rows.map(async row => {
+            try {
+              const sync = await db.syncMaterialRequestFulfillmentStatus(
+                row.request.id,
+                user.id
+              );
+              if (sync.changed) row.request.status = sync.status as any;
+              return sync.changed;
+            } catch (error) {
+              console.warn(
+                `No se pudo sincronizar la requisición ${row.request.id} al listar requisiciones`,
+                error
+              );
+              return false;
+            }
+          })
+        );
+      const changedRows = await syncRows(result.items);
+      if (filters.status && changedRows.some(Boolean)) {
+        result = await listMaterialRequestsPage(filters);
+        await syncRows(result.items);
+      }
+      return result;
     }),
 
   getById: protectedProcedure

@@ -1,0 +1,1722 @@
+{
+  "generatedAt": "2026-07-09T16:18:26.682Z",
+  "mode": "apply",
+  "file": "C:\\Users\\ed_ba\\Desktop\\hidalgo\\001 Plantilla Subproyecto o Actividad Especifica AdmonHeH v2.xlsx",
+  "sheetName": "Supproyectos",
+  "backupPath": "E:\\AIB\\agencIA\\buildreq\\backups\\buildreq-before-subprojects-import-20260709-161756Z.sql",
+  "snapshotPath": "E:\\AIB\\agencIA\\buildreq\\backups\\buildreq-before-subprojects-import-20260709-161756Z.snapshot.json",
+  "counts": {
+    "rawRows": 61,
+    "parsedRows": 54,
+    "skippedRows": 6,
+    "validationErrors": 0,
+    "inserts": 13,
+    "updates": 41,
+    "unchanged": 0,
+    "existingNotListed": 5
+  },
+  "parse": {
+    "headerRowNumber": 1,
+    "skippedRows": [
+      {
+        "rowNumber": 56,
+        "reason": "Fila vacia",
+        "projectLabel": null,
+        "code": null,
+        "name": null
+      },
+      {
+        "rowNumber": 57,
+        "reason": "Fila vacia",
+        "projectLabel": null,
+        "code": null,
+        "name": null
+      },
+      {
+        "rowNumber": 58,
+        "reason": "Fila vacia",
+        "projectLabel": null,
+        "code": null,
+        "name": null
+      },
+      {
+        "rowNumber": 59,
+        "reason": "Fila vacia",
+        "projectLabel": null,
+        "code": null,
+        "name": null
+      },
+      {
+        "rowNumber": 60,
+        "reason": "Fila vacia",
+        "projectLabel": null,
+        "code": null,
+        "name": null
+      },
+      {
+        "rowNumber": 61,
+        "reason": "Fila vacia",
+        "projectLabel": null,
+        "code": null,
+        "name": null
+      }
+    ],
+    "validationErrors": []
+  },
+  "inserts": [
+    {
+      "projectId": 13,
+      "projectCode": "001",
+      "code": "001-1",
+      "name": "MANTENIMIENTO DE MAQUINARIA Y EQUIPO",
+      "description": "MANTENIMIENTO DE MAQUINARIA Y EQUIPO",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": null,
+      "startDateIso": "2026-07-01",
+      "endDateIso": null,
+      "isActive": true,
+      "sourceRow": 43
+    },
+    {
+      "projectId": 14,
+      "projectCode": "004",
+      "code": "004-1",
+      "name": "MANTENIMIENTO DE CHAPEADORAS",
+      "description": "MANTENIMIENTO PREVENTIVO Y CORRECTIVO",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": null,
+      "startDateIso": "2026-07-01",
+      "endDateIso": null,
+      "isActive": true,
+      "sourceRow": 44
+    },
+    {
+      "projectId": 14,
+      "projectCode": "004",
+      "code": "004-2",
+      "name": "MANTENIMIENTO EQUIPO MENOR A GASOLINA",
+      "description": "MANTENIMIENTO EQUIPO MENOR A GASOLINA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": null,
+      "startDateIso": "2026-07-01",
+      "endDateIso": null,
+      "isActive": true,
+      "sourceRow": 45
+    },
+    {
+      "projectId": 14,
+      "projectCode": "004",
+      "code": "004-3",
+      "name": "LIMPIEZA CA-5",
+      "description": "LIMPIEZA VIAL, PEAJES, ACCIDENTES",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": null,
+      "startDateIso": "2026-07-01",
+      "endDateIso": null,
+      "isActive": true,
+      "sourceRow": 46
+    },
+    {
+      "projectId": 15,
+      "projectCode": "006",
+      "code": "006-1",
+      "name": "TALLER VULCANIZADO",
+      "description": "REPARACION E INSTALACION DE LLANTAS Y TUBO LLANTAS",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": null,
+      "startDateIso": "2026-07-01",
+      "endDateIso": null,
+      "isActive": true,
+      "sourceRow": 47
+    },
+    {
+      "projectId": 15,
+      "projectCode": "006",
+      "code": "006-2",
+      "name": "TALLER  MECANICA",
+      "description": "TRABAJOS VARIOS",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": null,
+      "startDateIso": "2026-07-01",
+      "endDateIso": null,
+      "isActive": true,
+      "sourceRow": 48
+    },
+    {
+      "projectId": 15,
+      "projectCode": "006",
+      "code": "006-3",
+      "name": "TALLER SOLDADURA",
+      "description": "TRABAJOS VARIOS",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": null,
+      "startDateIso": "2026-07-01",
+      "endDateIso": null,
+      "isActive": true,
+      "sourceRow": 49
+    },
+    {
+      "projectId": 15,
+      "projectCode": "006",
+      "code": "006-4",
+      "name": "EQUIPO PROTECCION PERSONAL (EPP)",
+      "description": "EQUIPO PROTECCION PERSONAL (EPP)",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": null,
+      "startDateIso": "2026-07-01",
+      "endDateIso": null,
+      "isActive": true,
+      "sourceRow": 50
+    },
+    {
+      "projectId": 15,
+      "projectCode": "006",
+      "code": "006-5",
+      "name": "MANTENIMIENTO DE PLANTEL",
+      "description": "REPARACIONES VARIAS",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": null,
+      "startDateIso": "2026-07-01",
+      "endDateIso": null,
+      "isActive": true,
+      "sourceRow": 51
+    },
+    {
+      "projectId": 15,
+      "projectCode": "006",
+      "code": "006-6",
+      "name": "SUMINISTROS",
+      "description": "OFICINA TECNICA, ADMINISTRATIVA Y BODEGA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": null,
+      "startDateIso": "2026-07-01",
+      "endDateIso": null,
+      "isActive": true,
+      "sourceRow": 52
+    },
+    {
+      "projectId": 15,
+      "projectCode": "006",
+      "code": "006-7",
+      "name": "HIDRATACION DEL PERSONAL",
+      "description": "HIDRATACION DEL PERSONAL",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": null,
+      "startDateIso": "2026-07-01",
+      "endDateIso": null,
+      "isActive": true,
+      "sourceRow": 53
+    },
+    {
+      "projectId": 15,
+      "projectCode": "006",
+      "code": "006-8",
+      "name": "ASFALTO CA-5",
+      "description": "COMRA DE SUMINISTROS DE TRABAJO",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": null,
+      "startDateIso": "2026-07-01",
+      "endDateIso": null,
+      "isActive": true,
+      "sourceRow": 54
+    },
+    {
+      "projectId": 15,
+      "projectCode": "006",
+      "code": "006-9",
+      "name": "CONCRETO CA-5",
+      "description": "COMRA DE SUMINISTROS DE TRABAJO",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": null,
+      "startDateIso": "2026-07-01",
+      "endDateIso": null,
+      "isActive": true,
+      "sourceRow": 55
+    }
+  ],
+  "updates": [
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "1.01",
+      "name": "RÓTULOS DE IDENTIFICACIÓN DEL PROYECTO.",
+      "description": "SEÑALIZACION PREVENTIVA EN LA VIA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 2,
+      "id": 7,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 7,
+        "projectId": 21,
+        "code": "1.01",
+        "name": "Rótulos de Identificación del Proyecto.",
+        "description": "Señalizacion preventiva en la via",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "3.03",
+      "name": "RIGIDIZACIÓN DE BASE CON CEMENTO (E=20CM).",
+      "description": "CONFORMACIÓN DE SU EL BASE PARA COLOCACIÓN DE CONCRETO HIDRÁULICO",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 3,
+      "id": 8,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 8,
+        "projectId": 21,
+        "code": "3.03",
+        "name": "Rigidización de Base con Cemento (e=20cm).",
+        "description": "Conformación de su el base para colocación de concreto hidráulico",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "3.05",
+      "name": "CONCRETO PARA PAVIMENTO MR=650 PSI",
+      "description": "COLOCACIN DE CONCRETO HIDRAULICO EN LA VIA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 4,
+      "id": 9,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 9,
+        "projectId": 21,
+        "code": "3.05",
+        "name": "Concreto Para Pavimento MR=650 PSI",
+        "description": "Colocacin de concreto hidraulico en la via",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "3.07",
+      "name": "CUÑA DE TRANSICIÓN, BORDE DE PAVIMENTO CON SUB-BASE CEMENTADA AL 3%",
+      "description": "CONSTRUCCION DE CUÑAS EN LA VIA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 5,
+      "id": 10,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 10,
+        "projectId": 21,
+        "code": "3.07",
+        "name": "Cuña de Transición, Borde de Pavimento con Sub-Base Cementada al 3%",
+        "description": "Construccion de cuñas en la via",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "3.09",
+      "name": "CUÑA DE TRANSICIÓN BORDE DE PAVIMENTO CON CONCRETO 180 KG/CM2",
+      "description": "CONSTRUCCION DE CUÑAS EN LA VIA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 6,
+      "id": 11,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 11,
+        "projectId": 21,
+        "code": "3.09",
+        "name": "Cuña de Transición Borde de Pavimento con concreto 180 Kg/cm2",
+        "description": "Construccion de cuñas en la via",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "4.03",
+      "name": "COLOCACIÓN ALCANTARILLA TCR DE 30\" TIPO III",
+      "description": "CONSTRUCCION DE ALCANTARILLA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 7,
+      "id": 12,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 12,
+        "projectId": 21,
+        "code": "4.03",
+        "name": "Colocación Alcantarilla TCR de 30\" Tipo III",
+        "description": "Construccion de alcantarilla",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "4.04",
+      "name": "COLOCACIÓN ALCANTARILLA TCR DE 36\" TIPO III",
+      "description": "CONSTRUCCION DE ALCANTARILLA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 8,
+      "id": 13,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 13,
+        "projectId": 21,
+        "code": "4.04",
+        "name": "Colocación Alcantarilla TCR de 36\" Tipo III",
+        "description": "Construccion de alcantarilla",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "4.05",
+      "name": "COLOCACIÓN ALCANTARILLA TCR DE 72\" TIPO III",
+      "description": "CONSTRUCCION DE ALCANTARILLA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 9,
+      "id": 14,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 14,
+        "projectId": 21,
+        "code": "4.05",
+        "name": "Colocación Alcantarilla TCR de 72\" Tipo III",
+        "description": "Construccion de alcantarilla",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "4.09",
+      "name": "ESTRUCTURAS DE MAMPOSTERÍA DE PIEDRA",
+      "description": "TRABAJOS DE MANPOSTERIA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 10,
+      "id": 15,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 15,
+        "projectId": 21,
+        "code": "4.09",
+        "name": "Estructuras de Mampostería de piedra",
+        "description": "Trabajos de manposteria",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "4.13",
+      "name": "SUB-DRENAJE PVC SDR-41, DIÁMETRO 6\" PERFORADO",
+      "description": "CONSTRUCCIÓN DE FILTRO EN LA VÍA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 11,
+      "id": 16,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 16,
+        "projectId": 21,
+        "code": "4.13",
+        "name": "Sub-drenaje PVC SDR-41, diámetro 6\" perforado",
+        "description": "Construcción de filtro en la vía",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "4.16",
+      "name": "COLOCACIÓN ALCANTARILLA TCR DE 42\" TIPO III",
+      "description": "CONSTRUCCIÓN DE ALCANTARILLA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 12,
+      "id": 17,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 17,
+        "projectId": 21,
+        "code": "4.16",
+        "name": "Colocación Alcantarilla TCR de 42\" Tipo III",
+        "description": "Construcción de alcantarilla",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "4.17",
+      "name": "COLOCACIÓN ALCANTARILLA TCR DE 48\" TIPO III",
+      "description": "CONSTRUCCIÓN DE ALCANTARILLA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 13,
+      "id": 18,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 18,
+        "projectId": 21,
+        "code": "4.17",
+        "name": "Colocación Alcantarilla TCR de 48\" Tipo III",
+        "description": "Construcción de alcantarilla",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "5.02",
+      "name": "GAVIONES TIPO CAJA 2 X 1 X 1 M",
+      "description": "CONSTRUCCIÓN DE GAVINES",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 14,
+      "id": 19,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 19,
+        "projectId": 21,
+        "code": "5.02",
+        "name": "Gaviones Tipo Caja 2 x 1 x 1 m",
+        "description": "Construcción de gavines",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "5.03",
+      "name": "COLCHONETAS 0.23 X 2 X 4 M",
+      "description": "CONSTRUCCIÓN DE GAVINES",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 15,
+      "id": 20,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 20,
+        "projectId": 21,
+        "code": "5.03",
+        "name": "Colchonetas 0.23 x 2 x 4 m",
+        "description": "Construcción de gavines",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "5.05",
+      "name": "BORDILLOS DE CONCRETO Y CUNETAS (210 KG/CM2)",
+      "description": "CONSTRUCCIÓN DE BORDILLOS EN LA VIA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 16,
+      "id": 21,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 21,
+        "projectId": 21,
+        "code": "5.05",
+        "name": "Bordillos de concreto y cunetas (210 kg/cm2)",
+        "description": "Construcción de bordillos en la via",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "5.06",
+      "name": "ACERA DE CONCRETO E=10CMS (180 KG/CM2)",
+      "description": "CONSTRUCCIÓN DE ACERAS DE CONCRETO EN LA VIA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 17,
+      "id": 22,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 22,
+        "projectId": 21,
+        "code": "5.06",
+        "name": "Acera de Concreto e=10cms (180 kg/cm2)",
+        "description": "Construcción de aceras de concreto en la via",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "5.07",
+      "name": "DEFENSA DE CONCRETO (180 KG/CM2) CON REFUERZO (NEW JERSEY)",
+      "description": "CONSTRUCCIÓN DE BARRERAS DE CONCRETO EN LA VIA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 18,
+      "id": 23,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 23,
+        "projectId": 21,
+        "code": "5.07",
+        "name": "Defensa de Concreto (180 kg/cm2) con Refuerzo (New Jersey)",
+        "description": "Construcción de barreras de concreto en la via",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "6.01",
+      "name": "TUBERÍA PVC DE RSD-21 DIAMETRO 2\"AGUA POTABLE",
+      "description": "REEMPLAZO DE TUBERIA DE AGUA POTABLE",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 19,
+      "id": 24,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 24,
+        "projectId": 21,
+        "code": "6.01",
+        "name": "Tubería PVC de RSD-21 Diametro 2\"Agua Potable",
+        "description": "Reemplazo de tuberia de agua potable",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "6.02",
+      "name": "TUBERÍA PVC DE RSD-21 DIÁMETRO 3\"AGUA POTABLE",
+      "description": "REEMPLAZO DE TUBERIA DE AGUA POTABLE",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 20,
+      "id": 25,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 25,
+        "projectId": 21,
+        "code": "6.02",
+        "name": "Tubería PVC de RSD-21 Diámetro 3\"Agua Potable",
+        "description": "Reemplazo de tuberia de agua potable",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "6.03",
+      "name": "TUBERÍA PVC DE RSD-21 DIÁMETRO 4\"AGUA POTABLE",
+      "description": "REEMPLAZO DE TUBERIA DE AGUA POTABLE",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 21,
+      "id": 26,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 26,
+        "projectId": 21,
+        "code": "6.03",
+        "name": "Tubería PVC de RSD-21 Diámetro 4\"Agua Potable",
+        "description": "Reemplazo de tuberia de agua potable",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "6.04",
+      "name": "TUBERÍA PVC DE RSD-21 DIÁMETRO 6\"AGUA POTABLE",
+      "description": "REEMPLAZO DE TUBERIA DE AGUA POTABLE",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 22,
+      "id": 27,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 27,
+        "projectId": 21,
+        "code": "6.04",
+        "name": "Tubería PVC de RSD-21 Diámetro 6\"Agua Potable",
+        "description": "Reemplazo de tuberia de agua potable",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "6.05",
+      "name": "TUBERÍA PVC DE RSD-21 DIÁMETRO 8\"AGUA POTABLE",
+      "description": "REEMPLAZO DE TUBERIA DE AGUA POTABLE",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 23,
+      "id": 28,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 28,
+        "projectId": 21,
+        "code": "6.05",
+        "name": "Tubería PVC de RSD-21 Diámetro 8\"Agua Potable",
+        "description": "Reemplazo de tuberia de agua potable",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "6.07",
+      "name": "TUBERÍA PVC 4\" ALCANTARILLADO SANITARIO",
+      "description": "REEMPLAZO DE TUBERIA DE ALCANTARILLA SANITARIA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 24,
+      "id": 29,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 29,
+        "projectId": 21,
+        "code": "6.07",
+        "name": "Tubería pvc 4\" Alcantarillado Sanitario",
+        "description": "Reemplazo de tuberia de alcantarilla sanitaria",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "6.08",
+      "name": "TUBERÍA PVC 6\" ALCANTARILLADO SANITARIO",
+      "description": "REEMPLAZO DE TUBERIA DE ALCANTARILLA SANITARIA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 25,
+      "id": 30,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 30,
+        "projectId": 21,
+        "code": "6.08",
+        "name": "Tubería pvc 6\" Alcantarillado Sanitario",
+        "description": "Reemplazo de tuberia de alcantarilla sanitaria",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "6.09",
+      "name": "TUBERÍA PVC 8\" ALCANTARILLADO SANITARIO",
+      "description": "REEMPLAZO DE TUBERIA DE ALCANTARILLA SANITARIA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 26,
+      "id": 31,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 31,
+        "projectId": 21,
+        "code": "6.09",
+        "name": "Tubería pvc 8\" Alcantarillado Sanitario",
+        "description": "Reemplazo de tuberia de alcantarilla sanitaria",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "10",
+      "name": "MURO DE CONCRETO CICLOPEO EST: KM. 218+260",
+      "description": "CONSTRUCCIÓN DE MURO",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 27,
+      "id": 32,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 32,
+        "projectId": 21,
+        "code": "10",
+        "name": "Muro de concreto ciclopeo Est: km. 218+260",
+        "description": "Construcción de muro",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "11",
+      "name": "MURO MECANIZADAMENTE ESTABILIZADO EST: KM. 222+050",
+      "description": "CONSTRUCCIÓN DE MURO",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 28,
+      "id": 33,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 33,
+        "projectId": 21,
+        "code": "11",
+        "name": "Muro mecanizadamente estabilizado Est: km. 222+050",
+        "description": "Construcción de muro",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "12",
+      "name": "MURO MECANIZADAMENTE ESTABILIZADO EST: KM. 219+700",
+      "description": "CONSTRUCCIÓN DE MURO",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 29,
+      "id": 34,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 34,
+        "projectId": 21,
+        "code": "12",
+        "name": "Muro mecanizadamente estabilizado Est: km. 219+700",
+        "description": "Construcción de muro",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "001",
+      "name": "GERENCIA DEL PROYECTO",
+      "description": "COMPRA DE SUMINISTROS DE OFICINA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 30,
+      "id": 35,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 35,
+        "projectId": 21,
+        "code": "001",
+        "name": "Gerencia del proyecto",
+        "description": "Compra de suministros de oficina",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "002",
+      "name": "OFICINA ADMINISTRATIVA",
+      "description": "COMPRA DE SUMINISTROS DE OFICINA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 31,
+      "id": 36,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 36,
+        "projectId": 21,
+        "code": "002",
+        "name": "Oficina administrativa",
+        "description": "Compra de suministros de oficina",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "003",
+      "name": "OFICINA TECNICA",
+      "description": "COMPRA DE SUMINISTROS DE OFICINA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 32,
+      "id": 37,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 37,
+        "projectId": 21,
+        "code": "003",
+        "name": "Oficina tecnica",
+        "description": "Compra de suministros de oficina",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "004",
+      "name": "LABORATORIO DE SUELOS",
+      "description": "COMPRA DE SUMINISTROS, INSUMOS Y MATERIALES DE LABORATORIO",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 33,
+      "id": 38,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 38,
+        "projectId": 21,
+        "code": "004",
+        "name": "Laboratorio de suelos",
+        "description": "Compra de suministros, insumos y materiales de laboratorio",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "005",
+      "name": "BODEGA DEL PROYECTO",
+      "description": "COMPRA Y ALMACENAJE DE SUMINISTROS, INSUMOS, MATERIALES, REPUESTOS Y EQUIPOS",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 34,
+      "id": 39,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 39,
+        "projectId": 21,
+        "code": "005",
+        "name": "Bodega del proyecto",
+        "description": "Compra y almacenaje de suministros, insumos, materiales, repuestos y equipos",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "006",
+      "name": "COCINA Y COMEDOR DEL PROYECTO",
+      "description": "COMPRA DE VÍVERES Y ENSERES DE COCINA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 35,
+      "id": 40,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 40,
+        "projectId": 21,
+        "code": "006",
+        "name": "Cocina y Comedor del proyecto",
+        "description": "Compra de víveres y enseres de cocina",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "007",
+      "name": "DORMITORIOS DEL PERSONAL",
+      "description": "COMPRA DE ENSERES DE DORMITORIO",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 36,
+      "id": 41,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 41,
+        "projectId": 21,
+        "code": "007",
+        "name": "Dormitorios del personal",
+        "description": "Compra de enseres de dormitorio",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "008",
+      "name": "EQUIPO DE PROTECCIÓN PERSONAL (EPP)",
+      "description": "COMPRA DE EQUIPO DE SEGURIDAD",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 37,
+      "id": 42,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 42,
+        "projectId": 21,
+        "code": "008",
+        "name": "Equipo de Protección Personal (EPP)",
+        "description": "Compra de equipo de seguridad",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "009",
+      "name": "TALLER DE MECÁNICA",
+      "description": "COMPRA DE MATERIALES Y REPUESTOS PARA REPARACIÓN DE MAQUINAS",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 38,
+      "id": 43,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 43,
+        "projectId": 21,
+        "code": "009",
+        "name": "Taller de mecánica",
+        "description": "Compra de materiales y repuestos para reparación de maquinas",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "010",
+      "name": "TALLER DE SUELDA",
+      "description": "COMPRA DE MATERIALES PARA REPARACION DE LLANTAS",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 39,
+      "id": 44,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 44,
+        "projectId": 21,
+        "code": "010",
+        "name": "Taller de suelda",
+        "description": "Compra de materiales para reparacion de llantas",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "011",
+      "name": "TALLER DE REPARACIÓN DE LLANTAS",
+      "description": "COMPRA DE MATERIALES PARA SOLDADURA",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 40,
+      "id": 45,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 45,
+        "projectId": 21,
+        "code": "011",
+        "name": "Taller de reparación de llantas",
+        "description": "Compra de materiales para soldadura",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "012",
+      "name": "FABRICACIÓN DE DOVELAS",
+      "description": "COMPRA DE MATERIALES PARA FABRICACIN DE DOVELAS",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 41,
+      "id": 46,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 46,
+        "projectId": 21,
+        "code": "012",
+        "name": "Fabricación de dovelas",
+        "description": "Compra de materiales para fabricacin de dovelas",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    },
+    {
+      "projectId": 21,
+      "projectCode": "017",
+      "code": "013",
+      "name": "MANTENIMIENTO DE MAQUINARIA",
+      "description": "COMPRA DE FILTROS, ACEITES, DIESEL, ETC.",
+      "startDate": "2026-07-01T06:00:00.000Z",
+      "endDate": "2027-02-07T06:00:00.000Z",
+      "startDateIso": "2026-07-01",
+      "endDateIso": "2027-02-07",
+      "isActive": true,
+      "sourceRow": 42,
+      "id": 47,
+      "changedFields": [
+        "name",
+        "description"
+      ],
+      "previous": {
+        "id": 47,
+        "projectId": 21,
+        "code": "013",
+        "name": "Mantenimiento de Maquinaria",
+        "description": "Compra de filtros, aceites, Diesel, etc.",
+        "startDate": "2026-07-01T06:00:00.000Z",
+        "endDate": "2027-02-07T06:00:00.000Z",
+        "isActive": true
+      }
+    }
+  ],
+  "unchanged": [],
+  "existingNotListed": [
+    {
+      "id": 5,
+      "projectId": 14,
+      "code": "004SP-26",
+      "name": "ETAPA2106",
+      "description": "50 KM DE ATENCIÓN ENTRE ETAPA 2 Y 3",
+      "startDate": "2026-06-19T12:00:00.000Z",
+      "endDate": "2026-08-13T12:00:00.000Z",
+      "isActive": true,
+      "projectCode": "004",
+      "projectName": "Mantenimiento rutinario CA-5"
+    },
+    {
+      "id": 6,
+      "projectId": 21,
+      "code": "17_01",
+      "name": "BORDILLOS CONCRETO 210 KG/CM2 APROXIMACIÓN PUENTES",
+      "description": null,
+      "startDate": "2026-07-01T12:00:00.000Z",
+      "endDate": "2026-12-31T12:00:00.000Z",
+      "isActive": true,
+      "projectCode": "017",
+      "projectName": "CA-4 Ocotepeque - El Portillo"
+    },
+    {
+      "id": 3,
+      "projectId": 15,
+      "code": "SP-PRUEBAS",
+      "name": "SP-PRUEBAS",
+      "description": null,
+      "startDate": "2026-06-12T12:00:00.000Z",
+      "endDate": "2026-08-28T12:00:00.000Z",
+      "isActive": true,
+      "projectCode": "006",
+      "projectName": "Mantenimiento periódico"
+    },
+    {
+      "id": 4,
+      "projectId": 15,
+      "code": "SP-PRUEBAS2",
+      "name": "SP-PRUEBAS",
+      "description": null,
+      "startDate": "2026-06-15T12:00:00.000Z",
+      "endDate": "2027-01-30T12:00:00.000Z",
+      "isActive": true,
+      "projectCode": "006",
+      "projectName": "Mantenimiento periódico"
+    },
+    {
+      "id": 2,
+      "projectId": 14,
+      "code": "SUBPROYECTO1",
+      "name": "ETAPA 1",
+      "description": "PRUEBA",
+      "startDate": "2026-06-10T12:00:00.000Z",
+      "endDate": "2026-08-31T12:00:00.000Z",
+      "isActive": false,
+      "projectCode": "004",
+      "projectName": "Mantenimiento rutinario CA-5"
+    }
+  ],
+  "appliedRows": [
+    {
+      "action": "update",
+      "id": 7,
+      "code": "1.01"
+    },
+    {
+      "action": "update",
+      "id": 8,
+      "code": "3.03"
+    },
+    {
+      "action": "update",
+      "id": 9,
+      "code": "3.05"
+    },
+    {
+      "action": "update",
+      "id": 10,
+      "code": "3.07"
+    },
+    {
+      "action": "update",
+      "id": 11,
+      "code": "3.09"
+    },
+    {
+      "action": "update",
+      "id": 12,
+      "code": "4.03"
+    },
+    {
+      "action": "update",
+      "id": 13,
+      "code": "4.04"
+    },
+    {
+      "action": "update",
+      "id": 14,
+      "code": "4.05"
+    },
+    {
+      "action": "update",
+      "id": 15,
+      "code": "4.09"
+    },
+    {
+      "action": "update",
+      "id": 16,
+      "code": "4.13"
+    },
+    {
+      "action": "update",
+      "id": 17,
+      "code": "4.16"
+    },
+    {
+      "action": "update",
+      "id": 18,
+      "code": "4.17"
+    },
+    {
+      "action": "update",
+      "id": 19,
+      "code": "5.02"
+    },
+    {
+      "action": "update",
+      "id": 20,
+      "code": "5.03"
+    },
+    {
+      "action": "update",
+      "id": 21,
+      "code": "5.05"
+    },
+    {
+      "action": "update",
+      "id": 22,
+      "code": "5.06"
+    },
+    {
+      "action": "update",
+      "id": 23,
+      "code": "5.07"
+    },
+    {
+      "action": "update",
+      "id": 24,
+      "code": "6.01"
+    },
+    {
+      "action": "update",
+      "id": 25,
+      "code": "6.02"
+    },
+    {
+      "action": "update",
+      "id": 26,
+      "code": "6.03"
+    },
+    {
+      "action": "update",
+      "id": 27,
+      "code": "6.04"
+    },
+    {
+      "action": "update",
+      "id": 28,
+      "code": "6.05"
+    },
+    {
+      "action": "update",
+      "id": 29,
+      "code": "6.07"
+    },
+    {
+      "action": "update",
+      "id": 30,
+      "code": "6.08"
+    },
+    {
+      "action": "update",
+      "id": 31,
+      "code": "6.09"
+    },
+    {
+      "action": "update",
+      "id": 32,
+      "code": "10"
+    },
+    {
+      "action": "update",
+      "id": 33,
+      "code": "11"
+    },
+    {
+      "action": "update",
+      "id": 34,
+      "code": "12"
+    },
+    {
+      "action": "update",
+      "id": 35,
+      "code": "001"
+    },
+    {
+      "action": "update",
+      "id": 36,
+      "code": "002"
+    },
+    {
+      "action": "update",
+      "id": 37,
+      "code": "003"
+    },
+    {
+      "action": "update",
+      "id": 38,
+      "code": "004"
+    },
+    {
+      "action": "update",
+      "id": 39,
+      "code": "005"
+    },
+    {
+      "action": "update",
+      "id": 40,
+      "code": "006"
+    },
+    {
+      "action": "update",
+      "id": 41,
+      "code": "007"
+    },
+    {
+      "action": "update",
+      "id": 42,
+      "code": "008"
+    },
+    {
+      "action": "update",
+      "id": 43,
+      "code": "009"
+    },
+    {
+      "action": "update",
+      "id": 44,
+      "code": "010"
+    },
+    {
+      "action": "update",
+      "id": 45,
+      "code": "011"
+    },
+    {
+      "action": "update",
+      "id": 46,
+      "code": "012"
+    },
+    {
+      "action": "update",
+      "id": 47,
+      "code": "013"
+    },
+    {
+      "action": "insert",
+      "id": 48,
+      "code": "001-1"
+    },
+    {
+      "action": "insert",
+      "id": 49,
+      "code": "004-1"
+    },
+    {
+      "action": "insert",
+      "id": 50,
+      "code": "004-2"
+    },
+    {
+      "action": "insert",
+      "id": 51,
+      "code": "004-3"
+    },
+    {
+      "action": "insert",
+      "id": 52,
+      "code": "006-1"
+    },
+    {
+      "action": "insert",
+      "id": 53,
+      "code": "006-2"
+    },
+    {
+      "action": "insert",
+      "id": 54,
+      "code": "006-3"
+    },
+    {
+      "action": "insert",
+      "id": 55,
+      "code": "006-4"
+    },
+    {
+      "action": "insert",
+      "id": 56,
+      "code": "006-5"
+    },
+    {
+      "action": "insert",
+      "id": 57,
+      "code": "006-6"
+    },
+    {
+      "action": "insert",
+      "id": 58,
+      "code": "006-7"
+    },
+    {
+      "action": "insert",
+      "id": 59,
+      "code": "006-8"
+    },
+    {
+      "action": "insert",
+      "id": 60,
+      "code": "006-9"
+    }
+  ]
+}

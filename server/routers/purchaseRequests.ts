@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
+import { listPurchaseRequestsPage } from "../paginatedLists";
 import { procurementProcedure as protectedProcedure, router } from "../_core/trpc";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 import {
@@ -443,6 +444,30 @@ async function resolvePurchaseRequestItemTarget(input: {
 }
 
 export const purchaseRequestsRouter = router({
+  listPage: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.number().optional(),
+        purchaseType: z.string().optional(),
+        status: z.string().optional(),
+        search: z.string().trim().optional(),
+        page: z.number().int().min(1).optional(),
+        pageSize: z.number().int().min(10).max(200).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      if (!canReadPurchaseRequests(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a las solicitudes de compra",
+        });
+      }
+      return listPurchaseRequestsPage({
+        ...applyProjectScope(input, ctx.user),
+        approvalsEnabled: isPurchaseRequestApprovalEnabled(),
+      });
+    }),
+
   list: protectedProcedure
     .input(
       z

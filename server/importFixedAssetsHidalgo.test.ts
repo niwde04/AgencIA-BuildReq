@@ -128,7 +128,7 @@ describe("import-fixed-assets-hidalgo", () => {
         "Tipo de articulo": "ACTIVO",
         "Grupo SAP": "0702 MAQUINARIA PESADA",
         "Descripcion del articulo": "ZARANDA VIBRATORIA",
-        "Descripcion del articulo completa": "Descripcion completa no cargada",
+        "Descripcion del articulo completa": "Descripcion completa cargada",
         "Permite retencion": "NO",
         Activo: "NO",
         "Serie activo fijo": "110203306",
@@ -158,6 +158,9 @@ describe("import-fixed-assets-hidalgo", () => {
 
       expect(workbook.sheetName).toBe("ARTICULOS");
       expect(workbook.unmappedColumns).toContain("Año");
+      expect(workbook.unmappedColumns).not.toContain(
+        "Descripcion del articulo completa"
+      );
       expect(result.validationErrors).toEqual([]);
       expect(result.parsedRows).toHaveLength(1);
       expect(result.skippedRows).toEqual([
@@ -169,7 +172,7 @@ describe("import-fixed-assets-hidalgo", () => {
       ]);
       expect(result.parsedRows[0]).toMatchObject({
         itemCode: "070200001",
-        description: "ZARANDA VIBRATORIA",
+        description: "Descripcion completa cargada",
         itemGroup: "0702 MAQUINARIA PESADA",
         allowsTaxWithholding: false,
         isActive: false,
@@ -187,6 +190,25 @@ describe("import-fixed-assets-hidalgo", () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("falls back to short description when full description is blank", () => {
+    const result = parseRows([
+      {
+        "Numero de articulo": "AF001",
+        "Tipo de articulo": "ACTIVO",
+        "Grupo SAP": "GRUPO",
+        "Descripcion del articulo": "Descripcion corta",
+        "Descripcion del articulo completa": "",
+      },
+    ]);
+
+    expect(result.validationErrors).toEqual([]);
+    expect(result.parsedRows).toHaveLength(1);
+    expect(result.parsedRows[0]).toMatchObject({
+      itemCode: "AF001",
+      description: "Descripcion corta",
+    });
   });
 
   it("falls back to Hoja1 when ARTICULOS is not present", async () => {

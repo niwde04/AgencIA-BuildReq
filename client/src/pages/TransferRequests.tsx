@@ -1,4 +1,6 @@
 import { trpc } from "@/lib/trpc";
+import { DataPagination } from "@/components/DataPagination";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -33,6 +35,8 @@ import {
 } from "@/components/ui/select";
 import { Plus, Truck, Ban, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+
+const PAGE_SIZE = 50;
 import { toast } from "sonner";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -242,6 +246,8 @@ export default function TransferRequests() {
   const [unit, setUnit] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const debouncedSearchTerm = useDebouncedValue(searchTerm);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
   const [transferQuantityByItemId, setTransferQuantityByItemId] = useState<
     Record<number, string>
@@ -259,7 +265,20 @@ export default function TransferRequests() {
     useState<Record<number, string>>({});
 
   const { data: projects } = trpc.projects.list.useQuery({ status: "activo" });
-  const { data: transferRequests, isLoading } = trpc.transferRequests.list.useQuery();
+  const {
+    data: transferRequestsPage,
+    isLoading,
+    isPlaceholderData,
+  } = trpc.transferRequests.listPage.useQuery(
+    {
+      search: debouncedSearchTerm.trim() || undefined,
+      status: statusFilter === "all" ? undefined : statusFilter,
+      page,
+      pageSize: PAGE_SIZE,
+    },
+    { placeholderData: previousData => previousData }
+  );
+  const transferRequests = transferRequestsPage?.items ?? [];
   const {
     data: detail,
     isLoading: detailLoading,
@@ -340,7 +359,7 @@ export default function TransferRequests() {
       setItemName("");
       setQuantity("");
       setUnit("");
-      void utils.transferRequests.list.invalidate();
+      void utils.transferRequests.invalidate();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -349,8 +368,8 @@ export default function TransferRequests() {
     onSuccess: (result) => {
       toast.success(`Traslado ${result.transferNumber} generado`);
       void Promise.all([
-        utils.transferRequests.list.invalidate(),
-        utils.transfers.list.invalidate(),
+        utils.transferRequests.invalidate(),
+        utils.transfers.invalidate(),
         detailId ? utils.transferRequests.getById.invalidate({ id: detailId }) : Promise.resolve(),
       ]);
     },
@@ -362,7 +381,7 @@ export default function TransferRequests() {
       onSuccess: () => {
         toast.success("Bodega destino actualizada");
         void Promise.all([
-          utils.transferRequests.list.invalidate(),
+          utils.transferRequests.invalidate(),
           detailId
             ? utils.transferRequests.getById.invalidate({ id: detailId })
             : Promise.resolve(),
@@ -376,7 +395,7 @@ export default function TransferRequests() {
       toast.success("Solicitud de traslado anulada");
       setConfirmCancelId(null);
       void Promise.all([
-        utils.transferRequests.list.invalidate(),
+        utils.transferRequests.invalidate(),
         detailId ? utils.transferRequests.getById.invalidate({ id: detailId }) : Promise.resolve(),
       ]);
     },
@@ -922,33 +941,18 @@ export default function TransferRequests() {
           : item.quantity ?? 0)
     );
 
-  const filteredTransferRequests = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredTransferRequests = transferRequests;
 
-    return (transferRequests ?? []).filter((row: any) => {
-      const transferRequest = row.transferRequest;
-      const projectLabel = row.project
-        ? `${row.project.code} ${row.project.name}`
-        : "";
-      const destinationLabel = getDestinationLabel(transferRequest);
-      const matchesSearch =
-        !normalizedSearch ||
-        [
-          transferRequest.requestNumber,
-          row.materialRequest?.requestNumber,
-          projectLabel,
-          destinationLabel,
-        ]
-          .filter(Boolean)
-          .some(value =>
-            String(value).toLowerCase().includes(normalizedSearch)
-          );
-      const matchesStatus =
-        statusFilter === "all" || transferRequest.status === statusFilter;
-
-      return matchesSearch && matchesStatus;
-    });
-  }, [searchTerm, statusFilter, transferRequests]);
+  useEffect(() => setPage(1), [debouncedSearchTerm, statusFilter]);
+  useEffect(() => {
+    if (
+      !isPlaceholderData &&
+      transferRequestsPage?.page &&
+      transferRequestsPage.page !== page
+    ) {
+      setPage(transferRequestsPage.page);
+    }
+  }, [isPlaceholderData, page, transferRequestsPage?.page]);
 
   const handleConvertToTransfer = () => {
     if (!detail) return;
@@ -1276,6 +1280,15 @@ export default function TransferRequests() {
               </table>
             </div>
           )}
+          {transferRequestsPage ? (
+            <DataPagination
+              page={transferRequestsPage.page}
+              pageSize={transferRequestsPage.pageSize}
+              total={transferRequestsPage.total}
+              totalPages={transferRequestsPage.totalPages}
+              onPageChange={setPage}
+            />
+          ) : null}
         </CardContent>
       </Card>
 
