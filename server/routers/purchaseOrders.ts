@@ -22,6 +22,7 @@ import {
   getPurchaseOrderApprovalReadinessError,
   isPurchaseOrderDraftLike,
   isPurchaseOrderApprovalEnabled,
+  isPurchaseRequestApprovalEnabled,
   isPurchaseRequestConversionReady,
   PROCUREMENT_APPROVALS_DISABLED_MESSAGE,
   purchaseOrderExceedsApprovalLimit,
@@ -819,6 +820,15 @@ export const purchaseOrdersRouter = router({
             message: "Uno de los ítems no pertenece a la solicitud de compra",
           });
         }
+        if (
+          isPurchaseRequestApprovalEnabled() &&
+          item.approvalStatus !== "aprobada"
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `El ítem ${item.itemName} no fue aprobado y no puede convertirse`,
+          });
+        }
 
         const pendingQuantity = getPendingConversionQuantity(item);
         const quantityToConvert = requestedQuantity;
@@ -1126,7 +1136,12 @@ export const purchaseOrdersRouter = router({
 
       const allItems = purchaseRequests.flatMap(detail =>
         (detail.items ?? [])
-          .filter((item: any) => getPendingConversionQuantity(item) > 0)
+          .filter(
+            (item: any) =>
+              getPendingConversionQuantity(item) > 0 &&
+              (!isPurchaseRequestApprovalEnabled() ||
+                item.approvalStatus === "aprobada")
+          )
           .map((item: any) => ({
             detail,
             item,

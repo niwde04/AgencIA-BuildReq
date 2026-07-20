@@ -140,6 +140,7 @@ import {
   type ProcurementApprovalSettings,
 } from "@shared/procurement-approvals";
 import {
+  getEffectiveSupplierFiscalProfile,
   getSupplierAccountPaymentCertificateStatus,
   getSupplierRetentionPolicy,
   isAccountPaymentAllowedRetention,
@@ -205,6 +206,73 @@ export async function getDb() {
     }
   }
   return _db;
+}
+
+export const DUPLICATE_SUPPLIER_FISCAL_INVOICE_MESSAGE =
+  "El número de factura fiscal ya está registrado para este proveedor";
+
+export class DuplicateSupplierFiscalInvoiceError extends Error {
+  readonly code = "SUPPLIER_FISCAL_INVOICE_DUPLICATE";
+
+  constructor() {
+    super(DUPLICATE_SUPPLIER_FISCAL_INVOICE_MESSAGE);
+    this.name = "DuplicateSupplierFiscalInvoiceError";
+  }
+}
+
+export function isDuplicateSupplierFiscalInvoiceError(error: unknown) {
+  let current: unknown = error;
+
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    if (current instanceof DuplicateSupplierFiscalInvoiceError) return true;
+    if (typeof current !== "object") return false;
+
+    const record = current as Record<string, unknown>;
+    if (record.code === "SUPPLIER_FISCAL_INVOICE_DUPLICATE") return true;
+    if (
+      record.code === "23505" &&
+      (record.constraint === "supplier_fiscal_invoice_number_unique" ||
+        String(record.message ?? "").includes(
+          DUPLICATE_SUPPLIER_FISCAL_INVOICE_MESSAGE
+        ))
+    ) {
+      return true;
+    }
+
+    current = record.cause;
+  }
+
+  return false;
+}
+
+async function assertSupplierFiscalInvoiceNumberAvailable(params: {
+  supplierId?: number | null;
+  invoiceNumber?: string | null;
+  excludeInvoiceId?: number;
+}) {
+  const invoiceNumberKey = getFiscalInvoiceNumberKey(params.invoiceNumber);
+  if (!params.supplierId || !invoiceNumberKey) return;
+
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const conditions = [
+    eq(invoices.supplierId, params.supplierId),
+    eq(invoices.isFiscalDocument, true),
+    sql`${invoices.status} <> 'anulada'`,
+    sql`regexp_replace(coalesce(${invoices.invoiceNumber}, ''), '[^0-9]', '', 'g') = ${invoiceNumberKey}`,
+  ];
+  if (params.excludeInvoiceId) {
+    conditions.push(sql`${invoices.id} <> ${params.excludeInvoiceId}`);
+  }
+
+  const [duplicate] = await db
+    .select({ id: invoices.id })
+    .from(invoices)
+    .where(and(...conditions))
+    .limit(1);
+
+  if (duplicate) throw new DuplicateSupplierFiscalInvoiceError();
 }
 
 function toProcurementApprovalSettings(
@@ -6248,6 +6316,17 @@ export async function submitPurchaseRequestForApproval(params: {
       );
     }
 
+    await tx
+      .update(purchaseRequestItems)
+      .set({
+        approvalStatus: "pendiente",
+        approvedById: null,
+        approvedAt: null,
+        rejectionReason: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(purchaseRequestItems.purchaseRequestId, params.id));
+
     await tx.insert(procurementApprovalHistory).values({
       documentType: "purchase_request",
       documentId: params.id,
@@ -6268,10 +6347,118 @@ export async function submitPurchaseRequestForApproval(params: {
   });
 }
 
+export async function updatePendingPurchaseRequestQuantities(params: {
+  id: number;
+  items: Array<{ id: number; quantity: string | number }>;
+  actor: ProcurementApprovalActor;
+}) {
+  assertProcurementApprovalWorkflowEnabled("purchase_request");
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const itemIds = params.items.map(item => item.id);
+  if (new Set(itemIds).size !== itemIds.length) {
+    throw new Error("No se puede enviar el mismo ítem más de una vez");
+  }
+
+  return db.transaction(async tx => {
+    const [pendingRequest] = await tx
+      .update(purchaseRequests)
+      .set({ updatedAt: new Date() })
+      .where(
+        and(
+          eq(purchaseRequests.id, params.id),
+          eq(purchaseRequests.status, "en_revision"),
+          eq(purchaseRequests.approvalStatus, "pendiente")
+        )
+      )
+      .returning({ id: purchaseRequests.id });
+
+    if (!pendingRequest) {
+      throw new Error(
+        "Solo se pueden corregir cantidades mientras la solicitud está pendiente de aprobación"
+      );
+    }
+
+    const existingItems = await tx
+      .select({
+        id: purchaseRequestItems.id,
+        itemName: purchaseRequestItems.itemName,
+        quantity: purchaseRequestItems.quantity,
+        convertedQuantity: purchaseRequestItems.convertedQuantity,
+      })
+      .from(purchaseRequestItems)
+      .where(
+        and(
+          eq(purchaseRequestItems.purchaseRequestId, params.id),
+          inArray(purchaseRequestItems.id, itemIds)
+        )
+      );
+
+    if (existingItems.length !== itemIds.length) {
+      throw new Error(
+        "Uno de los ítems no pertenece a la solicitud de compra"
+      );
+    }
+
+    const existingById = new Map(existingItems.map(item => [item.id, item]));
+    const changes = params.items.flatMap(item => {
+      const existing = existingById.get(item.id)!;
+      const quantity = parseDecimal(item.quantity);
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        throw new Error("La cantidad debe ser un número mayor que cero");
+      }
+      if (quantity < parseDecimal(existing.convertedQuantity)) {
+        throw new Error(
+          `La cantidad de ${existing.itemName} no puede ser menor que la cantidad ya convertida`
+        );
+      }
+      const normalizedQuantity = toDecimalString(quantity);
+      return normalizedQuantity === toDecimalString(existing.quantity)
+        ? []
+        : [{ existing, quantity: normalizedQuantity }];
+    });
+
+    for (const change of changes) {
+      await tx
+        .update(purchaseRequestItems)
+        .set({ quantity: change.quantity, updatedAt: new Date() })
+        .where(
+          and(
+            eq(purchaseRequestItems.id, change.existing.id),
+            eq(purchaseRequestItems.purchaseRequestId, params.id)
+          )
+        );
+    }
+
+    if (changes.length > 0) {
+      await tx.insert(procurementApprovalHistory).values({
+        documentType: "purchase_request",
+        documentId: params.id,
+        action: "quantities_updated",
+        previousStatus: "pendiente",
+        newStatus: "pendiente",
+        ...getApprovalActorSnapshot(params.actor),
+        comment: changes
+          .map(
+            change =>
+              `${change.existing.itemName}: ${toDecimalString(change.existing.quantity)} → ${change.quantity}`
+          )
+          .join("; "),
+        amount: null,
+        currency: null,
+      });
+    }
+
+    return { success: true, updatedItemCount: changes.length };
+  });
+}
+
 export async function reviewPurchaseRequestApproval(params: {
   id: number;
   decision: "approve" | "reject";
   comment?: string | null;
+  approvedItemIds?: number[];
   actor: ProcurementApprovalActor;
 }) {
   assertProcurementApprovalWorkflowEnabled("purchase_request");
@@ -6281,25 +6468,73 @@ export async function reviewPurchaseRequestApproval(params: {
   if (params.decision === "reject" && (!comment || comment.length < 5)) {
     throw new Error("El motivo de rechazo debe tener al menos 5 caracteres");
   }
+  if (
+    params.approvedItemIds &&
+    new Set(params.approvedItemIds).size !== params.approvedItemIds.length
+  ) {
+    throw new Error("No se puede seleccionar el mismo ítem más de una vez");
+  }
 
   return db.transaction(async tx => {
+    const items = await tx
+      .select({
+        id: purchaseRequestItems.id,
+        itemName: purchaseRequestItems.itemName,
+        quantity: purchaseRequestItems.quantity,
+        convertedQuantity: purchaseRequestItems.convertedQuantity,
+        approvalStatus: purchaseRequestItems.approvalStatus,
+      })
+      .from(purchaseRequestItems)
+      .where(eq(purchaseRequestItems.purchaseRequestId, params.id));
+    if (items.length === 0) {
+      throw new Error("La solicitud debe tener al menos un ítem");
+    }
+
+    const requestedApprovedItemIds =
+      params.decision === "approve"
+        ? (params.approvedItemIds ?? items.map(item => item.id))
+        : [];
+    if (params.decision === "approve" && requestedApprovedItemIds.length === 0) {
+      throw new Error("Seleccione al menos un ítem para aprobar");
+    }
+    const itemById = new Map(items.map(item => [item.id, item]));
+    const unknownApprovedItemId = requestedApprovedItemIds.find(
+      itemId => !itemById.has(itemId)
+    );
+    if (unknownApprovedItemId !== undefined) {
+      throw new Error("Uno de los ítems seleccionados no pertenece a la solicitud");
+    }
+    const itemNoLongerPending = items.find(
+      item => item.approvalStatus !== "pendiente"
+    );
+    if (itemNoLongerPending) {
+      throw new Error(
+        `El ítem ${itemNoLongerPending.itemName} ya no está pendiente de aprobación`
+      );
+    }
+
+    const approvedItemIdSet = new Set(requestedApprovedItemIds);
+    const approvedItems = items.filter(item => approvedItemIdSet.has(item.id));
+    const rejectedItems = items.filter(item => !approvedItemIdSet.has(item.id));
+    if (
+      params.decision === "approve" &&
+      rejectedItems.length > 0 &&
+      (!comment || comment.length < 5)
+    ) {
+      throw new Error(
+        "Indique un motivo de rechazo de al menos 5 caracteres para los ítems no seleccionados"
+      );
+    }
     let nextDocumentStatus:
       | "aprobada"
       | "parcialmente_convertida"
       | "convertida"
       | "rechazada" = "rechazada";
     if (params.decision === "approve") {
-      const items = await tx
-        .select({
-          quantity: purchaseRequestItems.quantity,
-          convertedQuantity: purchaseRequestItems.convertedQuantity,
-        })
-        .from(purchaseRequestItems)
-        .where(eq(purchaseRequestItems.purchaseRequestId, params.id));
       const allConverted =
-        items.length > 0 &&
-        items.every(item => getPendingConversionQuantity(item) <= 0);
-      const hasConverted = items.some(
+        approvedItems.length > 0 &&
+        approvedItems.every(item => getPendingConversionQuantity(item) <= 0);
+      const hasConverted = approvedItems.some(
         item => parseDecimal(item.convertedQuantity) > 0
       );
       nextDocumentStatus = allConverted
@@ -6334,14 +6569,72 @@ export async function reviewPurchaseRequestApproval(params: {
       );
     }
 
+    const decidedAt = new Date();
+    if (approvedItems.length > 0) {
+      await tx
+        .update(purchaseRequestItems)
+        .set({
+          approvalStatus: "aprobada",
+          approvedById: params.actor.id,
+          approvedAt: decidedAt,
+          rejectionReason: null,
+          updatedAt: decidedAt,
+        })
+        .where(
+          and(
+            eq(purchaseRequestItems.purchaseRequestId, params.id),
+            inArray(
+              purchaseRequestItems.id,
+              approvedItems.map(item => item.id)
+            )
+          )
+        );
+    }
+    if (rejectedItems.length > 0) {
+      await tx
+        .update(purchaseRequestItems)
+        .set({
+          approvalStatus: "rechazada",
+          approvedById: params.actor.id,
+          approvedAt: decidedAt,
+          rejectionReason:
+            comment || "Ítem no seleccionado durante la aprobación",
+          updatedAt: decidedAt,
+        })
+        .where(
+          and(
+            eq(purchaseRequestItems.purchaseRequestId, params.id),
+            inArray(
+              purchaseRequestItems.id,
+              rejectedItems.map(item => item.id)
+            )
+          )
+        );
+    }
+
+    const historyComment =
+      params.decision === "approve" && rejectedItems.length > 0
+        ? [
+            `Aprobados ${approvedItems.length} de ${items.length} ítems`,
+            comment,
+          ]
+            .filter(Boolean)
+            .join(". ")
+        : comment;
+
     await tx.insert(procurementApprovalHistory).values({
       documentType: "purchase_request",
       documentId: params.id,
-      action: params.decision === "approve" ? "approved" : "rejected",
+      action:
+        params.decision === "approve" && rejectedItems.length > 0
+          ? "partially_approved"
+          : params.decision === "approve"
+            ? "approved"
+            : "rejected",
       previousStatus: "pendiente",
       newStatus: nextApprovalStatus,
       ...getApprovalActorSnapshot(params.actor),
-      comment,
+      comment: historyComment,
       amount: null,
       currency: null,
     });
@@ -6350,6 +6643,8 @@ export async function reviewPurchaseRequestApproval(params: {
       success: true,
       status: updated.status,
       approvalStatus: updated.approvalStatus,
+      approvedItemCount: approvedItems.length,
+      rejectedItemCount: rejectedItems.length,
     };
   });
 }
@@ -6382,6 +6677,17 @@ export async function reopenRejectedPurchaseRequest(params: {
     if (!updated) {
       throw new Error("Solo se puede corregir una solicitud rechazada");
     }
+
+    await tx
+      .update(purchaseRequestItems)
+      .set({
+        approvalStatus: "no_requiere",
+        approvedById: null,
+        approvedAt: null,
+        rejectionReason: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(purchaseRequestItems.purchaseRequestId, params.id));
 
     await tx.insert(procurementApprovalHistory).values({
       documentType: "purchase_request",
@@ -6521,10 +6827,13 @@ export async function syncPurchaseRequestConversionStatus(id: number) {
     return purchaseRequest.status;
   }
 
-  const items = await db
+  const allItems = await db
     .select()
     .from(purchaseRequestItems)
     .where(eq(purchaseRequestItems.purchaseRequestId, id));
+  const items = isPurchaseRequestApprovalEnabled()
+    ? allItems.filter(item => item.approvalStatus === "aprobada")
+    : allItems;
 
   if (items.length === 0) {
     return purchaseRequest.status;
@@ -9436,6 +9745,12 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
       "La fecha de vencimiento del documento es requerida para facturas"
     );
   }
+  if (params.receiptData.isFiscalDocument) {
+    await assertSupplierFiscalInvoiceNumberAvailable({
+      supplierId: params.purchaseOrderDetail.purchaseOrder.supplierId,
+      invoiceNumber: params.receiptData.invoiceNumber,
+    });
+  }
   const invoiceEmissionDeadline =
     emissionDeadline ??
     params.receiptData.documentDate ??
@@ -9663,6 +9978,13 @@ export async function registerReceipt(
     purchaseOrderDetailForReceipt = await getPurchaseOrderById(data.sourceId);
     if (!purchaseOrderDetailForReceipt) {
       throw new Error("Orden de compra no encontrada");
+    }
+
+    if (data.isFiscalDocument) {
+      await assertSupplierFiscalInvoiceNumberAvailable({
+        supplierId: purchaseOrderDetailForReceipt.purchaseOrder.supplierId,
+        invoiceNumber: data.invoiceNumber,
+      });
     }
 
     const purchaseOrderDetailItemsById = new Map(
@@ -11273,8 +11595,27 @@ export async function listDmcReportSourceInvoices(filters?: {
 
   const [itemRows, retentionRows] = await Promise.all([
     db
-      .select()
+      .select({
+        item: invoiceItems,
+        articleDescription: sapCatalog.description,
+        financialGroupCode: sapCatalog.financialGroupCode,
+        financialGroupDescription: financialGroups.financialGroupDescription,
+      })
       .from(invoiceItems)
+      .leftJoin(
+        sapCatalog,
+        eq(
+          sapCatalog.itemCode,
+          sql<string | null>`coalesce(${invoiceItems.currentSapItemCode}, ${invoiceItems.originalSapItemCode})`
+        )
+      )
+      .leftJoin(
+        financialGroups,
+        eq(
+          sapCatalog.financialGroupCode,
+          financialGroups.financialGroupCode
+        )
+      )
       .where(inArray(invoiceItems.invoiceId, invoiceIds))
       .orderBy(asc(invoiceItems.invoiceId), asc(invoiceItems.id)),
     db
@@ -11285,10 +11626,10 @@ export async function listDmcReportSourceInvoices(filters?: {
   ]);
 
   const itemsByInvoiceId = new Map<number, typeof itemRows>();
-  itemRows.forEach(item => {
-    const current = itemsByInvoiceId.get(item.invoiceId) ?? [];
-    current.push(item);
-    itemsByInvoiceId.set(item.invoiceId, current);
+  itemRows.forEach(row => {
+    const current = itemsByInvoiceId.get(row.item.invoiceId) ?? [];
+    current.push(row);
+    itemsByInvoiceId.set(row.item.invoiceId, current);
   });
 
   const retentionsByInvoiceId = new Map<number, typeof retentionRows>();
@@ -11500,14 +11841,19 @@ export async function listDmcReportSourceInvoices(filters?: {
       supplierCode: supplier?.supplierCode ?? null,
       supplierName: supplier?.name ?? null,
       supplierRtn: supplier?.rtn ?? null,
-      items: (itemsByInvoiceId.get(invoice.id) ?? []).map(item => ({
-        id: item.id,
-        itemName: item.itemName,
-        taxCode: item.taxCode,
-        subtotal: item.subtotal,
-        taxAmount: item.taxAmount,
-        total: item.total,
-        taxBreakdown: item.taxBreakdown,
+      items: (itemsByInvoiceId.get(invoice.id) ?? []).map(row => ({
+        id: row.item.id,
+        itemName: row.item.itemName,
+        sapItemCode:
+          row.item.currentSapItemCode ?? row.item.originalSapItemCode,
+        articleDescription: row.articleDescription,
+        financialGroupCode: row.financialGroupCode,
+        financialGroupDescription: row.financialGroupDescription,
+        taxCode: row.item.taxCode,
+        subtotal: row.item.subtotal,
+        taxAmount: row.item.taxAmount,
+        total: row.item.total,
+        taxBreakdown: row.item.taxBreakdown,
       })),
       retentions: (retentionsByInvoiceId.get(invoice.id) ?? []).map(
         retention => ({
@@ -11760,6 +12106,29 @@ export async function updateInvoice(
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
+
+  const [current] = await db
+    .select({
+      supplierId: invoices.supplierId,
+      isFiscalDocument: invoices.isFiscalDocument,
+      invoiceNumber: invoices.invoiceNumber,
+    })
+    .from(invoices)
+    .where(eq(invoices.id, id))
+    .limit(1);
+
+  if (current) {
+    const isFiscalDocument =
+      data.isFiscalDocument ?? current.isFiscalDocument;
+    const invoiceNumber = data.invoiceNumber ?? current.invoiceNumber;
+    if (isFiscalDocument) {
+      await assertSupplierFiscalInvoiceNumberAvailable({
+        supplierId: current.supplierId,
+        invoiceNumber,
+        excludeInvoiceId: id,
+      });
+    }
+  }
 
   const [updated] = await db
     .update(invoices)
@@ -19972,11 +20341,55 @@ export async function listSupplierCatalog(filters?: SupplierListFilters) {
     .orderBy(asc(suppliers.name))
     .limit(pageSize)
     .offset(offset);
-  const items = rows.map(row => ({
-    ...row.supplier,
-    createdBy: toAuditUser(row.createdBy),
-    updatedBy: toAuditUser(row.updatedBy),
-  }));
+  const supplierIds = rows.map(row => row.supplier.id);
+  const validAccountPaymentSupplierIds = new Set<number>();
+  if (supplierIds.length > 0) {
+    const certificateRows = await db
+      .select({
+        supplierId: supplierDocuments.supplierId,
+        documentDate: supplierDocuments.documentDate,
+        expirationDate: supplierDocuments.expirationDate,
+      })
+      .from(supplierDocuments)
+      .innerJoin(
+        supplierDocumentTypes,
+        eq(supplierDocuments.documentTypeId, supplierDocumentTypes.id)
+      )
+      .where(
+        and(
+          inArray(supplierDocuments.supplierId, supplierIds),
+          inArray(supplierDocumentTypes.code, [
+            ...SUPPLIER_ACCOUNT_PAYMENT_CERTIFICATE_CODES,
+          ])
+        )
+      );
+    const referenceDate = new Date();
+    for (const certificate of certificateRows) {
+      if (
+        getSupplierAccountPaymentCertificateStatus(
+          certificate,
+          referenceDate
+        ) === "vigente"
+      ) {
+        validAccountPaymentSupplierIds.add(certificate.supplierId);
+      }
+    }
+  }
+  const items = rows.map(row => {
+    const fiscalProfile = getEffectiveSupplierFiscalProfile({
+      certificateStatus: validAccountPaymentSupplierIds.has(row.supplier.id)
+        ? "vigente"
+        : null,
+      allowsTaxWithholding: row.supplier.allowsTaxWithholding,
+      subjectToAccountPayments: row.supplier.subjectToAccountPayments,
+    });
+    return {
+      ...row.supplier,
+      ...fiscalProfile,
+      createdBy: toAuditUser(row.createdBy),
+      updatedBy: toAuditUser(row.updatedBy),
+    };
+  });
 
   return {
     items,

@@ -12,6 +12,8 @@ export type DmcCellValue = string | number | Date | null;
 export const DMC_COLUMNS = [
   { key: "numeroRegistro", header: "N° REGISTRO", width: 14, numFmt: "#,##0" },
   { key: "codFinanzas", header: "Cod_Finanzas", width: 16 },
+  { key: "nombreGrupoFinanciero", header: "Nombre_Grupo_Financiero", width: 44 },
+  { key: "codigoSap", header: "Código SAP", width: 18 },
   { key: "rtn", header: "RTN", width: 18 },
   { key: "razonSocial", header: "Razón Social", width: 36 },
   { key: "sistemaDePago", header: "Sistema_de_Pago", width: 18 },
@@ -84,6 +86,10 @@ export type DmcReportRow = Record<DmcReportColumnKey, DmcCellValue>;
 export type DmcReportSourceItem = {
   id: number;
   itemName: string;
+  sapItemCode?: string | null;
+  articleDescription?: string | null;
+  financialGroupCode?: string | null;
+  financialGroupDescription?: string | null;
   taxCode?: string | null;
   subtotal?: string | number | null;
   taxAmount?: string | number | null;
@@ -420,7 +426,10 @@ function formatDateForObservation(value: Date | string | null | undefined) {
   return `${year}-${month}-${day}`;
 }
 
-function buildRow(invoice: DmcReportSourceInvoice, index: number): DmcReportRow {
+function buildInvoiceRow(
+  invoice: DmcReportSourceInvoice,
+  index: number
+): DmcReportRow {
   const taxes = summarizeTaxes(invoice.items);
   const retentions = summarizeRetentions(invoice.retentions);
   const hasOceExemption = invoice.hasOceExemption === true;
@@ -458,7 +467,9 @@ function buildRow(invoice: DmcReportSourceInvoice, index: number): DmcReportRow 
 
   return {
     numeroRegistro: index + 1,
-    codFinanzas: invoice.supplierCode ?? "",
+    codFinanzas: "",
+    nombreGrupoFinanciero: "",
+    codigoSap: "",
     rtn: invoice.supplierRtn ?? "",
     razonSocial: invoice.supplierName ?? "",
     sistemaDePago: invoice.purchaseOrderPaymentMethod
@@ -530,6 +541,111 @@ function buildRow(invoice: DmcReportSourceInvoice, index: number): DmcReportRow 
   };
 }
 
+function allocateMoney(total: number, weights: number[]) {
+  if (weights.length === 0) return [];
+
+  const roundedTotal = money(total);
+  const normalizedWeights = weights.map(weight => Math.max(0, money(weight)));
+  const totalWeight = normalizedWeights.reduce(
+    (sum, weight) => sum + weight,
+    0
+  );
+  let allocated = 0;
+
+  return normalizedWeights.map((weight, index) => {
+    if (index === normalizedWeights.length - 1) {
+      return money(roundedTotal - allocated);
+    }
+
+    const amount =
+      totalWeight > 0
+        ? money((roundedTotal * weight) / totalWeight)
+        : index === 0
+          ? roundedTotal
+          : 0;
+    allocated = money(allocated + amount);
+    return amount;
+  });
+}
+
+function buildDetailRows(
+  invoice: DmcReportSourceInvoice,
+  invoiceIndex: number
+): DmcReportRow[] {
+  const invoiceRow = buildInvoiceRow(invoice, invoiceIndex);
+  if (invoice.items.length === 0) return [invoiceRow];
+
+  const itemTotalWeights = invoice.items.map(item => money(item.total));
+  const itemSubtotalWeights = invoice.items.map(item => money(item.subtotal));
+  const invoiceRetentions = summarizeRetentions(invoice.retentions);
+  const invoiceTotal =
+    money(invoice.total) ||
+    money(itemTotalWeights.reduce((sum, total) => sum + total, 0));
+  const totalRetention =
+    money(invoice.retentionTotal) || invoiceRetentions.totalRetencion;
+  const netPayable =
+    money(invoice.netPayable) || money(invoiceTotal - totalRetention);
+  const totalFacturaByItem = allocateMoney(invoiceTotal, itemTotalWeights);
+  const totalRetentionByItem = allocateMoney(totalRetention, itemTotalWeights);
+  const netPayableByItem = allocateMoney(netPayable, itemTotalWeights);
+  const retIsr1ByItem = allocateMoney(
+    invoiceRetentions.retIsr1,
+    itemSubtotalWeights
+  );
+  const retIsr12_5ByItem = allocateMoney(
+    invoiceRetentions.retIsr12_5,
+    itemSubtotalWeights
+  );
+  const retIsr25ByItem = allocateMoney(
+    invoiceRetentions.retIsr25,
+    itemSubtotalWeights
+  );
+  const retIsvByItem = allocateMoney(
+    invoiceRetentions.retIsv,
+    itemSubtotalWeights
+  );
+  const oceBaseByItem = allocateMoney(
+    invoice.hasOceExemption === true ? money(invoice.oceExemptAmount) : 0,
+    itemSubtotalWeights
+  );
+
+  return invoice.items.map((item, itemIndex) => {
+    const taxes = summarizeTaxes([item]);
+    const baseIsv0 =
+      invoice.hasOceExemption === true
+        ? oceBaseByItem[itemIndex]
+        : taxes.baseIsv0;
+    const totalBase = money(
+      taxes.baseIsv15 + taxes.baseIsv18 + taxes.baseIsv4 + baseIsv0
+    );
+
+    return {
+      ...invoiceRow,
+      codFinanzas: item.financialGroupCode ?? "",
+      nombreGrupoFinanciero: item.financialGroupDescription ?? "",
+      codigoSap: item.sapItemCode ?? "",
+      descripcionFactura:
+        item.articleDescription || item.itemName || invoice.invoiceDocumentNumber,
+      baseIsv15: taxes.baseIsv15,
+      baseIsv18: taxes.baseIsv18,
+      baseIsv4: taxes.baseIsv4,
+      baseIsv0,
+      totalBase: totalBase || money(item.subtotal),
+      isv15: taxes.isv15,
+      isv18: taxes.isv18,
+      isv4: taxes.isv4,
+      totalIsv: taxes.totalIsv || money(item.taxAmount),
+      totalFactura: totalFacturaByItem[itemIndex],
+      retIsr1: retIsr1ByItem[itemIndex],
+      retIsr12_5: retIsr12_5ByItem[itemIndex],
+      retIsr25: retIsr25ByItem[itemIndex],
+      retIsv: retIsvByItem[itemIndex],
+      totalRetencion: totalRetentionByItem[itemIndex],
+      netoPagar: netPayableByItem[itemIndex],
+    };
+  });
+}
+
 export function buildDmcReportPayload(
   invoices: DmcReportSourceInvoice[],
   params: {
@@ -540,13 +656,18 @@ export function buildDmcReportPayload(
     statusMode?: DmcStatusMode;
   } = {}
 ): DmcReportPayload {
-  const rows = invoices.map((invoice, index) => buildRow(invoice, index));
+  const rows = invoices.flatMap((invoice, index) =>
+    buildDetailRows(invoice, index)
+  );
   const totalsByCurrency = (["HNL", "USD"] as const)
     .map(currency => {
       const currencyRows = rows.filter(row => row.moneda === currency);
+      const currencyInvoices = invoices.filter(
+        invoice => (invoice.currency === "USD" ? "USD" : "HNL") === currency
+      );
       return {
         currency,
-        invoiceCount: currencyRows.length,
+        invoiceCount: currencyInvoices.length,
         totalBase: money(
           currencyRows.reduce(
             (sum, row) => sum + toNumber(row.totalBase as number),
@@ -589,7 +710,7 @@ export function buildDmcReportPayload(
       dateFrom: normalizeDate(params.dateFrom),
       dateTo: normalizeDate(params.dateTo),
       statusMode: params.statusMode ?? "non_void",
-      invoiceCount: rows.length,
+      invoiceCount: invoices.length,
       totalsByCurrency,
     },
   };

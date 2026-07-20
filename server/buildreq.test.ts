@@ -25,8 +25,10 @@ import {
 } from "../shared/invoices";
 import { getDefaultTransferPreparedByName } from "../client/src/lib/transfer-print";
 import {
+  getRuntimeProcurementApprovalSettings,
   PROCUREMENT_APPROVALS_DISABLED_MESSAGE,
   PROCUREMENT_APPROVALS_ENABLED,
+  setRuntimeProcurementApprovalSettings,
 } from "@shared/procurement-approvals";
 
 // ============================================================
@@ -9514,6 +9516,248 @@ describe("BuildReq - User Management", () => {
 // Tests: Purchase Requests
 // ============================================================
 describe("BuildReq - Purchase Requests", () => {
+  it.each(["superintendente_aprobador", "gerente"] as const)(
+    "%s only lists purchase requests pending approval",
+    async buildreqRole => {
+      const { ctx } = createProcurementApproverContext(buildreqRole);
+      const caller = appRouter.createCaller(ctx);
+      const pendingDetail = {
+        purchaseRequest: {
+          id: 33,
+          projectId: 1,
+          status: "en_revision",
+          approvalStatus: "pendiente",
+        },
+        items: [],
+      } as any;
+      const approvedDetail = {
+        purchaseRequest: {
+          id: 34,
+          projectId: 1,
+          status: "aprobada",
+          approvalStatus: "aprobada",
+        },
+        items: [],
+      } as any;
+      const listPurchaseRequestsSpy = vi
+        .spyOn(db, "listPurchaseRequests")
+        .mockResolvedValue([pendingDetail, approvedDetail]);
+
+      await expect(
+        caller.purchaseRequests.list({ status: "aprobada" })
+      ).resolves.toEqual([pendingDetail]);
+      expect(listPurchaseRequestsSpy).toHaveBeenCalledWith({
+        projectIds: [1],
+        status: "en_revision",
+      });
+
+      listPurchaseRequestsSpy.mockRestore();
+    }
+  );
+
+  it.each(["superintendente_aprobador", "gerente"] as const)(
+    "%s cannot open a purchase request that is no longer pending approval",
+    async buildreqRole => {
+      const { ctx } = createProcurementApproverContext(buildreqRole);
+      const caller = appRouter.createCaller(ctx);
+      const getPurchaseRequestByIdSpy = vi
+        .spyOn(db, "getPurchaseRequestById")
+        .mockResolvedValue({
+          purchaseRequest: {
+            id: 34,
+            projectId: 1,
+            status: "aprobada",
+            approvalStatus: "aprobada",
+          },
+          items: [],
+        } as any);
+
+      await expect(
+        caller.purchaseRequests.getById({ id: 34 })
+      ).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        message:
+          "Los aprobadores solo pueden consultar solicitudes pendientes de aprobación",
+      });
+
+      getPurchaseRequestByIdSpy.mockRestore();
+    }
+  );
+
+  it.each(["superintendente_aprobador", "gerente"] as const)(
+    "%s can correct item quantities while approval is pending",
+    async buildreqRole => {
+      const previousSettings = getRuntimeProcurementApprovalSettings();
+      const enabledAt = new Date(
+        Math.max(
+          Date.now(),
+          previousSettings.updatedAt
+            ? new Date(previousSettings.updatedAt).getTime()
+            : 0
+        ) + 1
+      );
+      setRuntimeProcurementApprovalSettings({
+        purchaseRequestApprovalsEnabled: true,
+        purchaseOrderApprovalsEnabled:
+          previousSettings.purchaseOrderApprovalsEnabled,
+        updatedAt: enabledAt,
+      });
+
+      const { ctx } = createProcurementApproverContext(buildreqRole);
+      const caller = appRouter.createCaller(ctx);
+      const getPurchaseRequestByIdSpy = vi
+        .spyOn(db, "getPurchaseRequestById")
+        .mockResolvedValue({
+          purchaseRequest: {
+            id: 33,
+            projectId: 1,
+            status: "en_revision",
+            approvalStatus: "pendiente",
+          },
+          items: [{ id: 501, quantity: "27.00" }],
+        } as any);
+      const updateQuantitiesSpy = vi
+        .spyOn(db, "updatePendingPurchaseRequestQuantities")
+        .mockResolvedValue({ success: true, updatedItemCount: 1 });
+
+      try {
+        await expect(
+          caller.purchaseRequests.updatePendingQuantities({
+            id: 33,
+            items: [{ id: 501, quantity: "25.00" }],
+          })
+        ).resolves.toEqual({ success: true, updatedItemCount: 1 });
+        expect(updateQuantitiesSpy).toHaveBeenCalledWith({
+          id: 33,
+          items: [{ id: 501, quantity: "25.00" }],
+          actor: ctx.user,
+        });
+      } finally {
+        getPurchaseRequestByIdSpy.mockRestore();
+        updateQuantitiesSpy.mockRestore();
+        setRuntimeProcurementApprovalSettings({
+          purchaseRequestApprovalsEnabled:
+            previousSettings.purchaseRequestApprovalsEnabled,
+          purchaseOrderApprovalsEnabled:
+            previousSettings.purchaseOrderApprovalsEnabled,
+          updatedAt: new Date(enabledAt.getTime() + 1),
+        });
+      }
+    }
+  );
+
+  it("does not allow non-approver roles to correct pending quantities", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi.spyOn(db, "getPurchaseRequestById");
+    const updateQuantitiesSpy = vi.spyOn(
+      db,
+      "updatePendingPurchaseRequestQuantities"
+    );
+
+    await expect(
+      caller.purchaseRequests.updatePendingQuantities({
+        id: 33,
+        items: [{ id: 501, quantity: "25.00" }],
+      })
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "Solo los roles aprobadores pueden corregir cantidades",
+    });
+    expect(getPurchaseRequestByIdSpy).not.toHaveBeenCalled();
+    expect(updateQuantitiesSpy).not.toHaveBeenCalled();
+
+    getPurchaseRequestByIdSpy.mockRestore();
+    updateQuantitiesSpy.mockRestore();
+  });
+
+  it("sends the approver item selection with the purchase request decision", async () => {
+    const previousSettings = getRuntimeProcurementApprovalSettings();
+    const enabledAt = new Date(
+      Math.max(
+        Date.now(),
+        previousSettings.updatedAt
+          ? new Date(previousSettings.updatedAt).getTime()
+          : 0
+      ) + 1
+    );
+    setRuntimeProcurementApprovalSettings({
+      purchaseRequestApprovalsEnabled: true,
+      purchaseOrderApprovalsEnabled:
+        previousSettings.purchaseOrderApprovalsEnabled,
+      updatedAt: enabledAt,
+    });
+
+    const { ctx } = createProcurementApproverContext("gerente");
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 33,
+          projectId: 1,
+          requestNumber: "SC-2026-0033",
+          createdById: 4,
+          status: "en_revision",
+          approvalStatus: "pendiente",
+        },
+        items: [
+          { id: 501, approvalStatus: "pendiente" },
+          { id: 502, approvalStatus: "pendiente" },
+        ],
+      } as any);
+    const reviewApprovalSpy = vi
+      .spyOn(db, "reviewPurchaseRequestApproval")
+      .mockResolvedValue({
+        success: true,
+        status: "aprobada",
+        approvalStatus: "aprobada",
+        approvedItemCount: 1,
+        rejectedItemCount: 1,
+      } as any);
+    const createNotificationSpy = vi
+      .spyOn(db, "createNotification")
+      .mockResolvedValue({ id: 1 } as any);
+
+    try {
+      await expect(
+        caller.purchaseRequests.reviewApproval({
+          id: 33,
+          decision: "approve",
+          approvedItemIds: [501],
+          comment: "El segundo ítem no está autorizado",
+        })
+      ).resolves.toMatchObject({
+        approvedItemCount: 1,
+        rejectedItemCount: 1,
+      });
+      expect(reviewApprovalSpy).toHaveBeenCalledWith({
+        id: 33,
+        decision: "approve",
+        approvedItemIds: [501],
+        comment: "El segundo ítem no está autorizado",
+        actor: ctx.user,
+      });
+      expect(createNotificationSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Solicitud de compra aprobada parcialmente",
+          message: expect.stringContaining("1 ítem(s) no continuarán"),
+        })
+      );
+    } finally {
+      getPurchaseRequestByIdSpy.mockRestore();
+      reviewApprovalSpy.mockRestore();
+      createNotificationSpy.mockRestore();
+      setRuntimeProcurementApprovalSettings({
+        purchaseRequestApprovalsEnabled:
+          previousSettings.purchaseRequestApprovalsEnabled,
+        purchaseOrderApprovalsEnabled:
+          previousSettings.purchaseOrderApprovalsEnabled,
+        updatedAt: new Date(enabledAt.getTime() + 1),
+      });
+    }
+  });
+
   it("Bodeguero de Proyecto can view purchase requests and attach quotes but cannot edit them", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
@@ -15604,6 +15848,39 @@ describe("BuildReq - Invoices", () => {
     updateInvoiceSpy.mockRestore();
   });
 
+  it("rejects an active fiscal invoice number already used by the supplier", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi
+      .spyOn(db, "getInvoiceById")
+      .mockResolvedValue(invoiceDetail);
+    const updateInvoiceSpy = vi
+      .spyOn(db, "updateInvoice")
+      .mockRejectedValue(new db.DuplicateSupplierFiscalInvoiceError());
+
+    await expect(
+      caller.invoices.update({
+        id: 10,
+        cai: VALID_CAI,
+        invoiceNumber: VALID_INVOICE_NUMBER_ALT,
+        documentRangeStart: VALID_DOCUMENT_RANGE_START,
+        documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+        documentDate: "2026-05-01",
+        documentDueDate: "2026-06-01",
+        postingDate: "2026-05-02",
+        receiptDate: "2026-05-02",
+        emissionDeadline: "2026-05-31",
+      })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: db.DUPLICATE_SUPPLIER_FISCAL_INVOICE_MESSAGE,
+    });
+    expect(updateInvoiceSpy).toHaveBeenCalledOnce();
+
+    getInvoiceByIdSpy.mockRestore();
+    updateInvoiceSpy.mockRestore();
+  });
+
   it("requires valid CAI and invoice number when updating invoice metadata", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -18792,6 +19069,75 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
 
     getPurchaseRequestByIdSpy.mockRestore();
     createPurchaseOrderSpy.mockRestore();
+  });
+
+  it("does not convert a purchase request item rejected during approval", async () => {
+    const previousSettings = getRuntimeProcurementApprovalSettings();
+    const enabledAt = new Date(
+      Math.max(
+        Date.now(),
+        previousSettings.updatedAt
+          ? new Date(previousSettings.updatedAt).getTime()
+          : 0
+      ) + 1
+    );
+    setRuntimeProcurementApprovalSettings({
+      purchaseRequestApprovalsEnabled: true,
+      purchaseOrderApprovalsEnabled:
+        previousSettings.purchaseOrderApprovalsEnabled,
+      updatedAt: enabledAt,
+    });
+
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 74,
+          projectId: 3,
+          requestNumber: "SC-2026-0074",
+          purchaseType: "local",
+          status: "aprobada",
+          approvalStatus: "aprobada",
+        },
+        items: [
+          {
+            id: 7401,
+            itemName: "ARTÍCULO NO AUTORIZADO",
+            quantity: "5.00",
+            convertedQuantity: "0.00",
+            approvalStatus: "rechazada",
+          },
+        ],
+      } as any);
+    const createPurchaseOrderSpy = vi.spyOn(db, "createPurchaseOrder");
+
+    try {
+      await expect(
+        caller.purchaseOrders.createFromPurchaseRequest({
+          purchaseRequestId: 74,
+          itemsToConvert: [
+            { purchaseRequestItemId: 7401, quantity: "5.00" },
+          ],
+        })
+      ).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+        message:
+          "El ítem ARTÍCULO NO AUTORIZADO no fue aprobado y no puede convertirse",
+      });
+      expect(createPurchaseOrderSpy).not.toHaveBeenCalled();
+    } finally {
+      getPurchaseRequestByIdSpy.mockRestore();
+      createPurchaseOrderSpy.mockRestore();
+      setRuntimeProcurementApprovalSettings({
+        purchaseRequestApprovalsEnabled:
+          previousSettings.purchaseRequestApprovalsEnabled,
+        purchaseOrderApprovalsEnabled:
+          previousSettings.purchaseOrderApprovalsEnabled,
+        updatedAt: new Date(enabledAt.getTime() + 1),
+      });
+    }
   });
 
   it("createFromPurchaseRequest allows direct purchase orders without payment method in draft", async () => {

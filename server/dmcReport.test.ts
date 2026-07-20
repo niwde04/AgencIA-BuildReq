@@ -170,7 +170,11 @@ describe("DMC report mapper", () => {
           items: [
             {
               id: 10,
-              itemName: "Cemento gris",
+              itemName: "Nombre guardado de cemento",
+              sapItemCode: "01010100001",
+              articleDescription: "Cemento gris Portland tipo I",
+              financialGroupCode: "02019901",
+              financialGroupDescription: "Materiales de construcción",
               taxCode: "isv_15",
               subtotal: "1000.0000",
               taxAmount: "150.0000",
@@ -192,7 +196,11 @@ describe("DMC report mapper", () => {
             },
             {
               id: 11,
-              itemName: "Servicio exento",
+              itemName: "Nombre guardado del servicio",
+              sapItemCode: "02020200002",
+              articleDescription: "Servicio técnico exento",
+              financialGroupCode: "02029902",
+              financialGroupDescription: "Servicios técnicos",
               taxCode: "exe",
               subtotal: "250.0000",
               taxAmount: "0.0000",
@@ -250,25 +258,48 @@ describe("DMC report mapper", () => {
       }
     );
 
-    const row = payload.rows[0];
+    const [cementRow, serviceRow] = payload.rows;
     expect(DMC_COLUMNS.map(column => column.header)).toContain("N° REGISTRO");
-    expect(row.establecimiento).toBe("000");
-    expect(row.puntoEmision).toBe("001");
-    expect(row.tipoDocumento).toBe("01");
-    expect(row.correlativo).toBe("00010571");
-    expect(row.diasCredito).toBe(30);
-    expect(row.baseIsv15).toBe(1000);
-    expect(row.baseIsv0).toBe(250);
-    expect(row.isv15).toBe(150);
-    expect(row.retIsr1).toBe(10);
-    expect(row.retIsv).toBe(20);
-    expect(row.totalRetencion).toBe(30);
-    expect(row.netoPagar).toBe(1370);
-    expect(row.job).toBe("REQ-2026-0025");
-    expect(row.actividadFlujo).toBe("Solicitud de compra");
-    expect(row.level3).toBe("SP-01 - Cimentación");
+    expect(DMC_COLUMNS.map(column => column.header)).toContain(
+      "Nombre_Grupo_Financiero"
+    );
+    expect(DMC_COLUMNS.map(column => column.header)).toContain("Código SAP");
+    expect(payload.rows).toHaveLength(2);
+    expect(payload.rows.map(row => row.numeroRegistro)).toEqual([1, 1]);
+    expect(cementRow.codFinanzas).toBe("02019901");
+    expect(serviceRow.codFinanzas).toBe("02029902");
+    expect(cementRow.nombreGrupoFinanciero).toBe(
+      "Materiales de construcción"
+    );
+    expect(serviceRow.nombreGrupoFinanciero).toBe("Servicios técnicos");
+    expect(cementRow.codigoSap).toBe("01010100001");
+    expect(serviceRow.codigoSap).toBe("02020200002");
+    expect(cementRow.descripcionFactura).toBe(
+      "Cemento gris Portland tipo I"
+    );
+    expect(serviceRow.descripcionFactura).toBe("Servicio técnico exento");
+    expect(cementRow.establecimiento).toBe("000");
+    expect(cementRow.puntoEmision).toBe("001");
+    expect(cementRow.tipoDocumento).toBe("01");
+    expect(cementRow.correlativo).toBe("00010571");
+    expect(cementRow.diasCredito).toBe(30);
+    expect(cementRow.baseIsv15).toBe(1000);
+    expect(cementRow.baseIsv0).toBe(0);
+    expect(serviceRow.baseIsv15).toBe(0);
+    expect(serviceRow.baseIsv0).toBe(250);
+    expect(cementRow.isv15).toBe(150);
+    expect(serviceRow.isv15).toBe(0);
+    expect(
+      payload.rows.reduce((sum, row) => sum + Number(row.totalRetencion), 0)
+    ).toBe(30);
+    expect(
+      payload.rows.reduce((sum, row) => sum + Number(row.netoPagar), 0)
+    ).toBe(1370);
+    expect(cementRow.job).toBe("REQ-2026-0025");
+    expect(cementRow.actividadFlujo).toBe("Solicitud de compra");
+    expect(cementRow.level3).toBe("SP-01 - Cimentación");
     expect(payload.summary.invoiceCount).toBe(1);
-    expect(row.moneda).toBe("HNL");
+    expect(cementRow.moneda).toBe("HNL");
     expect(payload.summary.totalsByCurrency).toEqual([
       expect.objectContaining({
         currency: "HNL",

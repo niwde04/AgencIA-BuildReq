@@ -670,6 +670,12 @@ export const purchaseRequestItems = pgTable(
     convertedQuantity: decimal("convertedQuantity", { precision: 12, scale: 2 })
       .default("0.00")
       .notNull(),
+    approvalStatus: approvalStatusEnum("approvalStatus")
+      .default("no_requiere")
+      .notNull(),
+    approvedById: integer("approvedById"),
+    approvedAt: timestamp("approvedAt"),
+    rejectionReason: text("rejectionReason"),
     receivedQuantity: decimal("receivedQuantity", { precision: 12, scale: 2 }),
     unit: varchar("unit", { length: 50 }),
     unitPrice: decimal("unitPrice", { precision: 12, scale: 2 })
@@ -693,6 +699,9 @@ export const purchaseRequestItems = pgTable(
   table => ({
     purchaseRequestIdx: index("pri_purchase_request_idx").on(
       table.purchaseRequestId
+    ),
+    approvalStatusIdx: index("pri_approval_status_idx").on(
+      table.approvalStatus
     ),
     subProjectIdx: index("pri_subproject_idx").on(table.subProjectId),
     fixedAssetIdx: index("pri_fixed_asset_idx").on(table.fixedAssetSapItemCode),

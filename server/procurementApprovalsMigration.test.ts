@@ -124,4 +124,31 @@ describe("procurement approvals migration", () => {
     expect(sql).not.toContain("\"status\" = 'aprobada'");
     expect(sql).not.toContain('DELETE FROM "procurementApprovalHistory"');
   });
+
+  it("adds and backfills approval state for purchase request items", () => {
+    const sql = readFileSync(
+      new URL(
+        "../drizzle/0114_purchase_request_item_approvals.sql",
+        import.meta.url
+      ),
+      "utf8"
+    );
+
+    for (const column of [
+      "approvalStatus",
+      "approvedById",
+      "approvedAt",
+      "rejectionReason",
+    ]) {
+      expect(sql).toContain(`ADD COLUMN IF NOT EXISTS "${column}"`);
+    }
+    expect(sql).toContain('FROM "purchaseRequests" AS request');
+    expect(sql).toContain(
+      "WHEN request.\"approvalStatus\" = 'aprobada' THEN 'aprobada'"
+    );
+    expect(sql).toContain(
+      "WHEN request.\"approvalStatus\" = 'rechazada' THEN 'rechazada'"
+    );
+    expect(sql).toContain('CREATE INDEX IF NOT EXISTS "pri_approval_status_idx"');
+  });
 });

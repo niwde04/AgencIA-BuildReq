@@ -90,3 +90,21 @@ export function getSupplierRetentionPolicy(value: {
   if (value.certificateStatus === "vigente") return "rt15_only";
   return value.allowsTaxWithholding !== false ? "manual" : "none";
 }
+
+export function getEffectiveSupplierFiscalProfile(value: {
+  certificateStatus?: SupplierAccountPaymentCertificateStatus | null;
+  allowsTaxWithholding?: boolean | null;
+  subjectToAccountPayments?: boolean | null;
+}) {
+  if (value.certificateStatus === "vigente") {
+    return {
+      allowsTaxWithholding: false,
+      subjectToAccountPayments: true,
+    };
+  }
+
+  return {
+    allowsTaxWithholding: value.allowsTaxWithholding !== false,
+    subjectToAccountPayments: value.subjectToAccountPayments !== false,
+  };
+}

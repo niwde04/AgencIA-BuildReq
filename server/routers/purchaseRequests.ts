@@ -91,6 +91,32 @@ function assertProcurementApprovalsEnabled() {
   }
 }
 
+function isPendingPurchaseRequestApproval(purchaseRequest: {
+  status?: string | null;
+  approvalStatus?: string | null;
+}) {
+  return (
+    purchaseRequest.status === "en_revision" &&
+    purchaseRequest.approvalStatus === "pendiente"
+  );
+}
+
+function assertApproverPendingVisibility(
+  user: { buildreqRole?: string | null },
+  purchaseRequest: { status?: string | null; approvalStatus?: string | null }
+) {
+  if (
+    isProcurementApproverRole(user.buildreqRole) &&
+    !isPendingPurchaseRequestApproval(purchaseRequest)
+  ) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message:
+        "Los aprobadores solo pueden consultar solicitudes pendientes de aprobación",
+    });
+  }
+}
+
 function assertPurchaseRequestMutable(purchaseRequest: {
   status: string;
   approvalStatus?: string | null;
@@ -202,6 +228,7 @@ const approvalDecisionSchema = z
     id: z.number(),
     decision: z.enum(["approve", "reject"]),
     comment: z.string().trim().max(1000).optional(),
+    approvedItemIds: z.array(z.number().int().positive()).min(1).optional(),
   })
   .superRefine((value, ctx) => {
     if (
@@ -366,6 +393,12 @@ const purchaseRequestItemUpdateSchema = z
     fixedAssetName: z.string().nullable().optional(),
   })
   .strict();
+const purchaseRequestApprovalQuantitySchema = z
+  .object({
+    id: z.number().int().positive(),
+    quantity: purchaseRequestQuantitySchema,
+  })
+  .strict();
 const purchaseTypeSchema = z.enum(["local", "extranjera", "compra_directa"]);
 
 async function resolvePurchaseRequestItemTarget(input: {
@@ -462,9 +495,14 @@ export const purchaseRequestsRouter = router({
           message: "No tiene acceso a las solicitudes de compra",
         });
       }
+      const pendingApprovalOnly = isProcurementApproverRole(
+        ctx.user.buildreqRole
+      );
       return listPurchaseRequestsPage({
         ...applyProjectScope(input, ctx.user),
         approvalsEnabled: isPurchaseRequestApprovalEnabled(),
+        pendingApprovalOnly,
+        status: pendingApprovalOnly ? undefined : input.status,
       });
     }),
 
@@ -485,11 +523,25 @@ export const purchaseRequestsRouter = router({
         });
       }
 
-      const rows = await db.listPurchaseRequests(
-        applyProjectScope(input ?? {}, ctx.user)
+      const pendingApprovalOnly = isProcurementApproverRole(
+        ctx.user.buildreqRole
       );
-      if (!isProjectScopedRole(ctx.user.buildreqRole)) return rows;
-      return rows.filter(row =>
+      const rows = await db.listPurchaseRequests(
+        applyProjectScope(
+          {
+            ...(input ?? {}),
+            ...(pendingApprovalOnly ? { status: "en_revision" } : {}),
+          },
+          ctx.user
+        )
+      );
+      const visibleRows = pendingApprovalOnly
+        ? rows.filter(row =>
+            isPendingPurchaseRequestApproval(row.purchaseRequest)
+          )
+        : rows;
+      if (!isProjectScopedRole(ctx.user.buildreqRole)) return visibleRows;
+      return visibleRows.filter(row =>
         getPurchaseRequestProjectIds(row).every(projectId =>
           canAccessProject(ctx.user, projectId)
         )
@@ -515,6 +567,7 @@ export const purchaseRequestsRouter = router({
       }
 
       assertPurchaseRequestProjectScope(ctx.user, detail);
+      assertApproverPendingVisibility(ctx.user, detail.purchaseRequest);
       return detail;
     }),
 
@@ -803,6 +856,9 @@ export const purchaseRequestsRouter = router({
           id: input.id,
           decision: input.decision,
           comment: input.comment,
+          ...(input.approvedItemIds
+            ? { approvedItemIds: input.approvedItemIds }
+            : {}),
           actor: ctx.user,
         });
       } catch (error) {
@@ -820,11 +876,15 @@ export const purchaseRequestsRouter = router({
           userId: detail.purchaseRequest.createdById,
           title:
             input.decision === "approve"
-              ? "Solicitud de compra aprobada"
+              ? result.rejectedItemCount > 0
+                ? "Solicitud de compra aprobada parcialmente"
+                : "Solicitud de compra aprobada"
               : "Solicitud de compra rechazada",
           message:
             input.decision === "approve"
-              ? `${detail.purchaseRequest.requestNumber} fue aprobada.`
+              ? result.rejectedItemCount > 0
+                ? `${detail.purchaseRequest.requestNumber} fue aprobada con ${result.approvedItemCount} ítem(s); ${result.rejectedItemCount} ítem(s) no continuarán al flujo de compra.`
+                : `${detail.purchaseRequest.requestNumber} fue aprobada.`
               : `${detail.purchaseRequest.requestNumber} fue rechazada: ${input.comment?.trim()}`,
           type: "solicitud_compra",
           relatedEntityType: "purchase_request",
@@ -838,6 +898,49 @@ export const purchaseRequestsRouter = router({
       }
 
       return result;
+    }),
+
+  updatePendingQuantities: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        items: z.array(purchaseRequestApprovalQuantitySchema).min(1),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!isProcurementApproverRole(ctx.user.buildreqRole)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Solo los roles aprobadores pueden corregir cantidades",
+        });
+      }
+      assertProcurementApprovalsEnabled();
+
+      const detail = await db.getPurchaseRequestById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Solicitud de compra no encontrada",
+        });
+      }
+      assertPurchaseRequestProjectScope(ctx.user, detail);
+      assertApproverPendingVisibility(ctx.user, detail.purchaseRequest);
+
+      try {
+        return await db.updatePendingPurchaseRequestQuantities({
+          id: input.id,
+          items: input.items,
+          actor: ctx.user,
+        });
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudieron actualizar las cantidades",
+        });
+      }
     }),
 
   reopenRejected: protectedProcedure

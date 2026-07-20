@@ -33,6 +33,16 @@ function canAccessInvoices(user: {
   );
 }
 
+function rethrowDuplicateSupplierFiscalInvoice(error: unknown): never {
+  if (db.isDuplicateSupplierFiscalInvoiceError(error)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: db.DUPLICATE_SUPPLIER_FISCAL_INVOICE_MESSAGE,
+    });
+  }
+  throw error;
+}
+
 function canEditInvoices(user: { role: string; buildreqRole?: string | null }) {
   return (
     user.role === "admin" ||
@@ -770,7 +780,7 @@ export const invoicesRouter = router({
         });
       }
 
-      return db.updateInvoice(input.id, {
+      const updateData = {
         isFiscalDocument,
         cai: input.cai?.trim()
           ? isFiscalDocument
@@ -834,7 +844,13 @@ export const invoicesRouter = router({
           ? oceExemptAmount.toFixed(4)
           : "0.0000",
         notes: input.notes?.trim() || null,
-      });
+      };
+
+      try {
+        return await db.updateInvoice(input.id, updateData);
+      } catch (error) {
+        rethrowDuplicateSupplierFiscalInvoice(error);
+      }
     }),
 
   review: protectedProcedure

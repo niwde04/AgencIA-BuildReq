@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getEffectiveSupplierFiscalProfile,
   getSupplierAccountPaymentCertificateStatus,
   getSupplierRetentionPolicy,
   isAccountPaymentAllowedRetention,
@@ -93,5 +94,29 @@ describe("supplier account payment certificates", () => {
         allowsTaxWithholding: false,
       })
     ).toBe("none");
+  });
+
+  it("uses the valid certificate as the effective supplier fiscal profile", () => {
+    expect(
+      getEffectiveSupplierFiscalProfile({
+        certificateStatus: "vigente",
+        allowsTaxWithholding: true,
+        subjectToAccountPayments: false,
+      })
+    ).toEqual({
+      allowsTaxWithholding: false,
+      subjectToAccountPayments: true,
+    });
+
+    expect(
+      getEffectiveSupplierFiscalProfile({
+        certificateStatus: "vencido",
+        allowsTaxWithholding: true,
+        subjectToAccountPayments: false,
+      })
+    ).toEqual({
+      allowsTaxWithholding: true,
+      subjectToAccountPayments: false,
+    });
   });
 });

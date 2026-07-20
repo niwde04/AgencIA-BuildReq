@@ -273,6 +273,7 @@ export type PurchaseRequestPageFilters = PageInput & {
   purchaseType?: string;
   status?: string;
   approvalsEnabled?: boolean;
+  pendingApprovalOnly?: boolean;
 };
 
 export async function listPurchaseRequestsPage(
@@ -288,7 +289,14 @@ export async function listPurchaseRequestsPage(
   addProjectScope(conditions, purchaseRequests.projectId, filters.projectIds);
   if (filters.purchaseType)
     conditions.push(sql`${purchaseRequests.purchaseType}::text = ${filters.purchaseType}`);
-  if (filters.status) {
+  if (filters.pendingApprovalOnly) {
+    conditions.push(
+      and(
+        eq(purchaseRequests.status, "en_revision" as any),
+        eq(purchaseRequests.approvalStatus, "pendiente" as any)
+      )!
+    );
+  } else if (filters.status) {
     if (!filters.approvalsEnabled && filters.status === "pendiente") {
       conditions.push(
         or(

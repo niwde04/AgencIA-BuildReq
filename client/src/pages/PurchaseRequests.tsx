@@ -392,6 +392,8 @@ const getWarehousePrintDestinationLabel = (warehouse: any) =>
 
 export default function PurchaseRequests() {
   const { user } = useAuth();
+  const buildreqRole = (user as any)?.buildreqRole;
+  const isProcurementApprover = isProcurementApproverRole(buildreqRole);
   const { purchaseRequestApprovalsEnabled: PROCUREMENT_APPROVALS_ENABLED } =
     useProcurementApprovalSettings();
   const utils = trpc.useUtils();
@@ -407,6 +409,12 @@ export default function PurchaseRequests() {
   const [convertQuantities, setConvertQuantities] = useState<
     Record<number, string>
   >({});
+  const [approvalQuantities, setApprovalQuantities] = useState<
+    Record<number, string>
+  >({});
+  const [approvalSelectedItemIds, setApprovalSelectedItemIds] = useState<
+    number[]
+  >([]);
   const [targetPopoverOpen, setTargetPopoverOpen] = useState<number | null>(
     null
   );
@@ -422,6 +430,9 @@ export default function PurchaseRequests() {
     PurchaseType | "all"
   >("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const effectiveStatusFilter = isProcurementApprover
+    ? "en_revision"
+    : statusFilter;
   const [rejectReason, setRejectReason] = useState("");
   const [approvalComment, setApprovalComment] = useState("");
   const [emailDialog, setEmailDialog] = useState<{
@@ -441,7 +452,8 @@ export default function PurchaseRequests() {
       search: debouncedSearchTerm.trim() || undefined,
       purchaseType:
         purchaseTypeFilter === "all" ? undefined : purchaseTypeFilter,
-      status: statusFilter === "all" ? undefined : statusFilter,
+      status:
+        effectiveStatusFilter === "all" ? undefined : effectiveStatusFilter,
       page,
       pageSize: PAGE_SIZE,
     },
@@ -473,8 +485,6 @@ export default function PurchaseRequests() {
     { enabled: selectedProjectIdNumber > 0 }
   );
 
-  const buildreqRole = (user as any)?.buildreqRole;
-  const isProcurementApprover = isProcurementApproverRole(buildreqRole);
   const isProjectAdmin = buildreqRole === "administrador_proyecto";
   const isProjectWarehouse = buildreqRole === "bodeguero_proyecto";
   const canManagePurchaseRequests =
@@ -495,12 +505,12 @@ export default function PurchaseRequests() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearchTerm, purchaseTypeFilter, statusFilter]);
+  }, [debouncedSearchTerm, purchaseTypeFilter, effectiveStatusFilter]);
 
   useEffect(() => {
     setSelectedRequestIds([]);
     setSelectedItemIds([]);
-  }, [page, debouncedSearchTerm, purchaseTypeFilter, statusFilter]);
+  }, [page, debouncedSearchTerm, purchaseTypeFilter, effectiveStatusFilter]);
 
   useEffect(() => {
     if (
@@ -564,15 +574,33 @@ export default function PurchaseRequests() {
   const reviewApprovalMutation =
     trpc.purchaseRequests.reviewApproval.useMutation({
       onSuccess: (
-        _result: unknown,
-        variables: { decision: "approve" | "reject" }
+        result,
+        variables: {
+          decision: "approve" | "reject";
+          approvedItemIds?: number[];
+        }
       ) => {
         toast.success(
           variables.decision === "approve"
-            ? "Solicitud aprobada"
+            ? result.rejectedItemCount > 0
+              ? `Aprobados ${result.approvedItemCount} ítem(s); rechazados ${result.rejectedItemCount}`
+              : "Solicitud aprobada"
             : "Solicitud rechazada"
         );
         setApprovalComment("");
+        setApprovalSelectedItemIds([]);
+        setSelectedId(null);
+        void utils.purchaseRequests.invalidate();
+      },
+      onError: (error: { message: string }) => toast.error(error.message),
+    });
+
+  const updatePendingQuantitiesMutation =
+    trpc.purchaseRequests.updatePendingQuantities.useMutation({
+      onSuccess: result => {
+        if (result.updatedItemCount > 0) {
+          toast.success("Cantidades actualizadas");
+        }
         void Promise.all([
           utils.purchaseRequests.invalidate(),
           selectedId
@@ -669,6 +697,22 @@ export default function PurchaseRequests() {
   const selectedItems = useMemo(() => {
     return detail?.items ?? [];
   }, [detail]);
+  const pendingApprovalItemIds = useMemo(
+    () =>
+      selectedItems
+        .filter((item: any) => item.approvalStatus === "pendiente")
+        .map((item: any) => item.id),
+    [selectedItems]
+  );
+  const allApprovalItemsSelected =
+    pendingApprovalItemIds.length > 0 &&
+    pendingApprovalItemIds.every(itemId =>
+      approvalSelectedItemIds.includes(itemId)
+    );
+  const someApprovalItemsSelected =
+    pendingApprovalItemIds.some(itemId =>
+      approvalSelectedItemIds.includes(itemId)
+    ) && !allApprovalItemsSelected;
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -682,6 +726,8 @@ export default function PurchaseRequests() {
     if (!detail) {
       setEditItems({});
       setConvertQuantities({});
+      setApprovalQuantities({});
+      setApprovalSelectedItemIds([]);
       return;
     }
 
@@ -702,6 +748,22 @@ export default function PurchaseRequests() {
               getPendingConversionQuantity(item).toFixed(2)
           ),
         ])
+      )
+    );
+    setApprovalQuantities(
+      Object.fromEntries(
+        (detail.items ?? []).map((item: any) => [
+          item.id,
+          String(item.quantity ?? ""),
+        ])
+      )
+    );
+    setApprovalSelectedItemIds(current =>
+      current.filter(itemId =>
+        (detail.items ?? []).some(
+          (item: any) =>
+            item.id === itemId && item.approvalStatus === "pendiente"
+        )
       )
     );
   }, [detail]);
@@ -750,6 +812,40 @@ export default function PurchaseRequests() {
       ...current,
       [item.id]: value,
     }));
+  };
+
+  const getApprovalQuantityDraft = (item: any) =>
+    approvalQuantities[item.id] ?? String(item.quantity ?? "");
+
+  const updateApprovalQuantityDraft = (item: any, value: string) => {
+    setApprovalQuantities(current => ({
+      ...current,
+      [item.id]: value,
+    }));
+  };
+
+  const buildApprovalQuantityUpdates = () => {
+    const updates: Array<{ id: number; quantity: string }> = [];
+    for (const item of selectedItems) {
+      const rawQuantity = getApprovalQuantityDraft(item).trim();
+      const quantity = Number(rawQuantity);
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        toast.error(
+          `La cantidad de ${item.itemName} debe ser mayor que cero`
+        );
+        return null;
+      }
+      if (quantity < getConvertedQuantity(item)) {
+        toast.error(
+          `La cantidad de ${item.itemName} no puede ser menor que la cantidad convertida`
+        );
+        return null;
+      }
+      if (Math.abs(quantity - Number(item.quantity ?? 0)) > 0.0001) {
+        updates.push({ id: item.id, quantity: rawQuantity });
+      }
+    }
+    return updates;
   };
 
   const buildItemUpdatePayload = () => {
@@ -836,6 +932,12 @@ export default function PurchaseRequests() {
     return selectedItems
       .filter((item: any) => {
         if (getPendingConversionQuantity(item) <= 0) return false;
+        if (
+          PROCUREMENT_APPROVALS_ENABLED &&
+          item.approvalStatus !== "aprobada"
+        ) {
+          return false;
+        }
         if (!isProjectAdmin) return true;
         if (canUseAllProjects) return true;
         const itemProjectId =
@@ -847,6 +949,7 @@ export default function PurchaseRequests() {
     canConvert,
     detail?.purchaseRequest.projectId,
     isProjectAdmin,
+    PROCUREMENT_APPROVALS_ENABLED,
     selectedItems,
     user,
   ]);
@@ -974,6 +1077,19 @@ export default function PurchaseRequests() {
     item: any,
     draft: PurchaseRequestItemDraft
   ) => {
+    if (isProcurementApprover) {
+      const targetLabel =
+        draft.targetSelection?.label ?? "Destino no especificado";
+      return (
+        <div
+          className="min-h-9 whitespace-normal break-words rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-sm leading-5"
+          title={targetLabel}
+        >
+          {targetLabel}
+        </div>
+      );
+    }
+
     const open = targetPopoverOpen === item.id;
     const disabled =
       !canEditPurchaseRequestDestination || !selectedProjectIdNumber;
@@ -1151,6 +1267,7 @@ export default function PurchaseRequests() {
     setTargetSearch("");
     setDebouncedTargetSearch("");
     setSelectedItemIds([]);
+    setApprovalSelectedItemIds([]);
     setRejectReason("");
     setApprovalComment("");
   };
@@ -1201,11 +1318,59 @@ export default function PurchaseRequests() {
     }
   };
 
-  const handleReviewApproval = (decision: "approve" | "reject") => {
+  const persistApprovalQuantityChanges = async (showNoChanges = false) => {
+    if (!detail || !canReviewSelectedPurchaseRequest) return false;
+    const items = buildApprovalQuantityUpdates();
+    if (!items) return false;
+    if (items.length === 0) {
+      if (showNoChanges) toast.info("No hay cambios de cantidad por guardar");
+      return true;
+    }
+
+    await updatePendingQuantitiesMutation.mutateAsync({
+      id: detail.purchaseRequest.id,
+      items,
+    });
+    return true;
+  };
+
+  const handleSaveApprovalQuantities = async () => {
+    try {
+      await persistApprovalQuantityChanges(true);
+    } catch {
+      // The mutation displays the server error.
+    }
+  };
+
+  const handleReviewApproval = async (decision: "approve" | "reject") => {
     if (!detail || !canReviewSelectedPurchaseRequest) return;
     const comment = approvalComment.trim();
+    const selectedApprovalIds = approvalSelectedItemIds.filter(itemId =>
+      pendingApprovalItemIds.includes(itemId)
+    );
+    if (decision === "approve" && selectedApprovalIds.length === 0) {
+      toast.error("Marca al menos un ítem para aprobar");
+      return;
+    }
+    if (
+      decision === "approve" &&
+      selectedApprovalIds.length < pendingApprovalItemIds.length &&
+      comment.length < 5
+    ) {
+      toast.error(
+        "Indica un motivo de al menos 5 caracteres para los ítems no seleccionados"
+      );
+      return;
+    }
     if (decision === "reject" && comment.length < 5) {
       toast.error("Indica un motivo de rechazo de al menos 5 caracteres");
+      return;
+    }
+
+    try {
+      const quantitiesSaved = await persistApprovalQuantityChanges();
+      if (!quantitiesSaved) return;
+    } catch {
       return;
     }
 
@@ -1213,6 +1378,8 @@ export default function PurchaseRequests() {
       id: detail.purchaseRequest.id,
       decision,
       comment: comment || undefined,
+      approvedItemIds:
+        decision === "approve" ? selectedApprovalIds : undefined,
     });
   };
 
@@ -1272,10 +1439,10 @@ export default function PurchaseRequests() {
           : escapeHtml(item.itemName);
         return `
           <tr>
-            <td>${escapeHtml(code)}</td>
+            ${isProcurementApprover ? "" : `<td>${escapeHtml(code)}</td>`}
             <td class="numeric">${escapeHtml(quantity)}</td>
             <td>${itemDescriptionMarkup}</td>
-            <td>${escapeHtml(partNumber)}</td>
+            ${isProcurementApprover ? "" : `<td>${escapeHtml(partNumber)}</td>`}
             <td>${escapeHtml(getItemTargetLabel(item))}</td>
             <td>${escapeHtml(draft.brand || "-")}</td>
             <td>${escapeHtml(item.unit || "-")}</td>
@@ -1459,10 +1626,10 @@ export default function PurchaseRequests() {
             <table>
               <thead>
                 <tr>
-                  <th style="width: 13%;">Codigo</th>
+                  ${isProcurementApprover ? "" : '<th style="width: 13%;">Codigo</th>'}
                   <th style="width: 9%;" class="numeric">Cantidad</th>
                   <th style="width: 18%;">Descripción</th>
-                  <th style="width: 12%;">No. Parte</th>
+                  ${isProcurementApprover ? "" : '<th style="width: 12%;">No. Parte</th>'}
                   <th style="width: 17%;">Destino</th>
                   <th style="width: 10%;">Marca</th>
                   <th style="width: 7%;">U.M</th>
@@ -1470,9 +1637,9 @@ export default function PurchaseRequests() {
                 </tr>
               </thead>
               <tbody>
-                ${itemRows || `<tr><td colspan="8">Sin ítems</td></tr>`}
+                ${itemRows || `<tr><td colspan="${isProcurementApprover ? 6 : 8}">Sin ítems</td></tr>`}
                 <tr class="summary">
-                  <td colspan="6">Total solicitado</td>
+                  <td colspan="${isProcurementApprover ? 4 : 6}">Total solicitado</td>
                   <td class="numeric">${escapeHtml(formatQuantity(totalQuantity))}</td>
                   <td></td>
                 </tr>
@@ -1507,7 +1674,10 @@ export default function PurchaseRequests() {
           search: debouncedSearchTerm.trim() || undefined,
           purchaseType:
             purchaseTypeFilter === "all" ? undefined : purchaseTypeFilter,
-          status: statusFilter === "all" ? undefined : statusFilter,
+          status:
+            effectiveStatusFilter === "all"
+              ? undefined
+              : effectiveStatusFilter,
           page: exportPage,
           pageSize,
         })
@@ -1659,17 +1829,32 @@ export default function PurchaseRequests() {
             <SelectItem value="extranjera">Compra Extranjera</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
+        <Select
+          value={effectiveStatusFilter}
+          onValueChange={value => {
+            if (!isProcurementApprover) setStatusFilter(value);
+          }}
+        >
           <SelectTrigger className="h-10 w-full lg:w-56">
             <SelectValue placeholder="Estado" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Todos los estados</SelectItem>
-            {getStatusFilterOptions(PROCUREMENT_APPROVALS_ENABLED).map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
+            {isProcurementApprover ? (
+              <SelectItem value="en_revision">
+                Pendiente de aprobación
               </SelectItem>
-            ))}
+            ) : (
+              <>
+                <SelectItem value="all">Todos los estados</SelectItem>
+                {getStatusFilterOptions(PROCUREMENT_APPROVALS_ENABLED).map(
+                  ([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  )
+                )}
+              </>
+            )}
           </SelectContent>
         </Select>
       </div>
@@ -2269,7 +2454,7 @@ export default function PurchaseRequests() {
                     <Textarea
                       value={approvalComment}
                       onChange={event => setApprovalComment(event.target.value)}
-                      placeholder="Opcional al aprobar; obligatorio y de al menos 5 caracteres al rechazar"
+                      placeholder="Opcional si aprueba todos; obligatorio para justificar ítems no seleccionados o rechazar la solicitud"
                       rows={3}
                       className="min-h-[110px] resize-y bg-background text-sm"
                     />
@@ -2307,7 +2492,9 @@ export default function PurchaseRequests() {
                           : isRejectedPurchaseRequest
                             ? "La solicitud debe reabrirse antes de poder corregir sus ítems."
                             : isPendingApprovalPurchaseRequest
-                              ? "Los ítems permanecen bloqueados mientras se revisa la solicitud."
+                              ? canReviewSelectedPurchaseRequest
+                                ? "Marca los ítems que deben continuar al flujo de compra; los no seleccionados serán rechazados."
+                                : "Los ítems permanecen bloqueados mientras se revisa la solicitud."
                               : canConvertSelectedPurchaseRequest
                                 ? "Marca los renglones que deseas convertir a la próxima orden de compra."
                                 : "Detalle de ítems incluidos en la solicitud."}
@@ -2324,11 +2511,26 @@ export default function PurchaseRequests() {
                           : `Se convertirán ${convertibleItemIds.length}`}
                       </Badge>
                     )}
+                    {canReviewSelectedPurchaseRequest && (
+                      <Badge
+                        variant="secondary"
+                        className="rounded-full px-3 py-1 text-xs"
+                      >
+                        {approvalSelectedItemIds.length} de{" "}
+                        {pendingApprovalItemIds.length} seleccionados
+                      </Badge>
+                    )}
                   </div>
                 </div>
 
                 <div className="max-w-full overflow-x-auto">
-                  <table className="w-full min-w-[1980px] table-fixed text-sm">
+                  <table
+                    className={`w-full table-fixed text-sm ${
+                      isProcurementApprover
+                        ? "min-w-[1730px]"
+                        : "min-w-[1980px]"
+                    }`}
+                  >
                     <colgroup>
                       {canConvertSelectedPurchaseRequest && (
                         <col className="w-20" />
@@ -2337,13 +2539,25 @@ export default function PurchaseRequests() {
                       <col className="w-56" />
                       <col className="w-72" />
                       <col className="w-72" />
-                      <col className="w-48" />
-                      <col className="w-56" />
+                      {!isProcurementApprover ? (
+                        <>
+                          <col className="w-48" />
+                          <col className="w-56" />
+                        </>
+                      ) : null}
                       <col className="w-64" />
                       <col className="w-52" />
                       <col className="w-44" />
-                      <col className="w-44" />
-                      <col className="w-52" />
+                      {canReviewSelectedPurchaseRequest && (
+                        <col className="w-28" />
+                      )}
+                      {!isProcurementApprover ? (
+                        <>
+                          <col className="w-44" />
+                          <col className="w-44" />
+                          <col className="w-52" />
+                        </>
+                      ) : null}
                     </colgroup>
                     <thead>
                       <tr className="border-b border-border bg-muted/20">
@@ -2364,12 +2578,16 @@ export default function PurchaseRequests() {
                         <th className="p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Ítem
                         </th>
-                        <th className="w-48 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          SAP
-                        </th>
-                        <th className="w-44 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          No. parte
-                        </th>
+                        {!isProcurementApprover ? (
+                          <>
+                            <th className="w-48 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              SAP
+                            </th>
+                            <th className="w-44 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              No. parte
+                            </th>
+                          </>
+                        ) : null}
                         <th className="w-44 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Marca
                         </th>
@@ -2379,23 +2597,59 @@ export default function PurchaseRequests() {
                         <th className="w-52 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Cantidad solicitada
                         </th>
-                        <th className="w-44 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Convertido
-                        </th>
-                        <th className="w-44 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Pendiente
-                        </th>
-                        <th className="w-52 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Cantidad a comprar
-                        </th>
+                        {canReviewSelectedPurchaseRequest && (
+                          <th className="w-28 p-4 text-center text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            <div className="flex items-center justify-center gap-2">
+                              <Checkbox
+                                checked={
+                                  allApprovalItemsSelected
+                                    ? true
+                                    : someApprovalItemsSelected
+                                      ? "indeterminate"
+                                      : false
+                                }
+                                onCheckedChange={checked =>
+                                  setApprovalSelectedItemIds(
+                                    checked ? pendingApprovalItemIds : []
+                                  )
+                                }
+                                aria-label="Seleccionar todos los ítems para aprobación"
+                              />
+                              Aprobar
+                            </div>
+                          </th>
+                        )}
+                        {!isProcurementApprover ? (
+                          <>
+                            <th className="w-44 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Convertido
+                            </th>
+                            <th className="w-44 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Pendiente
+                            </th>
+                            <th className="w-52 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Cantidad a comprar
+                            </th>
+                          </>
+                        ) : null}
                       </tr>
                     </thead>
                     <tbody>
                       {selectedItems.map((item: any) => {
                         const draft = getItemDraft(item);
                         const convertedQuantity = getConvertedQuantity(item);
-                        const pendingQuantity =
-                          getPendingConversionQuantity(item);
+                        const requestedQuantityValue = canReviewSelectedPurchaseRequest
+                          ? Number(getApprovalQuantityDraft(item) || 0)
+                          : Number(item.quantity ?? 0);
+                        const requestedQuantity = Number.isFinite(
+                          requestedQuantityValue
+                        )
+                          ? requestedQuantityValue
+                          : 0;
+                        const pendingQuantity = Math.max(
+                          requestedQuantity - convertedQuantity,
+                          0
+                        );
                         const convertQuantity = getConvertQuantityDraft(item);
                         const canConvertItem =
                           canConvertSelectedPurchaseRequest &&
@@ -2440,7 +2694,33 @@ export default function PurchaseRequests() {
                               {renderItemTargetCombobox(item, draft)}
                             </td>
                             <td className="p-4 align-top">
-                              <p className="font-medium">{item.itemName}</p>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="font-medium">{item.itemName}</p>
+                                {PROCUREMENT_APPROVALS_ENABLED &&
+                                item.approvalStatus === "rechazada" ? (
+                                  <Badge
+                                    variant="destructive"
+                                    className="text-[10px]"
+                                  >
+                                    Rechazado
+                                  </Badge>
+                                ) : null}
+                                {PROCUREMENT_APPROVALS_ENABLED &&
+                                item.approvalStatus === "aprobada" ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="border-emerald-300 bg-emerald-50 text-[10px] text-emerald-700"
+                                  >
+                                    Aprobado
+                                  </Badge>
+                                ) : null}
+                              </div>
+                              {item.approvalStatus === "rechazada" &&
+                              item.rejectionReason ? (
+                                <p className="mt-1 text-xs text-rose-700">
+                                  Motivo: {item.rejectionReason}
+                                </p>
+                              ) : null}
                               {requesterItemName ? (
                                 <p className="mt-1 text-xs text-muted-foreground">
                                   Solicitado:{" "}
@@ -2455,14 +2735,18 @@ export default function PurchaseRequests() {
                                 </p>
                               )}
                             </td>
-                            <td className="p-4 align-top text-xs font-mono">
-                              {item.currentSapItemCode ||
-                                item.originalSapItemCode ||
-                                "—"}
-                            </td>
-                            <td className="p-4 align-top text-xs">
-                              {getPurchaseRequestItemPartNumber(item)}
-                            </td>
+                            {!isProcurementApprover ? (
+                              <>
+                                <td className="p-4 align-top text-xs font-mono">
+                                  {item.currentSapItemCode ||
+                                    item.originalSapItemCode ||
+                                    "—"}
+                                </td>
+                                <td className="p-4 align-top text-xs">
+                                  {getPurchaseRequestItemPartNumber(item)}
+                                </td>
+                              </>
+                            ) : null}
                             <td className="p-4 align-top">
                               <Input
                                 className="h-9 min-w-0 text-sm"
@@ -2495,44 +2779,88 @@ export default function PurchaseRequests() {
                             </td>
                             <td className="p-4 align-top">
                               <div className="flex items-center justify-end gap-2">
-                                <span className="h-9 w-36 rounded-md border border-transparent px-3 py-2 text-right font-mono">
-                                  {formatQuantity(item.quantity)}
-                                </span>
+                                {canReviewSelectedPurchaseRequest ? (
+                                  <Input
+                                    className="h-9 w-36 text-right font-mono"
+                                    type="number"
+                                    min="0.01"
+                                    step="0.01"
+                                    value={getApprovalQuantityDraft(item)}
+                                    onChange={event =>
+                                      updateApprovalQuantityDraft(
+                                        item,
+                                        event.target.value
+                                      )
+                                    }
+                                  />
+                                ) : (
+                                  <span className="h-9 w-36 rounded-md border border-transparent px-3 py-2 text-right font-mono">
+                                    {formatQuantity(item.quantity)}
+                                  </span>
+                                )}
                                 <span className="min-w-12 text-left text-xs text-muted-foreground">
                                   {item.unit || ""}
                                 </span>
                               </div>
                             </td>
-                            <td className="p-4 text-right align-top font-medium">
-                              {formatQuantity(convertedQuantity)}{" "}
-                              {item.unit || ""}
-                            </td>
-                            <td className="p-4 text-right align-top font-medium">
-                              {formatQuantity(pendingQuantity)}{" "}
-                              {item.unit || ""}
-                            </td>
-                            <td className="p-4 align-top">
-                              <div className="flex items-center justify-end gap-2">
-                                <Input
-                                  className="h-9 w-36 text-right"
-                                  type="number"
-                                  min="0.01"
-                                  max={pendingQuantity || undefined}
-                                  step="0.01"
-                                  value={convertQuantity}
-                                  onChange={event =>
-                                    updateConvertQuantityDraft(
-                                      item,
-                                      event.target.value
+                            {canReviewSelectedPurchaseRequest && (
+                              <td className="p-4 text-center align-top">
+                                <Checkbox
+                                  checked={approvalSelectedItemIds.includes(
+                                    item.id
+                                  )}
+                                  disabled={
+                                    item.approvalStatus !== "pendiente"
+                                  }
+                                  onCheckedChange={checked =>
+                                    setApprovalSelectedItemIds(current =>
+                                      checked
+                                        ? Array.from(
+                                            new Set([...current, item.id])
+                                          )
+                                        : current.filter(
+                                            itemId => itemId !== item.id
+                                          )
                                     )
                                   }
-                                  disabled={!canConvertItem}
+                                  aria-label={`Aprobar ${item.itemName}`}
                                 />
-                                <span className="min-w-12 text-left text-xs text-muted-foreground">
+                              </td>
+                            )}
+                            {!isProcurementApprover ? (
+                              <>
+                                <td className="p-4 text-right align-top font-medium">
+                                  {formatQuantity(convertedQuantity)}{" "}
                                   {item.unit || ""}
-                                </span>
-                              </div>
-                            </td>
+                                </td>
+                                <td className="p-4 text-right align-top font-medium">
+                                  {formatQuantity(pendingQuantity)}{" "}
+                                  {item.unit || ""}
+                                </td>
+                                <td className="p-4 align-top">
+                                  <div className="flex items-center justify-end gap-2">
+                                    <Input
+                                      className="h-9 w-36 text-right"
+                                      type="number"
+                                      min="0.01"
+                                      max={pendingQuantity || undefined}
+                                      step="0.01"
+                                      value={convertQuantity}
+                                      onChange={event =>
+                                        updateConvertQuantityDraft(
+                                          item,
+                                          event.target.value
+                                        )
+                                      }
+                                      disabled={!canConvertItem}
+                                    />
+                                    <span className="min-w-12 text-left text-xs text-muted-foreground">
+                                      {item.unit || ""}
+                                    </span>
+                                  </div>
+                                </td>
+                              </>
+                            ) : null}
                           </tr>
                         );
                       })}
@@ -2583,21 +2911,36 @@ export default function PurchaseRequests() {
                   {canReviewSelectedPurchaseRequest && (
                     <>
                       <Button
+                        variant="outline"
+                        className="h-11 px-4"
+                        onClick={() => void handleSaveApprovalQuantities()}
+                        disabled={updatePendingQuantitiesMutation.isPending}
+                      >
+                        <Save className="mr-2 h-4 w-4" />
+                        Guardar cantidades
+                      </Button>
+                      <Button
                         variant="destructive"
                         className="h-11 px-4"
-                        onClick={() => handleReviewApproval("reject")}
-                        disabled={reviewApprovalMutation.isPending}
+                        onClick={() => void handleReviewApproval("reject")}
+                        disabled={
+                          reviewApprovalMutation.isPending ||
+                          updatePendingQuantitiesMutation.isPending
+                        }
                       >
                         <XCircle className="mr-2 h-4 w-4" />
                         Rechazar
                       </Button>
                       <Button
                         className="h-11 bg-emerald-600 px-5 text-white hover:bg-emerald-700"
-                        onClick={() => handleReviewApproval("approve")}
-                        disabled={reviewApprovalMutation.isPending}
+                        onClick={() => void handleReviewApproval("approve")}
+                        disabled={
+                          reviewApprovalMutation.isPending ||
+                          updatePendingQuantitiesMutation.isPending
+                        }
                       >
                         <CheckCircle2 className="mr-2 h-4 w-4" />
-                        Aprobar
+                        Aprobar seleccionados
                       </Button>
                     </>
                   )}

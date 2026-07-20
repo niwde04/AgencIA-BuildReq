@@ -54,6 +54,16 @@ function canAccessReceipts(user: {
   );
 }
 
+function rethrowDuplicateSupplierFiscalInvoice(error: unknown): never {
+  if (db.isDuplicateSupplierFiscalInvoiceError(error)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: db.DUPLICATE_SUPPLIER_FISCAL_INVOICE_MESSAGE,
+    });
+  }
+  throw error;
+}
+
 function canReceivePurchaseOrder(purchaseOrder: any, contractSummary?: any) {
   if (purchaseOrder.approvalStatus === "aprobada") return false;
   if (!purchaseOrder.appliesContract) {
@@ -1677,8 +1687,12 @@ export const receiptsRouter = router({
       );
       const receiptItems = receiptItemGroups.flat();
 
-      return otherCharges.length > 0
-        ? db.registerReceipt(receiptData, receiptItems, otherCharges)
-        : db.registerReceipt(receiptData, receiptItems);
+      try {
+        return await (otherCharges.length > 0
+          ? db.registerReceipt(receiptData, receiptItems, otherCharges)
+          : db.registerReceipt(receiptData, receiptItems));
+      } catch (error) {
+        rethrowDuplicateSupplierFiscalInvoice(error);
+      }
     }),
 });
