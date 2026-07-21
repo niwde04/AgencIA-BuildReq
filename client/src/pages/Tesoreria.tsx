@@ -180,6 +180,23 @@ function BatchFormDialog({
     },
     { enabled: open && Boolean(projectId) }
   );
+  const sortedProjects = useMemo(
+    () =>
+      [...(projectsQuery.data ?? [])].sort(
+        (left: any, right: any) =>
+          String(left.code ?? "").localeCompare(
+            String(right.code ?? ""),
+            "es-HN",
+            { numeric: true, sensitivity: "base" }
+          ) ||
+          String(left.name ?? "").localeCompare(
+            String(right.name ?? ""),
+            "es-HN",
+            { sensitivity: "base" }
+          )
+      ),
+    [projectsQuery.data]
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -324,7 +341,7 @@ function BatchFormDialog({
                   <SelectValue placeholder="Seleccione proyecto" />
                 </SelectTrigger>
                 <SelectContent>
-                  {(projectsQuery.data ?? []).map((project: any) => (
+                  {sortedProjects.map((project: any) => (
                     <SelectItem key={project.id} value={String(project.id)}>
                       {project.code} - {project.name}
                     </SelectItem>
