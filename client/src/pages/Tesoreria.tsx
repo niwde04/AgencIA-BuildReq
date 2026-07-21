@@ -270,6 +270,35 @@ function BatchFormDialog({
         .includes(term)
     );
   }, [eligibleQuery.data, search]);
+  const allVisibleInvoicesSelected =
+    visibleInvoices.length > 0 &&
+    visibleInvoices.every((row: any) => selectedIds.has(row.invoice.id));
+
+  function toggleAllVisibleInvoices() {
+    const shouldSelect = !allVisibleInvoicesSelected;
+    setSelectedIds(current => {
+      const next = new Set(current);
+      visibleInvoices.forEach((row: any) => {
+        if (shouldSelect) next.add(row.invoice.id);
+        else next.delete(row.invoice.id);
+      });
+      return next;
+    });
+    if (shouldSelect) {
+      setAmounts(current => {
+        const next = { ...current };
+        visibleInvoices.forEach((row: any) => {
+          if (
+            next[row.invoice.id] === undefined ||
+            next[row.invoice.id] === ""
+          ) {
+            next[row.invoice.id] = String(row.money.availableAmount);
+          }
+        });
+        return next;
+      });
+    }
+  }
 
   function toggleInvoice(row: any, checked: boolean) {
     setSelectedIds(current => {
@@ -407,12 +436,26 @@ function BatchFormDialog({
                 onChange={event => setSearch(event.target.value)}
               />
             </div>
-            <Badge variant="secondary" className="w-fit shrink-0 px-3 py-1.5">
-              {visibleInvoices.length}{" "}
-              {visibleInvoices.length === 1
-                ? "factura disponible"
-                : "facturas disponibles"}
-            </Badge>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={eligibleQuery.isLoading || !visibleInvoices.length}
+                onClick={toggleAllVisibleInvoices}
+              >
+                <CheckCircle2 className="mr-2 h-4 w-4" />
+                {allVisibleInvoicesSelected
+                  ? "Deseleccionar todas"
+                  : "Seleccionar todas"}
+              </Button>
+              <Badge variant="secondary" className="w-fit shrink-0 px-3 py-1.5">
+                {visibleInvoices.length}{" "}
+                {visibleInvoices.length === 1
+                  ? "factura disponible"
+                  : "facturas disponibles"}
+              </Badge>
+            </div>
           </div>
 
           <div className="overflow-hidden rounded-lg border bg-card">
