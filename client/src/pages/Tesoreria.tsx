@@ -279,176 +279,218 @@ function BatchFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] max-w-6xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>
-            {existing ? "Editar lote" : "Nuevo lote de abonos"}
-          </DialogTitle>
-          <DialogDescription>
-            Seleccione facturas de línea de crédito y defina el abono
-            solicitado. El valor inicial es el saldo completo disponible.
-          </DialogDescription>
+      <DialogContent className="grid max-h-[94vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-5xl xl:max-w-6xl">
+        <DialogHeader className="border-b px-6 py-5 pr-14">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <WalletCards className="h-5 w-5" />
+            </div>
+            <div className="space-y-1.5">
+              <DialogTitle>
+                {existing ? "Editar lote" : "Nuevo lote de abonos"}
+              </DialogTitle>
+              <DialogDescription className="max-w-3xl leading-relaxed">
+                Seleccione facturas de línea de crédito y defina el abono
+                solicitado. El valor inicial corresponde al saldo completo
+                disponible y puede reducirse para registrar un pago parcial.
+              </DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
 
-        <div className="grid gap-4 md:grid-cols-4">
-          <div className="space-y-2 md:col-span-2">
-            <Label>Proyecto</Label>
-            <Select
-              value={projectId}
-              onValueChange={setProjectId}
-              disabled={Boolean(existing)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Seleccione proyecto" />
-              </SelectTrigger>
-              <SelectContent>
-                {(projectsQuery.data ?? []).map((project: any) => (
-                  <SelectItem key={project.id} value={String(project.id)}>
-                    {project.code} - {project.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        <div className="min-h-0 space-y-5 overflow-y-auto px-6 py-5">
+          <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(8rem,0.65fr)_minmax(11rem,0.9fr)]">
+            <div className="min-w-0 space-y-2">
+              <Label>Proyecto</Label>
+              <Select
+                value={projectId}
+                onValueChange={setProjectId}
+                disabled={Boolean(existing)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Seleccione proyecto" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(projectsQuery.data ?? []).map((project: any) => (
+                    <SelectItem key={project.id} value={String(project.id)}>
+                      {project.code} - {project.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Moneda</Label>
+              <Select
+                value={currency}
+                onValueChange={value => setCurrency(value as "HNL" | "USD")}
+                disabled={Boolean(existing)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="HNL">HNL</SelectItem>
+                  <SelectItem value="USD">USD</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Fecha prevista</Label>
+              <Input
+                type="date"
+                value={paymentDate}
+                onChange={event => setPaymentDate(event.target.value)}
+              />
+            </div>
           </div>
+
           <div className="space-y-2">
-            <Label>Moneda</Label>
-            <Select
-              value={currency}
-              onValueChange={value => setCurrency(value as "HNL" | "USD")}
-              disabled={Boolean(existing)}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="HNL">HNL</SelectItem>
-                <SelectItem value="USD">USD</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Fecha prevista</Label>
-            <Input
-              type="date"
-              value={paymentDate}
-              onChange={event => setPaymentDate(event.target.value)}
+            <Label>Notas</Label>
+            <Textarea
+              className="min-h-20 resize-y"
+              value={notes}
+              onChange={event => setNotes(event.target.value)}
+              maxLength={2000}
+              placeholder="Agregue una observación para el lote (opcional)"
             />
           </div>
-        </div>
 
-        <div className="space-y-2">
-          <Label>Notas</Label>
-          <Textarea
-            value={notes}
-            onChange={event => setNotes(event.target.value)}
-            maxLength={2000}
-          />
-        </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="relative min-w-0 flex-1">
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Buscar por proveedor, código o número de factura"
+                value={search}
+                onChange={event => setSearch(event.target.value)}
+              />
+            </div>
+            <Badge variant="secondary" className="w-fit shrink-0 px-3 py-1.5">
+              {visibleInvoices.length}{" "}
+              {visibleInvoices.length === 1
+                ? "factura disponible"
+                : "facturas disponibles"}
+            </Badge>
+          </div>
 
-        <div className="relative">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            className="pl-9"
-            placeholder="Buscar proveedor o factura"
-            value={search}
-            onChange={event => setSearch(event.target.value)}
-          />
-        </div>
-
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-10" />
-                <TableHead>Proveedor / Factura</TableHead>
-                <TableHead>Total</TableHead>
-                <TableHead>Pagado</TableHead>
-                <TableHead>Saldo</TableHead>
-                <TableHead className="w-44">Abono solicitado</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {eligibleQuery.isLoading ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center">
-                    Cargando facturas...
-                  </TableCell>
-                </TableRow>
-              ) : visibleInvoices.length ? (
-                visibleInvoices.map((row: any) => {
-                  const checked = selectedIds.has(row.invoice.id);
-                  return (
-                    <TableRow
-                      key={row.invoice.id}
-                      data-state={checked ? "selected" : undefined}
-                    >
-                      <TableCell>
-                        <Checkbox
-                          checked={checked}
-                          onCheckedChange={value =>
-                            toggleInvoice(row, value === true)
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <div className="font-medium">{row.supplier.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {row.invoice.invoiceDocumentNumber} ·{" "}
-                          {row.invoice.invoiceNumber || "Sin número fiscal"}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {formatMoney(row.money.invoiceNetPayable, currency)}
-                      </TableCell>
-                      <TableCell>
-                        {formatMoney(row.money.paidAmount, currency)}
-                      </TableCell>
-                      <TableCell className="font-medium">
-                        {formatMoney(row.money.availableAmount, currency)}
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          type="number"
-                          min="0.0001"
-                          step="0.0001"
-                          max={row.money.availableAmount}
-                          disabled={!checked}
-                          value={amounts[row.invoice.id] ?? ""}
-                          onChange={event =>
-                            setAmounts(current => ({
-                              ...current,
-                              [row.invoice.id]: event.target.value,
-                            }))
-                          }
-                        />
+          <div className="overflow-hidden rounded-lg border bg-card">
+            <div className="max-h-[38vh] overflow-y-auto">
+              <Table className="min-w-[860px]">
+                <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
+                  <TableRow>
+                    <TableHead className="w-10" />
+                    <TableHead className="min-w-72">
+                      Proveedor / Factura
+                    </TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="text-right">Pagado</TableHead>
+                    <TableHead className="text-right">Saldo</TableHead>
+                    <TableHead className="w-48 text-right">
+                      Abono solicitado
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {eligibleQuery.isLoading ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-12 text-center">
+                        <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-muted-foreground" />
+                        <span className="text-sm text-muted-foreground">
+                          Cargando facturas...
+                        </span>
                       </TableCell>
                     </TableRow>
-                  );
-                })
-              ) : (
-                <TableRow>
-                  <TableCell
-                    colSpan={6}
-                    className="py-10 text-center text-muted-foreground"
-                  >
-                    {projectId
-                      ? "No hay facturas elegibles con saldo disponible."
-                      : "Seleccione un proyecto."}
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
+                  ) : visibleInvoices.length ? (
+                    visibleInvoices.map((row: any) => {
+                      const checked = selectedIds.has(row.invoice.id);
+                      return (
+                        <TableRow
+                          key={row.invoice.id}
+                          data-state={checked ? "selected" : undefined}
+                        >
+                          <TableCell>
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={value =>
+                                toggleInvoice(row, value === true)
+                              }
+                            />
+                          </TableCell>
+                          <TableCell className="whitespace-normal">
+                            <div className="font-medium">
+                              {row.supplier.name}
+                            </div>
+                            <div className="mt-0.5 text-xs text-muted-foreground">
+                              {row.invoice.invoiceDocumentNumber} ·{" "}
+                              {row.invoice.invoiceNumber || "Sin número fiscal"}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatMoney(row.money.invoiceNetPayable, currency)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatMoney(row.money.paidAmount, currency)}
+                          </TableCell>
+                          <TableCell className="text-right font-medium tabular-nums">
+                            {formatMoney(row.money.availableAmount, currency)}
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              className="ml-auto w-40 text-right tabular-nums"
+                              type="number"
+                              min="0.0001"
+                              step="0.0001"
+                              max={row.money.availableAmount}
+                              disabled={!checked}
+                              value={amounts[row.invoice.id] ?? ""}
+                              onChange={event =>
+                                setAmounts(current => ({
+                                  ...current,
+                                  [row.invoice.id]: event.target.value,
+                                }))
+                              }
+                            />
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  ) : (
+                    <TableRow>
+                      <TableCell
+                        colSpan={6}
+                        className="py-12 text-center text-muted-foreground"
+                      >
+                        {projectId
+                          ? "No hay facturas elegibles con saldo disponible."
+                          : "Seleccione un proyecto para consultar sus facturas."}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancelar
-          </Button>
-          <Button onClick={save} disabled={pending || selectedIds.size === 0}>
-            {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {existing ? "Guardar cambios" : "Crear borrador"}
-          </Button>
+        <DialogFooter className="border-t bg-muted/20 px-6 py-4 sm:items-center sm:justify-between">
+          <div className="text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">
+              {selectedIds.size}
+            </span>{" "}
+            {selectedIds.size === 1
+              ? "factura seleccionada"
+              : "facturas seleccionadas"}
+          </div>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={save} disabled={pending || selectedIds.size === 0}>
+              {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {existing ? "Guardar cambios" : "Crear borrador"}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
