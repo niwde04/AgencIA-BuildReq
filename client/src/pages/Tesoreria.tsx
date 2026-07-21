@@ -648,8 +648,8 @@ function BatchDetailDialog({
 
   return (
     <Dialog open={Boolean(batchId)} onOpenChange={open => !open && onClose()}>
-      <DialogContent className="max-h-[94vh] max-w-7xl overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="grid max-h-[94vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-6xl xl:max-w-7xl">
+        <DialogHeader className="border-b px-6 py-5 pr-14">
           <DialogTitle className="flex flex-wrap items-center gap-2">
             {batch?.batchNumber || "Lote de Tesorería"}
             {status && (
@@ -658,7 +658,7 @@ function BatchDetailDialog({
               </Badge>
             )}
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="max-w-5xl leading-relaxed">
             {detail
               ? `${detail.project.code} - ${detail.project.name} · ${detail.batch.currency} · Pago previsto ${formatDate(detail.batch.requestedPaymentDate)}`
               : "Cargando..."}
@@ -666,11 +666,11 @@ function BatchDetailDialog({
         </DialogHeader>
 
         {detailQuery.isLoading || !detail ? (
-          <div className="flex min-h-48 items-center justify-center">
+          <div className="flex min-h-48 items-center justify-center px-6 py-5">
             <Loader2 className="h-6 w-6 animate-spin" />
           </div>
         ) : (
-          <div className="space-y-5">
+          <div className="min-h-0 space-y-5 overflow-y-auto px-6 py-5">
             {detail.batch.returnReason && (
               <Alert variant="destructive">
                 <RotateCcw />
@@ -679,7 +679,7 @@ function BatchDetailDialog({
               </Alert>
             )}
 
-            <div className="grid gap-3 md:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Card>
                 <CardContent className="pt-5">
                   <div className="text-xs text-muted-foreground">
@@ -741,18 +741,22 @@ function BatchDetailDialog({
               </Card>
             </div>
 
-            <div className="rounded-md border">
-              <Table>
-                <TableHeader>
+            <div className="overflow-hidden rounded-lg border bg-card">
+              <Table className="min-w-[960px]">
+                <TableHeader className="bg-muted/95">
                   <TableRow>
                     {status === "pendiente_contabilizacion" && isAccountant && (
                       <TableHead className="w-10" />
                     )}
-                    <TableHead>Proveedor / Factura</TableHead>
+                    <TableHead className="min-w-72">
+                      Proveedor / Factura
+                    </TableHead>
                     <TableHead>Estado</TableHead>
-                    <TableHead>Total factura</TableHead>
-                    <TableHead>Pagado anterior</TableHead>
-                    <TableHead>Abono</TableHead>
+                    <TableHead className="text-right">Total factura</TableHead>
+                    <TableHead className="text-right">
+                      Pagado anterior
+                    </TableHead>
+                    <TableHead className="text-right">Abono</TableHead>
                     {editableAdjustments && <TableHead>Excluir</TableHead>}
                   </TableRow>
                 </TableHeader>
@@ -776,7 +780,7 @@ function BatchDetailDialog({
                             />
                           </TableCell>
                         )}
-                      <TableCell>
+                      <TableCell className="whitespace-normal">
                         <div className="font-medium">{item.supplierName}</div>
                         <div className="text-xs text-muted-foreground">
                           {item.invoiceDocumentNumber} ·{" "}
@@ -795,22 +799,22 @@ function BatchDetailDialog({
                           ] ?? item.status}
                         </Badge>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="text-right tabular-nums">
                         {formatMoney(
                           item.invoiceNetPayable,
                           detail.batch.currency
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="text-right tabular-nums">
                         {formatMoney(
                           item.previousPaidAmount,
                           detail.batch.currency
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="text-right tabular-nums">
                         {editableAdjustments && item.status !== "excluida" ? (
                           <Input
-                            className="w-36"
+                            className="ml-auto w-36 text-right tabular-nums"
                             type="number"
                             min="0.0001"
                             step="0.0001"
@@ -825,7 +829,7 @@ function BatchDetailDialog({
                             }
                           />
                         ) : (
-                          <div>
+                          <div className="tabular-nums">
                             {formatMoney(
                               item.bankPaidAmount ??
                                 item.approvedAmount ??
@@ -1004,7 +1008,7 @@ function BatchDetailDialog({
         )}
 
         {detail && (
-          <DialogFooter className="flex-wrap sm:justify-between">
+          <DialogFooter className="flex-wrap border-t bg-muted/20 px-6 py-4 sm:items-center sm:justify-between">
             <div className="flex flex-wrap gap-2">
               {(status === "borrador" || status === "devuelto") &&
                 isProjectManager && (
