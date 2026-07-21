@@ -33,11 +33,12 @@ import { retentionsRouter } from "./routers/retentions";
 import { taxesRouter } from "./routers/taxes";
 import { reportsRouter } from "./routers/reports";
 import { systemSettingsRouter } from "./routers/systemSettings";
+import { treasuryRouter } from "./routers/treasury";
 
 export const appRouter = router({
   system: systemRouter,
   auth: router({
-    me: publicProcedure.query((opts) => opts.ctx.user),
+    me: publicProcedure.query(opts => opts.ctx.user),
 
     /**
      * Called by the frontend after Supabase login.
@@ -95,6 +96,7 @@ export const appRouter = router({
   taxes: taxesRouter,
   reports: reportsRouter,
   systemSettings: systemSettingsRouter,
+  treasury: treasuryRouter,
 });
 
 export type AppRouter = typeof appRouter;

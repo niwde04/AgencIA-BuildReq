@@ -282,7 +282,8 @@ function toProcurementApprovalSettings(
   return {
     purchaseRequestApprovalsEnabled:
       settings.purchaseRequestApprovalsEnabled === true,
-    purchaseOrderApprovalsEnabled: settings.purchaseOrderApprovalsEnabled === true,
+    purchaseOrderApprovalsEnabled:
+      settings.purchaseOrderApprovalsEnabled === true,
     updatedAt: settings.updatedAt,
   };
 }
@@ -319,8 +320,7 @@ export async function updateProcurementApprovalSettings(params: {
     .insert(systemSettings)
     .values({
       id: 1,
-      purchaseRequestApprovalsEnabled:
-        params.purchaseRequestApprovalsEnabled,
+      purchaseRequestApprovalsEnabled: params.purchaseRequestApprovalsEnabled,
       purchaseOrderApprovalsEnabled: params.purchaseOrderApprovalsEnabled,
       updatedByUserId: params.updatedByUserId,
       updatedAt,
@@ -328,8 +328,7 @@ export async function updateProcurementApprovalSettings(params: {
     .onConflictDoUpdate({
       target: systemSettings.id,
       set: {
-        purchaseRequestApprovalsEnabled:
-          params.purchaseRequestApprovalsEnabled,
+        purchaseRequestApprovalsEnabled: params.purchaseRequestApprovalsEnabled,
         purchaseOrderApprovalsEnabled: params.purchaseOrderApprovalsEnabled,
         updatedByUserId: params.updatedByUserId,
         updatedAt,
@@ -363,7 +362,8 @@ type AttachmentEntityType =
   | "transfer"
   | "receipt"
   | "invoice"
-  | "supplier";
+  | "supplier"
+  | "treasury_payment_batch";
 
 function parseDecimal(value: string | number | null | undefined) {
   if (value === null || value === undefined) return 0;
@@ -6396,9 +6396,7 @@ export async function updatePendingPurchaseRequestQuantities(params: {
       );
 
     if (existingItems.length !== itemIds.length) {
-      throw new Error(
-        "Uno de los ítems no pertenece a la solicitud de compra"
-      );
+      throw new Error("Uno de los ítems no pertenece a la solicitud de compra");
     }
 
     const existingById = new Map(existingItems.map(item => [item.id, item]));
@@ -6494,7 +6492,10 @@ export async function reviewPurchaseRequestApproval(params: {
       params.decision === "approve"
         ? (params.approvedItemIds ?? items.map(item => item.id))
         : [];
-    if (params.decision === "approve" && requestedApprovedItemIds.length === 0) {
+    if (
+      params.decision === "approve" &&
+      requestedApprovedItemIds.length === 0
+    ) {
       throw new Error("Seleccione al menos un ítem para aprobar");
     }
     const itemById = new Map(items.map(item => [item.id, item]));
@@ -6502,7 +6503,9 @@ export async function reviewPurchaseRequestApproval(params: {
       itemId => !itemById.has(itemId)
     );
     if (unknownApprovedItemId !== undefined) {
-      throw new Error("Uno de los ítems seleccionados no pertenece a la solicitud");
+      throw new Error(
+        "Uno de los ítems seleccionados no pertenece a la solicitud"
+      );
     }
     const itemNoLongerPending = items.find(
       item => item.approvalStatus !== "pendiente"
@@ -11606,15 +11609,14 @@ export async function listDmcReportSourceInvoices(filters?: {
         sapCatalog,
         eq(
           sapCatalog.itemCode,
-          sql<string | null>`coalesce(${invoiceItems.currentSapItemCode}, ${invoiceItems.originalSapItemCode})`
+          sql<
+            string | null
+          >`coalesce(${invoiceItems.currentSapItemCode}, ${invoiceItems.originalSapItemCode})`
         )
       )
       .leftJoin(
         financialGroups,
-        eq(
-          sapCatalog.financialGroupCode,
-          financialGroups.financialGroupCode
-        )
+        eq(sapCatalog.financialGroupCode, financialGroups.financialGroupCode)
       )
       .where(inArray(invoiceItems.invoiceId, invoiceIds))
       .orderBy(asc(invoiceItems.invoiceId), asc(invoiceItems.id)),
@@ -12118,8 +12120,7 @@ export async function updateInvoice(
     .limit(1);
 
   if (current) {
-    const isFiscalDocument =
-      data.isFiscalDocument ?? current.isFiscalDocument;
+    const isFiscalDocument = data.isFiscalDocument ?? current.isFiscalDocument;
     const invoiceNumber = data.invoiceNumber ?? current.invoiceNumber;
     if (isFiscalDocument) {
       await assertSupplierFiscalInvoiceNumberAvailable({

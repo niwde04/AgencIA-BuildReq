@@ -43,6 +43,9 @@ const OPERATIONAL_ZERO_TABLES = [
   "receiptItems",
   "receiptOtherCharges",
   "invoices",
+  "treasuryPaymentBatches",
+  "treasuryPaymentItems",
+  "treasuryPaymentEvents",
   "invoiceItems",
   "invoiceOtherCharges",
   "invoiceRetentions",
@@ -75,7 +78,9 @@ class FakeExecutor implements ResetOperationalMovementsExecutor {
         rows: this.state.afterCleanup
           ? []
           : this.state.attachmentFileKeys.map(fileKey => ({ fileKey })),
-        rowCount: this.state.afterCleanup ? 0 : this.state.attachmentFileKeys.length,
+        rowCount: this.state.afterCleanup
+          ? 0
+          : this.state.attachmentFileKeys.length,
       };
     }
 
@@ -123,12 +128,21 @@ class FakeExecutor implements ResetOperationalMovementsExecutor {
       }
       if (query.includes('FROM "sapCatalog"')) {
         return {
-          rows: [{ count: this.state.afterCleanup ? HIDALGO_KEEP_CODE_COUNT : HIDALGO_KEEP_CODE_COUNT + 10 }],
+          rows: [
+            {
+              count: this.state.afterCleanup
+                ? HIDALGO_KEEP_CODE_COUNT
+                : HIDALGO_KEEP_CODE_COUNT + 10,
+            },
+          ],
           rowCount: 1,
         };
       }
       if (query.includes('FROM "inventoryItems"')) {
-        return { rows: [{ count: this.state.afterCleanup ? 0 : 10 }], rowCount: 1 };
+        return {
+          rows: [{ count: this.state.afterCleanup ? 0 : 10 }],
+          rowCount: 1,
+        };
       }
       return { rows: [{ count: 1 }], rowCount: 1 };
     }
@@ -149,7 +163,9 @@ function shouldBeZeroAfterCleanup(query: string) {
     OPERATIONAL_ZERO_TABLES.some(table => query.includes(`FROM "${table}"`)) ||
     query.includes(`FROM "notifications" WHERE "type" <> 'sistema'`) ||
     query.includes(`FROM "attachments" WHERE "entityType"`) ||
-    query.includes(`FROM "supplierFiscalDocumentRanges" WHERE "sourceInvoiceId" IS NOT NULL`)
+    query.includes(
+      `FROM "supplierFiscalDocumentRanges" WHERE "sourceInvoiceId" IS NOT NULL`
+    )
   );
 }
 
@@ -165,8 +181,9 @@ function createFakeExecutor(attachmentFileKeys: string[] = []) {
 }
 
 function makeKeepCodes(count = HIDALGO_KEEP_CODE_COUNT) {
-  return Array.from({ length: count }, (_, index) =>
-    `HID${String(index + 1).padStart(4, "0")}`
+  return Array.from(
+    { length: count },
+    (_, index) => `HID${String(index + 1).padStart(4, "0")}`
   );
 }
 
@@ -182,7 +199,9 @@ function mutationQueries(queries: string[]) {
 
 describe("prune-catalog-to-hidalgo-assets", () => {
   it("keeps dry-run read-only", async () => {
-    const { executor, state } = createFakeExecutor(["buildreq/invoice/1/a.pdf"]);
+    const { executor, state } = createFakeExecutor([
+      "buildreq/invoice/1/a.pdf",
+    ]);
 
     const result = await executePruneCatalogToHidalgoAssets(
       executor,
@@ -221,9 +240,9 @@ describe("prune-catalog-to-hidalgo-assets", () => {
         PRUNE_CATALOG_TO_HIDALGO_CONFIRMATION,
       ]).dryRun
     ).toBe(false);
-    expect(() =>
-      parsePruneCatalogArgs(["--confirm", "BORRAR"])
-    ).toThrow("Confirmacion invalida");
+    expect(() => parsePruneCatalogArgs(["--confirm", "BORRAR"])).toThrow(
+      "Confirmacion invalida"
+    );
   });
 
   it("loads keep codes from the Hidalgo apply report shape", async () => {
@@ -263,10 +282,18 @@ describe("prune-catalog-to-hidalgo-assets", () => {
     expect(purchaseOrderDeleteIndex).toBeGreaterThanOrEqual(0);
     expect(inventoryDeleteIndex).toBeGreaterThan(purchaseOrderDeleteIndex);
     expect(catalogDeleteIndex).toBeGreaterThan(inventoryDeleteIndex);
-    expect(statements.some(statement => statement.includes('"users"'))).toBe(false);
-    expect(statements.some(statement => statement.includes('"projects"'))).toBe(false);
-    expect(statements.some(statement => statement.includes('"warehouses"'))).toBe(false);
-    expect(statements.some(statement => statement.includes('"suppliers"'))).toBe(false);
+    expect(statements.some(statement => statement.includes('"users"'))).toBe(
+      false
+    );
+    expect(statements.some(statement => statement.includes('"projects"'))).toBe(
+      false
+    );
+    expect(
+      statements.some(statement => statement.includes('"warehouses"'))
+    ).toBe(false);
+    expect(
+      statements.some(statement => statement.includes('"suppliers"'))
+    ).toBe(false);
   });
 
   it("executes physical prune and verifies the resulting counts", async () => {
@@ -291,12 +318,12 @@ describe("prune-catalog-to-hidalgo-assets", () => {
     expect(storageDelete).toHaveBeenCalledTimes(2);
 
     const mutations = mutationQueries(state.queries);
-    expect(mutations.some(query => query.includes('DELETE FROM "inventoryItems"'))).toBe(
-      true
-    );
-    expect(mutations.some(query => query.includes('DELETE FROM "sapCatalog"'))).toBe(
-      true
-    );
+    expect(
+      mutations.some(query => query.includes('DELETE FROM "inventoryItems"'))
+    ).toBe(true);
+    expect(
+      mutations.some(query => query.includes('DELETE FROM "sapCatalog"'))
+    ).toBe(true);
     expect(mutations.some(query => query.includes('"users"'))).toBe(false);
     expect(mutations.some(query => query.includes('"projects"'))).toBe(false);
     expect(mutations.some(query => query.includes('"warehouses"'))).toBe(false);
@@ -304,7 +331,9 @@ describe("prune-catalog-to-hidalgo-assets", () => {
   });
 
   it("requires a storage deleter when operational attachment records exist", async () => {
-    const { executor, state } = createFakeExecutor(["buildreq/invoice/1/a.pdf"]);
+    const { executor, state } = createFakeExecutor([
+      "buildreq/invoice/1/a.pdf",
+    ]);
 
     await expect(
       executePruneCatalogToHidalgoAssets(executor, makeKeepCodes(), {
@@ -329,16 +358,13 @@ describe("prune-catalog-to-hidalgo-assets", () => {
     });
 
     try {
-      const result: PruneCatalogResult = await executePruneCatalogToHidalgoAssets(
-        executor,
-        makeKeepCodes(),
-        {
+      const result: PruneCatalogResult =
+        await executePruneCatalogToHidalgoAssets(executor, makeKeepCodes(), {
           dryRun: false,
           storageDelete,
           storageDeleteRetries: 2,
           failureReportPath,
-        }
-      );
+        });
 
       expect(result.storage.attempted).toBe(2);
       expect(result.storage.deleted).toBe(1);

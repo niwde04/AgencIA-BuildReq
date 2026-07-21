@@ -15,10 +15,13 @@ export const RESET_OPERATIONAL_ATTACHMENT_ENTITY_TYPES = [
   "transfer",
   "receipt",
   "invoice",
+  "treasury_payment_batch",
 ] as const;
 
 const OPERATIONAL_ATTACHMENT_ENTITY_TYPES_SQL =
-  RESET_OPERATIONAL_ATTACHMENT_ENTITY_TYPES.map(value => `'${value}'`).join(", ");
+  RESET_OPERATIONAL_ATTACHMENT_ENTITY_TYPES.map(value => `'${value}'`).join(
+    ", "
+  );
 
 export type ResetOperationalMovementsQueryResult = {
   rows?: Array<Record<string, unknown>>;
@@ -68,7 +71,10 @@ export type ResetOperationalMovementsOptions = {
 };
 
 const COUNT_QUERIES: Array<{ key: string; query: string }> = [
-  { key: "usersPreserved", query: `SELECT count(*)::int AS "count" FROM "users"` },
+  {
+    key: "usersPreserved",
+    query: `SELECT count(*)::int AS "count" FROM "users"`,
+  },
   {
     key: "invitationsPreserved",
     query: `SELECT count(*)::int AS "count" FROM "invitations"`,
@@ -101,7 +107,10 @@ const COUNT_QUERIES: Array<{ key: string; query: string }> = [
     key: "materialRequests",
     query: `SELECT count(*)::int AS "count" FROM "materialRequests"`,
   },
-  { key: "requestItems", query: `SELECT count(*)::int AS "count" FROM "requestItems"` },
+  {
+    key: "requestItems",
+    query: `SELECT count(*)::int AS "count" FROM "requestItems"`,
+  },
   {
     key: "supplyFlowRecords",
     query: `SELECT count(*)::int AS "count" FROM "supplyFlowRecords"`,
@@ -138,19 +147,40 @@ const COUNT_QUERIES: Array<{ key: string; query: string }> = [
     key: "transferRequestItems",
     query: `SELECT count(*)::int AS "count" FROM "transferRequestItems"`,
   },
-  { key: "transfers", query: `SELECT count(*)::int AS "count" FROM "transfers"` },
+  {
+    key: "transfers",
+    query: `SELECT count(*)::int AS "count" FROM "transfers"`,
+  },
   {
     key: "remissionGuides",
     query: `SELECT count(*)::int AS "count" FROM "remissionGuides"`,
   },
   { key: "receipts", query: `SELECT count(*)::int AS "count" FROM "receipts"` },
-  { key: "receiptItems", query: `SELECT count(*)::int AS "count" FROM "receiptItems"` },
+  {
+    key: "receiptItems",
+    query: `SELECT count(*)::int AS "count" FROM "receiptItems"`,
+  },
   {
     key: "receiptOtherCharges",
     query: `SELECT count(*)::int AS "count" FROM "receiptOtherCharges"`,
   },
   { key: "invoices", query: `SELECT count(*)::int AS "count" FROM "invoices"` },
-  { key: "invoiceItems", query: `SELECT count(*)::int AS "count" FROM "invoiceItems"` },
+  {
+    key: "treasuryPaymentBatches",
+    query: `SELECT count(*)::int AS "count" FROM "treasuryPaymentBatches"`,
+  },
+  {
+    key: "treasuryPaymentItems",
+    query: `SELECT count(*)::int AS "count" FROM "treasuryPaymentItems"`,
+  },
+  {
+    key: "treasuryPaymentEvents",
+    query: `SELECT count(*)::int AS "count" FROM "treasuryPaymentEvents"`,
+  },
+  {
+    key: "invoiceItems",
+    query: `SELECT count(*)::int AS "count" FROM "invoiceItems"`,
+  },
   {
     key: "invoiceOtherCharges",
     query: `SELECT count(*)::int AS "count" FROM "invoiceOtherCharges"`,
@@ -187,7 +217,10 @@ const COUNT_QUERIES: Array<{ key: string; query: string }> = [
     key: "reverseLogisticsItems",
     query: `SELECT count(*)::int AS "count" FROM "reverseLogisticsItems"`,
   },
-  { key: "sapSyncLog", query: `SELECT count(*)::int AS "count" FROM "sapSyncLog"` },
+  {
+    key: "sapSyncLog",
+    query: `SELECT count(*)::int AS "count" FROM "sapSyncLog"`,
+  },
   {
     key: "operativeNotifications",
     query: `SELECT count(*)::int AS "count" FROM "notifications" WHERE "type" <> 'sistema'`,
@@ -204,6 +237,9 @@ const CLEANUP_STATEMENTS = [
   `DELETE FROM "attachments" WHERE "entityType" IN (${OPERATIONAL_ATTACHMENT_ENTITY_TYPES_SQL})`,
   `DELETE FROM "notifications" WHERE "type" <> 'sistema'`,
   `DELETE FROM "sapSyncLog"`,
+  `DELETE FROM "treasuryPaymentEvents"`,
+  `DELETE FROM "treasuryPaymentItems"`,
+  `DELETE FROM "treasuryPaymentBatches"`,
   `DELETE FROM "invoiceRetentions"`,
   `DELETE FROM "invoiceOtherCharges"`,
   `UPDATE "supplierFiscalDocumentRanges" SET "sourceInvoiceId" = NULL WHERE "sourceInvoiceId" IS NOT NULL`,
@@ -260,12 +296,11 @@ export async function collectResetOperationalMovementsSnapshot(
     counts[entry.key] = readCount(result);
   }
 
-  const fileKeyRows = (await executor.run(ATTACHMENT_FILE_KEYS_QUERY)).rows ?? [];
+  const fileKeyRows =
+    (await executor.run(ATTACHMENT_FILE_KEYS_QUERY)).rows ?? [];
   const attachmentFileKeys = Array.from(
     new Set(
-      fileKeyRows
-        .map(row => String(row.fileKey ?? "").trim())
-        .filter(Boolean)
+      fileKeyRows.map(row => String(row.fileKey ?? "").trim()).filter(Boolean)
     )
   );
 
@@ -303,7 +338,8 @@ export async function executeResetOperationalMovements(
   }
 
   const snapshot = await executor.transaction(async tx => {
-    const transactionSnapshot = await collectResetOperationalMovementsSnapshot(tx);
+    const transactionSnapshot =
+      await collectResetOperationalMovementsSnapshot(tx);
 
     for (const statement of CLEANUP_STATEMENTS) {
       await tx.run(statement);
@@ -392,7 +428,10 @@ function normalizeQueryResult(
   result: unknown
 ): ResetOperationalMovementsQueryResult {
   if (Array.isArray(result)) {
-    return { rows: result as Array<Record<string, unknown>>, rowCount: result.length };
+    return {
+      rows: result as Array<Record<string, unknown>>,
+      rowCount: result.length,
+    };
   }
 
   if (result && typeof result === "object") {

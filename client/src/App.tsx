@@ -38,6 +38,7 @@ import SaldosIniciales from "./pages/SaldosIniciales";
 import SalidasBodega from "./pages/SalidasBodega";
 import ActualizarContrasena from "./pages/ActualizarContrasena";
 import Configuracion from "./pages/Configuracion";
+import Tesoreria from "./pages/Tesoreria";
 
 const UPPERCASE_TEXT_INPUT_TYPES = new Set([
   "",
@@ -67,9 +68,12 @@ const CASE_SENSITIVE_AUTOCOMPLETE_HINTS = [
   "one-time-code",
 ];
 
-function hasCaseSensitiveHint(value: string | null | undefined, hints: string[]) {
+function hasCaseSensitiveHint(
+  value: string | null | undefined,
+  hints: string[]
+) {
   const normalizedValue = value?.toLocaleLowerCase("es-HN") ?? "";
-  return hints.some((hint) => normalizedValue.includes(hint));
+  return hints.some(hint => normalizedValue.includes(hint));
 }
 
 function shouldUppercaseInput(
@@ -111,9 +115,7 @@ function shouldUppercaseInput(
   return UPPERCASE_TEXT_INPUT_TYPES.has(inputType);
 }
 
-function uppercaseInputValue(
-  element: HTMLInputElement | HTMLTextAreaElement
-) {
+function uppercaseInputValue(element: HTMLInputElement | HTMLTextAreaElement) {
   const originalValue = element.value;
   const upperValue = originalValue.toLocaleUpperCase("es-HN");
 
@@ -123,9 +125,10 @@ function uppercaseInputValue(
   const selectionEnd = element.selectionEnd;
   const selectionDirection = element.selectionDirection;
 
-  const prototype = element instanceof HTMLTextAreaElement
-    ? HTMLTextAreaElement.prototype
-    : HTMLInputElement.prototype;
+  const prototype =
+    element instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
   const valueSetter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
   if (valueSetter) {
     valueSetter.call(element, upperValue);
@@ -188,6 +191,7 @@ function DashboardRoutes() {
       <Route path="/traslados" component={Transfers} />
       <Route path="/recepciones" component={Recepciones} />
       <Route path="/facturas" component={Facturas} />
+      <Route path="/tesoreria" component={Tesoreria} />
       <Route path="/reportes" component={Reportes} />
       <Route path="/impuestos" component={Impuestos} />
       <Route path="/retenciones" component={Retenciones} />

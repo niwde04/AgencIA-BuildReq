@@ -77,6 +77,9 @@ const OPERATIONAL_ZERO_COUNT_KEYS = [
   "receiptItems",
   "receiptOtherCharges",
   "invoices",
+  "treasuryPaymentBatches",
+  "treasuryPaymentItems",
+  "treasuryPaymentEvents",
   "invoiceItems",
   "invoiceOtherCharges",
   "invoiceRetentions",
@@ -257,7 +260,9 @@ export function validatePruneVerification(snapshot: PruneCatalogSnapshot) {
     );
   }
   if (snapshot.catalog.nonKeep !== 0) {
-    problems.push(`sapCatalog.nonKeep=${snapshot.catalog.nonKeep}; se esperaba 0`);
+    problems.push(
+      `sapCatalog.nonKeep=${snapshot.catalog.nonKeep}; se esperaba 0`
+    );
   }
   if (snapshot.catalog.keep !== HIDALGO_KEEP_CODE_COUNT) {
     problems.push(
@@ -326,7 +331,9 @@ export async function executePruneCatalogToHidalgoAssets(
   const preflightProblems = validatePrunePreflight(before);
 
   if (preflightProblems.length > 0) {
-    throw new Error(`No se puede ejecutar la limpieza: ${preflightProblems.join("; ")}`);
+    throw new Error(
+      `No se puede ejecutar la limpieza: ${preflightProblems.join("; ")}`
+    );
   }
 
   if (dryRun) {
@@ -343,7 +350,11 @@ export async function executePruneCatalogToHidalgoAssets(
     };
   }
 
-  if (deleteStorage && !options.storageDelete && before.attachmentFileKeys.length > 0) {
+  if (
+    deleteStorage &&
+    !options.storageDelete &&
+    before.attachmentFileKeys.length > 0
+  ) {
     throw new Error(
       "storageDelete is required when deleting operational attachment records"
     );

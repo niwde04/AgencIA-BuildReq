@@ -3,6 +3,14 @@ import { getSupabaseAdminClient } from "./_core/supabaseAdmin";
 
 let bucketReadyPromise: Promise<void> | null = null;
 
+const STORAGE_ALLOWED_MIME_TYPES = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+];
+
 function normalizeKey(relKey: string): string {
   return relKey.replace(/^\/+/, "");
 }
@@ -39,22 +47,50 @@ function isMissingBucketError(error: unknown) {
 async function ensureBucketExists() {
   const supabase = getSupabaseAdminClient();
   const bucket = getBucketName();
-  const { error: getError } = await supabase.storage.getBucket(bucket);
+  const { data: existingBucket, error: getError } =
+    await supabase.storage.getBucket(bucket);
 
-  if (!getError) return;
+  if (!getError) {
+    const existingMimeTypes = existingBucket?.allowed_mime_types;
+    const hasMimeRestrictions =
+      Array.isArray(existingMimeTypes) && existingMimeTypes.length > 0;
+    const configuredMimeTypes = new Set(existingMimeTypes ?? []);
+    const needsMimeUpdate =
+      hasMimeRestrictions &&
+      STORAGE_ALLOWED_MIME_TYPES.some(
+        mimeType => !configuredMimeTypes.has(mimeType)
+      );
+    if (needsMimeUpdate || existingBucket?.public === true) {
+      const allowedMimeTypes = hasMimeRestrictions
+        ? Array.from(
+            new Set([...existingMimeTypes, ...STORAGE_ALLOWED_MIME_TYPES])
+          )
+        : undefined;
+      const { error: updateError } = await supabase.storage.updateBucket(
+        bucket,
+        {
+          public: false,
+          ...(allowedMimeTypes ? { allowedMimeTypes } : {}),
+        }
+      );
+      if (updateError) {
+        throw new Error(
+          `Supabase Storage bucket update failed: ${updateError.message}`
+        );
+      }
+    }
+    return;
+  }
   if (!isMissingBucketError(getError)) {
-    throw new Error(`Supabase Storage bucket check failed: ${getError.message}`);
+    throw new Error(
+      `Supabase Storage bucket check failed: ${getError.message}`
+    );
   }
 
   const { error: createError } = await supabase.storage.createBucket(bucket, {
     public: false,
     fileSizeLimit: "10MB",
-    allowedMimeTypes: [
-      "application/pdf",
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-    ],
+    allowedMimeTypes: STORAGE_ALLOWED_MIME_TYPES,
   });
 
   if (createError && !isMissingBucketError(createError)) {
@@ -100,11 +136,13 @@ export async function storagePut(
   const key = normalizeKey(relKey);
   const body =
     typeof data === "string" ? Buffer.from(data) : Buffer.from(data as any);
-  const { error } = await supabase.storage.from(getBucketName()).upload(key, body, {
-    cacheControl: "3600",
-    contentType,
-    upsert: false,
-  });
+  const { error } = await supabase.storage
+    .from(getBucketName())
+    .upload(key, body, {
+      cacheControl: "3600",
+      contentType,
+      upsert: false,
+    });
 
   if (error) {
     throw new Error(`Supabase Storage upload failed: ${error.message}`);

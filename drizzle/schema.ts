@@ -20,6 +20,10 @@ import type {
   PurchaseOrderTaxBreakdownEntry,
 } from "../shared/purchase-orders";
 import type { FixedAssetDetail } from "../shared/fixed-assets";
+import type {
+  TreasuryBatchStatus,
+  TreasuryItemStatus,
+} from "../shared/treasury";
 
 // ============================================================
 // ENUMS
@@ -225,6 +229,27 @@ export const invoiceStatusEnum = pgEnum("invoice_status", [
   "registrada",
   "anulada",
 ]);
+export const treasuryBatchStatusEnum = pgEnum("treasury_batch_status", [
+  "borrador",
+  "enviado_depuracion",
+  "pendiente_aprobacion",
+  "aprobado",
+  "enviado_banco",
+  "conciliacion",
+  "pendiente_contabilizacion",
+  "cerrado",
+  "devuelto",
+  "anulado",
+]);
+export const treasuryItemStatusEnum = pgEnum("treasury_item_status", [
+  "incluida",
+  "excluida",
+  "aprobada",
+  "pagada",
+  "rechazada_banco",
+  "con_diferencia",
+  "contabilizada",
+]);
 export const supplierContactTypeEnum = pgEnum("supplier_contact_type", [
   "ventas",
   "compras",
@@ -254,6 +279,7 @@ export const attachmentEntityTypeEnum = pgEnum("attachment_entity_type", [
   "receipt",
   "invoice",
   "supplier",
+  "treasury_payment_batch",
 ]);
 export const attachmentCategoryEnum = pgEnum("attachment_category", [
   "factura",
@@ -261,6 +287,8 @@ export const attachmentCategoryEnum = pgEnum("attachment_category", [
   "comprobante_entrega",
   "foto_material",
   "documento_proveedor",
+  "archivo_bancario",
+  "comprobante_pago",
   "otro",
 ]);
 export const notificationTypeEnum = pgEnum("notification_type", [
@@ -271,6 +299,7 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "traslado",
   "recepcion",
   "devolucion",
+  "tesoreria",
   "sistema",
 ]);
 export const sapSyncEntityTypeEnum = pgEnum("sap_sync_entity_type", [
@@ -328,6 +357,7 @@ export const systemSettings = pgTable("systemSettings", {
   purchaseOrderApprovalsEnabled: boolean("purchaseOrderApprovalsEnabled")
     .default(false)
     .notNull(),
+  treasuryEnabled: boolean("treasuryEnabled").default(false).notNull(),
   updatedByUserId: integer("updatedByUserId").references(() => users.id, {
     onDelete: "set null",
   }),
@@ -1024,9 +1054,7 @@ export const transferRequestItems = pgTable(
     transferRequestIdx: index("tri_transfer_request_idx").on(
       table.transferRequestId
     ),
-    sourceProjectIdx: index("tri_source_project_idx").on(
-      table.sourceProjectId
-    ),
+    sourceProjectIdx: index("tri_source_project_idx").on(table.sourceProjectId),
     sourceWarehouseIdx: index("tri_source_warehouse_idx").on(
       table.sourceWarehouseId
     ),
@@ -1353,6 +1381,238 @@ export const invoices = pgTable(
 
 export type Invoice = typeof invoices.$inferSelect;
 export type InsertInvoice = typeof invoices.$inferInsert;
+
+// ============================================================
+// TREASURY - Supplier payment batches and partial payments
+// ============================================================
+export const treasuryApproverAssignments = pgTable(
+  "treasuryApproverAssignments",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    isActive: boolean("isActive").default(true).notNull(),
+    assignedById: integer("assignedById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    userUnique: uniqueIndex("treasury_approver_user_unique").on(table.userId),
+    activeIdx: index("treasury_approver_active_idx").on(table.isActive),
+  })
+);
+
+export type TreasuryApproverAssignment =
+  typeof treasuryApproverAssignments.$inferSelect;
+export type InsertTreasuryApproverAssignment =
+  typeof treasuryApproverAssignments.$inferInsert;
+
+export const treasuryPaymentBatches = pgTable(
+  "treasuryPaymentBatches",
+  {
+    id: serial("id").primaryKey(),
+    batchNumber: varchar("batchNumber", { length: 64 }).notNull().unique(),
+    projectId: integer("projectId")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    currency: varchar("currency", { length: 3 })
+      .$type<PurchaseCurrency>()
+      .notNull(),
+    requestedPaymentDate: date("requestedPaymentDate", {
+      mode: "date",
+    }).notNull(),
+    status: treasuryBatchStatusEnum("status")
+      .$type<TreasuryBatchStatus>()
+      .default("borrador")
+      .notNull(),
+    version: integer("version").default(1).notNull(),
+    notes: text("notes"),
+    createdById: integer("createdById")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    submittedById: integer("submittedById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    submittedAt: timestamp("submittedAt"),
+    purifiedById: integer("purifiedById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    purifiedAt: timestamp("purifiedAt"),
+    approvedById: integer("approvedById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    approvedAt: timestamp("approvedAt"),
+    exportedById: integer("exportedById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    exportedAt: timestamp("exportedAt"),
+    reconciledById: integer("reconciledById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    reconciledAt: timestamp("reconciledAt"),
+    accountedById: integer("accountedById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    accountedAt: timestamp("accountedAt"),
+    returnedById: integer("returnedById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    returnedAt: timestamp("returnedAt"),
+    returnReason: text("returnReason"),
+    cancelledById: integer("cancelledById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    cancelledAt: timestamp("cancelledAt"),
+    cancellationReason: text("cancellationReason"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    projectIdx: index("treasury_batch_project_idx").on(table.projectId),
+    statusIdx: index("treasury_batch_status_idx").on(table.status),
+    createdIdx: index("treasury_batch_created_idx").on(
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
+    currencyCheck: check(
+      "treasury_batch_currency_check",
+      sql`${table.currency} in ('HNL', 'USD')`
+    ),
+    versionCheck: check(
+      "treasury_batch_version_check",
+      sql`${table.version} > 0`
+    ),
+  })
+);
+
+export type TreasuryPaymentBatch = typeof treasuryPaymentBatches.$inferSelect;
+export type InsertTreasuryPaymentBatch =
+  typeof treasuryPaymentBatches.$inferInsert;
+
+export const treasuryPaymentItems = pgTable(
+  "treasuryPaymentItems",
+  {
+    id: serial("id").primaryKey(),
+    batchId: integer("batchId")
+      .notNull()
+      .references(() => treasuryPaymentBatches.id, { onDelete: "cascade" }),
+    invoiceId: integer("invoiceId")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "restrict" }),
+    supplierId: integer("supplierId").references(() => suppliers.id, {
+      onDelete: "set null",
+    }),
+    supplierCode: varchar("supplierCode", { length: 50 }).notNull(),
+    supplierName: varchar("supplierName", { length: 500 }).notNull(),
+    invoiceDocumentNumber: varchar("invoiceDocumentNumber", {
+      length: 64,
+    }).notNull(),
+    invoiceNumber: varchar("invoiceNumber", { length: 100 }),
+    currency: varchar("currency", { length: 3 })
+      .$type<PurchaseCurrency>()
+      .notNull(),
+    invoiceNetPayable: decimal("invoiceNetPayable", {
+      precision: 14,
+      scale: 4,
+    }).notNull(),
+    previousPaidAmount: decimal("previousPaidAmount", {
+      precision: 14,
+      scale: 4,
+    })
+      .default("0.0000")
+      .notNull(),
+    requestedAmount: decimal("requestedAmount", {
+      precision: 14,
+      scale: 4,
+    }).notNull(),
+    approvedAmount: decimal("approvedAmount", { precision: 14, scale: 4 }),
+    bankPaidAmount: decimal("bankPaidAmount", { precision: 14, scale: 4 }),
+    status: treasuryItemStatusEnum("status")
+      .$type<TreasuryItemStatus>()
+      .default("incluida")
+      .notNull(),
+    activeReservation: boolean("activeReservation").default(true).notNull(),
+    bankPaidDate: date("bankPaidDate", { mode: "date" }),
+    bankReference: varchar("bankReference", { length: 255 }),
+    bankComment: text("bankComment"),
+    exclusionReason: text("exclusionReason"),
+    excludedById: integer("excludedById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    excludedAt: timestamp("excludedAt"),
+    differenceResolutionComment: text("differenceResolutionComment"),
+    accountingComment: text("accountingComment"),
+    accountedById: integer("accountedById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    accountedAt: timestamp("accountedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    batchIdx: index("treasury_item_batch_idx").on(table.batchId),
+    invoiceIdx: index("treasury_item_invoice_idx").on(table.invoiceId),
+    statusIdx: index("treasury_item_status_idx").on(table.status),
+    batchInvoiceUnique: uniqueIndex("treasury_item_batch_invoice_unique").on(
+      table.batchId,
+      table.invoiceId
+    ),
+    activeInvoiceUnique: uniqueIndex("treasury_item_active_invoice_unique")
+      .on(table.invoiceId)
+      .where(sql`${table.activeReservation} = true`),
+    currencyCheck: check(
+      "treasury_item_currency_check",
+      sql`${table.currency} in ('HNL', 'USD')`
+    ),
+    amountCheck: check(
+      "treasury_item_amount_check",
+      sql`${table.requestedAmount} > 0 and ${table.invoiceNetPayable} > 0`
+    ),
+  })
+);
+
+export type TreasuryPaymentItem = typeof treasuryPaymentItems.$inferSelect;
+export type InsertTreasuryPaymentItem =
+  typeof treasuryPaymentItems.$inferInsert;
+
+export const treasuryPaymentEvents = pgTable(
+  "treasuryPaymentEvents",
+  {
+    id: serial("id").primaryKey(),
+    batchId: integer("batchId")
+      .notNull()
+      .references(() => treasuryPaymentBatches.id, { onDelete: "cascade" }),
+    itemId: integer("itemId").references(() => treasuryPaymentItems.id, {
+      onDelete: "cascade",
+    }),
+    action: varchar("action", { length: 80 }).notNull(),
+    previousStatus: varchar("previousStatus", { length: 50 }),
+    newStatus: varchar("newStatus", { length: 50 }),
+    actorUserId: integer("actorUserId")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    actorName: varchar("actorName", { length: 255 }).notNull(),
+    actorRole: varchar("actorRole", { length: 80 }).notNull(),
+    comment: text("comment"),
+    metadata: jsonb("metadata").$type<Record<string, unknown> | null>(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => ({
+    batchDateIdx: index("treasury_event_batch_date_idx").on(
+      table.batchId,
+      table.createdAt
+    ),
+    itemIdx: index("treasury_event_item_idx").on(table.itemId),
+    actorIdx: index("treasury_event_actor_idx").on(table.actorUserId),
+  })
+);
+
+export type TreasuryPaymentEvent = typeof treasuryPaymentEvents.$inferSelect;
+export type InsertTreasuryPaymentEvent =
+  typeof treasuryPaymentEvents.$inferInsert;
 
 export const invoiceItems = pgTable(
   "invoiceItems",
@@ -2077,8 +2337,9 @@ export type InsertInvitationProjectAssignment =
 export const financialGroups = pgTable(
   "financialGroups",
   {
-    financialGroupCode: varchar("financialGroupCode", { length: 20 })
-      .primaryKey(),
+    financialGroupCode: varchar("financialGroupCode", {
+      length: 20,
+    }).primaryKey(),
     financialGroupDescription: varchar("financialGroupDescription", {
       length: 500,
     }).notNull(),

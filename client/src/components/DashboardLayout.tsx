@@ -48,6 +48,7 @@ import {
   Truck,
   UserRound,
   Settings,
+  WalletCards,
 } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -269,6 +270,18 @@ const allMenuItems: MenuItem[] = [
     ],
   },
   {
+    icon: WalletCards,
+    label: "Tesorería",
+    path: "/tesoreria",
+    roles: [
+      "administracion_central",
+      "administrador_proyecto",
+      "superintendente",
+      "contable",
+      "admin",
+    ],
+  },
+  {
     icon: FileSpreadsheet,
     label: "Reportes",
     path: "/reportes",
@@ -418,10 +431,8 @@ function DashboardLayoutContent({
   const isMobile = useIsMobile();
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
-  const {
-    purchaseRequestApprovalsEnabled,
-    purchaseOrderApprovalsEnabled,
-  } = useProcurementApprovalSettings();
+  const { purchaseRequestApprovalsEnabled, purchaseOrderApprovalsEnabled } =
+    useProcurementApprovalSettings();
 
   const { data: unreadCount } = trpc.notifications.unreadCount.useQuery(
     undefined,
@@ -441,7 +452,8 @@ function DashboardLayoutContent({
         return (
           item.path === "/" ||
           item.path === "/solicitudes" ||
-          item.path === "/articulos"
+          item.path === "/articulos" ||
+          item.path === "/tesoreria"
         );
       }
       if (isProcurementApproverRole(userRole)) {
@@ -455,6 +467,7 @@ function DashboardLayoutContent({
           item.path === "/ordenes-compra" ||
           item.path === "/recepciones" ||
           item.path === "/facturas" ||
+          item.path === "/tesoreria" ||
           item.path === "/proyectos" ||
           item.path === "/reportes" ||
           item.path === "/impuestos" ||
@@ -479,6 +492,8 @@ function DashboardLayoutContent({
     location !== "/ordenes-compra" &&
     location !== "/recepciones" &&
     location !== "/facturas" &&
+    location !== "/tesoreria" &&
+    location !== "/notificaciones" &&
     location !== "/proyectos" &&
     location !== "/reportes" &&
     location !== "/impuestos" &&
@@ -487,6 +502,8 @@ function DashboardLayoutContent({
     location === "/" ||
     location === "/articulos" ||
     location === "/solicitudes" ||
+    location === "/tesoreria" ||
+    location === "/notificaciones" ||
     /^\/solicitudes\/\d+$/.test(location);
   const shouldRedirectSuperintendent =
     userRole === "superintendente" && !isSuperintendentAllowedPath;
@@ -728,33 +745,31 @@ function DashboardLayoutContent({
                 </SidebarMenu>
               ) : null}
 
-              {userRole !== "contable" && userRole !== "superintendente" ? (
-                <SidebarMenu className="px-2 pb-2">
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      isActive={location === "/notificaciones"}
-                      onClick={() => setLocation("/notificaciones")}
-                      tooltip="Notificaciones"
-                      className="h-9 transition-all font-normal text-sm"
-                    >
-                      <Bell
-                        className={`h-4 w-4 ${location === "/notificaciones" ? "text-primary" : "text-muted-foreground"}`}
-                      />
-                      <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
-                        <span className="truncate">Notificaciones</span>
-                        {(unreadCount ?? 0) > 0 && (
-                          <Badge
-                            variant="destructive"
-                            className="h-5 min-w-5 shrink-0 text-xs px-1 rounded-sm"
-                          >
-                            {unreadCount}
-                          </Badge>
-                        )}
-                      </span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </SidebarMenu>
-              ) : null}
+              <SidebarMenu className="px-2 pb-2">
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={location === "/notificaciones"}
+                    onClick={() => setLocation("/notificaciones")}
+                    tooltip="Notificaciones"
+                    className="h-9 transition-all font-normal text-sm"
+                  >
+                    <Bell
+                      className={`h-4 w-4 ${location === "/notificaciones" ? "text-primary" : "text-muted-foreground"}`}
+                    />
+                    <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                      <span className="truncate">Notificaciones</span>
+                      {(unreadCount ?? 0) > 0 && (
+                        <Badge
+                          variant="destructive"
+                          className="h-5 min-w-5 shrink-0 text-xs px-1 rounded-sm"
+                        >
+                          {unreadCount}
+                        </Badge>
+                      )}
+                    </span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
             </div>
           </SidebarContent>
 

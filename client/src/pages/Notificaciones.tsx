@@ -4,11 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Bell, Check, CheckCheck } from "lucide-react";
 import { toast } from "sonner";
+import { useLocation } from "wouter";
 
 export default function Notificaciones() {
+  const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
-  const { data: notifications, isLoading } =
-    trpc.notifications.list.useQuery();
+  const { data: notifications, isLoading } = trpc.notifications.list.useQuery();
 
   const markReadMutation = trpc.notifications.markAsRead.useMutation({
     onSuccess: () => {
@@ -53,7 +54,7 @@ export default function Notificaciones() {
 
       {isLoading ? (
         <div className="space-y-3">
-          {[1, 2, 3].map((i) => (
+          {[1, 2, 3].map(i => (
             <Card key={i}>
               <CardContent className="p-4">
                 <div className="h-12 animate-pulse bg-muted rounded" />
@@ -73,7 +74,12 @@ export default function Notificaciones() {
           {(notifications || []).map((n: any) => (
             <Card
               key={n.id}
-              className={`transition-colors ${!n.isRead ? "border-primary/30 bg-primary/5" : ""}`}
+              className={`transition-colors ${n.relatedEntityType === "treasury_payment_batch" ? "cursor-pointer hover:bg-muted/40" : ""} ${!n.isRead ? "border-primary/30 bg-primary/5" : ""}`}
+              onClick={() => {
+                if (n.relatedEntityType !== "treasury_payment_batch") return;
+                if (!n.isRead) markReadMutation.mutate({ id: n.id });
+                setLocation("/tesoreria");
+              }}
             >
               <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-3">
@@ -94,7 +100,10 @@ export default function Notificaciones() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => markReadMutation.mutate({ id: n.id })}
+                      onClick={event => {
+                        event.stopPropagation();
+                        markReadMutation.mutate({ id: n.id });
+                      }}
                       className="shrink-0"
                     >
                       <Check className="h-4 w-4" />

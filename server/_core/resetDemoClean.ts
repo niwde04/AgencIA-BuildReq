@@ -14,11 +14,12 @@ export const RESET_DEMO_ATTACHMENT_ENTITY_TYPES = [
   "transfer",
   "receipt",
   "invoice",
+  "treasury_payment_batch",
   "supplier",
 ] as const;
 
 const OPERATIVE_ATTACHMENT_ENTITY_TYPES_SQL =
-  RESET_DEMO_ATTACHMENT_ENTITY_TYPES.map((value) => `'${value}'`).join(", ");
+  RESET_DEMO_ATTACHMENT_ENTITY_TYPES.map(value => `'${value}'`).join(", ");
 
 export type ResetDemoCleanQueryResult = {
   rows?: Array<Record<string, unknown>>;
@@ -27,7 +28,9 @@ export type ResetDemoCleanQueryResult = {
 
 export type ResetDemoCleanExecutor = {
   run(query: string): Promise<ResetDemoCleanQueryResult>;
-  transaction<T>(callback: (tx: ResetDemoCleanExecutor) => Promise<T>): Promise<T>;
+  transaction<T>(
+    callback: (tx: ResetDemoCleanExecutor) => Promise<T>
+  ): Promise<T>;
 };
 
 export type ResetDemoCleanCounts = Record<string, number>;
@@ -66,7 +69,10 @@ export type ResetDemoCleanOptions = {
 };
 
 const COUNT_QUERIES: Array<{ key: string; query: string }> = [
-  { key: "usersPreserved", query: `SELECT count(*)::int AS "count" FROM "users"` },
+  {
+    key: "usersPreserved",
+    query: `SELECT count(*)::int AS "count" FROM "users"`,
+  },
   {
     key: "invitationsPreserved",
     query: `SELECT count(*)::int AS "count" FROM "invitations"`,
@@ -75,7 +81,10 @@ const COUNT_QUERIES: Array<{ key: string; query: string }> = [
     key: "materialRequests",
     query: `SELECT count(*)::int AS "count" FROM "materialRequests"`,
   },
-  { key: "requestItems", query: `SELECT count(*)::int AS "count" FROM "requestItems"` },
+  {
+    key: "requestItems",
+    query: `SELECT count(*)::int AS "count" FROM "requestItems"`,
+  },
   {
     key: "supplyFlowRecords",
     query: `SELECT count(*)::int AS "count" FROM "supplyFlowRecords"`,
@@ -108,13 +117,19 @@ const COUNT_QUERIES: Array<{ key: string; query: string }> = [
     key: "transferRequestItems",
     query: `SELECT count(*)::int AS "count" FROM "transferRequestItems"`,
   },
-  { key: "transfers", query: `SELECT count(*)::int AS "count" FROM "transfers"` },
+  {
+    key: "transfers",
+    query: `SELECT count(*)::int AS "count" FROM "transfers"`,
+  },
   {
     key: "remissionGuides",
     query: `SELECT count(*)::int AS "count" FROM "remissionGuides"`,
   },
   { key: "receipts", query: `SELECT count(*)::int AS "count" FROM "receipts"` },
-  { key: "receiptItems", query: `SELECT count(*)::int AS "count" FROM "receiptItems"` },
+  {
+    key: "receiptItems",
+    query: `SELECT count(*)::int AS "count" FROM "receiptItems"`,
+  },
   {
     key: "warehouseExits",
     query: `SELECT count(*)::int AS "count" FROM "warehouseExits"`,
@@ -139,7 +154,22 @@ const COUNT_QUERIES: Array<{ key: string; query: string }> = [
     key: "reverseLogisticsItems",
     query: `SELECT count(*)::int AS "count" FROM "reverseLogisticsItems"`,
   },
-  { key: "sapSyncLog", query: `SELECT count(*)::int AS "count" FROM "sapSyncLog"` },
+  {
+    key: "sapSyncLog",
+    query: `SELECT count(*)::int AS "count" FROM "sapSyncLog"`,
+  },
+  {
+    key: "treasuryPaymentBatches",
+    query: `SELECT count(*)::int AS "count" FROM "treasuryPaymentBatches"`,
+  },
+  {
+    key: "treasuryPaymentItems",
+    query: `SELECT count(*)::int AS "count" FROM "treasuryPaymentItems"`,
+  },
+  {
+    key: "treasuryPaymentEvents",
+    query: `SELECT count(*)::int AS "count" FROM "treasuryPaymentEvents"`,
+  },
   {
     key: "operativeNotifications",
     query: `SELECT count(*)::int AS "count" FROM "notifications" WHERE "type" <> 'sistema'`,
@@ -196,6 +226,9 @@ const CLEANUP_STATEMENTS = [
   `DELETE FROM "attachments" WHERE "entityType" IN (${OPERATIVE_ATTACHMENT_ENTITY_TYPES_SQL})`,
   `DELETE FROM "notifications" WHERE "type" <> 'sistema'`,
   `DELETE FROM "sapSyncLog"`,
+  `DELETE FROM "treasuryPaymentEvents"`,
+  `DELETE FROM "treasuryPaymentItems"`,
+  `DELETE FROM "treasuryPaymentBatches"`,
   `DELETE FROM "receiptItems"`,
   `DELETE FROM "receipts"`,
   `DELETE FROM "reverseLogisticsItems"`,
@@ -238,7 +271,7 @@ export function createDrizzleResetDemoCleanExecutor(client: {
       return normalizeQueryResult(await client.execute(sql.raw(query)));
     },
     async transaction(callback) {
-      return client.transaction((tx) =>
+      return client.transaction(tx =>
         callback(createDrizzleResetDemoCleanExecutor(tx))
       );
     },
@@ -255,12 +288,11 @@ export async function collectResetDemoCleanSnapshot(
     counts[entry.key] = readCount(result);
   }
 
-  const fileKeyRows = (await executor.run(ATTACHMENT_FILE_KEYS_QUERY)).rows ?? [];
+  const fileKeyRows =
+    (await executor.run(ATTACHMENT_FILE_KEYS_QUERY)).rows ?? [];
   const attachmentFileKeys = Array.from(
     new Set(
-      fileKeyRows
-        .map((row) => String(row.fileKey ?? "").trim())
-        .filter(Boolean)
+      fileKeyRows.map(row => String(row.fileKey ?? "").trim()).filter(Boolean)
     )
   );
 
@@ -297,7 +329,7 @@ export async function executeResetDemoClean(
     }
   }
 
-  const snapshot = await executor.transaction(async (tx) => {
+  const snapshot = await executor.transaction(async tx => {
     const transactionSnapshot = await collectResetDemoCleanSnapshot(tx);
 
     for (const statement of CLEANUP_STATEMENTS) {
@@ -385,7 +417,10 @@ async function deleteStorageFiles(
 
 function normalizeQueryResult(result: unknown): ResetDemoCleanQueryResult {
   if (Array.isArray(result)) {
-    return { rows: result as Array<Record<string, unknown>>, rowCount: result.length };
+    return {
+      rows: result as Array<Record<string, unknown>>,
+      rowCount: result.length,
+    };
   }
 
   if (result && typeof result === "object") {
