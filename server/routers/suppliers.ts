@@ -422,6 +422,7 @@ export const suppliersRouter = router({
     .input(
       z.object({
         id: z.number().int().positive(),
+        email: optionalEmailSchema,
         rtn: z.string().trim().max(50).optional(),
         address: z.string().trim().max(1000).optional(),
         allowsTaxWithholding: z.boolean().optional(),
@@ -431,6 +432,12 @@ export const suppliersRouter = router({
     .mutation(async ({ ctx, input }) => {
       assertCanManageSupplierFiscalProfile(ctx.user);
       const data: Parameters<typeof db.updateSupplier>[1] = {};
+      if (!canManageSupplierCatalog(ctx.user) && input.email !== undefined) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para modificar el correo del proveedor",
+        });
+      }
       if (
         ctx.user.buildreqRole === "administrador_proyecto" &&
         input.rtn !== undefined
@@ -442,6 +449,9 @@ export const suppliersRouter = router({
       }
       if (input.rtn !== undefined) {
         data.rtn = input.rtn.trim() || null;
+      }
+      if (input.email !== undefined) {
+        data.email = input.email.trim().toLowerCase() || null;
       }
       if (input.address !== undefined) {
         data.address = input.address.trim() || null;

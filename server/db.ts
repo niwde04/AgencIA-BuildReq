@@ -20432,6 +20432,7 @@ export async function createSupplier(data: InsertSupplier) {
 export async function updateSupplier(
   id: number,
   data: {
+    email?: string | null;
     rtn?: string | null;
     address?: string | null;
     allowsTaxWithholding?: boolean;

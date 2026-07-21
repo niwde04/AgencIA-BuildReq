@@ -1794,7 +1794,7 @@ describe("BuildReq - Suppliers catalog", () => {
     createSupplierSpy.mockRestore();
   });
 
-  it("Authorized users can update supplier fiscal profile including RTN", async () => {
+  it("Authorized catalog users can update supplier email and fiscal profile", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
     const hasValidCertificateSpy = vi
@@ -1802,6 +1802,7 @@ describe("BuildReq - Suppliers catalog", () => {
       .mockResolvedValue(false);
     const updateSupplierSpy = vi.spyOn(db, "updateSupplier").mockResolvedValue({
       id: 5,
+      email: "compras@proveedor.com",
       rtn: "08019999999999",
       address: "Tegucigalpa",
       allowsTaxWithholding: false,
@@ -1811,6 +1812,7 @@ describe("BuildReq - Suppliers catalog", () => {
     await expect(
       caller.suppliers.update({
         id: 5,
+        email: "Compras@Proveedor.com",
         rtn: "08019999999999",
         address: "Tegucigalpa",
         allowsTaxWithholding: false,
@@ -1818,6 +1820,7 @@ describe("BuildReq - Suppliers catalog", () => {
       })
     ).resolves.toEqual(
       expect.objectContaining({
+        email: "compras@proveedor.com",
         rtn: "08019999999999",
         allowsTaxWithholding: false,
         subjectToAccountPayments: false,
@@ -1825,6 +1828,7 @@ describe("BuildReq - Suppliers catalog", () => {
     );
 
     expect(updateSupplierSpy).toHaveBeenCalledWith(5, {
+      email: "compras@proveedor.com",
       rtn: "08019999999999",
       address: "Tegucigalpa",
       allowsTaxWithholding: false,
@@ -1942,6 +1946,24 @@ describe("BuildReq - Suppliers catalog", () => {
         subjectToAccountPayments: false,
       })
     ).rejects.toThrow("No tiene permisos para modificar el RTN del proveedor");
+
+    expect(updateSupplierSpy).not.toHaveBeenCalled();
+    updateSupplierSpy.mockRestore();
+  });
+
+  it("Project Administrator cannot update supplier email", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const updateSupplierSpy = vi.spyOn(db, "updateSupplier");
+
+    await expect(
+      caller.suppliers.update({
+        id: 5,
+        email: "compras@proveedor.com",
+      })
+    ).rejects.toThrow(
+      "No tiene permisos para modificar el correo del proveedor"
+    );
 
     expect(updateSupplierSpy).not.toHaveBeenCalled();
     updateSupplierSpy.mockRestore();

@@ -279,6 +279,7 @@ export default function Proveedores() {
     canManageSupplierCatalog || buildreqRole === "administrador_proyecto";
   const canManageSupplierFiscalProfile =
     canManageSupplierCatalog || buildreqRole === "administrador_proyecto";
+  const canEditSupplierEmail = canManageSupplierCatalog;
   const canEditSupplierRtn = canManageSupplierCatalog;
   const canManageSupplierDocuments =
     canManageSupplierCatalog || buildreqRole === "administrador_proyecto";
@@ -542,6 +543,14 @@ export default function Proveedores() {
     const supplierCode = supplierDraft.supplierCode.trim().toUpperCase();
     const name = supplierDraft.name.trim();
     const email = supplierDraft.email.trim().toLowerCase();
+    if (
+      (isCreatingSupplier || canEditSupplierEmail) &&
+      email &&
+      !EMAIL_PATTERN.test(email)
+    ) {
+      toast.error("Ingrese un correo válido");
+      return;
+    }
     if (isCreatingSupplier) {
       if (!supplierCode) {
         toast.error("Ingrese el código del proveedor");
@@ -549,10 +558,6 @@ export default function Proveedores() {
       }
       if (!name) {
         toast.error("Ingrese el nombre del proveedor");
-        return;
-      }
-      if (email && !EMAIL_PATTERN.test(email)) {
-        toast.error("Ingrese un correo válido");
         return;
       }
       createMutation.mutate({
@@ -571,6 +576,7 @@ export default function Proveedores() {
     if (!selectedSupplier) return;
     updateMutation.mutate({
       id: selectedSupplier.id,
+      ...(canEditSupplierEmail ? { email } : {}),
       ...(canEditSupplierRtn ? { rtn: editRtn.trim() } : {}),
       address: editAddress.trim(),
       ...(hasValidAccountPaymentCertificate
@@ -1081,7 +1087,7 @@ export default function Proveedores() {
                 <Input
                   type="email"
                   value={supplierDraft.email}
-                  readOnly={!isCreatingSupplier}
+                  readOnly={!isCreatingSupplier && !canEditSupplierEmail}
                   onChange={(event) =>
                     setSupplierDraft((current) => ({
                       ...current,
