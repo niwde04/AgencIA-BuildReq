@@ -18,35 +18,6 @@ const adjustmentSchema = z.object({
   excluded: z.boolean().optional(),
   reason: z.string().trim().max(2000).optional(),
 });
-const bankResponseItemSchema = z
-  .object({
-    itemId: z.number().int().positive(),
-    paid: z.boolean(),
-    paidAmount: z.number().positive().max(999_999_999).optional(),
-    paidDate: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
-      .optional(),
-    bankReference: z.string().trim().max(255).optional(),
-    bankComment: z.string().trim().max(2000).optional(),
-  })
-  .superRefine((item, ctx) => {
-    if (!item.paid) return;
-    if (item.paidAmount === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["paidAmount"],
-        message: "Ingrese el monto pagado.",
-      });
-    }
-    if (!item.paidDate) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["paidDate"],
-        message: "Seleccione la fecha de pago.",
-      });
-    }
-  });
 const bankResponseAttachmentSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
   mimeType: z.string().trim().min(1).max(150),
@@ -67,10 +38,6 @@ function isProjectManager(user: User) {
 
 function isAccountant(user: User) {
   return user.role === "admin" || user.buildreqRole === "contable";
-}
-
-function canManageBankResponse(user: User) {
-  return isCentral(user) || user.buildreqRole === "financiero";
 }
 
 async function canAccessTreasury(user: User) {
@@ -370,13 +337,7 @@ export const treasuryRouter = router({
     }),
 
   approve: protectedProcedure
-    .input(
-      z.object({
-        id: z.number().int().positive(),
-        adjustments: z.array(adjustmentSchema).max(500).default([]),
-        comment: z.string().trim().max(2000).optional(),
-      })
-    )
+    .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
       await assertBatchAccess(ctx.user, input.id);
@@ -391,8 +352,33 @@ export const treasuryRouter = router({
         return await treasury.approveTreasuryBatch({
           batchId: input.id,
           actor: ctx.user,
-          adjustments: input.adjustments,
-          comment: input.comment,
+        });
+      } catch (error) {
+        rethrowTreasuryError(error);
+      }
+    }),
+
+  reject: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        reason: z.string().trim().min(5).max(2000),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      await assertBatchAccess(ctx.user, input.id);
+      if (ctx.user.buildreqRole !== "financiero") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Solo el rol Financiero puede rechazar lotes de Tesorería.",
+        });
+      }
+      try {
+        return await treasury.rejectTreasuryBatch({
+          batchId: input.id,
+          actor: ctx.user,
+          reason: input.reason,
         });
       } catch (error) {
         rethrowTreasuryError(error);
@@ -410,9 +396,7 @@ export const treasuryRouter = router({
       await assertTreasuryEnabled();
       const detail = await assertBatchAccess(ctx.user, input.id);
       const allowed =
-        (detail.batch.status === "enviado_depuracion" && isCentral(ctx.user)) ||
-        (detail.batch.status === "pendiente_aprobacion" &&
-          ctx.user.buildreqRole === "financiero");
+        detail.batch.status === "enviado_depuracion" && isCentral(ctx.user);
       if (!allowed) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -435,11 +419,10 @@ export const treasuryRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
       await assertBatchAccess(ctx.user, input.id);
-      if (!canManageBankResponse(ctx.user)) {
+      if (!isCentral(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message:
-            "Solo Administración Central o Financiero pueden exportar al banco.",
+          message: "Solo Administración Central puede exportar al banco.",
         });
       }
       try {
@@ -453,28 +436,24 @@ export const treasuryRouter = router({
     .input(
       z.object({
         id: z.number().int().positive(),
-        items: z.array(bankResponseItemSchema).min(1).max(500),
-        attachment: bankResponseAttachmentSchema.optional(),
+        bankReference: z.string().trim().min(1).max(255),
+        attachment: bankResponseAttachmentSchema,
       })
     )
     .mutation(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
       await assertBatchAccess(ctx.user, input.id);
-      if (!canManageBankResponse(ctx.user)) {
+      if (!isCentral(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message:
-            "Solo Administración Central o Financiero pueden registrar la respuesta bancaria.",
+          message: "Solo Administración Central puede registrar el pago bancario.",
         });
       }
       try {
         return await treasury.recordTreasuryBankResponse({
           batchId: input.id,
           actor: ctx.user,
-          items: input.items.map(item => ({
-            ...item,
-            paidDate: item.paidDate ? parseDate(item.paidDate) : undefined,
-          })),
+          bankReference: input.bankReference,
           attachment: input.attachment,
         });
       } catch (error) {
@@ -493,11 +472,11 @@ export const treasuryRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
       await assertBatchAccess(ctx.user, input.id);
-      if (!canManageBankResponse(ctx.user)) {
+      if (!isCentral(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo Administración Central o Financiero pueden importar la respuesta bancaria.",
+            "Solo Administración Central puede importar la respuesta bancaria.",
         });
       }
       try {
@@ -524,11 +503,10 @@ export const treasuryRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
       await assertBatchAccess(ctx.user, input.id);
-      if (!canManageBankResponse(ctx.user)) {
+      if (!isCentral(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message:
-            "Solo Administración Central o Financiero pueden resolver diferencias.",
+          message: "Solo Administración Central puede resolver diferencias.",
         });
       }
       try {
@@ -573,6 +551,34 @@ export const treasuryRouter = router({
       }
     }),
 
+  reopenRejected: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        reason: z.string().trim().min(5).max(2000),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      await assertBatchAccess(ctx.user, input.id);
+      if (!isCentral(ctx.user) && ctx.user.buildreqRole !== "financiero") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo Administración Central o Financiero pueden reabrir lotes rechazados.",
+        });
+      }
+      try {
+        return await treasury.reopenRejectedTreasuryBatch({
+          batchId: input.id,
+          actor: ctx.user,
+          reason: input.reason,
+        });
+      } catch (error) {
+        rethrowTreasuryError(error);
+      }
+    }),
+
   reopenClosed: protectedProcedure
     .input(
       z.object({
@@ -583,14 +589,10 @@ export const treasuryRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
       await assertBatchAccess(ctx.user, input.id);
-      if (
-        !isCentral(ctx.user) &&
-        ctx.user.buildreqRole !== "financiero"
-      ) {
+      if (!isCentral(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message:
-            "Solo Administración Central o Financiero pueden reabrir lotes cerrados.",
+          message: "Solo Administración Central puede reabrir lotes cerrados.",
         });
       }
       try {

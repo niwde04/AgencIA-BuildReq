@@ -1239,8 +1239,6 @@ export async function consolidateTreasuryBatchesForApproval(input: {
 export async function approveTreasuryBatch(input: {
   batchId: number;
   actor: TreasuryActor;
-  adjustments: TreasuryAdjustmentInput[];
-  comment?: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -1253,7 +1251,7 @@ export async function approveTreasuryBatch(input: {
       tx,
       input.batchId,
       input.actor,
-      input.adjustments,
+      [],
       "aprobacion"
     );
     const now = new Date();
@@ -1273,13 +1271,97 @@ export async function approveTreasuryBatch(input: {
       previousStatus: batch.status,
       newStatus: updated.status,
       actor: input.actor,
-      comment: input.comment,
     });
     return updated;
   });
   await notifyRole("administracion_central", {
     title: "Lote aprobado",
     message: `El lote ${result.batchNumber} está listo para enviarse al banco.`,
+    batchId: input.batchId,
+  });
+  return result;
+}
+
+export async function rejectTreasuryBatch(input: {
+  batchId: number;
+  actor: TreasuryActor;
+  reason: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const reason = input.reason.trim();
+  const result = await db.transaction(async tx => {
+    const batch = await readBatch(tx, input.batchId);
+    if (batch.status !== "pendiente_aprobacion") {
+      throw new TreasuryRuleError("El lote no está pendiente de aprobación.");
+    }
+    const now = new Date();
+    const [updated] = await tx
+      .update(treasuryPaymentBatches)
+      .set({
+        status: "rechazado",
+        returnedById: input.actor.id,
+        returnedAt: now,
+        returnReason: reason,
+        updatedAt: now,
+      })
+      .where(eq(treasuryPaymentBatches.id, input.batchId))
+      .returning();
+    await insertEvent(tx, {
+      batchId: input.batchId,
+      action: "rechazar_lote",
+      previousStatus: batch.status,
+      newStatus: "rechazado",
+      actor: input.actor,
+      comment: reason,
+    });
+    return updated;
+  });
+  await notifyRole("administracion_central", {
+    title: "Lote rechazado",
+    message: `El lote ${result.batchNumber} fue rechazado: ${reason}`,
+    batchId: input.batchId,
+  });
+  return result;
+}
+
+export async function reopenRejectedTreasuryBatch(input: {
+  batchId: number;
+  actor: TreasuryActor;
+  reason: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const reason = input.reason.trim();
+  const result = await db.transaction(async tx => {
+    const batch = await readBatch(tx, input.batchId);
+    if (batch.status !== "rechazado") {
+      throw new TreasuryRuleError("Solo se puede reabrir un lote rechazado.");
+    }
+    const [updated] = await tx
+      .update(treasuryPaymentBatches)
+      .set({
+        status: "pendiente_aprobacion",
+        returnedById: null,
+        returnedAt: null,
+        returnReason: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(treasuryPaymentBatches.id, input.batchId))
+      .returning();
+    await insertEvent(tx, {
+      batchId: input.batchId,
+      action: "reabrir_lote_rechazado",
+      previousStatus: batch.status,
+      newStatus: "pendiente_aprobacion",
+      actor: input.actor,
+      comment: reason,
+    });
+    return updated;
+  });
+  await notifyTreasuryApprovers({
+    title: "Lote reabierto para aprobación",
+    message: `El lote ${result.batchNumber} volvió a quedar pendiente de aprobación.`,
     batchId: input.batchId,
   });
   return result;
@@ -1718,100 +1800,87 @@ async function applyTreasuryBankRows(input: {
   return result;
 }
 
-export type TreasuryBankResponseItemInput = {
-  itemId: number;
-  paid: boolean;
-  paidAmount?: number;
-  paidDate?: Date;
-  bankReference?: string;
-  bankComment?: string;
-};
+export function buildTreasuryFullPaymentRows(input: {
+  batch: { batchNumber: string; version: number };
+  items: Array<{
+    id: number;
+    status: TreasuryItemStatus;
+    approvedAmount?: string | number | null;
+    requestedAmount: string | number;
+  }>;
+  bankReference: string;
+  paidDate: Date;
+}): TreasuryBankRow[] {
+  const approvedItems = input.items.filter(item => item.status === "aprobada");
+  if (!approvedItems.length) {
+    throw new TreasuryRuleError("El lote no tiene facturas aprobadas para pagar.");
+  }
+  const bankReference = input.bankReference.trim();
+  if (!bankReference) {
+    throw new TreasuryRuleError("Ingrese la referencia bancaria del lote.");
+  }
+  return approvedItems.map((item, index) => ({
+    rowNumber: index + 1,
+    batchNumber: input.batch.batchNumber,
+    version: input.batch.version,
+    itemId: item.id,
+    bankStatus: "PAGADO",
+    paidAmount: roundTreasuryMoney(
+      Number(item.approvedAmount ?? item.requestedAmount)
+    ),
+    paidDate: input.paidDate,
+    bankReference,
+    bankComment: "",
+  }));
+}
 
 export async function recordTreasuryBankResponse(input: {
   batchId: number;
   actor: TreasuryActor;
-  items: TreasuryBankResponseItemInput[];
-  attachment?: TreasuryBankResponseAttachmentInput;
+  bankReference: string;
+  attachment: TreasuryBankResponseAttachmentInput;
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const batch = await readBatch(db, input.batchId);
   const batchItems: any[] = await readBatchItems(db, input.batchId);
-  const itemById = new Map<number, any>(
-    batchItems.map((item: any) => [item.id, item])
-  );
-  const parsedRows: TreasuryBankRow[] = input.items.map((entry, index) => {
-    const item = itemById.get(entry.itemId);
-    const label = item?.invoiceDocumentNumber || `línea ${entry.itemId}`;
-    const paidAmount = entry.paid
-      ? roundTreasuryMoney(Number(entry.paidAmount))
-      : 0;
-    if (entry.paid && (!Number.isFinite(paidAmount) || paidAmount <= 0)) {
-      throw new TreasuryRuleError(
-        `${label}: ingrese un monto pagado mayor que cero.`
-      );
-    }
-    const approvedAmount = Number(
-      item?.approvedAmount ?? item?.requestedAmount ?? 0
-    );
-    if (entry.paid && paidAmount > approvedAmount + 0.0001) {
-      throw new TreasuryRuleError(
-        `${label}: el monto pagado no puede superar el abono aprobado.`
-      );
-    }
-    if (
-      entry.paid &&
-      (!entry.paidDate || Number.isNaN(entry.paidDate.getTime()))
-    ) {
-      throw new TreasuryRuleError(`${label}: seleccione la fecha de pago.`);
-    }
-    return {
-      rowNumber: index + 1,
-      batchNumber: batch.batchNumber,
-      version: batch.version,
-      itemId: entry.itemId,
-      bankStatus: entry.paid ? "PAGADO" : "RECHAZADO",
-      paidAmount,
-      paidDate: entry.paid ? entry.paidDate! : null,
-      bankReference: entry.bankReference?.trim() || "",
-      bankComment: entry.bankComment?.trim() || "",
-    };
+  const bankReference = input.bankReference.trim();
+  const parsedRows = buildTreasuryFullPaymentRows({
+    batch,
+    items: batchItems,
+    bankReference,
+    paidDate: new Date(),
   });
   matchTreasuryBankRows(parsedRows, batch, batchItems);
-  const preparedAttachment = input.attachment
-    ? prepareTreasuryBankAttachment(input.attachment)
-    : undefined;
-  const stored = preparedAttachment
-    ? await persistTreasuryAttachment({
-        batchId: input.batchId,
-        actorId: input.actor.id,
-        fileName: preparedAttachment.fileName,
-        buffer: preparedAttachment.buffer,
-        mimeType: preparedAttachment.mimeType,
-        category: "comprobante_pago",
-      })
-    : undefined;
+  const preparedAttachment = prepareTreasuryBankAttachment(input.attachment);
+  const stored = await persistTreasuryAttachment({
+    batchId: input.batchId,
+    actorId: input.actor.id,
+    fileName: preparedAttachment.fileName,
+    buffer: preparedAttachment.buffer,
+    mimeType: preparedAttachment.mimeType,
+    category: "comprobante_pago",
+  });
   try {
     return await applyTreasuryBankRows({
       db,
       batchId: input.batchId,
       actor: input.actor,
       parsedRows,
-      eventAction: "registrar_respuesta_banco",
+      eventAction: "registrar_pago_banco",
       eventMetadata: {
         source: "manual",
-        attachmentFileName: preparedAttachment?.fileName,
+        bankReference,
+        attachmentFileName: preparedAttachment.fileName,
       },
     });
   } catch (error) {
-    if (stored) {
-      try {
-        await db.delete(attachments).where(eq(attachments.fileKey, stored.key));
-      } catch {
-        // Best effort: keep the transaction error as the user-facing cause.
-      }
-      await storageDelete(stored.key).catch(() => undefined);
+    try {
+      await db.delete(attachments).where(eq(attachments.fileKey, stored.key));
+    } catch {
+      // Best effort: keep the transaction error as the user-facing cause.
     }
+    await storageDelete(stored.key).catch(() => undefined);
     throw error;
   }
 }
@@ -2100,6 +2169,7 @@ export async function cancelTreasuryBatch(input: {
         "conciliacion",
         "pendiente_contabilizacion",
         "cerrado",
+        "rechazado",
         "anulado",
         "consolidado",
       ].includes(batch.status)

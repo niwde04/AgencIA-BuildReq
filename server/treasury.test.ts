@@ -6,6 +6,7 @@ import {
   roundTreasuryMoney,
 } from "../shared/treasury";
 import {
+  buildTreasuryFullPaymentRows,
   getTreasuryReopenTargetStatus,
   parseTreasuryBankWorkbook,
   prepareTreasuryBankAttachment,
@@ -180,5 +181,61 @@ describe("treasury bank response attachments", () => {
         base64: Buffer.from("invalid").toString("base64"),
       })
     ).toThrow("El adjunto debe ser PDF");
+  });
+});
+
+describe("treasury full batch payment", () => {
+  it("marks every approved line as fully paid with one batch reference", () => {
+    const paidDate = new Date("2026-07-21T00:00:00.000Z");
+    const rows = buildTreasuryFullPaymentRows({
+      batch: { batchNumber: "TES-2026-000006", version: 1 },
+      bankReference: "REF-LOTE-100",
+      paidDate,
+      items: [
+        {
+          id: 10,
+          status: "aprobada",
+          approvedAmount: "3844.4900",
+          requestedAmount: "3844.4900",
+        },
+        {
+          id: 11,
+          status: "aprobada",
+          approvedAmount: "224016.8000",
+          requestedAmount: "224016.8000",
+        },
+        {
+          id: 12,
+          status: "excluida",
+          requestedAmount: "100.0000",
+        },
+      ],
+    });
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map(row => row.paidAmount)).toEqual([3844.49, 224016.8]);
+    expect(rows.every(row => row.bankStatus === "PAGADO")).toBe(true);
+    expect(rows.every(row => row.bankReference === "REF-LOTE-100")).toBe(
+      true
+    );
+    expect(rows.every(row => row.paidDate === paidDate)).toBe(true);
+  });
+
+  it("requires one bank reference for the whole batch", () => {
+    expect(() =>
+      buildTreasuryFullPaymentRows({
+        batch: { batchNumber: "TES-2026-000006", version: 1 },
+        bankReference: "  ",
+        paidDate: new Date(),
+        items: [
+          {
+            id: 10,
+            status: "aprobada",
+            approvedAmount: "10.0000",
+            requestedAmount: "10.0000",
+          },
+        ],
+      })
+    ).toThrow("Ingrese la referencia bancaria del lote");
   });
 });

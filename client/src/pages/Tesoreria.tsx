@@ -69,14 +69,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-type BankResponseDraft = {
-  paid: boolean;
-  amount: string;
-  paidDate: string;
-  reference: string;
-  comment: string;
-};
-
 type PreparedBankAttachment = {
   fileName: string;
   mimeType: string;
@@ -88,6 +80,8 @@ type PendingReasonAction =
   | { type: "return" }
   | { type: "cancel" }
   | { type: "reopen" }
+  | { type: "reject" }
+  | { type: "reopenRejected" }
   | { type: "resolve"; itemId: number; resolution: "accept" | "reject" };
 
 const CURRENCY_FORMATTERS = {
@@ -209,7 +203,11 @@ async function prepareBankAttachment(
 function statusVariant(status: string) {
   if (status === "cerrado" || status === "contabilizada")
     return "default" as const;
-  if (status === "anulado" || status === "rechazada_banco")
+  if (
+    status === "anulado" ||
+    status === "rechazado" ||
+    status === "rechazada_banco"
+  )
     return "destructive" as const;
   if (status === "conciliacion" || status === "con_diferencia")
     return "outline" as const;
@@ -226,6 +224,9 @@ function auditActionLabel(action: string) {
     consolidar_enviar_aprobacion: "consolidar y enviar a aprobación",
     consolidar_en_lote: "integrar en lote consolidado",
     crear_lote_consolidado: "crear lote consolidado y enviar a aprobación",
+    rechazar_lote: "rechazar lote",
+    reabrir_lote_rechazado: "reabrir lote rechazado",
+    registrar_pago_banco: "registrar pago bancario",
     reabrir_respuesta_bancaria: "restaurar respuesta bancaria",
     reabrir_lote: "reabrir lote para corregir respuesta bancaria",
   };
@@ -693,9 +694,7 @@ function BatchDetailDialog({
     Record<number, string>
   >({});
   const [accountItemIds, setAccountItemIds] = useState<Set<number>>(new Set());
-  const [bankResponses, setBankResponses] = useState<
-    Record<number, BankResponseDraft>
-  >({});
+  const [batchBankReference, setBatchBankReference] = useState("");
   const [bankAttachment, setBankAttachment] =
     useState<PreparedBankAttachment>();
   const [preparingBankAttachment, setPreparingBankAttachment] = useState(false);
@@ -707,6 +706,7 @@ function BatchDetailDialog({
   useEffect(() => {
     const items = detailQuery.data?.items ?? [];
     setRemovingItem(undefined);
+    setBatchBankReference("");
     setBankAttachment(undefined);
     setAmounts(
       Object.fromEntries(
@@ -725,22 +725,6 @@ function BatchDetailDialog({
         items
           .filter((item: any) => item.status === "pagada")
           .map((item: any) => item.id)
-      )
-    );
-    setBankResponses(
-      Object.fromEntries(
-        items
-          .filter((item: any) => item.status === "aprobada")
-          .map((item: any) => [
-            item.id,
-            {
-              paid: false,
-              amount: String(item.approvedAmount ?? item.requestedAmount),
-              paidDate: toDateInput(new Date()),
-              reference: "",
-              comment: "",
-            } satisfies BankResponseDraft,
-          ])
       )
     );
   }, [detailQuery.data]);
@@ -769,6 +753,9 @@ function BatchDetailDialog({
   const approveMutation = trpc.treasury.approve.useMutation(
     mutationOptions("Lote aprobado")
   );
+  const rejectMutation = trpc.treasury.reject.useMutation(
+    mutationOptions("Lote rechazado")
+  );
   const returnMutation = trpc.treasury.returnBatch.useMutation(
     mutationOptions("Lote devuelto")
   );
@@ -785,7 +772,7 @@ function BatchDetailDialog({
   });
   const recordBankResponseMutation =
     trpc.treasury.recordBankResponse.useMutation(
-      mutationOptions("Respuesta bancaria registrada")
+      mutationOptions("Pago bancario registrado")
     );
   const removeDraftItemMutation = trpc.treasury.updateDraft.useMutation({
     onSuccess: async () => {
@@ -804,6 +791,9 @@ function BatchDetailDialog({
   const reopenMutation = trpc.treasury.reopenClosed.useMutation(
     mutationOptions("Lote reabierto en Enviado al banco")
   );
+  const reopenRejectedMutation = trpc.treasury.reopenRejected.useMutation(
+    mutationOptions("Lote reabierto para aprobación")
+  );
 
   const detail = detailQuery.data;
   const batch = detail?.batch;
@@ -815,19 +805,19 @@ function BatchDetailDialog({
   const isAccountant =
     user?.role === "admin" || user?.buildreqRole === "contable";
   const isApprover = settingsQuery.data?.isApprover === true;
-  const canManageBankResponse = isCentral || isApprover;
-  const editableAdjustments =
-    (status === "enviado_depuracion" && isCentral) ||
-    (status === "pendiente_aprobacion" && isApprover);
+  const canManageBankResponse = isCentral;
+  const editableAdjustments = status === "enviado_depuracion" && isCentral;
   const canReopenClosedBatch =
     status === "cerrado" &&
-    (isCentral || isApprover) &&
+    isCentral &&
     (detail?.items ?? []).some(
       (item: any) => item.status === "rechazada_banco"
     ) &&
     (detail?.items ?? []).every((item: any) =>
       ["rechazada_banco", "excluida"].includes(item.status)
     );
+  const canReopenRejectedBatch =
+    status === "rechazado" && (isCentral || isApprover);
 
   function currentPaymentAmount(item: any) {
     if (item.status === "excluida" || excludedIds.has(item.id)) return 0;
@@ -861,75 +851,25 @@ function BatchDetailDialog({
       }));
   }
 
-  function updateBankResponse(
-    itemId: number,
-    changes: Partial<BankResponseDraft>
-  ) {
-    setBankResponses(current => ({
-      ...current,
-      [itemId]: { ...current[itemId]!, ...changes },
-    }));
-  }
-
   function recordBankResponse() {
     if (!batch || !detail) return;
-    try {
-      const payableItems = detail.items.filter(
-        (item: any) => item.status === "aprobada"
-      );
-      const items = payableItems.map((item: any) => {
-        const response = bankResponses[item.id];
-        if (!response) {
-          throw new Error(
-            `No se pudo preparar la respuesta de ${item.invoiceDocumentNumber}.`
-          );
-        }
-        if (response.paid) {
-          const paidAmount = Number(response.amount);
-          if (!Number.isFinite(paidAmount) || paidAmount <= 0) {
-            throw new Error(
-              `${item.invoiceDocumentNumber}: ingrese un monto pagado mayor que cero.`
-            );
-          }
-          if (!response.paidDate) {
-            throw new Error(
-              `${item.invoiceDocumentNumber}: seleccione la fecha de pago.`
-            );
-          }
-          return {
-            itemId: item.id,
-            paid: true as const,
-            paidAmount,
-            paidDate: response.paidDate,
-            bankReference: response.reference,
-            bankComment: response.comment,
-          };
-        }
-        return {
-          itemId: item.id,
-          paid: false as const,
-          bankReference: response.reference,
-          bankComment: response.comment,
-        };
-      });
-      recordBankResponseMutation.mutate({
-        id: batch.id,
-        items,
-        attachment: bankAttachment
-          ? {
-              fileName: bankAttachment.fileName,
-              mimeType: bankAttachment.mimeType,
-              base64: bankAttachment.base64,
-            }
-          : undefined,
-      });
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "No se pudo preparar la respuesta bancaria."
-      );
+    if (!batchBankReference.trim()) {
+      toast.error("Ingrese la referencia bancaria del lote.");
+      return;
     }
+    if (!bankAttachment) {
+      toast.error("Adjunte el comprobante de pago del banco.");
+      return;
+    }
+    recordBankResponseMutation.mutate({
+      id: batch.id,
+      bankReference: batchBankReference.trim(),
+      attachment: {
+        fileName: bankAttachment.fileName,
+        mimeType: bankAttachment.mimeType,
+        base64: bankAttachment.base64,
+      },
+    });
   }
 
   function removeDraftItem() {
@@ -987,6 +927,20 @@ function BatchDetailDialog({
       );
       return;
     }
+    if (pendingReasonAction.type === "reject") {
+      rejectMutation.mutate(
+        { id: detail.batch.id, reason: actionReason },
+        { onSuccess }
+      );
+      return;
+    }
+    if (pendingReasonAction.type === "reopenRejected") {
+      reopenRejectedMutation.mutate(
+        { id: detail.batch.id, reason: actionReason },
+        { onSuccess }
+      );
+      return;
+    }
     resolveMutation.mutate(
       {
         id: detail.batch.id,
@@ -1002,6 +956,7 @@ function BatchDetailDialog({
     submitMutation,
     saveReviewMutation,
     approveMutation,
+    rejectMutation,
     returnMutation,
     cancelMutation,
     exportMutation,
@@ -1010,6 +965,7 @@ function BatchDetailDialog({
     resolveMutation,
     accountMutation,
     reopenMutation,
+    reopenRejectedMutation,
   ].some(mutation => mutation.isPending);
 
   return (
@@ -1040,7 +996,9 @@ function BatchDetailDialog({
             {detail.batch.returnReason && (
               <Alert variant="destructive">
                 <RotateCcw />
-                <AlertTitle>Lote devuelto</AlertTitle>
+                <AlertTitle>
+                  {status === "rechazado" ? "Lote rechazado" : "Lote devuelto"}
+                </AlertTitle>
                 <AlertDescription>{detail.batch.returnReason}</AlertDescription>
               </Alert>
             )}
@@ -1312,29 +1270,43 @@ function BatchDetailDialog({
             {status === "enviado_banco" && canManageBankResponse && (
               <div className="space-y-4">
                 <div>
-                  <h3 className="font-semibold">Respuesta bancaria</h3>
+                  <h3 className="font-semibold">Registrar pago bancario</h3>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Registre el resultado de cada factura sin modificar ni
-                    volver a cargar el archivo Excel.
+                    Ingrese la referencia del lote y adjunte el comprobante de
+                    pago emitido por el banco.
                   </p>
                 </div>
                 <Alert>
                   <Banknote />
-                  <AlertTitle>Resultado por factura</AlertTitle>
+                  <AlertTitle>Pago completo del lote</AlertTitle>
                   <AlertDescription>
-                    Marque Pagado únicamente cuando el banco confirme el abono.
-                    Una factura desmarcada se registrará como rechazada por el
-                    banco.
+                    Al registrar, todas las facturas aprobadas se marcarán como
+                    pagadas por el monto aprobado.
                   </AlertDescription>
                 </Alert>
                 <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="batch-bank-reference">
+                      Referencia bancaria del lote
+                    </Label>
+                    <Input
+                      id="batch-bank-reference"
+                      value={batchBankReference}
+                      onChange={event =>
+                        setBatchBankReference(event.target.value)
+                      }
+                      placeholder="Ingrese la referencia bancaria"
+                      maxLength={255}
+                      disabled={pending}
+                    />
+                  </div>
                   <div className="space-y-1">
                     <Label htmlFor="bank-response-attachment">
-                      Adjunto del banco (opcional)
+                      Comprobante de pago del banco
                     </Label>
                     <p className="text-xs text-muted-foreground">
-                      PDF, imagen o Excel de hasta 10 MB. Se guardará en
-                      Archivos bancarios.
+                      Obligatorio. PDF, imagen o Excel de hasta 10 MB. Se
+                      guardará en Archivos bancarios.
                     </p>
                   </div>
                   <Input
@@ -1387,126 +1359,6 @@ function BatchDetailDialog({
                       </Button>
                     </div>
                   )}
-                </div>
-                <div className="space-y-3">
-                  {detail.items
-                    .filter((item: any) => item.status === "aprobada")
-                    .map((item: any) => {
-                      const response = bankResponses[item.id];
-                      if (!response) return null;
-                      return (
-                        <div
-                          key={item.id}
-                          className="space-y-4 rounded-lg border p-4"
-                        >
-                          <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="font-medium">
-                                {item.supplierName}
-                              </div>
-                              <div className="text-sm text-muted-foreground">
-                                {item.invoiceDocumentNumber} ·{" "}
-                                {item.invoiceNumber || "Sin número fiscal"}
-                              </div>
-                              <div className="mt-1 text-sm">
-                                Abono aprobado:{" "}
-                                <span className="font-medium tabular-nums">
-                                  {formatMoney(
-                                    item.approvedAmount ?? item.requestedAmount,
-                                    detail.batch.currency
-                                  )}
-                                </span>
-                              </div>
-                            </div>
-                            <label className="flex cursor-pointer items-center gap-3 rounded-md border px-4 py-2">
-                              <Checkbox
-                                checked={response.paid}
-                                onCheckedChange={checked =>
-                                  updateBankResponse(item.id, {
-                                    paid: checked === true,
-                                  })
-                                }
-                              />
-                              <span className="font-medium">
-                                {response.paid ? "Pagado" : "No pagado"}
-                              </span>
-                            </label>
-                          </div>
-                          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                            <div className="space-y-2">
-                              <Label htmlFor={`bank-amount-${item.id}`}>
-                                Monto pagado
-                              </Label>
-                              <Input
-                                id={`bank-amount-${item.id}`}
-                                className="text-right tabular-nums"
-                                type="number"
-                                min="0.0001"
-                                step="0.0001"
-                                max={
-                                  item.approvedAmount ?? item.requestedAmount
-                                }
-                                disabled={!response.paid}
-                                value={response.amount}
-                                onChange={event =>
-                                  updateBankResponse(item.id, {
-                                    amount: event.target.value,
-                                  })
-                                }
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor={`bank-date-${item.id}`}>
-                                Fecha de pago
-                              </Label>
-                              <Input
-                                id={`bank-date-${item.id}`}
-                                type="date"
-                                disabled={!response.paid}
-                                value={response.paidDate}
-                                onChange={event =>
-                                  updateBankResponse(item.id, {
-                                    paidDate: event.target.value,
-                                  })
-                                }
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor={`bank-reference-${item.id}`}>
-                                Referencia bancaria
-                              </Label>
-                              <Input
-                                id={`bank-reference-${item.id}`}
-                                maxLength={255}
-                                placeholder="Opcional"
-                                value={response.reference}
-                                onChange={event =>
-                                  updateBankResponse(item.id, {
-                                    reference: event.target.value,
-                                  })
-                                }
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor={`bank-comment-${item.id}`}>
-                                Comentario del banco
-                              </Label>
-                              <Input
-                                id={`bank-comment-${item.id}`}
-                                maxLength={2000}
-                                placeholder="Opcional"
-                                value={response.comment}
-                                onChange={event =>
-                                  updateBankResponse(item.id, {
-                                    comment: event.target.value,
-                                  })
-                                }
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
                 </div>
               </div>
             )}
@@ -1657,20 +1509,25 @@ function BatchDetailDialog({
                 </Button>
               )}
               {status === "pendiente_aprobacion" && isApprover && (
-                <Button
-                  onClick={() =>
-                    approveMutation.mutate({
-                      id: detail.batch.id,
-                      adjustments: adjustments(),
-                    })
-                  }
-                  disabled={pending}
-                >
-                  <CheckCircle2 className="mr-2 h-4 w-4" /> Aprobar
-                </Button>
+                <>
+                  <Button
+                    onClick={() =>
+                      approveMutation.mutate({ id: detail.batch.id })
+                    }
+                    disabled={pending}
+                  >
+                    <CheckCircle2 className="mr-2 h-4 w-4" /> Aprobar lote
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    disabled={pending}
+                    onClick={() => requestReason({ type: "reject" })}
+                  >
+                    <XCircle className="mr-2 h-4 w-4" /> Rechazar lote
+                  </Button>
+                </>
               )}
-              {(status === "enviado_depuracion" && isCentral) ||
-              (status === "pendiente_aprobacion" && isApprover) ? (
+              {status === "enviado_depuracion" && isCentral ? (
                 <Button
                   variant="outline"
                   disabled={pending}
@@ -1696,12 +1553,14 @@ function BatchDetailDialog({
                   disabled={
                     pending ||
                     preparingBankAttachment ||
+                    !batchBankReference.trim() ||
+                    !bankAttachment ||
                     detail.items.every(
                       (item: any) => item.status !== "aprobada"
                     )
                   }
                 >
-                  <CheckCircle2 className="mr-2 h-4 w-4" /> Registrar respuesta
+                  <CheckCircle2 className="mr-2 h-4 w-4" /> Registrar
                 </Button>
               )}
               {status === "pendiente_contabilizacion" && isAccountant && (
@@ -1726,6 +1585,15 @@ function BatchDetailDialog({
                   <RotateCcw className="mr-2 h-4 w-4" /> Reabrir lote
                 </Button>
               )}
+              {canReopenRejectedBatch && (
+                <Button
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() => requestReason({ type: "reopenRejected" })}
+                >
+                  <RotateCcw className="mr-2 h-4 w-4" /> Reabrir lote
+                </Button>
+              )}
             </div>
             <div className="flex gap-2">
               {status &&
@@ -1734,6 +1602,7 @@ function BatchDetailDialog({
                   "conciliacion",
                   "pendiente_contabilizacion",
                   "cerrado",
+                  "rechazado",
                   "anulado",
                   "consolidado",
                 ].includes(status) &&
@@ -1803,13 +1672,21 @@ function BatchDetailDialog({
                   ? "Anular lote"
                   : pendingReasonAction?.type === "reopen"
                     ? "Reabrir lote"
-                  : pendingReasonAction?.resolution === "accept"
-                    ? "Aceptar abono real"
-                    : "Rechazar línea bancaria"}
+                    : pendingReasonAction?.type === "reject"
+                      ? "Rechazar lote"
+                      : pendingReasonAction?.type === "reopenRejected"
+                        ? "Reabrir lote rechazado"
+                        : pendingReasonAction?.resolution === "accept"
+                          ? "Aceptar abono real"
+                          : "Rechazar línea bancaria"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {pendingReasonAction?.type === "reopen"
                 ? "El lote volverá a Enviado al banco y las líneas rechazadas regresarán a Aprobada. Escriba el motivo para registrarlo en la auditoría."
+                : pendingReasonAction?.type === "reject"
+                  ? "El lote completo quedará rechazado. Escriba el motivo obligatorio para registrarlo en la auditoría."
+                  : pendingReasonAction?.type === "reopenRejected"
+                    ? "El lote volverá a quedar pendiente de aprobación. Escriba el motivo de la reapertura."
                 : "Escriba un motivo de al menos 5 caracteres para registrar esta acción en la auditoría."}
             </AlertDialogDescription>
           </AlertDialogHeader>

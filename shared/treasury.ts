@@ -10,6 +10,7 @@ export const TREASURY_BATCH_STATUS_CODES = [
   "pendiente_contabilizacion",
   "cerrado",
   "devuelto",
+  "rechazado",
   "anulado",
   "consolidado",
 ] as const;
@@ -28,6 +29,7 @@ export const TREASURY_BATCH_STATUS_LABELS: Readonly<
   pendiente_contabilizacion: "Pendiente de contabilización",
   cerrado: "Cerrado",
   devuelto: "Devuelto",
+  rechazado: "Rechazado",
   anulado: "Anulado",
   consolidado: "Consolidado",
 };
