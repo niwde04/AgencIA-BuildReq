@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,6 +62,7 @@ import {
   RotateCcw,
   Search,
   Send,
+  Trash2,
   WalletCards,
   XCircle,
 } from "lucide-react";
@@ -553,9 +564,11 @@ function BatchDetailDialog({
   const [bankResponses, setBankResponses] = useState<
     Record<number, BankResponseDraft>
   >({});
+  const [removingItem, setRemovingItem] = useState<any>();
 
   useEffect(() => {
     const items = detailQuery.data?.items ?? [];
+    setRemovingItem(undefined);
     setAmounts(
       Object.fromEntries(
         items.map((item: any) => [
@@ -634,6 +647,14 @@ function BatchDetailDialog({
     trpc.treasury.recordBankResponse.useMutation(
       mutationOptions("Respuesta bancaria registrada")
     );
+  const removeDraftItemMutation = trpc.treasury.updateDraft.useMutation({
+    onSuccess: async () => {
+      setRemovingItem(undefined);
+      toast.success("Factura quitada del borrador");
+      await refresh();
+    },
+    onError: error => toast.error(error.message),
+  });
   const resolveMutation = trpc.treasury.resolveDifference.useMutation(
     mutationOptions("Diferencia resuelta")
   );
@@ -729,6 +750,28 @@ function BatchDetailDialog({
     }
   }
 
+  function removeDraftItem() {
+    if (!batch || !detail || !removingItem || status !== "borrador") return;
+    const remainingItems = detail.items.filter(
+      (item: any) => item.status !== "excluida" && item.id !== removingItem.id
+    );
+    if (!remainingItems.length) {
+      toast.error(
+        "El lote debe conservar al menos una factura. Para eliminarlo por completo, anule el lote."
+      );
+      return;
+    }
+    removeDraftItemMutation.mutate({
+      id: batch.id,
+      requestedPaymentDate: toDateInput(batch.requestedPaymentDate),
+      notes: batch.notes ?? undefined,
+      items: remainingItems.map((item: any) => ({
+        invoiceId: item.invoiceId,
+        requestedAmount: Number(item.requestedAmount),
+      })),
+    });
+  }
+
   const pending = [
     submitMutation,
     purifyMutation,
@@ -737,6 +780,7 @@ function BatchDetailDialog({
     cancelMutation,
     exportMutation,
     recordBankResponseMutation,
+    removeDraftItemMutation,
     resolveMutation,
     accountMutation,
   ].some(mutation => mutation.isPending);
@@ -837,7 +881,13 @@ function BatchDetailDialog({
             </div>
 
             <div className="overflow-hidden rounded-lg border bg-card">
-              <Table className="min-w-[960px]">
+              <Table
+                className={
+                  status === "borrador" && isProjectManager
+                    ? "min-w-[1040px]"
+                    : "min-w-[960px]"
+                }
+              >
                 <TableHeader className="bg-muted/95">
                   <TableRow>
                     {status === "pendiente_contabilizacion" && isAccountant && (
@@ -853,6 +903,11 @@ function BatchDetailDialog({
                     </TableHead>
                     <TableHead className="text-right">Abono</TableHead>
                     {editableAdjustments && <TableHead>Excluir</TableHead>}
+                    {status === "borrador" && isProjectManager && (
+                      <TableHead className="w-24 text-right">
+                        Acciones
+                      </TableHead>
+                    )}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -969,6 +1024,32 @@ function BatchDetailDialog({
                               )}
                             </div>
                           )}
+                        </TableCell>
+                      )}
+                      {status === "borrador" && isProjectManager && (
+                        <TableCell className="text-right">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            disabled={
+                              pending ||
+                              detail.items.filter(
+                                (row: any) => row.status !== "excluida"
+                              ).length <= 1
+                            }
+                            title={
+                              detail.items.filter(
+                                (row: any) => row.status !== "excluida"
+                              ).length <= 1
+                                ? "Un lote debe conservar al menos una factura"
+                                : "Quitar factura del borrador"
+                            }
+                            onClick={() => setRemovingItem(item)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" /> Quitar
+                          </Button>
                         </TableCell>
                       )}
                     </TableRow>
@@ -1380,6 +1461,36 @@ function BatchDetailDialog({
           </DialogFooter>
         )}
       </DialogContent>
+      <AlertDialog
+        open={Boolean(removingItem)}
+        onOpenChange={open => !open && setRemovingItem(undefined)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Quitar esta factura?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {removingItem
+                ? `${removingItem.supplierName} · ${removingItem.invoiceDocumentNumber} se quitará del borrador y su saldo quedará disponible para otro lote.`
+                : "La factura se quitará del borrador."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removeDraftItemMutation.isPending}>
+              Conservar factura
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90"
+              disabled={removeDraftItemMutation.isPending}
+              onClick={removeDraftItem}
+            >
+              {removeDraftItemMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Quitar factura
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }
