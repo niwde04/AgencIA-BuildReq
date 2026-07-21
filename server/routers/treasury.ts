@@ -560,6 +560,37 @@ export const treasuryRouter = router({
       }
     }),
 
+  reopenClosed: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        reason: z.string().trim().min(5).max(2000),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      await assertBatchAccess(ctx.user, input.id);
+      if (
+        !isCentral(ctx.user) &&
+        ctx.user.buildreqRole !== "financiero"
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo Administración Central o Financiero pueden reabrir lotes cerrados.",
+        });
+      }
+      try {
+        return await treasury.reopenClosedTreasuryBatch({
+          batchId: input.id,
+          actor: ctx.user,
+          reason: input.reason,
+        });
+      } catch (error) {
+        rethrowTreasuryError(error);
+      }
+    }),
+
   cancel: protectedProcedure
     .input(
       z.object({

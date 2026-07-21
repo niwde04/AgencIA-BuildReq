@@ -80,6 +80,7 @@ type BankResponseDraft = {
 type PendingReasonAction =
   | { type: "return" }
   | { type: "cancel" }
+  | { type: "reopen" }
   | { type: "resolve"; itemId: number; resolution: "accept" | "reject" };
 
 const CURRENCY_FORMATTERS = {
@@ -173,6 +174,8 @@ function auditActionLabel(action: string) {
     consolidar_enviar_aprobacion: "consolidar y enviar a aprobación",
     consolidar_en_lote: "integrar en lote consolidado",
     crear_lote_consolidado: "crear lote consolidado y enviar a aprobación",
+    reabrir_respuesta_bancaria: "restaurar respuesta bancaria",
+    reabrir_lote: "reabrir lote para corregir respuesta bancaria",
   };
   return reviewLabels[action] ?? action.replaceAll("_", " ");
 }
@@ -742,6 +745,9 @@ function BatchDetailDialog({
   const accountMutation = trpc.treasury.accountItems.useMutation(
     mutationOptions("Abonos contabilizados")
   );
+  const reopenMutation = trpc.treasury.reopenClosed.useMutation(
+    mutationOptions("Lote reabierto en Enviado al banco")
+  );
 
   const detail = detailQuery.data;
   const batch = detail?.batch;
@@ -756,6 +762,15 @@ function BatchDetailDialog({
   const editableAdjustments =
     (status === "enviado_depuracion" && isCentral) ||
     (status === "pendiente_aprobacion" && isApprover);
+  const canReopenClosedBatch =
+    status === "cerrado" &&
+    (isCentral || isApprover) &&
+    (detail?.items ?? []).some(
+      (item: any) => item.status === "rechazada_banco"
+    ) &&
+    (detail?.items ?? []).every((item: any) =>
+      ["rechazada_banco", "excluida"].includes(item.status)
+    );
 
   function currentPaymentAmount(item: any) {
     if (item.status === "excluida" || excludedIds.has(item.id)) return 0;
@@ -898,6 +913,13 @@ function BatchDetailDialog({
       );
       return;
     }
+    if (pendingReasonAction.type === "reopen") {
+      reopenMutation.mutate(
+        { id: detail.batch.id, reason: actionReason },
+        { onSuccess }
+      );
+      return;
+    }
     resolveMutation.mutate(
       {
         id: detail.batch.id,
@@ -920,6 +942,7 @@ function BatchDetailDialog({
     removeDraftItemMutation,
     resolveMutation,
     accountMutation,
+    reopenMutation,
   ].some(mutation => mutation.isPending);
 
   return (
@@ -1565,6 +1588,15 @@ function BatchDetailDialog({
                   <Banknote className="mr-2 h-4 w-4" /> Contabilizar abonos
                 </Button>
               )}
+              {canReopenClosedBatch && (
+                <Button
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() => requestReason({ type: "reopen" })}
+                >
+                  <RotateCcw className="mr-2 h-4 w-4" /> Reabrir lote
+                </Button>
+              )}
             </div>
             <div className="flex gap-2">
               {status &&
@@ -1640,13 +1672,16 @@ function BatchDetailDialog({
                 ? "Devolver lote"
                 : pendingReasonAction?.type === "cancel"
                   ? "Anular lote"
+                  : pendingReasonAction?.type === "reopen"
+                    ? "Reabrir lote"
                   : pendingReasonAction?.resolution === "accept"
                     ? "Aceptar abono real"
                     : "Rechazar línea bancaria"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Escriba un motivo de al menos 5 caracteres para registrar esta
-              acción en la auditoría.
+              {pendingReasonAction?.type === "reopen"
+                ? "El lote volverá a Enviado al banco y las líneas rechazadas regresarán a Aprobada. Escriba el motivo para registrarlo en la auditoría."
+                : "Escriba un motivo de al menos 5 caracteres para registrar esta acción en la auditoría."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2">

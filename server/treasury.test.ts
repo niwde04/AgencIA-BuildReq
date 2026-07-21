@@ -5,7 +5,11 @@ import {
   getTreasuryPaymentStatus,
   roundTreasuryMoney,
 } from "../shared/treasury";
-import { parseTreasuryBankWorkbook, TreasuryRuleError } from "./treasury";
+import {
+  getTreasuryReopenTargetStatus,
+  parseTreasuryBankWorkbook,
+  TreasuryRuleError,
+} from "./treasury";
 
 function bankWorkbook(rows: Array<Record<string, unknown>>) {
   const workbook = XLSX.utils.book_new();
@@ -125,5 +129,31 @@ describe("treasury bank workbook", () => {
         ])
       )
     ).toThrow(TreasuryRuleError);
+  });
+});
+
+describe("treasury closed batch reopening", () => {
+  it("returns a fully rejected closed batch to the bank-response stage", () => {
+    expect(
+      getTreasuryReopenTargetStatus("cerrado", [
+        "rechazada_banco",
+        "excluida",
+      ])
+    ).toBe("enviado_banco");
+  });
+
+  it("does not reopen a batch with paid or accounted lines", () => {
+    expect(() =>
+      getTreasuryReopenTargetStatus("cerrado", [
+        "rechazada_banco",
+        "contabilizada",
+      ])
+    ).toThrow("tiene pagos realizados o contabilizados");
+  });
+
+  it("does not reopen a batch that is not closed", () => {
+    expect(() =>
+      getTreasuryReopenTargetStatus("enviado_banco", ["rechazada_banco"])
+    ).toThrow("Solo se puede reabrir un lote cerrado");
   });
 });

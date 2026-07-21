@@ -73,6 +73,29 @@ const FINAL_ITEM_STATUSES = new Set<TreasuryItemStatus>([
   "contabilizada",
 ]);
 
+const REOPENABLE_CLOSED_ITEM_STATUSES = new Set<TreasuryItemStatus>([
+  "excluida",
+  "rechazada_banco",
+]);
+
+export function getTreasuryReopenTargetStatus(
+  batchStatus: TreasuryBatchStatus,
+  itemStatuses: TreasuryItemStatus[]
+): TreasuryBatchStatus {
+  if (batchStatus !== "cerrado") {
+    throw new TreasuryRuleError("Solo se puede reabrir un lote cerrado.");
+  }
+  if (
+    !itemStatuses.includes("rechazada_banco") ||
+    itemStatuses.some(status => !REOPENABLE_CLOSED_ITEM_STATUSES.has(status))
+  ) {
+    throw new TreasuryRuleError(
+      "El lote tiene pagos realizados o contabilizados y no puede reabrirse."
+    );
+  }
+  return "enviado_banco";
+}
+
 const BANK_EXPORT_HEADERS = {
   batchNumber: "LOTE",
   version: "VERSION",
@@ -1912,6 +1935,74 @@ export async function accountTreasuryItems(input: {
       previousStatus: batch.status,
       newStatus: updated.status,
       actor: input.actor,
+    });
+    return updated;
+  });
+}
+
+export async function reopenClosedTreasuryBatch(input: {
+  batchId: number;
+  actor: TreasuryActor;
+  reason: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  return db.transaction(async tx => {
+    const batch = await readBatch(tx, input.batchId);
+    const items = await readBatchItems(tx, input.batchId);
+    const targetStatus = getTreasuryReopenTargetStatus(
+      batch.status,
+      items.map((item: any) => item.status as TreasuryItemStatus)
+    );
+    const now = new Date();
+    const reason = input.reason.trim();
+    const rejectedItems = items.filter(
+      (item: any) => item.status === "rechazada_banco"
+    );
+
+    for (const item of rejectedItems) {
+      await tx
+        .update(treasuryPaymentItems)
+        .set({
+          status: "aprobada",
+          activeReservation: true,
+          bankPaidAmount: null,
+          bankPaidDate: null,
+          bankReference: null,
+          bankComment: null,
+          differenceResolutionComment: null,
+          updatedAt: now,
+        })
+        .where(eq(treasuryPaymentItems.id, item.id));
+      await insertEvent(tx, {
+        batchId: input.batchId,
+        itemId: item.id,
+        action: "reabrir_respuesta_bancaria",
+        previousStatus: item.status,
+        newStatus: "aprobada",
+        actor: input.actor,
+        comment: reason,
+      });
+    }
+
+    const [updated] = await tx
+      .update(treasuryPaymentBatches)
+      .set({
+        status: targetStatus,
+        reconciledById: null,
+        reconciledAt: null,
+        updatedAt: now,
+      })
+      .where(eq(treasuryPaymentBatches.id, input.batchId))
+      .returning();
+    await insertEvent(tx, {
+      batchId: input.batchId,
+      action: "reabrir_lote",
+      previousStatus: batch.status,
+      newStatus: targetStatus,
+      actor: input.actor,
+      comment: reason,
+      metadata: { restoredItems: rejectedItems.length },
     });
     return updated;
   });
