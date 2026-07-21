@@ -47,6 +47,11 @@ const bankResponseItemSchema = z
       });
     }
   });
+const bankResponseAttachmentSchema = z.object({
+  fileName: z.string().trim().min(1).max(255),
+  mimeType: z.string().trim().min(1).max(150),
+  base64: z.string().min(1).max(15_000_000),
+});
 
 function isCentral(user: User) {
   return (
@@ -62,6 +67,10 @@ function isProjectManager(user: User) {
 
 function isAccountant(user: User) {
   return user.role === "admin" || user.buildreqRole === "contable";
+}
+
+function canManageBankResponse(user: User) {
+  return isCentral(user) || user.buildreqRole === "financiero";
 }
 
 async function canAccessTreasury(user: User) {
@@ -426,10 +435,11 @@ export const treasuryRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
       await assertBatchAccess(ctx.user, input.id);
-      if (!isCentral(ctx.user)) {
+      if (!canManageBankResponse(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo Administración Central puede exportar al banco.",
+          message:
+            "Solo Administración Central o Financiero pueden exportar al banco.",
         });
       }
       try {
@@ -444,16 +454,17 @@ export const treasuryRouter = router({
       z.object({
         id: z.number().int().positive(),
         items: z.array(bankResponseItemSchema).min(1).max(500),
+        attachment: bankResponseAttachmentSchema.optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
       await assertBatchAccess(ctx.user, input.id);
-      if (!isCentral(ctx.user)) {
+      if (!canManageBankResponse(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo Administración Central puede registrar la respuesta bancaria.",
+            "Solo Administración Central o Financiero pueden registrar la respuesta bancaria.",
         });
       }
       try {
@@ -464,6 +475,7 @@ export const treasuryRouter = router({
             ...item,
             paidDate: item.paidDate ? parseDate(item.paidDate) : undefined,
           })),
+          attachment: input.attachment,
         });
       } catch (error) {
         rethrowTreasuryError(error);
@@ -481,11 +493,11 @@ export const treasuryRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
       await assertBatchAccess(ctx.user, input.id);
-      if (!isCentral(ctx.user)) {
+      if (!canManageBankResponse(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo Administración Central puede importar la respuesta bancaria.",
+            "Solo Administración Central o Financiero pueden importar la respuesta bancaria.",
         });
       }
       try {
@@ -512,10 +524,11 @@ export const treasuryRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
       await assertBatchAccess(ctx.user, input.id);
-      if (!isCentral(ctx.user)) {
+      if (!canManageBankResponse(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo Administración Central puede resolver diferencias.",
+          message:
+            "Solo Administración Central o Financiero pueden resolver diferencias.",
         });
       }
       try {

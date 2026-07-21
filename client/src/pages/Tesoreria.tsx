@@ -77,6 +77,13 @@ type BankResponseDraft = {
   comment: string;
 };
 
+type PreparedBankAttachment = {
+  fileName: string;
+  mimeType: string;
+  base64: string;
+  fileSize: number;
+};
+
 type PendingReasonAction =
   | { type: "return" }
   | { type: "cancel" }
@@ -152,6 +159,51 @@ function downloadBase64File(
   anchor.download = fileName;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+const BANK_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const BANK_ATTACHMENT_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+  pdf: "application/pdf",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
+function readFileAsBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result ?? "");
+      resolve(value.includes(",") ? (value.split(",")[1] ?? "") : value);
+    };
+    reader.onerror = () => reject(new Error("No se pudo leer el adjunto"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function prepareBankAttachment(
+  file: File
+): Promise<PreparedBankAttachment> {
+  const extension = file.name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? "";
+  const mimeType = BANK_ATTACHMENT_MIME_BY_EXTENSION[extension];
+  if (!mimeType) {
+    throw new Error(
+      "El adjunto debe ser PDF, imagen JPG/PNG/WebP o archivo Excel."
+    );
+  }
+  if (!file.size) throw new Error("El adjunto bancario está vacío.");
+  if (file.size > BANK_ATTACHMENT_MAX_BYTES) {
+    throw new Error("El adjunto bancario no puede superar 10 MB.");
+  }
+  return {
+    fileName: file.name,
+    mimeType,
+    base64: await readFileAsBase64(file),
+    fileSize: file.size,
+  };
 }
 
 function statusVariant(status: string) {
@@ -644,6 +696,9 @@ function BatchDetailDialog({
   const [bankResponses, setBankResponses] = useState<
     Record<number, BankResponseDraft>
   >({});
+  const [bankAttachment, setBankAttachment] =
+    useState<PreparedBankAttachment>();
+  const [preparingBankAttachment, setPreparingBankAttachment] = useState(false);
   const [removingItem, setRemovingItem] = useState<any>();
   const [pendingReasonAction, setPendingReasonAction] =
     useState<PendingReasonAction>();
@@ -652,6 +707,7 @@ function BatchDetailDialog({
   useEffect(() => {
     const items = detailQuery.data?.items ?? [];
     setRemovingItem(undefined);
+    setBankAttachment(undefined);
     setAmounts(
       Object.fromEntries(
         items.map((item: any) => [
@@ -759,6 +815,7 @@ function BatchDetailDialog({
   const isAccountant =
     user?.role === "admin" || user?.buildreqRole === "contable";
   const isApprover = settingsQuery.data?.isApprover === true;
+  const canManageBankResponse = isCentral || isApprover;
   const editableAdjustments =
     (status === "enviado_depuracion" && isCentral) ||
     (status === "pendiente_aprobacion" && isApprover);
@@ -855,7 +912,17 @@ function BatchDetailDialog({
           bankComment: response.comment,
         };
       });
-      recordBankResponseMutation.mutate({ id: batch.id, items });
+      recordBankResponseMutation.mutate({
+        id: batch.id,
+        items,
+        attachment: bankAttachment
+          ? {
+              fileName: bankAttachment.fileName,
+              mimeType: bankAttachment.mimeType,
+              base64: bankAttachment.base64,
+            }
+          : undefined,
+      });
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -1242,7 +1309,7 @@ function BatchDetailDialog({
               </Table>
             </div>
 
-            {status === "enviado_banco" && isCentral && (
+            {status === "enviado_banco" && canManageBankResponse && (
               <div className="space-y-4">
                 <div>
                   <h3 className="font-semibold">Respuesta bancaria</h3>
@@ -1260,6 +1327,67 @@ function BatchDetailDialog({
                     banco.
                   </AlertDescription>
                 </Alert>
+                <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+                  <div className="space-y-1">
+                    <Label htmlFor="bank-response-attachment">
+                      Adjunto del banco (opcional)
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      PDF, imagen o Excel de hasta 10 MB. Se guardará en
+                      Archivos bancarios.
+                    </p>
+                  </div>
+                  <Input
+                    id="bank-response-attachment"
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,.webp,.xls,.xlsx"
+                    disabled={pending || preparingBankAttachment}
+                    onChange={async event => {
+                      const input = event.currentTarget;
+                      const file = input.files?.[0];
+                      if (!file) {
+                        setBankAttachment(undefined);
+                        return;
+                      }
+                      setPreparingBankAttachment(true);
+                      try {
+                        setBankAttachment(await prepareBankAttachment(file));
+                      } catch (error) {
+                        input.value = "";
+                        setBankAttachment(undefined);
+                        toast.error(
+                          error instanceof Error
+                            ? error.message
+                            : "No se pudo preparar el adjunto bancario."
+                        );
+                      } finally {
+                        setPreparingBankAttachment(false);
+                      }
+                    }}
+                  />
+                  {preparingBankAttachment && (
+                    <div className="flex items-center text-sm text-muted-foreground">
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Preparando adjunto…
+                    </div>
+                  )}
+                  {bankAttachment && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-background px-3 py-2 text-sm">
+                      <span className="min-w-0 truncate">
+                        {bankAttachment.fileName} ·{" "}
+                        {(bankAttachment.fileSize / 1024 / 1024).toFixed(2)} MB
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setBankAttachment(undefined)}
+                      >
+                        Quitar
+                      </Button>
+                    </div>
+                  )}
+                </div>
                 <div className="space-y-3">
                   {detail.items
                     .filter((item: any) => item.status === "aprobada")
@@ -1383,7 +1511,7 @@ function BatchDetailDialog({
               </div>
             )}
 
-            {status === "conciliacion" && isCentral && (
+            {status === "conciliacion" && canManageBankResponse && (
               <div className="space-y-3">
                 <h3 className="font-semibold">Diferencias bancarias</h3>
                 {detail.items
@@ -1552,7 +1680,7 @@ function BatchDetailDialog({
                 </Button>
               ) : null}
               {(status === "aprobado" || status === "enviado_banco") &&
-                isCentral && (
+                canManageBankResponse && (
                   <Button
                     onClick={() =>
                       exportMutation.mutate({ id: detail.batch.id })
@@ -1562,11 +1690,12 @@ function BatchDetailDialog({
                     <Download className="mr-2 h-4 w-4" /> Descargar Excel banco
                   </Button>
                 )}
-              {status === "enviado_banco" && isCentral && (
+              {status === "enviado_banco" && canManageBankResponse && (
                 <Button
                   onClick={recordBankResponse}
                   disabled={
                     pending ||
+                    preparingBankAttachment ||
                     detail.items.every(
                       (item: any) => item.status !== "aprobada"
                     )

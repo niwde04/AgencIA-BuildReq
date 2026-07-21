@@ -118,6 +118,50 @@ const BANK_EXPORT_HEADERS = {
   bankComment: "COMENTARIO_BANCO",
 } as const;
 
+const TREASURY_BANK_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const TREASURY_BANK_ATTACHMENT_MIME_TYPES: Readonly<
+  Record<string, readonly string[]>
+> = {
+  pdf: ["application/pdf"],
+  jpg: ["image/jpeg"],
+  jpeg: ["image/jpeg"],
+  png: ["image/png"],
+  webp: ["image/webp"],
+  xls: ["application/vnd.ms-excel", "application/octet-stream"],
+  xlsx: [
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/octet-stream",
+  ],
+};
+
+export type TreasuryBankResponseAttachmentInput = {
+  fileName: string;
+  mimeType: string;
+  base64: string;
+};
+
+export function prepareTreasuryBankAttachment(
+  input: TreasuryBankResponseAttachmentInput
+) {
+  const fileName = input.fileName.trim().split(/[\\/]/).pop() ?? "";
+  const extension = fileName.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? "";
+  const allowedMimeTypes = TREASURY_BANK_ATTACHMENT_MIME_TYPES[extension];
+  const mimeType = input.mimeType.trim().toLowerCase();
+  if (!fileName || !allowedMimeTypes?.includes(mimeType)) {
+    throw new TreasuryRuleError(
+      "El adjunto debe ser PDF, imagen JPG/PNG/WebP o archivo Excel."
+    );
+  }
+  const buffer = Buffer.from(input.base64, "base64");
+  if (!buffer.byteLength) {
+    throw new TreasuryRuleError("El adjunto bancario está vacío.");
+  }
+  if (buffer.byteLength > TREASURY_BANK_ATTACHMENT_MAX_BYTES) {
+    throw new TreasuryRuleError("El adjunto bancario no puede superar 10 MB.");
+  }
+  return { fileName, mimeType, buffer };
+}
+
 function getActorRole(actor: TreasuryActor) {
   return actor.role === "admin" ? "admin" : actor.buildreqRole || "sin_rol";
 }
@@ -1337,18 +1381,19 @@ function buildBankWorkbook(
   );
 }
 
-async function persistWorkbook(input: {
+async function persistTreasuryAttachment(input: {
   batchId: number;
   actorId: number;
   fileName: string;
   buffer: Buffer;
+  mimeType: string;
   category: "archivo_bancario" | "comprobante_pago";
 }) {
   const key = `treasury/${input.batchId}/${Date.now()}-${randomUUID()}-${input.fileName}`;
   const stored = await storagePut(
     key,
     input.buffer,
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    input.mimeType
   );
   try {
     await createAttachment({
@@ -1357,8 +1402,7 @@ async function persistWorkbook(input: {
       fileName: input.fileName,
       fileKey: stored.key,
       fileUrl: stored.url,
-      mimeType:
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      mimeType: input.mimeType,
       fileSize: input.buffer.byteLength,
       category: input.category,
       uploadedById: input.actorId,
@@ -1381,11 +1425,13 @@ export async function exportTreasuryBankWorkbook(
   }
   const buffer = buildBankWorkbook(detail);
   const fileName = `${detail.batch.batchNumber}-v${detail.batch.version}-banco.xlsx`;
-  await persistWorkbook({
+  await persistTreasuryAttachment({
     batchId,
     actorId: actor.id,
     fileName,
     buffer,
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     category: "archivo_bancario",
   });
   const db = await getDb();
@@ -1557,11 +1603,13 @@ export async function importTreasuryBankWorkbook(input: {
   const preliminaryItems = await readBatchItems(db, input.batchId);
   matchTreasuryBankRows(parsedRows, preliminaryBatch, preliminaryItems);
 
-  const stored = await persistWorkbook({
+  const stored = await persistTreasuryAttachment({
     batchId: input.batchId,
     actorId: input.actor.id,
     fileName: input.fileName,
     buffer,
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     category: "comprobante_pago",
   });
   let result;
@@ -1683,6 +1731,7 @@ export async function recordTreasuryBankResponse(input: {
   batchId: number;
   actor: TreasuryActor;
   items: TreasuryBankResponseItemInput[];
+  attachment?: TreasuryBankResponseAttachmentInput;
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -1729,14 +1778,42 @@ export async function recordTreasuryBankResponse(input: {
     };
   });
   matchTreasuryBankRows(parsedRows, batch, batchItems);
-  return applyTreasuryBankRows({
-    db,
-    batchId: input.batchId,
-    actor: input.actor,
-    parsedRows,
-    eventAction: "registrar_respuesta_banco",
-    eventMetadata: { source: "manual" },
-  });
+  const preparedAttachment = input.attachment
+    ? prepareTreasuryBankAttachment(input.attachment)
+    : undefined;
+  const stored = preparedAttachment
+    ? await persistTreasuryAttachment({
+        batchId: input.batchId,
+        actorId: input.actor.id,
+        fileName: preparedAttachment.fileName,
+        buffer: preparedAttachment.buffer,
+        mimeType: preparedAttachment.mimeType,
+        category: "comprobante_pago",
+      })
+    : undefined;
+  try {
+    return await applyTreasuryBankRows({
+      db,
+      batchId: input.batchId,
+      actor: input.actor,
+      parsedRows,
+      eventAction: "registrar_respuesta_banco",
+      eventMetadata: {
+        source: "manual",
+        attachmentFileName: preparedAttachment?.fileName,
+      },
+    });
+  } catch (error) {
+    if (stored) {
+      try {
+        await db.delete(attachments).where(eq(attachments.fileKey, stored.key));
+      } catch {
+        // Best effort: keep the transaction error as the user-facing cause.
+      }
+      await storageDelete(stored.key).catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 export async function resolveTreasuryDifference(input: {

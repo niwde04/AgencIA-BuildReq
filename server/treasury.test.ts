@@ -8,6 +8,7 @@ import {
 import {
   getTreasuryReopenTargetStatus,
   parseTreasuryBankWorkbook,
+  prepareTreasuryBankAttachment,
   TreasuryRuleError,
 } from "./treasury";
 
@@ -155,5 +156,29 @@ describe("treasury closed batch reopening", () => {
     expect(() =>
       getTreasuryReopenTargetStatus("enviado_banco", ["rechazada_banco"])
     ).toThrow("Solo se puede reabrir un lote cerrado");
+  });
+});
+
+describe("treasury bank response attachments", () => {
+  it("accepts a supported bank attachment", () => {
+    const result = prepareTreasuryBankAttachment({
+      fileName: "respuesta-banco.pdf",
+      mimeType: "application/pdf",
+      base64: Buffer.from("%PDF-1.7").toString("base64"),
+    });
+
+    expect(result.fileName).toBe("respuesta-banco.pdf");
+    expect(result.mimeType).toBe("application/pdf");
+    expect(result.buffer.byteLength).toBeGreaterThan(0);
+  });
+
+  it("rejects unsupported bank attachments", () => {
+    expect(() =>
+      prepareTreasuryBankAttachment({
+        fileName: "respuesta.exe",
+        mimeType: "application/octet-stream",
+        base64: Buffer.from("invalid").toString("base64"),
+      })
+    ).toThrow("El adjunto debe ser PDF");
   });
 });
