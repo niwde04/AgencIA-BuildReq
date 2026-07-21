@@ -19,7 +19,7 @@ export const TREASURY_BATCH_STATUS_LABELS: Readonly<
   Record<TreasuryBatchStatus, string>
 > = {
   borrador: "Borrador",
-  enviado_depuracion: "Pendiente de depuración",
+  enviado_depuracion: "Pendiente de revisión",
   pendiente_aprobacion: "Pendiente de aprobación",
   aprobado: "Aprobado",
   enviado_banco: "Enviado al banco",

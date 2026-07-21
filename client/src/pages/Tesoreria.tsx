@@ -157,6 +157,16 @@ function statusVariant(status: string) {
   return "secondary" as const;
 }
 
+function auditActionLabel(action: string) {
+  const reviewLabels: Record<string, string> = {
+    enviar_depuracion: "enviar a revisión",
+    finalizar_depuracion: "finalizar revisión",
+    ajustar_depuracion: "ajustar en revisión",
+    excluir_depuracion: "excluir en revisión",
+  };
+  return reviewLabels[action] ?? action.replaceAll("_", " ");
+}
+
 function BatchFormDialog({
   open,
   onOpenChange,
@@ -679,7 +689,7 @@ function BatchDetailDialog({
     onError: (error: { message: string }) => toast.error(error.message),
   });
   const submitMutation = trpc.treasury.submit.useMutation(
-    mutationOptions("Lote enviado a depuración")
+    mutationOptions("Lote enviado a revisión")
   );
   const purifyMutation = trpc.treasury.purify.useMutation(
     mutationOptions("Lote enviado a aprobación")
@@ -733,6 +743,25 @@ function BatchDetailDialog({
   const editableAdjustments =
     (status === "enviado_depuracion" && isCentral) ||
     (status === "pendiente_aprobacion" && isApprover);
+
+  function currentPaymentAmount(item: any) {
+    if (item.status === "excluida" || excludedIds.has(item.id)) return 0;
+    const value = editableAdjustments
+      ? amounts[item.id]
+      : (item.bankPaidAmount ?? item.approvedAmount ?? item.requestedAmount);
+    const amount = Number(value ?? 0);
+    return Number.isFinite(amount) ? amount : 0;
+  }
+
+  function pendingInvoiceBalance(item: any) {
+    const invoiceTotal = Number(item.invoiceNetPayable ?? 0);
+    const advancePaid = Number(item.previousPaidAmount ?? 0);
+    const balance =
+      (Number.isFinite(invoiceTotal) ? invoiceTotal : 0) -
+      (Number.isFinite(advancePaid) ? advancePaid : 0) -
+      currentPaymentAmount(item);
+    return Math.max(0, balance);
+  }
 
   function adjustments() {
     return (detail?.items ?? [])
@@ -942,8 +971,8 @@ function BatchDetailDialog({
               <Table
                 className={
                   status === "borrador" && isProjectManager
-                    ? "min-w-[1040px]"
-                    : "min-w-[960px]"
+                    ? "min-w-[1180px]"
+                    : "min-w-[1100px]"
                 }
               >
                 <TableHeader className="bg-muted/95">
@@ -957,9 +986,12 @@ function BatchDetailDialog({
                     <TableHead>Estado</TableHead>
                     <TableHead className="text-right">Total factura</TableHead>
                     <TableHead className="text-right">
-                      Pagado anterior
+                      Anticipo pagado
                     </TableHead>
                     <TableHead className="text-right">Abono</TableHead>
+                    <TableHead className="text-right">
+                      Saldo pendiente
+                    </TableHead>
                     {editableAdjustments && <TableHead>Excluir</TableHead>}
                     {status === "borrador" && isProjectManager && (
                       <TableHead className="w-24 text-right">
@@ -1050,6 +1082,12 @@ function BatchDetailDialog({
                               </div>
                             )}
                           </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-medium tabular-nums">
+                        {formatMoney(
+                          pendingInvoiceBalance(item),
+                          detail.batch.currency
                         )}
                       </TableCell>
                       {editableAdjustments && (
@@ -1367,7 +1405,7 @@ function BatchDetailDialog({
                   <div key={event.id} className="text-sm">
                     <span className="font-medium">{event.actorName}</span>{" "}
                     <span className="text-muted-foreground">
-                      · {event.action.replaceAll("_", " ")} ·{" "}
+                      · {auditActionLabel(event.action)} ·{" "}
                       {formatDate(event.createdAt)}
                     </span>
                     {event.comment && (
@@ -1401,7 +1439,7 @@ function BatchDetailDialog({
                       }
                       disabled={pending}
                     >
-                      <Send className="mr-2 h-4 w-4" /> Enviar a depuración
+                      <Send className="mr-2 h-4 w-4" /> Enviar a revisión
                     </Button>
                   </>
                 )}

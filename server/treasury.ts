@@ -889,7 +889,7 @@ export async function submitTreasuryBatch(
     return updated;
   });
   await notifyRole("administracion_central", {
-    title: "Lote pendiente de depuración",
+    title: "Lote pendiente de revisión",
     message: `El lote ${result.batchNumber} fue enviado a Tesorería.`,
     batchId,
   });
@@ -941,7 +941,7 @@ async function applyAdjustments(
     const amount = roundTreasuryMoney(adjustment?.amount ?? currentLimit);
     if (amount <= 0 || amount > currentLimit + 0.0001) {
       throw new TreasuryRuleError(
-        "Durante depuración y aprobación solo se puede mantener o disminuir el abono."
+        "Durante revisión y aprobación solo se puede mantener o disminuir el abono."
       );
     }
     const update =
@@ -986,7 +986,7 @@ export async function purifyTreasuryBatch(input: {
   const result = await db.transaction(async tx => {
     const batch = await readBatch(tx, input.batchId);
     if (batch.status !== "enviado_depuracion") {
-      throw new TreasuryRuleError("El lote no está pendiente de depuración.");
+      throw new TreasuryRuleError("El lote no está pendiente de revisión.");
     }
     await applyAdjustments(
       tx,
@@ -1018,7 +1018,7 @@ export async function purifyTreasuryBatch(input: {
   });
   await notifyTreasuryApprovers({
     title: "Lote pendiente de aprobación",
-    message: `El lote ${result.batchNumber} fue depurado y requiere aprobación.`,
+    message: `El lote ${result.batchNumber} fue revisado y requiere aprobación.`,
     batchId: input.batchId,
   });
   return result;
