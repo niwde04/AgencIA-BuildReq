@@ -1319,6 +1319,8 @@ export function parseTreasuryBankWorkbook(buffer: Buffer) {
   });
 }
 
+type TreasuryBankRow = ReturnType<typeof parseTreasuryBankWorkbook>[number];
+
 function matchTreasuryBankRows(
   parsedRows: ReturnType<typeof parseTreasuryBankWorkbook>,
   batch: any,
@@ -1396,67 +1398,13 @@ export async function importTreasuryBankWorkbook(input: {
   });
   let result;
   try {
-    result = await db.transaction(async tx => {
-      const batch = await readBatch(tx, input.batchId);
-      const items = await readBatchItems(tx, input.batchId);
-      const { matchedRows, hasDifferences, hasPaidLines } =
-        matchTreasuryBankRows(parsedRows, batch, items);
-      for (const { row, item, approved, rejected, differs } of matchedRows) {
-        await tx
-          .update(treasuryPaymentItems)
-          .set({
-            status: rejected
-              ? "rechazada_banco"
-              : differs
-                ? "con_diferencia"
-                : "pagada",
-            activeReservation: !rejected,
-            bankPaidAmount: rejected ? null : toMoneyString(row.paidAmount),
-            bankPaidDate: row.paidDate,
-            bankReference: row.bankReference || null,
-            bankComment: row.bankComment || null,
-            updatedAt: new Date(),
-          })
-          .where(eq(treasuryPaymentItems.id, item.id));
-        await insertEvent(tx, {
-          batchId: input.batchId,
-          itemId: item.id,
-          action: rejected ? "rechazo_bancario" : "pago_bancario",
-          previousStatus: item.status,
-          newStatus: rejected
-            ? "rechazada_banco"
-            : differs
-              ? "con_diferencia"
-              : "pagada",
-          actor: input.actor,
-          metadata: { approvedAmount: approved, paidAmount: row.paidAmount },
-        });
-      }
-      const now = new Date();
-      const nextStatus = hasDifferences
-        ? "conciliacion"
-        : hasPaidLines
-          ? "pendiente_contabilizacion"
-          : "cerrado";
-      const [updated] = await tx
-        .update(treasuryPaymentBatches)
-        .set({
-          status: nextStatus,
-          reconciledById: input.actor.id,
-          reconciledAt: now,
-          updatedAt: now,
-        })
-        .where(eq(treasuryPaymentBatches.id, input.batchId))
-        .returning();
-      await insertEvent(tx, {
-        batchId: input.batchId,
-        action: "importar_respuesta_banco",
-        previousStatus: batch.status,
-        newStatus: nextStatus,
-        actor: input.actor,
-        metadata: { fileName: input.fileName, hasDifferences, hasPaidLines },
-      });
-      return updated;
+    result = await applyTreasuryBankRows({
+      db,
+      batchId: input.batchId,
+      actor: input.actor,
+      parsedRows,
+      eventAction: "importar_respuesta_banco",
+      eventMetadata: { fileName: input.fileName },
     });
   } catch (error) {
     try {
@@ -1467,6 +1415,83 @@ export async function importTreasuryBankWorkbook(input: {
     await storageDelete(stored.key).catch(() => undefined);
     throw error;
   }
+  return result;
+}
+
+async function applyTreasuryBankRows(input: {
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>;
+  batchId: number;
+  actor: TreasuryActor;
+  parsedRows: TreasuryBankRow[];
+  eventAction: string;
+  eventMetadata?: Record<string, unknown>;
+}) {
+  const result = await input.db.transaction(async tx => {
+    const batch = await readBatch(tx, input.batchId);
+    const items = await readBatchItems(tx, input.batchId);
+    const { matchedRows, hasDifferences, hasPaidLines } = matchTreasuryBankRows(
+      input.parsedRows,
+      batch,
+      items
+    );
+    for (const { row, item, approved, rejected, differs } of matchedRows) {
+      const nextItemStatus = rejected
+        ? "rechazada_banco"
+        : differs
+          ? "con_diferencia"
+          : "pagada";
+      await tx
+        .update(treasuryPaymentItems)
+        .set({
+          status: nextItemStatus,
+          activeReservation: !rejected,
+          bankPaidAmount: rejected ? null : toMoneyString(row.paidAmount),
+          bankPaidDate: row.paidDate,
+          bankReference: row.bankReference || null,
+          bankComment: row.bankComment || null,
+          updatedAt: new Date(),
+        })
+        .where(eq(treasuryPaymentItems.id, item.id));
+      await insertEvent(tx, {
+        batchId: input.batchId,
+        itemId: item.id,
+        action: rejected ? "rechazo_bancario" : "pago_bancario",
+        previousStatus: item.status,
+        newStatus: nextItemStatus,
+        actor: input.actor,
+        metadata: { approvedAmount: approved, paidAmount: row.paidAmount },
+      });
+    }
+    const now = new Date();
+    const nextStatus = hasDifferences
+      ? "conciliacion"
+      : hasPaidLines
+        ? "pendiente_contabilizacion"
+        : "cerrado";
+    const [updated] = await tx
+      .update(treasuryPaymentBatches)
+      .set({
+        status: nextStatus,
+        reconciledById: input.actor.id,
+        reconciledAt: now,
+        updatedAt: now,
+      })
+      .where(eq(treasuryPaymentBatches.id, input.batchId))
+      .returning();
+    await insertEvent(tx, {
+      batchId: input.batchId,
+      action: input.eventAction,
+      previousStatus: batch.status,
+      newStatus: nextStatus,
+      actor: input.actor,
+      metadata: {
+        ...input.eventMetadata,
+        hasDifferences,
+        hasPaidLines,
+      },
+    });
+    return updated;
+  });
   if (result.status === "pendiente_contabilizacion") {
     await notifyRole("contable", {
       title: "Pagos pendientes de contabilización",
@@ -1475,6 +1500,75 @@ export async function importTreasuryBankWorkbook(input: {
     });
   }
   return result;
+}
+
+export type TreasuryBankResponseItemInput = {
+  itemId: number;
+  paid: boolean;
+  paidAmount?: number;
+  paidDate?: Date;
+  bankReference?: string;
+  bankComment?: string;
+};
+
+export async function recordTreasuryBankResponse(input: {
+  batchId: number;
+  actor: TreasuryActor;
+  items: TreasuryBankResponseItemInput[];
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const batch = await readBatch(db, input.batchId);
+  const batchItems: any[] = await readBatchItems(db, input.batchId);
+  const itemById = new Map<number, any>(
+    batchItems.map((item: any) => [item.id, item])
+  );
+  const parsedRows: TreasuryBankRow[] = input.items.map((entry, index) => {
+    const item = itemById.get(entry.itemId);
+    const label = item?.invoiceDocumentNumber || `línea ${entry.itemId}`;
+    const paidAmount = entry.paid
+      ? roundTreasuryMoney(Number(entry.paidAmount))
+      : 0;
+    if (entry.paid && (!Number.isFinite(paidAmount) || paidAmount <= 0)) {
+      throw new TreasuryRuleError(
+        `${label}: ingrese un monto pagado mayor que cero.`
+      );
+    }
+    const approvedAmount = Number(
+      item?.approvedAmount ?? item?.requestedAmount ?? 0
+    );
+    if (entry.paid && paidAmount > approvedAmount + 0.0001) {
+      throw new TreasuryRuleError(
+        `${label}: el monto pagado no puede superar el abono aprobado.`
+      );
+    }
+    if (
+      entry.paid &&
+      (!entry.paidDate || Number.isNaN(entry.paidDate.getTime()))
+    ) {
+      throw new TreasuryRuleError(`${label}: seleccione la fecha de pago.`);
+    }
+    return {
+      rowNumber: index + 1,
+      batchNumber: batch.batchNumber,
+      version: batch.version,
+      itemId: entry.itemId,
+      bankStatus: entry.paid ? "PAGADO" : "RECHAZADO",
+      paidAmount,
+      paidDate: entry.paid ? entry.paidDate! : null,
+      bankReference: entry.bankReference?.trim() || "",
+      bankComment: entry.bankComment?.trim() || "",
+    };
+  });
+  matchTreasuryBankRows(parsedRows, batch, batchItems);
+  return applyTreasuryBankRows({
+    db,
+    batchId: input.batchId,
+    actor: input.actor,
+    parsedRows,
+    eventAction: "registrar_respuesta_banco",
+    eventMetadata: { source: "manual" },
+  });
 }
 
 export async function resolveTreasuryDifference(input: {

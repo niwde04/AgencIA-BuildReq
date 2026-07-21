@@ -18,6 +18,35 @@ const adjustmentSchema = z.object({
   excluded: z.boolean().optional(),
   reason: z.string().trim().max(2000).optional(),
 });
+const bankResponseItemSchema = z
+  .object({
+    itemId: z.number().int().positive(),
+    paid: z.boolean(),
+    paidAmount: z.number().positive().max(999_999_999).optional(),
+    paidDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    bankReference: z.string().trim().max(255).optional(),
+    bankComment: z.string().trim().max(2000).optional(),
+  })
+  .superRefine((item, ctx) => {
+    if (!item.paid) return;
+    if (item.paidAmount === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["paidAmount"],
+        message: "Ingrese el monto pagado.",
+      });
+    }
+    if (!item.paidDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["paidDate"],
+        message: "Seleccione la fecha de pago.",
+      });
+    }
+  });
 
 function isCentral(user: User) {
   return (
@@ -403,6 +432,37 @@ export const treasuryRouter = router({
       }
       try {
         return await treasury.exportTreasuryBankWorkbook(input.id, ctx.user);
+      } catch (error) {
+        rethrowTreasuryError(error);
+      }
+    }),
+
+  recordBankResponse: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        items: z.array(bankResponseItemSchema).min(1).max(500),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      await assertBatchAccess(ctx.user, input.id);
+      if (!isCentral(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo Administración Central puede registrar la respuesta bancaria.",
+        });
+      }
+      try {
+        return await treasury.recordTreasuryBankResponse({
+          batchId: input.id,
+          actor: ctx.user,
+          items: input.items.map(item => ({
+            ...item,
+            paidDate: item.paidDate ? parseDate(item.paidDate) : undefined,
+          })),
+        });
       } catch (error) {
         rethrowTreasuryError(error);
       }

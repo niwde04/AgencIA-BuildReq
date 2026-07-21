@@ -31,6 +31,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import { trpc } from "@/lib/trpc";
 import {
   TREASURY_BATCH_STATUS_CODES,
@@ -51,11 +52,18 @@ import {
   RotateCcw,
   Search,
   Send,
-  Upload,
   WalletCards,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+
+type BankResponseDraft = {
+  paid: boolean;
+  amount: string;
+  paidDate: string;
+  reference: string;
+  comment: string;
+};
 
 const CURRENCY_FORMATTERS = {
   HNL: new Intl.NumberFormat("es-HN", {
@@ -93,6 +101,23 @@ function toDateInput(value: unknown) {
     : date.toISOString().slice(0, 10);
 }
 
+function toDateKey(value: unknown) {
+  if (!value) return "";
+  if (typeof value === "string") {
+    const datePrefix = value.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+    if (datePrefix) return datePrefix;
+  }
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+}
+
+function toExcelDate(value: unknown) {
+  const dateKey = toDateKey(value);
+  if (!dateKey) return undefined;
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Date(year!, month! - 1, day!);
+}
+
 function downloadBase64File(
   fileName: string,
   mimeType: string,
@@ -109,18 +134,6 @@ function downloadBase64File(
   anchor.download = fileName;
   anchor.click();
   URL.revokeObjectURL(url);
-}
-
-function fileToBase64(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("No se pudo leer el archivo."));
-    reader.onload = () => {
-      const result = String(reader.result ?? "");
-      resolve(result.includes(",") ? result.split(",")[1]! : result);
-    };
-    reader.readAsDataURL(file);
-  });
 }
 
 function statusVariant(status: string) {
@@ -520,6 +533,9 @@ function BatchDetailDialog({
   >({});
   const [comment, setComment] = useState("");
   const [accountItemIds, setAccountItemIds] = useState<Set<number>>(new Set());
+  const [bankResponses, setBankResponses] = useState<
+    Record<number, BankResponseDraft>
+  >({});
 
   useEffect(() => {
     const items = detailQuery.data?.items ?? [];
@@ -539,6 +555,22 @@ function BatchDetailDialog({
         items
           .filter((item: any) => item.status === "pagada")
           .map((item: any) => item.id)
+      )
+    );
+    setBankResponses(
+      Object.fromEntries(
+        items
+          .filter((item: any) => item.status === "aprobada")
+          .map((item: any) => [
+            item.id,
+            {
+              paid: false,
+              amount: String(item.approvedAmount ?? item.requestedAmount),
+              paidDate: toDateInput(new Date()),
+              reference: "",
+              comment: "",
+            } satisfies BankResponseDraft,
+          ])
       )
     );
   }, [detailQuery.data]);
@@ -581,9 +613,10 @@ function BatchDetailDialog({
     },
     onError: error => toast.error(error.message),
   });
-  const importMutation = trpc.treasury.importBankWorkbook.useMutation(
-    mutationOptions("Respuesta bancaria importada")
-  );
+  const recordBankResponseMutation =
+    trpc.treasury.recordBankResponse.useMutation(
+      mutationOptions("Respuesta bancaria registrada")
+    );
   const resolveMutation = trpc.treasury.resolveDifference.useMutation(
     mutationOptions("Diferencia resuelta")
   );
@@ -618,18 +651,63 @@ function BatchDetailDialog({
       }));
   }
 
-  async function importFile(file: File) {
-    if (!batch) return;
-    if (!file.name.toLowerCase().endsWith(".xlsx")) {
-      toast.error("Seleccione el archivo XLSX devuelto por el banco.");
-      return;
-    }
+  function updateBankResponse(
+    itemId: number,
+    changes: Partial<BankResponseDraft>
+  ) {
+    setBankResponses(current => ({
+      ...current,
+      [itemId]: { ...current[itemId]!, ...changes },
+    }));
+  }
+
+  function recordBankResponse() {
+    if (!batch || !detail) return;
     try {
-      const base64 = await fileToBase64(file);
-      importMutation.mutate({ id: batch.id, fileName: file.name, base64 });
+      const payableItems = detail.items.filter(
+        (item: any) => item.status === "aprobada"
+      );
+      const items = payableItems.map((item: any) => {
+        const response = bankResponses[item.id];
+        if (!response) {
+          throw new Error(
+            `No se pudo preparar la respuesta de ${item.invoiceDocumentNumber}.`
+          );
+        }
+        if (response.paid) {
+          const paidAmount = Number(response.amount);
+          if (!Number.isFinite(paidAmount) || paidAmount <= 0) {
+            throw new Error(
+              `${item.invoiceDocumentNumber}: ingrese un monto pagado mayor que cero.`
+            );
+          }
+          if (!response.paidDate) {
+            throw new Error(
+              `${item.invoiceDocumentNumber}: seleccione la fecha de pago.`
+            );
+          }
+          return {
+            itemId: item.id,
+            paid: true as const,
+            paidAmount,
+            paidDate: response.paidDate,
+            bankReference: response.reference,
+            bankComment: response.comment,
+          };
+        }
+        return {
+          itemId: item.id,
+          paid: false as const,
+          bankReference: response.reference,
+          bankComment: response.comment,
+        };
+      });
+      recordBankResponseMutation.mutate({ id: batch.id, items });
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "No se pudo leer el archivo."
+        error instanceof Error
+          ? error.message
+          : "No se pudo preparar la respuesta bancaria."
       );
     }
   }
@@ -641,7 +719,7 @@ function BatchDetailDialog({
     returnMutation,
     cancelMutation,
     exportMutation,
-    importMutation,
+    recordBankResponseMutation,
     resolveMutation,
     accountMutation,
   ].some(mutation => mutation.isPending);
@@ -882,6 +960,147 @@ function BatchDetailDialog({
               </Table>
             </div>
 
+            {status === "enviado_banco" && isCentral && (
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-semibold">Respuesta bancaria</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Registre el resultado de cada factura sin modificar ni
+                    volver a cargar el archivo Excel.
+                  </p>
+                </div>
+                <Alert>
+                  <Banknote />
+                  <AlertTitle>Resultado por factura</AlertTitle>
+                  <AlertDescription>
+                    Marque Pagado únicamente cuando el banco confirme el abono.
+                    Una factura desmarcada se registrará como rechazada por el
+                    banco.
+                  </AlertDescription>
+                </Alert>
+                <div className="space-y-3">
+                  {detail.items
+                    .filter((item: any) => item.status === "aprobada")
+                    .map((item: any) => {
+                      const response = bankResponses[item.id];
+                      if (!response) return null;
+                      return (
+                        <div
+                          key={item.id}
+                          className="space-y-4 rounded-lg border p-4"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="font-medium">
+                                {item.supplierName}
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                {item.invoiceDocumentNumber} ·{" "}
+                                {item.invoiceNumber || "Sin número fiscal"}
+                              </div>
+                              <div className="mt-1 text-sm">
+                                Abono aprobado:{" "}
+                                <span className="font-medium tabular-nums">
+                                  {formatMoney(
+                                    item.approvedAmount ?? item.requestedAmount,
+                                    detail.batch.currency
+                                  )}
+                                </span>
+                              </div>
+                            </div>
+                            <label className="flex cursor-pointer items-center gap-3 rounded-md border px-4 py-2">
+                              <Checkbox
+                                checked={response.paid}
+                                onCheckedChange={checked =>
+                                  updateBankResponse(item.id, {
+                                    paid: checked === true,
+                                  })
+                                }
+                              />
+                              <span className="font-medium">
+                                {response.paid ? "Pagado" : "No pagado"}
+                              </span>
+                            </label>
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                            <div className="space-y-2">
+                              <Label htmlFor={`bank-amount-${item.id}`}>
+                                Monto pagado
+                              </Label>
+                              <Input
+                                id={`bank-amount-${item.id}`}
+                                className="text-right tabular-nums"
+                                type="number"
+                                min="0.0001"
+                                step="0.0001"
+                                max={
+                                  item.approvedAmount ?? item.requestedAmount
+                                }
+                                disabled={!response.paid}
+                                value={response.amount}
+                                onChange={event =>
+                                  updateBankResponse(item.id, {
+                                    amount: event.target.value,
+                                  })
+                                }
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor={`bank-date-${item.id}`}>
+                                Fecha de pago
+                              </Label>
+                              <Input
+                                id={`bank-date-${item.id}`}
+                                type="date"
+                                disabled={!response.paid}
+                                value={response.paidDate}
+                                onChange={event =>
+                                  updateBankResponse(item.id, {
+                                    paidDate: event.target.value,
+                                  })
+                                }
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor={`bank-reference-${item.id}`}>
+                                Referencia bancaria
+                              </Label>
+                              <Input
+                                id={`bank-reference-${item.id}`}
+                                maxLength={255}
+                                placeholder="Opcional"
+                                value={response.reference}
+                                onChange={event =>
+                                  updateBankResponse(item.id, {
+                                    reference: event.target.value,
+                                  })
+                                }
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor={`bank-comment-${item.id}`}>
+                                Comentario del banco
+                              </Label>
+                              <Input
+                                id={`bank-comment-${item.id}`}
+                                maxLength={2000}
+                                placeholder="Opcional"
+                                value={response.comment}
+                                onChange={event =>
+                                  updateBankResponse(item.id, {
+                                    comment: event.target.value,
+                                  })
+                                }
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+
             {(editableAdjustments ||
               status === "pendiente_contabilizacion" ||
               status === "conciliacion") && (
@@ -1085,20 +1304,16 @@ function BatchDetailDialog({
                   </Button>
                 )}
               {status === "enviado_banco" && isCentral && (
-                <Button variant="outline" asChild disabled={pending}>
-                  <label className="cursor-pointer">
-                    <Upload className="mr-2 h-4 w-4" /> Importar respuesta
-                    <input
-                      className="hidden"
-                      type="file"
-                      accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                      onChange={event => {
-                        const file = event.target.files?.[0];
-                        if (file) void importFile(file);
-                        event.target.value = "";
-                      }}
-                    />
-                  </label>
+                <Button
+                  onClick={recordBankResponse}
+                  disabled={
+                    pending ||
+                    detail.items.every(
+                      (item: any) => item.status !== "aprobada"
+                    )
+                  }
+                >
+                  <CheckCircle2 className="mr-2 h-4 w-4" /> Registrar respuesta
                 </Button>
               )}
               {status === "pendiente_contabilizacion" && isAccountant && (
@@ -1155,6 +1370,9 @@ function BatchDetailDialog({
 export default function Tesoreria() {
   const [statusFilter, setStatusFilter] = useState<string>("todos");
   const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [exporting, setExporting] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
   const [editingDetail, setEditingDetail] = useState<any>();
@@ -1172,19 +1390,130 @@ export default function Tesoreria() {
 
   const visibleBatches = useMemo(() => {
     const term = search.trim().toLocaleLowerCase("es-HN");
-    if (!term) return batchesQuery.data ?? [];
-    return (batchesQuery.data ?? []).filter((row: any) =>
-      [
-        row.batch.batchNumber,
-        row.project.code,
-        row.project.name,
-        row.batch.status,
-      ]
-        .join(" ")
-        .toLocaleLowerCase("es-HN")
-        .includes(term)
-    );
-  }, [batchesQuery.data, search]);
+    return (batchesQuery.data ?? []).filter((row: any) => {
+      const requestedPaymentDate = toDateKey(row.batch.requestedPaymentDate);
+      const matchesSearch =
+        !term ||
+        [
+          row.batch.batchNumber,
+          row.project.code,
+          row.project.name,
+          row.batch.status,
+        ]
+          .join(" ")
+          .toLocaleLowerCase("es-HN")
+          .includes(term);
+      const matchesDateFrom = !dateFrom || requestedPaymentDate >= dateFrom;
+      const matchesDateTo = !dateTo || requestedPaymentDate <= dateTo;
+      return matchesSearch && matchesDateFrom && matchesDateTo;
+    });
+  }, [batchesQuery.data, dateFrom, dateTo, search]);
+
+  async function exportFilteredBatches() {
+    if (!visibleBatches.length) {
+      toast.error("No hay lotes para exportar con los filtros actuales.");
+      return;
+    }
+    setExporting(true);
+    try {
+      const fileName =
+        dateFrom || dateTo
+          ? `lotes-tesoreria-${dateFrom || "inicio"}-${dateTo || "fin"}.xlsx`
+          : buildDatedExcelFileName("lotes-tesoreria");
+      await downloadExcel(
+        fileName,
+        "Lotes de pago",
+        [
+          {
+            header: "Lote",
+            value: (row: any) => row.batch.batchNumber,
+            width: 22,
+          },
+          {
+            header: "Código de proyecto",
+            value: (row: any) => row.project.code,
+            width: 20,
+          },
+          {
+            header: "Proyecto",
+            value: (row: any) => row.project.name,
+            width: 36,
+          },
+          {
+            header: "Estado",
+            value: (row: any) =>
+              TREASURY_BATCH_STATUS_LABELS[
+                row.batch.status as TreasuryBatchStatus
+              ] ?? row.batch.status,
+            width: 28,
+          },
+          {
+            header: "Fecha prevista",
+            value: (row: any) => toExcelDate(row.batch.requestedPaymentDate),
+            width: 17,
+            numFmt: "dd/mm/yyyy",
+          },
+          {
+            header: "Moneda",
+            value: (row: any) => row.batch.currency,
+            width: 12,
+          },
+          {
+            header: "Proveedores",
+            value: (row: any) => Number(row.supplierCount ?? 0),
+            width: 14,
+          },
+          {
+            header: "Facturas",
+            value: (row: any) => Number(row.itemCount ?? 0),
+            width: 12,
+          },
+          {
+            header: "Solicitado",
+            value: (row: any) => Number(row.requestedTotal ?? 0),
+            width: 18,
+            numFmt: "#,##0.0000",
+          },
+          {
+            header: "Aprobado",
+            value: (row: any) => Number(row.approvedTotal ?? 0),
+            width: 18,
+            numFmt: "#,##0.0000",
+          },
+          {
+            header: "Pagado",
+            value: (row: any) => Number(row.paidTotal ?? 0),
+            width: 18,
+            numFmt: "#,##0.0000",
+          },
+          {
+            header: "Versión",
+            value: (row: any) => Number(row.batch.version ?? 1),
+            width: 10,
+          },
+          {
+            header: "Notas",
+            value: (row: any) => row.batch.notes ?? "",
+            width: 42,
+          },
+        ],
+        visibleBatches
+      );
+      toast.success(
+        `${visibleBatches.length} ${
+          visibleBatches.length === 1 ? "lote exportado" : "lotes exportados"
+        } a Excel.`
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar el archivo Excel."
+      );
+    } finally {
+      setExporting(false);
+    }
+  }
 
   if (settingsQuery.isLoading) {
     return (
@@ -1245,29 +1574,72 @@ export default function Tesoreria() {
           <CardTitle className="text-lg">Lotes de pago</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-3">
-            <div className="relative min-w-64 flex-1">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+          <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-[minmax(18rem,1fr)_15rem_11rem_11rem_auto_auto]">
+            <div className="space-y-2">
+              <Label htmlFor="treasury-search">Buscar</Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="treasury-search"
+                  className="pl-9"
+                  placeholder="Buscar lote o proyecto"
+                  value={search}
+                  onChange={event => setSearch(event.target.value)}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Estado</Label>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos los estados</SelectItem>
+                  {TREASURY_BATCH_STATUS_CODES.map(status => (
+                    <SelectItem key={status} value={status}>
+                      {TREASURY_BATCH_STATUS_LABELS[status]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="treasury-date-from">Desde</Label>
               <Input
-                className="pl-9"
-                placeholder="Buscar lote o proyecto"
-                value={search}
-                onChange={event => setSearch(event.target.value)}
+                id="treasury-date-from"
+                type="date"
+                value={dateFrom}
+                max={dateTo || undefined}
+                onChange={event => setDateFrom(event.target.value)}
               />
             </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-60">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todos">Todos los estados</SelectItem>
-                {TREASURY_BATCH_STATUS_CODES.map(status => (
-                  <SelectItem key={status} value={status}>
-                    {TREASURY_BATCH_STATUS_LABELS[status]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="space-y-2">
+              <Label htmlFor="treasury-date-to">Hasta</Label>
+              <Input
+                id="treasury-date-to"
+                type="date"
+                value={dateTo}
+                min={dateFrom || undefined}
+                onChange={event => setDateTo(event.target.value)}
+              />
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => void exportFilteredBatches()}
+              disabled={
+                exporting ||
+                batchesQuery.isFetching ||
+                visibleBatches.length === 0
+              }
+            >
+              {exporting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <FileSpreadsheet className="mr-2 h-4 w-4" />
+              )}
+              Exportar Excel
+            </Button>
             <Button
               variant="outline"
               size="icon"
@@ -1276,6 +1648,27 @@ export default function Tesoreria() {
             >
               <RefreshCcw className="h-4 w-4" />
             </Button>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+            <span>
+              {visibleBatches.length}{" "}
+              {visibleBatches.length === 1
+                ? "lote encontrado"
+                : "lotes encontrados"}
+            </span>
+            {(dateFrom || dateTo) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setDateFrom("");
+                  setDateTo("");
+                }}
+              >
+                Limpiar rango de fechas
+              </Button>
+            )}
           </div>
 
           <div className="rounded-md border">
