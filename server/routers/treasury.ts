@@ -311,7 +311,7 @@ export const treasuryRouter = router({
   consolidateForApproval: protectedProcedure
     .input(
       z.object({
-        batchIds: z.array(z.number().int().positive()).min(2).max(100),
+        batchIds: z.array(z.number().int().positive()).min(1).max(100),
       })
     )
     .mutation(async ({ ctx, input }) => {

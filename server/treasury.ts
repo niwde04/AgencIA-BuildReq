@@ -1039,10 +1039,72 @@ export async function consolidateTreasuryBatchesForApproval(input: {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const batchIds = Array.from(new Set(input.batchIds));
-  if (batchIds.length < 2) {
-    throw new TreasuryRuleError(
-      "Seleccione al menos dos lotes para crear un consolidado."
-    );
+  if (!batchIds.length) {
+    throw new TreasuryRuleError("Seleccione al menos un lote.");
+  }
+  if (batchIds.length === 1) {
+    const result = await db.transaction(async tx => {
+      const batch = await readBatch(tx, batchIds[0]!);
+      if (batch.status !== "enviado_depuracion") {
+        throw new TreasuryRuleError(
+          batch.status === "pendiente_aprobacion"
+            ? `El lote ${batch.batchNumber} ya está pendiente de aprobación.`
+            : `El lote ${batch.batchNumber} ya no está disponible para enviar a aprobación.`
+        );
+      }
+      const items = await readBatchItems(tx, batch.id);
+      if (
+        !items.some(
+          (item: any) => item.activeReservation && item.status !== "excluida"
+        )
+      ) {
+        throw new TreasuryRuleError(
+          `El lote ${batch.batchNumber} no tiene facturas disponibles para aprobar.`
+        );
+      }
+      const now = new Date();
+      const [updated] = await tx
+        .update(treasuryPaymentBatches)
+        .set({
+          status: "pendiente_aprobacion",
+          purifiedById: input.actor.id,
+          purifiedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(treasuryPaymentBatches.id, batch.id),
+            eq(treasuryPaymentBatches.status, "enviado_depuracion")
+          )
+        )
+        .returning();
+      if (!updated) {
+        throw new TreasuryRuleError(
+          "El lote cambió de estado. Actualice la lista e intente nuevamente."
+        );
+      }
+      await insertEvent(tx, {
+        batchId: batch.id,
+        action: "enviar_aprobacion",
+        previousStatus: batch.status,
+        newStatus: "pendiente_aprobacion",
+        actor: input.actor,
+      });
+      return {
+        batchId: updated.id,
+        batchNumber: updated.batchNumber,
+        sourceBatchIds: [updated.id],
+        sourceBatchNumbers: [updated.batchNumber],
+        currency: updated.currency,
+        consolidated: false,
+      };
+    });
+    await notifyTreasuryApprovers({
+      title: "Lote pendiente de aprobación",
+      message: `El lote ${result.batchNumber} requiere aprobación.`,
+      batchId: result.batchId,
+    });
+    return result;
   }
   const result = await db.transaction(async tx => {
     const batches = (
@@ -1226,6 +1288,7 @@ export async function consolidateTreasuryBatchesForApproval(input: {
       sourceBatchIds: batchIds,
       sourceBatchNumbers,
       currency: baseBatch.currency,
+      consolidated: true,
     };
   });
   await notifyTreasuryApprovers({

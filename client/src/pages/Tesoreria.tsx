@@ -224,6 +224,7 @@ function auditActionLabel(action: string) {
     consolidar_enviar_aprobacion: "consolidar y enviar a aprobación",
     consolidar_en_lote: "integrar en lote consolidado",
     crear_lote_consolidado: "crear lote consolidado y enviar a aprobación",
+    enviar_aprobacion: "enviar a aprobación",
     rechazar_lote: "rechazar lote",
     reabrir_lote_rechazado: "reabrir lote rechazado",
     registrar_pago_banco: "registrar pago bancario",
@@ -1744,7 +1745,9 @@ export default function Tesoreria() {
     onSuccess: async data => {
       setSelectedConsolidationBatchIds(new Set());
       toast.success(
-        `Lote consolidado ${data.batchNumber} creado con ${data.sourceBatchIds.length} lotes y enviado a aprobación.`
+        data.consolidated
+          ? `Lote consolidado ${data.batchNumber} creado con ${data.sourceBatchIds.length} lotes y enviado a aprobación.`
+          : `Lote ${data.batchNumber} enviado a aprobación.`
       );
       await Promise.all([
         utils.treasury.list.invalidate(),
@@ -1794,6 +1797,12 @@ export default function Tesoreria() {
     visibleConsolidatableBatches.some((row: any) =>
       selectedConsolidationBatchIds.has(row.batch.id)
     );
+  const selectedConsolidationBatches = (batchesQuery.data ?? []).filter(
+    (row: any) => selectedConsolidationBatchIds.has(row.batch.id)
+  );
+  const singleSelectedBatchAlreadyPendingApproval =
+    selectedConsolidationBatches.length === 1 &&
+    selectedConsolidationBatches[0]?.batch.status === "pendiente_aprobacion";
 
   useEffect(() => {
     const visibleIds = new Set(
@@ -1817,9 +1826,11 @@ export default function Tesoreria() {
   }
 
   function consolidateSelectedBatches() {
-    const selectedRows = (batchesQuery.data ?? []).filter((row: any) =>
-      selectedConsolidationBatchIds.has(row.batch.id)
-    );
+    const selectedRows = selectedConsolidationBatches;
+    if (!selectedRows.length) {
+      toast.error("Seleccione al menos un lote.");
+      return;
+    }
     const projects = new Set(
       selectedRows.map((row: any) => row.batch.projectId)
     );
@@ -2261,7 +2272,8 @@ export default function Tesoreria() {
                 onClick={consolidateSelectedBatches}
                 disabled={
                   consolidateMutation.isPending ||
-                  selectedConsolidationBatchIds.size < 2
+                  selectedConsolidationBatchIds.size === 0 ||
+                  singleSelectedBatchAlreadyPendingApproval
                 }
               >
                 {consolidateMutation.isPending ? (
@@ -2269,7 +2281,11 @@ export default function Tesoreria() {
                 ) : (
                   <CheckCircle2 className="mr-2 h-4 w-4" />
                 )}
-                Consolidar y enviar a aprobación
+                {singleSelectedBatchAlreadyPendingApproval
+                  ? "Ya enviado a aprobación"
+                  : selectedConsolidationBatchIds.size === 1
+                    ? "Enviar a aprobación"
+                    : "Consolidar y enviar a aprobación"}
               </Button>
             </div>
           )}
