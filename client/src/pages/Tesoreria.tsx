@@ -273,6 +273,9 @@ function BatchFormDialog({
   const allVisibleInvoicesSelected =
     visibleInvoices.length > 0 &&
     visibleInvoices.every((row: any) => selectedIds.has(row.invoice.id));
+  const someVisibleInvoicesSelected = visibleInvoices.some((row: any) =>
+    selectedIds.has(row.invoice.id)
+  );
 
   function toggleAllVisibleInvoices() {
     const shouldSelect = !allVisibleInvoicesSelected;
@@ -437,18 +440,6 @@ function BatchFormDialog({
               />
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={eligibleQuery.isLoading || !visibleInvoices.length}
-                onClick={toggleAllVisibleInvoices}
-              >
-                <CheckCircle2 className="mr-2 h-4 w-4" />
-                {allVisibleInvoicesSelected
-                  ? "Deseleccionar todas"
-                  : "Seleccionar todas"}
-              </Button>
               <Badge variant="secondary" className="w-fit shrink-0 px-3 py-1.5">
                 {visibleInvoices.length}{" "}
                 {visibleInvoices.length === 1
@@ -463,7 +454,31 @@ function BatchFormDialog({
               <Table className="min-w-[860px]">
                 <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
                   <TableRow>
-                    <TableHead className="w-10" />
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={
+                          allVisibleInvoicesSelected
+                            ? true
+                            : someVisibleInvoicesSelected
+                              ? "indeterminate"
+                              : false
+                        }
+                        disabled={
+                          eligibleQuery.isLoading || !visibleInvoices.length
+                        }
+                        onCheckedChange={toggleAllVisibleInvoices}
+                        aria-label={
+                          allVisibleInvoicesSelected
+                            ? "Deseleccionar todas las facturas visibles"
+                            : "Seleccionar todas las facturas visibles"
+                        }
+                        title={
+                          allVisibleInvoicesSelected
+                            ? "Deseleccionar todas"
+                            : "Seleccionar todas"
+                        }
+                      />
+                    </TableHead>
                     <TableHead className="min-w-72">
                       Proveedor / Factura
                     </TableHead>
