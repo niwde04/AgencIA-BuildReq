@@ -326,12 +326,11 @@ export const treasuryRouter = router({
       }
     }),
 
-  purify: protectedProcedure
+  saveReview: protectedProcedure
     .input(
       z.object({
         id: z.number().int().positive(),
         adjustments: z.array(adjustmentSchema).max(500).default([]),
-        comment: z.string().trim().max(2000).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -340,15 +339,42 @@ export const treasuryRouter = router({
       if (!isCentral(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo Administración Central puede depurar lotes.",
+          message: "Solo Administración Central puede revisar lotes.",
         });
       }
       try {
-        return await treasury.purifyTreasuryBatch({
+        return await treasury.saveTreasuryReview({
           batchId: input.id,
           actor: ctx.user,
           adjustments: input.adjustments,
-          comment: input.comment,
+        });
+      } catch (error) {
+        rethrowTreasuryError(error);
+      }
+    }),
+
+  consolidateForApproval: protectedProcedure
+    .input(
+      z.object({
+        batchIds: z.array(z.number().int().positive()).min(1).max(100),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      if (!isCentral(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo Administración Central puede consolidar lotes para aprobación.",
+        });
+      }
+      for (const batchId of Array.from(new Set(input.batchIds))) {
+        await assertBatchAccess(ctx.user, batchId);
+      }
+      try {
+        return await treasury.consolidateTreasuryBatchesForApproval({
+          batchIds: input.batchIds,
+          actor: ctx.user,
         });
       } catch (error) {
         rethrowTreasuryError(error);

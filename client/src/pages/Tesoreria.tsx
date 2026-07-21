@@ -60,6 +60,7 @@ import {
   Plus,
   RefreshCcw,
   RotateCcw,
+  Save,
   Search,
   Send,
   Trash2,
@@ -75,6 +76,11 @@ type BankResponseDraft = {
   reference: string;
   comment: string;
 };
+
+type PendingReasonAction =
+  | { type: "return" }
+  | { type: "cancel" }
+  | { type: "resolve"; itemId: number; resolution: "accept" | "reject" };
 
 const CURRENCY_FORMATTERS = {
   HNL: new Intl.NumberFormat("es-HN", {
@@ -163,6 +169,8 @@ function auditActionLabel(action: string) {
     finalizar_depuracion: "finalizar revisión",
     ajustar_depuracion: "ajustar en revisión",
     excluir_depuracion: "excluir en revisión",
+    guardar_revision: "guardar revisión",
+    consolidar_enviar_aprobacion: "consolidar y enviar a aprobación",
   };
   return reviewLabels[action] ?? action.replaceAll("_", " ");
 }
@@ -627,12 +635,14 @@ function BatchDetailDialog({
   const [exclusionReasons, setExclusionReasons] = useState<
     Record<number, string>
   >({});
-  const [comment, setComment] = useState("");
   const [accountItemIds, setAccountItemIds] = useState<Set<number>>(new Set());
   const [bankResponses, setBankResponses] = useState<
     Record<number, BankResponseDraft>
   >({});
   const [removingItem, setRemovingItem] = useState<any>();
+  const [pendingReasonAction, setPendingReasonAction] =
+    useState<PendingReasonAction>();
+  const [actionReason, setActionReason] = useState("");
 
   useEffect(() => {
     const items = detailQuery.data?.items ?? [];
@@ -647,7 +657,8 @@ function BatchDetailDialog({
     );
     setExcludedIds(new Set());
     setExclusionReasons({});
-    setComment("");
+    setPendingReasonAction(undefined);
+    setActionReason("");
     setAccountItemIds(
       new Set(
         items
@@ -691,8 +702,8 @@ function BatchDetailDialog({
   const submitMutation = trpc.treasury.submit.useMutation(
     mutationOptions("Lote enviado a revisión")
   );
-  const purifyMutation = trpc.treasury.purify.useMutation(
-    mutationOptions("Lote enviado a aprobación")
+  const saveReviewMutation = trpc.treasury.saveReview.useMutation(
+    mutationOptions("Revisión guardada")
   );
   const approveMutation = trpc.treasury.approve.useMutation(
     mutationOptions("Lote aprobado")
@@ -859,9 +870,46 @@ function BatchDetailDialog({
     });
   }
 
+  function requestReason(action: PendingReasonAction) {
+    setActionReason("");
+    setPendingReasonAction(action);
+  }
+
+  function submitReasonAction() {
+    if (!detail || !pendingReasonAction || actionReason.trim().length < 5)
+      return;
+    const onSuccess = () => {
+      setPendingReasonAction(undefined);
+      setActionReason("");
+    };
+    if (pendingReasonAction.type === "return") {
+      returnMutation.mutate(
+        { id: detail.batch.id, reason: actionReason },
+        { onSuccess }
+      );
+      return;
+    }
+    if (pendingReasonAction.type === "cancel") {
+      cancelMutation.mutate(
+        { id: detail.batch.id, reason: actionReason },
+        { onSuccess }
+      );
+      return;
+    }
+    resolveMutation.mutate(
+      {
+        id: detail.batch.id,
+        itemId: pendingReasonAction.itemId,
+        resolution: pendingReasonAction.resolution,
+        comment: actionReason,
+      },
+      { onSuccess }
+    );
+  }
+
   const pending = [
     submitMutation,
-    purifyMutation,
+    saveReviewMutation,
     approveMutation,
     returnMutation,
     cancelMutation,
@@ -1295,20 +1343,6 @@ function BatchDetailDialog({
               </div>
             )}
 
-            {(editableAdjustments ||
-              status === "pendiente_contabilizacion" ||
-              status === "conciliacion") && (
-              <div className="space-y-2">
-                <Label>Comentario</Label>
-                <Textarea
-                  value={comment}
-                  onChange={event => setComment(event.target.value)}
-                  placeholder="Comentario, motivo de devolución o resolución"
-                  maxLength={2000}
-                />
-              </div>
-            )}
-
             {status === "conciliacion" && isCentral && (
               <div className="space-y-3">
                 <h3 className="font-semibold">Diferencias bancarias</h3>
@@ -1340,13 +1374,12 @@ function BatchDetailDialog({
                         <Button
                           size="sm"
                           variant="outline"
-                          disabled={pending || comment.trim().length < 5}
+                          disabled={pending}
                           onClick={() =>
-                            resolveMutation.mutate({
-                              id: detail.batch.id,
+                            requestReason({
+                              type: "resolve",
                               itemId: item.id,
                               resolution: "reject",
-                              comment,
                             })
                           }
                         >
@@ -1354,13 +1387,12 @@ function BatchDetailDialog({
                         </Button>
                         <Button
                           size="sm"
-                          disabled={pending || comment.trim().length < 5}
+                          disabled={pending}
                           onClick={() =>
-                            resolveMutation.mutate({
-                              id: detail.batch.id,
+                            requestReason({
+                              type: "resolve",
                               itemId: item.id,
                               resolution: "accept",
-                              comment,
                             })
                           }
                         >
@@ -1446,15 +1478,14 @@ function BatchDetailDialog({
               {status === "enviado_depuracion" && isCentral && (
                 <Button
                   onClick={() =>
-                    purifyMutation.mutate({
+                    saveReviewMutation.mutate({
                       id: detail.batch.id,
                       adjustments: adjustments(),
-                      comment,
                     })
                   }
                   disabled={pending}
                 >
-                  <Send className="mr-2 h-4 w-4" /> Enviar a aprobación
+                  <Save className="mr-2 h-4 w-4" /> Guardar
                 </Button>
               )}
               {status === "pendiente_aprobacion" && isApprover && (
@@ -1463,7 +1494,6 @@ function BatchDetailDialog({
                     approveMutation.mutate({
                       id: detail.batch.id,
                       adjustments: adjustments(),
-                      comment,
                     })
                   }
                   disabled={pending}
@@ -1475,13 +1505,8 @@ function BatchDetailDialog({
               (status === "pendiente_aprobacion" && isApprover) ? (
                 <Button
                   variant="outline"
-                  disabled={pending || comment.trim().length < 5}
-                  onClick={() =>
-                    returnMutation.mutate({
-                      id: detail.batch.id,
-                      reason: comment,
-                    })
-                  }
+                  disabled={pending}
+                  onClick={() => requestReason({ type: "return" })}
                 >
                   <RotateCcw className="mr-2 h-4 w-4" /> Devolver
                 </Button>
@@ -1516,7 +1541,6 @@ function BatchDetailDialog({
                     accountMutation.mutate({
                       id: detail.batch.id,
                       itemIds: Array.from(accountItemIds),
-                      comment,
                     })
                   }
                   disabled={pending || accountItemIds.size === 0}
@@ -1539,13 +1563,8 @@ function BatchDetailDialog({
                     isProjectManager)) && (
                   <Button
                     variant="destructive"
-                    disabled={pending || comment.trim().length < 5}
-                    onClick={() =>
-                      cancelMutation.mutate({
-                        id: detail.batch.id,
-                        reason: comment,
-                      })
-                    }
+                    disabled={pending}
+                    onClick={() => requestReason({ type: "cancel" })}
                   >
                     Anular
                   </Button>
@@ -1587,11 +1606,60 @@ function BatchDetailDialog({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <AlertDialog
+        open={Boolean(pendingReasonAction)}
+        onOpenChange={open => {
+          if (!open) {
+            setPendingReasonAction(undefined);
+            setActionReason("");
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingReasonAction?.type === "return"
+                ? "Devolver lote"
+                : pendingReasonAction?.type === "cancel"
+                  ? "Anular lote"
+                  : pendingReasonAction?.resolution === "accept"
+                    ? "Aceptar abono real"
+                    : "Rechazar línea bancaria"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Escriba un motivo de al menos 5 caracteres para registrar esta
+              acción en la auditoría.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="treasury-action-reason">Motivo</Label>
+            <Textarea
+              id="treasury-action-reason"
+              autoFocus
+              value={actionReason}
+              onChange={event => setActionReason(event.target.value)}
+              placeholder="Escriba el motivo"
+              maxLength={2000}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={pending || actionReason.trim().length < 5}
+              onClick={submitReasonAction}
+            >
+              {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Confirmar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }
 
 export default function Tesoreria() {
+  const utils = trpc.useUtils();
   const [statusFilter, setStatusFilter] = useState<string>("todos");
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -1600,6 +1668,9 @@ export default function Tesoreria() {
   const [formOpen, setFormOpen] = useState(false);
   const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
   const [editingDetail, setEditingDetail] = useState<any>();
+  const [selectedReviewBatchIds, setSelectedReviewBatchIds] = useState<
+    Set<number>
+  >(new Set());
   const settingsQuery = trpc.treasury.settings.useQuery();
   const batchesQuery = trpc.treasury.list.useQuery(
     statusFilter === "todos"
@@ -1611,6 +1682,20 @@ export default function Tesoreria() {
         settingsQuery.data?.canAccess === true,
     }
   );
+  const consolidateMutation = trpc.treasury.consolidateForApproval.useMutation({
+    onSuccess: async data => {
+      setSelectedReviewBatchIds(new Set());
+      toast.success(
+        `${data.batchIds.length} ${data.batchIds.length === 1 ? "lote consolidado y enviado" : "lotes consolidados y enviados"} a aprobación.`
+      );
+      await Promise.all([
+        utils.treasury.list.invalidate(),
+        utils.treasury.getById.invalidate(),
+        utils.notifications.unreadCount.invalidate(),
+      ]);
+    },
+    onError: error => toast.error(error.message),
+  });
 
   const visibleBatches = useMemo(() => {
     const term = search.trim().toLocaleLowerCase("es-HN");
@@ -1632,6 +1717,60 @@ export default function Tesoreria() {
       return matchesSearch && matchesDateFrom && matchesDateTo;
     });
   }, [batchesQuery.data, dateFrom, dateTo, search]);
+  const visibleReviewBatches = useMemo(
+    () =>
+      visibleBatches.filter(
+        (row: any) => row.batch.status === "enviado_depuracion"
+      ),
+    [visibleBatches]
+  );
+  const allVisibleReviewBatchesSelected =
+    visibleReviewBatches.length > 0 &&
+    visibleReviewBatches.every((row: any) =>
+      selectedReviewBatchIds.has(row.batch.id)
+    );
+  const someVisibleReviewBatchesSelected = visibleReviewBatches.some(
+    (row: any) => selectedReviewBatchIds.has(row.batch.id)
+  );
+
+  useEffect(() => {
+    const visibleIds = new Set(
+      visibleReviewBatches.map((row: any) => row.batch.id)
+    );
+    setSelectedReviewBatchIds(current => {
+      const next = new Set(
+        Array.from(current).filter(batchId => visibleIds.has(batchId))
+      );
+      return next.size === current.size ? current : next;
+    });
+  }, [visibleReviewBatches]);
+
+  function toggleVisibleReviewBatches() {
+    const shouldSelect = !allVisibleReviewBatchesSelected;
+    setSelectedReviewBatchIds(
+      shouldSelect
+        ? new Set(visibleReviewBatches.map((row: any) => row.batch.id))
+        : new Set()
+    );
+  }
+
+  function consolidateSelectedBatches() {
+    const selectedRows = (batchesQuery.data ?? []).filter((row: any) =>
+      selectedReviewBatchIds.has(row.batch.id)
+    );
+    const currencies = new Set(
+      selectedRows.map((row: any) => row.batch.currency)
+    );
+    if (currencies.size > 1) {
+      toast.error(
+        "Seleccione lotes de una sola moneda para crear el consolidado."
+      );
+      return;
+    }
+    consolidateMutation.mutate({
+      batchIds: Array.from(selectedReviewBatchIds),
+    });
+  }
 
   async function exportFilteredBatches() {
     if (!visibleBatches.length) {
@@ -1899,6 +2038,26 @@ export default function Tesoreria() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  {settingsQuery.data.permissions.canDepurate && (
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={
+                          allVisibleReviewBatchesSelected
+                            ? true
+                            : someVisibleReviewBatchesSelected
+                              ? "indeterminate"
+                              : false
+                        }
+                        disabled={
+                          consolidateMutation.isPending ||
+                          visibleReviewBatches.length === 0
+                        }
+                        onCheckedChange={toggleVisibleReviewBatches}
+                        aria-label="Seleccionar todos los lotes pendientes de revisión"
+                        title="Seleccionar lotes pendientes de revisión"
+                      />
+                    </TableHead>
+                  )}
                   <TableHead>Lote</TableHead>
                   <TableHead>Proyecto</TableHead>
                   <TableHead>Estado</TableHead>
@@ -1912,13 +2071,38 @@ export default function Tesoreria() {
               <TableBody>
                 {batchesQuery.isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-12 text-center">
+                    <TableCell
+                      colSpan={
+                        8 + (settingsQuery.data.permissions.canDepurate ? 1 : 0)
+                      }
+                      className="py-12 text-center"
+                    >
                       <Loader2 className="mx-auto h-6 w-6 animate-spin" />
                     </TableCell>
                   </TableRow>
                 ) : visibleBatches.length ? (
                   visibleBatches.map((row: any) => (
                     <TableRow key={row.batch.id}>
+                      {settingsQuery.data.permissions.canDepurate && (
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedReviewBatchIds.has(row.batch.id)}
+                            disabled={
+                              consolidateMutation.isPending ||
+                              row.batch.status !== "enviado_depuracion"
+                            }
+                            onCheckedChange={checked =>
+                              setSelectedReviewBatchIds(current => {
+                                const next = new Set(current);
+                                if (checked === true) next.add(row.batch.id);
+                                else next.delete(row.batch.id);
+                                return next;
+                              })
+                            }
+                            aria-label={`Seleccionar lote ${row.batch.batchNumber}`}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell className="font-medium">
                         {row.batch.batchNumber}
                       </TableCell>
@@ -1961,7 +2145,9 @@ export default function Tesoreria() {
                 ) : (
                   <TableRow>
                     <TableCell
-                      colSpan={8}
+                      colSpan={
+                        8 + (settingsQuery.data.permissions.canDepurate ? 1 : 0)
+                      }
                       className="py-12 text-center text-muted-foreground"
                     >
                       No hay lotes con estos filtros.
@@ -1971,6 +2157,32 @@ export default function Tesoreria() {
               </TableBody>
             </Table>
           </div>
+          {settingsQuery.data.permissions.canDepurate && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/20 p-4">
+              <div className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  {selectedReviewBatchIds.size}
+                </span>{" "}
+                {selectedReviewBatchIds.size === 1
+                  ? "lote seleccionado"
+                  : "lotes seleccionados"}
+              </div>
+              <Button
+                onClick={consolidateSelectedBatches}
+                disabled={
+                  consolidateMutation.isPending ||
+                  selectedReviewBatchIds.size === 0
+                }
+              >
+                {consolidateMutation.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                )}
+                Consolidar y enviar a aprobación
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 

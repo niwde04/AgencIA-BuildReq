@@ -975,15 +975,14 @@ async function applyAdjustments(
   return remaining;
 }
 
-export async function purifyTreasuryBatch(input: {
+export async function saveTreasuryReview(input: {
   batchId: number;
   actor: TreasuryActor;
   adjustments: TreasuryAdjustmentInput[];
-  comment?: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  const result = await db.transaction(async tx => {
+  return db.transaction(async tx => {
     const batch = await readBatch(tx, input.batchId);
     if (batch.status !== "enviado_depuracion") {
       throw new TreasuryRuleError("El lote no está pendiente de revisión.");
@@ -999,7 +998,6 @@ export async function purifyTreasuryBatch(input: {
     const [updated] = await tx
       .update(treasuryPaymentBatches)
       .set({
-        status: "pendiente_aprobacion",
         purifiedById: input.actor.id,
         purifiedAt: now,
         updatedAt: now,
@@ -1008,18 +1006,122 @@ export async function purifyTreasuryBatch(input: {
       .returning();
     await insertEvent(tx, {
       batchId: input.batchId,
-      action: "finalizar_depuracion",
+      action: "guardar_revision",
       previousStatus: batch.status,
-      newStatus: updated.status,
+      newStatus: batch.status,
       actor: input.actor,
-      comment: input.comment,
     });
     return updated;
   });
+}
+
+export async function consolidateTreasuryBatchesForApproval(input: {
+  batchIds: number[];
+  actor: TreasuryActor;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const batchIds = Array.from(new Set(input.batchIds));
+  if (!batchIds.length) {
+    throw new TreasuryRuleError("Seleccione al menos un lote para consolidar.");
+  }
+  const consolidationReference = `CON-${new Date().getUTCFullYear()}-${randomUUID().slice(0, 8).toUpperCase()}`;
+  const result = await db.transaction(async tx => {
+    const batches = await tx
+      .select()
+      .from(treasuryPaymentBatches)
+      .where(inArray(treasuryPaymentBatches.id, batchIds));
+    if (batches.length !== batchIds.length) {
+      throw new TreasuryRuleError(
+        "Uno o más lotes seleccionados ya no existen."
+      );
+    }
+    const invalidBatch = batches.find(
+      batch => batch.status !== "enviado_depuracion"
+    );
+    if (invalidBatch) {
+      throw new TreasuryRuleError(
+        `El lote ${invalidBatch.batchNumber} ya no está pendiente de revisión.`
+      );
+    }
+    const currencies = new Set(batches.map(batch => batch.currency));
+    if (currencies.size !== 1) {
+      throw new TreasuryRuleError(
+        "Todos los lotes del consolidado deben utilizar la misma moneda."
+      );
+    }
+    const items = await tx
+      .select({
+        batchId: treasuryPaymentItems.batchId,
+        status: treasuryPaymentItems.status,
+        activeReservation: treasuryPaymentItems.activeReservation,
+      })
+      .from(treasuryPaymentItems)
+      .where(inArray(treasuryPaymentItems.batchId, batchIds));
+    const emptyBatch = batches.find(
+      batch =>
+        !items.some(
+          item =>
+            item.batchId === batch.id &&
+            item.activeReservation &&
+            item.status !== "excluida"
+        )
+    );
+    if (emptyBatch) {
+      throw new TreasuryRuleError(
+        `El lote ${emptyBatch.batchNumber} no tiene facturas disponibles para aprobar.`
+      );
+    }
+
+    const now = new Date();
+    const updatedBatches = await tx
+      .update(treasuryPaymentBatches)
+      .set({
+        status: "pendiente_aprobacion",
+        purifiedById: input.actor.id,
+        purifiedAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          inArray(treasuryPaymentBatches.id, batchIds),
+          eq(treasuryPaymentBatches.status, "enviado_depuracion")
+        )
+      )
+      .returning({ id: treasuryPaymentBatches.id });
+    if (updatedBatches.length !== batchIds.length) {
+      throw new TreasuryRuleError(
+        "Uno o más lotes cambiaron de estado. Actualice la lista e intente nuevamente."
+      );
+    }
+
+    const batchNumbers = batches.map(batch => batch.batchNumber);
+    for (const batch of batches) {
+      await insertEvent(tx, {
+        batchId: batch.id,
+        action: "consolidar_enviar_aprobacion",
+        previousStatus: batch.status,
+        newStatus: "pendiente_aprobacion",
+        actor: input.actor,
+        metadata: {
+          consolidationReference,
+          batchIds,
+          batchNumbers,
+          currency: batch.currency,
+        },
+      });
+    }
+    return {
+      consolidationReference,
+      batchIds,
+      batchNumbers,
+      currency: batches[0]!.currency,
+    };
+  });
   await notifyTreasuryApprovers({
-    title: "Lote pendiente de aprobación",
-    message: `El lote ${result.batchNumber} fue revisado y requiere aprobación.`,
-    batchId: input.batchId,
+    title: "Consolidado pendiente de aprobación",
+    message: `${result.batchIds.length} ${result.batchIds.length === 1 ? "lote fue enviado" : "lotes fueron enviados"} para aprobación en ${result.currency}.`,
+    batchId: result.batchIds[0]!,
   });
   return result;
 }
