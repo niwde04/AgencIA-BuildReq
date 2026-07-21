@@ -276,7 +276,7 @@ const allMenuItems: MenuItem[] = [
     roles: [
       "administracion_central",
       "administrador_proyecto",
-      "superintendente",
+      "financiero",
       "contable",
       "admin",
     ],
@@ -452,12 +452,14 @@ function DashboardLayoutContent({
         return (
           item.path === "/" ||
           item.path === "/solicitudes" ||
-          item.path === "/articulos" ||
-          item.path === "/tesoreria"
+          item.path === "/articulos"
         );
       }
       if (isProcurementApproverRole(userRole)) {
         return PROCUREMENT_APPROVER_MENU_PATHS.has(item.path);
+      }
+      if (userRole === "financiero") {
+        return item.path === "/tesoreria";
       }
       if (userRole === "contable") {
         return (
@@ -502,7 +504,6 @@ function DashboardLayoutContent({
     location === "/" ||
     location === "/articulos" ||
     location === "/solicitudes" ||
-    location === "/tesoreria" ||
     location === "/notificaciones" ||
     /^\/solicitudes\/\d+$/.test(location);
   const shouldRedirectSuperintendent =
@@ -517,6 +518,10 @@ function DashboardLayoutContent({
     location === "/notificaciones";
   const shouldRedirectProcurementApprover =
     isProcurementApproverRole(userRole) && !isProcurementApproverAllowedPath;
+  const shouldRedirectFinancial =
+    userRole === "financiero" &&
+    location !== "/tesoreria" &&
+    location !== "/notificaciones";
   const shouldRedirectUserManagement =
     location.startsWith("/usuarios") &&
     !isAdmin &&
@@ -543,6 +548,12 @@ function DashboardLayoutContent({
       setLocation(location.startsWith("/solicitudes") ? "/solicitudes" : "/");
     }
   }, [location, setLocation, shouldRedirectProcurementApprover]);
+
+  useEffect(() => {
+    if (shouldRedirectFinancial) {
+      setLocation("/tesoreria");
+    }
+  }, [setLocation, shouldRedirectFinancial]);
 
   useEffect(() => {
     if (shouldRedirectUserManagement) {
@@ -579,6 +590,7 @@ function DashboardLayoutContent({
     shouldRedirectContable ||
     shouldRedirectSuperintendent ||
     shouldRedirectProcurementApprover ||
+    shouldRedirectFinancial ||
     shouldRedirectUserManagement
   ) {
     return null;

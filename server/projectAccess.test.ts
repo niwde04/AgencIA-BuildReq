@@ -29,6 +29,12 @@ describe("BuildReq role definitions", () => {
     expect(isSuperintendentFamilyRole("superintendente")).toBe(true);
     expect(isProcurementApproverRole("superintendente")).toBe(false);
   });
+
+  it("defines Financiero as a global non-project role", () => {
+    expect(BUILDREQ_ROLE_LABELS.financiero).toBe("Financiero");
+    expect(isProjectScopedRole("financiero")).toBe(false);
+    expect(requiresProjectAssignment("financiero")).toBe(false);
+  });
 });
 
 describe("project access for procurement approvers", () => {
@@ -53,6 +59,14 @@ describe("project access for procurement approvers", () => {
 
   it("preserves global access for a base admin without a scoped functional role", () => {
     const user = { role: "admin", buildreqRole: null };
+
+    expect(hasAllProjectAccess(user)).toBe(true);
+    expect(getProjectScopeIds(user)).toBeUndefined();
+    expect(canAccessProject(user, 123)).toBe(true);
+  });
+
+  it("gives Financiero access to consolidated lots from every project", () => {
+    const user = { role: "user", buildreqRole: "financiero" };
 
     expect(hasAllProjectAccess(user)).toBe(true);
     expect(getProjectScopeIds(user)).toBeUndefined();

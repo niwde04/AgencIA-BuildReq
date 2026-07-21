@@ -171,6 +171,8 @@ function auditActionLabel(action: string) {
     excluir_depuracion: "excluir en revisión",
     guardar_revision: "guardar revisión",
     consolidar_enviar_aprobacion: "consolidar y enviar a aprobación",
+    consolidar_en_lote: "integrar en lote consolidado",
+    crear_lote_consolidado: "crear lote consolidado y enviar a aprobación",
   };
   return reviewLabels[action] ?? action.replaceAll("_", " ");
 }
@@ -953,6 +955,21 @@ function BatchDetailDialog({
               </Alert>
             )}
 
+            {detail.sourceBatches?.length > 0 && (
+              <Alert>
+                <WalletCards />
+                <AlertTitle>
+                  Lote consolidado de {detail.sourceBatches.length} lotes
+                </AlertTitle>
+                <AlertDescription>
+                  Origen:{" "}
+                  {detail.sourceBatches
+                    .map((source: any) => source.batchNumber)
+                    .join(", ")}
+                </AlertDescription>
+              </Alert>
+            )}
+
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Card>
                 <CardContent className="pt-5">
@@ -1557,6 +1574,7 @@ function BatchDetailDialog({
                   "pendiente_contabilizacion",
                   "cerrado",
                   "anulado",
+                  "consolidado",
                 ].includes(status) &&
                 (isCentral ||
                   ((status === "borrador" || status === "devuelto") &&
@@ -1668,9 +1686,8 @@ export default function Tesoreria() {
   const [formOpen, setFormOpen] = useState(false);
   const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
   const [editingDetail, setEditingDetail] = useState<any>();
-  const [selectedReviewBatchIds, setSelectedReviewBatchIds] = useState<
-    Set<number>
-  >(new Set());
+  const [selectedConsolidationBatchIds, setSelectedConsolidationBatchIds] =
+    useState<Set<number>>(new Set());
   const settingsQuery = trpc.treasury.settings.useQuery();
   const batchesQuery = trpc.treasury.list.useQuery(
     statusFilter === "todos"
@@ -1684,15 +1701,16 @@ export default function Tesoreria() {
   );
   const consolidateMutation = trpc.treasury.consolidateForApproval.useMutation({
     onSuccess: async data => {
-      setSelectedReviewBatchIds(new Set());
+      setSelectedConsolidationBatchIds(new Set());
       toast.success(
-        `${data.batchIds.length} ${data.batchIds.length === 1 ? "lote consolidado y enviado" : "lotes consolidados y enviados"} a aprobación.`
+        `Lote consolidado ${data.batchNumber} creado con ${data.sourceBatchIds.length} lotes y enviado a aprobación.`
       );
       await Promise.all([
         utils.treasury.list.invalidate(),
         utils.treasury.getById.invalidate(),
         utils.notifications.unreadCount.invalidate(),
       ]);
+      setSelectedBatchId(data.batchId);
     },
     onError: error => toast.error(error.message),
   });
@@ -1717,47 +1735,59 @@ export default function Tesoreria() {
       return matchesSearch && matchesDateFrom && matchesDateTo;
     });
   }, [batchesQuery.data, dateFrom, dateTo, search]);
-  const visibleReviewBatches = useMemo(
+  const visibleConsolidatableBatches = useMemo(
     () =>
-      visibleBatches.filter(
-        (row: any) => row.batch.status === "enviado_depuracion"
+      visibleBatches.filter((row: any) =>
+        ["enviado_depuracion", "pendiente_aprobacion"].includes(
+          row.batch.status
+        )
       ),
     [visibleBatches]
   );
-  const allVisibleReviewBatchesSelected =
-    visibleReviewBatches.length > 0 &&
-    visibleReviewBatches.every((row: any) =>
-      selectedReviewBatchIds.has(row.batch.id)
+  const allVisibleConsolidatableBatchesSelected =
+    visibleConsolidatableBatches.length > 0 &&
+    visibleConsolidatableBatches.every((row: any) =>
+      selectedConsolidationBatchIds.has(row.batch.id)
     );
-  const someVisibleReviewBatchesSelected = visibleReviewBatches.some(
-    (row: any) => selectedReviewBatchIds.has(row.batch.id)
-  );
+  const someVisibleConsolidatableBatchesSelected =
+    visibleConsolidatableBatches.some((row: any) =>
+      selectedConsolidationBatchIds.has(row.batch.id)
+    );
 
   useEffect(() => {
     const visibleIds = new Set(
-      visibleReviewBatches.map((row: any) => row.batch.id)
+      visibleConsolidatableBatches.map((row: any) => row.batch.id)
     );
-    setSelectedReviewBatchIds(current => {
+    setSelectedConsolidationBatchIds(current => {
       const next = new Set(
         Array.from(current).filter(batchId => visibleIds.has(batchId))
       );
       return next.size === current.size ? current : next;
     });
-  }, [visibleReviewBatches]);
+  }, [visibleConsolidatableBatches]);
 
-  function toggleVisibleReviewBatches() {
-    const shouldSelect = !allVisibleReviewBatchesSelected;
-    setSelectedReviewBatchIds(
+  function toggleVisibleConsolidatableBatches() {
+    const shouldSelect = !allVisibleConsolidatableBatchesSelected;
+    setSelectedConsolidationBatchIds(
       shouldSelect
-        ? new Set(visibleReviewBatches.map((row: any) => row.batch.id))
+        ? new Set(visibleConsolidatableBatches.map((row: any) => row.batch.id))
         : new Set()
     );
   }
 
   function consolidateSelectedBatches() {
     const selectedRows = (batchesQuery.data ?? []).filter((row: any) =>
-      selectedReviewBatchIds.has(row.batch.id)
+      selectedConsolidationBatchIds.has(row.batch.id)
     );
+    const projects = new Set(
+      selectedRows.map((row: any) => row.batch.projectId)
+    );
+    if (projects.size > 1) {
+      toast.error(
+        "Seleccione lotes de un solo proyecto para crear el consolidado."
+      );
+      return;
+    }
     const currencies = new Set(
       selectedRows.map((row: any) => row.batch.currency)
     );
@@ -1767,8 +1797,17 @@ export default function Tesoreria() {
       );
       return;
     }
+    const paymentDates = new Set(
+      selectedRows.map((row: any) => toDateKey(row.batch.requestedPaymentDate))
+    );
+    if (paymentDates.size > 1) {
+      toast.error(
+        "Seleccione lotes con la misma fecha prevista para crear el consolidado."
+      );
+      return;
+    }
     consolidateMutation.mutate({
-      batchIds: Array.from(selectedReviewBatchIds),
+      batchIds: Array.from(selectedConsolidationBatchIds),
     });
   }
 
@@ -2042,19 +2081,19 @@ export default function Tesoreria() {
                     <TableHead className="w-10">
                       <Checkbox
                         checked={
-                          allVisibleReviewBatchesSelected
+                          allVisibleConsolidatableBatchesSelected
                             ? true
-                            : someVisibleReviewBatchesSelected
+                            : someVisibleConsolidatableBatchesSelected
                               ? "indeterminate"
                               : false
                         }
                         disabled={
                           consolidateMutation.isPending ||
-                          visibleReviewBatches.length === 0
+                          visibleConsolidatableBatches.length === 0
                         }
-                        onCheckedChange={toggleVisibleReviewBatches}
-                        aria-label="Seleccionar todos los lotes pendientes de revisión"
-                        title="Seleccionar lotes pendientes de revisión"
+                        onCheckedChange={toggleVisibleConsolidatableBatches}
+                        aria-label="Seleccionar todos los lotes disponibles para consolidar"
+                        title="Seleccionar lotes disponibles para consolidar"
                       />
                     </TableHead>
                   )}
@@ -2086,13 +2125,18 @@ export default function Tesoreria() {
                       {settingsQuery.data.permissions.canDepurate && (
                         <TableCell>
                           <Checkbox
-                            checked={selectedReviewBatchIds.has(row.batch.id)}
+                            checked={selectedConsolidationBatchIds.has(
+                              row.batch.id
+                            )}
                             disabled={
                               consolidateMutation.isPending ||
-                              row.batch.status !== "enviado_depuracion"
+                              ![
+                                "enviado_depuracion",
+                                "pendiente_aprobacion",
+                              ].includes(row.batch.status)
                             }
                             onCheckedChange={checked =>
-                              setSelectedReviewBatchIds(current => {
+                              setSelectedConsolidationBatchIds(current => {
                                 const next = new Set(current);
                                 if (checked === true) next.add(row.batch.id);
                                 else next.delete(row.batch.id);
@@ -2104,7 +2148,12 @@ export default function Tesoreria() {
                         </TableCell>
                       )}
                       <TableCell className="font-medium">
-                        {row.batch.batchNumber}
+                        <div>{row.batch.batchNumber}</div>
+                        {row.sourceBatchNumbers?.length > 0 && (
+                          <div className="text-xs font-normal text-muted-foreground">
+                            Consolidado de {row.sourceBatchNumbers.length} lotes
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div>{row.project.code}</div>
@@ -2161,9 +2210,9 @@ export default function Tesoreria() {
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/20 p-4">
               <div className="text-sm text-muted-foreground">
                 <span className="font-medium text-foreground">
-                  {selectedReviewBatchIds.size}
+                  {selectedConsolidationBatchIds.size}
                 </span>{" "}
-                {selectedReviewBatchIds.size === 1
+                {selectedConsolidationBatchIds.size === 1
                   ? "lote seleccionado"
                   : "lotes seleccionados"}
               </div>
@@ -2171,7 +2220,7 @@ export default function Tesoreria() {
                 onClick={consolidateSelectedBatches}
                 disabled={
                   consolidateMutation.isPending ||
-                  selectedReviewBatchIds.size === 0
+                  selectedConsolidationBatchIds.size < 2
                 }
               >
                 {consolidateMutation.isPending ? (

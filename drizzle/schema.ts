@@ -39,6 +39,7 @@ export const buildreqRoleEnum = pgEnum("buildreq_role", [
   "superintendente_aprobador",
   "gerente",
   "contable",
+  "financiero",
 ]);
 export const projectStatusEnum = pgEnum("project_status", [
   "activo",
@@ -240,6 +241,7 @@ export const treasuryBatchStatusEnum = pgEnum("treasury_batch_status", [
   "cerrado",
   "devuelto",
   "anulado",
+  "consolidado",
 ]);
 export const treasuryItemStatusEnum = pgEnum("treasury_item_status", [
   "incluida",
@@ -1428,6 +1430,11 @@ export const treasuryPaymentBatches = pgTable(
       .$type<TreasuryBatchStatus>()
       .default("borrador")
       .notNull(),
+    consolidatedIntoBatchId: integer("consolidatedIntoBatchId"),
+    consolidatedById: integer("consolidatedById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    consolidatedAt: timestamp("consolidatedAt"),
     version: integer("version").default(1).notNull(),
     notes: text("notes"),
     createdById: integer("createdById")
@@ -1473,6 +1480,9 @@ export const treasuryPaymentBatches = pgTable(
   table => ({
     projectIdx: index("treasury_batch_project_idx").on(table.projectId),
     statusIdx: index("treasury_batch_status_idx").on(table.status),
+    consolidatedIntoIdx: index("treasury_batch_consolidated_into_idx").on(
+      table.consolidatedIntoBatchId
+    ),
     createdIdx: index("treasury_batch_created_idx").on(
       table.createdAt.desc(),
       table.id.desc()

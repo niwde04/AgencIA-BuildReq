@@ -69,8 +69,7 @@ async function canAccessTreasury(user: User) {
     isCentral(user) ||
     isProjectManager(user) ||
     isAccountant(user) ||
-    (user.buildreqRole === "superintendente" &&
-      (await treasury.isTreasuryApprover(user.id)))
+    user.buildreqRole === "financiero"
   );
 }
 
@@ -139,9 +138,7 @@ export const treasuryRouter = router({
   settings: protectedProcedure.query(async ({ ctx }) => ({
     ...(await treasury.getTreasurySettings()),
     canAccess: await canAccessTreasury(ctx.user),
-    isApprover:
-      ctx.user.role === "admin" ||
-      (await treasury.isTreasuryApprover(ctx.user.id)),
+    isApprover: ctx.user.buildreqRole === "financiero",
     permissions: {
       canCreate: isProjectManager(ctx.user),
       canDepurate: isCentral(ctx.user),
@@ -163,24 +160,6 @@ export const treasuryRouter = router({
     }),
 
   approvers: adminProcedure.query(() => treasury.listTreasuryApprovers()),
-
-  setApprover: adminProcedure
-    .input(
-      z.object({
-        userId: z.number().int().positive(),
-        isActive: z.boolean(),
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      try {
-        return await treasury.setTreasuryApprover({
-          ...input,
-          assignedById: ctx.user.id,
-        });
-      } catch (error) {
-        rethrowTreasuryError(error);
-      }
-    }),
 
   eligibleInvoices: protectedProcedure
     .input(
@@ -356,7 +335,7 @@ export const treasuryRouter = router({
   consolidateForApproval: protectedProcedure
     .input(
       z.object({
-        batchIds: z.array(z.number().int().positive()).min(1).max(100),
+        batchIds: z.array(z.number().int().positive()).min(2).max(100),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -392,13 +371,11 @@ export const treasuryRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
       await assertBatchAccess(ctx.user, input.id);
-      const approvedUser =
-        ctx.user.role === "admin" ||
-        (await treasury.isTreasuryApprover(ctx.user.id));
+      const approvedUser = ctx.user.buildreqRole === "financiero";
       if (!approvedUser) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "No está configurado como aprobador de Tesorería.",
+          message: "Solo el rol Financiero puede aprobar lotes de Tesorería.",
         });
       }
       try {
@@ -426,8 +403,7 @@ export const treasuryRouter = router({
       const allowed =
         (detail.batch.status === "enviado_depuracion" && isCentral(ctx.user)) ||
         (detail.batch.status === "pendiente_aprobacion" &&
-          (ctx.user.role === "admin" ||
-            (await treasury.isTreasuryApprover(ctx.user.id))));
+          ctx.user.buildreqRole === "financiero");
       if (!allowed) {
         throw new TRPCError({
           code: "FORBIDDEN",

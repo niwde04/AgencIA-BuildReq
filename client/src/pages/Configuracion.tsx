@@ -1,7 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import { Checkbox } from "@/components/ui/checkbox";
 import { trpc } from "@/lib/trpc";
 import { useProcurementApprovalSettings } from "@/hooks/useProcurementApprovalSettings";
 import { Settings2, ShieldCheck, WalletCards, UserCheck } from "lucide-react";
@@ -44,16 +43,6 @@ export default function Configuracion() {
       await Promise.all([
         utils.treasury.settings.invalidate(),
         utils.treasury.list.invalidate(),
-      ]);
-    },
-    onError: error => toast.error(error.message),
-  });
-  const setApproverMutation = trpc.treasury.setApprover.useMutation({
-    onSuccess: async () => {
-      toast.success("Aprobador de Tesorería actualizado");
-      await Promise.all([
-        utils.treasury.approvers.invalidate(),
-        utils.treasury.settings.invalidate(),
       ]);
     },
     onError: error => toast.error(error.message),
@@ -183,30 +172,21 @@ export default function Configuracion() {
               <p className="font-medium">Aprobadores autorizados</p>
             </div>
             <p className="text-sm text-muted-foreground">
-              Solo los Superintendentes marcados aquí podrán aprobar lotes. Una
-              aprobación será suficiente.
+              Todos los usuarios con rol Financiero pueden aprobar lotes de
+              Tesorería. El rol se asigna desde la administración de usuarios.
             </p>
             {approversQuery.isLoading ? (
               <p className="text-sm text-muted-foreground">
-                Cargando superintendentes...
+                Cargando usuarios financieros...
               </p>
             ) : approversQuery.data?.length ? (
               <div className="divide-y rounded-md border">
                 {approversQuery.data.map(approver => (
-                  <label
+                  <div
                     key={approver.id}
-                    className="flex cursor-pointer items-center gap-3 p-3"
+                    className="flex items-center gap-3 p-3"
                   >
-                    <Checkbox
-                      checked={approver.isTreasuryApprover}
-                      onCheckedChange={checked =>
-                        setApproverMutation.mutate({
-                          userId: approver.id,
-                          isActive: checked === true,
-                        })
-                      }
-                      disabled={setApproverMutation.isPending}
-                    />
+                    <UserCheck className="h-4 w-4 text-primary" />
                     <span className="min-w-0">
                       <span className="block font-medium">
                         {approver.name || `Usuario ${approver.id}`}
@@ -215,12 +195,13 @@ export default function Configuracion() {
                         {approver.email || "Sin correo"}
                       </span>
                     </span>
-                  </label>
+                  </div>
                 ))}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
-                No hay usuarios con rol Superintendente.
+                No hay usuarios con rol Financiero. Asigne el rol antes de
+                enviar lotes a aprobación.
               </p>
             )}
           </div>

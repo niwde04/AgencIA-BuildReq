@@ -11,6 +11,7 @@ export const TREASURY_BATCH_STATUS_CODES = [
   "cerrado",
   "devuelto",
   "anulado",
+  "consolidado",
 ] as const;
 
 export type TreasuryBatchStatus = (typeof TREASURY_BATCH_STATUS_CODES)[number];
@@ -28,6 +29,7 @@ export const TREASURY_BATCH_STATUS_LABELS: Readonly<
   cerrado: "Cerrado",
   devuelto: "Devuelto",
   anulado: "Anulado",
+  consolidado: "Consolidado",
 };
 
 export const TREASURY_ITEM_STATUS_CODES = [

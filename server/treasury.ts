@@ -1,5 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  sql,
+} from "drizzle-orm";
 import * as XLSX from "xlsx";
 import {
   attachments,
@@ -8,7 +18,6 @@ import {
   purchaseOrders,
   suppliers,
   systemSettings,
-  treasuryApproverAssignments,
   treasuryPaymentBatches,
   treasuryPaymentEvents,
   treasuryPaymentItems,
@@ -303,19 +312,13 @@ export async function updateTreasurySettings(input: {
   if (!db) throw new Error("DB not available");
   if (input.treasuryEnabled) {
     const [approver] = await db
-      .select({ id: treasuryApproverAssignments.id })
-      .from(treasuryApproverAssignments)
-      .innerJoin(users, eq(treasuryApproverAssignments.userId, users.id))
-      .where(
-        and(
-          eq(treasuryApproverAssignments.isActive, true),
-          eq(users.buildreqRole, "superintendente")
-        )
-      )
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.buildreqRole, "financiero"))
       .limit(1);
     if (!approver) {
       throw new TreasuryRuleError(
-        "Configure al menos un aprobador de Tesorería antes de habilitar el módulo."
+        "Asigne el rol Financiero al menos a un usuario antes de habilitar Tesorería."
       );
     }
   }
@@ -346,102 +349,17 @@ export async function listTreasuryApprovers() {
   const db = await getDb();
   if (!db) return [];
   const rows = await db
-    .select({ user: users, assignment: treasuryApproverAssignments })
+    .select({ user: users })
     .from(users)
-    .leftJoin(
-      treasuryApproverAssignments,
-      eq(treasuryApproverAssignments.userId, users.id)
-    )
-    .where(eq(users.buildreqRole, "superintendente"))
+    .where(eq(users.buildreqRole, "financiero"))
     .orderBy(asc(users.name));
   return rows.map(row => ({
     id: row.user.id,
     name: row.user.name,
     email: row.user.email,
     buildreqRole: row.user.buildreqRole,
-    isTreasuryApprover: row.assignment?.isActive === true,
+    isTreasuryApprover: true,
   }));
-}
-
-export async function setTreasuryApprover(input: {
-  userId: number;
-  isActive: boolean;
-  assignedById: number;
-}) {
-  const db = await getDb();
-  if (!db) throw new Error("DB not available");
-  const [user] = await db
-    .select({ id: users.id, buildreqRole: users.buildreqRole })
-    .from(users)
-    .where(eq(users.id, input.userId))
-    .limit(1);
-  if (!user || user.buildreqRole !== "superintendente") {
-    throw new TreasuryRuleError(
-      "Solo un usuario con rol Superintendente puede ser aprobador de Tesorería."
-    );
-  }
-  if (!input.isActive) {
-    const [settings] = await db
-      .select({ treasuryEnabled: systemSettings.treasuryEnabled })
-      .from(systemSettings)
-      .where(eq(systemSettings.id, 1))
-      .limit(1);
-    if (settings?.treasuryEnabled) {
-      const [otherApprover] = await db
-        .select({ id: treasuryApproverAssignments.id })
-        .from(treasuryApproverAssignments)
-        .innerJoin(users, eq(treasuryApproverAssignments.userId, users.id))
-        .where(
-          and(
-            eq(treasuryApproverAssignments.isActive, true),
-            ne(treasuryApproverAssignments.userId, input.userId),
-            eq(users.buildreqRole, "superintendente")
-          )
-        )
-        .limit(1);
-      if (!otherApprover) {
-        throw new TreasuryRuleError(
-          "No puede retirar al último aprobador mientras Tesorería está habilitada. Configure otro aprobador o deshabilite primero el módulo."
-        );
-      }
-    }
-  }
-  const [assignment] = await db
-    .insert(treasuryApproverAssignments)
-    .values({
-      userId: input.userId,
-      isActive: input.isActive,
-      assignedById: input.assignedById,
-      updatedAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: treasuryApproverAssignments.userId,
-      set: {
-        isActive: input.isActive,
-        assignedById: input.assignedById,
-        updatedAt: new Date(),
-      },
-    })
-    .returning();
-  return assignment;
-}
-
-export async function isTreasuryApprover(userId: number) {
-  const db = await getDb();
-  if (!db) return false;
-  const [assignment] = await db
-    .select({ id: treasuryApproverAssignments.id })
-    .from(treasuryApproverAssignments)
-    .innerJoin(users, eq(treasuryApproverAssignments.userId, users.id))
-    .where(
-      and(
-        eq(treasuryApproverAssignments.userId, userId),
-        eq(treasuryApproverAssignments.isActive, true),
-        eq(users.buildreqRole, "superintendente")
-      )
-    )
-    .limit(1);
-  return Boolean(assignment);
 }
 
 export async function listEligibleTreasuryInvoices(filters?: {
@@ -506,6 +424,9 @@ export async function listTreasuryBatches(filters?: {
   const db = await getDb();
   if (!db) return [];
   const conditions = [];
+  if (!filters?.status) {
+    conditions.push(isNull(treasuryPaymentBatches.consolidatedIntoBatchId));
+  }
   if (filters?.projectIds) {
     conditions.push(
       filters.projectIds.length
@@ -534,6 +455,18 @@ export async function listTreasuryBatches(filters?: {
         batchRows.map(row => row.batch.id)
       )
     );
+  const sourceBatches = await db
+    .select({
+      batchNumber: treasuryPaymentBatches.batchNumber,
+      consolidatedIntoBatchId: treasuryPaymentBatches.consolidatedIntoBatchId,
+    })
+    .from(treasuryPaymentBatches)
+    .where(
+      inArray(
+        treasuryPaymentBatches.consolidatedIntoBatchId,
+        batchRows.map(row => row.batch.id)
+      )
+    );
   return batchRows.map(row => {
     const batchItems = items.filter(item => item.batchId === row.batch.id);
     const included = batchItems.filter(item => item.status !== "excluida");
@@ -558,6 +491,9 @@ export async function listTreasuryBatches(filters?: {
           0
         )
       ),
+      sourceBatchNumbers: sourceBatches
+        .filter(source => source.consolidatedIntoBatchId === row.batch.id)
+        .map(source => source.batchNumber),
     };
   });
 }
@@ -572,7 +508,7 @@ export async function getTreasuryBatchById(batchId: number) {
     .where(eq(treasuryPaymentBatches.id, batchId))
     .limit(1);
   if (!row) return undefined;
-  const [items, events, attachmentRows] = await Promise.all([
+  const [items, events, attachmentRows, sourceBatches] = await Promise.all([
     readBatchItems(db, batchId),
     db
       .select()
@@ -583,6 +519,14 @@ export async function getTreasuryBatchById(batchId: number) {
         desc(treasuryPaymentEvents.id)
       ),
     getAttachmentsByEntity("treasury_payment_batch", batchId),
+    db
+      .select({
+        id: treasuryPaymentBatches.id,
+        batchNumber: treasuryPaymentBatches.batchNumber,
+      })
+      .from(treasuryPaymentBatches)
+      .where(eq(treasuryPaymentBatches.consolidatedIntoBatchId, batchId))
+      .orderBy(asc(treasuryPaymentBatches.id)),
   ]);
   const signedAttachments = await Promise.all(
     attachmentRows.map(async attachment => {
@@ -594,7 +538,13 @@ export async function getTreasuryBatchById(batchId: number) {
       }
     })
   );
-  return { ...row, items, events, attachments: signedAttachments };
+  return {
+    ...row,
+    items,
+    events,
+    attachments: signedAttachments,
+    sourceBatches,
+  };
 }
 
 export async function createTreasuryBatch(input: {
@@ -1022,26 +972,39 @@ export async function consolidateTreasuryBatchesForApproval(input: {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const batchIds = Array.from(new Set(input.batchIds));
-  if (!batchIds.length) {
-    throw new TreasuryRuleError("Seleccione al menos un lote para consolidar.");
+  if (batchIds.length < 2) {
+    throw new TreasuryRuleError(
+      "Seleccione al menos dos lotes para crear un consolidado."
+    );
   }
-  const consolidationReference = `CON-${new Date().getUTCFullYear()}-${randomUUID().slice(0, 8).toUpperCase()}`;
   const result = await db.transaction(async tx => {
-    const batches = await tx
-      .select()
-      .from(treasuryPaymentBatches)
-      .where(inArray(treasuryPaymentBatches.id, batchIds));
+    const batches = (
+      await tx
+        .select()
+        .from(treasuryPaymentBatches)
+        .where(inArray(treasuryPaymentBatches.id, batchIds))
+    ).sort((left, right) => left.id - right.id);
     if (batches.length !== batchIds.length) {
       throw new TreasuryRuleError(
         "Uno o más lotes seleccionados ya no existen."
       );
     }
+    const consolidatableStatuses: TreasuryBatchStatus[] = [
+      "enviado_depuracion",
+      "pendiente_aprobacion",
+    ];
     const invalidBatch = batches.find(
-      batch => batch.status !== "enviado_depuracion"
+      batch => !consolidatableStatuses.includes(batch.status)
     );
     if (invalidBatch) {
       throw new TreasuryRuleError(
-        `El lote ${invalidBatch.batchNumber} ya no está pendiente de revisión.`
+        `El lote ${invalidBatch.batchNumber} ya no está disponible para consolidar.`
+      );
+    }
+    const projects = new Set(batches.map(batch => batch.projectId));
+    if (projects.size !== 1) {
+      throw new TreasuryRuleError(
+        "Todos los lotes del consolidado deben pertenecer al mismo proyecto."
       );
     }
     const currencies = new Set(batches.map(batch => batch.currency));
@@ -1050,22 +1013,26 @@ export async function consolidateTreasuryBatchesForApproval(input: {
         "Todos los lotes del consolidado deben utilizar la misma moneda."
       );
     }
-    const items = await tx
-      .select({
-        batchId: treasuryPaymentItems.batchId,
-        status: treasuryPaymentItems.status,
-        activeReservation: treasuryPaymentItems.activeReservation,
-      })
+    const paymentDates = new Set(
+      batches.map(batch => toDateOnly(batch.requestedPaymentDate))
+    );
+    if (paymentDates.size !== 1) {
+      throw new TreasuryRuleError(
+        "Todos los lotes del consolidado deben tener la misma fecha prevista."
+      );
+    }
+    const activeItems = await tx
+      .select()
       .from(treasuryPaymentItems)
-      .where(inArray(treasuryPaymentItems.batchId, batchIds));
-    const emptyBatch = batches.find(
-      batch =>
-        !items.some(
-          item =>
-            item.batchId === batch.id &&
-            item.activeReservation &&
-            item.status !== "excluida"
+      .where(
+        and(
+          inArray(treasuryPaymentItems.batchId, batchIds),
+          eq(treasuryPaymentItems.activeReservation, true),
+          ne(treasuryPaymentItems.status, "excluida")
         )
+      );
+    const emptyBatch = batches.find(
+      batch => !activeItems.some(item => item.batchId === batch.id)
     );
     if (emptyBatch) {
       throw new TreasuryRuleError(
@@ -1074,54 +1041,130 @@ export async function consolidateTreasuryBatchesForApproval(input: {
     }
 
     const now = new Date();
-    const updatedBatches = await tx
-      .update(treasuryPaymentBatches)
-      .set({
+    const sourceBatchNumbers = batches.map(batch => batch.batchNumber);
+    const baseBatch = batches[0]!;
+    const tempNumber = `TEMP-${randomUUID()}`;
+    const [consolidatedBatch] = await tx
+      .insert(treasuryPaymentBatches)
+      .values({
+        batchNumber: tempNumber,
+        projectId: baseBatch.projectId,
+        currency: baseBatch.currency,
+        requestedPaymentDate: baseBatch.requestedPaymentDate,
         status: "pendiente_aprobacion",
+        notes: `Consolidado de ${sourceBatchNumbers.join(", ")}`,
+        createdById: input.actor.id,
+        submittedById: input.actor.id,
+        submittedAt: now,
         purifiedById: input.actor.id,
         purifiedAt: now,
+      })
+      .returning();
+    const batchNumber = `TES-${new Date(baseBatch.requestedPaymentDate).getUTCFullYear()}-${String(consolidatedBatch.id).padStart(6, "0")}`;
+    await tx
+      .update(treasuryPaymentBatches)
+      .set({ batchNumber })
+      .where(eq(treasuryPaymentBatches.id, consolidatedBatch.id));
+
+    const deactivatedItems = await tx
+      .update(treasuryPaymentItems)
+      .set({ activeReservation: false, updatedAt: now })
+      .where(
+        inArray(
+          treasuryPaymentItems.id,
+          activeItems.map(item => item.id)
+        )
+      )
+      .returning({ id: treasuryPaymentItems.id });
+    if (deactivatedItems.length !== activeItems.length) {
+      throw new TreasuryRuleError(
+        "No se pudieron liberar todas las facturas de los lotes origen."
+      );
+    }
+    const copiedItems = await tx
+      .insert(treasuryPaymentItems)
+      .values(
+        activeItems.map(item => ({
+          batchId: consolidatedBatch.id,
+          invoiceId: item.invoiceId,
+          supplierId: item.supplierId,
+          supplierCode: item.supplierCode,
+          supplierName: item.supplierName,
+          invoiceDocumentNumber: item.invoiceDocumentNumber,
+          invoiceNumber: item.invoiceNumber,
+          currency: item.currency,
+          invoiceNetPayable: item.invoiceNetPayable,
+          previousPaidAmount: item.previousPaidAmount,
+          requestedAmount: item.requestedAmount,
+          status: "incluida" as const,
+          activeReservation: true,
+        }))
+      )
+      .returning({ id: treasuryPaymentItems.id });
+    if (copiedItems.length !== activeItems.length) {
+      throw new TreasuryRuleError(
+        "No se pudieron copiar todas las facturas al lote consolidado."
+      );
+    }
+
+    const consolidatedSources = await tx
+      .update(treasuryPaymentBatches)
+      .set({
+        status: "consolidado",
+        consolidatedIntoBatchId: consolidatedBatch.id,
+        consolidatedById: input.actor.id,
+        consolidatedAt: now,
         updatedAt: now,
       })
       .where(
         and(
           inArray(treasuryPaymentBatches.id, batchIds),
-          eq(treasuryPaymentBatches.status, "enviado_depuracion")
+          inArray(treasuryPaymentBatches.status, consolidatableStatuses)
         )
       )
       .returning({ id: treasuryPaymentBatches.id });
-    if (updatedBatches.length !== batchIds.length) {
+    if (consolidatedSources.length !== batchIds.length) {
       throw new TreasuryRuleError(
         "Uno o más lotes cambiaron de estado. Actualice la lista e intente nuevamente."
       );
     }
 
-    const batchNumbers = batches.map(batch => batch.batchNumber);
     for (const batch of batches) {
       await insertEvent(tx, {
         batchId: batch.id,
-        action: "consolidar_enviar_aprobacion",
+        action: "consolidar_en_lote",
         previousStatus: batch.status,
-        newStatus: "pendiente_aprobacion",
+        newStatus: "consolidado",
         actor: input.actor,
         metadata: {
-          consolidationReference,
-          batchIds,
-          batchNumbers,
-          currency: batch.currency,
+          consolidatedBatchId: consolidatedBatch.id,
+          consolidatedBatchNumber: batchNumber,
         },
       });
     }
+    await insertEvent(tx, {
+      batchId: consolidatedBatch.id,
+      action: "crear_lote_consolidado",
+      newStatus: "pendiente_aprobacion",
+      actor: input.actor,
+      metadata: {
+        sourceBatchIds: batchIds,
+        sourceBatchNumbers,
+        itemCount: copiedItems.length,
+      },
+    });
     return {
-      consolidationReference,
-      batchIds,
-      batchNumbers,
-      currency: batches[0]!.currency,
+      batchId: consolidatedBatch.id,
+      batchNumber,
+      sourceBatchIds: batchIds,
+      sourceBatchNumbers,
+      currency: baseBatch.currency,
     };
   });
   await notifyTreasuryApprovers({
     title: "Consolidado pendiente de aprobación",
-    message: `${result.batchIds.length} ${result.batchIds.length === 1 ? "lote fue enviado" : "lotes fueron enviados"} para aprobación en ${result.currency}.`,
-    batchId: result.batchIds[0]!,
+    message: `El lote consolidado ${result.batchNumber}, creado a partir de ${result.sourceBatchIds.length} lotes, requiere aprobación.`,
+    batchId: result.batchId,
   });
   return result;
 }
@@ -1890,6 +1933,7 @@ export async function cancelTreasuryBatch(input: {
         "pendiente_contabilizacion",
         "cerrado",
         "anulado",
+        "consolidado",
       ].includes(batch.status)
     ) {
       throw new TreasuryRuleError("El lote ya no puede anularse.");
@@ -1941,7 +1985,7 @@ async function notifyUsers(
 }
 
 async function notifyRole(
-  role: "administracion_central" | "contable",
+  role: "administracion_central" | "contable" | "financiero",
   input: { title: string; message: string; batchId: number }
 ) {
   const recipients = await getUsersByBuildreqRole(role);
@@ -1956,20 +2000,5 @@ async function notifyTreasuryApprovers(input: {
   message: string;
   batchId: number;
 }) {
-  const db = await getDb();
-  if (!db) return;
-  const recipients = await db
-    .select({ userId: treasuryApproverAssignments.userId })
-    .from(treasuryApproverAssignments)
-    .innerJoin(users, eq(treasuryApproverAssignments.userId, users.id))
-    .where(
-      and(
-        eq(treasuryApproverAssignments.isActive, true),
-        eq(users.buildreqRole, "superintendente")
-      )
-    );
-  await notifyUsers(
-    recipients.map(row => row.userId),
-    input
-  );
+  await notifyRole("financiero", input);
 }

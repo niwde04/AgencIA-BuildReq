@@ -8,6 +8,7 @@ export const BUILDREQ_ROLE_CODES = [
   "superintendente_aprobador",
   "gerente",
   "contable",
+  "financiero",
 ] as const;
 
 export type BuildReqRole = (typeof BUILDREQ_ROLE_CODES)[number];
@@ -22,6 +23,7 @@ const buildreqRoleLabels = {
   superintendente_aprobador: "Superintendente Aprobador",
   gerente: "Gerente",
   contable: "Contable",
+  financiero: "Financiero",
 } as const satisfies Record<BuildReqRole, string>;
 
 export const BUILDREQ_ROLE_LABELS: Readonly<Record<string, string>> =
