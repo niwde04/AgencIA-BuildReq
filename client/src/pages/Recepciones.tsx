@@ -2133,16 +2133,17 @@ export default function Recepciones() {
 
   const resolveReceiptFixedAssetMutation =
     trpc.articles.resolveFixedAssetCode.useMutation({
-      onSuccess: article => {
+      onSuccess: async article => {
+        await Promise.all([
+          utils.articles.list.invalidate(),
+          utils.purchaseOrders.invalidate(),
+        ]);
+        if (sourceType === "purchase_order" && sourceId) {
+          await refetchPurchaseOrderDetail();
+        }
         toast.success(`Código real actualizado: ${article.itemCode}`);
         setSelectedReceiptFixedAssetArticle(null);
         setReceiptFixedAssetRealCode("");
-        void utils.articles.list.invalidate();
-        void utils.purchaseOrders.invalidate();
-        if (sourceType === "purchase_order" && sourceId) {
-          void utils.purchaseOrders.getById.invalidate({ id: Number(sourceId) });
-          void refetchPurchaseOrderDetail();
-        }
       },
       onError: error => toast.error(error.message),
     });
@@ -6958,7 +6959,7 @@ export default function Recepciones() {
         <Dialog
           open={Boolean(selectedReceiptFixedAssetArticle)}
           onOpenChange={open => {
-            if (!open) {
+            if (!open && !resolveReceiptFixedAssetMutation.isPending) {
               setSelectedReceiptFixedAssetArticle(null);
               setReceiptFixedAssetRealCode("");
             }
@@ -7035,6 +7036,7 @@ export default function Recepciones() {
                       selectedReceiptFixedAssetArticle.fixedAssetStatus ===
                       "resuelto"
                     }
+                    disabled={resolveReceiptFixedAssetMutation.isPending}
                     placeholder="Ingrese el código real"
                     onKeyDown={event => {
                       if (event.key === "Enter") {
@@ -7063,12 +7065,18 @@ export default function Recepciones() {
               "pendiente" ? (
                 <Button
                   type="button"
+                  className="gap-2"
                   onClick={submitReceiptFixedAssetCode}
                   disabled={resolveReceiptFixedAssetMutation.isPending}
                 >
-                  {resolveReceiptFixedAssetMutation.isPending
-                    ? "Guardando..."
-                    : "Guardar código"}
+                  {resolveReceiptFixedAssetMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Actualizando tabla...
+                    </>
+                  ) : (
+                    "Guardar código"
+                  )}
                 </Button>
               ) : null}
             </DialogFooter>
