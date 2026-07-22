@@ -2243,7 +2243,65 @@ export default function PurchaseRequests() {
                 ]}
                 detailTitle={`Ítems a aprobar (${selectedItems.length})`}
                 detailContent={
-                  <table className="w-full min-w-[720px] text-sm">
+                  <>
+                    <div className="space-y-3 p-3 md:hidden">
+                      {selectedItems.map((item: any) => (
+                        <article
+                          key={item.id}
+                          className="space-y-3 rounded-xl border border-border/70 bg-card p-3"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <p className="font-medium leading-snug">
+                              {item.itemName}
+                            </p>
+                            <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                              {item.currentSapItemCode ||
+                                item.originalSapItemCode ||
+                                "—"}
+                            </span>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label
+                              htmlFor={`compact-approval-quantity-${item.id}`}
+                              className="text-xs text-muted-foreground"
+                            >
+                              Cantidad a aprobar
+                            </Label>
+                            <div className="flex items-center gap-2">
+                              <Input
+                                id={`compact-approval-quantity-${item.id}`}
+                                className="h-10 flex-1 text-right font-mono"
+                                type="number"
+                                min="0.01"
+                                step="0.01"
+                                value={getApprovalQuantityDraft(item)}
+                                onChange={event =>
+                                  updateApprovalQuantityDraft(
+                                    item,
+                                    event.target.value
+                                  )
+                                }
+                                disabled={
+                                  updatePendingQuantitiesMutation.isPending ||
+                                  reviewApprovalMutation.isPending
+                                }
+                              />
+                              <span className="min-w-10 text-xs text-muted-foreground">
+                                {item.unit || ""}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="border-t border-border/70 pt-2 text-xs text-muted-foreground">
+                            <span className="font-medium text-foreground">
+                              Destino:
+                            </span>{" "}
+                            {getItemTargetLabel(item)}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+
+                    <table className="hidden w-full min-w-[720px] text-sm md:table">
                     <thead className="bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
                       <tr>
                         <th className="px-4 py-3 text-left">Artículo</th>
@@ -2296,7 +2354,8 @@ export default function PurchaseRequests() {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                    </table>
+                  </>
                 }
                 notes={detail.purchaseRequest.notes}
                 history={[...approvalHistory]

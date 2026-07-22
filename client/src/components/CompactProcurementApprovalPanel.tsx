@@ -80,8 +80,36 @@ export function CompactProcurementApprovalPanel({
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-8 sm:py-6">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border/70 bg-card p-3 md:hidden">
+        {summaryFields.map((field, index) => {
+          const Icon = SUMMARY_ICONS[field.icon];
+          const fillsLastRow =
+            summaryFields.length % 2 === 1 &&
+            index === summaryFields.length - 1;
+          return (
+            <div
+              key={field.label}
+              className={`min-w-0 ${fillsLastRow ? "col-span-2" : ""}`}
+            >
+              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <Icon className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{field.label}</span>
+              </div>
+              <p
+                className={`mt-1 truncate text-sm font-semibold ${
+                  field.accent ? "text-blue-600" : "text-foreground"
+                }`}
+                title={field.value}
+              >
+                {field.value}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+
       <div
-        className={`grid gap-3 sm:grid-cols-2 ${
+        className={`hidden gap-3 md:grid md:grid-cols-2 ${
           summaryFields.length >= 5
             ? "xl:grid-cols-5"
             : summaryFields.length === 4

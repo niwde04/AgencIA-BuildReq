@@ -3161,7 +3161,132 @@ export default function OrdenesCompra() {
               No hay órdenes de compra que coincidan con los filtros
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+              <div className="space-y-3 p-3 md:hidden">
+                {filteredOrders.map((row: any) => {
+                  const effectiveStatus = getEffectivePurchaseOrderStatus(
+                    row.purchaseOrder.status,
+                    row.purchaseOrder.approvalStatus
+                  );
+                  return (
+                    <article
+                      key={row.purchaseOrder.id}
+                      className="space-y-3 rounded-xl border border-border/70 bg-card p-4 shadow-sm"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-semibold leading-tight">
+                            {row.purchaseOrder.orderNumber}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {formatPurchaseOrderRequestNumbers(row)}
+                          </p>
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className={`shrink-0 text-[10px] ${
+                            STATUS_COLORS[effectiveStatus] || ""
+                          }`}
+                        >
+                          {STATUS_LABELS[effectiveStatus] ||
+                            row.purchaseOrder.status}
+                        </Badge>
+                      </div>
+
+                      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                        <div className="min-w-0">
+                          <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Proyecto
+                          </dt>
+                          <dd className="mt-1 text-xs leading-snug">
+                            {row.project
+                              ? `${row.project.code} — ${row.project.name}`
+                              : "—"}
+                          </dd>
+                        </div>
+                        <div className="min-w-0">
+                          <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Tipo
+                          </dt>
+                          <dd className="mt-1 text-xs">
+                            {PURCHASE_TYPE_LABELS[
+                              row.purchaseOrder.purchaseType
+                            ] || "—"}
+                          </dd>
+                        </div>
+                        <div className="col-span-2 min-w-0">
+                          <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Proveedor
+                          </dt>
+                          <dd className="mt-1 text-xs leading-snug">
+                            {row.supplier?.name || "Proveedor pendiente"}
+                            {row.supplier ? (
+                              <span className="block text-muted-foreground">
+                                RTN: {formatSupplierRtnLabel(row.supplier)}
+                              </span>
+                            ) : null}
+                          </dd>
+                        </div>
+                        <div className="min-w-0">
+                          <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Requiriente
+                          </dt>
+                          <dd className="mt-1 text-xs leading-snug">
+                            {formatPurchaseOrderRequestedBy(row)}
+                          </dd>
+                        </div>
+                        <div className="min-w-0">
+                          <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Clasificación
+                          </dt>
+                          <dd className="mt-1 text-xs uppercase">
+                            {row.purchaseOrder.classification}
+                          </dd>
+                        </div>
+                      </dl>
+
+                      <div className="flex flex-wrap items-center gap-2 border-t border-border/70 pt-3">
+                        {PROCUREMENT_APPROVALS_ENABLED ? (
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] ${getApprovalStatusColor(
+                              row.purchaseOrder.approvalStatus
+                            )}`}
+                          >
+                            {getApprovalStatusLabel(
+                              row.purchaseOrder.approvalStatus
+                            )}
+                          </Badge>
+                        ) : null}
+                        {row.purchaseOrder.appliesContract ? (
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] ${
+                              row.contractSummary?.isExpired
+                                ? "border-rose-300 bg-rose-50 text-rose-700"
+                                : row.contractSummary?.expiresSoon
+                                  ? "border-amber-300 bg-amber-50 text-amber-800"
+                                  : "border-cyan-300 bg-cyan-50 text-cyan-700"
+                            }`}
+                          >
+                            {row.contractSummary?.statusLabel || "Contrato"}
+                          </Badge>
+                        ) : null}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="ml-auto"
+                          onClick={() => setSelectedId(row.purchaseOrder.id)}
+                        >
+                          Ver detalle
+                        </Button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+              <div className="hidden overflow-x-auto md:block">
               <table className="w-full min-w-[1720px] text-sm">
                 <thead>
                   <tr className="border-b border-border">
@@ -3323,7 +3448,8 @@ export default function OrdenesCompra() {
                   ))}
                 </tbody>
               </table>
-            </div>
+              </div>
+            </>
           )}
           {ordersPage ? (
             <DataPagination
@@ -3636,7 +3762,7 @@ export default function OrdenesCompra() {
           <DialogHeader
             className={
               isCompactApprovalView
-                ? "shrink-0 border-b border-border/70 px-5 py-5 pr-12 sm:px-8 sm:py-6"
+                ? "shrink-0 border-b border-border/70 px-4 py-3 pr-12 sm:px-8 sm:py-5"
                 : "border-b border-border/70 pb-4 pr-10"
             }
           >
@@ -4699,7 +4825,74 @@ export default function OrdenesCompra() {
                 ]}
                 detailTitle={`Ítems a aprobar (${items.length})`}
                 detailContent={
-                  <table className="w-full min-w-[860px] text-sm">
+                  <>
+                    <div className="space-y-3 p-3 md:hidden">
+                      {items.map((item: any) => {
+                        const draft = getItemDraft(item);
+                        const lineAmounts = calculatePurchaseOrderLineAmounts({
+                          quantity: draft.quantity,
+                          unitPrice: draft.unitPrice,
+                          subtotal: draft.subtotal,
+                          pricesIncludeTax:
+                            detail.purchaseOrder.pricesIncludeTax,
+                          taxCode: draft.taxCode,
+                          additionalTaxCodes: draft.additionalTaxCodes,
+                          taxes: activeSalesTaxes,
+                        });
+                        return (
+                          <article
+                            key={item.id}
+                            className="space-y-3 rounded-xl border border-border/70 bg-card p-3"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <p className="font-medium leading-snug">
+                                {getTemporaryFixedAssetDisplayName(item)}
+                              </p>
+                              <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                                {item.currentSapItemCode ||
+                                  item.originalSapItemCode ||
+                                  "—"}
+                              </span>
+                            </div>
+                            <dl className="grid grid-cols-2 gap-3 border-t border-border/70 pt-3 text-sm">
+                              <div>
+                                <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                  Cantidad
+                                </dt>
+                                <dd className="mt-1 font-medium">
+                                  {formatQuantity(draft.quantity)}{" "}
+                                  {item.unit || ""}
+                                </dd>
+                              </div>
+                              <div className="text-right">
+                                <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                  Precio unitario
+                                </dt>
+                                <dd className="mt-1">
+                                  {formatPurchaseOrderCurrency(
+                                    Number(draft.unitPrice || 0),
+                                    orderCurrency
+                                  )}
+                                </dd>
+                              </div>
+                              <div className="col-span-2 flex items-center justify-between border-t border-border/70 pt-2">
+                                <dt className="text-xs font-semibold text-muted-foreground">
+                                  Subtotal
+                                </dt>
+                                <dd className="font-semibold">
+                                  {formatPurchaseOrderCurrency(
+                                    lineAmounts.subtotal,
+                                    orderCurrency
+                                  )}
+                                </dd>
+                              </div>
+                            </dl>
+                          </article>
+                        );
+                      })}
+                    </div>
+
+                    <table className="hidden w-full min-w-[860px] text-sm md:table">
                     <thead className="bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
                       <tr>
                         <th className="px-4 py-3 text-left">Artículo</th>
@@ -4753,7 +4946,8 @@ export default function OrdenesCompra() {
                         );
                       })}
                     </tbody>
-                  </table>
+                    </table>
+                  </>
                 }
                 notes={detail.purchaseOrder.notes}
                 history={approvalHistory.map(
