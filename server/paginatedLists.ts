@@ -30,9 +30,7 @@ import {
   transfers,
   users,
 } from "../drizzle/schema";
-import {
-  purchaseOrderExceedsApprovalLimit,
-} from "@shared/procurement-approvals";
+import { purchaseOrderRequiresApproval } from "@shared/procurement-approvals";
 import { summarizePurchaseOrderLines } from "@shared/purchase-orders";
 import * as data from "./db";
 
@@ -118,9 +116,13 @@ export async function listMaterialRequestsPage(
   if (filters.requestedById)
     conditions.push(eq(materialRequests.requestedById, filters.requestedById));
   if (filters.requestType)
-    conditions.push(sql`${materialRequests.requestType}::text = ${filters.requestType}`);
+    conditions.push(
+      sql`${materialRequests.requestType}::text = ${filters.requestType}`
+    );
   if (filters.workflowStage)
-    conditions.push(sql`${materialRequests.workflowStage}::text = ${filters.workflowStage}`);
+    conditions.push(
+      sql`${materialRequests.workflowStage}::text = ${filters.workflowStage}`
+    );
 
   const search = filters.search?.trim();
   if (search) {
@@ -208,10 +210,15 @@ export type SupplyFlowPageFilters = PageInput & {
 export async function listSupplyFlowsPage(filters: SupplyFlowPageFilters) {
   const database = await data.getDb();
   if (!database)
-    return { ...pageResult([], 0, filters), countsByFlow: {} as Record<string, number> };
+    return {
+      ...pageResult([], 0, filters),
+      countsByFlow: {} as Record<string, number>,
+    };
   const conditions: any[] = [];
   if (filters.flowType)
-    conditions.push(sql`${supplyFlowRecords.flowType}::text = ${filters.flowType}`);
+    conditions.push(
+      sql`${supplyFlowRecords.flowType}::text = ${filters.flowType}`
+    );
   if (filters.flowTypes)
     conditions.push(
       filters.flowTypes.length > 0
@@ -232,14 +239,20 @@ export async function listSupplyFlowsPage(filters: SupplyFlowPageFilters) {
   const [totalRow] = await database
     .select({ count: count() })
     .from(supplyFlowRecords)
-    .leftJoin(materialRequests, eq(supplyFlowRecords.requestId, materialRequests.id))
+    .leftJoin(
+      materialRequests,
+      eq(supplyFlowRecords.requestId, materialRequests.id)
+    )
     .where(where);
   const total = totalRow?.count ?? 0;
   const meta = getPageMeta(total, filters);
   const idRows = await database
     .select({ id: supplyFlowRecords.id })
     .from(supplyFlowRecords)
-    .leftJoin(materialRequests, eq(supplyFlowRecords.requestId, materialRequests.id))
+    .leftJoin(
+      materialRequests,
+      eq(supplyFlowRecords.requestId, materialRequests.id)
+    )
     .where(where)
     .orderBy(desc(supplyFlowRecords.createdAt), desc(supplyFlowRecords.id))
     .limit(meta.pageSize)
@@ -250,7 +263,10 @@ export async function listSupplyFlowsPage(filters: SupplyFlowPageFilters) {
       count: count(),
     })
     .from(supplyFlowRecords)
-    .leftJoin(materialRequests, eq(supplyFlowRecords.requestId, materialRequests.id))
+    .leftJoin(
+      materialRequests,
+      eq(supplyFlowRecords.requestId, materialRequests.id)
+    )
     .where(where)
     .groupBy(supplyFlowRecords.flowType);
   const countsByFlow = Object.fromEntries(
@@ -288,7 +304,9 @@ export async function listPurchaseRequestsPage(
     conditions.push(eq(purchaseRequests.projectId, filters.projectId));
   addProjectScope(conditions, purchaseRequests.projectId, filters.projectIds);
   if (filters.purchaseType)
-    conditions.push(sql`${purchaseRequests.purchaseType}::text = ${filters.purchaseType}`);
+    conditions.push(
+      sql`${purchaseRequests.purchaseType}::text = ${filters.purchaseType}`
+    );
   if (filters.pendingApprovalOnly) {
     conditions.push(
       and(
@@ -308,7 +326,9 @@ export async function listPurchaseRequestsPage(
         )!
       );
     } else {
-      conditions.push(sql`${purchaseRequests.status}::text = ${filters.status}`);
+      conditions.push(
+        sql`${purchaseRequests.status}::text = ${filters.status}`
+      );
     }
   }
 
@@ -316,8 +336,14 @@ export async function listPurchaseRequestsPage(
     const outsideRows = await database
       .select({ id: purchaseRequestItems.purchaseRequestId })
       .from(purchaseRequestItems)
-      .leftJoin(requestItems, eq(purchaseRequestItems.materialRequestItemId, requestItems.id))
-      .leftJoin(materialRequests, eq(requestItems.requestId, materialRequests.id))
+      .leftJoin(
+        requestItems,
+        eq(purchaseRequestItems.materialRequestItemId, requestItems.id)
+      )
+      .leftJoin(
+        materialRequests,
+        eq(requestItems.requestId, materialRequests.id)
+      )
       .where(notInArray(materialRequests.projectId, filters.projectIds));
     const outsideIds = uniqueIds(outsideRows);
     if (outsideIds.length > 0)
@@ -331,8 +357,14 @@ export async function listPurchaseRequestsPage(
     const sourceRows = await database
       .select({ id: purchaseRequestItems.purchaseRequestId })
       .from(purchaseRequestItems)
-      .leftJoin(requestItems, eq(purchaseRequestItems.materialRequestItemId, requestItems.id))
-      .leftJoin(materialRequests, eq(requestItems.requestId, materialRequests.id))
+      .leftJoin(
+        requestItems,
+        eq(purchaseRequestItems.materialRequestItemId, requestItems.id)
+      )
+      .leftJoin(
+        materialRequests,
+        eq(requestItems.requestId, materialRequests.id)
+      )
       .leftJoin(sourceProject, eq(materialRequests.projectId, sourceProject.id))
       .leftJoin(requestedBy, eq(materialRequests.requestedById, requestedBy.id))
       .where(
@@ -364,7 +396,9 @@ export async function listPurchaseRequestsPage(
         ilike(projects.name, pattern),
         sql`concat_ws(' ', ${projects.code}, ${projects.name}) ilike ${pattern}`,
         ilike(createdBy.name, pattern),
-        relatedIds.length > 0 ? inArray(purchaseRequests.id, relatedIds) : sql`false`
+        relatedIds.length > 0
+          ? inArray(purchaseRequests.id, relatedIds)
+          : sql`false`
       )!
     );
   }
@@ -374,13 +408,19 @@ export async function listPurchaseRequestsPage(
       .select({ id: purchaseRequests.id })
       .from(purchaseRequests)
       .leftJoin(projects, eq(purchaseRequests.projectId, projects.id))
-      .leftJoin(materialRequests, eq(purchaseRequests.materialRequestId, materialRequests.id))
+      .leftJoin(
+        materialRequests,
+        eq(purchaseRequests.materialRequestId, materialRequests.id)
+      )
       .leftJoin(createdBy, eq(purchaseRequests.createdById, createdBy.id));
   const [totalRow] = await database
     .select({ count: count() })
     .from(purchaseRequests)
     .leftJoin(projects, eq(purchaseRequests.projectId, projects.id))
-    .leftJoin(materialRequests, eq(purchaseRequests.materialRequestId, materialRequests.id))
+    .leftJoin(
+      materialRequests,
+      eq(purchaseRequests.materialRequestId, materialRequests.id)
+    )
     .leftJoin(createdBy, eq(purchaseRequests.createdById, createdBy.id))
     .where(where);
   const total = totalRow?.count ?? 0;
@@ -408,7 +448,9 @@ export type PurchaseOrderPageFilters = PageInput & {
   approverOnly?: boolean;
 };
 
-export async function listPurchaseOrdersPage(filters: PurchaseOrderPageFilters) {
+export async function listPurchaseOrdersPage(
+  filters: PurchaseOrderPageFilters
+) {
   const database = await data.getDb();
   if (!database) return pageResult([], 0, filters);
   const createdBy = alias(users, "po_page_created_by");
@@ -418,9 +460,13 @@ export async function listPurchaseOrdersPage(filters: PurchaseOrderPageFilters) 
     conditions.push(eq(purchaseOrders.projectId, filters.projectId));
   addProjectScope(conditions, purchaseOrders.projectId, filters.projectIds);
   if (filters.classification)
-    conditions.push(sql`${purchaseOrders.classification}::text = ${filters.classification}`);
+    conditions.push(
+      sql`${purchaseOrders.classification}::text = ${filters.classification}`
+    );
   if (filters.purchaseType)
-    conditions.push(sql`${purchaseOrders.purchaseType}::text = ${filters.purchaseType}`);
+    conditions.push(
+      sql`${purchaseOrders.purchaseType}::text = ${filters.purchaseType}`
+    );
   if (filters.status) {
     if (!filters.approvalsEnabled && filters.status === "borrador") {
       conditions.push(
@@ -442,8 +488,14 @@ export async function listPurchaseOrdersPage(filters: PurchaseOrderPageFilters) 
     const sourceRows = await database
       .select({ id: purchaseOrderItems.purchaseOrderId })
       .from(purchaseOrderItems)
-      .leftJoin(requestItems, eq(purchaseOrderItems.materialRequestItemId, requestItems.id))
-      .leftJoin(materialRequests, eq(requestItems.requestId, materialRequests.id))
+      .leftJoin(
+        requestItems,
+        eq(purchaseOrderItems.materialRequestItemId, requestItems.id)
+      )
+      .leftJoin(
+        materialRequests,
+        eq(requestItems.requestId, materialRequests.id)
+      )
       .leftJoin(requestedBy, eq(materialRequests.requestedById, requestedBy.id))
       .where(
         or(
@@ -468,10 +520,18 @@ export async function listPurchaseOrdersPage(filters: PurchaseOrderPageFilters) 
         ilike(suppliers.supplierCode, pattern),
         ilike(suppliers.rtn, pattern),
         ilike(createdBy.name, pattern),
-        directPurchaseMatch ? eq(purchaseOrders.purchaseType, "compra_directa" as any) : sql`false`,
-        localMatch ? eq(purchaseOrders.purchaseType, "local" as any) : sql`false`,
-        foreignMatch ? eq(purchaseOrders.purchaseType, "extranjera" as any) : sql`false`,
-        sourceIds.length > 0 ? inArray(purchaseOrders.id, sourceIds) : sql`false`
+        directPurchaseMatch
+          ? eq(purchaseOrders.purchaseType, "compra_directa" as any)
+          : sql`false`,
+        localMatch
+          ? eq(purchaseOrders.purchaseType, "local" as any)
+          : sql`false`,
+        foreignMatch
+          ? eq(purchaseOrders.purchaseType, "extranjera" as any)
+          : sql`false`,
+        sourceIds.length > 0
+          ? inArray(purchaseOrders.id, sourceIds)
+          : sql`false`
       )!
     );
   }
@@ -552,12 +612,14 @@ export async function listPurchaseOrdersPage(filters: PurchaseOrderPageFilters) 
           pricesIncludeTax: row.pricesIncludeTax,
         }))
       ).total;
-      return purchaseOrderExceedsApprovalLimit(row.currency, total);
+      return purchaseOrderRequiresApproval(row.currency, total);
     });
   }
   const total = visibleRows.length;
   const meta = getPageMeta(total, filters);
-  const ids = visibleRows.slice(meta.offset, meta.offset + meta.pageSize).map(row => row.id);
+  const ids = visibleRows
+    .slice(meta.offset, meta.offset + meta.pageSize)
+    .map(row => row.id);
   const items = await data.listPurchaseOrders({
     ids,
     projectId: filters.projectId,
@@ -573,7 +635,9 @@ export type TransferRequestPageFilters = PageInput & {
   status?: string;
 };
 
-export async function listTransferRequestsPage(filters: TransferRequestPageFilters) {
+export async function listTransferRequestsPage(
+  filters: TransferRequestPageFilters
+) {
   const database = await data.getDb();
   if (!database) return pageResult([], 0, filters);
   const conditions: any[] = [];
@@ -604,7 +668,7 @@ export async function listTransferRequestsPage(filters: TransferRequestPageFilte
         sql`concat_ws(' ', ${projects.code}, ${projects.name}) ilike ${pattern}`,
         sql`('Proyecto ' || ${transferRequests.destinationProjectId}::text) ilike ${pattern}`,
         "proyecto/bodega destino en recepción".includes(normalizedSearch) ||
-        "bodega central".includes(normalizedSearch)
+          "bodega central".includes(normalizedSearch)
           ? eq(transferRequests.destinationType, "bodega_central" as any)
           : sql`false`
       )!
@@ -615,7 +679,10 @@ export async function listTransferRequestsPage(filters: TransferRequestPageFilte
     .select({ count: count() })
     .from(transferRequests)
     .leftJoin(projects, eq(transferRequests.projectId, projects.id))
-    .leftJoin(materialRequests, eq(transferRequests.materialRequestId, materialRequests.id))
+    .leftJoin(
+      materialRequests,
+      eq(transferRequests.materialRequestId, materialRequests.id)
+    )
     .where(where);
   const total = totalRow?.count ?? 0;
   const meta = getPageMeta(total, filters);
@@ -623,7 +690,10 @@ export async function listTransferRequestsPage(filters: TransferRequestPageFilte
     .select({ id: transferRequests.id })
     .from(transferRequests)
     .leftJoin(projects, eq(transferRequests.projectId, projects.id))
-    .leftJoin(materialRequests, eq(transferRequests.materialRequestId, materialRequests.id))
+    .leftJoin(
+      materialRequests,
+      eq(transferRequests.materialRequestId, materialRequests.id)
+    )
     .where(where)
     .orderBy(desc(transferRequests.createdAt), desc(transferRequests.id))
     .limit(meta.pageSize)
@@ -648,16 +718,23 @@ export type TransferPageFilters = PageInput & {
 export async function listTransfersPage(filters: TransferPageFilters) {
   const database = await data.getDb();
   if (!database) return pageResult([], 0, filters);
-  const destinationProject = alias(projects, "transfer_page_destination_project");
+  const destinationProject = alias(
+    projects,
+    "transfer_page_destination_project"
+  );
   const conditions: any[] = [];
   if (filters.status)
     conditions.push(sql`${transfers.status}::text = ${filters.status}`);
   if (filters.receivableOnly)
-    conditions.push(sql`${transfers.status}::text in ('confirmado', 'en_transito', 'parcialmente_recibido')`);
+    conditions.push(
+      sql`${transfers.status}::text in ('confirmado', 'en_transito', 'parcialmente_recibido')`
+    );
   if (filters.sourceProjectId)
     conditions.push(eq(transferRequests.projectId, filters.sourceProjectId));
   if (filters.destinationProjectId)
-    conditions.push(eq(transferRequests.destinationProjectId, filters.destinationProjectId));
+    conditions.push(
+      eq(transferRequests.destinationProjectId, filters.destinationProjectId)
+    );
   if (filters.projectIds !== undefined) {
     conditions.push(
       filters.projectIds.length > 0
@@ -689,13 +766,23 @@ export async function listTransfersPage(filters: TransferPageFilters) {
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   const joins = (query: any) =>
     query
-      .leftJoin(transferRequests, eq(transfers.transferRequestId, transferRequests.id))
+      .leftJoin(
+        transferRequests,
+        eq(transfers.transferRequestId, transferRequests.id)
+      )
       .leftJoin(projects, eq(transferRequests.projectId, projects.id))
-      .leftJoin(destinationProject, eq(transferRequests.destinationProjectId, destinationProject.id));
-  const [totalRow] = await joins(database.select({ count: count() }).from(transfers)).where(where);
+      .leftJoin(
+        destinationProject,
+        eq(transferRequests.destinationProjectId, destinationProject.id)
+      );
+  const [totalRow] = await joins(
+    database.select({ count: count() }).from(transfers)
+  ).where(where);
   const total = totalRow?.count ?? 0;
   const meta = getPageMeta(total, filters);
-  const idRows = await joins(database.select({ id: transfers.id }).from(transfers))
+  const idRows = await joins(
+    database.select({ id: transfers.id }).from(transfers)
+  )
     .where(where)
     .orderBy(desc(transfers.createdAt), desc(transfers.id))
     .limit(meta.pageSize)
@@ -722,10 +809,13 @@ export async function listReceiptsPage(filters: ReceiptPageFilters) {
   const database = await data.getDb();
   if (!database) return pageResult([], 0, filters);
   const conditions: any[] = [];
-  if (filters.projectId) conditions.push(eq(receipts.projectId, filters.projectId));
+  if (filters.projectId)
+    conditions.push(eq(receipts.projectId, filters.projectId));
   addProjectScope(conditions, receipts.projectId, filters.projectIds);
-  if (filters.sourceType) conditions.push(sql`${receipts.sourceType}::text = ${filters.sourceType}`);
-  if (filters.status) conditions.push(sql`${receipts.status}::text = ${filters.status}`);
+  if (filters.sourceType)
+    conditions.push(sql`${receipts.sourceType}::text = ${filters.sourceType}`);
+  if (filters.status)
+    conditions.push(sql`${receipts.status}::text = ${filters.status}`);
   const search = filters.search?.trim();
   if (search) {
     const pattern = `%${search}%`;
@@ -754,15 +844,18 @@ export async function listReceiptsPage(filters: ReceiptPageFilters) {
   }
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   const [totalRow] = await database
-      .select({ count: count() })
-      .from(receipts)
-      .leftJoin(projects, eq(receipts.projectId, projects.id))
-      .leftJoin(
-        purchaseOrders,
-        and(eq(receipts.sourceType, "purchase_order" as any), eq(receipts.sourceId, purchaseOrders.id))
+    .select({ count: count() })
+    .from(receipts)
+    .leftJoin(projects, eq(receipts.projectId, projects.id))
+    .leftJoin(
+      purchaseOrders,
+      and(
+        eq(receipts.sourceType, "purchase_order" as any),
+        eq(receipts.sourceId, purchaseOrders.id)
       )
-      .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
-      .where(where);
+    )
+    .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
+    .where(where);
   const total = totalRow?.count ?? 0;
   const meta = getPageMeta(total, filters);
   const idRows = await database
@@ -771,7 +864,10 @@ export async function listReceiptsPage(filters: ReceiptPageFilters) {
     .leftJoin(projects, eq(receipts.projectId, projects.id))
     .leftJoin(
       purchaseOrders,
-      and(eq(receipts.sourceType, "purchase_order" as any), eq(receipts.sourceId, purchaseOrders.id))
+      and(
+        eq(receipts.sourceType, "purchase_order" as any),
+        eq(receipts.sourceId, purchaseOrders.id)
+      )
     )
     .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
     .where(where)
@@ -805,17 +901,30 @@ export async function listInvoicesPage(filters: InvoicePageFilters) {
   const createdBy = alias(users, "invoice_page_created_by");
   const requestedBy = alias(users, "invoice_page_requested_by");
   const conditions: any[] = [];
-  if (filters.projectId) conditions.push(eq(invoices.projectId, filters.projectId));
+  if (filters.projectId)
+    conditions.push(eq(invoices.projectId, filters.projectId));
   addProjectScope(conditions, invoices.projectId, filters.projectIds);
-  if (filters.status) conditions.push(sql`${invoices.status}::text = ${filters.status}`);
+  if (filters.status)
+    conditions.push(sql`${invoices.status}::text = ${filters.status}`);
   if (filters.statuses?.length)
-    conditions.push(sql`${invoices.status}::text in (${sql.join(filters.statuses.map(value => sql`${value}`), sql`, `)})`);
-  if (filters.excludeStatus) conditions.push(sql`${invoices.status}::text <> ${filters.excludeStatus}`);
-  if (filters.supplierId) conditions.push(eq(invoices.supplierId, filters.supplierId));
+    conditions.push(
+      sql`${invoices.status}::text in (${sql.join(
+        filters.statuses.map(value => sql`${value}`),
+        sql`, `
+      )})`
+    );
+  if (filters.excludeStatus)
+    conditions.push(sql`${invoices.status}::text <> ${filters.excludeStatus}`);
+  if (filters.supplierId)
+    conditions.push(eq(invoices.supplierId, filters.supplierId));
   if (filters.dateFrom)
-    conditions.push(sql`${invoices.documentDate}::date >= ${filters.dateFrom}::date`);
+    conditions.push(
+      sql`${invoices.documentDate}::date >= ${filters.dateFrom}::date`
+    );
   if (filters.dateTo)
-    conditions.push(sql`${invoices.documentDate}::date <= ${filters.dateTo}::date`);
+    conditions.push(
+      sql`${invoices.documentDate}::date <= ${filters.dateTo}::date`
+    );
   const search = filters.search?.trim();
   if (search) {
     const pattern = `%${search}%`;
@@ -830,7 +939,10 @@ export async function listInvoicesPage(filters: InvoicePageFilters) {
         requestItems,
         eq(purchaseOrderItems.materialRequestItemId, requestItems.id)
       )
-      .leftJoin(materialRequests, eq(requestItems.requestId, materialRequests.id))
+      .leftJoin(
+        materialRequests,
+        eq(requestItems.requestId, materialRequests.id)
+      )
       .leftJoin(requestedBy, eq(materialRequests.requestedById, requestedBy.id))
       .where(
         or(
@@ -863,14 +975,14 @@ export async function listInvoicesPage(filters: InvoicePageFilters) {
   }
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   const [totalRow] = await database
-      .select({ count: count() })
-      .from(invoices)
-      .leftJoin(receipts, eq(invoices.receiptId, receipts.id))
-      .leftJoin(purchaseOrders, eq(invoices.purchaseOrderId, purchaseOrders.id))
-      .leftJoin(projects, eq(invoices.projectId, projects.id))
-      .leftJoin(suppliers, eq(invoices.supplierId, suppliers.id))
-      .leftJoin(createdBy, eq(receipts.receivedById, createdBy.id))
-      .where(where);
+    .select({ count: count() })
+    .from(invoices)
+    .leftJoin(receipts, eq(invoices.receiptId, receipts.id))
+    .leftJoin(purchaseOrders, eq(invoices.purchaseOrderId, purchaseOrders.id))
+    .leftJoin(projects, eq(invoices.projectId, projects.id))
+    .leftJoin(suppliers, eq(invoices.supplierId, suppliers.id))
+    .leftJoin(createdBy, eq(receipts.receivedById, createdBy.id))
+    .where(where);
   const total = totalRow?.count ?? 0;
   const meta = getPageMeta(total, filters);
   const idRows = await database

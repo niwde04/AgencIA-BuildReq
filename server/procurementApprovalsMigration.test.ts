@@ -149,6 +149,34 @@ describe("procurement approvals migration", () => {
     expect(sql).toContain(
       "WHEN request.\"approvalStatus\" = 'rechazada' THEN 'rechazada'"
     );
-    expect(sql).toContain('CREATE INDEX IF NOT EXISTS "pri_approval_status_idx"');
+    expect(sql).toContain(
+      'CREATE INDEX IF NOT EXISTS "pri_approval_status_idx"'
+    );
+  });
+
+  it("adds configurable nonnegative purchase order approval amounts", () => {
+    const sql = readFileSync(
+      new URL(
+        "../drizzle/0119_purchase_order_approval_amounts.sql",
+        import.meta.url
+      ),
+      "utf8"
+    );
+
+    expect(sql).toContain(
+      'ADD COLUMN IF NOT EXISTS "purchaseOrderApprovalMinimumHnl" numeric(18, 2)'
+    );
+    expect(sql).toContain(
+      'ADD COLUMN IF NOT EXISTS "purchaseOrderApprovalMinimumUsd" numeric(18, 2)'
+    );
+    expect(sql).toContain(
+      '"purchaseOrderApprovalMinimumHnl" SET DEFAULT 250000.00'
+    );
+    expect(sql).toContain(
+      '"purchaseOrderApprovalMinimumUsd" SET DEFAULT 10000.00'
+    );
+    expect(sql).toContain('CHECK ("purchaseOrderApprovalMinimumHnl" >= 0)');
+    expect(sql).toContain('CHECK ("purchaseOrderApprovalMinimumUsd" >= 0)');
+    expect(sql).not.toContain('UPDATE "purchaseOrders"');
   });
 });

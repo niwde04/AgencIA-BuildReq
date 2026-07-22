@@ -10,13 +10,18 @@ export const PROCUREMENT_APPROVALS_ENABLED = false;
 export type ProcurementApprovalSettings = {
   purchaseRequestApprovalsEnabled: boolean;
   purchaseOrderApprovalsEnabled: boolean;
+  purchaseOrderApprovalMinimumHnl: number;
+  purchaseOrderApprovalMinimumUsd: number;
   updatedAt?: Date | string | null;
 };
 
-export const DEFAULT_PROCUREMENT_APPROVAL_SETTINGS: ProcurementApprovalSettings = {
-  purchaseRequestApprovalsEnabled: false,
-  purchaseOrderApprovalsEnabled: false,
-};
+export const DEFAULT_PROCUREMENT_APPROVAL_SETTINGS: ProcurementApprovalSettings =
+  {
+    purchaseRequestApprovalsEnabled: false,
+    purchaseOrderApprovalsEnabled: false,
+    purchaseOrderApprovalMinimumHnl: 0,
+    purchaseOrderApprovalMinimumUsd: 0,
+  };
 
 let runtimeProcurementApprovalSettings: ProcurementApprovalSettings = {
   ...DEFAULT_PROCUREMENT_APPROVAL_SETTINGS,
@@ -41,6 +46,12 @@ export function setRuntimeProcurementApprovalSettings(
       settings.purchaseRequestApprovalsEnabled === true,
     purchaseOrderApprovalsEnabled:
       settings.purchaseOrderApprovalsEnabled === true,
+    purchaseOrderApprovalMinimumHnl: normalizeApprovalMinimum(
+      settings.purchaseOrderApprovalMinimumHnl
+    ),
+    purchaseOrderApprovalMinimumUsd: normalizeApprovalMinimum(
+      settings.purchaseOrderApprovalMinimumUsd
+    ),
     updatedAt: settings.updatedAt ?? new Date(nextUpdatedAt),
   };
   return runtimeProcurementApprovalSettings;
@@ -60,11 +71,6 @@ export function isPurchaseOrderApprovalEnabled() {
 
 export const PROCUREMENT_APPROVALS_DISABLED_MESSAGE =
   "El flujo de aprobación de Solicitudes y Órdenes de Compra está deshabilitado temporalmente";
-
-export const PURCHASE_ORDER_APPROVAL_LIMITS = {
-  HNL: 250_000,
-  USD: 10_000,
-} as const satisfies Record<PurchaseCurrency, number>;
 
 export type ProcurementApprovalDecision = "approve" | "reject";
 export type ProcurementApprovalDocumentType =
@@ -246,23 +252,38 @@ export function roundProcurementAmount(value: unknown) {
   return Math.round((numeric + tolerance) * 100) / 100;
 }
 
-export function purchaseOrderExceedsApprovalLimit(
+function normalizeApprovalMinimum(value: unknown) {
+  return Math.max(0, roundProcurementAmount(value));
+}
+
+export function getPurchaseOrderApprovalMinimum(
   currency: PurchaseCurrency,
-  total: unknown
+  settings = getRuntimeProcurementApprovalSettings()
+) {
+  return currency === "USD"
+    ? normalizeApprovalMinimum(settings.purchaseOrderApprovalMinimumUsd)
+    : normalizeApprovalMinimum(settings.purchaseOrderApprovalMinimumHnl);
+}
+
+export function purchaseOrderMeetsApprovalMinimum(
+  currency: PurchaseCurrency,
+  total: unknown,
+  settings = getRuntimeProcurementApprovalSettings()
 ) {
   return (
-    roundProcurementAmount(total) > PURCHASE_ORDER_APPROVAL_LIMITS[currency]
+    roundProcurementAmount(total) >=
+    getPurchaseOrderApprovalMinimum(currency, settings)
   );
 }
 
 export function purchaseOrderRequiresApproval(
   currency: PurchaseCurrency,
   total: unknown,
-  approvalsEnabled = isPurchaseOrderApprovalEnabled()
+  settings = getRuntimeProcurementApprovalSettings()
 ) {
   return (
-    approvalsEnabled &&
-    purchaseOrderExceedsApprovalLimit(currency, total)
+    settings.purchaseOrderApprovalsEnabled &&
+    purchaseOrderMeetsApprovalMinimum(currency, total, settings)
   );
 }
 

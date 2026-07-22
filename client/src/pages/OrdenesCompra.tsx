@@ -142,11 +142,12 @@ const STATUS_COLORS: Record<string, string> = {
   anulada: "border-rose-300 bg-rose-50 text-rose-700",
 };
 
-const getStatusFilterOptions = (approvalsEnabled: boolean) => Object.entries(STATUS_LABELS).filter(
-  ([status]) =>
-    approvalsEnabled ||
-    !["pendiente_aprobacion", "rechazada"].includes(status)
-);
+const getStatusFilterOptions = (approvalsEnabled: boolean) =>
+  Object.entries(STATUS_LABELS).filter(
+    ([status]) =>
+      approvalsEnabled ||
+      !["pendiente_aprobacion", "rechazada"].includes(status)
+  );
 
 function getEffectivePurchaseOrderStatus(
   status?: string | null,
@@ -250,6 +251,7 @@ const APPROVAL_ACTION_LABELS: Record<string, string> = {
   reopened: "Reabierta para corrección",
   reopen_rejected: "Reabierta para corrección",
   corregida: "Reabierta para corrección",
+  reopened_by_settings: "Reabierta por cambio de configuración",
 };
 
 function getApprovalStatusLabel(status?: string | null) {
@@ -910,8 +912,11 @@ type ApprovalReviewDecision = "approve" | "reject";
 export default function OrdenesCompra() {
   const utils = trpc.useUtils();
   const { user } = useAuth();
-  const { purchaseOrderApprovalsEnabled: PROCUREMENT_APPROVALS_ENABLED } =
-    useProcurementApprovalSettings();
+  const {
+    purchaseOrderApprovalsEnabled: PROCUREMENT_APPROVALS_ENABLED,
+    purchaseOrderApprovalMinimumHnl,
+    purchaseOrderApprovalMinimumUsd,
+  } = useProcurementApprovalSettings();
   const userRole = (user as any)?.buildreqRole;
   const isProcurementApprover = isProcurementApproverRole(userRole);
   const canManagePurchaseOrders =
@@ -1324,6 +1329,10 @@ export default function OrdenesCompra() {
   const approvalHistory = (detail as any)?.approvalHistory ?? [];
   const orderTotal = Number(detail?.summary?.total ?? 0);
   const orderCurrency = detail?.purchaseOrder.currency ?? "HNL";
+  const orderApprovalMinimum =
+    orderCurrency === "USD"
+      ? purchaseOrderApprovalMinimumUsd
+      : purchaseOrderApprovalMinimumHnl;
   const orderRequiresApproval =
     Number.isFinite(orderTotal) &&
     purchaseOrderRequiresApproval(orderCurrency, orderTotal);
@@ -3124,11 +3133,13 @@ export default function OrdenesCompra() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos los estados</SelectItem>
-            {getStatusFilterOptions(PROCUREMENT_APPROVALS_ENABLED).map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
+            {getStatusFilterOptions(PROCUREMENT_APPROVALS_ENABLED).map(
+              ([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              )
+            )}
           </SelectContent>
         </Select>
       </div>
@@ -4835,9 +4846,10 @@ export default function OrdenesCompra() {
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground">
                         Límite:{" "}
-                        {orderCurrency === "USD"
-                          ? "USD 10,000.00"
-                          : "L 250,000.00"}
+                        {formatPurchaseOrderCurrency(
+                          orderApprovalMinimum,
+                          orderCurrency
+                        )}
                       </p>
                     </div>
                     <div>

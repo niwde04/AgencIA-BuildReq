@@ -390,25 +390,18 @@ export async function updateTreasurySettings(input: {
     }
   }
   const [settings] = await db
-    .insert(systemSettings)
-    .values({
-      id: 1,
+    .update(systemSettings)
+    .set({
       treasuryEnabled: input.treasuryEnabled,
       updatedByUserId: input.updatedByUserId,
       updatedAt: new Date(),
     })
-    .onConflictDoUpdate({
-      target: systemSettings.id,
-      set: {
-        treasuryEnabled: input.treasuryEnabled,
-        updatedByUserId: input.updatedByUserId,
-        updatedAt: new Date(),
-      },
-    })
+    .where(eq(systemSettings.id, 1))
     .returning({
       treasuryEnabled: systemSettings.treasuryEnabled,
       updatedAt: systemSettings.updatedAt,
     });
+  if (!settings) throw new Error("Configuración del sistema no disponible");
   return settings;
 }
 
@@ -1310,13 +1303,7 @@ export async function approveTreasuryBatch(input: {
     if (batch.status !== "pendiente_aprobacion") {
       throw new TreasuryRuleError("El lote no está pendiente de aprobación.");
     }
-    await applyAdjustments(
-      tx,
-      input.batchId,
-      input.actor,
-      [],
-      "aprobacion"
-    );
+    await applyAdjustments(tx, input.batchId, input.actor, [], "aprobacion");
     const now = new Date();
     const [updated] = await tx
       .update(treasuryPaymentBatches)
@@ -1535,11 +1522,7 @@ async function persistTreasuryAttachment(input: {
   category: "archivo_bancario" | "comprobante_pago";
 }) {
   const key = `treasury/${input.batchId}/${Date.now()}-${randomUUID()}-${input.fileName}`;
-  const stored = await storagePut(
-    key,
-    input.buffer,
-    input.mimeType
-  );
+  const stored = await storagePut(key, input.buffer, input.mimeType);
   try {
     await createAttachment({
       entityType: "treasury_payment_batch",
@@ -1876,7 +1859,9 @@ export function buildTreasuryFullPaymentRows(input: {
 }): TreasuryBankRow[] {
   const approvedItems = input.items.filter(item => item.status === "aprobada");
   if (!approvedItems.length) {
-    throw new TreasuryRuleError("El lote no tiene facturas aprobadas para pagar.");
+    throw new TreasuryRuleError(
+      "El lote no tiene facturas aprobadas para pagar."
+    );
   }
   const bankReference = input.bankReference.trim();
   if (!bankReference) {

@@ -128,6 +128,7 @@ import type { BuildReqRole } from "@shared/buildreq-roles";
 export type { BuildReqRole } from "@shared/buildreq-roles";
 import {
   formatApprovalSnapshotAmount,
+  getRuntimeProcurementApprovalSettings,
   getPurchaseOrderApprovalReadinessError,
   isPurchaseOrderDraftLike,
   isPurchaseRequestDraftLike,
@@ -284,6 +285,12 @@ function toProcurementApprovalSettings(
       settings.purchaseRequestApprovalsEnabled === true,
     purchaseOrderApprovalsEnabled:
       settings.purchaseOrderApprovalsEnabled === true,
+    purchaseOrderApprovalMinimumHnl: Number(
+      settings.purchaseOrderApprovalMinimumHnl
+    ),
+    purchaseOrderApprovalMinimumUsd: Number(
+      settings.purchaseOrderApprovalMinimumUsd
+    ),
     updatedAt: settings.updatedAt,
   };
 }
@@ -301,15 +308,14 @@ export async function getProcurementApprovalSettings() {
       toProcurementApprovalSettings(settings)
     );
   } catch {
-    // During deployment the feature stays safely disabled until migration 0112
-    // has been applied.
+    // During deployment the feature stays safely disabled until the system
+    // settings migrations have been applied.
     return { ...DEFAULT_PROCUREMENT_APPROVAL_SETTINGS };
   }
 }
 
-export async function updateProcurementApprovalSettings(params: {
+export async function updatePurchaseRequestApprovalSettings(params: {
   purchaseRequestApprovalsEnabled: boolean;
-  purchaseOrderApprovalsEnabled: boolean;
   updatedByUserId: number;
 }) {
   const db = await getDb();
@@ -317,24 +323,129 @@ export async function updateProcurementApprovalSettings(params: {
 
   const updatedAt = new Date();
   const [settings] = await db
-    .insert(systemSettings)
-    .values({
-      id: 1,
+    .update(systemSettings)
+    .set({
       purchaseRequestApprovalsEnabled: params.purchaseRequestApprovalsEnabled,
-      purchaseOrderApprovalsEnabled: params.purchaseOrderApprovalsEnabled,
       updatedByUserId: params.updatedByUserId,
       updatedAt,
     })
-    .onConflictDoUpdate({
-      target: systemSettings.id,
-      set: {
-        purchaseRequestApprovalsEnabled: params.purchaseRequestApprovalsEnabled,
-        purchaseOrderApprovalsEnabled: params.purchaseOrderApprovalsEnabled,
-        updatedByUserId: params.updatedByUserId,
-        updatedAt,
-      },
-    })
+    .where(eq(systemSettings.id, 1))
     .returning();
+
+  if (!settings) throw new Error("Configuración del sistema no disponible");
+
+  return setRuntimeProcurementApprovalSettings(
+    toProcurementApprovalSettings(settings)
+  );
+}
+
+export async function updatePurchaseOrderApprovalSettings(params: {
+  purchaseOrderApprovalsEnabled: boolean;
+  purchaseOrderApprovalMinimumHnl: number;
+  purchaseOrderApprovalMinimumUsd: number;
+  actor: ProcurementApprovalActor;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const updatedAt = new Date();
+  const settings = await db.transaction(async tx => {
+    const [updatedSettings] = await tx
+      .update(systemSettings)
+      .set({
+        purchaseOrderApprovalsEnabled: params.purchaseOrderApprovalsEnabled,
+        purchaseOrderApprovalMinimumHnl:
+          params.purchaseOrderApprovalMinimumHnl.toFixed(2),
+        purchaseOrderApprovalMinimumUsd:
+          params.purchaseOrderApprovalMinimumUsd.toFixed(2),
+        updatedByUserId: params.actor.id,
+        updatedAt,
+      })
+      .where(eq(systemSettings.id, 1))
+      .returning();
+
+    if (!updatedSettings) {
+      throw new Error("Configuración del sistema no disponible");
+    }
+
+    const nextSettings = toProcurementApprovalSettings(updatedSettings);
+    const openApprovalOrders = await tx
+      .select()
+      .from(purchaseOrders)
+      .where(
+        or(
+          and(
+            eq(purchaseOrders.status, "pendiente_aprobacion"),
+            eq(purchaseOrders.approvalStatus, "pendiente")
+          ),
+          and(
+            eq(purchaseOrders.status, "rechazada"),
+            eq(purchaseOrders.approvalStatus, "rechazada")
+          )
+        )
+      );
+
+    const openOrderItems =
+      openApprovalOrders.length > 0
+        ? await tx
+            .select()
+            .from(purchaseOrderItems)
+            .where(
+              inArray(
+                purchaseOrderItems.purchaseOrderId,
+                openApprovalOrders.map(purchaseOrder => purchaseOrder.id)
+              )
+            )
+        : [];
+    const itemsByPurchaseOrderId = new Map<number, typeof openOrderItems>();
+    for (const item of openOrderItems) {
+      const items = itemsByPurchaseOrderId.get(item.purchaseOrderId) ?? [];
+      items.push(item);
+      itemsByPurchaseOrderId.set(item.purchaseOrderId, items);
+    }
+
+    for (const purchaseOrder of openApprovalOrders) {
+      const snapshot = summarizePersistedPurchaseOrder(
+        purchaseOrder,
+        itemsByPurchaseOrderId.get(purchaseOrder.id) ?? [],
+        nextSettings
+      );
+      if (snapshot.requiresApproval) continue;
+
+      const previousStatus = purchaseOrder.approvalStatus;
+      const [reopened] = await tx
+        .update(purchaseOrders)
+        .set({
+          status: "borrador",
+          approvalStatus: null,
+          updatedAt,
+        })
+        .where(
+          and(
+            eq(purchaseOrders.id, purchaseOrder.id),
+            eq(purchaseOrders.status, purchaseOrder.status),
+            eq(purchaseOrders.approvalStatus, previousStatus!)
+          )
+        )
+        .returning({ id: purchaseOrders.id });
+      if (!reopened) continue;
+
+      await tx.insert(procurementApprovalHistory).values({
+        documentType: "purchase_order",
+        documentId: purchaseOrder.id,
+        action: "reopened_by_settings",
+        previousStatus,
+        newStatus: null,
+        ...getApprovalActorSnapshot(params.actor),
+        comment:
+          "Reabierta automáticamente por cambio en la configuración de aprobación",
+        amount: snapshot.amount,
+        currency: snapshot.currency,
+      });
+    }
+
+    return updatedSettings;
+  });
 
   return setRuntimeProcurementApprovalSettings(
     toProcurementApprovalSettings(settings)
@@ -5498,7 +5609,8 @@ function summarizePersistedPurchaseOrder(
       | "additionalTaxCodes"
       | "taxBreakdown"
     >
-  >
+  >,
+  approvalSettings = getRuntimeProcurementApprovalSettings()
 ) {
   const summary = summarizePurchaseOrderLines(
     items.map(item => ({
@@ -5513,7 +5625,8 @@ function summarizePersistedPurchaseOrder(
     currency: purchaseOrder.currency,
     requiresApproval: purchaseOrderRequiresApproval(
       purchaseOrder.currency,
-      amount
+      amount,
+      approvalSettings
     ),
   };
 }
@@ -7865,6 +7978,7 @@ export async function submitPurchaseOrderForApproval(params: {
   id: number;
   actor: ProcurementApprovalActor;
 }) {
+  await getProcurementApprovalSettings();
   assertProcurementApprovalWorkflowEnabled("purchase_order");
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -7883,7 +7997,7 @@ export async function submitPurchaseOrderForApproval(params: {
     const snapshot = summarizePersistedPurchaseOrder(purchaseOrder, items);
     if (!snapshot.requiresApproval) {
       throw new Error(
-        "La orden no supera el límite y puede emitirse sin aprobación"
+        "La orden no alcanza el monto mínimo y puede emitirse sin aprobación"
       );
     }
 
@@ -7936,6 +8050,7 @@ export async function reviewPurchaseOrderApproval(params: {
   comment?: string | null;
   actor: ProcurementApprovalActor;
 }) {
+  await getProcurementApprovalSettings();
   assertProcurementApprovalWorkflowEnabled("purchase_order");
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -8084,6 +8199,7 @@ export async function issuePurchaseOrder(params: {
   id: number;
   actor: ProcurementApprovalActor;
 }) {
+  await getProcurementApprovalSettings();
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
@@ -8106,7 +8222,7 @@ export async function issuePurchaseOrder(params: {
     ) {
       if (snapshot.requiresApproval) {
         throw new Error(
-          "La orden supera el límite y debe aprobarse antes de emitirse"
+          "La orden alcanza el monto mínimo y debe aprobarse antes de emitirse"
         );
       }
 

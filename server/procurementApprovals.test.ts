@@ -5,34 +5,76 @@ import {
   isPurchaseOrderDraftLike,
   isPurchaseRequestConversionReady,
   PROCUREMENT_APPROVALS_ENABLED,
-  purchaseOrderExceedsApprovalLimit,
+  purchaseOrderMeetsApprovalMinimum,
   purchaseOrderRequiresApproval,
   roundProcurementAmount,
 } from "@shared/procurement-approvals";
 
 describe("procurement approval limits", () => {
+  const enabledSettings = {
+    purchaseRequestApprovalsEnabled: false,
+    purchaseOrderApprovalsEnabled: true,
+    purchaseOrderApprovalMinimumHnl: 250_000,
+    purchaseOrderApprovalMinimumUsd: 10_000,
+  };
+
   it.each([
-    ["HNL", 250_000, false],
-    ["HNL", 250_000.004, false],
-    ["HNL", 250_000.005, true],
+    ["HNL", 249_999.99, false],
+    ["HNL", 250_000, true],
+    ["HNL", 250_000.004, true],
     ["HNL", 250_000.01, true],
-    ["USD", 10_000, false],
-    ["USD", 10_000.004, false],
-    ["USD", 10_000.005, true],
+    ["USD", 9_999.99, false],
+    ["USD", 10_000, true],
+    ["USD", 10_000.004, true],
     ["USD", 10_000.01, true],
   ] as const)(
-    "uses the strict %s limit for %s",
+    "uses the inclusive configurable %s minimum for %s",
     (currency, total, expected) => {
-      expect(purchaseOrderExceedsApprovalLimit(currency, total)).toBe(expected);
+      expect(
+        purchaseOrderMeetsApprovalMinimum(currency, total, enabledSettings)
+      ).toBe(expected);
     }
   );
 
-  it("keeps the approval policy disabled without removing the thresholds", () => {
+  it("uses independent amounts per currency", () => {
+    const customSettings = {
+      ...enabledSettings,
+      purchaseOrderApprovalMinimumHnl: 125_000,
+      purchaseOrderApprovalMinimumUsd: 5_500,
+    };
+    expect(purchaseOrderRequiresApproval("HNL", 125_000, customSettings)).toBe(
+      true
+    );
+    expect(purchaseOrderRequiresApproval("USD", 5_499.99, customSettings)).toBe(
+      false
+    );
+  });
+
+  it("bypasses monetary approval while the switch is disabled", () => {
     expect(PROCUREMENT_APPROVALS_ENABLED).toBe(false);
-    expect(purchaseOrderExceedsApprovalLimit("HNL", 300_000)).toBe(true);
-    expect(purchaseOrderExceedsApprovalLimit("USD", 12_000)).toBe(true);
-    expect(purchaseOrderRequiresApproval("HNL", 300_000)).toBe(false);
-    expect(purchaseOrderRequiresApproval("USD", 12_000)).toBe(false);
+    const disabledSettings = {
+      ...enabledSettings,
+      purchaseOrderApprovalsEnabled: false,
+    };
+    expect(
+      purchaseOrderMeetsApprovalMinimum("HNL", 300_000, disabledSettings)
+    ).toBe(true);
+    expect(
+      purchaseOrderRequiresApproval("HNL", 300_000, disabledSettings)
+    ).toBe(false);
+    expect(purchaseOrderRequiresApproval("USD", 12_000, disabledSettings)).toBe(
+      false
+    );
+  });
+
+  it("accepts zero as a minimum amount", () => {
+    const zeroSettings = {
+      ...enabledSettings,
+      purchaseOrderApprovalMinimumHnl: 0,
+      purchaseOrderApprovalMinimumUsd: 0,
+    };
+    expect(purchaseOrderRequiresApproval("HNL", 0, zeroSettings)).toBe(true);
+    expect(purchaseOrderRequiresApproval("USD", 1, zeroSettings)).toBe(true);
   });
 
   it("allows open procurement documents to continue while disabled", () => {

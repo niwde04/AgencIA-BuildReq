@@ -360,6 +360,14 @@ export const systemSettings = pgTable("systemSettings", {
   purchaseOrderApprovalsEnabled: boolean("purchaseOrderApprovalsEnabled")
     .default(false)
     .notNull(),
+  purchaseOrderApprovalMinimumHnl: decimal("purchaseOrderApprovalMinimumHnl", {
+    precision: 18,
+    scale: 2,
+  }).notNull(),
+  purchaseOrderApprovalMinimumUsd: decimal("purchaseOrderApprovalMinimumUsd", {
+    precision: 18,
+    scale: 2,
+  }).notNull(),
   treasuryEnabled: boolean("treasuryEnabled").default(false).notNull(),
   updatedByUserId: integer("updatedByUserId").references(() => users.id, {
     onDelete: "set null",

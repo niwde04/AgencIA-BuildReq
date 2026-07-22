@@ -9534,6 +9534,105 @@ describe("BuildReq - User Management", () => {
   });
 });
 
+describe("BuildReq - Procurement approval settings", () => {
+  const savedSettings = {
+    purchaseRequestApprovalsEnabled: true,
+    purchaseOrderApprovalsEnabled: true,
+    purchaseOrderApprovalMinimumHnl: 175_000,
+    purchaseOrderApprovalMinimumUsd: 7_500,
+    updatedAt: new Date("2026-07-22T12:00:00Z"),
+  };
+
+  it("lets an admin save only the purchase order switch and amounts", async () => {
+    const { ctx } = createUserContext({ role: "admin" });
+    const caller = appRouter.createCaller(ctx);
+    const updateSpy = vi
+      .spyOn(db, "updatePurchaseOrderApprovalSettings")
+      .mockResolvedValue(savedSettings);
+
+    await expect(
+      caller.systemSettings.updatePurchaseOrderApprovals({
+        purchaseOrderApprovalsEnabled: true,
+        purchaseOrderApprovalMinimumHnl: 175_000,
+        purchaseOrderApprovalMinimumUsd: 7_500,
+      })
+    ).resolves.toEqual(savedSettings);
+    expect(updateSpy).toHaveBeenCalledWith({
+      purchaseOrderApprovalsEnabled: true,
+      purchaseOrderApprovalMinimumHnl: 175_000,
+      purchaseOrderApprovalMinimumUsd: 7_500,
+      actor: ctx.user,
+    });
+
+    updateSpy.mockRestore();
+  });
+
+  it("rejects negative amounts and values with more than two decimals", async () => {
+    const caller = appRouter.createCaller(
+      createUserContext({ role: "admin" }).ctx
+    );
+    const updateSpy = vi.spyOn(db, "updatePurchaseOrderApprovalSettings");
+
+    await expect(
+      caller.systemSettings.updatePurchaseOrderApprovals({
+        purchaseOrderApprovalsEnabled: true,
+        purchaseOrderApprovalMinimumHnl: -1,
+        purchaseOrderApprovalMinimumUsd: 10_000,
+      })
+    ).rejects.toThrow();
+    await expect(
+      caller.systemSettings.updatePurchaseOrderApprovals({
+        purchaseOrderApprovalsEnabled: true,
+        purchaseOrderApprovalMinimumHnl: 250_000.001,
+        purchaseOrderApprovalMinimumUsd: 10_000,
+      })
+    ).rejects.toThrow("máximo dos decimales");
+    expect(updateSpy).not.toHaveBeenCalled();
+
+    updateSpy.mockRestore();
+  });
+
+  it("denies purchase order configuration changes to non-admin users", async () => {
+    const caller = appRouter.createCaller(createAdminCentralContext().ctx);
+    const updateSpy = vi.spyOn(db, "updatePurchaseOrderApprovalSettings");
+
+    await expect(
+      caller.systemSettings.updatePurchaseOrderApprovals({
+        purchaseOrderApprovalsEnabled: false,
+        purchaseOrderApprovalMinimumHnl: 250_000,
+        purchaseOrderApprovalMinimumUsd: 10_000,
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(updateSpy).not.toHaveBeenCalled();
+
+    updateSpy.mockRestore();
+  });
+
+  it("keeps purchase request approval updates on their own mutation", async () => {
+    const { ctx } = createUserContext({ role: "admin" });
+    const caller = appRouter.createCaller(ctx);
+    const updateRequestSpy = vi
+      .spyOn(db, "updatePurchaseRequestApprovalSettings")
+      .mockResolvedValue({
+        ...savedSettings,
+        purchaseRequestApprovalsEnabled: false,
+      });
+    const updateOrderSpy = vi.spyOn(db, "updatePurchaseOrderApprovalSettings");
+
+    await caller.systemSettings.updatePurchaseRequestApprovals({
+      purchaseRequestApprovalsEnabled: false,
+    });
+    expect(updateRequestSpy).toHaveBeenCalledWith({
+      purchaseRequestApprovalsEnabled: false,
+      updatedByUserId: ctx.user!.id,
+    });
+    expect(updateOrderSpy).not.toHaveBeenCalled();
+
+    updateRequestSpy.mockRestore();
+    updateOrderSpy.mockRestore();
+  });
+});
+
 // ============================================================
 // Tests: Purchase Requests
 // ============================================================
@@ -9619,9 +9718,8 @@ describe("BuildReq - Purchase Requests", () => {
         ) + 1
       );
       setRuntimeProcurementApprovalSettings({
+        ...previousSettings,
         purchaseRequestApprovalsEnabled: true,
-        purchaseOrderApprovalsEnabled:
-          previousSettings.purchaseOrderApprovalsEnabled,
         updatedAt: enabledAt,
       });
 
@@ -9658,10 +9756,7 @@ describe("BuildReq - Purchase Requests", () => {
         getPurchaseRequestByIdSpy.mockRestore();
         updateQuantitiesSpy.mockRestore();
         setRuntimeProcurementApprovalSettings({
-          purchaseRequestApprovalsEnabled:
-            previousSettings.purchaseRequestApprovalsEnabled,
-          purchaseOrderApprovalsEnabled:
-            previousSettings.purchaseOrderApprovalsEnabled,
+          ...previousSettings,
           updatedAt: new Date(enabledAt.getTime() + 1),
         });
       }
@@ -9704,9 +9799,8 @@ describe("BuildReq - Purchase Requests", () => {
       ) + 1
     );
     setRuntimeProcurementApprovalSettings({
+      ...previousSettings,
       purchaseRequestApprovalsEnabled: true,
-      purchaseOrderApprovalsEnabled:
-        previousSettings.purchaseOrderApprovalsEnabled,
       updatedAt: enabledAt,
     });
 
@@ -9771,10 +9865,7 @@ describe("BuildReq - Purchase Requests", () => {
       reviewApprovalSpy.mockRestore();
       createNotificationSpy.mockRestore();
       setRuntimeProcurementApprovalSettings({
-        purchaseRequestApprovalsEnabled:
-          previousSettings.purchaseRequestApprovalsEnabled,
-        purchaseOrderApprovalsEnabled:
-          previousSettings.purchaseOrderApprovalsEnabled,
+        ...previousSettings,
         updatedAt: new Date(enabledAt.getTime() + 1),
       });
     }
@@ -11152,6 +11243,25 @@ describe("BuildReq - Purchase Orders", () => {
   it("approver list visibility includes only high-value or approval-history POs", async () => {
     const { ctx } = createProcurementApproverContext();
     const caller = appRouter.createCaller(ctx);
+    const previousSettings = getRuntimeProcurementApprovalSettings();
+    const enabledAt = new Date(
+      Math.max(
+        Date.now(),
+        previousSettings.updatedAt
+          ? new Date(previousSettings.updatedAt).getTime()
+          : 0
+      ) + 1
+    );
+    setRuntimeProcurementApprovalSettings({
+      ...previousSettings,
+      purchaseOrderApprovalsEnabled: true,
+      purchaseOrderApprovalMinimumHnl: 250_000,
+      purchaseOrderApprovalMinimumUsd: 10_000,
+      updatedAt: enabledAt,
+    });
+    const getSettingsSpy = vi
+      .spyOn(db, "getProcurementApprovalSettings")
+      .mockResolvedValue(getRuntimeProcurementApprovalSettings());
     const rows = [
       {
         purchaseOrder: { id: 1, projectId: 1, currency: "HNL" },
@@ -11183,10 +11293,19 @@ describe("BuildReq - Purchase Orders", () => {
       .spyOn(db, "listPurchaseOrders")
       .mockResolvedValue(rows);
 
-    const visibleRows = await caller.purchaseOrders.list();
-    expect(visibleRows.map(row => row.purchaseOrder.id)).toEqual([2, 3, 5]);
-
-    listPurchaseOrdersSpy.mockRestore();
+    try {
+      const visibleRows = await caller.purchaseOrders.list();
+      expect(visibleRows.map(row => row.purchaseOrder.id)).toEqual([
+        1, 2, 3, 4, 5,
+      ]);
+    } finally {
+      getSettingsSpy.mockRestore();
+      listPurchaseOrdersSpy.mockRestore();
+      setRuntimeProcurementApprovalSettings({
+        ...previousSettings,
+        updatedAt: new Date(enabledAt.getTime() + 1),
+      });
+    }
   });
 
   it("changes the tax interpretation only for an editable purchase order", async () => {
@@ -19104,9 +19223,8 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
       ) + 1
     );
     setRuntimeProcurementApprovalSettings({
+      ...previousSettings,
       purchaseRequestApprovalsEnabled: true,
-      purchaseOrderApprovalsEnabled:
-        previousSettings.purchaseOrderApprovalsEnabled,
       updatedAt: enabledAt,
     });
 
@@ -19139,9 +19257,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
       await expect(
         caller.purchaseOrders.createFromPurchaseRequest({
           purchaseRequestId: 74,
-          itemsToConvert: [
-            { purchaseRequestItemId: 7401, quantity: "5.00" },
-          ],
+          itemsToConvert: [{ purchaseRequestItemId: 7401, quantity: "5.00" }],
         })
       ).rejects.toMatchObject({
         code: "BAD_REQUEST",
@@ -19153,10 +19269,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
       getPurchaseRequestByIdSpy.mockRestore();
       createPurchaseOrderSpy.mockRestore();
       setRuntimeProcurementApprovalSettings({
-        purchaseRequestApprovalsEnabled:
-          previousSettings.purchaseRequestApprovalsEnabled,
-        purchaseOrderApprovalsEnabled:
-          previousSettings.purchaseOrderApprovalsEnabled,
+        ...previousSettings,
         updatedAt: new Date(enabledAt.getTime() + 1),
       });
     }

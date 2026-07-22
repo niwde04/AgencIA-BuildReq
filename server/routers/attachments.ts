@@ -1,7 +1,10 @@
 import { TRPCError } from "@trpc/server";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { procurementProcedure as protectedProcedure, router } from "../_core/trpc";
+import {
+  procurementProcedure as protectedProcedure,
+  router,
+} from "../_core/trpc";
 import * as db from "../db";
 import { storageDelete, storageGet, storagePut } from "../storage";
 import { canAccessProject } from "../projectAccess";
@@ -13,7 +16,7 @@ import {
 import {
   isPurchaseOrderDraftLike,
   isPurchaseRequestDraftLike,
-  purchaseOrderExceedsApprovalLimit,
+  purchaseOrderRequiresApproval,
 } from "@shared/procurement-approvals";
 
 const PDF_MAX_BYTES = 10 * 1000 * 1000;
@@ -373,7 +376,7 @@ async function assertPurchaseOrderAttachmentAccess(
   if (
     isProcurementApproverRole(user.buildreqRole) &&
     detail.approvalHistory.length === 0 &&
-    !purchaseOrderExceedsApprovalLimit(
+    !purchaseOrderRequiresApproval(
       detail.purchaseOrder.currency,
       detail.summary.total
     )

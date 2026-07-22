@@ -11,5 +11,9 @@ export function useProcurementApprovalSettings() {
       query.data?.purchaseRequestApprovalsEnabled ?? false,
     purchaseOrderApprovalsEnabled:
       query.data?.purchaseOrderApprovalsEnabled ?? false,
+    purchaseOrderApprovalMinimumHnl:
+      query.data?.purchaseOrderApprovalMinimumHnl ?? 0,
+    purchaseOrderApprovalMinimumUsd:
+      query.data?.purchaseOrderApprovalMinimumUsd ?? 0,
   };
 }

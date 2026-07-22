@@ -2,7 +2,10 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
 import { listPurchaseOrdersPage } from "../paginatedLists";
-import { procurementProcedure as protectedProcedure, router } from "../_core/trpc";
+import {
+  procurementProcedure as protectedProcedure,
+  router,
+} from "../_core/trpc";
 import {
   PURCHASE_CURRENCIES,
   PURCHASE_ORDER_CONTRACT_FREQUENCIES,
@@ -25,7 +28,7 @@ import {
   isPurchaseRequestApprovalEnabled,
   isPurchaseRequestConversionReady,
   PROCUREMENT_APPROVALS_DISABLED_MESSAGE,
-  purchaseOrderExceedsApprovalLimit,
+  purchaseOrderRequiresApproval,
 } from "@shared/procurement-approvals";
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
@@ -622,7 +625,7 @@ export const purchaseOrdersRouter = router({
       return rows.filter(
         row =>
           row.hasApprovalHistory ||
-          purchaseOrderExceedsApprovalLimit(
+          purchaseOrderRequiresApproval(
             row.purchaseOrder.currency,
             row.totalAmount
           )
@@ -650,7 +653,7 @@ export const purchaseOrdersRouter = router({
       if (
         isProcurementApproverRole(ctx.user.buildreqRole) &&
         detail.approvalHistory.length === 0 &&
-        !purchaseOrderExceedsApprovalLimit(
+        !purchaseOrderRequiresApproval(
           detail.purchaseOrder.currency,
           detail.summary.total
         )

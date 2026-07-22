@@ -1,10 +1,21 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import { useProcurementApprovalSettings } from "@/hooks/useProcurementApprovalSettings";
 import { Settings2, ShieldCheck, WalletCards, UserCheck } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
+
+function parseApprovalMinimum(value: string) {
+  const normalized = value.trim();
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return null;
+  const amount = Number(normalized);
+  return Number.isFinite(amount) && amount >= 0 ? amount : null;
+}
 
 export default function Configuracion() {
   const { user } = useAuth();
@@ -13,20 +24,55 @@ export default function Configuracion() {
     data: settings,
     isLoading,
     purchaseRequestApprovalsEnabled,
-    purchaseOrderApprovalsEnabled,
   } = useProcurementApprovalSettings();
+  const [orderApprovalsEnabled, setOrderApprovalsEnabled] = useState(false);
+  const [minimumHnl, setMinimumHnl] = useState("");
+  const [minimumUsd, setMinimumUsd] = useState("");
+  const [purchaseOrderSettingsDirty, setPurchaseOrderSettingsDirty] =
+    useState(false);
 
-  const updateMutation =
-    trpc.systemSettings.updateProcurementApprovals.useMutation({
+  useEffect(() => {
+    if (!settings || purchaseOrderSettingsDirty) return;
+    setOrderApprovalsEnabled(settings.purchaseOrderApprovalsEnabled);
+    setMinimumHnl(settings.purchaseOrderApprovalMinimumHnl.toFixed(2));
+    setMinimumUsd(settings.purchaseOrderApprovalMinimumUsd.toFixed(2));
+  }, [settings, purchaseOrderSettingsDirty]);
+
+  const invalidateApprovalQueries = async () => {
+    await Promise.all([
+      utils.systemSettings.procurementApprovals.invalidate(),
+      utils.purchaseRequests.list.invalidate(),
+      utils.purchaseRequests.listPage.invalidate(),
+      utils.purchaseOrders.list.invalidate(),
+      utils.purchaseOrders.listPage.invalidate(),
+      utils.purchaseOrders.getById.invalidate(),
+      utils.dashboard.sidebarCounts.invalidate(),
+      utils.dashboard.stats.invalidate(),
+    ]);
+  };
+
+  const updatePurchaseRequestMutation =
+    trpc.systemSettings.updatePurchaseRequestApprovals.useMutation({
       onSuccess: async () => {
-        toast.success("Configuración de aprobaciones actualizada");
-        await Promise.all([
-          utils.systemSettings.procurementApprovals.invalidate(),
-          utils.purchaseRequests.list.invalidate(),
-          utils.purchaseOrders.list.invalidate(),
-          utils.dashboard.sidebarCounts.invalidate(),
-          utils.dashboard.stats.invalidate(),
-        ]);
+        toast.success("Configuración de solicitudes actualizada");
+        await invalidateApprovalQueries();
+      },
+      onError: error => toast.error(error.message),
+    });
+
+  const updatePurchaseOrderMutation =
+    trpc.systemSettings.updatePurchaseOrderApprovals.useMutation({
+      onSuccess: async updatedSettings => {
+        setOrderApprovalsEnabled(updatedSettings.purchaseOrderApprovalsEnabled);
+        setMinimumHnl(
+          updatedSettings.purchaseOrderApprovalMinimumHnl.toFixed(2)
+        );
+        setMinimumUsd(
+          updatedSettings.purchaseOrderApprovalMinimumUsd.toFixed(2)
+        );
+        setPurchaseOrderSettingsDirty(false);
+        toast.success("Configuración de órdenes de compra actualizada");
+        await invalidateApprovalQueries();
       },
       onError: error => toast.error(error.message),
     });
@@ -58,22 +104,24 @@ export default function Configuracion() {
     );
   }
 
-  const updateApprovalSetting = (
-    setting:
-      | "purchaseRequestApprovalsEnabled"
-      | "purchaseOrderApprovalsEnabled",
-    enabled: boolean
-  ) => {
-    if (!settings || updateMutation.isPending) return;
-    updateMutation.mutate({
-      purchaseRequestApprovalsEnabled:
-        setting === "purchaseRequestApprovalsEnabled"
-          ? enabled
-          : purchaseRequestApprovalsEnabled,
-      purchaseOrderApprovalsEnabled:
-        setting === "purchaseOrderApprovalsEnabled"
-          ? enabled
-          : purchaseOrderApprovalsEnabled,
+  const minimumHnlValue = parseApprovalMinimum(minimumHnl);
+  const minimumUsdValue = parseApprovalMinimum(minimumUsd);
+  const purchaseOrderSettingsValid =
+    minimumHnlValue !== null && minimumUsdValue !== null;
+
+  const savePurchaseOrderSettings = () => {
+    if (
+      !settings ||
+      updatePurchaseOrderMutation.isPending ||
+      minimumHnlValue === null ||
+      minimumUsdValue === null
+    ) {
+      return;
+    }
+    updatePurchaseOrderMutation.mutate({
+      purchaseOrderApprovalsEnabled: orderApprovalsEnabled,
+      purchaseOrderApprovalMinimumHnl: minimumHnlValue,
+      purchaseOrderApprovalMinimumUsd: minimumUsdValue,
     });
   };
 
@@ -108,31 +156,120 @@ export default function Configuracion() {
             <Switch
               checked={purchaseRequestApprovalsEnabled}
               onCheckedChange={enabled =>
-                updateApprovalSetting(
-                  "purchaseRequestApprovalsEnabled",
-                  enabled
-                )
+                updatePurchaseRequestMutation.mutate({
+                  purchaseRequestApprovalsEnabled: enabled,
+                })
               }
-              disabled={isLoading || updateMutation.isPending}
+              disabled={isLoading || updatePurchaseRequestMutation.isPending}
               aria-label="Activar aprobaciones de solicitudes de compra"
             />
           </div>
 
-          <div className="flex items-center justify-between gap-6 rounded-lg border p-4">
-            <div className="space-y-1">
-              <p className="font-medium">Aprobar Órdenes de Compra</p>
-              <p className="text-sm text-muted-foreground">
-                Exige aprobación para OC que superen el límite configurado.
-              </p>
+          <div className="space-y-5 rounded-lg border p-4">
+            <div className="flex items-center justify-between gap-6">
+              <div className="space-y-1">
+                <p className="font-medium">Aprobar Órdenes de Compra</p>
+                <p className="text-sm text-muted-foreground">
+                  Exige aprobación cuando una OC alcanza el monto mínimo
+                  configurado para su moneda.
+                </p>
+              </div>
+              <Switch
+                checked={orderApprovalsEnabled}
+                onCheckedChange={enabled => {
+                  setOrderApprovalsEnabled(enabled);
+                  setPurchaseOrderSettingsDirty(true);
+                }}
+                disabled={isLoading || updatePurchaseOrderMutation.isPending}
+                aria-label="Activar aprobaciones de órdenes de compra"
+              />
             </div>
-            <Switch
-              checked={purchaseOrderApprovalsEnabled}
-              onCheckedChange={enabled =>
-                updateApprovalSetting("purchaseOrderApprovalsEnabled", enabled)
-              }
-              disabled={isLoading || updateMutation.isPending}
-              aria-label="Activar aprobaciones de órdenes de compra"
-            />
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="purchase-order-minimum-hnl">
+                  Monto mínimo en lempiras
+                </Label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-medium text-muted-foreground">
+                    L
+                  </span>
+                  <Input
+                    id="purchase-order-minimum-hnl"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    className="pl-8"
+                    value={minimumHnl}
+                    onChange={event => {
+                      setMinimumHnl(event.target.value);
+                      setPurchaseOrderSettingsDirty(true);
+                    }}
+                    disabled={
+                      isLoading || updatePurchaseOrderMutation.isPending
+                    }
+                    aria-invalid={
+                      purchaseOrderSettingsDirty && minimumHnlValue === null
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="purchase-order-minimum-usd">
+                  Monto mínimo en dólares
+                </Label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-medium text-muted-foreground">
+                    USD
+                  </span>
+                  <Input
+                    id="purchase-order-minimum-usd"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    className="pl-14"
+                    value={minimumUsd}
+                    onChange={event => {
+                      setMinimumUsd(event.target.value);
+                      setPurchaseOrderSettingsDirty(true);
+                    }}
+                    disabled={
+                      isLoading || updatePurchaseOrderMutation.isPending
+                    }
+                    aria-invalid={
+                      purchaseOrderSettingsDirty && minimumUsdValue === null
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+
+            {purchaseOrderSettingsDirty && !purchaseOrderSettingsValid ? (
+              <p className="text-sm text-destructive">
+                Ingrese montos válidos, mayores o iguales a cero y con máximo
+                dos decimales.
+              </p>
+            ) : null}
+
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                onClick={savePurchaseOrderSettings}
+                disabled={
+                  isLoading ||
+                  updatePurchaseOrderMutation.isPending ||
+                  !purchaseOrderSettingsDirty ||
+                  !purchaseOrderSettingsValid
+                }
+              >
+                {updatePurchaseOrderMutation.isPending
+                  ? "Guardando..."
+                  : "Guardar configuración"}
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
