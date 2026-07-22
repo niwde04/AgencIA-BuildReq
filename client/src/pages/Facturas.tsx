@@ -179,9 +179,9 @@ const ASSET_DETAIL_OPTIONAL_FIELDS: Array<{
   label: string;
   placeholder: string;
 }> = [
+  { key: "brand", label: "Marca", placeholder: "Marca" },
   { key: "color", label: "Color", placeholder: "Color" },
   { key: "model", label: "Modelo", placeholder: "Modelo" },
-  { key: "brand", label: "Marca", placeholder: "Marca" },
   { key: "chassisSeries", label: "Serie chasis", placeholder: "Serie chasis" },
   { key: "motorSeries", label: "Serie motor", placeholder: "Serie motor" },
   { key: "plateOrCode", label: "Placa/código", placeholder: "Placa o código" },
@@ -1168,78 +1168,99 @@ function InvoiceAssetDetailsEditor({
           </div>
         ) : (
           <div className="space-y-3">
-            {assetDetails.map((detail, index) => (
-              <div
-                key={`${item.id}-asset-${index}`}
-                className="rounded-lg border border-border/70 p-3"
-              >
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm font-semibold">
-                    Unidad {index + 1}
-                  </span>
-                  {!canEdit ? (
-                    <span className="text-xs text-muted-foreground">
-                      {getAssetDetailSummary(detail)}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <div className="space-y-1.5">
-                    <Label>Número de serie</Label>
-                    <Input
-                      value={detail.serialNumber}
-                      disabled={!canEdit}
-                      onChange={event =>
-                        updateAssetDetail(
-                          index,
-                          "serialNumber",
-                          event.target.value
-                        )
-                      }
-                      placeholder="Serie"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Condición</Label>
-                    <Select
-                      value={detail.condition}
-                      disabled={!canEdit}
-                      onValueChange={value =>
-                        updateAssetDetail(index, "condition", value)
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ASSET_CONDITION_VALUES.map(condition => (
-                          <SelectItem key={condition} value={condition}>
-                            {ASSET_CONDITION_LABELS[condition]}
-                          </SelectItem>
+            <div className="overflow-hidden rounded-lg border border-border/70">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1320px] border-collapse text-sm">
+                  <thead className="bg-muted/40">
+                    <tr className="border-b border-border/70 text-left text-xs font-semibold text-muted-foreground">
+                      <th className="w-16 px-3 py-2.5">Unidad</th>
+                      <th className="min-w-[160px] px-2 py-2.5">
+                        Número de serie
+                      </th>
+                      <th className="w-32 px-2 py-2.5">Condición</th>
+                      {ASSET_DETAIL_OPTIONAL_FIELDS.map(field => (
+                        <th
+                          key={field.key}
+                          className="min-w-[145px] px-2 py-2.5"
+                        >
+                          {field.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {assetDetails.map((detail, index) => (
+                      <tr
+                        key={`${item.id}-asset-${index}`}
+                        className="border-b border-border/60 last:border-b-0"
+                      >
+                        <td className="px-3 py-2 font-semibold">{index + 1}</td>
+                        <td className="px-2 py-2">
+                          <Input
+                            className="h-9"
+                            aria-label={`Número de serie de la unidad ${index + 1}`}
+                            value={detail.serialNumber}
+                            disabled={!canEdit}
+                            onChange={event =>
+                              updateAssetDetail(
+                                index,
+                                "serialNumber",
+                                event.target.value
+                              )
+                            }
+                            placeholder="Ej. SN123456"
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <Select
+                            value={detail.condition}
+                            disabled={!canEdit}
+                            onValueChange={value =>
+                              updateAssetDetail(index, "condition", value)
+                            }
+                          >
+                            <SelectTrigger
+                              className="h-9"
+                              aria-label={`Condición de la unidad ${index + 1}`}
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {ASSET_CONDITION_VALUES.map(condition => (
+                                <SelectItem key={condition} value={condition}>
+                                  {ASSET_CONDITION_LABELS[condition]}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </td>
+                        {ASSET_DETAIL_OPTIONAL_FIELDS.map(field => (
+                          <td key={field.key} className="px-2 py-2">
+                            <Input
+                              className="h-9"
+                              aria-label={`${field.label} de la unidad ${index + 1}`}
+                              value={String(detail[field.key] ?? "")}
+                              disabled={!canEdit}
+                              onChange={event =>
+                                updateAssetDetail(
+                                  index,
+                                  field.key,
+                                  event.target.value
+                                )
+                              }
+                              placeholder={field.placeholder}
+                            />
+                          </td>
                         ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {ASSET_DETAIL_OPTIONAL_FIELDS.map(field => (
-                    <div key={field.key} className="space-y-1.5">
-                      <Label>{field.label}</Label>
-                      <Input
-                        value={String(detail[field.key] ?? "")}
-                        disabled={!canEdit}
-                        onChange={event =>
-                          updateAssetDetail(
-                            index,
-                            field.key,
-                            event.target.value
-                          )
-                        }
-                        placeholder={field.placeholder}
-                      />
-                    </div>
-                  ))}
-                </div>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            ))}
+              <div className="border-t border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                Mostrando {assetDetails.length} de {assetUnitCount} unidad(es)
+              </div>
+            </div>
           </div>
         )
       ) : null}
