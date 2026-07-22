@@ -2153,24 +2153,26 @@ export default function PurchaseRequests() {
               </div>
               {detail && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge
-                    variant="outline"
-                    className={`rounded-full px-3 py-1 text-xs uppercase ${
-                      STATUS_COLORS[
+                  {!isCompactApprovalView ? (
+                    <Badge
+                      variant="outline"
+                      className={`rounded-full px-3 py-1 text-xs uppercase ${
+                        STATUS_COLORS[
+                          getEffectivePurchaseRequestStatus(
+                            detail.purchaseRequest.status,
+                            detail.purchaseRequest.approvalStatus
+                          )
+                        ] || ""
+                      }`}
+                    >
+                      {STATUS_LABELS[
                         getEffectivePurchaseRequestStatus(
                           detail.purchaseRequest.status,
                           detail.purchaseRequest.approvalStatus
                         )
-                      ] || ""
-                    }`}
-                  >
-                    {STATUS_LABELS[
-                      getEffectivePurchaseRequestStatus(
-                        detail.purchaseRequest.status,
-                        detail.purchaseRequest.approvalStatus
-                      )
-                    ] || detail.purchaseRequest.status}
-                  </Badge>
+                      ] || detail.purchaseRequest.status}
+                    </Badge>
+                  ) : null}
                   <Badge
                     variant="secondary"
                     className="rounded-full px-3 py-1 text-xs"
@@ -2237,12 +2239,6 @@ export default function PurchaseRequests() {
                         ).toLocaleDateString("es-HN")
                       : "—",
                     icon: "date",
-                  },
-                  {
-                    label: "Estado",
-                    value: "Pendiente",
-                    icon: "status",
-                    accent: true,
                   },
                 ]}
                 detailTitle={`Ítems a aprobar (${selectedItems.length})`}

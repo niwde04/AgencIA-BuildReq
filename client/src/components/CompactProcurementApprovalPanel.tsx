@@ -75,12 +75,18 @@ export function CompactProcurementApprovalPanel({
   isPending = false,
 }: CompactProcurementApprovalPanelProps) {
   const [isDetailOpen, setIsDetailOpen] = useState(true);
+  const [isNotesOpen, setIsNotesOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-8 sm:py-6">
       <div
         className={`grid gap-3 sm:grid-cols-2 ${
-          summaryFields.length >= 5 ? "xl:grid-cols-5" : "lg:grid-cols-4"
+          summaryFields.length >= 5
+            ? "xl:grid-cols-5"
+            : summaryFields.length === 4
+              ? "lg:grid-cols-4"
+              : "lg:grid-cols-3"
         }`}
       >
         {summaryFields.map(field => {
@@ -128,59 +134,91 @@ export function CompactProcurementApprovalPanel({
         ) : null}
       </section>
 
-      <section className="mt-4 rounded-xl border border-border/70 bg-card p-4">
-        <div className="flex items-center gap-2">
-          <FileText className="h-4 w-4 text-muted-foreground" />
-          <h3 className="font-semibold">Notas</h3>
-        </div>
-        <p className="mt-2 whitespace-pre-wrap pl-6 text-sm text-muted-foreground">
-          {notes?.trim() || "Sin notas."}
-        </p>
+      <section className="mt-4 overflow-hidden rounded-xl border border-border/70 bg-card">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/30"
+          onClick={() => setIsNotesOpen(current => !current)}
+          aria-expanded={isNotesOpen}
+        >
+          <span className="flex items-center gap-2">
+            <FileText className="h-4 w-4 text-muted-foreground" />
+            <span className="font-semibold">Notas</span>
+          </span>
+          <ChevronDown
+            className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+              isNotesOpen ? "rotate-180" : ""
+            }`}
+          />
+        </button>
+        {isNotesOpen ? (
+          <p className="whitespace-pre-wrap border-t border-border/70 px-4 py-3 pl-10 text-sm text-muted-foreground">
+            {notes?.trim() || "Sin notas."}
+          </p>
+        ) : null}
       </section>
 
-      <section className="mt-4 rounded-xl border border-border/70 bg-card p-4">
-        <div className="flex items-start gap-2">
-          <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-          <div>
-            <h3 className="font-semibold">Historial de aprobación</h3>
-            <p className="text-xs text-muted-foreground">
-              {historyDescription}
-            </p>
-          </div>
-        </div>
+      <section className="mt-4 overflow-hidden rounded-xl border border-border/70 bg-card">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/30"
+          onClick={() => setIsHistoryOpen(current => !current)}
+          aria-expanded={isHistoryOpen}
+        >
+          <span className="flex min-w-0 items-start gap-2">
+            <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+            <span>
+              <span className="block font-semibold">
+                Historial de aprobación
+              </span>
+              <span className="block text-xs text-muted-foreground">
+                {historyDescription}
+              </span>
+            </span>
+          </span>
+          <ChevronDown
+            className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+              isHistoryOpen ? "rotate-180" : ""
+            }`}
+          />
+        </button>
 
-        {history.length > 0 ? (
-          <ol className="mt-4 space-y-4 pl-2">
-            {history.map(entry => (
-              <li
-                key={entry.id}
-                className="relative border-l border-border pb-1 pl-6 last:pb-0"
-              >
-                <span className="absolute -left-1.5 top-1 h-3 w-3 rounded-full border-2 border-blue-500 bg-blue-100" />
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-semibold">{entry.title}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {entry.actor}
-                    </p>
-                  </div>
-                  <time className="text-xs text-muted-foreground">
-                    {entry.date}
-                  </time>
-                </div>
-                {entry.comment ? (
-                  <p className="mt-2 rounded-lg bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                    {entry.comment}
-                  </p>
-                ) : null}
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <p className="mt-4 rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
-            {emptyHistoryMessage}
-          </p>
-        )}
+        {isHistoryOpen ? (
+          <div className="border-t border-border/70 px-4 py-4">
+            {history.length > 0 ? (
+              <ol className="space-y-4 pl-2">
+                {history.map(entry => (
+                  <li
+                    key={entry.id}
+                    className="relative border-l border-border pb-1 pl-6 last:pb-0"
+                  >
+                    <span className="absolute -left-1.5 top-1 h-3 w-3 rounded-full border-2 border-blue-500 bg-blue-100" />
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold">{entry.title}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {entry.actor}
+                        </p>
+                      </div>
+                      <time className="text-xs text-muted-foreground">
+                        {entry.date}
+                      </time>
+                    </div>
+                    {entry.comment ? (
+                      <p className="mt-2 rounded-lg bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+                        {entry.comment}
+                      </p>
+                    ) : null}
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
+                {emptyHistoryMessage}
+              </p>
+            )}
+          </div>
+        ) : null}
       </section>
 
       <div className="mt-5 flex flex-col gap-3 border-t border-border/70 pt-4 sm:flex-row sm:items-center sm:justify-between">

@@ -3669,24 +3669,26 @@ export default function OrdenesCompra() {
                   </Badge>
                 ) : detail?.purchaseOrder.status ? (
                   <>
-                    <Badge
-                      variant="outline"
-                      className={`text-sm ${
-                        STATUS_COLORS[
+                    {!isCompactApprovalView ? (
+                      <Badge
+                        variant="outline"
+                        className={`text-sm ${
+                          STATUS_COLORS[
+                            getEffectivePurchaseOrderStatus(
+                              detail.purchaseOrder.status,
+                              detail.purchaseOrder.approvalStatus
+                            )
+                          ] || ""
+                        }`}
+                      >
+                        {STATUS_LABELS[
                           getEffectivePurchaseOrderStatus(
                             detail.purchaseOrder.status,
                             detail.purchaseOrder.approvalStatus
                           )
-                        ] || ""
-                      }`}
-                    >
-                      {STATUS_LABELS[
-                        getEffectivePurchaseOrderStatus(
-                          detail.purchaseOrder.status,
-                          detail.purchaseOrder.approvalStatus
-                        )
-                      ] || detail.purchaseOrder.status}
-                    </Badge>
+                        ] || detail.purchaseOrder.status}
+                      </Badge>
+                    ) : null}
                     {isCompactApprovalView ? (
                       <Badge variant="secondary" className="text-sm">
                         {items.length} ítem(s)
