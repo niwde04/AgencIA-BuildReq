@@ -4695,6 +4695,64 @@ export default function OrdenesCompra() {
                     accent: true,
                   },
                 ]}
+                detailTitle={`Ítems a aprobar (${items.length})`}
+                detailContent={
+                  <table className="w-full min-w-[860px] text-sm">
+                    <thead className="bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Artículo</th>
+                        <th className="px-4 py-3 text-left">SAP</th>
+                        <th className="px-4 py-3 text-right">Cantidad</th>
+                        <th className="px-4 py-3 text-right">
+                          Precio unitario
+                        </th>
+                        <th className="px-4 py-3 text-right">Subtotal</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/70">
+                      {items.map((item: any) => {
+                        const draft = getItemDraft(item);
+                        const lineAmounts = calculatePurchaseOrderLineAmounts({
+                          quantity: draft.quantity,
+                          unitPrice: draft.unitPrice,
+                          subtotal: draft.subtotal,
+                          pricesIncludeTax:
+                            detail.purchaseOrder.pricesIncludeTax,
+                          taxCode: draft.taxCode,
+                          additionalTaxCodes: draft.additionalTaxCodes,
+                          taxes: activeSalesTaxes,
+                        });
+                        return (
+                          <tr key={item.id}>
+                            <td className="px-4 py-3 font-medium">
+                              {getTemporaryFixedAssetDisplayName(item)}
+                            </td>
+                            <td className="px-4 py-3 font-mono text-xs">
+                              {item.currentSapItemCode ||
+                                item.originalSapItemCode ||
+                                "—"}
+                            </td>
+                            <td className="px-4 py-3 text-right font-medium">
+                              {formatQuantity(draft.quantity)} {item.unit || ""}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              {formatPurchaseOrderCurrency(
+                                Number(draft.unitPrice || 0),
+                                orderCurrency
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-right font-semibold">
+                              {formatPurchaseOrderCurrency(
+                                lineAmounts.subtotal,
+                                orderCurrency
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                }
                 notes={detail.purchaseOrder.notes}
                 history={approvalHistory.map(
                   (entry: any, index: number) => ({

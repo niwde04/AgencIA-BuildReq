@@ -1,7 +1,9 @@
 import { Button } from "@/components/ui/button";
+import { useState, type ReactNode } from "react";
 import {
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
   CircleDollarSign,
   Clock3,
   FileText,
@@ -38,6 +40,8 @@ export type CompactApprovalHistoryEntry = {
 
 type CompactProcurementApprovalPanelProps = {
   summaryFields: CompactApprovalSummaryField[];
+  detailTitle: string;
+  detailContent: ReactNode;
   notes?: string | null;
   history: CompactApprovalHistoryEntry[];
   historyDescription: string;
@@ -59,6 +63,8 @@ const SUMMARY_ICONS = {
 
 export function CompactProcurementApprovalPanel({
   summaryFields,
+  detailTitle,
+  detailContent,
   notes,
   history,
   historyDescription,
@@ -68,6 +74,8 @@ export function CompactProcurementApprovalPanel({
   onApprove,
   isPending = false,
 }: CompactProcurementApprovalPanelProps) {
+  const [isDetailOpen, setIsDetailOpen] = useState(true);
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-8 sm:py-6">
       <div
@@ -98,6 +106,27 @@ export function CompactProcurementApprovalPanel({
           );
         })}
       </div>
+
+      <section className="mt-4 overflow-hidden rounded-xl border border-border/70 bg-card">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/30"
+          onClick={() => setIsDetailOpen(current => !current)}
+          aria-expanded={isDetailOpen}
+        >
+          <span className="font-semibold">{detailTitle}</span>
+          <ChevronDown
+            className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+              isDetailOpen ? "rotate-180" : ""
+            }`}
+          />
+        </button>
+        {isDetailOpen ? (
+          <div className="overflow-x-auto border-t border-border/70">
+            {detailContent}
+          </div>
+        ) : null}
+      </section>
 
       <section className="mt-4 rounded-xl border border-border/70 bg-card p-4">
         <div className="flex items-center gap-2">

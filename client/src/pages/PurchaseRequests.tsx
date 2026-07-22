@@ -2245,6 +2245,63 @@ export default function PurchaseRequests() {
                     accent: true,
                   },
                 ]}
+                detailTitle={`Ítems a aprobar (${selectedItems.length})`}
+                detailContent={
+                  <table className="w-full min-w-[720px] text-sm">
+                    <thead className="bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Artículo</th>
+                        <th className="px-4 py-3 text-left">SAP</th>
+                        <th className="px-4 py-3 text-right">
+                          Cantidad a aprobar
+                        </th>
+                        <th className="px-4 py-3 text-left">Destino</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/70">
+                      {selectedItems.map((item: any) => (
+                        <tr key={item.id}>
+                          <td className="px-4 py-3 font-medium">
+                            {item.itemName}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs">
+                            {item.currentSapItemCode ||
+                              item.originalSapItemCode ||
+                              "—"}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center justify-end gap-2">
+                              <Input
+                                className="h-9 w-32 text-right font-mono"
+                                type="number"
+                                min="0.01"
+                                step="0.01"
+                                value={getApprovalQuantityDraft(item)}
+                                onChange={event =>
+                                  updateApprovalQuantityDraft(
+                                    item,
+                                    event.target.value
+                                  )
+                                }
+                                disabled={
+                                  updatePendingQuantitiesMutation.isPending ||
+                                  reviewApprovalMutation.isPending
+                                }
+                                aria-label={`Cantidad a aprobar de ${item.itemName}`}
+                              />
+                              <span className="min-w-10 text-left text-xs text-muted-foreground">
+                                {item.unit || ""}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-muted-foreground">
+                            {getItemTargetLabel(item)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                }
                 notes={detail.purchaseRequest.notes}
                 history={[...approvalHistory]
                   .sort(
