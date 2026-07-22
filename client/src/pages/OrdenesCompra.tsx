@@ -3629,7 +3629,7 @@ export default function OrdenesCompra() {
         <DialogContent
           className={
             isCompactApprovalView
-              ? "flex max-h-[calc(100vh-1rem)] w-[calc(100vw-1rem)] max-w-[1000px] flex-col overflow-hidden rounded-2xl p-0 sm:max-h-[calc(100vh-2rem)] sm:w-[calc(100vw-2rem)]"
+              ? "flex max-h-[calc(100vh-1rem)] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl p-0 sm:max-h-[calc(100vh-2rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1000px]"
               : "scrollbar-visible max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1600px] sm:p-6 lg:p-7"
           }
         >
