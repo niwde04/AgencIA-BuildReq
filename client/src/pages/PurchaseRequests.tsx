@@ -705,6 +705,8 @@ export default function PurchaseRequests() {
   const selectedItems = useMemo(() => {
     return detail?.items ?? [];
   }, [detail]);
+  const isApprovedPurchaseRequest =
+    detail?.purchaseRequest.approvalStatus === "aprobada";
   const pendingApprovalItemIds = useMemo(
     () =>
       selectedItems
@@ -886,13 +888,18 @@ export default function PurchaseRequests() {
   };
 
   const buildConversionPayload = () => {
-    const selectedIds =
-      selectedItemIds.length > 0 ? selectedItemIds : convertibleItemIds;
+    const selectedIds = isApprovedPurchaseRequest
+      ? convertibleItemIds
+      : selectedItemIds.length > 0
+        ? selectedItemIds
+        : convertibleItemIds;
     const itemsToConvert = selectedItems
       .filter((item: any) => selectedIds.includes(item.id))
       .map((item: any) => {
         const pendingQuantity = getPendingConversionQuantity(item);
-        const quantity = Number(getConvertQuantityDraft(item) || 0);
+        const quantity = isApprovedPurchaseRequest
+          ? pendingQuantity
+          : Number(getConvertQuantityDraft(item) || 0);
         return {
           item,
           pendingQuantity,
@@ -969,10 +976,17 @@ export default function PurchaseRequests() {
 
   const itemIdsToConvert = useMemo(
     () =>
-      selectedItemIds.length > 0
+      isApprovedPurchaseRequest
+        ? convertibleItemIds
+        : selectedItemIds.length > 0
         ? selectedItemIds.filter(id => convertibleItemIdSet.has(id))
         : convertibleItemIds,
-    [convertibleItemIdSet, convertibleItemIds, selectedItemIds]
+    [
+      convertibleItemIdSet,
+      convertibleItemIds,
+      isApprovedPurchaseRequest,
+      selectedItemIds,
+    ]
   );
 
   const convertibleRequestIds = useMemo(
@@ -1028,8 +1042,6 @@ export default function PurchaseRequests() {
     PROCUREMENT_APPROVALS_ENABLED &&
     (detail?.purchaseRequest.approvalStatus === "pendiente" ||
       detail?.purchaseRequest.status === "en_revision");
-  const isApprovedPurchaseRequest =
-    detail?.purchaseRequest.approvalStatus === "aprobada";
   const isDraftPurchaseRequest = isPurchaseRequestDraftLike(
     detail?.purchaseRequest.status,
     detail?.purchaseRequest.approvalStatus
@@ -2842,7 +2854,9 @@ export default function PurchaseRequests() {
                                 ? "Marca los ítems que deben continuar al flujo de compra; los no seleccionados serán rechazados."
                                 : "Los ítems permanecen bloqueados mientras se revisa la solicitud."
                               : canConvertSelectedPurchaseRequest
-                                ? "Marca los renglones que deseas convertir a la próxima orden de compra."
+                                ? isApprovedPurchaseRequest
+                                  ? "Solicitud aprobada y bloqueada. Se convertirán todos los ítems pendientes a la orden de compra."
+                                  : "Marca los renglones que deseas convertir a la próxima orden de compra."
                                 : "Detalle de ítems incluidos en la solicitud."}
                     </p>
                   </div>
@@ -2852,7 +2866,9 @@ export default function PurchaseRequests() {
                         variant="secondary"
                         className="rounded-full px-3 py-1 text-xs"
                       >
-                        {selectedItemIds.length > 0
+                        {isApprovedPurchaseRequest
+                          ? `Se convertirán ${convertibleItemIds.length}`
+                          : selectedItemIds.length > 0
                           ? `${selectedItemIds.length} seleccionados`
                           : `Se convertirán ${convertibleItemIds.length}`}
                       </Badge>
@@ -2878,7 +2894,8 @@ export default function PurchaseRequests() {
                     }`}
                   >
                     <colgroup>
-                      {canConvertSelectedPurchaseRequest && (
+                      {canConvertSelectedPurchaseRequest &&
+                        !isApprovedPurchaseRequest && (
                         <col className="w-20" />
                       )}
                       <col className="w-44" />
@@ -2907,7 +2924,8 @@ export default function PurchaseRequests() {
                     </colgroup>
                     <thead>
                       <tr className="border-b border-border bg-muted/20">
-                        {canConvertSelectedPurchaseRequest && (
+                        {canConvertSelectedPurchaseRequest &&
+                          !isApprovedPurchaseRequest && (
                           <th className="w-20 p-4 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                             A OC
                           </th>
@@ -2974,7 +2992,9 @@ export default function PurchaseRequests() {
                               Pendiente
                             </th>
                             <th className="w-52 p-4 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                              Cantidad a comprar
+                              {isApprovedPurchaseRequest
+                                ? "Cantidad a convertir"
+                                : "Cantidad a comprar"}
                             </th>
                           </>
                         ) : null}
@@ -3009,7 +3029,8 @@ export default function PurchaseRequests() {
                             key={item.id}
                             className="border-b border-border/70 last:border-0"
                           >
-                            {canConvertSelectedPurchaseRequest && (
+                            {canConvertSelectedPurchaseRequest &&
+                              !isApprovedPurchaseRequest && (
                               <td className="p-4 align-top">
                                 <Checkbox
                                   checked={selectedItemIds.includes(item.id)}
@@ -3185,21 +3206,27 @@ export default function PurchaseRequests() {
                                 </td>
                                 <td className="p-4 align-top">
                                   <div className="flex items-center justify-end gap-2">
-                                    <Input
-                                      className="h-9 w-36 text-right"
-                                      type="number"
-                                      min="0.01"
-                                      max={pendingQuantity || undefined}
-                                      step="0.01"
-                                      value={convertQuantity}
-                                      onChange={event =>
-                                        updateConvertQuantityDraft(
-                                          item,
-                                          event.target.value
-                                        )
-                                      }
-                                      disabled={!canConvertItem}
-                                    />
+                                    {isApprovedPurchaseRequest ? (
+                                      <span className="h-9 w-36 rounded-md border border-transparent px-3 py-2 text-right font-mono">
+                                        {formatQuantity(pendingQuantity)}
+                                      </span>
+                                    ) : (
+                                      <Input
+                                        className="h-9 w-36 text-right"
+                                        type="number"
+                                        min="0.01"
+                                        max={pendingQuantity || undefined}
+                                        step="0.01"
+                                        value={convertQuantity}
+                                        onChange={event =>
+                                          updateConvertQuantityDraft(
+                                            item,
+                                            event.target.value
+                                          )
+                                        }
+                                        disabled={!canConvertItem}
+                                      />
+                                    )}
                                     <span className="min-w-12 text-left text-xs text-muted-foreground">
                                       {item.unit || ""}
                                     </span>
