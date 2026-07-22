@@ -1893,7 +1893,149 @@ export default function PurchaseRequests() {
               No hay solicitudes de compra que coincidan con los filtros
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+              <div className="space-y-3 p-3 md:hidden">
+                {filteredRequests.map((row: any) => {
+                  const canSelectForUnified =
+                    canConvertPurchaseRequestRow(row);
+                  const effectiveStatus = getEffectivePurchaseRequestStatus(
+                    row.purchaseRequest.status,
+                    row.purchaseRequest.approvalStatus
+                  );
+
+                  return (
+                    <article
+                      key={row.purchaseRequest.id}
+                      className="space-y-3 rounded-xl border border-border/70 bg-card p-4 shadow-sm"
+                    >
+                      <div className="flex items-start gap-3">
+                        {canConvert ? (
+                          <Checkbox
+                            className="mt-0.5"
+                            checked={selectedRequestIds.includes(
+                              row.purchaseRequest.id
+                            )}
+                            onCheckedChange={checked =>
+                              toggleRequestSelection(
+                                row.purchaseRequest.id,
+                                checked === true
+                              )
+                            }
+                            disabled={!canSelectForUnified}
+                            aria-label={`Seleccionar ${row.purchaseRequest.requestNumber}`}
+                          />
+                        ) : null}
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold leading-tight">
+                            {row.purchaseRequest.requestNumber}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {formatPurchaseRequestRequestNumbers(row)}
+                          </p>
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className={`shrink-0 text-[10px] ${
+                            STATUS_COLORS[effectiveStatus] || ""
+                          }`}
+                        >
+                          {STATUS_LABELS[effectiveStatus] ||
+                            row.purchaseRequest.status}
+                        </Badge>
+                      </div>
+
+                      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                        <div className="col-span-2 min-w-0">
+                          <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Proyecto
+                          </dt>
+                          <dd className="mt-1 text-xs leading-snug">
+                            {row.projectSummary?.label ||
+                              (row.project
+                                ? `${row.project.code} — ${row.project.name}`
+                                : "—")}
+                          </dd>
+                        </div>
+                        <div className="min-w-0">
+                          <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Requiriente
+                          </dt>
+                          <dd className="mt-1 text-xs leading-snug">
+                            {formatPurchaseRequestRequestedBy(row)}
+                          </dd>
+                        </div>
+                        <div className="min-w-0">
+                          <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Tipo de compra
+                          </dt>
+                          <dd className="mt-1 text-xs">
+                            {getPurchaseTypeLabel(
+                              row.purchaseRequest.purchaseType
+                            )}
+                          </dd>
+                        </div>
+                        <div className="min-w-0">
+                          <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Fecha creación
+                          </dt>
+                          <dd className="mt-1 text-xs">
+                            {row.purchaseRequest.createdAt
+                              ? new Date(
+                                  row.purchaseRequest.createdAt
+                                ).toLocaleDateString("es-HN")
+                              : "—"}
+                          </dd>
+                        </div>
+                        <div className="min-w-0">
+                          <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Fecha necesaria
+                          </dt>
+                          <dd className="mt-1 text-xs">
+                            {row.purchaseRequest.neededBy
+                              ? new Date(
+                                  row.purchaseRequest.neededBy
+                                ).toLocaleDateString("es-HN")
+                              : "—"}
+                          </dd>
+                        </div>
+                      </dl>
+
+                      <div className="flex flex-wrap items-center gap-2 border-t border-border/70 pt-3">
+                        {PROCUREMENT_APPROVALS_ENABLED ? (
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] ${
+                              APPROVAL_STATUS_COLORS[
+                                row.purchaseRequest.approvalStatus
+                              ] || ""
+                            }`}
+                          >
+                            {formatApprovalStatus(
+                              row.purchaseRequest.approvalStatus
+                            )}
+                          </Badge>
+                        ) : null}
+                        {row.purchaseRequest.sapDocumentNumber ? (
+                          <Badge variant="outline" className="text-[10px]">
+                            SAP {row.purchaseRequest.sapDocumentNumber}
+                          </Badge>
+                        ) : null}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="ml-auto"
+                          onClick={() => openRequest(row.purchaseRequest.id)}
+                        >
+                          <Eye className="mr-2 h-4 w-4" />
+                          Ver detalle
+                        </Button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+              <div className="hidden overflow-x-auto md:block">
               <table className="w-full min-w-[1700px] text-sm">
                 <thead>
                   <tr className="border-b border-border">
@@ -2085,7 +2227,8 @@ export default function PurchaseRequests() {
                   })}
                 </tbody>
               </table>
-            </div>
+              </div>
+            </>
           )}
           {requestsPage ? (
             <DataPagination
@@ -2120,7 +2263,9 @@ export default function PurchaseRequests() {
         >
           <DialogHeader
             className={`shrink-0 border-b border-border/70 px-5 py-5 pr-12 sm:px-8 ${
-              isCompactApprovalView ? "sm:py-6" : "lg:px-8"
+              isCompactApprovalView
+                ? "px-4 py-3 sm:py-5"
+                : "lg:px-8"
             }`}
           >
             <div className="flex flex-wrap items-end justify-between gap-3">
