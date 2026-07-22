@@ -4,11 +4,19 @@ import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { ASSET_CONDITION_VALUES } from "@shared/fixed-assets";
 import {
+  ARTICLE_DESCRIPTION_MAX_LENGTH,
+  normalizeArticleDescription,
+} from "@shared/article-descriptions";
+import {
   isProcurementApproverRole,
   isSuperintendentFamilyRole,
 } from "@shared/buildreq-roles";
 
 const articleTypeSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
+const articleDescriptionSchema = z
+  .string()
+  .transform(normalizeArticleDescription)
+  .pipe(z.string().min(1).max(ARTICLE_DESCRIPTION_MAX_LENGTH));
 const fixedAssetDetailSchema = z.object({
   serialNumber: z.string().trim().min(1).max(120),
   condition: z.enum(ASSET_CONDITION_VALUES),
@@ -149,7 +157,7 @@ export const articlesRouter = router({
       z.object({
         id: z.number().int().positive(),
         itemCode: z.string().trim().min(1).max(50).optional(),
-        description: z.string().trim().min(1).max(500).optional(),
+        description: articleDescriptionSchema.optional(),
         itemGroup: z.string().trim().max(255).nullable().optional(),
         financialGroupCode: z.string().trim().max(20).nullable().optional(),
         brand: z.string().trim().max(120).nullable().optional(),
@@ -256,7 +264,7 @@ export const articlesRouter = router({
     .input(
       z.object({
         itemCode: z.string().trim().min(1).max(50),
-        description: z.string().trim().min(1).max(500),
+        description: articleDescriptionSchema,
         itemGroup: z.string().trim().max(255).nullable().optional(),
         financialGroupCode: z.string().trim().max(20).nullable().optional(),
         brand: z.string().trim().max(120).nullable().optional(),

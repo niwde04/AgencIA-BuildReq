@@ -73,7 +73,7 @@ describe("import-services-hidalgo", () => {
       expect(result.parsedRows).toEqual([
         expect.objectContaining({
           itemCode: "1001000001",
-          description: "Servicios de internet",
+          description: "SERVICIOS DE INTERNET",
           itemGroup: "0104 Servicios basicos",
           allowsTaxWithholding: false,
           isActive: true,

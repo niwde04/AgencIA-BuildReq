@@ -172,7 +172,7 @@ describe("import-fixed-assets-hidalgo", () => {
       ]);
       expect(result.parsedRows[0]).toMatchObject({
         itemCode: "070200001",
-        description: "Descripcion completa cargada",
+        description: "DESCRIPCION COMPLETA CARGADA",
         itemGroup: "0702 MAQUINARIA PESADA",
         allowsTaxWithholding: false,
         isActive: false,
@@ -207,7 +207,7 @@ describe("import-fixed-assets-hidalgo", () => {
     expect(result.parsedRows).toHaveLength(1);
     expect(result.parsedRows[0]).toMatchObject({
       itemCode: "AF001",
-      description: "Descripcion corta",
+      description: "DESCRIPCION CORTA",
     });
   });
 

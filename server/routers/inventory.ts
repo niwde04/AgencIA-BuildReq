@@ -3,6 +3,18 @@ import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 import { TRPCError } from "@trpc/server";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
+import {
+  ARTICLE_DESCRIPTION_MAX_LENGTH,
+  normalizeArticleDescription,
+} from "@shared/article-descriptions";
+
+const inventoryNameSchema = z
+  .string()
+  .transform(normalizeArticleDescription)
+  .pipe(z.string().min(1).max(ARTICLE_DESCRIPTION_MAX_LENGTH));
+const inventoryDescriptionSchema = z
+  .string()
+  .transform(normalizeArticleDescription);
 
 type InventoryAccessUser = {
   id: number;
@@ -339,8 +351,8 @@ export const inventoryRouter = router({
     .input(
       z.object({
         sapItemCode: z.string().min(1),
-        name: z.string().min(1).max(500),
-        description: z.string().optional(),
+        name: inventoryNameSchema,
+        description: inventoryDescriptionSchema.optional(),
         unit: z.string().optional(),
         category: z.string().optional(),
         currentStock: z.string().optional(),
@@ -365,8 +377,8 @@ export const inventoryRouter = router({
     .input(
       z.object({
         id: z.number(),
-        name: z.string().optional(),
-        description: z.string().optional(),
+        name: inventoryNameSchema.optional(),
+        description: inventoryDescriptionSchema.optional(),
         unit: z.string().optional(),
         category: z.string().optional(),
         currentStock: z.string().optional(),

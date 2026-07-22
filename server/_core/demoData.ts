@@ -190,8 +190,12 @@ export function parseArticlesPaste(raw?: string | null) {
     const itemCode = row[0]?.trim();
     const warehouseCode = row[1]?.trim() || undefined;
     const warehouseName = row[2]?.trim() || undefined;
-    const shortDescription = row[3]?.trim();
-    const fullDescription = row[4]?.trim() || undefined;
+    const shortDescription = row[3]?.trim()
+      ? normalizeArticleDescription(row[3])
+      : undefined;
+    const fullDescription = row[4]?.trim()
+      ? normalizeArticleDescription(row[4])
+      : undefined;
     const description = shortDescription || fullDescription;
 
     if (!itemCode || !description) continue;
@@ -268,3 +272,4 @@ export function parseDemoImportInput(input: {
 
   return payload;
 }
+import { normalizeArticleDescription } from "@shared/article-descriptions";

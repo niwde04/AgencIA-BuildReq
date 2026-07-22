@@ -933,7 +933,10 @@ describe("BuildReq - Articles catalog", () => {
 
     expect(financialGroupSpy).toHaveBeenCalledTimes(2);
     expect(createArticleSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ financialGroupCode: "02019901" })
+      expect.objectContaining({
+        description: "ARTÍCULO CON GRUPO FINANCIERO",
+        financialGroupCode: "02019901",
+      })
     );
     expect(updateArticleSpy).toHaveBeenNthCalledWith(
       1,
@@ -1218,6 +1221,7 @@ describe("BuildReq - Articles catalog", () => {
       1,
       expect.objectContaining({
         itemCode: "ADM-001",
+        description: "ARTÍCULO NUEVO",
         createdById: 1,
         updatedById: 1,
       })
@@ -1489,7 +1493,7 @@ describe("BuildReq - Articles catalog", () => {
     expect(updateArticleSpy).toHaveBeenCalledWith(
       1,
       expect.objectContaining({
-        description: "Descripción actualizada",
+        description: "DESCRIPCIÓN ACTUALIZADA",
         itemGroup: "Grupo actualizado",
         financialGroupCode: "02019901",
       })
@@ -4284,6 +4288,47 @@ describe("BuildReq - Role-based Access Control", () => {
 
     expect(createInventoryItemSpy).not.toHaveBeenCalled();
     createInventoryItemSpy.mockRestore();
+  });
+
+  it("Normalizes inventory names and descriptions before persistence", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const createInventoryItemSpy = vi
+      .spyOn(db, "createInventoryItem")
+      .mockResolvedValue({ id: 91 });
+    const updateInventoryItemSpy = vi
+      .spyOn(db, "updateInventoryItem")
+      .mockResolvedValue({ success: true });
+
+    await caller.inventory.create({
+      sapItemCode: "MAT-001",
+      name: "  Cemento gris  ",
+      description: "Bolsa de 42.5 kg",
+      projectId: 10,
+      warehouseId: 20,
+    });
+    await caller.inventory.update({
+      id: 91,
+      name: "Cemento portland",
+      description: "Uso estructural",
+    });
+
+    expect(createInventoryItemSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "CEMENTO GRIS",
+        description: "BOLSA DE 42.5 KG",
+      })
+    );
+    expect(updateInventoryItemSpy).toHaveBeenCalledWith(
+      91,
+      expect.objectContaining({
+        name: "CEMENTO PORTLAND",
+        description: "USO ESTRUCTURAL",
+      })
+    );
+
+    createInventoryItemSpy.mockRestore();
+    updateInventoryItemSpy.mockRestore();
   });
 
   it("Administracion Central classifies selected inventory into project warehouse", async () => {

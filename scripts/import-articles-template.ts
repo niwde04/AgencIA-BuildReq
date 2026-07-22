@@ -4,6 +4,7 @@ import process from "node:process";
 import dotenv from "dotenv";
 import { Client } from "pg";
 import XLSX from "xlsx";
+import { normalizeArticleDescription } from "../shared/article-descriptions";
 
 const SHEET_NAME = "ARTICULOS";
 const BATCH_SIZE = 500;
@@ -607,7 +608,12 @@ function readWorkbook(file: string): ImportData {
     const rowNumber = index + 2;
     const itemCode = getCell(row, "Numero de articulo");
     const projectCode = getCell(row, "Codigo Proyecto");
-    const shortDescription = getCell(row, "Descripcion del articulo");
+    const shortDescription = normalizeArticleDescription(
+      getCell(row, "Descripcion del articulo")
+    );
+    const fullDescription = normalizeArticleDescription(
+      getCell(row, "Descripcion del articulo completa")
+    );
 
     if (!itemCode) {
       skippedRows.push({
@@ -639,7 +645,7 @@ function readWorkbook(file: string): ImportData {
       validationErrors
     );
 
-    if (!shortDescription && !getCell(row, "Descripcion del articulo completa")) {
+    if (!shortDescription && !fullDescription) {
       validationErrors.push(`Fila ${rowNumber}: falta descripcion del articulo`);
     }
 
@@ -656,7 +662,7 @@ function readWorkbook(file: string): ImportData {
       brand: getCell(row, "Marca"),
       partNumber: getCell(row, "Numero de parte"),
       shortDescription,
-      fullDescription: getCell(row, "Descripcion del articulo completa"),
+      fullDescription,
       unit: getCell(row, "Unidad"),
       category: getCell(row, "Categoria inventario"),
       stock: stock ?? 0,

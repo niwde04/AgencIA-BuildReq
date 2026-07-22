@@ -1,6 +1,10 @@
 import { trpc } from "@/lib/trpc";
 import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import { useAuth } from "@/_core/hooks/useAuth";
+import {
+  normalizeArticleDescription,
+  uppercaseArticleDescription,
+} from "@shared/article-descriptions";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -1063,7 +1067,9 @@ export default function Inventario() {
                     <Label className="text-xs">Nombre *</Label>
                     <Input
                       value={name}
-                      onChange={(e) => setName(e.target.value)}
+                      onChange={(e) =>
+                        setName(uppercaseArticleDescription(e.target.value))
+                      }
                       placeholder="Cemento Portland"
                     />
                   </div>
@@ -1181,8 +1187,10 @@ export default function Inventario() {
                     }
                     createMutation.mutate({
                       sapItemCode,
-                      name,
-                      description: description || undefined,
+                      name: normalizeArticleDescription(name),
+                      description: description
+                        ? normalizeArticleDescription(description)
+                        : undefined,
                       unit: unit || undefined,
                       category: category || undefined,
                       currentStock: currentStock || undefined,

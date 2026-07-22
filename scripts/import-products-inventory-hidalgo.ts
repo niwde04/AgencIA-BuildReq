@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import { Client } from "pg";
 import XLSX from "xlsx";
+import { normalizeArticleDescription } from "../shared/article-descriptions";
 
 const DEFAULT_SHEET_NAME = "Inventario";
 const BATCH_SIZE = 500;
@@ -573,7 +574,9 @@ export function parseRows(
     }
 
     const itemCode = normalizeUpper(row["codigo_sap*"]);
-    const description = normalizeCell(row["descripcion_articulo*"]);
+    const description = normalizeArticleDescription(
+      normalizeCell(row["descripcion_articulo*"])
+    );
     const itemGroup = normalizeCell(row["tipo_articulo*"]);
     const warehouseCodeRaw = normalizeUpper(row["codigo_almacen*"]);
     const bodegaCodeRaw = nullableText(row["codigo_bodega"]);

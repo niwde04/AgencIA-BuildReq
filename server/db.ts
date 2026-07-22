@@ -176,6 +176,10 @@ import {
   type FixedAssetDetail,
 } from "@shared/fixed-assets";
 import {
+  normalizeArticleDescription,
+  normalizeOptionalArticleDescription,
+} from "@shared/article-descriptions";
+import {
   getDemoImportWorkload,
   type ParsedDemoImportPayload,
 } from "./_core/demoData";
@@ -16205,8 +16209,10 @@ async function addInventoryStock(params: {
     await db
       .update(inventoryItems)
       .set({
-        name: existingRow.name || params.itemName,
-        description: existingRow.description ?? params.description ?? null,
+        name: normalizeArticleDescription(existingRow.name || params.itemName),
+        description: normalizeOptionalArticleDescription(
+          existingRow.description ?? params.description ?? null
+        ),
         unit: existingRow.unit ?? params.unit ?? null,
         projectId: inventoryProjectId,
         warehouseId: warehouseAssignment.warehouseId,
@@ -16236,8 +16242,10 @@ async function addInventoryStock(params: {
     .insert(inventoryItems)
     .values({
       sapItemCode: normalizedSapItemCode,
-      name: params.itemName,
-      description: params.description ?? null,
+      name: normalizeArticleDescription(params.itemName),
+      description: normalizeOptionalArticleDescription(
+        params.description ?? null
+      ),
       unit: params.unit ?? null,
       currentStock: toDecimalString(quantityToAdd),
       projectId: inventoryProjectId,
@@ -18470,10 +18478,15 @@ export async function createInventoryItem(data: InsertInventoryItem) {
       );
   const inventoryProjectId =
     getInventoryProjectIdForAssignment(projectAssignment);
+  const normalizedData: InsertInventoryItem = {
+    ...data,
+    name: normalizeArticleDescription(data.name),
+    description: normalizeOptionalArticleDescription(data.description),
+  };
   const [inventoryItem] = await db
     .insert(inventoryItems)
     .values({
-      ...data,
+      ...normalizedData,
       projectId: inventoryProjectId,
       warehouseId: warehouseAssignment.warehouseId,
       warehouseLocation: warehouseAssignment.warehouseLocation,
@@ -18501,7 +18514,17 @@ export async function updateInventoryItem(
       ? undefined
       : await resolveProjectAssignment(data.projectId, data.warehouseId);
 
-  const nextData: Partial<InsertInventoryItem> = { ...data };
+  const nextData: Partial<InsertInventoryItem> = {
+    ...data,
+    ...(data.name !== undefined
+      ? { name: normalizeArticleDescription(data.name) }
+      : {}),
+    ...(data.description !== undefined
+      ? {
+          description: normalizeOptionalArticleDescription(data.description),
+        }
+      : {}),
+  };
   if (data.projectId !== undefined) {
     nextData.projectId = getInventoryProjectIdForAssignment(projectAssignment);
     if (projectAssignment) {
@@ -19466,9 +19489,16 @@ export async function updateArticle(
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
+  const normalizedData = {
+    ...data,
+    ...(data.description !== undefined
+      ? { description: normalizeArticleDescription(data.description) }
+      : {}),
+  };
+
   const [article] = await db
     .update(sapCatalog)
-    .set({ ...data, updatedAt: new Date() })
+    .set({ ...normalizedData, updatedAt: new Date() })
     .where(eq(sapCatalog.id, id))
     .returning();
 
@@ -19625,7 +19655,7 @@ export async function createArticle(data: {
   if (!db) throw new Error("DB not available");
 
   const itemCode = data.itemCode.trim();
-  const description = data.description.trim();
+  const description = normalizeArticleDescription(data.description);
   if (!itemCode || !description) {
     throw new Error("Código y descripción son obligatorios");
   }
@@ -19913,7 +19943,7 @@ export async function savePurchaseOrderFixedAssetDraftLine(params: {
       const articleValues = {
         itemCode: temporaryCode,
         temporaryItemCode: temporaryCode,
-        description: itemDetail.item.itemName,
+        description: normalizeArticleDescription(itemDetail.item.itemName),
         itemGroup: "Activo fijo temporal",
         tipoArticulo: 3 as const,
         projectId: itemDetail.purchaseOrder.projectId,
@@ -21310,7 +21340,9 @@ export async function importDemoData(
       const existingArticle = existingCatalogMap.get(article.itemCode);
       const insertPayload: InsertSapCatalogItem = {
         itemCode: article.itemCode,
-        description: article.fullDescription ?? article.description,
+        description: normalizeArticleDescription(
+          article.fullDescription ?? article.description
+        ),
         isActive: true,
         demoBatchKey: batchKey,
         updatedAt: new Date(),
@@ -21405,8 +21437,10 @@ export async function importDemoData(
 
       if (existingItem) {
         const updateData: Partial<InsertInventoryItem> = {
-          name: article.description,
-          description: article.fullDescription ?? article.description,
+          name: normalizeArticleDescription(article.description),
+          description: normalizeArticleDescription(
+            article.fullDescription ?? article.description
+          ),
           warehouseId: matchedWarehouse?.id ?? null,
           warehouseLocation: resolvedWarehouseLocation,
           isActive: true,
@@ -21428,8 +21462,10 @@ export async function importDemoData(
 
       inventoryToInsert.push({
         sapItemCode: article.itemCode,
-        name: article.description,
-        description: article.fullDescription ?? article.description,
+        name: normalizeArticleDescription(article.description),
+        description: normalizeArticleDescription(
+          article.fullDescription ?? article.description
+        ),
         currentStock: article.stock ?? "0",
         warehouseId: matchedWarehouse?.id ?? null,
         warehouseLocation: resolvedWarehouseLocation,

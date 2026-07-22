@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import { Client } from "pg";
 import XLSX from "xlsx";
+import { normalizeArticleDescription } from "../shared/article-descriptions";
 
 const DEFAULT_SHEET_NAME = "SERVICIOS";
 const SERVICE_ARTICLE_TYPE = 2;
@@ -292,7 +293,9 @@ export function parseRows(
     }
 
     const itemCode = normalizeUpper(row["codigo_sap*"]);
-    const description = normalizeCell(row["descripcion_servicio*"]);
+    const description = normalizeArticleDescription(
+      normalizeCell(row["descripcion_servicio*"])
+    );
     const articleType = normalizeUpper(row["tipo_articulo*"]);
     const allowsTaxWithholding = parseBoolean(row["permite_retencion"], true);
     const isActive = parseBoolean(row["habilitado"], true);

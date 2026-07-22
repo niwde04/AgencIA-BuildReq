@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { DataPagination } from "@/components/DataPagination";
+import { CompactProcurementApprovalPanel } from "@/components/CompactProcurementApprovalPanel";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { fetchAllFilteredPages } from "@/lib/paginated-export";
 import { trpc } from "@/lib/trpc";
@@ -75,6 +76,7 @@ import {
 
 const PAGE_SIZE = 50;
 const EMPTY_PURCHASE_REQUESTS: any[] = [];
+const SHOW_PURCHASE_REQUEST_ATTACHMENTS = false;
 
 const STATUS_LABELS: Record<string, string> = {
   pendiente: "Borrador",
@@ -434,7 +436,11 @@ export default function PurchaseRequests() {
     ? "en_revision"
     : statusFilter;
   const [rejectReason, setRejectReason] = useState("");
+  const [isAnnulFormOpen, setIsAnnulFormOpen] = useState(false);
   const [approvalComment, setApprovalComment] = useState("");
+  const [compactApprovalDecision, setCompactApprovalDecision] = useState<
+    "approve" | "reject" | null
+  >(null);
   const [emailDialog, setEmailDialog] = useState<{
     to: string;
     subject: string;
@@ -546,6 +552,7 @@ export default function PurchaseRequests() {
     onSuccess: () => {
       toast.success("Solicitud de compra anulada");
       setRejectReason("");
+      setIsAnnulFormOpen(false);
       void Promise.all([
         utils.purchaseRequests.invalidate(),
         selectedId
@@ -589,6 +596,7 @@ export default function PurchaseRequests() {
         );
         setApprovalComment("");
         setApprovalSelectedItemIds([]);
+        setCompactApprovalDecision(null);
         setSelectedId(null);
         void utils.purchaseRequests.invalidate();
       },
@@ -1051,6 +1059,7 @@ export default function PurchaseRequests() {
     PROCUREMENT_APPROVALS_ENABLED &&
     isProcurementApprover &&
     isPendingApprovalPurchaseRequest;
+  const isCompactApprovalView = canReviewSelectedPurchaseRequest;
   const canReopenSelectedPurchaseRequest =
     PROCUREMENT_APPROVALS_ENABLED &&
     canManagePurchaseRequests &&
@@ -1269,7 +1278,9 @@ export default function PurchaseRequests() {
     setSelectedItemIds([]);
     setApprovalSelectedItemIds([]);
     setRejectReason("");
+    setIsAnnulFormOpen(false);
     setApprovalComment("");
+    setCompactApprovalDecision(null);
   };
 
   const toggleRequestSelection = (id: number, checked: boolean) => {
@@ -1342,12 +1353,15 @@ export default function PurchaseRequests() {
     }
   };
 
-  const handleReviewApproval = async (decision: "approve" | "reject") => {
+  const handleReviewApproval = async (
+    decision: "approve" | "reject",
+    approvedItemIdsOverride?: number[]
+  ) => {
     if (!detail || !canReviewSelectedPurchaseRequest) return;
     const comment = approvalComment.trim();
-    const selectedApprovalIds = approvalSelectedItemIds.filter(itemId =>
-      pendingApprovalItemIds.includes(itemId)
-    );
+    const selectedApprovalIds = (
+      approvedItemIdsOverride ?? approvalSelectedItemIds
+    ).filter(itemId => pendingApprovalItemIds.includes(itemId));
     if (decision === "approve" && selectedApprovalIds.length === 0) {
       toast.error("Marca al menos un ítem para aprobar");
       return;
@@ -2088,14 +2102,36 @@ export default function PurchaseRequests() {
       <Dialog
         open={Boolean(selectedId)}
         onOpenChange={open => {
-          if (!open) setSelectedId(null);
+          if (!open) {
+            setSelectedId(null);
+            setRejectReason("");
+            setIsAnnulFormOpen(false);
+            setCompactApprovalDecision(null);
+            setApprovalComment("");
+          }
         }}
       >
-        <DialogContent className="flex h-[calc(100dvh-0.75rem)] w-[calc(100vw-0.75rem)] max-w-[calc(100vw-0.75rem)] flex-col overflow-hidden rounded-2xl border border-border/70 p-0 shadow-2xl sm:h-[calc(100dvh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1500px]">
-          <DialogHeader className="shrink-0 border-b border-border/70 px-4 py-4 pr-12 sm:px-6 lg:px-8">
+        <DialogContent
+          className={`flex max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl border border-border/70 p-0 shadow-2xl sm:max-h-[calc(100dvh-2rem)] sm:w-[calc(100vw-2rem)] ${
+            isCompactApprovalView
+              ? "sm:max-w-[900px]"
+              : "h-[calc(100dvh-0.75rem)] max-w-[calc(100vw-0.75rem)] sm:h-[calc(100dvh-1.5rem)] sm:max-w-[1500px]"
+          }`}
+        >
+          <DialogHeader
+            className={`shrink-0 border-b border-border/70 px-5 py-5 pr-12 sm:px-8 ${
+              isCompactApprovalView ? "sm:py-6" : "lg:px-8"
+            }`}
+          >
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div className="space-y-2">
-                <DialogTitle className="text-3xl font-bold tracking-tight sm:text-[2.15rem]">
+                <DialogTitle
+                  className={`font-bold tracking-tight ${
+                    isCompactApprovalView
+                      ? "text-2xl sm:text-3xl"
+                      : "text-3xl sm:text-[2.15rem]"
+                  }`}
+                >
                   {detail?.purchaseRequest.requestNumber ||
                     "Solicitud de Compra"}
                 </DialogTitle>
@@ -2141,7 +2177,8 @@ export default function PurchaseRequests() {
                   >
                     {selectedItems.length} ítem(s)
                   </Badge>
-                  {PROCUREMENT_APPROVALS_ENABLED ? (
+                  {PROCUREMENT_APPROVALS_ENABLED &&
+                  !isCompactApprovalView ? (
                     <Badge
                       variant="outline"
                       className={`rounded-full px-3 py-1 text-xs uppercase ${
@@ -2178,8 +2215,76 @@ export default function PurchaseRequests() {
             </div>
           ) : null}
 
-          {detail && (
-            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-6 lg:px-8">
+          {detail &&
+            (isCompactApprovalView ? (
+              <CompactProcurementApprovalPanel
+                summaryFields={[
+                  {
+                    label: "Proyecto",
+                    value: projectLabel,
+                    icon: "project",
+                  },
+                  {
+                    label: "Tipo de compra",
+                    value: purchaseTypeLabel,
+                    icon: "purchase",
+                  },
+                  {
+                    label: "Fecha necesaria",
+                    value: detail.purchaseRequest.neededBy
+                      ? new Date(
+                          detail.purchaseRequest.neededBy
+                        ).toLocaleDateString("es-HN")
+                      : "—",
+                    icon: "date",
+                  },
+                  {
+                    label: "Estado",
+                    value: "Pendiente",
+                    icon: "status",
+                    accent: true,
+                  },
+                ]}
+                notes={detail.purchaseRequest.notes}
+                history={[...approvalHistory]
+                  .sort(
+                    (left, right) =>
+                      new Date(left.createdAt ?? 0).getTime() -
+                      new Date(right.createdAt ?? 0).getTime()
+                  )
+                  .map((event: any, index: number) => ({
+                    id: event.id ?? `${event.createdAt}-${index}`,
+                    title: formatApprovalAction(event.action),
+                    actor: [
+                      getApprovalEventActorName(event) ||
+                        "Usuario no disponible",
+                      event.actorRole
+                        ? getBuildReqRoleLabel(event.actorRole)
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · "),
+                    date: formatApprovalEventDate(event.createdAt),
+                    comment: event.comment,
+                  }))}
+                historyDescription="Registro de decisiones de esta SC."
+                emptyHistoryMessage="Esta solicitud todavía no tiene movimientos de aprobación."
+                onPrint={handlePrintDocument}
+                onReject={() => {
+                  setApprovalComment("");
+                  setCompactApprovalDecision("reject");
+                }}
+                onApprove={() => {
+                  setApprovalComment("");
+                  setCompactApprovalDecision("approve");
+                }}
+                isPending={
+                  reviewApprovalMutation.isPending ||
+                  updatePendingQuantitiesMutation.isPending
+                }
+              />
+            ) : (
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-6 lg:px-8">
               <div className="grid gap-4 xl:grid-cols-3 2xl:grid-cols-6">
                 <div className="rounded-2xl border border-border/70 bg-card p-5">
                   <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
@@ -2314,16 +2419,12 @@ export default function PurchaseRequests() {
                     {isCancelledPurchaseRequest
                       ? "La solicitud fue anulada y ya no permite cambios."
                       : !PROCUREMENT_APPROVALS_ENABLED
-                        ? detail.purchaseRequest.quoteAttachmentId
-                          ? "Cotización adjunta y lista para convertir."
-                          : "Puedes completar la solicitud y convertirla sin aprobación."
+                        ? "Puedes completar la solicitud y convertirla sin aprobación."
                         : isRejectedPurchaseRequest
                           ? "La solicitud espera corrección después del rechazo."
                           : isPendingApprovalPurchaseRequest
                             ? "La solicitud permanece bloqueada mientras se revisa."
-                            : detail.purchaseRequest.quoteAttachmentId
-                              ? "Cotización adjunta y lista para revisión."
-                              : "Todavía no tiene cotización aprobada adjunta."}
+                            : "Completa los datos antes de enviarla a aprobación."}
                   </p>
                 </div>
 
@@ -2353,20 +2454,6 @@ export default function PurchaseRequests() {
                     </p>
                   </div>
                 ) : null}
-              </div>
-
-              <div className="rounded-2xl border border-border/70 bg-card p-5">
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Notas</Label>
-                  <Textarea
-                    value={editNotes}
-                    onChange={event => setEditNotes(event.target.value)}
-                    rows={4}
-                    className="min-h-[140px] resize-y text-sm"
-                    placeholder="Detalles, condiciones o instrucciones importantes para esta solicitud de compra"
-                    disabled={!canEditSelectedPurchaseRequest}
-                  />
-                </div>
               </div>
 
               {PROCUREMENT_APPROVALS_ENABLED ? (
@@ -2462,21 +2549,23 @@ export default function PurchaseRequests() {
                 </div>
               )}
 
-              <DocumentAttachmentsPanel
-                entityType="purchase_request"
-                entityId={selectedId}
-                category="documento_proveedor"
-                title="Adjuntos y cotizaciones"
-                canManage={canManagePurchaseRequestAttachments}
-                disabled={attachQuoteMutation.isPending}
-                onUploadSuccess={result => {
-                  if (!selectedId) return;
-                  attachQuoteMutation.mutate({
-                    id: selectedId,
-                    attachmentId: result.id,
-                  });
-                }}
-              />
+              {SHOW_PURCHASE_REQUEST_ATTACHMENTS ? (
+                <DocumentAttachmentsPanel
+                  entityType="purchase_request"
+                  entityId={selectedId}
+                  category="documento_proveedor"
+                  title="Adjuntos y cotizaciones"
+                  canManage={canManagePurchaseRequestAttachments}
+                  disabled={attachQuoteMutation.isPending}
+                  onUploadSuccess={result => {
+                    if (!selectedId) return;
+                    attachQuoteMutation.mutate({
+                      id: selectedId,
+                      attachmentId: result.id,
+                    });
+                  }}
+                />
+              ) : null}
 
               <div className="min-w-0 rounded-2xl border border-border/70 bg-card">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-4">
@@ -2869,6 +2958,41 @@ export default function PurchaseRequests() {
                 </div>
               </div>
 
+              <div className="rounded-2xl border border-border/70 bg-card p-5">
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">Notas</Label>
+                  <Textarea
+                    value={editNotes}
+                    onChange={event => setEditNotes(event.target.value)}
+                    rows={4}
+                    className="min-h-[140px] resize-y text-sm"
+                    placeholder="Detalles, condiciones o instrucciones importantes para esta solicitud de compra"
+                    disabled={!canEditSelectedPurchaseRequest}
+                  />
+                </div>
+              </div>
+
+              {canAnnulSelectedPurchaseRequest && isAnnulFormOpen ? (
+                <div className="rounded-2xl border border-red-200 bg-red-50/30 p-5">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold">
+                      Motivo de anulación
+                    </Label>
+                    <Textarea
+                      autoFocus
+                      value={rejectReason}
+                      onChange={event => setRejectReason(event.target.value)}
+                      placeholder="Explique por qué se anula la solicitud de compra"
+                      rows={3}
+                      className="min-h-[120px] resize-y bg-background text-sm"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Escribe al menos 5 caracteres antes de confirmar.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
               <div className="sticky bottom-0 z-10 flex flex-col gap-4 rounded-2xl border border-border/70 bg-card/95 p-4 shadow-sm backdrop-blur xl:flex-row xl:items-start xl:justify-between">
                 <div className="flex min-w-0 flex-wrap gap-3">
                   <Button
@@ -2957,26 +3081,45 @@ export default function PurchaseRequests() {
                   )}
 
                   {canAnnulSelectedPurchaseRequest && (
-                    <Button
-                      variant="destructive"
-                      className="h-11 px-4"
-                      onClick={() => {
-                        if (rejectReason.trim().length < 5) {
-                          toast.error(
-                            "Indica un motivo de al menos 5 caracteres"
-                          );
-                          return;
-                        }
-                        rejectMutation.mutate({
-                          id: detail.purchaseRequest.id,
-                          reason: rejectReason,
-                        });
-                      }}
-                      disabled={rejectMutation.isPending}
-                    >
-                      <XCircle className="mr-2 h-4 w-4" />
-                      Anular SC
-                    </Button>
+                    <>
+                      {isAnnulFormOpen ? (
+                        <Button
+                          variant="outline"
+                          className="h-11 px-4"
+                          onClick={() => {
+                            setRejectReason("");
+                            setIsAnnulFormOpen(false);
+                          }}
+                          disabled={rejectMutation.isPending}
+                        >
+                          Cancelar
+                        </Button>
+                      ) : null}
+                      <Button
+                        variant="destructive"
+                        className="h-11 px-4"
+                        onClick={() => {
+                          if (!isAnnulFormOpen) {
+                            setIsAnnulFormOpen(true);
+                            return;
+                          }
+                          if (rejectReason.trim().length < 5) {
+                            toast.error(
+                              "Indica un motivo de al menos 5 caracteres"
+                            );
+                            return;
+                          }
+                          rejectMutation.mutate({
+                            id: detail.purchaseRequest.id,
+                            reason: rejectReason,
+                          });
+                        }}
+                        disabled={rejectMutation.isPending}
+                      >
+                        <XCircle className="mr-2 h-4 w-4" />
+                        {isAnnulFormOpen ? "Confirmar anulación" : "Anular SC"}
+                      </Button>
+                    </>
                   )}
 
                   {canConvertSelectedPurchaseRequest && (
@@ -2994,25 +3137,106 @@ export default function PurchaseRequests() {
                   )}
                 </div>
               </div>
+              </div>
+            ))}
+        </DialogContent>
+      </Dialog>
 
-              {canAnnulSelectedPurchaseRequest && (
-                <div className="rounded-2xl border border-border/70 bg-card p-5">
-                  <div className="space-y-2">
-                    <Label className="text-sm font-semibold">
-                      Motivo de anulación
-                    </Label>
-                    <Textarea
-                      value={rejectReason}
-                      onChange={event => setRejectReason(event.target.value)}
-                      placeholder="Explique por qué se anula la solicitud de compra"
-                      rows={3}
-                      className="min-h-[120px] resize-y text-sm"
-                    />
-                  </div>
-                </div>
-              )}
+      <Dialog
+        open={compactApprovalDecision !== null}
+        onOpenChange={open => {
+          if (!open && !reviewApprovalMutation.isPending) {
+            setCompactApprovalDecision(null);
+            setApprovalComment("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              {compactApprovalDecision === "approve"
+                ? "Aprobar solicitud de compra"
+                : "Rechazar solicitud de compra"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-xl border border-border/70 bg-muted/20 p-4 text-sm">
+              <p className="font-semibold">
+                {detail?.purchaseRequest.requestNumber ||
+                  "Solicitud de compra"}
+              </p>
+              <p className="mt-1 text-muted-foreground">
+                {compactApprovalDecision === "approve"
+                  ? `Se aprobarán ${pendingApprovalItemIds.length} ítem(s).`
+                  : "La solicitud completa será rechazada."}
+              </p>
             </div>
-          )}
+            <div className="space-y-2">
+              <Label htmlFor="purchase-request-approval-comment">
+                Comentario
+                {compactApprovalDecision === "reject"
+                  ? " (obligatorio)"
+                  : " (opcional)"}
+              </Label>
+              <Textarea
+                id="purchase-request-approval-comment"
+                value={approvalComment}
+                onChange={event => setApprovalComment(event.target.value)}
+                placeholder={
+                  compactApprovalDecision === "reject"
+                    ? "Explique el motivo del rechazo"
+                    : "Agregue una observación si lo necesita"
+                }
+                rows={4}
+                disabled={reviewApprovalMutation.isPending}
+              />
+              {compactApprovalDecision === "reject" ? (
+                <p className="text-xs text-muted-foreground">
+                  El motivo debe tener al menos 5 caracteres.
+                </p>
+              ) : null}
+            </div>
+            <div className="flex justify-end gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setCompactApprovalDecision(null);
+                  setApprovalComment("");
+                }}
+                disabled={reviewApprovalMutation.isPending}
+              >
+                Volver
+              </Button>
+              <Button
+                type="button"
+                variant={
+                  compactApprovalDecision === "reject"
+                    ? "destructive"
+                    : "default"
+                }
+                onClick={() => {
+                  if (!compactApprovalDecision) return;
+                  void handleReviewApproval(
+                    compactApprovalDecision,
+                    pendingApprovalItemIds
+                  );
+                }}
+                disabled={
+                  reviewApprovalMutation.isPending ||
+                  updatePendingQuantitiesMutation.isPending ||
+                  (compactApprovalDecision === "reject" &&
+                    approvalComment.trim().length < 5)
+                }
+              >
+                {reviewApprovalMutation.isPending
+                  ? "Procesando..."
+                  : compactApprovalDecision === "approve"
+                    ? "Confirmar aprobación"
+                    : "Confirmar rechazo"}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 

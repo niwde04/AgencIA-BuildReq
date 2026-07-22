@@ -2,6 +2,10 @@ import { trpc } from "@/lib/trpc";
 import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { isProcurementApproverRole } from "@shared/buildreq-roles";
+import {
+  normalizeArticleDescription,
+  uppercaseArticleDescription,
+} from "@shared/article-descriptions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -541,7 +545,7 @@ export default function Articulos() {
 
     createMutation.mutate({
       itemCode: createForm.itemCode.trim(),
-      description: createForm.description.trim(),
+      description: normalizeArticleDescription(createForm.description),
       itemGroup: createForm.itemGroup.trim() || null,
       financialGroupCode: createForm.financialGroupCode || null,
       brand: createForm.brand.trim() || null,
@@ -630,7 +634,7 @@ export default function Articulos() {
     updateMutation.mutate({
       id: selectedArticle.id,
       itemCode: editItemCode.trim(),
-      description: editDescription.trim(),
+      description: normalizeArticleDescription(editDescription),
       itemGroup: editItemGroup.trim() || null,
       financialGroupCode: editFinancialGroupCode || null,
       brand: editBrand.trim() || null,
@@ -1229,7 +1233,9 @@ export default function Articulos() {
                   onChange={(event) =>
                     setCreateForm((form) => ({
                       ...form,
-                      description: event.target.value,
+                      description: uppercaseArticleDescription(
+                        event.target.value
+                      ),
                     }))
                   }
                 />
@@ -1445,7 +1451,11 @@ export default function Articulos() {
                         : selectedArticle.description
                     }
                     disabled={!canEditSelectedArticleCatalog}
-                    onChange={(event) => setEditDescription(event.target.value)}
+                    onChange={(event) =>
+                      setEditDescription(
+                        uppercaseArticleDescription(event.target.value)
+                      )
+                    }
                   />
                 </div>
                 <div className="space-y-1">

@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { DataPagination } from "@/components/DataPagination";
+import { CompactProcurementApprovalPanel } from "@/components/CompactProcurementApprovalPanel";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { fetchAllFilteredPages } from "@/lib/paginated-export";
 import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
@@ -1395,6 +1396,7 @@ export default function OrdenesCompra() {
     PROCUREMENT_APPROVALS_ENABLED &&
     isProcurementApprover &&
     orderStatus === "pendiente_aprobacion";
+  const isCompactApprovalView = canReviewApproval;
   const canCorrectRejectedOrder =
     PROCUREMENT_APPROVALS_ENABLED &&
     canManagePurchaseOrders &&
@@ -3624,70 +3626,104 @@ export default function OrdenesCompra() {
           }
         }}
       >
-        <DialogContent className="scrollbar-visible max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1600px] sm:p-6 lg:p-7">
-          <DialogHeader className="border-b border-border/70 pb-4 pr-10">
-            <div className="flex flex-wrap items-center gap-3">
-              <DialogTitle className="text-[2.1rem] font-bold tracking-tight sm:text-[2.5rem]">
-                {newOrderDialogOpen
-                  ? "Nueva orden de compra"
-                  : detail?.purchaseOrder.orderNumber || "Orden de Compra"}
-              </DialogTitle>
-              {newOrderDialogOpen ? (
-                <Badge
-                  variant="outline"
-                  className={`text-sm ${STATUS_COLORS.borrador}`}
+        <DialogContent
+          className={
+            isCompactApprovalView
+              ? "flex max-h-[calc(100vh-1rem)] w-[calc(100vw-1rem)] max-w-[1000px] flex-col overflow-hidden rounded-2xl p-0 sm:max-h-[calc(100vh-2rem)] sm:w-[calc(100vw-2rem)]"
+              : "scrollbar-visible max-h-[calc(100vh-0.75rem)] w-[calc(100vw-0.5rem)] max-w-[calc(100vw-0.5rem)] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:max-h-[calc(100vh-1.5rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[1600px] sm:p-6 lg:p-7"
+          }
+        >
+          <DialogHeader
+            className={
+              isCompactApprovalView
+                ? "shrink-0 border-b border-border/70 px-5 py-5 pr-12 sm:px-8 sm:py-6"
+                : "border-b border-border/70 pb-4 pr-10"
+            }
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <DialogTitle
+                  className={`font-bold tracking-tight ${
+                    isCompactApprovalView
+                      ? "text-2xl sm:text-3xl"
+                      : "text-[2.1rem] sm:text-[2.5rem]"
+                  }`}
                 >
-                  Borrador
-                </Badge>
-              ) : detail?.purchaseOrder.status ? (
-                <>
+                  {newOrderDialogOpen
+                    ? "Nueva orden de compra"
+                    : detail?.purchaseOrder.orderNumber || "Orden de Compra"}
+                </DialogTitle>
+                {isCompactApprovalView ? (
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Pendiente de decisión y bloqueada para edición.
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {newOrderDialogOpen ? (
                   <Badge
                     variant="outline"
-                    className={`text-sm ${
-                      STATUS_COLORS[
+                    className={`text-sm ${STATUS_COLORS.borrador}`}
+                  >
+                    Borrador
+                  </Badge>
+                ) : detail?.purchaseOrder.status ? (
+                  <>
+                    <Badge
+                      variant="outline"
+                      className={`text-sm ${
+                        STATUS_COLORS[
+                          getEffectivePurchaseOrderStatus(
+                            detail.purchaseOrder.status,
+                            detail.purchaseOrder.approvalStatus
+                          )
+                        ] || ""
+                      }`}
+                    >
+                      {STATUS_LABELS[
                         getEffectivePurchaseOrderStatus(
                           detail.purchaseOrder.status,
                           detail.purchaseOrder.approvalStatus
                         )
-                      ] || ""
-                    }`}
-                  >
-                    {STATUS_LABELS[
-                      getEffectivePurchaseOrderStatus(
-                        detail.purchaseOrder.status,
-                        detail.purchaseOrder.approvalStatus
-                      )
-                    ] || detail.purchaseOrder.status}
-                  </Badge>
-                  {PROCUREMENT_APPROVALS_ENABLED ? (
-                    <Badge
-                      variant="outline"
-                      className={`text-sm ${getApprovalStatusColor(
-                        detail.purchaseOrder.approvalStatus
-                      )}`}
-                    >
-                      Aprobación:{" "}
-                      {getApprovalStatusLabel(
-                        detail.purchaseOrder.approvalStatus
-                      )}
+                      ] || detail.purchaseOrder.status}
                     </Badge>
-                  ) : null}
-                  {detail.purchaseOrder.appliesContract ? (
-                    <Badge
-                      variant="outline"
-                      className={`text-sm ${
-                        contractSummary.isExpired
-                          ? "border-rose-300 bg-rose-50 text-rose-700"
-                          : contractSummary.expiresSoon
-                            ? "border-amber-300 bg-amber-50 text-amber-800"
-                            : "border-cyan-300 bg-cyan-50 text-cyan-700"
-                      }`}
-                    >
-                      Contrato: {contractSummary.statusLabel}
-                    </Badge>
-                  ) : null}
-                </>
-              ) : null}
+                    {isCompactApprovalView ? (
+                      <Badge variant="secondary" className="text-sm">
+                        {items.length} ítem(s)
+                      </Badge>
+                    ) : null}
+                    {PROCUREMENT_APPROVALS_ENABLED &&
+                    !isCompactApprovalView ? (
+                      <Badge
+                        variant="outline"
+                        className={`text-sm ${getApprovalStatusColor(
+                          detail.purchaseOrder.approvalStatus
+                        )}`}
+                      >
+                        Aprobación:{" "}
+                        {getApprovalStatusLabel(
+                          detail.purchaseOrder.approvalStatus
+                        )}
+                      </Badge>
+                    ) : null}
+                    {detail.purchaseOrder.appliesContract &&
+                    !isCompactApprovalView ? (
+                      <Badge
+                        variant="outline"
+                        className={`text-sm ${
+                          contractSummary.isExpired
+                            ? "border-rose-300 bg-rose-50 text-rose-700"
+                            : contractSummary.expiresSoon
+                              ? "border-amber-300 bg-amber-50 text-amber-800"
+                              : "border-cyan-300 bg-cyan-50 text-cyan-700"
+                        }`}
+                      >
+                        Contrato: {contractSummary.statusLabel}
+                      </Badge>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
             </div>
           </DialogHeader>
 
@@ -4617,7 +4653,80 @@ export default function OrdenesCompra() {
               </div>
             </div>
           ) : detail ? (
-            <div className="space-y-5">
+            isCompactApprovalView ? (
+              <CompactProcurementApprovalPanel
+                summaryFields={[
+                  {
+                    label: "Proyecto",
+                    value: detail.project
+                      ? `${detail.project.code} — ${detail.project.name}`
+                      : `Proyecto ${detail.purchaseOrder.projectId}`,
+                    icon: "project",
+                  },
+                  {
+                    label: "Proveedor",
+                    value: detail.supplier?.name || "Proveedor pendiente",
+                    icon: "supplier",
+                  },
+                  {
+                    label: "Tipo de compra",
+                    value:
+                      PURCHASE_TYPE_LABELS[
+                        detail.purchaseOrder.purchaseType ?? ""
+                      ] || detail.purchaseOrder.purchaseType || "—",
+                    icon: "purchase",
+                  },
+                  {
+                    label: "Fecha necesaria",
+                    value: detail.purchaseOrder.neededBy
+                      ? new Date(
+                          detail.purchaseOrder.neededBy
+                        ).toLocaleDateString("es-HN")
+                      : "—",
+                    icon: "date",
+                  },
+                  {
+                    label: "Total",
+                    value: formatPurchaseOrderCurrency(
+                      orderTotal,
+                      orderCurrency
+                    ),
+                    icon: "total",
+                    accent: true,
+                  },
+                ]}
+                notes={detail.purchaseOrder.notes}
+                history={approvalHistory.map(
+                  (entry: any, index: number) => ({
+                    id: entry.id ?? `${entry.createdAt}-${index}`,
+                    title: formatApprovalAction(entry.action),
+                    actor: [
+                      entry.actorName || "Usuario no disponible",
+                      formatApprovalActorRole(entry.actorRole),
+                    ]
+                      .filter(Boolean)
+                      .join(" · "),
+                    date: entry.createdAt
+                      ? new Date(entry.createdAt).toLocaleString("es-HN")
+                      : "Fecha no disponible",
+                    comment: entry.comment,
+                  })
+                )}
+                historyDescription="Registro de decisiones de esta OC."
+                emptyHistoryMessage="Esta orden todavía no tiene movimientos de aprobación."
+                onPrint={handlePrintPurchaseOrder}
+                onReject={() => {
+                  setApprovalReviewComment("");
+                  setApprovalReviewDecision("reject");
+                }}
+                onApprove={() => {
+                  setApprovalReviewComment("");
+                  setApprovalReviewDecision("approve");
+                }}
+                isPending={reviewApprovalMutation.isPending}
+              />
+            ) : (
+              <div className="space-y-5">
               <div className="grid gap-3 md:grid-cols-12">
                 <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-2">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
@@ -5901,7 +6010,8 @@ export default function OrdenesCompra() {
                   </Button>
                 ) : null}
               </div>
-            </div>
+              </div>
+            )
           ) : null}
         </DialogContent>
       </Dialog>

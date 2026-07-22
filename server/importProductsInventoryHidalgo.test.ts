@@ -120,6 +120,7 @@ describe("import-products-inventory-hidalgo", () => {
       expect(result.parsedRows).toEqual([
         expect.objectContaining({
           itemCode: "P001",
+          description: "CEMENTO",
           projectCodeRaw: "001",
           warehouseCodeRaw: "001",
           quantity: 12.5,

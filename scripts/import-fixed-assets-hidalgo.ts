@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import { Client } from "pg";
 import XLSX from "xlsx";
+import { normalizeArticleDescription } from "../shared/article-descriptions";
 
 const DEFAULT_SHEET_NAME = "ARTICULOS";
 const LEGACY_SHEET_NAME = "Hoja1";
@@ -551,7 +552,9 @@ export function parseRows(
     const fullDescription = normalizeCell(
       row["Descripcion del articulo completa"]
     );
-    const description = fullDescription || shortDescription;
+    const description = normalizeArticleDescription(
+      fullDescription || shortDescription
+    );
     const itemGroup = normalizeCell(row["Grupo SAP"]);
     const tipoArticuloRaw = normalizeCell(row["Tipo de articulo"]);
     const tipoArticulo = normalizeLookup(tipoArticuloRaw);
