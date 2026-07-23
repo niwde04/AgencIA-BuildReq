@@ -43,6 +43,7 @@ import {
   CalendarDays,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronsUpDown,
   Clock3,
   Download,
@@ -3122,83 +3123,6 @@ export default function PurchaseRequests() {
                 ) : null}
               </div>
 
-              {PROCUREMENT_APPROVALS_ENABLED ? (
-                <div className="rounded-2xl border border-border/70 bg-card p-5">
-                  <div className="mb-4 flex items-center gap-2">
-                    <Clock3 className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="text-base font-semibold">
-                        Historial de aprobación
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                          Registro de envíos, decisiones y reaperturas de esta
-                          SC.
-                      </p>
-                    </div>
-                  </div>
-
-                  {approvalHistory.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
-                      {detail.purchaseRequest.approvalStatus === "no_requiere"
-                        ? "Documento histórico finalizado antes de este flujo; no tiene eventos de aprobación."
-                        : detail.purchaseRequest.approvalStatus
-                          ? "No hay eventos de aprobación registrados para esta solicitud."
-                          : "Esta solicitud todavía no ha sido enviada a aprobación."}
-                    </div>
-                  ) : (
-                    <ol className="space-y-4">
-                      {[...approvalHistory]
-                        .sort(
-                          (left, right) =>
-                            new Date(right.createdAt ?? 0).getTime() -
-                            new Date(left.createdAt ?? 0).getTime()
-                        )
-                        .map((event: any, index: number) => (
-                          <li
-                            key={event.id ?? `${event.createdAt}-${index}`}
-                            className="relative rounded-xl border border-border/70 bg-muted/10 p-4 pl-11"
-                          >
-                            <span
-                              className={`absolute left-4 top-5 h-3 w-3 rounded-full border ${
-                                APPROVAL_STATUS_COLORS[event.newStatus] ||
-                                "border-slate-300 bg-slate-100"
-                              }`}
-                            />
-                            <div className="flex flex-wrap items-start justify-between gap-2">
-                              <div>
-                                <p className="font-semibold capitalize">
-                                  {formatApprovalAction(event.action)}
-                                </p>
-                                <p className="mt-1 text-sm text-muted-foreground">
-                                  {getApprovalEventActorName(event) ||
-                                    "Usuario no disponible"}
-                                  {event.actorRole
-                                    ? ` · ${getBuildReqRoleLabel(event.actorRole)}`
-                                    : ""}
-                                </p>
-                              </div>
-                              <time className="text-xs text-muted-foreground">
-                                {formatApprovalEventDate(event.createdAt)}
-                              </time>
-                            </div>
-                            {(event.previousStatus || event.newStatus) && (
-                              <p className="mt-3 text-xs text-muted-foreground">
-                                {formatApprovalStatus(event.previousStatus)} →{" "}
-                                {formatApprovalStatus(event.newStatus)}
-                              </p>
-                            )}
-                            {event.comment ? (
-                              <p className="mt-3 whitespace-pre-wrap rounded-lg bg-background px-3 py-2 text-sm">
-                                {event.comment}
-                              </p>
-                            ) : null}
-                          </li>
-                        ))}
-                    </ol>
-                  )}
-                </div>
-              ) : null}
-
               {canReviewSelectedPurchaseRequest && (
                 <div className="rounded-2xl border border-blue-200 bg-blue-50/40 p-5">
                   <div className="space-y-2">
@@ -3738,6 +3662,99 @@ export default function PurchaseRequests() {
                     </p>
                   </div>
                 </div>
+              ) : null}
+
+              {PROCUREMENT_APPROVALS_ENABLED ? (
+                <details
+                  key={`approval-history-${selectedId}`}
+                  className="group overflow-hidden rounded-2xl border border-border/70 bg-card"
+                >
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-muted/30 [&::-webkit-details-marker]:hidden">
+                    <span className="flex min-w-0 items-start gap-3">
+                      <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0">
+                        <span className="block text-base font-semibold">
+                          Historial de aprobación
+                        </span>
+                        <span className="block text-sm text-muted-foreground">
+                          Registro de envíos, decisiones y reaperturas de esta
+                          SC.
+                        </span>
+                      </span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-3">
+                      <Badge
+                        variant="secondary"
+                        className="rounded-full px-3 py-1 text-xs"
+                      >
+                        {approvalHistory.length} movimiento(s)
+                      </Badge>
+                      <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+                    </span>
+                  </summary>
+
+                  <div className="border-t border-border/70 px-5 py-5">
+                    {approvalHistory.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
+                        {detail.purchaseRequest.approvalStatus === "no_requiere"
+                          ? "Documento histórico finalizado antes de este flujo; no tiene eventos de aprobación."
+                          : detail.purchaseRequest.approvalStatus
+                            ? "No hay eventos de aprobación registrados para esta solicitud."
+                            : "Esta solicitud todavía no ha sido enviada a aprobación."}
+                      </div>
+                    ) : (
+                      <ol className="space-y-4">
+                        {[...approvalHistory]
+                          .sort(
+                            (left, right) =>
+                              new Date(right.createdAt ?? 0).getTime() -
+                              new Date(left.createdAt ?? 0).getTime()
+                          )
+                          .map((event: any, index: number) => (
+                            <li
+                              key={event.id ?? `${event.createdAt}-${index}`}
+                              className="relative rounded-xl border border-border/70 bg-muted/10 p-4 pl-11"
+                            >
+                              <span
+                                className={`absolute left-4 top-5 h-3 w-3 rounded-full border ${
+                                  APPROVAL_STATUS_COLORS[event.newStatus] ||
+                                  "border-slate-300 bg-slate-100"
+                                }`}
+                              />
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div>
+                                  <p className="font-semibold capitalize">
+                                    {formatApprovalAction(event.action)}
+                                  </p>
+                                  <p className="mt-1 text-sm text-muted-foreground">
+                                    {getApprovalEventActorName(event) ||
+                                      "Usuario no disponible"}
+                                    {event.actorRole
+                                      ? ` · ${getBuildReqRoleLabel(event.actorRole)}`
+                                      : ""}
+                                  </p>
+                                </div>
+                                <time className="text-xs text-muted-foreground">
+                                  {formatApprovalEventDate(event.createdAt)}
+                                </time>
+                              </div>
+                              {(event.previousStatus || event.newStatus) && (
+                                <p className="mt-3 text-xs text-muted-foreground">
+                                  {formatApprovalStatus(event.previousStatus)} →{" "}
+                                  {formatApprovalStatus(event.newStatus)}
+                                </p>
+                              )}
+                              {event.comment ? (
+                                <p className="mt-3 whitespace-pre-wrap rounded-lg bg-background px-3 py-2 text-sm">
+                                  {event.comment}
+                                </p>
+                              ) : null}
+                            </li>
+                          ))}
+                      </ol>
+                    )}
+                  </div>
+                </details>
               ) : null}
 
               <div className="sticky bottom-0 z-10 flex flex-col gap-4 rounded-2xl border border-border/70 bg-card/95 p-4 shadow-sm backdrop-blur xl:flex-row xl:items-start xl:justify-between">
