@@ -2514,7 +2514,7 @@ export default function PurchaseRequests() {
         <DialogContent
           className={`flex max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl border border-border/70 p-0 shadow-2xl sm:max-h-[calc(100dvh-2rem)] sm:w-[calc(100vw-2rem)] ${
             isCompactApprovalView
-              ? "sm:max-w-[900px]"
+              ? "sm:max-w-[calc(100vw-2rem)] xl:max-w-[1400px]"
               : "h-[calc(100dvh-0.75rem)] max-w-[calc(100vw-0.75rem)] sm:h-[calc(100dvh-1.5rem)] sm:max-w-[1500px]"
           }`}
         >
