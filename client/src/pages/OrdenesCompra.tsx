@@ -248,6 +248,8 @@ const APPROVAL_ACTION_LABELS: Record<string, string> = {
   rejected: "Rechazada",
   approval_rejected: "Rechazada",
   rechazada: "Rechazada",
+  partially_approved: "Aprobada parcialmente",
+  rejected_and_cancelled: "Rechazada y anulada",
   reopen: "Reabierta para corrección",
   reopened: "Reabierta para corrección",
   reopen_rejected: "Reabierta para corrección",
@@ -977,6 +979,9 @@ export default function OrdenesCompra() {
   const [approvalReviewDecision, setApprovalReviewDecision] =
     useState<ApprovalReviewDecision | null>(null);
   const [approvalReviewComment, setApprovalReviewComment] = useState("");
+  const [approvalRejectedItemIds, setApprovalRejectedItemIds] = useState<
+    number[]
+  >([]);
 
   const {
     data: ordersPage,
@@ -1171,13 +1176,23 @@ export default function OrdenesCompra() {
 
   const reviewApprovalMutation = trpc.purchaseOrders.reviewApproval.useMutation(
     {
-      onSuccess: () => {
+      onSuccess: result => {
         toast.success(
-          approvalReviewDecision === "approve" ? "OC aprobada" : "OC rechazada"
+          result.outcome === "partially_approved"
+            ? `OC aprobada parcialmente: ${result.approvedItemCount} ítem(s) aprobados y ${result.rejectedItemCount} devueltos`
+            : result.outcome === "cancelled"
+              ? "OC rechazada y anulada; sus ítems volvieron a las solicitudes"
+              : "OC aprobada"
         );
         setApprovalReviewDecision(null);
         setApprovalReviewComment("");
-        void utils.purchaseOrders.invalidate();
+        setApprovalRejectedItemIds([]);
+        void Promise.all([
+          utils.purchaseOrders.invalidate(),
+          utils.purchaseRequests.invalidate(),
+          utils.materialRequests.invalidate(),
+          utils.supplyFlows.invalidate(),
+        ]);
         if (selectedId) {
           void utils.purchaseOrders.getById.invalidate({ id: selectedId });
         }
@@ -1330,6 +1345,41 @@ export default function OrdenesCompra() {
   const approvalHistory = (detail as any)?.approvalHistory ?? [];
   const orderTotal = Number(detail?.summary?.total ?? 0);
   const orderCurrency = detail?.purchaseOrder.currency ?? "HNL";
+  const approvalRejectedItemIdSet = useMemo(
+    () => new Set(approvalRejectedItemIds),
+    [approvalRejectedItemIds]
+  );
+  const approvalRejectedItems = useMemo(
+    () => items.filter((item: any) => approvalRejectedItemIdSet.has(item.id)),
+    [approvalRejectedItemIdSet, items]
+  );
+  const approvalRejectedTotal = useMemo(
+    () =>
+      approvalRejectedItems.reduce((total: number, item: any) => {
+        const lineAmounts = calculatePurchaseOrderLineAmounts({
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          subtotal: item.subtotal,
+          pricesIncludeTax: detail?.purchaseOrder.pricesIncludeTax === true,
+          taxCode: item.taxCode,
+          additionalTaxCodes: item.additionalTaxCodes,
+          taxBreakdown: item.taxBreakdown,
+          taxes: activeSalesTaxes,
+        });
+        return total + lineAmounts.total;
+      }, 0),
+    [
+      activeSalesTaxes,
+      approvalRejectedItems,
+      detail?.purchaseOrder.pricesIncludeTax,
+    ]
+  );
+  const isTotalApprovalRejection =
+    items.length > 0 && approvalRejectedItems.length === items.length;
+  const approvalRemainingTotal = Math.max(
+    orderTotal - approvalRejectedTotal,
+    0
+  );
   const orderApprovalMinimum =
     orderCurrency === "USD"
       ? purchaseOrderApprovalMinimumUsd
@@ -3749,6 +3799,7 @@ export default function OrdenesCompra() {
             setConfirmState({ kind: null });
             setApprovalReviewDecision(null);
             setApprovalReviewComment("");
+            setApprovalRejectedItemIds([]);
           }
         }}
       >
@@ -4971,10 +5022,12 @@ export default function OrdenesCompra() {
                 onPrint={handlePrintPurchaseOrder}
                 onReject={() => {
                   setApprovalReviewComment("");
+                  setApprovalRejectedItemIds([]);
                   setApprovalReviewDecision("reject");
                 }}
                 onApprove={() => {
                   setApprovalReviewComment("");
+                  setApprovalRejectedItemIds([]);
                   setApprovalReviewDecision("approve");
                 }}
                 isPending={reviewApprovalMutation.isPending}
@@ -6192,6 +6245,7 @@ export default function OrdenesCompra() {
                       className="h-10 min-w-[160px] border-destructive/40 px-5 text-sm font-semibold text-destructive sm:h-11 sm:text-base"
                       onClick={() => {
                         setApprovalReviewComment("");
+                        setApprovalRejectedItemIds([]);
                         setApprovalReviewDecision("reject");
                       }}
                       disabled={reviewApprovalMutation.isPending}
@@ -6204,6 +6258,7 @@ export default function OrdenesCompra() {
                       className="h-10 min-w-[160px] px-5 text-sm font-semibold sm:h-11 sm:text-base"
                       onClick={() => {
                         setApprovalReviewComment("");
+                        setApprovalRejectedItemIds([]);
                         setApprovalReviewDecision("approve");
                       }}
                       disabled={reviewApprovalMutation.isPending}
@@ -6276,10 +6331,11 @@ export default function OrdenesCompra() {
           if (!open && !reviewApprovalMutation.isPending) {
             setApprovalReviewDecision(null);
             setApprovalReviewComment("");
+            setApprovalRejectedItemIds([]);
           }
         }}
       >
-        <DialogContent className="max-w-lg rounded-2xl">
+        <DialogContent className="max-h-[calc(100vh-2rem)] max-w-2xl overflow-y-auto rounded-2xl">
           <DialogHeader>
             <DialogTitle>
               {approvalReviewDecision === "approve"
@@ -6296,6 +6352,139 @@ export default function OrdenesCompra() {
                 Total: {formatPurchaseOrderCurrency(orderTotal, orderCurrency)}
               </p>
             </div>
+            {approvalReviewDecision === "reject" ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">Artículos a rechazar</p>
+                    <p className="text-xs text-muted-foreground">
+                      Los artículos marcados volverán a quedar disponibles en
+                      sus solicitudes de origen.
+                    </p>
+                  </div>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+                    <Checkbox
+                      checked={
+                        approvalRejectedItems.length === items.length &&
+                        items.length > 0
+                          ? true
+                          : approvalRejectedItems.length > 0
+                            ? "indeterminate"
+                            : false
+                      }
+                      onCheckedChange={checked =>
+                        setApprovalRejectedItemIds(
+                          checked ? items.map((item: any) => item.id) : []
+                        )
+                      }
+                      disabled={
+                        reviewApprovalMutation.isPending || items.length === 0
+                      }
+                    />
+                    Seleccionar todos
+                  </label>
+                </div>
+
+                <div className="max-h-64 space-y-2 overflow-y-auto rounded-xl border border-border/70 p-2">
+                  {items.map((item: any) => {
+                    const lineAmounts = calculatePurchaseOrderLineAmounts({
+                      quantity: item.quantity,
+                      unitPrice: item.unitPrice,
+                      subtotal: item.subtotal,
+                      pricesIncludeTax:
+                        detail?.purchaseOrder.pricesIncludeTax === true,
+                      taxCode: item.taxCode,
+                      additionalTaxCodes: item.additionalTaxCodes,
+                      taxBreakdown: item.taxBreakdown,
+                      taxes: activeSalesTaxes,
+                    });
+                    const checked = approvalRejectedItemIdSet.has(item.id);
+                    return (
+                      <label
+                        key={item.id}
+                        className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
+                          checked
+                            ? "border-destructive/40 bg-destructive/5"
+                            : "border-transparent hover:bg-muted/40"
+                        }`}
+                      >
+                        <Checkbox
+                          className="mt-0.5"
+                          checked={checked}
+                          onCheckedChange={nextChecked =>
+                            setApprovalRejectedItemIds(current =>
+                              nextChecked
+                                ? Array.from(new Set([...current, item.id]))
+                                : current.filter(itemId => itemId !== item.id)
+                            )
+                          }
+                          disabled={reviewApprovalMutation.isPending}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block font-medium leading-snug">
+                            {getTemporaryFixedAssetDisplayName(item)}
+                          </span>
+                          <span className="mt-1 block text-xs text-muted-foreground">
+                            {formatQuantity(item.quantity)} {item.unit || ""}
+                            {" · "}
+                            {item.currentSapItemCode ||
+                              item.originalSapItemCode ||
+                              "Sin código SAP"}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-sm font-semibold">
+                          {formatPurchaseOrderCurrency(
+                            lineAmounts.total,
+                            orderCurrency
+                          )}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                <div
+                  className={`rounded-xl border p-3 text-sm ${
+                    approvalRejectedItems.length === 0
+                      ? "border-amber-300 bg-amber-50 text-amber-900"
+                      : isTotalApprovalRejection
+                        ? "border-destructive/40 bg-destructive/5 text-destructive"
+                        : "border-blue-300 bg-blue-50 text-blue-900"
+                  }`}
+                >
+                  {approvalRejectedItems.length === 0 ? (
+                    "Seleccione al menos un artículo."
+                  ) : isTotalApprovalRejection ? (
+                    <>
+                      <p className="font-semibold">
+                        Rechazo total: la OC será anulada.
+                      </p>
+                      <p className="mt-1">
+                        Los {items.length} artículos regresarán a sus
+                        solicitudes. El detalle quedará visible como evidencia.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="font-semibold">
+                        Rechazo parcial: {approvalRejectedItems.length} de{" "}
+                        {items.length} artículos serán devueltos.
+                      </p>
+                      <p className="mt-1">
+                        La OC quedará aprobada con{" "}
+                        {items.length - approvalRejectedItems.length}{" "}
+                        artículo(s) y un total de{" "}
+                        {formatPurchaseOrderCurrency(
+                          approvalRemainingTotal,
+                          orderCurrency
+                        )}
+                        .
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label htmlFor="purchase-order-approval-comment">
                 Comentario
@@ -6328,6 +6517,7 @@ export default function OrdenesCompra() {
                 onClick={() => {
                   setApprovalReviewDecision(null);
                   setApprovalReviewComment("");
+                  setApprovalRejectedItemIds([]);
                 }}
                 disabled={reviewApprovalMutation.isPending}
               >
@@ -6352,16 +6542,32 @@ export default function OrdenesCompra() {
                     );
                     return;
                   }
+                  if (approvalReviewDecision === "reject") {
+                    if (approvalRejectedItemIds.length === 0) {
+                      toast.error(
+                        "Seleccione al menos un artículo para rechazar"
+                      );
+                      return;
+                    }
+                    reviewApprovalMutation.mutate({
+                      id: selectedId,
+                      decision: "reject",
+                      comment,
+                      rejectedItemIds: approvalRejectedItemIds,
+                    });
+                    return;
+                  }
                   reviewApprovalMutation.mutate({
                     id: selectedId,
-                    decision: approvalReviewDecision,
+                    decision: "approve",
                     ...(comment ? { comment } : {}),
                   });
                 }}
                 disabled={
                   reviewApprovalMutation.isPending ||
                   (approvalReviewDecision === "reject" &&
-                    approvalReviewComment.trim().length < 5)
+                    (approvalReviewComment.trim().length < 5 ||
+                      approvalRejectedItemIds.length === 0))
                 }
               >
                 {reviewApprovalMutation.isPending ? (
@@ -6375,7 +6581,9 @@ export default function OrdenesCompra() {
                   ? "Guardando..."
                   : approvalReviewDecision === "approve"
                     ? "Confirmar aprobación"
-                    : "Confirmar rechazo"}
+                    : isTotalApprovalRejection
+                      ? "Rechazar y anular OC"
+                      : "Confirmar rechazo parcial"}
               </Button>
             </div>
           </div>

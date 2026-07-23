@@ -10724,6 +10724,41 @@ describe("BuildReq - Purchase Orders", () => {
     } as any;
   }
 
+  function enablePurchaseOrderApprovalsForTest() {
+    const previousSettings = getRuntimeProcurementApprovalSettings();
+    const enabledAt = new Date(
+      Math.max(
+        Date.now(),
+        previousSettings.updatedAt
+          ? new Date(previousSettings.updatedAt).getTime()
+          : 0
+      ) + 1
+    );
+    setRuntimeProcurementApprovalSettings({
+      ...previousSettings,
+      purchaseOrderApprovalsEnabled: true,
+      purchaseOrderApprovalMinimumHnl: 250_000,
+      purchaseOrderApprovalMinimumUsd: 10_000,
+      updatedAt: enabledAt,
+    });
+    return () =>
+      setRuntimeProcurementApprovalSettings({
+        ...previousSettings,
+        updatedAt: new Date(enabledAt.getTime() + 1),
+      });
+  }
+
+  async function withPurchaseOrderApprovalsEnabledForTest(
+    callback: () => Promise<void>
+  ) {
+    const restore = enablePurchaseOrderApprovalsForTest();
+    try {
+      await callback();
+    } finally {
+      restore();
+    }
+  }
+
   it("createFromPurchaseRequest requires contract scheduling fields", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
@@ -11128,15 +11163,189 @@ describe("BuildReq - Purchase Orders", () => {
     }
   );
 
-  it.skipIf(!PROCUREMENT_APPROVALS_ENABLED)(
-    "keeps an approval committed when creator notification fails",
-    async () => {
+  it("partially rejects selected PO items, approves the remainder, and notifies the creator", async () => {
+    await withPurchaseOrderApprovalsEnabledForTest(async () => {
+      const { ctx } = createProcurementApproverContext();
+      const caller = appRouter.createCaller(ctx);
+      const detail = createApprovalReadyPurchaseOrderDetail({
+        status: "pendiente_aprobacion",
+        approvalStatus: "pendiente",
+      });
+      detail.items = [
+        {
+          ...detail.items[0],
+          id: 15,
+          itemName: "Cemento",
+          quantity: "10.00",
+          unitPrice: "200.00",
+          subtotal: "2000.00",
+          purchaseRequestItemId: 501,
+        },
+        {
+          ...detail.items[0],
+          id: 16,
+          itemName: "Arena",
+          quantity: "5.00",
+          unitPrice: "100.00",
+          subtotal: "500.00",
+          purchaseRequestItemId: 502,
+        },
+      ];
+      const getPurchaseOrderByIdSpy = vi
+        .spyOn(db, "getPurchaseOrderById")
+        .mockResolvedValue(detail);
+      const reviewPurchaseOrderApprovalSpy = vi
+        .spyOn(db, "reviewPurchaseOrderApproval")
+        .mockResolvedValue({
+          success: true,
+          outcome: "partially_approved",
+          status: "aprobada",
+          approvalStatus: "aprobada",
+          approvedItemCount: 1,
+          rejectedItemCount: 1,
+          totalAmount: 2000,
+          currency: "HNL",
+        } as any);
+      const createNotificationSpy = vi
+        .spyOn(db, "createNotification")
+        .mockResolvedValue({ id: 2 } as any);
+
+      await expect(
+        caller.purchaseOrders.reviewApproval({
+          id: 4,
+          decision: "reject",
+          comment: "Arena fuera del alcance aprobado",
+          rejectedItemIds: [16],
+        })
+      ).resolves.toEqual(
+        expect.objectContaining({
+          outcome: "partially_approved",
+          approvedItemCount: 1,
+          rejectedItemCount: 1,
+        })
+      );
+      expect(reviewPurchaseOrderApprovalSpy).toHaveBeenCalledWith({
+        id: 4,
+        decision: "reject",
+        comment: "Arena fuera del alcance aprobado",
+        rejectedItemIds: [16],
+        actor: ctx.user,
+      });
+      expect(createNotificationSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 4,
+          title: "Orden de compra aprobada parcialmente",
+          message: expect.stringContaining("1 ítem(s) aprobados y 1 devueltos"),
+        })
+      );
+
+      getPurchaseOrderByIdSpy.mockRestore();
+      reviewPurchaseOrderApprovalSpy.mockRestore();
+      createNotificationSpy.mockRestore();
+    });
+  });
+
+  it("annuls a totally rejected PO and reports that all items returned to their requests", async () => {
+    await withPurchaseOrderApprovalsEnabledForTest(async () => {
+      const { ctx } = createProcurementApproverContext();
+      const caller = appRouter.createCaller(ctx);
+      const detail = createApprovalReadyPurchaseOrderDetail({
+        status: "pendiente_aprobacion",
+        approvalStatus: "pendiente",
+      });
+      const getPurchaseOrderByIdSpy = vi
+        .spyOn(db, "getPurchaseOrderById")
+        .mockResolvedValue(detail);
+      const reviewPurchaseOrderApprovalSpy = vi
+        .spyOn(db, "reviewPurchaseOrderApproval")
+        .mockResolvedValue({
+          success: true,
+          outcome: "cancelled",
+          status: "anulada",
+          approvalStatus: "rechazada",
+          approvedItemCount: 0,
+          rejectedItemCount: 1,
+          totalAmount: 0,
+          currency: "HNL",
+        } as any);
+      const createNotificationSpy = vi
+        .spyOn(db, "createNotification")
+        .mockResolvedValue({ id: 2 } as any);
+
+      await expect(
+        caller.purchaseOrders.reviewApproval({
+          id: 4,
+          decision: "reject",
+          comment: "La compra completa debe volver a cotizarse",
+          rejectedItemIds: [15],
+        })
+      ).resolves.toEqual(
+        expect.objectContaining({
+          outcome: "cancelled",
+          status: "anulada",
+          approvalStatus: "rechazada",
+        })
+      );
+      expect(createNotificationSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Orden de compra rechazada y anulada",
+          message: expect.stringContaining(
+            "volvieron a quedar disponibles en sus solicitudes"
+          ),
+        })
+      );
+
+      getPurchaseOrderByIdSpy.mockRestore();
+      reviewPurchaseOrderApprovalSpy.mockRestore();
+      createNotificationSpy.mockRestore();
+    });
+  });
+
+  it("rejects empty or duplicated PO rejection selections before database access", async () => {
+    const caller = appRouter.createCaller(
+      createProcurementApproverContext().ctx
+    );
+    const getPurchaseOrderByIdSpy = vi.spyOn(db, "getPurchaseOrderById");
+    const reviewPurchaseOrderApprovalSpy = vi.spyOn(
+      db,
+      "reviewPurchaseOrderApproval"
+    );
+
+    await expect(
+      caller.purchaseOrders.reviewApproval({
+        id: 4,
+        decision: "reject",
+        comment: "Debe corregirse la selección",
+        rejectedItemIds: [],
+      })
+    ).rejects.toThrow("Seleccione al menos un ítem para rechazar");
+    await expect(
+      caller.purchaseOrders.reviewApproval({
+        id: 4,
+        decision: "reject",
+        comment: "Debe corregirse la selección",
+        rejectedItemIds: [15, 15],
+      })
+    ).rejects.toThrow("No se puede seleccionar el mismo ítem más de una vez");
+
+    expect(getPurchaseOrderByIdSpy).not.toHaveBeenCalled();
+    expect(reviewPurchaseOrderApprovalSpy).not.toHaveBeenCalled();
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    reviewPurchaseOrderApprovalSpy.mockRestore();
+  });
+
+  it("keeps an approval committed when creator notification fails", async () => {
+    await withPurchaseOrderApprovalsEnabledForTest(async () => {
       const { ctx } = createProcurementApproverContext();
       const caller = appRouter.createCaller(ctx);
       const result = {
         success: true,
+        outcome: "approved",
         status: "aprobada",
         approvalStatus: "aprobada",
+        approvedItemCount: 1,
+        rejectedItemCount: 0,
         totalAmount: 300000,
         currency: "HNL",
       } as const;
@@ -11171,12 +11380,11 @@ describe("BuildReq - Purchase Orders", () => {
       reviewPurchaseOrderApprovalSpy.mockRestore();
       createNotificationSpy.mockRestore();
       consoleErrorSpy.mockRestore();
-    }
-  );
+    });
+  });
 
-  it.skipIf(!PROCUREMENT_APPROVALS_ENABLED)(
-    "does not let an approver decide a PO from another project",
-    async () => {
+  it("does not let an approver decide a PO from another project", async () => {
+    await withPurchaseOrderApprovalsEnabledForTest(async () => {
       const { ctx } = createProcurementApproverContext();
       const caller = appRouter.createCaller(ctx);
       const getPurchaseOrderByIdSpy = vi
@@ -11203,12 +11411,11 @@ describe("BuildReq - Purchase Orders", () => {
 
       getPurchaseOrderByIdSpy.mockRestore();
       reviewPurchaseOrderApprovalSpy.mockRestore();
-    }
-  );
+    });
+  });
 
-  it.skipIf(!PROCUREMENT_APPROVALS_ENABLED)(
-    "requires a rejection reason and denies decisions to a base admin",
-    async () => {
+  it("requires a rejection reason and denies decisions to a base admin", async () => {
+    await withPurchaseOrderApprovalsEnabledForTest(async () => {
       const approverCaller = appRouter.createCaller(
         createProcurementApproverContext().ctx
       );
@@ -11222,6 +11429,7 @@ describe("BuildReq - Purchase Orders", () => {
           id: 4,
           decision: "reject",
           comment: "no",
+          rejectedItemIds: [15],
         })
       ).rejects.toThrow(
         "El motivo de rechazo debe tener al menos 5 caracteres"
@@ -11239,6 +11447,7 @@ describe("BuildReq - Purchase Orders", () => {
           id: 4,
           decision: "reject",
           comment: "Fuera de presupuesto",
+          rejectedItemIds: [15],
         })
       ).rejects.toMatchObject({
         code: "FORBIDDEN",
@@ -11247,8 +11456,8 @@ describe("BuildReq - Purchase Orders", () => {
       expect(reviewPurchaseOrderApprovalSpy).not.toHaveBeenCalled();
 
       reviewPurchaseOrderApprovalSpy.mockRestore();
-    }
-  );
+    });
+  });
 
   it("reopens a rejected PO for correction through the shared history transition", async () => {
     const { ctx } = createAdminCentralContext();

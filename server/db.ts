@@ -3311,23 +3311,23 @@ export async function getMaterialRequestById(id: number) {
   };
 }
 
-export async function updateMaterialRequestStatus(
+type MaterialRequestWorkflowStatus =
+  | "borrador"
+  | "pendiente_aprobar"
+  | "en_espera"
+  | "en_proceso"
+  | "parcialmente_atendida"
+  | "flujo_completado"
+  | "cerrada"
+  | "cerrada_incompleta"
+  | "anulada";
+
+async function updateMaterialRequestStatusWithDatabase(
+  database: any,
   id: number,
-  status:
-    | "borrador"
-    | "pendiente_aprobar"
-    | "en_espera"
-    | "en_proceso"
-    | "parcialmente_atendida"
-    | "flujo_completado"
-    | "cerrada"
-    | "cerrada_incompleta"
-    | "anulada",
+  status: MaterialRequestWorkflowStatus,
   processedById?: number
 ) {
-  const db = await getDb();
-  if (!db) throw new Error("DB not available");
-
   const updateData: Record<string, unknown> = { status };
   if (processedById) updateData.processedById = processedById;
   if (
@@ -3349,21 +3349,29 @@ export async function updateMaterialRequestStatus(
   }
   if (status === "anulada") updateData.workflowStage = "rechazada";
 
-  await db
+  await database
     .update(materialRequests)
     .set(updateData)
     .where(eq(materialRequests.id, id));
   return { success: true };
 }
 
-export async function syncMaterialRequestFulfillmentStatus(
-  requestId: number,
+export async function updateMaterialRequestStatus(
+  id: number,
+  status: MaterialRequestWorkflowStatus,
   processedById?: number
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
+  return updateMaterialRequestStatusWithDatabase(db, id, status, processedById);
+}
 
-  const [request] = await db
+async function syncMaterialRequestFulfillmentStatusWithDatabase(
+  database: any,
+  requestId: number,
+  processedById?: number
+) {
+  const [request] = await database
     .select()
     .from(materialRequests)
     .where(eq(materialRequests.id, requestId))
@@ -3380,10 +3388,12 @@ export async function syncMaterialRequestFulfillmentStatus(
     return { success: true, status: request.status, changed: false };
   }
 
-  const items = await db
+  const items = (await database
     .select()
     .from(requestItems)
-    .where(eq(requestItems.requestId, requestId));
+    .where(eq(requestItems.requestId, requestId))) as Array<
+    typeof requestItems.$inferSelect
+  >;
   const activeItems = items.filter(item => item.approvalStatus !== "rechazada");
   if (activeItems.length === 0) {
     return { success: true, status: request.status, changed: false };
@@ -3392,7 +3402,7 @@ export async function syncMaterialRequestFulfillmentStatus(
   const activeItemIds = activeItems.map(item => item.id);
   const purchaseReceiptRows =
     activeItemIds.length > 0
-      ? await db
+      ? await database
           .select({
             materialRequestItemId: purchaseOrderItems.materialRequestItemId,
             receivedQuantity: sql<string>`coalesce(sum(${purchaseOrderItems.receivedQuantity}), 0)`,
@@ -3437,7 +3447,7 @@ export async function syncMaterialRequestFulfillmentStatus(
         toDecimalString(item.deliveredQuantity) ||
       nextItemStatus !== item.status
     ) {
-      await db
+      await database
         .update(requestItems)
         .set({
           deliveredQuantity: toDecimalString(nextDelivered),
@@ -3453,7 +3463,7 @@ export async function syncMaterialRequestFulfillmentStatus(
 
   const transferClosureRows =
     activeItemIds.length > 0
-      ? await db
+      ? await database
           .select({
             materialRequestItemId: transferRequestItems.materialRequestItemId,
             quantity: transferRequestItems.quantity,
@@ -3564,8 +3574,26 @@ export async function syncMaterialRequestFulfillmentStatus(
     return { success: true, status: request.status, changed: false };
   }
 
-  await updateMaterialRequestStatus(requestId, nextStatus, processedById);
+  await updateMaterialRequestStatusWithDatabase(
+    database,
+    requestId,
+    nextStatus,
+    processedById
+  );
   return { success: true, status: nextStatus, changed: true };
+}
+
+export async function syncMaterialRequestFulfillmentStatus(
+  requestId: number,
+  processedById?: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  return syncMaterialRequestFulfillmentStatusWithDatabase(
+    db,
+    requestId,
+    processedById
+  );
 }
 
 export async function approveMaterialRequest(id: number, approvedById: number) {
@@ -6942,11 +6970,11 @@ export async function adjustPurchaseRequestItemConvertedQuantity(
   };
 }
 
-export async function syncPurchaseRequestConversionStatus(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("DB not available");
-
-  const [purchaseRequest] = await db
+async function syncPurchaseRequestConversionStatusWithDatabase(
+  database: any,
+  id: number
+) {
+  const [purchaseRequest] = await database
     .select()
     .from(purchaseRequests)
     .where(eq(purchaseRequests.id, id))
@@ -6963,10 +6991,12 @@ export async function syncPurchaseRequestConversionStatus(id: number) {
     return purchaseRequest.status;
   }
 
-  const allItems = await db
+  const allItems = (await database
     .select()
     .from(purchaseRequestItems)
-    .where(eq(purchaseRequestItems.purchaseRequestId, id));
+    .where(eq(purchaseRequestItems.purchaseRequestId, id))) as Array<
+    typeof purchaseRequestItems.$inferSelect
+  >;
   const items = isPurchaseRequestApprovalEnabled()
     ? allItems.filter(item => item.approvalStatus === "aprobada")
     : allItems;
@@ -7012,13 +7042,23 @@ export async function syncPurchaseRequestConversionStatus(id: number) {
     historicalConversionReopened ||
     nextApprovalStatus !== purchaseRequest.approvalStatus
   ) {
-    await updatePurchaseRequest(id, {
-      status: nextStatus as any,
-      approvalStatus: nextApprovalStatus,
-    });
+    await database
+      .update(purchaseRequests)
+      .set({
+        status: nextStatus as any,
+        approvalStatus: nextApprovalStatus,
+        updatedAt: new Date(),
+      })
+      .where(eq(purchaseRequests.id, id));
   }
 
   return nextStatus;
+}
+
+export async function syncPurchaseRequestConversionStatus(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  return syncPurchaseRequestConversionStatusWithDatabase(db, id);
 }
 
 export async function addPurchaseRequestItems(
@@ -8064,12 +8104,300 @@ export async function submitPurchaseOrderForApproval(params: {
   });
 }
 
-export async function reviewPurchaseOrderApproval(params: {
-  id: number;
-  decision: "approve" | "reject";
-  comment?: string | null;
-  actor: ProcurementApprovalActor;
-}) {
+type PurchaseOrderApprovalReviewParams =
+  | {
+      id: number;
+      decision: "approve";
+      comment?: string | null;
+      actor: ProcurementApprovalActor;
+    }
+  | {
+      id: number;
+      decision: "reject";
+      comment: string;
+      rejectedItemIds: number[];
+      actor: ProcurementApprovalActor;
+    };
+
+function buildPurchaseOrderApprovalItemAuditSnapshot(
+  item: typeof purchaseOrderItems.$inferSelect
+) {
+  return JSON.stringify({
+    id: item.id,
+    purchaseRequestItemId: item.purchaseRequestItemId,
+    materialRequestItemId: item.materialRequestItemId,
+    itemName: item.itemName,
+    currentSapItemCode: item.currentSapItemCode,
+    originalSapItemCode: item.originalSapItemCode,
+    quantity: item.quantity,
+    unit: item.unit,
+    unitPrice: item.unitPrice,
+    subtotal: item.subtotal,
+    taxCode: item.taxCode,
+    additionalTaxCodes: item.additionalTaxCodes,
+    taxBreakdown: item.taxBreakdown,
+  });
+}
+
+async function releasePurchaseOrderApprovalItems(
+  database: any,
+  params: {
+    purchaseOrder: typeof purchaseOrders.$inferSelect;
+    rejectedItems: Array<typeof purchaseOrderItems.$inferSelect>;
+    remainingItems: Array<typeof purchaseOrderItems.$inferSelect>;
+    actorId: number;
+    comment: string;
+    deleteRejectedItems: boolean;
+  }
+) {
+  const purchaseRequestReleaseByItemId = new Map<number, number>();
+  for (const item of params.rejectedItems) {
+    if (!item.purchaseRequestItemId) continue;
+    purchaseRequestReleaseByItemId.set(
+      item.purchaseRequestItemId,
+      (purchaseRequestReleaseByItemId.get(item.purchaseRequestItemId) ?? 0) +
+        parseDecimal(item.quantity)
+    );
+  }
+
+  const purchaseRequestItemIds = Array.from(
+    purchaseRequestReleaseByItemId.keys()
+  ).sort((left, right) => left - right);
+  const candidatePurchaseRequestItems = (
+    purchaseRequestItemIds.length > 0
+      ? await database
+          .select({
+            id: purchaseRequestItems.id,
+            purchaseRequestId: purchaseRequestItems.purchaseRequestId,
+          })
+          .from(purchaseRequestItems)
+          .where(inArray(purchaseRequestItems.id, purchaseRequestItemIds))
+      : []
+  ) as Array<{ id: number; purchaseRequestId: number }>;
+  const purchaseRequestIds: number[] = Array.from(
+    new Set<number>(
+      candidatePurchaseRequestItems.map(
+        (item: { purchaseRequestId: number }) => item.purchaseRequestId
+      )
+    )
+  ).sort((left, right) => left - right);
+
+  if (purchaseRequestIds.length > 0) {
+    await database
+      .select({ id: purchaseRequests.id })
+      .from(purchaseRequests)
+      .where(inArray(purchaseRequests.id, purchaseRequestIds))
+      .orderBy(asc(purchaseRequests.id))
+      .for("update");
+  }
+
+  const lockedPurchaseRequestItems = (
+    purchaseRequestItemIds.length > 0
+      ? await database
+          .select()
+          .from(purchaseRequestItems)
+          .where(inArray(purchaseRequestItems.id, purchaseRequestItemIds))
+          .orderBy(asc(purchaseRequestItems.id))
+          .for("update")
+      : []
+  ) as Array<typeof purchaseRequestItems.$inferSelect>;
+  if (lockedPurchaseRequestItems.length !== purchaseRequestItemIds.length) {
+    throw new Error(
+      "No se encontró uno de los ítems de SC que debe volver a pendiente"
+    );
+  }
+
+  for (const sourceItem of lockedPurchaseRequestItems) {
+    const quantityToRelease =
+      purchaseRequestReleaseByItemId.get(sourceItem.id) ?? 0;
+    const currentConvertedQuantity = parseDecimal(sourceItem.convertedQuantity);
+    if (currentConvertedQuantity + 0.000001 < quantityToRelease) {
+      throw new Error(
+        `La cantidad convertida de ${sourceItem.itemName} no coincide con la OC`
+      );
+    }
+    await database
+      .update(purchaseRequestItems)
+      .set({
+        convertedQuantity: toDecimalString(
+          Math.max(currentConvertedQuantity - quantityToRelease, 0)
+        ),
+        updatedAt: new Date(),
+      })
+      .where(eq(purchaseRequestItems.id, sourceItem.id));
+  }
+
+  const retainedMaterialRequestItemIds = new Set(
+    params.remainingItems
+      .map(item => item.materialRequestItemId)
+      .filter((id): id is number => typeof id === "number")
+  );
+  const materialRequestItemIds = Array.from(
+    new Set(
+      params.rejectedItems
+        .map(item => item.materialRequestItemId)
+        .filter(
+          (id): id is number =>
+            typeof id === "number" && !retainedMaterialRequestItemIds.has(id)
+        )
+    )
+  ).sort((left, right) => left - right);
+  const candidateRequestItems = (
+    materialRequestItemIds.length > 0
+      ? await database
+          .select({ id: requestItems.id, requestId: requestItems.requestId })
+          .from(requestItems)
+          .where(inArray(requestItems.id, materialRequestItemIds))
+      : []
+  ) as Array<{ id: number; requestId: number }>;
+  const materialRequestIds: number[] = Array.from(
+    new Set<number>(
+      candidateRequestItems.map((item: { requestId: number }) => item.requestId)
+    )
+  ).sort((left, right) => left - right);
+
+  if (materialRequestIds.length > 0) {
+    await database
+      .select({ id: materialRequests.id })
+      .from(materialRequests)
+      .where(inArray(materialRequests.id, materialRequestIds))
+      .orderBy(asc(materialRequests.id))
+      .for("update");
+  }
+
+  const lockedRequestItems = (
+    materialRequestItemIds.length > 0
+      ? await database
+          .select()
+          .from(requestItems)
+          .where(inArray(requestItems.id, materialRequestItemIds))
+          .orderBy(asc(requestItems.id))
+          .for("update")
+      : []
+  ) as Array<typeof requestItems.$inferSelect>;
+  if (lockedRequestItems.length !== materialRequestItemIds.length) {
+    throw new Error(
+      "No se encontró uno de los artículos de requisición que debe liberarse"
+    );
+  }
+
+  const directFlows = (
+    materialRequestItemIds.length > 0
+      ? await database
+          .select()
+          .from(supplyFlowRecords)
+          .where(
+            and(
+              eq(supplyFlowRecords.flowType, "compra_directa"),
+              inArray(supplyFlowRecords.requestItemId, materialRequestItemIds)
+            )
+          )
+          .orderBy(asc(supplyFlowRecords.id))
+          .for("update")
+      : []
+  ) as Array<typeof supplyFlowRecords.$inferSelect>;
+  const activeDirectFlowsForOrder = directFlows.filter(
+    (flow: typeof supplyFlowRecords.$inferSelect) =>
+      flow.purchaseOrderNumber === params.purchaseOrder.orderNumber &&
+      flow.status !== "cancelado"
+  );
+  const releasedMaterialRequestItemIds = new Set<number>(
+    activeDirectFlowsForOrder
+      .map((flow: typeof supplyFlowRecords.$inferSelect) => flow.requestItemId)
+      .filter((id: number | null): id is number => typeof id === "number")
+  );
+
+  if (activeDirectFlowsForOrder.length > 0) {
+    await database
+      .update(supplyFlowRecords)
+      .set({
+        status: "cancelado",
+        processedById: params.actorId,
+        notes: `Flujo cancelado por rechazo de la orden ${params.purchaseOrder.orderNumber}: ${params.comment}`,
+        updatedAt: new Date(),
+      })
+      .where(
+        inArray(
+          supplyFlowRecords.id,
+          activeDirectFlowsForOrder.map(
+            (flow: typeof supplyFlowRecords.$inferSelect) => flow.id
+          )
+        )
+      );
+  }
+
+  const affectedMaterialRequestIds = new Set<number>();
+  for (const sourceItem of lockedRequestItems) {
+    const hasAnotherActiveDirectFlow = directFlows.some(
+      (flow: typeof supplyFlowRecords.$inferSelect) =>
+        flow.requestItemId === sourceItem.id &&
+        flow.purchaseOrderNumber !== params.purchaseOrder.orderNumber &&
+        flow.status !== "cancelado"
+    );
+    const shouldReleaseItem =
+      !hasAnotherActiveDirectFlow &&
+      (sourceItem.assignedFlow === "compra_directa" ||
+        releasedMaterialRequestItemIds.has(sourceItem.id) ||
+        params.purchaseOrder.classification === "cd");
+    if (!shouldReleaseItem) continue;
+
+    await database
+      .update(requestItems)
+      .set({
+        assignedFlow: null,
+        status: "pendiente",
+        updatedAt: new Date(),
+      })
+      .where(eq(requestItems.id, sourceItem.id));
+    affectedMaterialRequestIds.add(sourceItem.requestId);
+  }
+
+  await database.insert(purchaseOrderAuditLogs).values(
+    params.rejectedItems.map(item => ({
+      purchaseOrderId: params.purchaseOrder.id,
+      purchaseOrderItemId: item.id,
+      action: params.deleteRejectedItems
+        ? "approval_item_rejected"
+        : "approval_order_rejected",
+      field: "approval_rejection",
+      oldValue: buildPurchaseOrderApprovalItemAuditSnapshot(item),
+      newValue: params.deleteRejectedItems
+        ? null
+        : "retained_on_cancelled_order",
+      changedById: params.actorId,
+      note: params.comment,
+    }))
+  );
+
+  if (params.deleteRejectedItems) {
+    await database.delete(purchaseOrderItems).where(
+      inArray(
+        purchaseOrderItems.id,
+        params.rejectedItems.map(item => item.id)
+      )
+    );
+  }
+
+  for (const purchaseRequestId of purchaseRequestIds) {
+    await syncPurchaseRequestConversionStatusWithDatabase(
+      database,
+      purchaseRequestId
+    );
+  }
+  for (const materialRequestId of Array.from(affectedMaterialRequestIds).sort(
+    (left, right) => left - right
+  )) {
+    await syncMaterialRequestFulfillmentStatusWithDatabase(
+      database,
+      materialRequestId,
+      params.actorId
+    );
+  }
+}
+
+export async function reviewPurchaseOrderApproval(
+  params: PurchaseOrderApprovalReviewParams
+) {
   await getProcurementApprovalSettings();
   assertProcurementApprovalWorkflowEnabled("purchase_order");
   const db = await getDb();
@@ -8078,14 +8406,58 @@ export async function reviewPurchaseOrderApproval(params: {
   if (params.decision === "reject" && (!comment || comment.length < 5)) {
     throw new Error("El motivo de rechazo debe tener al menos 5 caracteres");
   }
+  if (params.decision === "reject" && params.rejectedItemIds.length === 0) {
+    throw new Error("Seleccione al menos un ítem para rechazar");
+  }
+  if (
+    params.decision === "reject" &&
+    new Set(params.rejectedItemIds).size !== params.rejectedItemIds.length
+  ) {
+    throw new Error("No se puede seleccionar el mismo ítem más de una vez");
+  }
 
   return db.transaction(async tx => {
     const purchaseOrder = await lockPurchaseOrderForUpdate(tx, params.id);
+    if (
+      purchaseOrder.status !== "pendiente_aprobacion" ||
+      purchaseOrder.approvalStatus !== "pendiente"
+    ) {
+      throw new Error(
+        "La orden ya no está pendiente o fue decidida por otro aprobador"
+      );
+    }
     const items = await tx
       .select()
       .from(purchaseOrderItems)
-      .where(eq(purchaseOrderItems.purchaseOrderId, params.id));
+      .where(eq(purchaseOrderItems.purchaseOrderId, params.id))
+      .orderBy(asc(purchaseOrderItems.id))
+      .for("update");
     const snapshot = summarizePersistedPurchaseOrder(purchaseOrder, items);
+    const [submittedSnapshot] = await tx
+      .select()
+      .from(procurementApprovalHistory)
+      .where(
+        and(
+          eq(procurementApprovalHistory.documentType, "purchase_order"),
+          eq(procurementApprovalHistory.documentId, params.id),
+          eq(procurementApprovalHistory.action, "submitted")
+        )
+      )
+      .orderBy(
+        desc(procurementApprovalHistory.createdAt),
+        desc(procurementApprovalHistory.id)
+      )
+      .limit(1);
+    if (
+      !submittedSnapshot ||
+      submittedSnapshot.currency !== snapshot.currency ||
+      formatApprovalSnapshotAmount(submittedSnapshot.amount) !== snapshot.amount
+    ) {
+      throw new Error(
+        "El monto o la moneda cambió después del envío; corrija y reenvíe la orden"
+      );
+    }
+
     if (params.decision === "approve") {
       await assertPersistedPurchaseOrderApprovalReadiness(
         tx,
@@ -8095,41 +8467,83 @@ export async function reviewPurchaseOrderApproval(params: {
       if (!snapshot.requiresApproval) {
         throw new Error("La orden ya no supera el límite de aprobación");
       }
+    }
 
-      const [submittedSnapshot] = await tx
-        .select()
-        .from(procurementApprovalHistory)
-        .where(
-          and(
-            eq(procurementApprovalHistory.documentType, "purchase_order"),
-            eq(procurementApprovalHistory.documentId, params.id),
-            eq(procurementApprovalHistory.action, "submitted")
-          )
-        )
-        .orderBy(
-          desc(procurementApprovalHistory.createdAt),
-          desc(procurementApprovalHistory.id)
-        )
-        .limit(1);
-      if (
-        !submittedSnapshot ||
-        submittedSnapshot.currency !== snapshot.currency ||
-        formatApprovalSnapshotAmount(submittedSnapshot.amount) !==
-          snapshot.amount
-      ) {
-        throw new Error(
-          "El monto o la moneda cambió después del envío; corrija y reenvíe la orden"
-        );
-      }
+    const rejectedItemIdSet =
+      params.decision === "reject"
+        ? new Set(params.rejectedItemIds)
+        : new Set<number>();
+    const rejectedItems = items.filter(item => rejectedItemIdSet.has(item.id));
+    if (
+      params.decision === "reject" &&
+      rejectedItems.length !== rejectedItemIdSet.size
+    ) {
+      throw new Error(
+        "Uno de los ítems seleccionados no pertenece a esta orden de compra"
+      );
+    }
+    if (
+      rejectedItems.some(
+        item =>
+          parseDecimal(item.receivedQuantity) > 0 || item.receiptClosed === true
+      )
+    ) {
+      throw new Error(
+        "No se puede rechazar un ítem que ya tiene recepciones registradas"
+      );
+    }
+
+    const remainingItems = items.filter(
+      item => !rejectedItemIdSet.has(item.id)
+    );
+    const isTotalRejection =
+      params.decision === "reject" && remainingItems.length === 0;
+    if (params.decision === "reject" && !isTotalRejection) {
+      await assertPersistedPurchaseOrderApprovalReadiness(
+        tx,
+        purchaseOrder,
+        remainingItems
+      );
+    }
+    const approvedSnapshot =
+      params.decision === "reject"
+        ? isTotalRejection
+          ? { amount: "0.00", currency: snapshot.currency }
+          : summarizePersistedPurchaseOrder(purchaseOrder, remainingItems)
+        : snapshot;
+
+    if (params.decision === "reject") {
+      await releasePurchaseOrderApprovalItems(tx, {
+        purchaseOrder,
+        rejectedItems,
+        remainingItems: isTotalRejection ? [] : remainingItems,
+        actorId: params.actor.id,
+        comment: comment!,
+        deleteRejectedItems: !isTotalRejection,
+      });
     }
 
     const nextApprovalStatus =
-      params.decision === "approve" ? "aprobada" : "rechazada";
+      params.decision === "approve" || !isTotalRejection
+        ? "aprobada"
+        : "rechazada";
+    const nextStatus =
+      params.decision === "approve" || !isTotalRejection
+        ? "aprobada"
+        : "anulada";
     const [updated] = await tx
       .update(purchaseOrders)
       .set({
-        status: params.decision === "approve" ? "aprobada" : "rechazada",
+        status: nextStatus,
         approvalStatus: nextApprovalStatus,
+        ...(params.decision === "reject" && !isTotalRejection
+          ? {
+              printedDocumentName: null,
+              printedDocumentMimeType: null,
+              printedDocumentContent: null,
+              printedAt: null,
+            }
+          : {}),
         updatedAt: new Date(),
       })
       .where(
@@ -8149,20 +8563,39 @@ export async function reviewPurchaseOrderApproval(params: {
     await tx.insert(procurementApprovalHistory).values({
       documentType: "purchase_order",
       documentId: params.id,
-      action: params.decision === "approve" ? "approved" : "rejected",
+      action:
+        params.decision === "approve"
+          ? "approved"
+          : isTotalRejection
+            ? "rejected_and_cancelled"
+            : "partially_approved",
       previousStatus: "pendiente",
       newStatus: nextApprovalStatus,
       ...getApprovalActorSnapshot(params.actor),
-      comment,
-      amount: snapshot.amount,
+      comment:
+        params.decision === "approve"
+          ? comment
+          : isTotalRejection
+            ? `Rechazo total: ${items.length} de ${items.length} ítems devueltos a sus solicitudes. ${comment}`
+            : `Aprobados ${remainingItems.length} de ${items.length} ítems; rechazados ${rejectedItems.length}. ${comment}`,
+      amount: isTotalRejection ? snapshot.amount : approvedSnapshot.amount,
       currency: snapshot.currency,
     });
 
     return {
       success: true,
+      outcome:
+        params.decision === "approve"
+          ? ("approved" as const)
+          : isTotalRejection
+            ? ("cancelled" as const)
+            : ("partially_approved" as const),
       status: updated.status,
       approvalStatus: updated.approvalStatus,
-      totalAmount: Number(snapshot.amount),
+      approvedItemCount:
+        params.decision === "approve" ? items.length : remainingItems.length,
+      rejectedItemCount: rejectedItems.length,
+      totalAmount: Number(approvedSnapshot.amount),
       currency: snapshot.currency,
     };
   });

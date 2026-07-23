@@ -452,24 +452,33 @@ function validatePurchaseOrderApprovalReadiness(detail: any) {
   }
 }
 
-const approvalDecisionSchema = z
-  .object({
+const approvalDecisionSchema = z.discriminatedUnion("decision", [
+  z.object({
     id: z.number(),
-    decision: z.enum(["approve", "reject"]),
+    decision: z.literal("approve"),
     comment: z.string().trim().max(1000).optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (
-      value.decision === "reject" &&
-      (value.comment?.trim().length ?? 0) < 5
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["comment"],
-        message: "El motivo de rechazo debe tener al menos 5 caracteres",
-      });
-    }
-  });
+  }),
+  z.object({
+    id: z.number(),
+    decision: z.literal("reject"),
+    comment: z
+      .string()
+      .trim()
+      .min(5, "El motivo de rechazo debe tener al menos 5 caracteres")
+      .max(1000),
+    rejectedItemIds: z
+      .array(z.number().int().positive())
+      .min(1, "Seleccione al menos un ítem para rechazar")
+      .superRefine((itemIds, ctx) => {
+        if (new Set(itemIds).size !== itemIds.length) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "No se puede seleccionar el mismo ítem más de una vez",
+          });
+        }
+      }),
+  }),
+]);
 
 async function notifyProjectProcurementApprovers(params: {
   projectId: number;
@@ -1386,12 +1395,21 @@ export const purchaseOrdersRouter = router({
 
       let result: Awaited<ReturnType<typeof db.reviewPurchaseOrderApproval>>;
       try {
-        result = await db.reviewPurchaseOrderApproval({
-          id: input.id,
-          decision: input.decision,
-          comment: input.comment,
-          actor: ctx.user,
-        });
+        result =
+          input.decision === "reject"
+            ? await db.reviewPurchaseOrderApproval({
+                id: input.id,
+                decision: "reject",
+                comment: input.comment,
+                rejectedItemIds: input.rejectedItemIds,
+                actor: ctx.user,
+              })
+            : await db.reviewPurchaseOrderApproval({
+                id: input.id,
+                decision: "approve",
+                comment: input.comment,
+                actor: ctx.user,
+              });
       } catch (error) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -1403,16 +1421,25 @@ export const purchaseOrdersRouter = router({
       }
 
       try {
+        const notification =
+          result.outcome === "partially_approved"
+            ? {
+                title: "Orden de compra aprobada parcialmente",
+                message: `${detail.purchaseOrder.orderNumber}: ${result.approvedItemCount} ítem(s) aprobados y ${result.rejectedItemCount} devueltos a sus solicitudes. Motivo: ${input.comment?.trim()}`,
+              }
+            : result.outcome === "cancelled"
+              ? {
+                  title: "Orden de compra rechazada y anulada",
+                  message: `${detail.purchaseOrder.orderNumber} fue anulada y sus ${result.rejectedItemCount} ítem(s) volvieron a quedar disponibles en sus solicitudes. Motivo: ${input.comment?.trim()}`,
+                }
+              : {
+                  title: "Orden de compra aprobada",
+                  message: `${detail.purchaseOrder.orderNumber} fue aprobada.`,
+                };
         await db.createNotification({
           userId: detail.purchaseOrder.createdById,
-          title:
-            input.decision === "approve"
-              ? "Orden de compra aprobada"
-              : "Orden de compra rechazada",
-          message:
-            input.decision === "approve"
-              ? `${detail.purchaseOrder.orderNumber} fue aprobada.`
-              : `${detail.purchaseOrder.orderNumber} fue rechazada: ${input.comment?.trim()}`,
+          title: notification.title,
+          message: notification.message,
           type: "orden_compra",
           relatedEntityType: "purchase_order",
           relatedEntityId: input.id,
