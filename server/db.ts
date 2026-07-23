@@ -6547,6 +6547,7 @@ export async function updatePendingPurchaseRequestQuantities(params: {
         itemName: purchaseRequestItems.itemName,
         quantity: purchaseRequestItems.quantity,
         convertedQuantity: purchaseRequestItems.convertedQuantity,
+        approvalStatus: purchaseRequestItems.approvalStatus,
       })
       .from(purchaseRequestItems)
       .where(
@@ -6563,6 +6564,11 @@ export async function updatePendingPurchaseRequestQuantities(params: {
     const existingById = new Map(existingItems.map(item => [item.id, item]));
     const changes = params.items.flatMap(item => {
       const existing = existingById.get(item.id)!;
+      if (existing.approvalStatus !== "pendiente") {
+        throw new Error(
+          `El ítem ${existing.itemName} ya no está pendiente de aprobación`
+        );
+      }
       const quantity = parseDecimal(item.quantity);
       if (!Number.isFinite(quantity) || quantity <= 0) {
         throw new Error("La cantidad debe ser un número mayor que cero");
@@ -6613,6 +6619,25 @@ export async function updatePendingPurchaseRequestQuantities(params: {
   });
 }
 
+function getPurchaseRequestStatusFromApprovedItems(
+  items: Array<{
+    quantity: string | number | null;
+    convertedQuantity: string | number | null;
+  }>
+) {
+  if (items.length === 0) return "rechazada" as const;
+  const allConverted = items.every(
+    item => getPendingConversionQuantity(item) <= 0
+  );
+  if (allConverted) return "convertida" as const;
+  const hasConverted = items.some(
+    item => parseDecimal(item.convertedQuantity) > 0
+  );
+  return hasConverted
+    ? ("parcialmente_convertida" as const)
+    : ("aprobada" as const);
+}
+
 export async function reviewPurchaseRequestApproval(params: {
   id: number;
   decision: "approve" | "reject";
@@ -6635,6 +6660,23 @@ export async function reviewPurchaseRequestApproval(params: {
   }
 
   return db.transaction(async tx => {
+    const [pendingRequest] = await tx
+      .select({ id: purchaseRequests.id })
+      .from(purchaseRequests)
+      .where(
+        and(
+          eq(purchaseRequests.id, params.id),
+          eq(purchaseRequests.status, "en_revision"),
+          eq(purchaseRequests.approvalStatus, "pendiente")
+        )
+      )
+      .for("update");
+    if (!pendingRequest) {
+      throw new Error(
+        "La solicitud ya no está pendiente o fue decidida por otro aprobador"
+      );
+    }
+
     const items = await tx
       .select({
         id: purchaseRequestItems.id,
@@ -6644,14 +6686,22 @@ export async function reviewPurchaseRequestApproval(params: {
         approvalStatus: purchaseRequestItems.approvalStatus,
       })
       .from(purchaseRequestItems)
-      .where(eq(purchaseRequestItems.purchaseRequestId, params.id));
+      .where(eq(purchaseRequestItems.purchaseRequestId, params.id))
+      .orderBy(asc(purchaseRequestItems.id))
+      .for("update");
     if (items.length === 0) {
       throw new Error("La solicitud debe tener al menos un ítem");
+    }
+    const pendingItems = items.filter(
+      item => item.approvalStatus === "pendiente"
+    );
+    if (pendingItems.length === 0) {
+      throw new Error("La solicitud no tiene ítems pendientes de aprobación");
     }
 
     const requestedApprovedItemIds =
       params.decision === "approve"
-        ? (params.approvedItemIds ?? items.map(item => item.id))
+        ? (params.approvedItemIds ?? pendingItems.map(item => item.id))
         : [];
     if (
       params.decision === "approve" &&
@@ -6659,7 +6709,7 @@ export async function reviewPurchaseRequestApproval(params: {
     ) {
       throw new Error("Seleccione al menos un ítem para aprobar");
     }
-    const itemById = new Map(items.map(item => [item.id, item]));
+    const itemById = new Map(pendingItems.map(item => [item.id, item]));
     const unknownApprovedItemId = requestedApprovedItemIds.find(
       itemId => !itemById.has(itemId)
     );
@@ -6668,18 +6718,13 @@ export async function reviewPurchaseRequestApproval(params: {
         "Uno de los ítems seleccionados no pertenece a la solicitud"
       );
     }
-    const itemNoLongerPending = items.find(
-      item => item.approvalStatus !== "pendiente"
-    );
-    if (itemNoLongerPending) {
-      throw new Error(
-        `El ítem ${itemNoLongerPending.itemName} ya no está pendiente de aprobación`
-      );
-    }
-
     const approvedItemIdSet = new Set(requestedApprovedItemIds);
-    const approvedItems = items.filter(item => approvedItemIdSet.has(item.id));
-    const rejectedItems = items.filter(item => !approvedItemIdSet.has(item.id));
+    const approvedItems = pendingItems.filter(item =>
+      approvedItemIdSet.has(item.id)
+    );
+    const rejectedItems = pendingItems.filter(
+      item => !approvedItemIdSet.has(item.id)
+    );
     if (
       params.decision === "approve" &&
       rejectedItems.length > 0 &&
@@ -6689,33 +6734,26 @@ export async function reviewPurchaseRequestApproval(params: {
         "Indique un motivo de rechazo de al menos 5 caracteres para los ítems no seleccionados"
       );
     }
-    let nextDocumentStatus:
-      | "aprobada"
-      | "parcialmente_convertida"
-      | "convertida"
-      | "rechazada" = "rechazada";
-    if (params.decision === "approve") {
-      const allConverted =
-        approvedItems.length > 0 &&
-        approvedItems.every(item => getPendingConversionQuantity(item) <= 0);
-      const hasConverted = approvedItems.some(
-        item => parseDecimal(item.convertedQuantity) > 0
-      );
-      nextDocumentStatus = allConverted
-        ? "convertida"
-        : hasConverted
-          ? "parcialmente_convertida"
-          : "aprobada";
-    }
-
+    const approvedItemsAfterDecision = [
+      ...items.filter(item => item.approvalStatus === "aprobada"),
+      ...approvedItems,
+    ];
+    const newlyRejectedItemIds = new Set(rejectedItems.map(item => item.id));
+    const rejectedItemCountAfterDecision = items.filter(
+      item =>
+        item.approvalStatus === "rechazada" || newlyRejectedItemIds.has(item.id)
+    ).length;
+    const nextDocumentStatus = getPurchaseRequestStatusFromApprovedItems(
+      approvedItemsAfterDecision
+    );
     const nextApprovalStatus =
-      params.decision === "approve" ? "aprobada" : "rechazada";
+      approvedItemsAfterDecision.length > 0 ? "aprobada" : "rechazada";
     const [updated] = await tx
       .update(purchaseRequests)
       .set({
         status: nextDocumentStatus,
         approvalStatus: nextApprovalStatus,
-        rejectionReason: params.decision === "reject" ? comment : null,
+        rejectionReason: nextApprovalStatus === "rechazada" ? comment : null,
         updatedAt: new Date(),
       })
       .where(
@@ -6777,9 +6815,9 @@ export async function reviewPurchaseRequestApproval(params: {
     }
 
     const historyComment =
-      params.decision === "approve" && rejectedItems.length > 0
+      approvedItemsAfterDecision.length > 0 && rejectedItems.length > 0
         ? [
-            `Aprobados ${approvedItems.length} de ${items.length} ítems`,
+            `Aprobados ${approvedItems.length} de ${pendingItems.length} ítems revisados`,
             comment,
           ]
             .filter(Boolean)
@@ -6790,9 +6828,10 @@ export async function reviewPurchaseRequestApproval(params: {
       documentType: "purchase_request",
       documentId: params.id,
       action:
-        params.decision === "approve" && rejectedItems.length > 0
+        approvedItemsAfterDecision.length > 0 &&
+        rejectedItemCountAfterDecision > 0
           ? "partially_approved"
-          : params.decision === "approve"
+          : approvedItemsAfterDecision.length > 0
             ? "approved"
             : "rejected",
       previousStatus: "pendiente",
@@ -6809,6 +6848,280 @@ export async function reviewPurchaseRequestApproval(params: {
       approvalStatus: updated.approvalStatus,
       approvedItemCount: approvedItems.length,
       rejectedItemCount: rejectedItems.length,
+      totalApprovedItemCount: approvedItemsAfterDecision.length,
+      remainingRejectedItemCount: rejectedItemCountAfterDecision,
+    };
+  });
+}
+
+export async function resubmitRejectedPurchaseRequestItems(params: {
+  id: number;
+  itemUpdates: Array<{
+    id: number;
+    data: Partial<InsertPurchaseRequestItem>;
+  }>;
+  actor: ProcurementApprovalActor;
+}) {
+  assertProcurementApprovalWorkflowEnabled("purchase_request");
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const itemIds = params.itemUpdates.map(item => item.id);
+  if (itemIds.length === 0) {
+    throw new Error("La solicitud no tiene ítems rechazados para reenviar");
+  }
+  if (new Set(itemIds).size !== itemIds.length) {
+    throw new Error("No se puede enviar el mismo ítem más de una vez");
+  }
+
+  return db.transaction(async tx => {
+    const [purchaseRequest] = await tx
+      .select()
+      .from(purchaseRequests)
+      .where(eq(purchaseRequests.id, params.id))
+      .for("update");
+    if (!purchaseRequest) {
+      throw new Error("Solicitud de compra no encontrada");
+    }
+    if (
+      purchaseRequest.approvalStatus !== "aprobada" ||
+      !["aprobada", "parcialmente_convertida", "convertida"].includes(
+        purchaseRequest.status
+      )
+    ) {
+      throw new Error(
+        "Solo se pueden reenviar ítems de una solicitud aprobada parcialmente"
+      );
+    }
+
+    const items = await tx
+      .select()
+      .from(purchaseRequestItems)
+      .where(eq(purchaseRequestItems.purchaseRequestId, params.id))
+      .orderBy(asc(purchaseRequestItems.id))
+      .for("update");
+    const rejectedItems = items.filter(
+      item => item.approvalStatus === "rechazada"
+    );
+    const rejectedItemIds = new Set(rejectedItems.map(item => item.id));
+    if (
+      rejectedItems.length === 0 ||
+      itemIds.length !== rejectedItems.length ||
+      itemIds.some(itemId => !rejectedItemIds.has(itemId))
+    ) {
+      throw new Error(
+        "Debe corregir y reenviar únicamente todos los ítems rechazados vigentes"
+      );
+    }
+
+    const updateById = new Map(
+      params.itemUpdates.map(item => [item.id, item.data])
+    );
+    const now = new Date();
+    for (const item of rejectedItems) {
+      const itemUpdate = updateById.get(item.id);
+      if (itemUpdate?.quantity !== undefined) {
+        const quantity = parseDecimal(itemUpdate.quantity);
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+          throw new Error(
+            `La cantidad de ${item.itemName} debe ser mayor que cero`
+          );
+        }
+        if (quantity < parseDecimal(item.convertedQuantity)) {
+          throw new Error(
+            `La cantidad de ${item.itemName} no puede ser menor que la cantidad ya convertida`
+          );
+        }
+      }
+      await tx
+        .update(purchaseRequestItems)
+        .set({
+          ...itemUpdate,
+          approvalStatus: "pendiente",
+          approvedById: null,
+          approvedAt: null,
+          rejectionReason: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(purchaseRequestItems.id, item.id),
+            eq(purchaseRequestItems.purchaseRequestId, params.id),
+            eq(purchaseRequestItems.approvalStatus, "rechazada")
+          )
+        );
+    }
+
+    const [updated] = await tx
+      .update(purchaseRequests)
+      .set({
+        status: "en_revision",
+        approvalStatus: "pendiente",
+        rejectionReason: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(purchaseRequests.id, params.id),
+          eq(purchaseRequests.status, purchaseRequest.status),
+          eq(purchaseRequests.approvalStatus, "aprobada")
+        )
+      )
+      .returning();
+    if (!updated) {
+      throw new Error(
+        "La solicitud cambió mientras se reenviaban los ítems rechazados"
+      );
+    }
+
+    await tx.insert(procurementApprovalHistory).values({
+      documentType: "purchase_request",
+      documentId: params.id,
+      action: "rejected_items_resubmitted",
+      previousStatus: "aprobada",
+      newStatus: "pendiente",
+      ...getApprovalActorSnapshot(params.actor),
+      comment: `Reenviados para aprobación: ${rejectedItems
+        .map(item => item.itemName)
+        .join(", ")}`,
+      amount: null,
+      currency: null,
+    });
+
+    return {
+      success: true,
+      status: updated.status,
+      approvalStatus: updated.approvalStatus,
+      resubmittedItemCount: rejectedItems.length,
+    };
+  });
+}
+
+export async function discardRejectedPurchaseRequestItems(params: {
+  id: number;
+  itemIds: number[];
+  comment: string;
+  actor: ProcurementApprovalActor;
+}) {
+  assertProcurementApprovalWorkflowEnabled("purchase_request");
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const comment = params.comment.trim();
+  if (comment.length < 5) {
+    throw new Error("El motivo debe tener al menos 5 caracteres");
+  }
+  if (params.itemIds.length === 0) {
+    throw new Error("Seleccione al menos un ítem rechazado");
+  }
+  if (new Set(params.itemIds).size !== params.itemIds.length) {
+    throw new Error("No se puede descartar el mismo ítem más de una vez");
+  }
+
+  return db.transaction(async tx => {
+    const [purchaseRequest] = await tx
+      .select()
+      .from(purchaseRequests)
+      .where(eq(purchaseRequests.id, params.id))
+      .for("update");
+    if (!purchaseRequest) {
+      throw new Error("Solicitud de compra no encontrada");
+    }
+    if (
+      purchaseRequest.approvalStatus !== "aprobada" ||
+      !["aprobada", "parcialmente_convertida", "convertida"].includes(
+        purchaseRequest.status
+      )
+    ) {
+      throw new Error(
+        "Solo se pueden descartar ítems de una solicitud aprobada parcialmente"
+      );
+    }
+
+    const items = await tx
+      .select()
+      .from(purchaseRequestItems)
+      .where(eq(purchaseRequestItems.purchaseRequestId, params.id))
+      .orderBy(asc(purchaseRequestItems.id))
+      .for("update");
+    const itemById = new Map(items.map(item => [item.id, item]));
+    const selectedItems = params.itemIds.map(itemId => itemById.get(itemId));
+    if (
+      selectedItems.some(item => !item || item.approvalStatus !== "rechazada")
+    ) {
+      throw new Error(
+        "Solo se pueden descartar definitivamente ítems rechazados"
+      );
+    }
+
+    const now = new Date();
+    await tx
+      .update(purchaseRequestItems)
+      .set({
+        approvalStatus: "descartada",
+        approvedById: params.actor.id,
+        approvedAt: now,
+        rejectionReason: comment,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(purchaseRequestItems.purchaseRequestId, params.id),
+          inArray(purchaseRequestItems.id, params.itemIds),
+          eq(purchaseRequestItems.approvalStatus, "rechazada")
+        )
+      );
+
+    const discardedItemIdSet = new Set(params.itemIds);
+    const remainingRejectedItemCount = items.filter(
+      item =>
+        item.approvalStatus === "rechazada" && !discardedItemIdSet.has(item.id)
+    ).length;
+    const approvedItems = items.filter(
+      item => item.approvalStatus === "aprobada"
+    );
+    const nextStatus = getPurchaseRequestStatusFromApprovedItems(approvedItems);
+    const nextApprovalStatus =
+      approvedItems.length > 0 ? "aprobada" : "rechazada";
+    const [updated] = await tx
+      .update(purchaseRequests)
+      .set({
+        status: nextStatus,
+        approvalStatus: nextApprovalStatus,
+        rejectionReason: nextApprovalStatus === "rechazada" ? comment : null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(purchaseRequests.id, params.id),
+          eq(purchaseRequests.status, purchaseRequest.status),
+          eq(purchaseRequests.approvalStatus, "aprobada")
+        )
+      )
+      .returning();
+    if (!updated) {
+      throw new Error("La solicitud cambió mientras se descartaban los ítems");
+    }
+
+    await tx.insert(procurementApprovalHistory).values({
+      documentType: "purchase_request",
+      documentId: params.id,
+      action: "rejected_items_discarded",
+      previousStatus: "aprobada",
+      newStatus: updated.approvalStatus,
+      ...getApprovalActorSnapshot(params.actor),
+      comment: `${comment}. Ítems descartados: ${selectedItems
+        .map(item => item!.itemName)
+        .join(", ")}`,
+      amount: null,
+      currency: null,
+    });
+
+    return {
+      success: true,
+      status: updated.status,
+      approvalStatus: updated.approvalStatus,
+      discardedItemCount: params.itemIds.length,
+      remainingRejectedItemCount,
+      approvalResolved: remainingRejectedItemCount === 0,
     };
   });
 }

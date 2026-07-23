@@ -162,13 +162,15 @@ describe("purchase request line approval", () => {
       summarizePurchaseRequestApprovalItems([
         { approvalStatus: "aprobada" },
         { approvalStatus: "rechazada" },
+        { approvalStatus: "descartada" },
         { approvalStatus: "pendiente" },
         { approvalStatus: "no_requiere" },
       ])
     ).toEqual({
-      totalItemCount: 4,
+      totalItemCount: 5,
       approvedItemCount: 1,
       rejectedItemCount: 1,
+      discardedItemCount: 1,
       pendingItemCount: 1,
       noApprovalRequiredItemCount: 1,
       isPartiallyApproved: true,

@@ -2,6 +2,19 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("procurement approvals migration", () => {
+  it("adds the terminal discarded state for purchase request items", () => {
+    const sql = readFileSync(
+      new URL(
+        "../drizzle/0122_purchase_request_item_discarded.sql",
+        import.meta.url
+      ),
+      "utf8"
+    );
+
+    expect(sql).toContain('ALTER TYPE "approval_status"');
+    expect(sql).toContain("ADD VALUE IF NOT EXISTS 'descartada'");
+  });
+
   it("adds approval roles, states, history, and open-document backfills", () => {
     const sql = readFileSync(
       new URL("../drizzle/0110_procurement_approvals.sql", import.meta.url),

@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  Ban,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -126,6 +127,7 @@ const APPROVAL_STATUS_LABELS: Record<string, string> = {
   aprobada: "Aprobada",
   parcialmente_aprobada: "Parcialmente aprobada",
   rechazada: "Rechazada",
+  descartada: "No aprobado definitivamente",
   no_requiere: "No requiere",
 };
 
@@ -134,6 +136,7 @@ const APPROVAL_STATUS_COLORS: Record<string, string> = {
   aprobada: "border-emerald-300 bg-emerald-50 text-emerald-700",
   parcialmente_aprobada: "border-cyan-300 bg-cyan-50 text-cyan-700",
   rechazada: "border-red-300 bg-red-50 text-red-700",
+  descartada: "border-slate-400 bg-slate-100 text-slate-700",
   no_requiere: "border-slate-300 bg-slate-50 text-slate-700",
 };
 
@@ -151,6 +154,8 @@ const APPROVAL_ACTION_LABELS: Record<string, string> = {
   reopened: "Reabierta para corrección",
   reopen: "Reabierta para corrección",
   reabierta: "Reabierta para corrección",
+  rejected_items_resubmitted: "Ítems rechazados reenviados",
+  rejected_items_discarded: "Ítems no aprobados definitivamente",
 };
 
 function getApprovalHistory(value: any): any[] {
@@ -280,12 +285,16 @@ type RequestTargetSelection =
     };
 
 type PurchaseRequestItemDraft = {
+  quantity: string;
   brand: string;
   costResponsible: string;
   targetSelection: RequestTargetSelection | null;
 };
 
-type PurchaseRequestItemDraftTextField = "brand" | "costResponsible";
+type PurchaseRequestItemDraftTextField =
+  | "quantity"
+  | "brand"
+  | "costResponsible";
 
 function mapPurchaseRequestItemTargetToSelection(
   item: any
@@ -336,6 +345,7 @@ function buildFixedAssetTargetSelection(asset: any): RequestTargetSelection {
 }
 
 const getItemDraftFromDetail = (item: any): PurchaseRequestItemDraft => ({
+  quantity: String(item.quantity ?? ""),
   brand: item.brand ?? "",
   costResponsible: item.costResponsible ?? "",
   targetSelection: mapPurchaseRequestItemTargetToSelection(item),
@@ -467,6 +477,11 @@ export default function PurchaseRequests() {
   const [rejectReason, setRejectReason] = useState("");
   const [isAnnulFormOpen, setIsAnnulFormOpen] = useState(false);
   const [approvalComment, setApprovalComment] = useState("");
+  const [discardRejectedItem, setDiscardRejectedItem] = useState<{
+    id: number;
+    itemName: string;
+  } | null>(null);
+  const [discardReason, setDiscardReason] = useState("");
   const [emailDialog, setEmailDialog] = useState<{
     to: string;
     subject: string;
@@ -604,21 +619,50 @@ export default function PurchaseRequests() {
       onError: (error: { message: string }) => toast.error(error.message),
     });
 
+  const resubmitRejectedItemsMutation =
+    trpc.purchaseRequests.resubmitRejectedItems.useMutation({
+      onSuccess: result => {
+        toast.success(
+          `${result.resubmittedItemCount} ítem(s) corregido(s) reenviado(s) a aprobación`
+        );
+        setSelectedId(null);
+        void utils.purchaseRequests.invalidate();
+      },
+      onError: (error: { message: string }) => toast.error(error.message),
+    });
+
+  const discardRejectedItemsMutation =
+    trpc.purchaseRequests.discardRejectedItems.useMutation({
+      onSuccess: result => {
+        toast.success(
+          result.approvalResolved
+            ? "Ítem descartado y revisión parcial cerrada"
+            : "Ítem descartado definitivamente"
+        );
+        setDiscardRejectedItem(null);
+        setDiscardReason("");
+        void Promise.all([
+          utils.purchaseRequests.invalidate(),
+          selectedId
+            ? utils.purchaseRequests.getById.invalidate({ id: selectedId })
+            : Promise.resolve(),
+        ]);
+      },
+      onError: (error: { message: string }) => toast.error(error.message),
+    });
+
   const reviewApprovalMutation =
     trpc.purchaseRequests.reviewApproval.useMutation({
-      onSuccess: (
-        result,
-        variables: {
-          decision: "approve" | "reject";
-          approvedItemIds?: number[];
-        }
-      ) => {
+      onSuccess: result => {
+        const isPartiallyApproved =
+          result.approvalStatus === "aprobada" &&
+          result.remainingRejectedItemCount > 0;
         toast.success(
-          variables.decision === "approve"
-            ? result.rejectedItemCount > 0
-              ? `Aprobados ${result.approvedItemCount} ítem(s); rechazados ${result.rejectedItemCount}`
+          result.approvalStatus === "rechazada"
+            ? "Solicitud rechazada"
+            : isPartiallyApproved
+              ? `${result.totalApprovedItemCount} ítem(s) aprobado(s); ${result.remainingRejectedItemCount} pendiente(s) de corrección`
               : "Solicitud aprobada"
-            : "Solicitud rechazada"
         );
         setApprovalComment("");
         setApprovalItemDecisions({});
@@ -970,6 +1014,57 @@ export default function PurchaseRequests() {
     });
   };
 
+  const buildRejectedItemUpdatePayload = () => {
+    const rejectedItems = selectedItems.filter(
+      (item: any) => item.approvalStatus === "rechazada"
+    );
+    if (rejectedItems.length === 0) {
+      toast.error("La solicitud no tiene ítems rechazados para reenviar");
+      return null;
+    }
+
+    const updates: any[] = [];
+    for (const item of rejectedItems) {
+      const draft = getItemDraft(item);
+      const rawQuantity = draft.quantity.trim();
+      const quantity = Number(rawQuantity);
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        toast.error(`La cantidad de ${item.itemName} debe ser mayor que cero`);
+        return null;
+      }
+      if (quantity < getConvertedQuantity(item)) {
+        toast.error(
+          `La cantidad de ${item.itemName} no puede ser menor que la cantidad convertida`
+        );
+        return null;
+      }
+
+      const payload: any = {
+        id: item.id,
+        quantity: rawQuantity,
+        brand: toNullablePrintText(draft.brand),
+        costResponsible: toNullablePrintText(draft.costResponsible),
+      };
+      if (canEditRejectedItemDestination) {
+        payload.targetType = draft.targetSelection?.targetType ?? null;
+        payload.subProjectId =
+          draft.targetSelection?.targetType === "subproyecto"
+            ? draft.targetSelection.subProjectId
+            : null;
+        payload.fixedAssetSapItemCode =
+          draft.targetSelection?.targetType === "activo_fijo"
+            ? draft.targetSelection.fixedAssetSapItemCode
+            : null;
+        payload.fixedAssetName =
+          draft.targetSelection?.targetType === "activo_fijo"
+            ? draft.targetSelection.fixedAssetName
+            : null;
+      }
+      updates.push(payload);
+    }
+    return updates;
+  };
+
   const buildConversionPayload = () => {
     const selectedIds = isApprovedPurchaseRequest
       ? convertibleItemIds
@@ -1140,6 +1235,19 @@ export default function PurchaseRequests() {
     (user?.role === "admin" ||
       buildreqRole === "administracion_central" ||
       isProjectAdmin);
+  const canResolveRejectedItems =
+    PROCUREMENT_APPROVALS_ENABLED &&
+    canManagePurchaseRequests &&
+    isPartiallyApprovedPurchaseRequest &&
+    detail?.purchaseRequest.approvalStatus === "aprobada";
+  const canEditRejectedItemDestination =
+    canResolveRejectedItems &&
+    (user?.role === "admin" ||
+      buildreqRole === "administracion_central" ||
+      isProjectAdmin);
+  const canEditPurchaseRequestItem = (item: any) =>
+    canEditSelectedPurchaseRequest ||
+    (canResolveRejectedItems && item.approvalStatus === "rechazada");
   const canConvertSelectedPurchaseRequest =
     canConvert &&
     isPurchaseRequestConversionReady(
@@ -1195,8 +1303,12 @@ export default function PurchaseRequests() {
     }
 
     const open = targetPopoverOpen === item.id;
+    const canEditDestinationForItem =
+      canEditPurchaseRequestDestination ||
+      (canEditRejectedItemDestination &&
+        item.approvalStatus === "rechazada");
     const disabled =
-      !canEditPurchaseRequestDestination || !selectedProjectIdNumber;
+      !canEditDestinationForItem || !selectedProjectIdNumber;
 
     return (
       <div className="flex gap-2">
@@ -1375,6 +1487,8 @@ export default function PurchaseRequests() {
     setRejectReason("");
     setIsAnnulFormOpen(false);
     setApprovalComment("");
+    setDiscardRejectedItem(null);
+    setDiscardReason("");
   };
 
   const toggleRequestSelection = (id: number, checked: boolean) => {
@@ -1421,6 +1535,30 @@ export default function PurchaseRequests() {
     } catch {
       // updateMutation displays the validation or server error toast.
     }
+  };
+
+  const handleResubmitRejectedItems = () => {
+    if (!detail || !canResolveRejectedItems) return;
+    const items = buildRejectedItemUpdatePayload();
+    if (!items) return;
+    resubmitRejectedItemsMutation.mutate({
+      id: detail.purchaseRequest.id,
+      items,
+    });
+  };
+
+  const handleDiscardRejectedItem = () => {
+    if (!detail || !discardRejectedItem || !canResolveRejectedItems) return;
+    const comment = discardReason.trim();
+    if (comment.length < 5) {
+      toast.error("Indica un motivo de al menos 5 caracteres");
+      return;
+    }
+    discardRejectedItemsMutation.mutate({
+      id: detail.purchaseRequest.id,
+      itemIds: [discardRejectedItem.id],
+      comment,
+    });
   };
 
   const persistApprovalQuantityChanges = async (
@@ -2368,6 +2506,8 @@ export default function PurchaseRequests() {
             setIsAnnulFormOpen(false);
             setApprovalItemDecisions({});
             setApprovalComment("");
+            setDiscardRejectedItem(null);
+            setDiscardReason("");
           }
         }}
       >
@@ -2398,7 +2538,9 @@ export default function PurchaseRequests() {
                 <p className="text-sm text-muted-foreground">
                   {isCancelledPurchaseRequest
                     ? "Esta solicitud fue anulada y se muestra en modo solo lectura."
-                    : isConvertedPurchaseRequest
+                    : isPartiallyApprovedPurchaseRequest
+                      ? "Corrige y reenvía únicamente los ítems rechazados, o márcalos como no aprobados definitivamente para cerrar la revisión."
+                      : isConvertedPurchaseRequest
                       ? "Esta solicitud ya fue convertida a orden de compra y se muestra en modo solo lectura."
                       : !PROCUREMENT_APPROVALS_ENABLED
                         ? "Revisa la solicitud y conviértela directamente en orden de compra cuando esté lista."
@@ -2406,8 +2548,6 @@ export default function PurchaseRequests() {
                           ? "La aprobación fue rechazada. El responsable debe reabrirla antes de corregirla y reenviarla."
                           : isPendingApprovalPurchaseRequest
                             ? "La solicitud está pendiente de decisión y permanece bloqueada para edición."
-                            : isPartiallyApprovedPurchaseRequest
-                              ? "La solicitud fue aprobada parcialmente; únicamente las líneas aprobadas pueden convertirse a orden de compra."
                             : isApprovedPurchaseRequest
                               ? "La solicitud fue aprobada y puede convertirse a orden de compra."
                               : "Revisa y completa la solicitud antes de enviarla a aprobación."}
@@ -3095,7 +3235,9 @@ export default function PurchaseRequests() {
                     <p className="text-sm text-muted-foreground">
                       {isCancelledPurchaseRequest
                         ? "La solicitud fue anulada y sus ítems quedaron cerrados para edición."
-                        : isConvertedPurchaseRequest
+                        : isPartiallyApprovedPurchaseRequest
+                          ? "Solo los ítems rechazados pueden corregirse y reenviarse. También puedes cerrarlos definitivamente."
+                          : isConvertedPurchaseRequest
                           ? "Los ítems ya fueron convertidos y esta solicitud quedó cerrada para edición."
                           : isRejectedPurchaseRequest
                             ? "La solicitud debe reabrirse antes de poder corregir sus ítems."
@@ -3343,12 +3485,46 @@ export default function PurchaseRequests() {
                                     Aprobado
                                   </Badge>
                                 ) : null}
+                                {PROCUREMENT_APPROVALS_ENABLED &&
+                                item.approvalStatus === "descartada" ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="border-slate-400 bg-slate-100 text-[10px] text-slate-700"
+                                  >
+                                    No aprobado definitivamente
+                                  </Badge>
+                                ) : null}
                               </div>
                               {item.approvalStatus === "rechazada" &&
                               item.rejectionReason ? (
                                 <p className="mt-1 text-xs text-rose-700">
                                   Motivo: {item.rejectionReason}
                                 </p>
+                              ) : null}
+                              {item.approvalStatus === "descartada" &&
+                              item.rejectionReason ? (
+                                <p className="mt-1 text-xs text-slate-600">
+                                  Cierre definitivo: {item.rejectionReason}
+                                </p>
+                              ) : null}
+                              {canResolveRejectedItems &&
+                              item.approvalStatus === "rechazada" ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="mt-2 h-8 border-rose-300 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                                  onClick={() => {
+                                    setDiscardRejectedItem({
+                                      id: item.id,
+                                      itemName: item.itemName,
+                                    });
+                                    setDiscardReason("");
+                                  }}
+                                >
+                                  <Ban className="mr-1.5 h-3.5 w-3.5" />
+                                  No aprobar definitivamente
+                                </Button>
                               ) : null}
                               {requesterItemName ? (
                                 <p className="mt-1 text-xs text-muted-foreground">
@@ -3388,7 +3564,7 @@ export default function PurchaseRequests() {
                                   )
                                 }
                                 placeholder="Marca"
-                                disabled={!canEditSelectedPurchaseRequest}
+                                disabled={!canEditPurchaseRequestItem(item)}
                               />
                             </td>
                             <td className="p-4 align-top">
@@ -3403,7 +3579,7 @@ export default function PurchaseRequests() {
                                   )
                                 }
                                 placeholder="Responsable compra"
-                                disabled={!canEditSelectedPurchaseRequest}
+                                disabled={!canEditPurchaseRequestItem(item)}
                               />
                             </td>
                             <td className="p-4 align-top">
@@ -3418,6 +3594,25 @@ export default function PurchaseRequests() {
                                     onChange={event =>
                                       updateApprovalQuantityDraft(
                                         item,
+                                        event.target.value
+                                      )
+                                    }
+                                    disabled={
+                                      item.approvalStatus !== "pendiente"
+                                    }
+                                  />
+                                ) : canResolveRejectedItems &&
+                                  item.approvalStatus === "rechazada" ? (
+                                  <Input
+                                    className="h-9 w-36 text-right font-mono"
+                                    type="number"
+                                    min="0.01"
+                                    step="0.01"
+                                    value={draft.quantity}
+                                    onChange={event =>
+                                      updateItemDraft(
+                                        item,
+                                        "quantity",
                                         event.target.value
                                       )
                                     }
@@ -3574,6 +3769,20 @@ export default function PurchaseRequests() {
                     </Button>
                   )}
 
+                  {canResolveRejectedItems && (
+                    <Button
+                      className="h-11 px-5"
+                      onClick={handleResubmitRejectedItems}
+                      disabled={
+                        resubmitRejectedItemsMutation.isPending ||
+                        discardRejectedItemsMutation.isPending
+                      }
+                    >
+                      <Send className="mr-2 h-4 w-4" />
+                      Guardar y reenviar rechazados
+                    </Button>
+                  )}
+
                   {canReviewSelectedPurchaseRequest && (
                     <>
                       <Button
@@ -3683,6 +3892,77 @@ export default function PurchaseRequests() {
               </div>
               </div>
             ))}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(discardRejectedItem)}
+        onOpenChange={open => {
+          if (!open && !discardRejectedItemsMutation.isPending) {
+            setDiscardRejectedItem(null);
+            setDiscardReason("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>No aprobar definitivamente</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
+              <p className="font-semibold">
+                {discardRejectedItem?.itemName}
+              </p>
+              <p className="mt-1">
+                Este ítem quedará cerrado y ya no podrá corregirse ni
+                reenviarse a aprobación desde esta SC. Los demás ítems no se
+                modificarán.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="discard-rejected-item-reason">
+                Motivo del cierre definitivo
+              </Label>
+              <Textarea
+                id="discard-rejected-item-reason"
+                autoFocus
+                value={discardReason}
+                onChange={event => setDiscardReason(event.target.value)}
+                placeholder="Explique por qué este ítem no continuará al flujo de compra"
+                rows={4}
+                disabled={discardRejectedItemsMutation.isPending}
+              />
+              <p className="text-xs text-muted-foreground">
+                Escribe al menos 5 caracteres. La decisión quedará en el
+                historial de aprobación.
+              </p>
+            </div>
+            <div className="flex justify-end gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setDiscardRejectedItem(null);
+                  setDiscardReason("");
+                }}
+                disabled={discardRejectedItemsMutation.isPending}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={handleDiscardRejectedItem}
+                disabled={
+                  discardReason.trim().length < 5 ||
+                  discardRejectedItemsMutation.isPending
+                }
+              >
+                <Ban className="mr-2 h-4 w-4" />
+                Confirmar cierre del ítem
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 

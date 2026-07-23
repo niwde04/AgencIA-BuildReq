@@ -9875,6 +9875,8 @@ describe("BuildReq - Purchase Requests", () => {
         approvalStatus: "aprobada",
         approvedItemCount: 1,
         rejectedItemCount: 1,
+        totalApprovedItemCount: 1,
+        remainingRejectedItemCount: 1,
       } as any);
     const createNotificationSpy = vi
       .spyOn(db, "createNotification")
@@ -9902,7 +9904,9 @@ describe("BuildReq - Purchase Requests", () => {
       expect(createNotificationSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           title: "Solicitud de compra aprobada parcialmente",
-          message: expect.stringContaining("1 ítem(s) no continuarán"),
+          message: expect.stringContaining(
+            "1 ítem(s) rechazado(s) para corrección"
+          ),
         })
       );
     } finally {
@@ -10045,6 +10049,251 @@ describe("BuildReq - Purchase Requests", () => {
       updateDraftPurchaseRequestSpy.mockRestore();
     }
   );
+
+  it("corrects and resubmits only the rejected items of a partially approved purchase request", async () => {
+    const previousSettings = getRuntimeProcurementApprovalSettings();
+    const enabledAt = new Date(
+      Math.max(
+        Date.now(),
+        previousSettings.updatedAt
+          ? new Date(previousSettings.updatedAt).getTime()
+          : 0
+      ) + 1
+    );
+    setRuntimeProcurementApprovalSettings({
+      ...previousSettings,
+      purchaseRequestApprovalsEnabled: true,
+      updatedAt: enabledAt,
+    });
+
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 33,
+          projectId: 1,
+          requestNumber: "SC-2026-0033",
+          status: "convertida",
+          approvalStatus: "aprobada",
+        },
+        approvalSummary: { isPartiallyApproved: true },
+        items: [
+          {
+            id: 501,
+            itemName: "LIMA PLANA",
+            quantity: "10.00",
+            approvalStatus: "rechazada",
+            sourceProject: { id: 1 },
+          },
+          {
+            id: 502,
+            itemName: "MACHETE",
+            quantity: "5.00",
+            approvalStatus: "aprobada",
+            sourceProject: { id: 1 },
+          },
+        ],
+      } as any);
+    const resubmitSpy = vi
+      .spyOn(db, "resubmitRejectedPurchaseRequestItems")
+      .mockResolvedValue({
+        success: true,
+        status: "en_revision",
+        approvalStatus: "pendiente",
+        resubmittedItemCount: 1,
+      } as any);
+    const approverUsersSpy = vi
+      .spyOn(db, "getUsersByBuildreqRoleAndProject")
+      .mockResolvedValue([]);
+
+    try {
+      await expect(
+        caller.purchaseRequests.resubmitRejectedItems({
+          id: 33,
+          items: [
+            {
+              id: 501,
+              quantity: "8.00",
+              brand: "TRUPER",
+              costResponsible: "COMPRAS",
+            },
+          ],
+        })
+      ).resolves.toMatchObject({
+        approvalStatus: "pendiente",
+        resubmittedItemCount: 1,
+      });
+      expect(resubmitSpy).toHaveBeenCalledWith({
+        id: 33,
+        itemUpdates: [
+          {
+            id: 501,
+            data: {
+              quantity: "8.00",
+              unitPrice: undefined,
+              brand: "TRUPER",
+              costResponsible: "COMPRAS",
+            },
+          },
+        ],
+        actor: ctx.user,
+      });
+    } finally {
+      getPurchaseRequestByIdSpy.mockRestore();
+      resubmitSpy.mockRestore();
+      approverUsersSpy.mockRestore();
+      setRuntimeProcurementApprovalSettings({
+        ...previousSettings,
+        updatedAt: new Date(enabledAt.getTime() + 1),
+      });
+    }
+  });
+
+  it("closes a rejected item definitively without changing approved items", async () => {
+    const previousSettings = getRuntimeProcurementApprovalSettings();
+    const enabledAt = new Date(
+      Math.max(
+        Date.now(),
+        previousSettings.updatedAt
+          ? new Date(previousSettings.updatedAt).getTime()
+          : 0
+      ) + 1
+    );
+    setRuntimeProcurementApprovalSettings({
+      ...previousSettings,
+      purchaseRequestApprovalsEnabled: true,
+      updatedAt: enabledAt,
+    });
+
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 33,
+          projectId: 1,
+          requestNumber: "SC-2026-0033",
+          status: "convertida",
+          approvalStatus: "aprobada",
+        },
+        approvalSummary: { isPartiallyApproved: true },
+        items: [
+          {
+            id: 501,
+            itemName: "LIMA PLANA",
+            approvalStatus: "rechazada",
+            sourceProject: { id: 1 },
+          },
+          {
+            id: 502,
+            itemName: "MACHETE",
+            approvalStatus: "aprobada",
+            sourceProject: { id: 1 },
+          },
+        ],
+      } as any);
+    const discardSpy = vi
+      .spyOn(db, "discardRejectedPurchaseRequestItems")
+      .mockResolvedValue({
+        success: true,
+        status: "convertida",
+        approvalStatus: "aprobada",
+        discardedItemCount: 1,
+        remainingRejectedItemCount: 0,
+        approvalResolved: true,
+      } as any);
+
+    try {
+      await expect(
+        caller.purchaseRequests.discardRejectedItems({
+          id: 33,
+          itemIds: [501],
+          comment: "El artículo ya no será requerido",
+        })
+      ).resolves.toMatchObject({
+        discardedItemCount: 1,
+        approvalResolved: true,
+      });
+      expect(discardSpy).toHaveBeenCalledWith({
+        id: 33,
+        itemIds: [501],
+        comment: "El artículo ya no será requerido",
+        actor: ctx.user,
+      });
+    } finally {
+      getPurchaseRequestByIdSpy.mockRestore();
+      discardSpy.mockRestore();
+      setRuntimeProcurementApprovalSettings({
+        ...previousSettings,
+        updatedAt: new Date(enabledAt.getTime() + 1),
+      });
+    }
+  });
+
+  it("does not allow an approved item to be resent or discarded as rejected", async () => {
+    const previousSettings = getRuntimeProcurementApprovalSettings();
+    const enabledAt = new Date(
+      Math.max(
+        Date.now(),
+        previousSettings.updatedAt
+          ? new Date(previousSettings.updatedAt).getTime()
+          : 0
+      ) + 1
+    );
+    setRuntimeProcurementApprovalSettings({
+      ...previousSettings,
+      purchaseRequestApprovalsEnabled: true,
+      updatedAt: enabledAt,
+    });
+
+    const caller = appRouter.createCaller(createAdminCentralContext().ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 33,
+          projectId: 1,
+          status: "aprobada",
+          approvalStatus: "aprobada",
+        },
+        approvalSummary: { isPartiallyApproved: true },
+        items: [
+          { id: 501, approvalStatus: "rechazada" },
+          { id: 502, approvalStatus: "aprobada" },
+        ],
+      } as any);
+    const resubmitSpy = vi.spyOn(db, "resubmitRejectedPurchaseRequestItems");
+    const discardSpy = vi.spyOn(db, "discardRejectedPurchaseRequestItems");
+
+    try {
+      await expect(
+        caller.purchaseRequests.resubmitRejectedItems({
+          id: 33,
+          items: [{ id: 502, quantity: "1.00" }],
+        })
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      await expect(
+        caller.purchaseRequests.discardRejectedItems({
+          id: 33,
+          itemIds: [502],
+          comment: "No debe cerrarse esta línea",
+        })
+      ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      expect(resubmitSpy).not.toHaveBeenCalled();
+      expect(discardSpy).not.toHaveBeenCalled();
+    } finally {
+      getPurchaseRequestByIdSpy.mockRestore();
+      resubmitSpy.mockRestore();
+      discardSpy.mockRestore();
+      setRuntimeProcurementApprovalSettings({
+        ...previousSettings,
+        updatedAt: new Date(enabledAt.getTime() + 1),
+      });
+    }
+  });
 
   it("can update purchase request item prices", async () => {
     const { ctx } = createAdminCentralContext();

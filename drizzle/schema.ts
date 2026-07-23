@@ -80,6 +80,7 @@ export const approvalStatusEnum = pgEnum("approval_status", [
   "pendiente",
   "aprobada",
   "rechazada",
+  "descartada",
   "no_requiere",
 ]);
 export const purchaseUrgencyEnum = pgEnum("purchase_urgency", [

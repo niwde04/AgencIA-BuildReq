@@ -81,6 +81,7 @@ export type PurchaseRequestApprovalSummary = {
   totalItemCount: number;
   approvedItemCount: number;
   rejectedItemCount: number;
+  discardedItemCount: number;
   pendingItemCount: number;
   noApprovalRequiredItemCount: number;
   isPartiallyApproved: boolean;
@@ -97,11 +98,15 @@ export function summarizePurchaseRequestApprovalItems(
   const rejectedItemCount = items.filter(
     item => item.approvalStatus === "rechazada"
   ).length;
+  const discardedItemCount = items.filter(
+    item => item.approvalStatus === "descartada"
+  ).length;
 
   return {
     totalItemCount: items.length,
     approvedItemCount,
     rejectedItemCount,
+    discardedItemCount,
     pendingItemCount: items.filter(item => item.approvalStatus === "pendiente")
       .length,
     noApprovalRequiredItemCount: items.filter(

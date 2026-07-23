@@ -393,12 +393,46 @@ const purchaseRequestItemUpdateSchema = z
     fixedAssetName: z.string().nullable().optional(),
   })
   .strict();
+const rejectedPurchaseRequestItemUpdateSchema =
+  purchaseRequestItemUpdateSchema.extend({
+    quantity: purchaseRequestQuantitySchema.optional(),
+  });
 const purchaseRequestApprovalQuantitySchema = z
   .object({
     id: z.number().int().positive(),
     quantity: purchaseRequestQuantitySchema,
   })
   .strict();
+const rejectedPurchaseRequestItemsSchema = z
+  .object({
+    id: z.number().int().positive(),
+    items: z.array(rejectedPurchaseRequestItemUpdateSchema).min(1),
+  })
+  .superRefine((value, ctx) => {
+    const itemIds = value.items.map(item => item.id);
+    if (new Set(itemIds).size !== itemIds.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items"],
+        message: "No se puede enviar el mismo ítem más de una vez",
+      });
+    }
+  });
+const discardRejectedPurchaseRequestItemsSchema = z
+  .object({
+    id: z.number().int().positive(),
+    itemIds: z.array(z.number().int().positive()).min(1),
+    comment: z.string().trim().min(5).max(1000),
+  })
+  .superRefine((value, ctx) => {
+    if (new Set(value.itemIds).size !== value.itemIds.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["itemIds"],
+        message: "No se puede descartar el mismo ítem más de una vez",
+      });
+    }
+  });
 const purchaseTypeSchema = z.enum(["local", "extranjera", "compra_directa"]);
 
 async function resolvePurchaseRequestItemTarget(input: {
@@ -831,6 +865,185 @@ export const purchaseRequestsRouter = router({
       return result;
     }),
 
+  resubmitRejectedItems: protectedProcedure
+    .input(rejectedPurchaseRequestItemsSchema)
+    .mutation(async ({ ctx, input }) => {
+      assertProcurementApprovalsEnabled();
+      if (!canManagePurchaseRequests(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "No tiene permisos para corregir y reenviar ítems rechazados",
+        });
+      }
+      const detail = await db.getPurchaseRequestById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Solicitud de compra no encontrada",
+        });
+      }
+      assertPurchaseRequestProjectScope(ctx.user, detail);
+
+      const rejectedItems = (detail.items ?? []).filter(
+        (item: any) => item.approvalStatus === "rechazada"
+      );
+      const rejectedItemIds = new Set(
+        rejectedItems.map((item: any) => item.id)
+      );
+      if (
+        !detail.approvalSummary?.isPartiallyApproved ||
+        input.items.length !== rejectedItems.length ||
+        input.items.some(item => !rejectedItemIds.has(item.id))
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Debe corregir y reenviar únicamente todos los ítems rechazados vigentes",
+        });
+      }
+
+      const itemById = new Map(
+        (detail.items ?? []).map((item: any) => [item.id, item])
+      );
+      const resolvedItemUpdates = await Promise.all(
+        input.items.map(async itemUpdate => {
+          const existingItem = itemById.get(itemUpdate.id);
+          const itemProjectId =
+            existingItem?.sourceProject?.id ?? detail.purchaseRequest.projectId;
+          assertProjectScopedAccess(ctx.user, itemProjectId);
+          const hasTargetUpdate =
+            "targetType" in itemUpdate ||
+            "subProjectId" in itemUpdate ||
+            "fixedAssetSapItemCode" in itemUpdate;
+          if (
+            hasTargetUpdate &&
+            !canManagePurchaseRequestDestinations(ctx.user)
+          ) {
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message:
+                "Solo el Administrador del Proyecto o Administración Central puede cambiar el destino",
+            });
+          }
+          const target = hasTargetUpdate
+            ? await resolvePurchaseRequestItemTarget({
+                projectId: itemProjectId,
+                itemName: existingItem?.itemName ?? null,
+                targetType: itemUpdate.targetType,
+                subProjectId: itemUpdate.subProjectId,
+                fixedAssetSapItemCode: itemUpdate.fixedAssetSapItemCode,
+              })
+            : {};
+
+          const itemData: Parameters<typeof db.updatePurchaseRequestItem>[1] = {
+            quantity:
+              "quantity" in itemUpdate ? itemUpdate.quantity : undefined,
+            unitPrice:
+              "unitPrice" in itemUpdate ? itemUpdate.unitPrice : undefined,
+            brand:
+              "brand" in itemUpdate ? (itemUpdate.brand ?? null) : undefined,
+            costResponsible:
+              "costResponsible" in itemUpdate
+                ? (itemUpdate.costResponsible ?? null)
+                : undefined,
+            ...target,
+          };
+          return { id: itemUpdate.id, data: itemData };
+        })
+      );
+
+      let result: Awaited<
+        ReturnType<typeof db.resubmitRejectedPurchaseRequestItems>
+      >;
+      try {
+        result = await db.resubmitRejectedPurchaseRequestItems({
+          id: input.id,
+          itemUpdates: resolvedItemUpdates,
+          actor: ctx.user,
+        });
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudieron reenviar los ítems rechazados",
+        });
+      }
+
+      try {
+        await notifyProjectProcurementApprovers({
+          projectIds: getPurchaseRequestProjectIds(detail),
+          title: "Ítems corregidos pendientes de aprobación",
+          message: `${detail.purchaseRequest.requestNumber} reenvió ${result.resubmittedItemCount} ítem(s) corregidos.`,
+          entityId: input.id,
+        });
+      } catch (error) {
+        console.error(
+          "[PurchaseRequests] No se pudo notificar el reenvío",
+          error
+        );
+      }
+
+      return result;
+    }),
+
+  discardRejectedItems: protectedProcedure
+    .input(discardRejectedPurchaseRequestItemsSchema)
+    .mutation(async ({ ctx, input }) => {
+      assertProcurementApprovalsEnabled();
+      if (!canManagePurchaseRequests(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "No tiene permisos para descartar ítems rechazados definitivamente",
+        });
+      }
+      const detail = await db.getPurchaseRequestById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Solicitud de compra no encontrada",
+        });
+      }
+      assertPurchaseRequestProjectScope(ctx.user, detail);
+      const itemById = new Map(
+        (detail.items ?? []).map((item: any) => [item.id, item])
+      );
+      for (const itemId of input.itemIds) {
+        const item = itemById.get(itemId);
+        if (!item || item.approvalStatus !== "rechazada") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "Solo se pueden descartar definitivamente ítems rechazados",
+          });
+        }
+        assertProjectScopedAccess(
+          ctx.user,
+          item.sourceProject?.id ?? detail.purchaseRequest.projectId
+        );
+      }
+
+      try {
+        return await db.discardRejectedPurchaseRequestItems({
+          id: input.id,
+          itemIds: input.itemIds,
+          comment: input.comment,
+          actor: ctx.user,
+        });
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudieron descartar los ítems seleccionados",
+        });
+      }
+    }),
+
   reviewApproval: protectedProcedure
     .input(approvalDecisionSchema)
     .mutation(async ({ ctx, input }) => {
@@ -872,20 +1085,23 @@ export const purchaseRequestsRouter = router({
       }
 
       try {
+        const isPartiallyApproved =
+          result.approvalStatus === "aprobada" &&
+          result.remainingRejectedItemCount > 0;
         await db.createNotification({
           userId: detail.purchaseRequest.createdById,
           title:
-            input.decision === "approve"
-              ? result.rejectedItemCount > 0
+            result.approvalStatus === "rechazada"
+              ? "Solicitud de compra rechazada"
+              : isPartiallyApproved
                 ? "Solicitud de compra aprobada parcialmente"
-                : "Solicitud de compra aprobada"
-              : "Solicitud de compra rechazada",
+                : "Solicitud de compra aprobada",
           message:
-            input.decision === "approve"
-              ? result.rejectedItemCount > 0
-                ? `${detail.purchaseRequest.requestNumber} fue aprobada con ${result.approvedItemCount} ítem(s); ${result.rejectedItemCount} ítem(s) no continuarán al flujo de compra.`
-                : `${detail.purchaseRequest.requestNumber} fue aprobada.`
-              : `${detail.purchaseRequest.requestNumber} fue rechazada: ${input.comment?.trim()}`,
+            result.approvalStatus === "rechazada"
+              ? `${detail.purchaseRequest.requestNumber} fue rechazada: ${input.comment?.trim()}`
+              : isPartiallyApproved
+                ? `${detail.purchaseRequest.requestNumber} conserva ${result.totalApprovedItemCount} ítem(s) aprobado(s) y ${result.remainingRejectedItemCount} ítem(s) rechazado(s) para corrección.`
+                : `${detail.purchaseRequest.requestNumber} fue aprobada.`,
           type: "solicitud_compra",
           relatedEntityType: "purchase_request",
           relatedEntityId: input.id,
