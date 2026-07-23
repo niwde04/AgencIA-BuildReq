@@ -11494,73 +11494,77 @@ describe("BuildReq - Purchase Orders", () => {
     reopenRejectedPurchaseOrderSpy.mockRestore();
   });
 
-  it("approver list visibility includes only high-value or approval-history POs", async () => {
-    const { ctx } = createProcurementApproverContext();
-    const caller = appRouter.createCaller(ctx);
-    const previousSettings = getRuntimeProcurementApprovalSettings();
-    const enabledAt = new Date(
-      Math.max(
-        Date.now(),
-        previousSettings.updatedAt
-          ? new Date(previousSettings.updatedAt).getTime()
-          : 0
-      ) + 1
-    );
-    setRuntimeProcurementApprovalSettings({
-      ...previousSettings,
-      purchaseOrderApprovalsEnabled: true,
-      purchaseOrderApprovalMinimumHnl: 250_000,
-      purchaseOrderApprovalMinimumUsd: 10_000,
-      updatedAt: enabledAt,
-    });
-    const getSettingsSpy = vi
-      .spyOn(db, "getProcurementApprovalSettings")
-      .mockResolvedValue(getRuntimeProcurementApprovalSettings());
-    const rows = [
-      {
-        purchaseOrder: { id: 1, projectId: 1, currency: "HNL" },
-        totalAmount: 250000,
-        hasApprovalHistory: false,
-      },
-      {
-        purchaseOrder: { id: 2, projectId: 1, currency: "HNL" },
-        totalAmount: 250000.01,
-        hasApprovalHistory: false,
-      },
-      {
-        purchaseOrder: { id: 3, projectId: 1, currency: "USD" },
-        totalAmount: 9999,
-        hasApprovalHistory: true,
-      },
-      {
-        purchaseOrder: { id: 4, projectId: 1, currency: "USD" },
-        totalAmount: 10000,
-        hasApprovalHistory: false,
-      },
-      {
-        purchaseOrder: { id: 5, projectId: 1, currency: "USD" },
-        totalAmount: 10000.01,
-        hasApprovalHistory: false,
-      },
-    ] as any;
-    const listPurchaseOrdersSpy = vi
-      .spyOn(db, "listPurchaseOrders")
-      .mockResolvedValue(rows);
+  it.each(["superintendente_aprobador", "gerente"] as const)(
+    "%s only lists purchase orders pending approval",
+    async buildreqRole => {
+      const { ctx } = createProcurementApproverContext(buildreqRole);
+      const caller = appRouter.createCaller(ctx);
+      const rows = [
+        {
+          purchaseOrder: {
+            id: 1,
+            projectId: 1,
+            status: "pendiente_aprobacion",
+            approvalStatus: "pendiente",
+          },
+        },
+        {
+          purchaseOrder: {
+            id: 2,
+            projectId: 1,
+            status: "aprobada",
+            approvalStatus: "aprobada",
+          },
+        },
+      ] as any;
+      const listPurchaseOrdersSpy = vi
+        .spyOn(db, "listPurchaseOrders")
+        .mockResolvedValue(rows);
 
-    try {
-      const visibleRows = await caller.purchaseOrders.list();
-      expect(visibleRows.map(row => row.purchaseOrder.id)).toEqual([
-        1, 2, 3, 4, 5,
-      ]);
-    } finally {
-      getSettingsSpy.mockRestore();
-      listPurchaseOrdersSpy.mockRestore();
-      setRuntimeProcurementApprovalSettings({
-        ...previousSettings,
-        updatedAt: new Date(enabledAt.getTime() + 1),
-      });
+      try {
+        await expect(
+          caller.purchaseOrders.list({ status: "aprobada" })
+        ).resolves.toEqual([rows[0]]);
+        expect(listPurchaseOrdersSpy).toHaveBeenCalledWith({
+          projectIds: [1],
+          status: "pendiente_aprobacion",
+        });
+      } finally {
+        listPurchaseOrdersSpy.mockRestore();
+      }
     }
-  });
+  );
+
+  it.each(["superintendente_aprobador", "gerente"] as const)(
+    "%s cannot open a purchase order that is no longer pending approval",
+    async buildreqRole => {
+      const { ctx } = createProcurementApproverContext(buildreqRole);
+      const caller = appRouter.createCaller(ctx);
+      const getPurchaseOrderByIdSpy = vi
+        .spyOn(db, "getPurchaseOrderById")
+        .mockResolvedValue({
+          purchaseOrder: {
+            id: 4,
+            projectId: 1,
+            status: "aprobada",
+            approvalStatus: "aprobada",
+          },
+          items: [],
+          approvalHistory: [],
+          summary: { total: 300000 },
+        } as any);
+
+      await expect(
+        caller.purchaseOrders.getById({ id: 4 })
+      ).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        message:
+          "Los aprobadores solo pueden consultar órdenes pendientes de aprobación",
+      });
+
+      getPurchaseOrderByIdSpy.mockRestore();
+    }
+  );
 
   it("changes the tax interpretation only for an editable purchase order", async () => {
     const { ctx } = createAdminCentralContext();

@@ -30,8 +30,6 @@ import {
   transfers,
   users,
 } from "../drizzle/schema";
-import { purchaseOrderRequiresApproval } from "@shared/procurement-approvals";
-import { summarizePurchaseOrderLines } from "@shared/purchase-orders";
 import * as data from "./db";
 
 export type PageInput = {
@@ -445,7 +443,7 @@ export type PurchaseOrderPageFilters = PageInput & {
   purchaseType?: string;
   status?: string;
   approvalsEnabled?: boolean;
-  approverOnly?: boolean;
+  pendingApprovalOnly?: boolean;
 };
 
 export async function listPurchaseOrdersPage(
@@ -467,7 +465,14 @@ export async function listPurchaseOrdersPage(
     conditions.push(
       sql`${purchaseOrders.purchaseType}::text = ${filters.purchaseType}`
     );
-  if (filters.status) {
+  if (filters.pendingApprovalOnly) {
+    conditions.push(
+      and(
+        eq(purchaseOrders.status, "pendiente_aprobacion" as any),
+        eq(purchaseOrders.approvalStatus, "pendiente" as any)
+      )!
+    );
+  } else if (filters.status) {
     if (!filters.approvalsEnabled && filters.status === "borrador") {
       conditions.push(
         or(
@@ -538,90 +543,27 @@ export async function listPurchaseOrdersPage(
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   const baseOrderQuery = () =>
     database
-      .select({
-        id: purchaseOrders.id,
-        currency: purchaseOrders.currency,
-        pricesIncludeTax: purchaseOrders.pricesIncludeTax,
-      })
+      .select({ id: purchaseOrders.id })
       .from(purchaseOrders)
       .leftJoin(projects, eq(purchaseOrders.projectId, projects.id))
       .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
       .leftJoin(createdBy, eq(purchaseOrders.createdById, createdBy.id));
-  if (!filters.approverOnly) {
-    const [totalRow] = await database
-      .select({ count: count() })
-      .from(purchaseOrders)
-      .leftJoin(projects, eq(purchaseOrders.projectId, projects.id))
-      .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
-      .leftJoin(createdBy, eq(purchaseOrders.createdById, createdBy.id))
-      .where(where);
-    const total = totalRow?.count ?? 0;
-    const meta = getPageMeta(total, filters);
-    const idRows = await baseOrderQuery()
-      .where(where)
-      .orderBy(desc(purchaseOrders.createdAt), desc(purchaseOrders.id))
-      .limit(meta.pageSize)
-      .offset(meta.offset);
-    const items = await data.listPurchaseOrders({
-      ids: uniqueIds(idRows),
-      projectId: filters.projectId,
-      projectIds: filters.projectIds,
-      classification: filters.classification,
-    });
-    return pageResult(items, total, filters);
-  }
-  const candidateRows = await baseOrderQuery()
-    .where(where)
-    .orderBy(desc(purchaseOrders.createdAt), desc(purchaseOrders.id));
-  let visibleRows = candidateRows;
-  if (candidateRows.length > 0) {
-    const candidateIds = uniqueIds(candidateRows);
-    const historyRows = await database
-      .select({ id: procurementApprovalHistory.documentId })
-      .from(procurementApprovalHistory)
-      .where(
-        and(
-          eq(procurementApprovalHistory.documentType, "purchase_order"),
-          inArray(procurementApprovalHistory.documentId, candidateIds)
-        )
-      );
-    const historyIds = new Set(uniqueIds(historyRows));
-    const lineRows = await database
-      .select({
-        id: purchaseOrderItems.purchaseOrderId,
-        quantity: purchaseOrderItems.quantity,
-        unitPrice: purchaseOrderItems.unitPrice,
-        subtotal: purchaseOrderItems.subtotal,
-        taxCode: purchaseOrderItems.taxCode,
-        additionalTaxCodes: purchaseOrderItems.additionalTaxCodes,
-        taxBreakdown: purchaseOrderItems.taxBreakdown,
-      })
-      .from(purchaseOrderItems)
-      .where(inArray(purchaseOrderItems.purchaseOrderId, candidateIds));
-    const linesById = new Map<number, typeof lineRows>();
-    for (const line of lineRows) {
-      const lines = linesById.get(line.id) ?? [];
-      lines.push(line);
-      linesById.set(line.id, lines);
-    }
-    visibleRows = candidateRows.filter(row => {
-      if (historyIds.has(row.id)) return true;
-      const total = summarizePurchaseOrderLines(
-        (linesById.get(row.id) ?? []).map(line => ({
-          ...line,
-          pricesIncludeTax: row.pricesIncludeTax,
-        }))
-      ).total;
-      return purchaseOrderRequiresApproval(row.currency, total);
-    });
-  }
-  const total = visibleRows.length;
+  const [totalRow] = await database
+    .select({ count: count() })
+    .from(purchaseOrders)
+    .leftJoin(projects, eq(purchaseOrders.projectId, projects.id))
+    .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
+    .leftJoin(createdBy, eq(purchaseOrders.createdById, createdBy.id))
+    .where(where);
+  const total = totalRow?.count ?? 0;
   const meta = getPageMeta(total, filters);
-  const ids = visibleRows
-    .slice(meta.offset, meta.offset + meta.pageSize)
-    .map(row => row.id);
+  const idRows = await baseOrderQuery()
+    .where(where)
+    .orderBy(desc(purchaseOrders.createdAt), desc(purchaseOrders.id))
+    .limit(meta.pageSize)
+    .offset(meta.offset);
   const items = await data.listPurchaseOrders({
-    ids,
+    ids: uniqueIds(idRows),
     projectId: filters.projectId,
     projectIds: filters.projectIds,
     classification: filters.classification,

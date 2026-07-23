@@ -73,6 +73,32 @@ function getPurchaseOrderItemName(item: {
   return item.itemName?.trim() || TEMPORARY_FIXED_ASSET_ITEM_NAME;
 }
 
+function isPendingPurchaseOrderApproval(purchaseOrder: {
+  status?: string | null;
+  approvalStatus?: string | null;
+}) {
+  return (
+    purchaseOrder.status === "pendiente_aprobacion" &&
+    purchaseOrder.approvalStatus === "pendiente"
+  );
+}
+
+function assertApproverPendingVisibility(
+  user: { buildreqRole?: string | null },
+  purchaseOrder: { status?: string | null; approvalStatus?: string | null }
+) {
+  if (
+    isProcurementApproverRole(user.buildreqRole) &&
+    !isPendingPurchaseOrderApproval(purchaseOrder)
+  ) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message:
+        "Los aprobadores solo pueden consultar órdenes pendientes de aprobación",
+    });
+  }
+}
+
 const quantityToConvertSchema = z.object({
   purchaseRequestItemId: z.number(),
   quantity: z
@@ -602,10 +628,14 @@ export const purchaseOrdersRouter = router({
           message: "No tiene acceso a órdenes de compra",
         });
       }
+      const pendingApprovalOnly = isProcurementApproverRole(
+        ctx.user.buildreqRole
+      );
       return listPurchaseOrdersPage({
         ...applyProjectScope(input, ctx.user),
         approvalsEnabled: isPurchaseOrderApprovalEnabled(),
-        approverOnly: isProcurementApproverRole(ctx.user.buildreqRole),
+        pendingApprovalOnly,
+        status: pendingApprovalOnly ? undefined : input.status,
       });
     }),
 
@@ -627,18 +657,21 @@ export const purchaseOrdersRouter = router({
         });
       }
 
+      const pendingApprovalOnly = isProcurementApproverRole(
+        ctx.user.buildreqRole
+      );
       const rows = await db.listPurchaseOrders(
-        applyProjectScope(input ?? {}, ctx.user)
+        applyProjectScope(
+          {
+            ...(input ?? {}),
+            ...(pendingApprovalOnly ? { status: "pendiente_aprobacion" } : {}),
+          },
+          ctx.user
+        )
       );
-      if (!isProcurementApproverRole(ctx.user.buildreqRole)) return rows;
-      return rows.filter(
-        row =>
-          row.hasApprovalHistory ||
-          purchaseOrderRequiresApproval(
-            row.purchaseOrder.currency,
-            row.totalAmount
-          )
-      );
+      return pendingApprovalOnly
+        ? rows.filter(row => isPendingPurchaseOrderApproval(row.purchaseOrder))
+        : rows;
     }),
 
   getById: protectedProcedure
@@ -659,19 +692,7 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
-      if (
-        isProcurementApproverRole(ctx.user.buildreqRole) &&
-        detail.approvalHistory.length === 0 &&
-        !purchaseOrderRequiresApproval(
-          detail.purchaseOrder.currency,
-          detail.summary.total
-        )
-      ) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Esta orden no requiere aprobación",
-        });
-      }
+      assertApproverPendingVisibility(ctx.user, detail.purchaseOrder);
       return detail;
     }),
 
