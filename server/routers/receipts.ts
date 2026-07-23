@@ -65,7 +65,6 @@ function rethrowDuplicateSupplierFiscalInvoice(error: unknown): never {
 }
 
 function canReceivePurchaseOrder(purchaseOrder: any, contractSummary?: any) {
-  if (purchaseOrder.approvalStatus === "aprobada") return false;
   if (!purchaseOrder.appliesContract) {
     return RECEIVABLE_PURCHASE_ORDER_STATUSES.has(purchaseOrder.status);
   }
@@ -760,10 +759,7 @@ export const receiptsRouter = router({
       if (!canReceivePurchaseOrder(detail.purchaseOrder, detail.contractSummary)) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message:
-            detail.purchaseOrder.approvalStatus === "aprobada"
-              ? "Una OC que pasó por aprobación queda bloqueada y no puede recibirse"
-              : "La orden no está disponible para recepción",
+          message: "La orden no está disponible para recepción",
         });
       }
       if (

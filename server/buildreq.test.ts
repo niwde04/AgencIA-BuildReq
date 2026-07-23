@@ -13268,7 +13268,7 @@ describe("BuildReq - Receipts", () => {
     }
   });
 
-  it("saves or updates a purchase order receipt draft", async () => {
+  it("saves or updates a receipt draft for an approved and issued purchase order", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
     const getPurchaseOrderByIdSpy = vi
@@ -13279,6 +13279,7 @@ describe("BuildReq - Receipts", () => {
           orderNumber: "OC-2026-0005",
           projectId: 1,
           status: "emitida",
+          approvalStatus: "aprobada",
           currency: "HNL",
           pricesIncludeTax: true,
         },
@@ -13461,7 +13462,7 @@ describe("BuildReq - Receipts", () => {
     saveReceiptDraftSpy.mockRestore();
   });
 
-  it("Bodeguero de Proyecto can register purchase order receipts for their project", async () => {
+  it("Bodeguero de Proyecto can receive an approved and issued purchase order for their project", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
     const getPurchaseOrderByIdSpy = vi
@@ -13472,6 +13473,7 @@ describe("BuildReq - Receipts", () => {
           orderNumber: "OC-2026-0005",
           projectId: 1,
           status: "emitida",
+          approvalStatus: "aprobada",
         },
         items: [
           {
