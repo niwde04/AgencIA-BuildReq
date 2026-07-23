@@ -1329,12 +1329,33 @@ export const invoices = pgTable(
       length: 100,
     }),
     retentionEmissionDeadline: timestamp("retentionEmissionDeadline"),
+    retentionDocumentDate: timestamp("retentionDocumentDate"),
     hasOceExemption: boolean("hasOceExemption").default(false).notNull(),
+    oceNumber: varchar("oceNumber", { length: 100 }),
     oceResolutionNumber: varchar("oceResolutionNumber", { length: 100 }),
     oceResolutionDate: timestamp("oceResolutionDate"),
     oceExemptAmount: decimal("oceExemptAmount", { precision: 14, scale: 4 })
       .default("0.0000")
       .notNull(),
+    oceExemptAmount15: decimal("oceExemptAmount15", {
+      precision: 14,
+      scale: 4,
+    }),
+    oceExemptAmount18: decimal("oceExemptAmount18", {
+      precision: 14,
+      scale: 4,
+    }),
+    dmcForeignSection: varchar("dmcForeignSection", { length: 20 }).$type<
+      "fyduca" | "importacion"
+    >(),
+    dmcForeignIdentification: varchar("dmcForeignIdentification", {
+      length: 100,
+    }),
+    dmcFyducaNumber: varchar("dmcFyducaNumber", { length: 100 }),
+    dmcDuaNumber: varchar("dmcDuaNumber", { length: 100 }),
+    dmcImportOutsideCentralAmerica: boolean(
+      "dmcImportOutsideCentralAmerica"
+    ),
     notes: text("notes"),
     subtotal: decimal("subtotal", { precision: 14, scale: 4 })
       .default("0.0000")
@@ -1385,6 +1406,18 @@ export const invoices = pgTable(
         (${table.currency} = 'HNL' and ${table.exchangeRate} is null and ${table.exchangeRateDate} is null)
         or
         (${table.currency} = 'USD' and ${table.exchangeRate} > 0 and ${table.exchangeRateDate} is not null)
+      )`
+    ),
+    dmcForeignSectionCheck: check(
+      "invoice_dmc_foreign_section_check",
+      sql`${table.dmcForeignSection} is null or ${table.dmcForeignSection} in ('fyduca', 'importacion')`
+    ),
+    oceSplitAmountsCheck: check(
+      "invoice_oce_split_amounts_check",
+      sql`(
+        (${table.oceExemptAmount15} is null or ${table.oceExemptAmount15} >= 0)
+        and
+        (${table.oceExemptAmount18} is null or ${table.oceExemptAmount18} >= 0)
       )`
     ),
   })
@@ -1685,6 +1718,9 @@ export const invoiceItems = pgTable(
     ),
     fixedAssetSapItemCode: varchar("fixedAssetSapItemCode", { length: 50 }),
     fixedAssetName: varchar("fixedAssetName", { length: 500 }),
+    dmcDestination: varchar("dmcDestination", { length: 20 }).$type<
+      "costo" | "gasto" | "no_deducible"
+    >(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   table => ({
@@ -1698,6 +1734,10 @@ export const invoiceItems = pgTable(
     subProjectIdx: index("invi_subproject_idx").on(table.subProjectId),
     fixedAssetIdx: index("invi_fixed_asset_idx").on(
       table.fixedAssetSapItemCode
+    ),
+    dmcDestinationCheck: check(
+      "invoice_item_dmc_destination_check",
+      sql`${table.dmcDestination} is null or ${table.dmcDestination} in ('costo', 'gasto', 'no_deducible')`
     ),
   })
 );

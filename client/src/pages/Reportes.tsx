@@ -12,13 +12,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { downloadDmcReport, downloadDmcSarReport } from "@/lib/dmc-export";
+import {
+  downloadDmcSarReport,
+  downloadRetentionSarReport,
+  downloadSystemWorkbook,
+} from "@/lib/dmc-export";
 import { trpc } from "@/lib/trpc";
-import type { DmcReportSummary, DmcStatusMode } from "@shared/dmc-report";
-import type { DmcSarReportSummary } from "@shared/dmc-sar-report";
+import type { FiscalReportIssue } from "@shared/dmc-sar-report";
+import type { DmcStatusMode } from "@shared/dmc-report";
 import { AlertTriangle, Download, FileSpreadsheet } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useLocation } from "wouter";
 
 const STATUS_MODE_LABELS: Record<DmcStatusMode, string> = {
   non_void: "No anuladas",
@@ -27,146 +32,120 @@ const STATUS_MODE_LABELS: Record<DmcStatusMode, string> = {
 };
 
 function toDateInputValue(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
-function getCurrentMonthRange() {
+function currentMonth() {
   const now = new Date();
   return {
-    dateFrom: toDateInputValue(new Date(now.getFullYear(), now.getMonth(), 1)),
-    dateTo: toDateInputValue(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
+    from: toDateInputValue(new Date(now.getFullYear(), now.getMonth(), 1)),
+    to: toDateInputValue(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
   };
-}
-
-function formatMoney(value: number) {
-  return value.toLocaleString("es-HN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-function formatDateLabel(value: Date | string | null | undefined) {
-  if (!value) return "Sin fecha";
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return "Sin fecha";
-  return date.toLocaleDateString("es-HN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
 }
 
 function canAccessReports(user: ReturnType<typeof useAuth>["user"]) {
-  const buildreqRole = (user as any)?.buildreqRole;
+  const role = (user as any)?.buildreqRole;
   return (
-    buildreqRole === "administracion_central" ||
-    buildreqRole === "administrador_proyecto" ||
-    buildreqRole === "contable"
+    role === "administracion_central" ||
+    role === "administrador_proyecto" ||
+    role === "contable"
   );
 }
 
+type LastResult = {
+  title: string;
+  records: number;
+  issues: FiscalReportIssue[];
+  generatedAt: Date | string;
+};
+
 export default function Reportes() {
   const { user } = useAuth();
-  const defaultRange = useMemo(() => getCurrentMonthRange(), []);
-  const [dateFrom, setDateFrom] = useState(defaultRange.dateFrom);
-  const [dateTo, setDateTo] = useState(defaultRange.dateTo);
+  const [, setLocation] = useLocation();
+  const initial = useMemo(currentMonth, []);
+  const [dateFrom, setDateFrom] = useState(initial.from);
+  const [dateTo, setDateTo] = useState(initial.to);
   const [statusMode, setStatusMode] = useState<DmcStatusMode>("non_void");
-  const [lastSummary, setLastSummary] = useState<DmcReportSummary | null>(null);
-  const [lastSarSummary, setLastSarSummary] =
-    useState<DmcSarReportSummary | null>(null);
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [isDownloadingSar, setIsDownloadingSar] = useState(false);
+  const [activeDownload, setActiveDownload] = useState<string | null>(null);
+  const [lastResult, setLastResult] = useState<LastResult | null>(null);
 
-  const reportInput = useMemo(
-    () => ({
-      dateFrom: dateFrom || null,
-      dateTo: dateTo || null,
-      statusMode,
-    }),
+  const baseInput = useMemo(
+    () => ({ dateFrom: dateFrom || null, dateTo: dateTo || null, statusMode }),
     [dateFrom, dateTo, statusMode]
   );
-
-  const dmcQuery = trpc.reports.dmcPurchases.useQuery(reportInput, {
+  const systemQuery = trpc.reports.systemWorkbook.useQuery(baseInput, {
     enabled: false,
     retry: false,
   });
-  const dmcSarQuery = trpc.reports.dmcSarPurchases.useQuery(reportInput, {
+  const dmcQuery = trpc.reports.dmcSarPurchases.useQuery(baseInput, {
     enabled: false,
     retry: false,
   });
+  const rt01Query = trpc.reports.retentionSar.useQuery(
+    { ...baseInput, type: "RT01" },
+    { enabled: false, retry: false }
+  );
+  const rt125Query = trpc.reports.retentionSar.useQuery(
+    { ...baseInput, type: "RT125" },
+    { enabled: false, retry: false }
+  );
+  const rt15Query = trpc.reports.retentionSar.useQuery(
+    { ...baseInput, type: "RT15" },
+    { enabled: false, retry: false }
+  );
 
   const hasAccess = canAccessReports(user);
-  const isGenerating = dmcQuery.isFetching || isDownloading;
-  const isGeneratingSar = dmcSarQuery.isFetching || isDownloadingSar;
 
-  const handleGenerateDmc = async () => {
-    if (!hasAccess) {
-      toast.error("No tiene acceso a reportes");
-      return;
-    }
+  const validateRange = () => {
     if (dateFrom && dateTo && dateFrom > dateTo) {
       toast.error("La fecha inicial no puede ser mayor que la fecha final");
-      return;
+      return false;
     }
-
-    setIsDownloading(true);
-    try {
-      const result = await dmcQuery.refetch();
-      if (result.error) throw result.error;
-      if (!result.data) throw new Error("No se pudo generar el reporte");
-
-      await downloadDmcReport(result.data);
-      setLastSummary(result.data.summary);
-      toast.success(
-        result.data.summary.invoiceCount === 1
-          ? "DMC generado con 1 factura"
-          : `DMC generado con ${result.data.summary.invoiceCount} facturas`
-      );
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "No se pudo generar el reporte DMC"
-      );
-    } finally {
-      setIsDownloading(false);
-    }
+    return true;
   };
 
-  const handleGenerateDmcSar = async () => {
-    if (!hasAccess) {
-      toast.error("No tiene acceso a reportes");
-      return;
-    }
-    if (dateFrom && dateTo && dateFrom > dateTo) {
-      toast.error("La fecha inicial no puede ser mayor que la fecha final");
-      return;
-    }
-
-    setIsDownloadingSar(true);
+  const run = async (
+    key: string,
+    request: () => Promise<any>,
+    download: (payload: any) => Promise<void>,
+    title: string
+  ) => {
+    if (!validateRange()) return;
+    setActiveDownload(key);
     try {
-      const result = await dmcSarQuery.refetch();
+      const result = await request();
       if (result.error) throw result.error;
-      if (!result.data) throw new Error("No se pudo generar el DMC SAR");
-
-      await downloadDmcSarReport(result.data);
-      setLastSarSummary(result.data.summary);
-      toast.success(
-        result.data.summary.invoiceCount === 1
-          ? "DMC SAR generado con 1 factura"
-          : `DMC SAR generado con ${result.data.summary.invoiceCount} facturas`
-      );
+      if (!result.data) throw new Error("No se pudo preparar el reporte");
+      const issues: FiscalReportIssue[] = result.data.issues ?? [];
+      const records =
+        result.data.summary.rowCount ??
+        result.data.summary.invoiceCount ??
+        result.data.summary.invoiceLineCount ??
+        0;
+      setLastResult({
+        title,
+        records,
+        issues,
+        generatedAt: result.data.summary.generatedAt,
+      });
+      if (result.data.canExport === false) {
+        toast.error(
+          `No se generó ${title}: hay ${issues.length} dato(s) por corregir`
+        );
+        return;
+      }
+      await download(result.data);
+      toast.success(`${title} generado con ${records} registro(s)`);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "No se pudo generar el reporte DMC SAR"
+        error instanceof Error ? error.message : `No se pudo generar ${title}`
       );
     } finally {
-      setIsDownloadingSar(false);
+      setActiveDownload(null);
     }
   };
 
@@ -183,185 +162,184 @@ export default function Reportes() {
     );
   }
 
+  const buttons = [
+    {
+      key: "system",
+      label: "Libro interno BuildReq",
+      action: () =>
+        run(
+          "system",
+          () => systemQuery.refetch(),
+          downloadSystemWorkbook,
+          "Libro interno BuildReq"
+        ),
+    },
+    {
+      key: "dmc",
+      label: "DMC SAR 527",
+      action: () =>
+        run("dmc", () => dmcQuery.refetch(), downloadDmcSarReport, "DMC SAR 527"),
+    },
+    {
+      key: "rt01",
+      label: "Retención 1% (135)",
+      action: () =>
+        run(
+          "rt01",
+          () => rt01Query.refetch(),
+          downloadRetentionSarReport,
+          "Retención 1% (135)"
+        ),
+    },
+    {
+      key: "rt125",
+      label: "Retención 12.5% (112)",
+      action: () =>
+        run(
+          "rt125",
+          () => rt125Query.refetch(),
+          downloadRetentionSarReport,
+          "Retención 12.5% (112)"
+        ),
+    },
+    {
+      key: "rt15",
+      label: "Retención 15% (217)",
+      action: () =>
+        run(
+          "rt15",
+          () => rt15Query.refetch(),
+          downloadRetentionSarReport,
+          "Retención 15% (217)"
+        ),
+    },
+  ];
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1>Reportes</h1>
-        </div>
+      <div>
+        <h1>Reportes</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Plantillas fiscales SAR y libro operativo del cliente.
+        </p>
       </div>
 
       <Card>
         <CardContent className="space-y-6 p-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <FileSpreadsheet className="h-5 w-5 text-primary" />
-                <h2 className="text-xl font-semibold tracking-tight">
-                  Declaración Mensual de Compras
-                </h2>
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">DMC</p>
+            <div className="flex items-center gap-2">
+              <FileSpreadsheet className="h-5 w-5 text-primary" />
+              <h2 className="text-xl font-semibold">Descargas XLSX</h2>
             </div>
-            <Badge variant="outline" className="rounded-sm">
-              XLSX
-            </Badge>
+            <Badge variant="outline">{STATUS_MODE_LABELS[statusMode]}</Badge>
           </div>
 
           <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-2">
-              <Label htmlFor="dmc-date-from">Fecha desde</Label>
+              <Label htmlFor="reports-date-from">Fecha inicial</Label>
               <Input
-                id="dmc-date-from"
+                id="reports-date-from"
                 type="date"
                 value={dateFrom}
                 onChange={event => setDateFrom(event.target.value)}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="dmc-date-to">Fecha hasta</Label>
+              <Label htmlFor="reports-date-to">Fecha final</Label>
               <Input
-                id="dmc-date-to"
+                id="reports-date-to"
                 type="date"
                 value={dateTo}
                 onChange={event => setDateTo(event.target.value)}
               />
             </div>
             <div className="space-y-2">
-              <Label>Estado</Label>
+              <Label>Estado de facturas</Label>
               <Select
                 value={statusMode}
                 onValueChange={value => setStatusMode(value as DmcStatusMode)}
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="non_void">No anuladas</SelectItem>
-                  <SelectItem value="registered_only">
-                    Solo contabilizadas
-                  </SelectItem>
+                  <SelectItem value="registered_only">Solo contabilizadas</SelectItem>
                   <SelectItem value="all">Todos los estados</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              type="button"
-              onClick={() => void handleGenerateDmc()}
-              disabled={isGenerating}
-            >
-              {isGenerating ? (
-                <Spinner className="mr-2 size-4" />
-              ) : (
-                <Download className="mr-2 h-4 w-4" />
-              )}
-              {isGenerating ? "Generando..." : "Registro de facturas"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void handleGenerateDmcSar()}
-              disabled={isGeneratingSar}
-            >
-              {isGeneratingSar ? (
-                <Spinner className="mr-2 size-4" />
-              ) : (
-                <Download className="mr-2 h-4 w-4" />
-              )}
-              {isGeneratingSar ? "Generando..." : "Generar DMC SAR"}
-            </Button>
-            <span className="text-sm text-muted-foreground">
-              {STATUS_MODE_LABELS[statusMode]}
-            </span>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            {buttons.map(button => (
+              <Button
+                key={button.key}
+                type="button"
+                variant={button.key === "system" ? "default" : "outline"}
+                disabled={activeDownload !== null}
+                onClick={() => void button.action()}
+                className="justify-start"
+              >
+                {activeDownload === button.key ? (
+                  <Spinner className="mr-2 size-4" />
+                ) : (
+                  <Download className="mr-2 size-4" />
+                )}
+                {button.label}
+              </Button>
+            ))}
           </div>
 
-          {lastSummary ? (
-            <div className="grid gap-3 border-t border-border pt-5 md:grid-cols-4">
-              <div>
-                <div className="text-xs uppercase text-muted-foreground">
-                  Facturas
-                </div>
-                <div className="text-lg font-semibold">
-                  {lastSummary.invoiceCount}
-                </div>
-              </div>
-              {lastSummary.totalsByCurrency.map(summary => (
-                <div key={summary.currency}>
-                  <div className="text-xs uppercase text-muted-foreground">
-                    Totales {summary.currency}
-                  </div>
-                  <div className="text-lg font-semibold">
-                    {formatMoney(summary.totalFactura)}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    Neto: {formatMoney(summary.netoPagar)} · {summary.invoiceCount} factura(s)
-                  </div>
-                </div>
-              ))}
-              <div>
-                <div className="text-xs uppercase text-muted-foreground">
-                  Generado
-                </div>
-                <div className="text-lg font-semibold">
-                  {formatDateLabel(lastSummary.generatedAt)}
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {lastSarSummary ? (
+          {lastResult ? (
             <div className="space-y-4 border-t border-border pt-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-base font-semibold">DMC SAR</h3>
-                <Badge variant="outline" className="rounded-sm">
-                  {lastSarSummary.invoiceCount} facturas
+                <div>
+                  <h3 className="font-semibold">{lastResult.title}</h3>
+                  <p className="text-sm text-muted-foreground">
+                    {lastResult.records} registro(s) ·{" "}
+                    {new Date(lastResult.generatedAt).toLocaleString("es-HN")}
+                  </p>
+                </div>
+                <Badge
+                  variant="outline"
+                  className={
+                    lastResult.issues.length
+                      ? "border-amber-300 text-amber-800"
+                      : "border-emerald-300 text-emerald-700"
+                  }
+                >
+                  {lastResult.issues.length
+                    ? `${lastResult.issues.length} pendiente(s)`
+                    : "Listo para descargar"}
                 </Badge>
               </div>
-              <div className="grid gap-3 md:grid-cols-4">
-                <div>
-                  <div className="text-xs uppercase text-muted-foreground">
-                    Detalle compras
+
+              {lastResult.issues.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium text-amber-900">
+                    <AlertTriangle className="h-4 w-4" />
+                    Corrija estos datos en Facturas y vuelva a generar:
                   </div>
-                  <div className="text-lg font-semibold">
-                    {lastSarSummary.detalleComprasCount}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase text-muted-foreground">
-                    Otros comprobantes
-                  </div>
-                  <div className="text-lg font-semibold">
-                    {lastSarSummary.otrosComprobantesCount}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase text-muted-foreground">
-                    Importaciones
-                  </div>
-                  <div className="text-lg font-semibold">
-                    {lastSarSummary.importacionesCount}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase text-muted-foreground">
-                    Generado
-                  </div>
-                  <div className="text-lg font-semibold">
-                    {formatDateLabel(lastSarSummary.generatedAt)}
-                  </div>
-                </div>
-              </div>
-              {lastSarSummary.isv4InvoiceCount > 0 ? (
-                <div className="flex items-start gap-2 rounded-sm border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <div>
-                    {lastSarSummary.isv4InvoiceCount} factura(s) tienen ISV 4%.
-                    La plantilla SAR usada no incluye columnas para ese impuesto.
-                    Base: {formatMoney(lastSarSummary.isv4BaseTotal)}; impuesto:{" "}
-                    {formatMoney(lastSarSummary.isv4TaxTotal)}.
+                  <div className="max-h-80 divide-y overflow-y-auto rounded-md border">
+                    {lastResult.issues.map((issue, index) => (
+                      <button
+                        key={`${issue.invoiceId}-${issue.field}-${index}`}
+                        type="button"
+                        className="flex w-full items-start justify-between gap-3 p-3 text-left text-sm hover:bg-muted/50"
+                        onClick={() =>
+                          setLocation(`/facturas?editar=${issue.invoiceId}`)
+                        }
+                      >
+                        <span>
+                          <strong>{issue.invoiceNumber}</strong>
+                          <span className="ml-2 text-muted-foreground">
+                            {issue.message}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-xs text-primary">
+                          Abrir factura
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 </div>
               ) : null}

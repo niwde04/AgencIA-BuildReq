@@ -3,98 +3,84 @@ import type { PurchaseOrderTaxBreakdownEntry } from "./purchase-orders";
 import { roundPurchaseOrderMoney } from "./purchase-orders";
 
 export type DmcSarStatusMode = "non_void" | "registered_only" | "all";
-export type DmcSarCellValue = string | number | Date | null;
+export type FiscalReportIssue = {
+  invoiceId: number;
+  invoiceNumber: string;
+  field: string;
+  message: string;
+};
 
-export type DmcSarLocalPurchaseRow = {
-  rtnProveedor: string;
-  razonSocialProveedor: string;
-  fecha: Date | null;
+type DmcAmounts = {
+  exempt: number;
+  exonerated15: number;
+  exonerated18: number;
+  base15: number;
+  base18: number;
+  cost: number;
+  expense: number;
+  nonDeductible: number;
+};
+
+export type DmcSar52752Row = DmcAmounts & {
+  supplierRtn: string;
+  documentClass: "FA" | "OC";
   cai: string;
-  establecimiento: string;
-  puntoEmision: string;
-  tipoDocumento: string;
-  correlativo: string;
-  compraConOce: string;
+  fiscalDocumentNumber: string;
+  otherDocumentNumber: string;
+  documentDate: Date | null;
+  postingDate: Date | null;
+  oceNumber: string;
   oceResolutionNumber: string;
-  oceResolutionDate: Date | null;
-  importeExento: number | null;
-  importeGravado15: number | null;
-  importeGravado18: number | null;
-  impuesto15: number | null;
-  impuesto18: number | null;
 };
 
-export type DmcSarOtherReceiptRow = {
-  tipoDocumento: string;
-  fecha: Date | null;
-  rtnProveedor: string;
-  razonSocialProveedor: string;
-  numeroDocumentoEquivalente: string;
-  compraConOce: string;
+export type DmcSar52753Row = DmcAmounts & {
+  foreignIdentification: string;
+  foreignTaxIdentifier: string;
+  supplierName: string;
+  fyducaNumber: string;
+  documentDate: Date | null;
+  postingDate: Date | null;
+  oceNumber: string;
   oceResolutionNumber: string;
-  oceResolutionDate: Date | null;
-  importeExento: number | null;
-  importeGravado15: number | null;
-  importeGravado18: number | null;
-  impuesto15: number | null;
-  impuesto18: number | null;
 };
 
-export type DmcSarOccasionalPurchaseRow = {
-  rtn: string;
-  identidadOCarnetResidencia: string;
-  pasaporte: string;
-  razonSocialProveedor: string;
-  departamento: string;
-  municipio: string;
-  descripcionProductoServicio: string;
-  fecha: Date | null;
-  cai: string;
-  establecimiento: string;
-  puntoEmision: string;
-  tipoDocumento: string;
-  correlativo: string;
-  importeExento: number | null;
-  importeGravado15: number | null;
-  importeGravado18: number | null;
-  impuesto15: number | null;
-  impuesto18: number | null;
-};
-
-export type DmcSarImportRow = {
-  identificadorTributarioProveedor: string;
-  razonSocialProveedor: string;
-  numeroDua: string;
-  numeroLiquidacion: string;
-  numeroResolucionExoneracionSefin: string;
-  fechaVencimientoResolucion: Date | null;
-};
-
-export type DmcSarReportSummary = {
-  generatedAt: Date;
-  source: string;
-  dateFrom: Date | null;
-  dateTo: Date | null;
-  statusMode: DmcSarStatusMode;
-  invoiceCount: number;
-  detalleComprasCount: number;
-  otrosComprobantesCount: number;
-  comprasEventualesCount: number;
-  importacionesCount: number;
-  isv4InvoiceCount: number;
-  isv4BaseTotal: number;
-  isv4TaxTotal: number;
+export type DmcSar52754Row = DmcAmounts & {
+  foreignIdentification: string;
+  supplierName: string;
+  duaNumber: string;
+  documentDate: Date | null;
+  postingDate: Date | null;
+  oceNumber: string;
+  oceResolutionNumber: string;
+  base15OutsideCentralAmerica: number;
+  base18OutsideCentralAmerica: number;
 };
 
 export type DmcSarReportPayload = {
-  detalleCompras: DmcSarLocalPurchaseRow[];
-  otrosComprobantes: DmcSarOtherReceiptRow[];
-  comprasEventuales: DmcSarOccasionalPurchaseRow[];
-  detalleImportaciones: DmcSarImportRow[];
-  summary: DmcSarReportSummary;
+  section52752: DmcSar52752Row[];
+  section52753: DmcSar52753Row[];
+  section52754: DmcSar52754Row[];
+  issues: FiscalReportIssue[];
+  canExport: boolean;
+  summary: {
+    generatedAt: Date;
+    source: string;
+    dateFrom: Date | null;
+    dateTo: Date | null;
+    statusMode: DmcSarStatusMode;
+    invoiceCount: number;
+    section52752Count: number;
+    section52753Count: number;
+    section52754Count: number;
+    issueCount: number;
+    totalBase: number;
+    totalCost: number;
+    totalExpense: number;
+    totalNonDeductible: number;
+  };
 };
 
-function toNumber(value: string | number | null | undefined) {
+function numberValue(value: string | number | null | undefined) {
   if (value === null || value === undefined || value === "") return 0;
   const parsed =
     typeof value === "number"
@@ -104,225 +90,216 @@ function toNumber(value: string | number | null | undefined) {
 }
 
 function money(value: string | number | null | undefined) {
-  return roundPurchaseOrderMoney(toNumber(value));
+  return roundPurchaseOrderMoney(numberValue(value));
 }
 
-function amountOrBlank(value: string | number | null | undefined) {
-  const amount = money(value);
-  return amount === 0 ? null : amount;
-}
-
-function normalizeDate(value: Date | string | null | undefined) {
+function dateValue(value: Date | string | null | undefined) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function parseTaxBreakdown(
+function breakdown(
   value: PurchaseOrderTaxBreakdownEntry[] | string | null | undefined
-): PurchaseOrderTaxBreakdownEntry[] {
+) {
   if (Array.isArray(value)) return value;
   if (!value) return [];
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed)
+      ? (parsed as PurchaseOrderTaxBreakdownEntry[])
+      : [];
   } catch {
     return [];
   }
 }
 
-function isRate(value: string | number | null | undefined, expected: number) {
-  return Math.abs(toNumber(value) - expected) < 0.0001;
+function isRate(value: string | number | null | undefined, rate: number) {
+  return Math.abs(numberValue(value) - rate) < 0.0001;
 }
 
-function taxMatches(
-  entry: Pick<PurchaseOrderTaxBreakdownEntry, "taxCode" | "ratePercent">,
-  code: string,
-  rate: number
-) {
-  return entry.taxCode === code || isRate(entry.ratePercent, rate);
-}
+function taxAmounts(invoice: DmcReportSourceInvoice) {
+  let exempt = 0;
+  let base15 = 0;
+  let base18 = 0;
+  let base4 = 0;
 
-function splitInvoiceNumber(value: string | null | undefined) {
-  const parts = String(value ?? "").split("-");
-  if (parts.length >= 4) {
-    return {
-      establecimiento: parts[0] ?? "",
-      puntoEmision: parts[1] ?? "",
-      tipoDocumento: parts[2] ?? "",
-      correlativo: parts.slice(3).join("-"),
-    };
-  }
-
-  const compact = String(value ?? "").replace(/\D/g, "");
-  return {
-    establecimiento: compact.length >= 16 ? compact.slice(0, 3) : "",
-    puntoEmision: compact.length >= 16 ? compact.slice(3, 6) : "",
-    tipoDocumento: compact.length >= 8 ? compact.slice(6, 8) : "",
-    correlativo: compact.length >= 16 ? compact.slice(8, 16) : compact,
-  };
-}
-
-function summarizeTaxes(items: DmcReportSourceInvoice["items"]) {
-  const summary = {
-    baseIsv15: 0,
-    baseIsv18: 0,
-    baseIsv4: 0,
-    baseIsv0: 0,
-    isv15: 0,
-    isv18: 0,
-    isv4: 0,
-  };
-
-  for (const item of items) {
-    const subtotal = money(item.subtotal);
-    const itemTaxAmount = money(item.taxAmount);
-    const breakdown = parseTaxBreakdown(item.taxBreakdown);
-    const baseEntries = breakdown.filter(entry => entry.taxType === "base");
-
-    if (baseEntries.length === 0) {
-      if (item.taxCode === "isv_15") {
-        summary.baseIsv15 += subtotal;
-        summary.isv15 += itemTaxAmount;
-      } else if (item.taxCode === "isv_18") {
-        summary.baseIsv18 += subtotal;
-        summary.isv18 += itemTaxAmount;
-      } else if (item.taxCode === "isv_4") {
-        summary.baseIsv4 += subtotal;
-        summary.isv4 += itemTaxAmount;
-      } else {
-        summary.baseIsv0 += subtotal;
-      }
+  for (const item of invoice.items) {
+    const allEntries = breakdown(item.taxBreakdown);
+    const entries = allEntries.filter(
+      entry => entry.taxType === "base"
+    );
+    if (entries.length === 0) {
+      if (item.taxCode === "isv_15") base15 += money(item.subtotal);
+      else if (item.taxCode === "isv_18") base18 += money(item.subtotal);
+      else if (item.taxCode === "isv_4") base4 += money(item.subtotal);
+      else exempt += money(item.subtotal);
       continue;
     }
-
-    for (const entry of baseEntries) {
-      const baseAmount = money(entry.baseAmount ?? subtotal);
-      if (entry.fiscalCategory === "gravado" && taxMatches(entry, "isv_15", 15)) {
-        summary.baseIsv15 += baseAmount;
-      } else if (entry.fiscalCategory === "gravado" && taxMatches(entry, "isv_18", 18)) {
-        summary.baseIsv18 += baseAmount;
-      } else if (entry.fiscalCategory === "gravado" && taxMatches(entry, "isv_4", 4)) {
-        summary.baseIsv4 += baseAmount;
-      } else if (toNumber(entry.ratePercent) === 0) {
-        summary.baseIsv0 += baseAmount;
-      }
+    const hasBaseIsv4 = entries.some(entry =>
+      isRate(entry.ratePercent, 4)
+    );
+    if (
+      !hasBaseIsv4 &&
+      allEntries.some(entry => isRate(entry.ratePercent, 4))
+    ) {
+      base4 += money(item.subtotal);
     }
-
-    for (const entry of breakdown) {
-      if (taxMatches(entry, "isv_15", 15)) {
-        summary.isv15 += money(entry.amount);
-      } else if (taxMatches(entry, "isv_18", 18)) {
-        summary.isv18 += money(entry.amount);
-      } else if (taxMatches(entry, "isv_4", 4)) {
-        summary.isv4 += money(entry.amount);
+    for (const entry of entries) {
+      const base = money(entry.baseAmount ?? item.subtotal);
+      if (
+        entry.fiscalCategory === "gravado" &&
+        isRate(entry.ratePercent, 15)
+      ) {
+        base15 += base;
+      } else if (
+        entry.fiscalCategory === "gravado" &&
+        isRate(entry.ratePercent, 18)
+      ) {
+        base18 += base;
+      } else if (
+        entry.fiscalCategory === "gravado" &&
+        isRate(entry.ratePercent, 4)
+      ) {
+        base4 += base;
       }
+      else if (numberValue(entry.ratePercent) === 0) exempt += base;
     }
   }
-
   return {
-    baseIsv15: money(summary.baseIsv15),
-    baseIsv18: money(summary.baseIsv18),
-    baseIsv4: money(summary.baseIsv4),
-    baseIsv0: money(summary.baseIsv0),
-    isv15: money(summary.isv15),
-    isv18: money(summary.isv18),
-    isv4: money(summary.isv4),
+    exempt: money(exempt),
+    base15: money(base15),
+    base18: money(base18),
+    base4: money(base4),
   };
 }
 
-function getDocumentDate(invoice: DmcReportSourceInvoice) {
-  return normalizeDate(
-    invoice.documentDate ?? invoice.receiptDate ?? invoice.postingDate
-  );
+function destinationAmounts(invoice: DmcReportSourceInvoice) {
+  const values = { cost: 0, expense: 0, nonDeductible: 0 };
+  for (const item of invoice.items) {
+    const amount = money(item.subtotal);
+    if (item.dmcDestination === "costo") values.cost += amount;
+    else if (item.dmcDestination === "gasto") values.expense += amount;
+    else if (item.dmcDestination === "no_deducible") {
+      values.nonDeductible += amount;
+    }
+  }
+  return {
+    cost: money(values.cost),
+    expense: money(values.expense),
+    nonDeductible: money(values.nonDeductible),
+  };
 }
 
-function getExemptAmount(
+function required(
+  issues: FiscalReportIssue[],
   invoice: DmcReportSourceInvoice,
-  taxes: ReturnType<typeof summarizeTaxes>
+  field: string,
+  value: unknown,
+  message: string
 ) {
-  return invoice.hasOceExemption === true
-    ? money(invoice.oceExemptAmount)
-    : taxes.baseIsv0;
+  if (
+    value === null ||
+    value === undefined ||
+    (typeof value === "string" && value.trim() === "")
+  ) {
+    issues.push({
+      invoiceId: invoice.invoiceId,
+      invoiceNumber:
+        invoice.invoiceNumber || invoice.invoiceDocumentNumber || String(invoice.invoiceId),
+      field,
+      message,
+    });
+  }
 }
 
-function getOceFlag(invoice: DmcReportSourceInvoice) {
-  return invoice.hasOceExemption === true ? "SI" : "NO";
+function commonAmounts(invoice: DmcReportSourceInvoice): DmcAmounts {
+  const taxes = taxAmounts(invoice);
+  const destinations = destinationAmounts(invoice);
+  return {
+    exempt: invoice.hasOceExemption ? 0 : taxes.exempt,
+    exonerated15: money(invoice.oceExemptAmount15),
+    exonerated18: money(invoice.oceExemptAmount18),
+    base15: taxes.base15,
+    base18: taxes.base18,
+    ...destinations,
+  };
 }
 
-function buildLocalRow(
+function validateInvoice(
   invoice: DmcReportSourceInvoice,
-  taxes: ReturnType<typeof summarizeTaxes>
-): DmcSarLocalPurchaseRow {
-  const numberParts = splitInvoiceNumber(invoice.invoiceNumber);
-  return {
-    rtnProveedor: invoice.supplierRtn ?? "",
-    razonSocialProveedor: invoice.supplierName ?? "",
-    fecha: getDocumentDate(invoice),
-    cai: invoice.cai ?? "",
-    establecimiento: numberParts.establecimiento,
-    puntoEmision: numberParts.puntoEmision,
-    tipoDocumento: "01",
-    correlativo: numberParts.correlativo,
-    compraConOce: getOceFlag(invoice),
-    oceResolutionNumber:
-      invoice.hasOceExemption === true ? invoice.oceResolutionNumber ?? "" : "",
-    oceResolutionDate:
-      invoice.hasOceExemption === true
-        ? normalizeDate(invoice.oceResolutionDate)
-        : null,
-    importeExento: amountOrBlank(getExemptAmount(invoice, taxes)),
-    importeGravado15: amountOrBlank(taxes.baseIsv15),
-    importeGravado18: amountOrBlank(taxes.baseIsv18),
-    impuesto15: amountOrBlank(taxes.isv15),
-    impuesto18: amountOrBlank(taxes.isv18),
-  };
-}
-
-function buildOtherReceiptRow(
-  invoice: DmcReportSourceInvoice,
-  taxes: ReturnType<typeof summarizeTaxes>
-): DmcSarOtherReceiptRow {
-  const numberParts = splitInvoiceNumber(invoice.invoiceNumber);
-  return {
-    tipoDocumento: numberParts.tipoDocumento,
-    fecha: getDocumentDate(invoice),
-    rtnProveedor: invoice.supplierRtn ?? "",
-    razonSocialProveedor: invoice.supplierName ?? "",
-    numeroDocumentoEquivalente:
-      invoice.invoiceNumber || invoice.invoiceDocumentNumber || "",
-    compraConOce: getOceFlag(invoice),
-    oceResolutionNumber:
-      invoice.hasOceExemption === true ? invoice.oceResolutionNumber ?? "" : "",
-    oceResolutionDate:
-      invoice.hasOceExemption === true
-        ? normalizeDate(invoice.oceResolutionDate)
-        : null,
-    importeExento: amountOrBlank(getExemptAmount(invoice, taxes)),
-    importeGravado15: amountOrBlank(taxes.baseIsv15),
-    importeGravado18: amountOrBlank(taxes.baseIsv18),
-    impuesto15: amountOrBlank(taxes.isv15),
-    impuesto18: amountOrBlank(taxes.isv18),
-  };
-}
-
-function buildImportRow(invoice: DmcReportSourceInvoice): DmcSarImportRow {
-  return {
-    identificadorTributarioProveedor: invoice.supplierRtn ?? "",
-    razonSocialProveedor: invoice.supplierName ?? "",
-    numeroDua: "",
-    numeroLiquidacion: "",
-    numeroResolucionExoneracionSefin: "",
-    fechaVencimientoResolucion: null,
-  };
-}
-
-function isForeignPurchase(invoice: DmcReportSourceInvoice) {
-  return invoice.purchaseType === "extranjera";
-}
-
-function isLocalFiscalInvoice(invoice: DmcReportSourceInvoice) {
-  return splitInvoiceNumber(invoice.invoiceNumber).tipoDocumento === "01";
+  issues: FiscalReportIssue[]
+) {
+  required(issues, invoice, "documentDate", invoice.documentDate, "Falta fecha de emisión");
+  required(issues, invoice, "postingDate", invoice.postingDate, "Falta fecha contable");
+  required(issues, invoice, "supplierName", invoice.supplierName, "Falta proveedor");
+  if (taxAmounts(invoice).base4 > 0) {
+    issues.push({
+      invoiceId: invoice.invoiceId,
+      invoiceNumber: invoice.invoiceNumber || invoice.invoiceDocumentNumber,
+      field: "taxBreakdown",
+      message: "La plantilla DMC 527 no puede representar ISV 4%",
+    });
+  }
+  invoice.items.forEach((item, index) => {
+    if (money(item.subtotal) > 0 && !item.dmcDestination) {
+      issues.push({
+        invoiceId: invoice.invoiceId,
+        invoiceNumber: invoice.invoiceNumber || invoice.invoiceDocumentNumber,
+        field: `items.${index}.dmcDestination`,
+        message: `Clasifique “${item.itemName}” como costo, gasto o no deducible`,
+      });
+    }
+  });
+  if (invoice.hasOceExemption) {
+    required(issues, invoice, "oceNumber", invoice.oceNumber, "Falta número OCE");
+    required(
+      issues,
+      invoice,
+      "oceResolutionNumber",
+      invoice.oceResolutionNumber,
+      "Falta resolución OCE"
+    );
+    if (
+      invoice.oceExemptAmount15 === null ||
+      invoice.oceExemptAmount15 === undefined ||
+      invoice.oceExemptAmount18 === null ||
+      invoice.oceExemptAmount18 === undefined
+    ) {
+      issues.push({
+        invoiceId: invoice.invoiceId,
+        invoiceNumber: invoice.invoiceNumber || invoice.invoiceDocumentNumber,
+        field: "oceExemptAmount15",
+        message: "El histórico OCE necesita desglose exonerado 15%/18%",
+      });
+    } else if (
+      Math.abs(
+        money(invoice.oceExemptAmount) -
+          money(
+            numberValue(invoice.oceExemptAmount15) +
+              numberValue(invoice.oceExemptAmount18)
+          )
+      ) > 0.01
+    ) {
+      issues.push({
+        invoiceId: invoice.invoiceId,
+        invoiceNumber: invoice.invoiceNumber || invoice.invoiceDocumentNumber,
+        field: "oceExemptAmount",
+        message: "El total OCE no coincide con el desglose 15%/18%",
+      });
+    }
+  }
+  if (
+    invoice.purchaseType === "extranjera" &&
+    !invoice.dmcForeignSection
+  ) {
+    issues.push({
+      invoiceId: invoice.invoiceId,
+      invoiceNumber: invoice.invoiceNumber || invoice.invoiceDocumentNumber,
+      field: "dmcForeignSection",
+      message: "Clasifique la compra extranjera como FYDUCA o importación",
+    });
+  }
 }
 
 export function buildDmcSarReportPayload(
@@ -335,49 +312,145 @@ export function buildDmcSarReportPayload(
     statusMode?: DmcSarStatusMode;
   } = {}
 ): DmcSarReportPayload {
-  const detalleCompras: DmcSarLocalPurchaseRow[] = [];
-  const otrosComprobantes: DmcSarOtherReceiptRow[] = [];
-  const detalleImportaciones: DmcSarImportRow[] = [];
-  let isv4InvoiceCount = 0;
-  let isv4BaseTotal = 0;
-  let isv4TaxTotal = 0;
+  const section52752: DmcSar52752Row[] = [];
+  const section52753: DmcSar52753Row[] = [];
+  const section52754: DmcSar52754Row[] = [];
+  const issues: FiscalReportIssue[] = [];
 
   for (const invoice of invoices) {
-    const taxes = summarizeTaxes(invoice.items);
-    if (taxes.baseIsv4 || taxes.isv4) {
-      isv4InvoiceCount += 1;
-      isv4BaseTotal += taxes.baseIsv4;
-      isv4TaxTotal += taxes.isv4;
-    }
+    validateInvoice(invoice, issues);
+    const amounts = commonAmounts(invoice);
+    const documentDate = dateValue(
+      invoice.documentDate ?? invoice.receiptDate ?? invoice.postingDate
+    );
+    const postingDate = dateValue(invoice.postingDate ?? invoice.receiptDate);
+    const oceNumber = invoice.hasOceExemption ? invoice.oceNumber ?? "" : "";
+    const oceResolutionNumber = invoice.hasOceExemption
+      ? invoice.oceResolutionNumber ?? ""
+      : "";
 
-    if (isForeignPurchase(invoice)) {
-      detalleImportaciones.push(buildImportRow(invoice));
-    } else if (isLocalFiscalInvoice(invoice)) {
-      detalleCompras.push(buildLocalRow(invoice, taxes));
+    if (invoice.dmcForeignSection === "fyduca") {
+      required(
+        issues,
+        invoice,
+        "dmcForeignIdentification",
+        invoice.dmcForeignIdentification,
+        "Falta identificación extranjera"
+      );
+      required(
+        issues,
+        invoice,
+        "dmcFyducaNumber",
+        invoice.dmcFyducaNumber,
+        "Falta número FYDUCA"
+      );
+      section52753.push({
+        ...amounts,
+        foreignIdentification: invoice.dmcForeignIdentification ?? "",
+        foreignTaxIdentifier: invoice.supplierRtn ?? "",
+        supplierName: invoice.supplierName ?? "",
+        fyducaNumber: invoice.dmcFyducaNumber ?? "",
+        documentDate,
+        postingDate,
+        oceNumber,
+        oceResolutionNumber,
+      });
+    } else if (invoice.dmcForeignSection === "importacion") {
+      required(
+        issues,
+        invoice,
+        "dmcForeignIdentification",
+        invoice.dmcForeignIdentification,
+        "Falta identificación extranjera"
+      );
+      required(
+        issues,
+        invoice,
+        "dmcDuaNumber",
+        invoice.dmcDuaNumber,
+        "Falta número DUA"
+      );
+      const outside = invoice.dmcImportOutsideCentralAmerica === true;
+      section52754.push({
+        ...amounts,
+        foreignIdentification: invoice.dmcForeignIdentification ?? "",
+        supplierName: invoice.supplierName ?? "",
+        duaNumber: invoice.dmcDuaNumber ?? "",
+        documentDate,
+        postingDate,
+        oceNumber,
+        oceResolutionNumber,
+        base15: outside ? 0 : amounts.base15,
+        base18: outside ? 0 : amounts.base18,
+        base15OutsideCentralAmerica: outside ? amounts.base15 : 0,
+        base18OutsideCentralAmerica: outside ? amounts.base18 : 0,
+      });
     } else {
-      otrosComprobantes.push(buildOtherReceiptRow(invoice, taxes));
+      required(issues, invoice, "supplierRtn", invoice.supplierRtn, "Falta RTN del proveedor");
+      const documentClass =
+        invoice.isFiscalDocument !== false && invoice.cai && invoice.invoiceNumber
+          ? "FA"
+          : "OC";
+      if (documentClass === "FA") {
+        required(issues, invoice, "cai", invoice.cai, "Falta CAI");
+        required(
+          issues,
+          invoice,
+          "invoiceNumber",
+          invoice.invoiceNumber,
+          "Falta número fiscal"
+        );
+      }
+      section52752.push({
+        ...amounts,
+        supplierRtn: invoice.supplierRtn ?? "",
+        documentClass,
+        cai: documentClass === "FA" ? invoice.cai ?? "" : "",
+        fiscalDocumentNumber:
+          documentClass === "FA" ? invoice.invoiceNumber ?? "" : "",
+        otherDocumentNumber:
+          documentClass === "OC"
+            ? invoice.invoiceNumber || invoice.invoiceDocumentNumber
+            : "",
+        documentDate,
+        postingDate,
+        oceNumber,
+        oceResolutionNumber,
+      });
     }
   }
 
+  const allRows = [...section52752, ...section52753, ...section52754];
+  const sum = (key: keyof DmcAmounts) =>
+    money(allRows.reduce((total, row) => total + numberValue(row[key]), 0));
+
   return {
-    detalleCompras,
-    otrosComprobantes,
-    comprasEventuales: [],
-    detalleImportaciones,
+    section52752,
+    section52753,
+    section52754,
+    issues,
+    canExport: issues.length === 0,
     summary: {
       generatedAt: params.generatedAt ?? new Date(),
       source: params.source ?? "Base actual de BuildReq",
-      dateFrom: normalizeDate(params.dateFrom),
-      dateTo: normalizeDate(params.dateTo),
+      dateFrom: dateValue(params.dateFrom),
+      dateTo: dateValue(params.dateTo),
       statusMode: params.statusMode ?? "non_void",
       invoiceCount: invoices.length,
-      detalleComprasCount: detalleCompras.length,
-      otrosComprobantesCount: otrosComprobantes.length,
-      comprasEventualesCount: 0,
-      importacionesCount: detalleImportaciones.length,
-      isv4InvoiceCount,
-      isv4BaseTotal: money(isv4BaseTotal),
-      isv4TaxTotal: money(isv4TaxTotal),
+      section52752Count: section52752.length,
+      section52753Count: section52753.length,
+      section52754Count: section52754.length,
+      issueCount: issues.length,
+      totalBase: money(
+        sum("exempt") +
+          sum("exonerated15") +
+          sum("exonerated18") +
+          sum("base15") +
+          sum("base18")
+      ),
+      totalCost: sum("cost"),
+      totalExpense: sum("expense"),
+      totalNonDeductible: sum("nonDeductible"),
     },
   };
 }

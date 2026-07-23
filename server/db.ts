@@ -124,6 +124,7 @@ import type {
   OpeningBalance,
 } from "../drizzle/schema";
 import type { DmcReportSourceInvoice } from "../shared/dmc-report";
+import type { SystemPurchaseOrderLine } from "../shared/system-workbook-report";
 import type { BuildReqRole } from "@shared/buildreq-roles";
 export type { BuildReqRole } from "@shared/buildreq-roles";
 import {
@@ -11959,10 +11960,21 @@ export async function listDmcReportSourceInvoices(filters?: {
       postingDate: invoice.postingDate,
       receiptDate: invoice.receiptDate,
       retentionReceiptNumber: invoice.retentionReceiptNumber,
+      retentionCai: invoice.retentionCai,
+      retentionDocumentDate: invoice.retentionDocumentDate,
       hasOceExemption: invoice.hasOceExemption,
+      oceNumber: invoice.oceNumber,
       oceResolutionNumber: invoice.oceResolutionNumber,
       oceResolutionDate: invoice.oceResolutionDate,
       oceExemptAmount: invoice.oceExemptAmount,
+      oceExemptAmount15: invoice.oceExemptAmount15,
+      oceExemptAmount18: invoice.oceExemptAmount18,
+      dmcForeignSection: invoice.dmcForeignSection,
+      dmcForeignIdentification: invoice.dmcForeignIdentification,
+      dmcFyducaNumber: invoice.dmcFyducaNumber,
+      dmcDuaNumber: invoice.dmcDuaNumber,
+      dmcImportOutsideCentralAmerica:
+        invoice.dmcImportOutsideCentralAmerica,
       subtotal: invoice.subtotal,
       taxAmount: invoice.taxAmount,
       total: invoice.total,
@@ -11991,6 +12003,7 @@ export async function listDmcReportSourceInvoices(filters?: {
         taxAmount: row.item.taxAmount,
         total: row.item.total,
         taxBreakdown: row.item.taxBreakdown,
+        dmcDestination: row.item.dmcDestination,
       })),
       retentions: (retentionsByInvoiceId.get(invoice.id) ?? []).map(
         retention => ({
@@ -12001,11 +12014,165 @@ export async function listDmcReportSourceInvoices(filters?: {
           percentage: retention.percentage,
           baseAmount: retention.baseAmount,
           amount: retention.amount,
+          invoiceItemId: retention.invoiceItemId,
         })
       ),
       materialRequests: sourceData.materialRequests,
       subProjectLabels: sourceData.subProjectLabels,
     } satisfies DmcReportSourceInvoice;
+  });
+}
+
+export async function listSystemReportPurchaseOrderLines(filters?: {
+  projectId?: number | null;
+  projectIds?: number[] | null;
+  dateFrom?: Date | null;
+  dateTo?: Date | null;
+}): Promise<SystemPurchaseOrderLine[]> {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [];
+  if (filters?.projectId) {
+    conditions.push(eq(purchaseOrders.projectId, filters.projectId));
+  }
+  if (filters?.projectIds) {
+    if (filters.projectIds.length === 0) return [];
+    conditions.push(inArray(purchaseOrders.projectId, filters.projectIds));
+  }
+  if (filters?.dateFrom) {
+    conditions.push(gte(purchaseOrders.createdAt, filters.dateFrom));
+  }
+  if (filters?.dateTo) {
+    conditions.push(lte(purchaseOrders.createdAt, filters.dateTo));
+  }
+
+  const systemDirectRequestItems = alias(
+    requestItems,
+    "system_report_direct_request_items"
+  );
+  const systemDirectRequests = alias(
+    materialRequests,
+    "system_report_direct_requests"
+  );
+  const systemPurchaseRequestRequests = alias(
+    materialRequests,
+    "system_report_purchase_request_requests"
+  );
+  const systemDirectRequesters = alias(users, "system_report_direct_requesters");
+  const systemPurchaseRequestCreators = alias(
+    users,
+    "system_report_purchase_request_creators"
+  );
+
+  const rows = await db
+    .select({
+      order: purchaseOrders,
+      item: purchaseOrderItems,
+      supplier: suppliers,
+      project: projects,
+      purchaseRequest: purchaseRequests,
+      directRequestNumber: systemDirectRequests.requestNumber,
+      purchaseRequestNumber: systemPurchaseRequestRequests.requestNumber,
+      directRequesterName: systemDirectRequesters.name,
+      purchaseRequestCreatorName: systemPurchaseRequestCreators.name,
+      financialGroupCode: sapCatalog.financialGroupCode,
+    })
+    .from(purchaseOrderItems)
+    .innerJoin(
+      purchaseOrders,
+      eq(purchaseOrderItems.purchaseOrderId, purchaseOrders.id)
+    )
+    .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
+    .leftJoin(projects, eq(purchaseOrders.projectId, projects.id))
+    .leftJoin(
+      purchaseRequests,
+      eq(purchaseOrders.purchaseRequestId, purchaseRequests.id)
+    )
+    .leftJoin(
+      systemPurchaseRequestRequests,
+      eq(purchaseRequests.materialRequestId, systemPurchaseRequestRequests.id)
+    )
+    .leftJoin(
+      systemPurchaseRequestCreators,
+      eq(purchaseRequests.createdById, systemPurchaseRequestCreators.id)
+    )
+    .leftJoin(
+      systemDirectRequestItems,
+      eq(
+        purchaseOrderItems.materialRequestItemId,
+        systemDirectRequestItems.id
+      )
+    )
+    .leftJoin(
+      systemDirectRequests,
+      eq(systemDirectRequestItems.requestId, systemDirectRequests.id)
+    )
+    .leftJoin(
+      systemDirectRequesters,
+      eq(systemDirectRequests.requestedById, systemDirectRequesters.id)
+    )
+    .leftJoin(
+      sapCatalog,
+      eq(
+        sapCatalog.itemCode,
+        sql<string>`coalesce(${purchaseOrderItems.currentSapItemCode}, ${purchaseOrderItems.originalSapItemCode})`
+      )
+    )
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(asc(purchaseOrders.createdAt), asc(purchaseOrders.id), asc(purchaseOrderItems.id));
+
+  const itemIndexByOrderId = new Map<number, number>();
+  return rows.map(row => {
+    const itemNumber = (itemIndexByOrderId.get(row.order.id) ?? 0) + 1;
+    itemIndexByOrderId.set(row.order.id, itemNumber);
+    const amounts = calculatePurchaseOrderLineAmounts({
+      quantity: row.item.quantity,
+      unitPrice: row.item.unitPrice,
+      subtotal: row.item.subtotal,
+      pricesIncludeTax: row.order.pricesIncludeTax,
+      taxCode: row.item.taxCode,
+      additionalTaxCodes: row.item.additionalTaxCodes,
+      taxBreakdown: row.item.taxBreakdown,
+    });
+    return {
+      orderNumber: row.order.orderNumber,
+      job:
+        row.directRequestNumber ||
+        row.purchaseRequestNumber ||
+        row.purchaseRequest?.requestNumber ||
+        "",
+      financialCode: row.financialGroupCode ?? "",
+      date: row.order.createdAt,
+      supplierRtn: row.supplier?.rtn ?? "",
+      supplierName: row.supplier?.name ?? "",
+      salesAdvisor: row.order.salesAdvisorName ?? "",
+      currency: row.order.currency,
+      orderId: row.order.id,
+      itemNumber,
+      partNumber:
+        row.item.currentSapItemCode ?? row.item.originalSapItemCode ?? "",
+      description: row.item.itemName,
+      quantity: Number(row.item.quantity),
+      unitPrice: Number(row.item.unitPrice),
+      subtotal: amounts.subtotal,
+      tax: amounts.taxAmount,
+      total: amounts.total,
+      purchaseType: row.order.purchaseType ?? "",
+      requestedBy:
+        row.directRequesterName ?? row.purchaseRequestCreatorName ?? "",
+      deliveryDate:
+        row.order.neededBy ?? row.purchaseRequest?.neededBy ?? null,
+      destination:
+        row.purchaseRequest?.printDestination ||
+        row.project?.location ||
+        row.project?.name ||
+        "",
+      quoteReference: row.purchaseRequest?.quoteAttachmentId
+        ? String(row.purchaseRequest.quoteAttachmentId)
+        : "",
+      status: row.order.status,
+    };
   });
 }
 
@@ -12233,10 +12400,19 @@ export async function updateInvoice(
       | "retentionDocumentRangeStart"
       | "retentionDocumentRangeEnd"
       | "retentionEmissionDeadline"
+      | "retentionDocumentDate"
       | "hasOceExemption"
+      | "oceNumber"
       | "oceResolutionNumber"
       | "oceResolutionDate"
       | "oceExemptAmount"
+      | "oceExemptAmount15"
+      | "oceExemptAmount18"
+      | "dmcForeignSection"
+      | "dmcForeignIdentification"
+      | "dmcFyducaNumber"
+      | "dmcDuaNumber"
+      | "dmcImportOutsideCentralAmerica"
       | "notes"
     >
   >
@@ -12283,7 +12459,11 @@ export async function updateInvoiceItemAssetDetails(
   invoiceItemId: number,
   data: Pick<
     InsertInvoiceItem,
-    "isFixedAsset" | "isLeasing" | "assetDetails" | "lineObservation"
+    | "isFixedAsset"
+    | "isLeasing"
+    | "assetDetails"
+    | "lineObservation"
+    | "dmcDestination"
   >
 ) {
   const db = await getDb();
@@ -12760,6 +12940,7 @@ export async function replaceInvoiceRetentions(
     retentionDocumentRangeStart?: string | null;
     retentionDocumentRangeEnd?: string | null;
     retentionEmissionDeadline?: Date | null;
+    retentionDocumentDate?: Date | null;
   }
 ) {
   const db = await getDb();
@@ -12814,12 +12995,20 @@ export async function replaceInvoiceRetentions(
       retentionFiscalData?.retentionEmissionDeadline ??
       invoice.retentionEmissionDeadline ??
       null;
+    const normalizedRetentionDocumentDate =
+      retentionFiscalData?.retentionDocumentDate ??
+      invoice.retentionDocumentDate ??
+      invoice.documentDate ??
+      invoice.postingDate ??
+      invoice.receiptDate ??
+      null;
     if (
       hasRetentions &&
       (!normalizedRetentionCai ||
         !normalizedRetentionRangeStart ||
         !normalizedRetentionRangeEnd ||
-        !normalizedRetentionEmissionDeadline)
+        !normalizedRetentionEmissionDeadline ||
+        !normalizedRetentionDocumentDate)
     ) {
       throw new Error(
         "Complete los datos fiscales del comprobante de retención antes de guardar retenciones"
@@ -13005,6 +13194,9 @@ export async function replaceInvoiceRetentions(
         retentionEmissionDeadline: hasRetentions
           ? normalizedRetentionEmissionDeadline
           : invoice.retentionEmissionDeadline,
+        retentionDocumentDate: hasRetentions
+          ? normalizedRetentionDocumentDate
+          : invoice.retentionDocumentDate,
         updatedAt: new Date(),
       })
       .where(eq(invoices.id, invoiceId))

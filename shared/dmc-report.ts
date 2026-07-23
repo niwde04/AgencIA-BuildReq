@@ -95,6 +95,7 @@ export type DmcReportSourceItem = {
   taxAmount?: string | number | null;
   total?: string | number | null;
   taxBreakdown?: PurchaseOrderTaxBreakdownEntry[] | string | null;
+  dmcDestination?: "costo" | "gasto" | "no_deducible" | null;
 };
 
 export type DmcReportSourceRetention = {
@@ -105,6 +106,7 @@ export type DmcReportSourceRetention = {
   percentage?: string | number | null;
   baseAmount?: string | number | null;
   amount?: string | number | null;
+  invoiceItemId?: number | null;
 };
 
 export type DmcReportSourceMaterialRequest = {
@@ -125,10 +127,20 @@ export type DmcReportSourceInvoice = {
   postingDate?: Date | string | null;
   receiptDate?: Date | string | null;
   retentionReceiptNumber?: string | null;
+  retentionCai?: string | null;
+  retentionDocumentDate?: Date | string | null;
   hasOceExemption?: boolean | null;
   oceResolutionNumber?: string | null;
   oceResolutionDate?: Date | string | null;
   oceExemptAmount?: string | number | null;
+  oceNumber?: string | null;
+  oceExemptAmount15?: string | number | null;
+  oceExemptAmount18?: string | number | null;
+  dmcForeignSection?: "fyduca" | "importacion" | null;
+  dmcForeignIdentification?: string | null;
+  dmcFyducaNumber?: string | null;
+  dmcDuaNumber?: string | null;
+  dmcImportOutsideCentralAmerica?: boolean | null;
   subtotal?: string | number | null;
   taxAmount?: string | number | null;
   total?: string | number | null;

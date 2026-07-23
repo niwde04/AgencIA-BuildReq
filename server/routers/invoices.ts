@@ -258,6 +258,7 @@ type RetentionFiscalDataInput = {
   retentionDocumentRangeStart?: string | null;
   retentionDocumentRangeEnd?: string | null;
   retentionEmissionDeadline?: string | Date | null;
+  retentionDocumentDate?: string | Date | null;
 };
 
 function assertRetentionFiscalData(
@@ -268,6 +269,7 @@ function assertRetentionFiscalData(
   const cai = value.retentionCai?.trim() ?? "";
   const rangeStart = value.retentionDocumentRangeStart?.trim() ?? "";
   const rangeEnd = value.retentionDocumentRangeEnd?.trim() ?? "";
+  const documentDate = value.retentionDocumentDate;
 
   if (required && !receiptNumber) {
     throw new TRPCError({
@@ -309,6 +311,12 @@ function assertRetentionFiscalData(
     throw new TRPCError({
       code: "BAD_REQUEST",
       message: "Ingrese el rango autorizado final del comprobante de retención",
+    });
+  }
+  if (required && !documentDate) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Seleccione la fecha del comprobante de retención",
     });
   }
   if (rangeEnd && !isValidInvoiceNumber(rangeEnd)) {
@@ -402,6 +410,10 @@ const invoiceItemAssetSchema = z.object({
   isFixedAsset: z.boolean(),
   isLeasing: z.boolean().optional(),
   lineObservation: z.string().trim().max(1000).optional(),
+  dmcDestination: z
+    .enum(["costo", "gasto", "no_deducible"])
+    .nullable()
+    .optional(),
   assetDetails: z.array(fixedAssetDetailSchema).optional(),
 });
 
@@ -575,10 +587,22 @@ export const invoicesRouter = router({
           retentionDocumentRangeStart: z.string().trim().max(100).optional(),
           retentionDocumentRangeEnd: z.string().trim().max(100).optional(),
           retentionEmissionDeadline: z.string().optional(),
+          retentionDocumentDate: z.string().optional(),
           hasOceExemption: z.boolean().optional(),
+          oceNumber: z.string().trim().max(100).optional(),
           oceResolutionNumber: z.string().trim().max(100).optional(),
           oceResolutionDate: z.string().optional(),
           oceExemptAmount: z.string().trim().optional(),
+          oceExemptAmount15: z.string().trim().optional(),
+          oceExemptAmount18: z.string().trim().optional(),
+          dmcForeignSection: z
+            .enum(["fyduca", "importacion"])
+            .nullable()
+            .optional(),
+          dmcForeignIdentification: z.string().trim().max(100).optional(),
+          dmcFyducaNumber: z.string().trim().max(100).optional(),
+          dmcDuaNumber: z.string().trim().max(100).optional(),
+          dmcImportOutsideCentralAmerica: z.boolean().optional(),
           notes: z.string().trim().max(2000).optional(),
         })
         .superRefine((value, ctx) => {
@@ -695,8 +719,45 @@ export const invoicesRouter = router({
             }
           }
 
+          if (value.dmcForeignSection) {
+            if (!value.dmcForeignIdentification?.trim()) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["dmcForeignIdentification"],
+                message: "Ingrese la identificación extranjera",
+              });
+            }
+            if (
+              value.dmcForeignSection === "fyduca" &&
+              !value.dmcFyducaNumber?.trim()
+            ) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["dmcFyducaNumber"],
+                message: "Ingrese el número FYDUCA",
+              });
+            }
+            if (
+              value.dmcForeignSection === "importacion" &&
+              !value.dmcDuaNumber?.trim()
+            ) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["dmcDuaNumber"],
+                message: "Ingrese el número DUA",
+              });
+            }
+          }
+
           if (!hasOceExemption) return;
 
+          if (!value.oceNumber?.trim()) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["oceNumber"],
+              message: "Ingrese el número OCE",
+            });
+          }
           if (!value.oceResolutionNumber?.trim()) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
@@ -711,12 +772,15 @@ export const invoicesRouter = router({
               message: "Seleccione la fecha de resolución OCE",
             });
           }
-          const exemptAmount = parseMoneyInput(value.oceExemptAmount);
+          const exemptAmount15 = parseMoneyInput(value.oceExemptAmount15);
+          const exemptAmount18 = parseMoneyInput(value.oceExemptAmount18);
+          const exemptAmount = exemptAmount15 + exemptAmount18;
           if (!Number.isFinite(exemptAmount) || exemptAmount <= 0) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
-              path: ["oceExemptAmount"],
-              message: "Ingrese un importe exento mayor que cero",
+              path: ["oceExemptAmount15"],
+              message:
+                "Ingrese un importe exonerado al 15% o 18% mayor que cero",
             });
           }
         })
@@ -762,12 +826,23 @@ export const invoicesRouter = router({
           ? input.retentionEmissionDeadline ||
             detail.invoice.retentionEmissionDeadline
           : input.retentionEmissionDeadline || null,
+        retentionDocumentDate: hasRetentions
+          ? input.retentionDocumentDate ||
+            detail.invoice.retentionDocumentDate ||
+            detail.invoice.documentDate ||
+            detail.invoice.postingDate ||
+            detail.invoice.receiptDate
+          : input.retentionDocumentDate || null,
       };
       assertRetentionFiscalData(retentionFiscalData, hasRetentions);
       const hasOceExemption = input.hasOceExemption === true;
-      const oceExemptAmount = hasOceExemption
-        ? parseMoneyInput(input.oceExemptAmount)
+      const oceExemptAmount15 = hasOceExemption
+        ? parseMoneyInput(input.oceExemptAmount15)
         : 0;
+      const oceExemptAmount18 = hasOceExemption
+        ? parseMoneyInput(input.oceExemptAmount18)
+        : 0;
+      const oceExemptAmount = oceExemptAmount15 + oceExemptAmount18;
       const invoiceSubtotal = parseMoneyInput(detail.invoice.subtotal);
       if (
         hasOceExemption &&
@@ -833,7 +908,17 @@ export const invoicesRouter = router({
           (retentionFiscalData.retentionEmissionDeadline instanceof Date
             ? retentionFiscalData.retentionEmissionDeadline
             : null),
+        retentionDocumentDate:
+          parseDateInput(
+            typeof retentionFiscalData.retentionDocumentDate === "string"
+              ? retentionFiscalData.retentionDocumentDate
+              : null
+          ) ??
+          (retentionFiscalData.retentionDocumentDate instanceof Date
+            ? retentionFiscalData.retentionDocumentDate
+            : null),
         hasOceExemption,
+        oceNumber: hasOceExemption ? input.oceNumber?.trim() || null : null,
         oceResolutionNumber: hasOceExemption
           ? input.oceResolutionNumber?.trim() || null
           : null,
@@ -843,6 +928,27 @@ export const invoicesRouter = router({
         oceExemptAmount: hasOceExemption
           ? oceExemptAmount.toFixed(4)
           : "0.0000",
+        oceExemptAmount15: hasOceExemption
+          ? oceExemptAmount15.toFixed(4)
+          : null,
+        oceExemptAmount18: hasOceExemption
+          ? oceExemptAmount18.toFixed(4)
+          : null,
+        dmcForeignSection: input.dmcForeignSection ?? null,
+        dmcForeignIdentification:
+          input.dmcForeignSection ? input.dmcForeignIdentification?.trim() || null : null,
+        dmcFyducaNumber:
+          input.dmcForeignSection === "fyduca"
+            ? input.dmcFyducaNumber?.trim() || null
+            : null,
+        dmcDuaNumber:
+          input.dmcForeignSection === "importacion"
+            ? input.dmcDuaNumber?.trim() || null
+            : null,
+        dmcImportOutsideCentralAmerica:
+          input.dmcForeignSection === "importacion"
+            ? input.dmcImportOutsideCentralAmerica === true
+            : null,
         notes: input.notes?.trim() || null,
       };
 
@@ -1019,6 +1125,7 @@ export const invoicesRouter = router({
         retentionDocumentRangeStart: z.string().trim().max(100).optional(),
         retentionDocumentRangeEnd: z.string().trim().max(100).optional(),
         retentionEmissionDeadline: z.string().optional(),
+        retentionDocumentDate: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -1053,6 +1160,12 @@ export const invoicesRouter = router({
         retentionEmissionDeadline:
           input.retentionEmissionDeadline ||
           detail.invoice.retentionEmissionDeadline,
+        retentionDocumentDate:
+          input.retentionDocumentDate ||
+          detail.invoice.retentionDocumentDate ||
+          detail.invoice.documentDate ||
+          detail.invoice.postingDate ||
+          detail.invoice.receiptDate,
       };
       assertRetentionFiscalData(
         effectiveRetentionFiscalData,
@@ -1062,7 +1175,8 @@ export const invoicesRouter = router({
         input.retentionCai !== undefined ||
         input.retentionDocumentRangeStart !== undefined ||
         input.retentionDocumentRangeEnd !== undefined ||
-        input.retentionEmissionDeadline !== undefined;
+        input.retentionEmissionDeadline !== undefined ||
+        input.retentionDocumentDate !== undefined;
 
       try {
         const formattedRetentionReceiptNumber = input.retentionReceiptNumber
@@ -1105,6 +1219,16 @@ export const invoicesRouter = router({
               (effectiveRetentionFiscalData.retentionEmissionDeadline instanceof
               Date
                 ? effectiveRetentionFiscalData.retentionEmissionDeadline
+                : null),
+            retentionDocumentDate:
+              parseDateInput(
+                typeof effectiveRetentionFiscalData.retentionDocumentDate ===
+                  "string"
+                  ? effectiveRetentionFiscalData.retentionDocumentDate
+                  : null
+              ) ??
+              (effectiveRetentionFiscalData.retentionDocumentDate instanceof Date
+                ? effectiveRetentionFiscalData.retentionDocumentDate
                 : null),
           }
         );
@@ -1188,6 +1312,7 @@ export const invoicesRouter = router({
         isLeasing: input.isFixedAsset ? input.isLeasing === true : false,
         assetDetails,
         lineObservation: input.lineObservation?.trim() || null,
+        dmcDestination: input.dmcDestination ?? null,
       });
     }),
 });

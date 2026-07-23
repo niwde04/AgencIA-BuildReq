@@ -16647,6 +16647,7 @@ describe("BuildReq - Invoices", () => {
       retentionDocumentRangeStart: VALID_RETENTION_RANGE_START,
       retentionDocumentRangeEnd: VALID_RETENTION_RANGE_END,
       retentionEmissionDeadline: "2026-12-31",
+      retentionDocumentDate: "2026-05-01",
       retentions: [
         {
           retentionCatalogId: 1,
@@ -16739,6 +16740,7 @@ describe("BuildReq - Invoices", () => {
         retentionDocumentRangeStart: VALID_RETENTION_RANGE_START,
         retentionDocumentRangeEnd: VALID_RETENTION_RANGE_END,
         retentionEmissionDeadline: expect.any(Date),
+        retentionDocumentDate: expect.any(Date),
       }
     );
 

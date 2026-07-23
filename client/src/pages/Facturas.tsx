@@ -125,10 +125,19 @@ type InvoiceDraft = {
   retentionDocumentRangeStart: string;
   retentionDocumentRangeEnd: string;
   retentionEmissionDeadline: string;
+  retentionDocumentDate: string;
   hasOceExemption: boolean;
+  oceNumber: string;
   oceResolutionNumber: string;
   oceResolutionDate: string;
   oceExemptAmount: string;
+  oceExemptAmount15: string;
+  oceExemptAmount18: string;
+  dmcForeignSection: "" | "fyduca" | "importacion";
+  dmcForeignIdentification: string;
+  dmcFyducaNumber: string;
+  dmcDuaNumber: string;
+  dmcImportOutsideCentralAmerica: boolean;
   notes: string;
 };
 
@@ -171,6 +180,7 @@ type InvoiceAssetDraft = {
   isFixedAsset: boolean;
   isLeasing: boolean;
   lineObservation: string;
+  dmcDestination: "" | "costo" | "gasto" | "no_deducible";
   assetDetails: FixedAssetDetail[];
 };
 
@@ -1005,6 +1015,7 @@ function InvoiceAssetDetailsEditor({
     isFixedAsset: item.isFixedAsset === true,
     isLeasing: item.isLeasing === true,
     lineObservation: item.lineObservation ?? "",
+    dmcDestination: item.dmcDestination ?? "",
     assetDetails: parseFixedAssetDetails(item.assetDetails),
   });
   const updateAssetDetailsMutation =
@@ -1022,6 +1033,7 @@ function InvoiceAssetDetailsEditor({
       isFixedAsset: item.isFixedAsset === true,
       isLeasing: item.isLeasing === true,
       lineObservation: item.lineObservation ?? "",
+      dmcDestination: item.dmcDestination ?? "",
       assetDetails: parseFixedAssetDetails(item.assetDetails),
     });
   }, [
@@ -1029,6 +1041,7 @@ function InvoiceAssetDetailsEditor({
     item.isFixedAsset,
     item.isLeasing,
     item.lineObservation,
+    item.dmcDestination,
     item.assetDetails,
   ]);
 
@@ -1082,6 +1095,7 @@ function InvoiceAssetDetailsEditor({
       isFixedAsset: draft.isFixedAsset,
       isLeasing: draft.isFixedAsset ? draft.isLeasing : false,
       lineObservation: draft.lineObservation.trim() || undefined,
+      dmcDestination: draft.dmcDestination || null,
       assetDetails: draft.isFixedAsset ? assetDetails : [],
     });
   };
@@ -1142,6 +1156,36 @@ function InvoiceAssetDetailsEditor({
             {assetDetails.length} unidad(es) con serie
           </Badge>
         ) : null}
+      </div>
+
+      <div className="space-y-2">
+        <Label>Clasificación DMC</Label>
+        <Select
+          value={draft.dmcDestination || "none"}
+          disabled={!canEdit}
+          onValueChange={value =>
+            setDraft(current => ({
+              ...current,
+              dmcDestination:
+                value === "none"
+                  ? ""
+                  : (value as InvoiceAssetDraft["dmcDestination"]),
+            }))
+          }
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Seleccione el destino contable" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">Sin clasificar</SelectItem>
+            <SelectItem value="costo">Costo</SelectItem>
+            <SelectItem value="gasto">Gasto</SelectItem>
+            <SelectItem value="no_deducible">No deducible</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          Requerido para generar el DMC 527.
+        </p>
       </div>
 
       <div className="space-y-2">
@@ -1282,7 +1326,7 @@ function InvoiceAssetDetailsEditor({
 
 export default function Facturas() {
   const utils = trpc.useUtils();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const { user } = useAuth();
   const userRole = (user as any)?.buildreqRole;
   const isAccountant = userRole === "contable";
@@ -1321,12 +1365,28 @@ export default function Facturas() {
     retentionDocumentRangeStart: "",
     retentionDocumentRangeEnd: "",
     retentionEmissionDeadline: "",
+    retentionDocumentDate: "",
     hasOceExemption: false,
+    oceNumber: "",
     oceResolutionNumber: "",
     oceResolutionDate: "",
     oceExemptAmount: "",
+    oceExemptAmount15: "",
+    oceExemptAmount18: "",
+    dmcForeignSection: "",
+    dmcForeignIdentification: "",
+    dmcFyducaNumber: "",
+    dmcDuaNumber: "",
+    dmcImportOutsideCentralAmerica: false,
     notes: "",
   });
+  useEffect(() => {
+    const query = location.includes("?") ? location.split("?")[1] : "";
+    const requestedId = Number(new URLSearchParams(query).get("editar"));
+    if (Number.isInteger(requestedId) && requestedId > 0) {
+      setSelectedId(requestedId);
+    }
+  }, [location]);
   const oceExemptAmountTouchedRef = useRef(false);
   const fiscalRangeAutofillRef = useRef<FiscalRangeAutofill | null>(null);
   const lastFiscalRangeLookupKeyRef = useRef("");
@@ -1610,10 +1670,26 @@ export default function Facturas() {
       retentionEmissionDeadline: dateInputValue(
         detail.invoice.retentionEmissionDeadline
       ),
+      retentionDocumentDate: dateInputValue(
+        detail.invoice.retentionDocumentDate ??
+          detail.invoice.documentDate ??
+          detail.invoice.postingDate ??
+          detail.invoice.receiptDate
+      ),
       hasOceExemption: detail.invoice.hasOceExemption === true,
+      oceNumber: detail.invoice.oceNumber ?? "",
       oceResolutionNumber: detail.invoice.oceResolutionNumber ?? "",
       oceResolutionDate: dateInputValue(detail.invoice.oceResolutionDate),
       oceExemptAmount: formatMoneyInput(detail.invoice.oceExemptAmount),
+      oceExemptAmount15: formatMoneyInput(detail.invoice.oceExemptAmount15),
+      oceExemptAmount18: formatMoneyInput(detail.invoice.oceExemptAmount18),
+      dmcForeignSection: detail.invoice.dmcForeignSection ?? "",
+      dmcForeignIdentification:
+        detail.invoice.dmcForeignIdentification ?? "",
+      dmcFyducaNumber: detail.invoice.dmcFyducaNumber ?? "",
+      dmcDuaNumber: detail.invoice.dmcDuaNumber ?? "",
+      dmcImportOutsideCentralAmerica:
+        detail.invoice.dmcImportOutsideCentralAmerica === true,
       notes: detail.invoice.notes ?? "",
     });
     setRetentionDrafts(
@@ -2407,6 +2483,10 @@ export default function Facturas() {
       );
       return false;
     }
+    if (required && !invoiceDraft.retentionDocumentDate) {
+      toast.error("Seleccione la fecha del comprobante de retención");
+      return false;
+    }
     return true;
   };
 
@@ -2497,8 +2577,14 @@ export default function Facturas() {
     }
     if (!validateRetentionFiscalDraft(retentionDrafts.length > 0)) return false;
     if (invoiceDraft.hasOceExemption) {
-      const exemptAmount = toMoneyNumber(invoiceDraft.oceExemptAmount);
+      const exemptAmount15 = toMoneyNumber(invoiceDraft.oceExemptAmount15);
+      const exemptAmount18 = toMoneyNumber(invoiceDraft.oceExemptAmount18);
+      const exemptAmount = exemptAmount15 + exemptAmount18;
       const invoiceSubtotal = toMoneyNumber(detail?.invoice?.subtotal);
+      if (!invoiceDraft.oceNumber.trim()) {
+        toast.error("Ingrese el número OCE");
+        return false;
+      }
       if (!invoiceDraft.oceResolutionNumber.trim()) {
         toast.error("Ingrese el número de resolución OCE");
         return false;
@@ -2513,6 +2599,26 @@ export default function Facturas() {
       }
       if (invoiceSubtotal > 0 && exemptAmount > invoiceSubtotal) {
         toast.error("El importe exento no puede exceder el subtotal");
+        return false;
+      }
+    }
+    if (invoiceDraft.dmcForeignSection) {
+      if (!invoiceDraft.dmcForeignIdentification.trim()) {
+        toast.error("Ingrese la identificación extranjera");
+        return false;
+      }
+      if (
+        invoiceDraft.dmcForeignSection === "fyduca" &&
+        !invoiceDraft.dmcFyducaNumber.trim()
+      ) {
+        toast.error("Ingrese el número FYDUCA");
+        return false;
+      }
+      if (
+        invoiceDraft.dmcForeignSection === "importacion" &&
+        !invoiceDraft.dmcDuaNumber.trim()
+      ) {
+        toast.error("Ingrese el número DUA");
         return false;
       }
     }
@@ -2563,7 +2669,11 @@ export default function Facturas() {
       ? formatInvoiceNumberInput(invoiceDraft.retentionDocumentRangeEnd)
       : undefined,
     retentionEmissionDeadline: invoiceDraft.retentionEmissionDeadline,
+    retentionDocumentDate: invoiceDraft.retentionDocumentDate,
     hasOceExemption: invoiceDraft.hasOceExemption,
+    oceNumber: invoiceDraft.hasOceExemption
+      ? invoiceDraft.oceNumber.trim()
+      : undefined,
     oceResolutionNumber: invoiceDraft.hasOceExemption
       ? invoiceDraft.oceResolutionNumber.trim()
       : undefined,
@@ -2571,8 +2681,24 @@ export default function Facturas() {
       ? invoiceDraft.oceResolutionDate
       : undefined,
     oceExemptAmount: invoiceDraft.hasOceExemption
-      ? String(toMoneyNumber(invoiceDraft.oceExemptAmount))
+      ? String(
+          toMoneyNumber(invoiceDraft.oceExemptAmount15) +
+            toMoneyNumber(invoiceDraft.oceExemptAmount18)
+        )
       : "0",
+    oceExemptAmount15: invoiceDraft.hasOceExemption
+      ? String(toMoneyNumber(invoiceDraft.oceExemptAmount15))
+      : undefined,
+    oceExemptAmount18: invoiceDraft.hasOceExemption
+      ? String(toMoneyNumber(invoiceDraft.oceExemptAmount18))
+      : undefined,
+    dmcForeignSection: invoiceDraft.dmcForeignSection || null,
+    dmcForeignIdentification:
+      invoiceDraft.dmcForeignIdentification.trim() || undefined,
+    dmcFyducaNumber: invoiceDraft.dmcFyducaNumber.trim() || undefined,
+    dmcDuaNumber: invoiceDraft.dmcDuaNumber.trim() || undefined,
+    dmcImportOutsideCentralAmerica:
+      invoiceDraft.dmcImportOutsideCentralAmerica,
     notes: invoiceDraft.notes,
   });
 
@@ -2783,6 +2909,8 @@ export default function Facturas() {
         : undefined,
       retentionEmissionDeadline:
         invoiceDraft.retentionEmissionDeadline || undefined,
+      retentionDocumentDate:
+        invoiceDraft.retentionDocumentDate || undefined,
       retentions: retentionDrafts.map(retention => ({
         invoiceItemId: retention.invoiceItemId ?? undefined,
         retentionCatalogId: Number(retention.retentionCatalogId),
@@ -3852,6 +3980,7 @@ export default function Facturas() {
                             updateInvoiceDraft(current => ({
                               ...current,
                               hasOceExemption: enabled,
+                              oceNumber: enabled ? current.oceNumber : "",
                               oceResolutionNumber: enabled
                                 ? current.oceResolutionNumber
                                 : "",
@@ -3864,12 +3993,35 @@ export default function Facturas() {
                                   ? suggestedAmount
                                   : current.oceExemptAmount
                                 : "",
+                              oceExemptAmount15: enabled
+                                ? toMoneyNumber(current.oceExemptAmount15) > 0
+                                  ? current.oceExemptAmount15
+                                  : suggestedAmount
+                                : "",
+                              oceExemptAmount18: enabled
+                                ? current.oceExemptAmount18
+                                : "",
                             }));
                           }}
                         />
                       </div>
                       {invoiceDraft.hasOceExemption ? (
                         <div className="mt-4 grid min-w-0 gap-3 md:grid-cols-3">
+                          <div className="space-y-2">
+                            <Label>No. OCE</Label>
+                            <Input
+                              value={invoiceDraft.oceNumber}
+                              disabled={!canEditSelectedInvoice}
+                              onChange={event =>
+                                updateInvoiceDraft(current => ({
+                                  ...current,
+                                  oceNumber: event.target.value,
+                                }))
+                              }
+                              placeholder="Número de orden de compra exenta"
+                              maxLength={100}
+                            />
+                          </div>
                           <div className="space-y-2">
                             <Label>No. resolución</Label>
                             <Input
@@ -3900,18 +4052,36 @@ export default function Facturas() {
                             />
                           </div>
                           <div className="space-y-2">
-                            <Label>Importe exento</Label>
+                            <Label>Importe exonerado 15%</Label>
                             <Input
                               type="number"
                               min="0"
                               step="0.01"
-                              value={invoiceDraft.oceExemptAmount}
+                              value={invoiceDraft.oceExemptAmount15}
                               disabled={!canEditSelectedInvoice}
                               onChange={event => {
                                 oceExemptAmountTouchedRef.current = true;
                                 updateInvoiceDraft(current => ({
                                   ...current,
-                                  oceExemptAmount: event.target.value,
+                                  oceExemptAmount15: event.target.value,
+                                }));
+                              }}
+                              placeholder="0.00"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Importe exonerado 18%</Label>
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={invoiceDraft.oceExemptAmount18}
+                              disabled={!canEditSelectedInvoice}
+                              onChange={event => {
+                                oceExemptAmountTouchedRef.current = true;
+                                updateInvoiceDraft(current => ({
+                                  ...current,
+                                  oceExemptAmount18: event.target.value,
                                 }));
                               }}
                               placeholder="0.00"
@@ -3919,6 +4089,119 @@ export default function Facturas() {
                           </div>
                         </div>
                       ) : null}
+                    </div>
+                    <div className="rounded-md border border-border/70 bg-muted/10 p-3">
+                      <div className="grid min-w-0 gap-3 md:grid-cols-3">
+                        <div className="space-y-2">
+                          <Label>Sección DMC extranjera</Label>
+                          <Select
+                            value={invoiceDraft.dmcForeignSection || "local"}
+                            disabled={!canEditSelectedInvoice}
+                            onValueChange={value =>
+                              updateInvoiceDraft(current => ({
+                                ...current,
+                                dmcForeignSection:
+                                  value === "local"
+                                    ? ""
+                                    : (value as "fyduca" | "importacion"),
+                                dmcFyducaNumber:
+                                  value === "fyduca"
+                                    ? current.dmcFyducaNumber
+                                    : "",
+                                dmcDuaNumber:
+                                  value === "importacion"
+                                    ? current.dmcDuaNumber
+                                    : "",
+                                dmcImportOutsideCentralAmerica:
+                                  value === "importacion"
+                                    ? current.dmcImportOutsideCentralAmerica
+                                    : false,
+                              }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="local">
+                                Mercado interno (527-52)
+                              </SelectItem>
+                              <SelectItem value="fyduca">
+                                FYDUCA (527-53)
+                              </SelectItem>
+                              <SelectItem value="importacion">
+                                Importación (527-54)
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {invoiceDraft.dmcForeignSection ? (
+                          <div className="space-y-2">
+                            <Label>Identificación extranjera</Label>
+                            <Input
+                              value={invoiceDraft.dmcForeignIdentification}
+                              disabled={!canEditSelectedInvoice}
+                              onChange={event =>
+                                updateInvoiceDraft(current => ({
+                                  ...current,
+                                  dmcForeignIdentification: event.target.value,
+                                }))
+                              }
+                              maxLength={100}
+                            />
+                          </div>
+                        ) : null}
+                        {invoiceDraft.dmcForeignSection === "fyduca" ? (
+                          <div className="space-y-2">
+                            <Label>Número FYDUCA</Label>
+                            <Input
+                              value={invoiceDraft.dmcFyducaNumber}
+                              disabled={!canEditSelectedInvoice}
+                              onChange={event =>
+                                updateInvoiceDraft(current => ({
+                                  ...current,
+                                  dmcFyducaNumber: event.target.value,
+                                }))
+                              }
+                              maxLength={100}
+                            />
+                          </div>
+                        ) : null}
+                        {invoiceDraft.dmcForeignSection === "importacion" ? (
+                          <>
+                            <div className="space-y-2">
+                              <Label>Número DUA</Label>
+                              <Input
+                                value={invoiceDraft.dmcDuaNumber}
+                                disabled={!canEditSelectedInvoice}
+                                onChange={event =>
+                                  updateInvoiceDraft(current => ({
+                                    ...current,
+                                    dmcDuaNumber: event.target.value,
+                                  }))
+                                }
+                                maxLength={100}
+                              />
+                            </div>
+                            <label className="flex items-center gap-2 self-end pb-2 text-sm font-medium">
+                              <Checkbox
+                                checked={
+                                  invoiceDraft.dmcImportOutsideCentralAmerica
+                                }
+                                disabled={!canEditSelectedInvoice}
+                                onCheckedChange={checked =>
+                                  updateInvoiceDraft(current => ({
+                                    ...current,
+                                    dmcImportOutsideCentralAmerica:
+                                      checked === true,
+                                  }))
+                                }
+                              />
+                              Fuera de la región centroamericana
+                            </label>
+                          </>
+                        ) : null}
+                      </div>
                     </div>
                     <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                       <div className="space-y-2">
@@ -4203,6 +4486,23 @@ export default function Facturas() {
                               updateInvoiceDraft(current => ({
                                 ...current,
                                 retentionEmissionDeadline: event.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>
+                            Fecha del comprobante
+                            {retentionDrafts.length > 0 ? " *" : ""}
+                          </Label>
+                          <Input
+                            type="date"
+                            value={invoiceDraft.retentionDocumentDate}
+                            disabled={!canEditSelectedInvoice}
+                            onChange={event =>
+                              updateInvoiceDraft(current => ({
+                                ...current,
+                                retentionDocumentDate: event.target.value,
                               }))
                             }
                           />
