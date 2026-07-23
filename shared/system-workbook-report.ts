@@ -134,11 +134,14 @@ export function buildSystemWorkbookPayload(
   let registration = 0;
   const invoiceRows = invoices.flatMap(invoice => {
     const rows = buildDmcReportPayload([invoice]).rows;
-    return rows.map(row => {
+    return rows.map((row, itemIndex) => {
+      const invoiceItem = invoice.items[itemIndex];
       registration += 1;
       return {
         "N° Registro": registration,
-        Cod_Finanzas: String(row.codFinanzas ?? ""),
+        Cod_Finanzas: String(
+          invoiceItem?.financialGroupCode ?? row.codFinanzas ?? ""
+        ),
         Rtn: String(row.rtn ?? ""),
         "Razón Social": String(row.razonSocial ?? ""),
         Sistema_De_Pago: String(row.sistemaDePago ?? ""),
@@ -147,7 +150,12 @@ export function buildSystemWorkbookPayload(
         "Nro. Factura":
           invoice.invoiceNumber || invoice.invoiceDocumentNumber,
         "Cai Factura": String(row.cai ?? ""),
-        "Descripcion_Fac.": String(row.descripcionFactura ?? ""),
+        "Descripcion_Fac.": String(
+          invoiceItem?.articleDescription ||
+            invoiceItem?.itemName ||
+            row.descripcionFactura ||
+            ""
+        ),
         "Base_Isv_15%": money(row.baseIsv15),
         "Base_Isv_18%": money(row.baseIsv18),
         "Isv_4%": money(row.baseIsv4),

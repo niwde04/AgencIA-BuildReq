@@ -701,9 +701,42 @@ describe("retention SAR workbooks", () => {
 });
 
 describe("internal BuildReq workbook", () => {
-  it("contains only the two client sheets and exact 32 invoice columns", () => {
+  it("contains one invoice row per article with its financial code and description", () => {
     const payload = buildSystemWorkbookPayload(
-      [sarInvoice()],
+      [
+        sarInvoice({
+          subtotal: "100.0000",
+          taxAmount: "0.0000",
+          total: "100.0000",
+          netPayable: "100.0000",
+          items: [
+            {
+              id: 1,
+              itemName: "Descripción capturada A",
+              articleDescription: "ARTÍCULO DE CATÁLOGO A",
+              financialGroupCode: "02010101",
+              taxCode: "exe",
+              subtotal: "40.0000",
+              taxAmount: "0.0000",
+              total: "40.0000",
+              taxBreakdown: [],
+              dmcDestination: "costo",
+            },
+            {
+              id: 2,
+              itemName: "Descripción capturada B",
+              articleDescription: "ARTÍCULO DE CATÁLOGO B",
+              financialGroupCode: "02020202",
+              taxCode: "exe",
+              subtotal: "60.0000",
+              taxAmount: "0.0000",
+              total: "60.0000",
+              taxBreakdown: [],
+              dmcDestination: "gasto",
+            },
+          ],
+        }),
+      ],
       [
         {
           orderNumber: "OC-001",
@@ -732,6 +765,28 @@ describe("internal BuildReq workbook", () => {
         },
       ]
     );
+    expect(payload.invoices).toHaveLength(2);
+    expect(
+      payload.invoices.map(row => ({
+        code: row.Cod_Finanzas,
+        description: row["Descripcion_Fac."],
+      }))
+    ).toEqual([
+      {
+        code: "02010101",
+        description: "ARTÍCULO DE CATÁLOGO A",
+      },
+      {
+        code: "02020202",
+        description: "ARTÍCULO DE CATÁLOGO B",
+      },
+    ]);
+    expect(payload.summary).toMatchObject({
+      invoiceCount: 1,
+      invoiceLineCount: 2,
+      invoiceTotal: 100,
+    });
+
     const workbook = buildSystemWorkbook(XLSX, payload);
     expect(workbook.SheetNames).toEqual([
       "Órdenes de Compra",
@@ -742,6 +797,18 @@ describe("internal BuildReq workbook", () => {
       { header: 1 }
     ) as unknown[][];
     expect(rows[1].slice(1)).toHaveLength(32);
+    const header = rows[1];
+    const financialCodeColumn = header.indexOf("Cod_Finanzas");
+    const invoiceDescriptionColumn = header.indexOf("Descripcion_Fac.");
+    expect(
+      rows.slice(2, 4).map(row => [
+        row[financialCodeColumn],
+        row[invoiceDescriptionColumn],
+      ])
+    ).toEqual([
+      ["02010101", "ARTÍCULO DE CATÁLOGO A"],
+      ["02020202", "ARTÍCULO DE CATÁLOGO B"],
+    ]);
     expect(rows.flat()).not.toContain("Data");
     expect(rows.flat()).not.toContain("Campos");
   });
