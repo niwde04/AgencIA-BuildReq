@@ -62,6 +62,7 @@ import {
   ArrowRightLeft,
   AlertTriangle,
   Check,
+  ChevronDown,
   ChevronsUpDown,
   Download,
   FileText,
@@ -6349,74 +6350,96 @@ export default function OrdenesCompra() {
                 </div>
 
                 {PROCUREMENT_APPROVALS_ENABLED ? (
-                  <div className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-4 sm:p-5">
-                    <div>
-                      <h3 className="font-semibold">Historial de aprobación</h3>
-                      <p className="text-sm text-muted-foreground">
-                        Envíos, decisiones y correcciones registradas para esta
-                        OC.
-                      </p>
-                    </div>
-                    {approvalHistory.length > 0 ? (
-                      <div className="space-y-0">
-                        {approvalHistory.map((entry: any, index: number) => (
-                          <div
-                            key={entry.id ?? `${entry.createdAt}-${index}`}
-                            className="relative border-l-2 border-border pb-5 pl-5 last:pb-0"
-                          >
-                            <span className="absolute -left-[5px] top-1.5 h-2 w-2 rounded-full bg-primary" />
-                            <div className="flex flex-wrap items-start justify-between gap-2">
-                              <div>
-                                <p className="font-semibold">
-                                  {formatApprovalAction(entry.action)}
-                                </p>
-                                <p className="text-xs text-muted-foreground">
-                                  {entry.actorName || "Usuario no disponible"} ·{" "}
-                                  {formatApprovalActorRole(entry.actorRole)}
-                                </p>
+                  <details
+                    key={`approval-history-${selectedId}`}
+                    className="group overflow-hidden rounded-2xl border border-border/70 bg-muted/10"
+                  >
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-4 transition-colors hover:bg-muted/30 sm:p-5 [&::-webkit-details-marker]:hidden">
+                      <span className="min-w-0">
+                        <span className="block font-semibold">
+                          Historial de aprobación
+                        </span>
+                        <span className="block text-sm text-muted-foreground">
+                          Envíos, decisiones y correcciones registradas para
+                          esta OC.
+                        </span>
+                      </span>
+                      <span className="flex shrink-0 items-center gap-3">
+                        <Badge
+                          variant="secondary"
+                          className="rounded-full px-3 py-1 text-xs"
+                        >
+                          {approvalHistory.length} movimiento(s)
+                        </Badge>
+                        <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+                      </span>
+                    </summary>
+
+                    <div className="border-t border-border/70 p-4 sm:p-5">
+                      {approvalHistory.length > 0 ? (
+                        <div className="space-y-0">
+                          {approvalHistory.map((entry: any, index: number) => (
+                            <div
+                              key={entry.id ?? `${entry.createdAt}-${index}`}
+                              className="relative border-l-2 border-border pb-5 pl-5 last:pb-0"
+                            >
+                              <span className="absolute -left-[5px] top-1.5 h-2 w-2 rounded-full bg-primary" />
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div>
+                                  <p className="font-semibold">
+                                    {formatApprovalAction(entry.action)}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {entry.actorName ||
+                                      "Usuario no disponible"}{" "}
+                                    · {formatApprovalActorRole(entry.actorRole)}
+                                  </p>
+                                </div>
+                                <time className="text-xs text-muted-foreground">
+                                  {entry.createdAt
+                                    ? new Date(entry.createdAt).toLocaleString(
+                                        "es-HN"
+                                      )
+                                    : "Fecha no disponible"}
+                                </time>
                               </div>
-                              <time className="text-xs text-muted-foreground">
-                                {entry.createdAt
-                                  ? new Date(entry.createdAt).toLocaleString(
-                                      "es-HN"
-                                    )
-                                  : "Fecha no disponible"}
-                              </time>
+                              {entry.previousStatus || entry.newStatus ? (
+                                <p className="mt-2 text-sm text-muted-foreground">
+                                  {formatApprovalTimelineStatus(
+                                    entry.previousStatus
+                                  )}{" "}
+                                  →{" "}
+                                  {formatApprovalTimelineStatus(
+                                    entry.newStatus
+                                  )}
+                                </p>
+                              ) : null}
+                              {entry.amount !== null &&
+                              entry.amount !== undefined ? (
+                                <p className="mt-1 text-sm text-muted-foreground">
+                                  Monto registrado:{" "}
+                                  {formatPurchaseOrderCurrency(
+                                    Number(entry.amount),
+                                    entry.currency ??
+                                      detail.purchaseOrder.currency
+                                  )}
+                                </p>
+                              ) : null}
+                              {entry.comment ? (
+                                <p className="mt-2 rounded-lg border border-border/70 bg-background px-3 py-2 text-sm">
+                                  {entry.comment}
+                                </p>
+                              ) : null}
                             </div>
-                            {entry.previousStatus || entry.newStatus ? (
-                              <p className="mt-2 text-sm text-muted-foreground">
-                                {formatApprovalTimelineStatus(
-                                  entry.previousStatus
-                                )}{" "}
-                                →{" "}
-                                {formatApprovalTimelineStatus(entry.newStatus)}
-                              </p>
-                            ) : null}
-                            {entry.amount !== null &&
-                            entry.amount !== undefined ? (
-                              <p className="mt-1 text-sm text-muted-foreground">
-                                Monto registrado:{" "}
-                                {formatPurchaseOrderCurrency(
-                                  Number(entry.amount),
-                                  entry.currency ??
-                                    detail.purchaseOrder.currency
-                                )}
-                              </p>
-                            ) : null}
-                            {entry.comment ? (
-                              <p className="mt-2 rounded-lg border border-border/70 bg-background px-3 py-2 text-sm">
-                                {entry.comment}
-                              </p>
-                            ) : null}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
-                        Esta orden todavía no tiene movimientos de aprobación.
-                      </p>
-                    )}
-                  </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
+                          Esta orden todavía no tiene movimientos de aprobación.
+                        </p>
+                      )}
+                    </div>
+                  </details>
                 ) : null}
 
                 <DocumentAttachmentsPanel
