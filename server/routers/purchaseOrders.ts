@@ -23,6 +23,7 @@ import {
 } from "@shared/buildreq-roles";
 import {
   getPurchaseOrderApprovalReadinessError,
+  hasUnresolvedPurchaseRequestApprovalItems,
   isPurchaseOrderDraftLike,
   isPurchaseOrderApprovalEnabled,
   isPurchaseRequestApprovalEnabled,
@@ -891,6 +892,17 @@ export const purchaseOrdersRouter = router({
         };
       });
 
+      if (
+        isPurchaseRequestApprovalEnabled() &&
+        hasUnresolvedPurchaseRequestApprovalItems(detail.items ?? [])
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Debe resolver todos los ítems pendientes o rechazados antes de convertir la solicitud en orden de compra",
+        });
+      }
+
       const directPurchaseRequestItemIds = conversionItems
         .map(({ item }) => item)
         .map((item: any) => item.materialRequestItemId)
@@ -1153,6 +1165,16 @@ export const purchaseOrdersRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: `La ${blockedRequest.purchaseRequest.requestNumber} no puede unificarse porque está ${blockedRequest.purchaseRequest.status}`,
+        });
+      }
+
+      const unresolvedRequest = purchaseRequests.find(detail =>
+        hasUnresolvedPurchaseRequestApprovalItems(detail.items ?? [])
+      );
+      if (isPurchaseRequestApprovalEnabled() && unresolvedRequest) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `La ${unresolvedRequest.purchaseRequest.requestNumber} tiene ítems pendientes o rechazados por resolver`,
         });
       }
 

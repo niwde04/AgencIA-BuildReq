@@ -71,6 +71,8 @@ import {
 } from "@shared/buildreq-roles";
 import {
   canFinalizePurchaseRequestLineReview,
+  getPendingPurchaseRequestApprovalItems,
+  hasUnresolvedPurchaseRequestApprovalSummary,
   isPurchaseRequestConversionReady,
   isPurchaseRequestDraftLike,
   isPurchaseRequestApprovalEnabled,
@@ -574,7 +576,9 @@ export default function PurchaseRequests() {
     isPurchaseRequestConversionReady(
       row.purchaseRequest.status,
       row.purchaseRequest.approvalStatus
-    );
+    ) &&
+    (!PROCUREMENT_APPROVALS_ENABLED ||
+      !hasUnresolvedPurchaseRequestApprovalSummary(row.approvalSummary));
 
   const updateMutation = trpc.purchaseRequests.update.useMutation({
     onSuccess: () => {
@@ -774,16 +778,17 @@ export default function PurchaseRequests() {
   const selectedItems = useMemo(() => {
     return detail?.items ?? [];
   }, [detail]);
+  const approvalReviewItems = useMemo(
+    () => getPendingPurchaseRequestApprovalItems(selectedItems),
+    [selectedItems]
+  );
   const isApprovedPurchaseRequest =
     detail?.purchaseRequest.approvalStatus === "aprobada";
   const isPartiallyApprovedPurchaseRequest =
     detail?.approvalSummary?.isPartiallyApproved === true;
   const pendingApprovalItemIds = useMemo(
-    () =>
-      selectedItems
-        .filter((item: any) => item.approvalStatus === "pendiente")
-        .map((item: any) => item.id),
-    [selectedItems]
+    () => approvalReviewItems.map((item: any) => item.id),
+    [approvalReviewItems]
   );
   const approvalLineDecisionSummary = useMemo(
     () =>
@@ -939,7 +944,7 @@ export default function PurchaseRequests() {
     });
   };
 
-  const approvedApprovalQuantitiesValid = selectedItems
+  const approvedApprovalQuantitiesValid = approvalReviewItems
     .filter((item: any) => approvalItemDecisions[item.id] === "approve")
     .every((item: any) => {
       const quantity = Number(getApprovalQuantityDraft(item).trim());
@@ -1253,7 +1258,9 @@ export default function PurchaseRequests() {
     isPurchaseRequestConversionReady(
       detail?.purchaseRequest.status,
       detail?.purchaseRequest.approvalStatus
-    );
+    ) &&
+    (!PROCUREMENT_APPROVALS_ENABLED ||
+      !hasUnresolvedPurchaseRequestApprovalSummary(detail?.approvalSummary));
   const canSubmitSelectedPurchaseRequest =
     PROCUREMENT_APPROVALS_ENABLED &&
     canManagePurchaseRequests &&
@@ -2581,7 +2588,10 @@ export default function PurchaseRequests() {
                     variant="secondary"
                     className="rounded-full px-3 py-1 text-xs"
                   >
-                    {selectedItems.length} ítem(s)
+                    {isCompactApprovalView
+                      ? approvalReviewItems.length
+                      : selectedItems.length}{" "}
+                    ítem(s)
                   </Badge>
                   {PROCUREMENT_APPROVALS_ENABLED &&
                   !isCompactApprovalView ? (
@@ -2649,11 +2659,11 @@ export default function PurchaseRequests() {
                     icon: "date",
                   },
                 ]}
-                detailTitle={`Ítems por revisar (${selectedItems.length})`}
+                detailTitle={`Ítems por revisar (${approvalReviewItems.length})`}
                 detailContent={
                   <>
                     <div className="space-y-3 p-3 md:hidden">
-                      {selectedItems.map((item: any) => (
+                      {approvalReviewItems.map((item: any) => (
                         <article
                           key={item.id}
                           className="space-y-3 rounded-xl border border-border/70 bg-card p-3"
@@ -2779,7 +2789,7 @@ export default function PurchaseRequests() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border/70">
-                        {selectedItems.map((item: any) => (
+                        {approvalReviewItems.map((item: any) => (
                           <tr key={item.id}>
                             <td className="px-4 py-3 font-medium">
                               {item.itemName}
@@ -3236,7 +3246,7 @@ export default function PurchaseRequests() {
                       {isCancelledPurchaseRequest
                         ? "La solicitud fue anulada y sus ítems quedaron cerrados para edición."
                         : isPartiallyApprovedPurchaseRequest
-                          ? "Solo los ítems rechazados pueden corregirse y reenviarse. También puedes cerrarlos definitivamente."
+                          ? "Solo los ítems rechazados pueden corregirse y reenviarse. También puedes cerrarlos definitivamente. La conversión a OC se habilitará cuando no queden ítems pendientes de resolver."
                           : isConvertedPurchaseRequest
                           ? "Los ítems ya fueron convertidos y esta solicitud quedó cerrada para edición."
                           : isRejectedPurchaseRequest

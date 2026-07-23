@@ -19784,6 +19784,78 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
     }
   });
 
+  it("does not convert approved lines while the purchase request still has unresolved items", async () => {
+    const previousSettings = getRuntimeProcurementApprovalSettings();
+    const enabledAt = new Date(
+      Math.max(
+        Date.now(),
+        previousSettings.updatedAt
+          ? new Date(previousSettings.updatedAt).getTime()
+          : 0
+      ) + 1
+    );
+    setRuntimeProcurementApprovalSettings({
+      ...previousSettings,
+      purchaseRequestApprovalsEnabled: true,
+      updatedAt: enabledAt,
+    });
+
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 75,
+          projectId: 3,
+          requestNumber: "SC-2026-0075",
+          purchaseType: "local",
+          status: "aprobada",
+          approvalStatus: "aprobada",
+        },
+        items: [
+          {
+            id: 7501,
+            itemName: "ARTÍCULO APROBADO",
+            quantity: "5.00",
+            convertedQuantity: "0.00",
+            approvalStatus: "aprobada",
+          },
+          {
+            id: 7502,
+            itemName: "ARTÍCULO POR CORREGIR",
+            quantity: "1.00",
+            convertedQuantity: "0.00",
+            approvalStatus: "rechazada",
+          },
+        ],
+      } as any);
+    const createPurchaseOrderSpy = vi.spyOn(db, "createPurchaseOrder");
+
+    try {
+      await expect(
+        caller.purchaseOrders.createFromPurchaseRequest({
+          purchaseRequestId: 75,
+          itemsToConvert: [
+            { purchaseRequestItemId: 7501, quantity: "5.00" },
+          ],
+        })
+      ).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+        message:
+          "Debe resolver todos los ítems pendientes o rechazados antes de convertir la solicitud en orden de compra",
+      });
+      expect(createPurchaseOrderSpy).not.toHaveBeenCalled();
+    } finally {
+      getPurchaseRequestByIdSpy.mockRestore();
+      createPurchaseOrderSpy.mockRestore();
+      setRuntimeProcurementApprovalSettings({
+        ...previousSettings,
+        updatedAt: new Date(enabledAt.getTime() + 1),
+      });
+    }
+  });
+
   it("createFromPurchaseRequest allows direct purchase orders without payment method in draft", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);

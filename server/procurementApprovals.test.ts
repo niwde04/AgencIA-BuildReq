@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   formatApprovalSnapshotAmount,
+  getPendingPurchaseRequestApprovalItems,
   getPurchaseOrderApprovalReadinessError,
+  hasUnresolvedPurchaseRequestApprovalItems,
+  hasUnresolvedPurchaseRequestApprovalSummary,
   isPurchaseOrderDraftLike,
   isPurchaseRequestConversionReady,
   canFinalizePurchaseRequestLineReview,
@@ -175,6 +178,29 @@ describe("purchase request line approval", () => {
       noApprovalRequiredItemCount: 1,
       isPartiallyApproved: true,
     });
+  });
+
+  it("identifies only resubmitted pending lines as reviewable and blocks unresolved requests", () => {
+    const items = [
+      { id: 10, approvalStatus: "aprobada" },
+      { id: 20, approvalStatus: "descartada" },
+      { id: 30, approvalStatus: "pendiente" },
+    ];
+
+    expect(getPendingPurchaseRequestApprovalItems(items)).toEqual([items[2]]);
+    expect(hasUnresolvedPurchaseRequestApprovalItems(items)).toBe(true);
+    expect(
+      hasUnresolvedPurchaseRequestApprovalSummary({
+        pendingItemCount: 1,
+        rejectedItemCount: 0,
+      })
+    ).toBe(true);
+    expect(
+      hasUnresolvedPurchaseRequestApprovalItems([
+        { approvalStatus: "aprobada" },
+        { approvalStatus: "descartada" },
+      ])
+    ).toBe(false);
   });
 
   it("requires an explicit decision for every pending line", () => {

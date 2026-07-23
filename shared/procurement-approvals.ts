@@ -89,6 +89,38 @@ export type PurchaseRequestApprovalSummary = {
 
 export type PurchaseRequestLineDecision = "approve" | "reject";
 
+type PurchaseRequestApprovalItemLike = {
+  approvalStatus?: string | null;
+};
+
+export function getPendingPurchaseRequestApprovalItems<
+  T extends PurchaseRequestApprovalItemLike,
+>(items: T[]) {
+  return items.filter(item => item.approvalStatus === "pendiente");
+}
+
+export function hasUnresolvedPurchaseRequestApprovalItems(
+  items: PurchaseRequestApprovalItemLike[]
+) {
+  return items.some(
+    item =>
+      item.approvalStatus === "pendiente" ||
+      item.approvalStatus === "rechazada"
+  );
+}
+
+export function hasUnresolvedPurchaseRequestApprovalSummary(
+  summary?: {
+    pendingItemCount?: number | null;
+    rejectedItemCount?: number | null;
+  } | null
+) {
+  return (
+    Number(summary?.pendingItemCount ?? 0) > 0 ||
+    Number(summary?.rejectedItemCount ?? 0) > 0
+  );
+}
+
 export function summarizePurchaseRequestApprovalItems(
   items: Array<{ approvalStatus?: string | null }>
 ): PurchaseRequestApprovalSummary {
@@ -107,8 +139,7 @@ export function summarizePurchaseRequestApprovalItems(
     approvedItemCount,
     rejectedItemCount,
     discardedItemCount,
-    pendingItemCount: items.filter(item => item.approvalStatus === "pendiente")
-      .length,
+    pendingItemCount: getPendingPurchaseRequestApprovalItems(items).length,
     noApprovalRequiredItemCount: items.filter(
       item => item.approvalStatus === "no_requiere"
     ).length,
