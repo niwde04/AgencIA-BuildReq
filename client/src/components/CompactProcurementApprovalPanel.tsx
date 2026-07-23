@@ -42,13 +42,15 @@ type CompactProcurementApprovalPanelProps = {
   summaryFields: CompactApprovalSummaryField[];
   detailTitle: string;
   detailContent: ReactNode;
+  decisionContent?: ReactNode;
   notes?: string | null;
   history: CompactApprovalHistoryEntry[];
   historyDescription: string;
   emptyHistoryMessage: string;
   onPrint: () => void;
-  onReject: () => void;
-  onApprove: () => void;
+  onReject?: () => void;
+  onApprove?: () => void;
+  decisionActions?: ReactNode;
   isPending?: boolean;
 };
 
@@ -65,6 +67,7 @@ export function CompactProcurementApprovalPanel({
   summaryFields,
   detailTitle,
   detailContent,
+  decisionContent,
   notes,
   history,
   historyDescription,
@@ -72,6 +75,7 @@ export function CompactProcurementApprovalPanel({
   onPrint,
   onReject,
   onApprove,
+  decisionActions,
   isPending = false,
 }: CompactProcurementApprovalPanelProps) {
   const [isDetailOpen, setIsDetailOpen] = useState(true);
@@ -161,6 +165,8 @@ export function CompactProcurementApprovalPanel({
           </div>
         ) : null}
       </section>
+
+      {decisionContent}
 
       <section className="mt-4 overflow-hidden rounded-xl border border-border/70 bg-card">
         <button
@@ -260,27 +266,29 @@ export function CompactProcurementApprovalPanel({
           <Printer className="mr-2 h-4 w-4" />
           Imprimir
         </Button>
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <Button
-            type="button"
-            variant="destructive"
-            className="h-11 min-w-36 px-6"
-            onClick={onReject}
-            disabled={isPending}
-          >
-            <XCircle className="mr-2 h-4 w-4" />
-            Rechazar
-          </Button>
-          <Button
-            type="button"
-            className="h-11 min-w-36 bg-emerald-600 px-6 text-white hover:bg-emerald-700"
-            onClick={onApprove}
-            disabled={isPending}
-          >
-            <CheckCircle2 className="mr-2 h-4 w-4" />
-            Aprobar
-          </Button>
-        </div>
+        {decisionActions ?? (
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Button
+              type="button"
+              variant="destructive"
+              className="h-11 min-w-36 px-6"
+              onClick={onReject}
+              disabled={isPending}
+            >
+              <XCircle className="mr-2 h-4 w-4" />
+              Rechazar
+            </Button>
+            <Button
+              type="button"
+              className="h-11 min-w-36 bg-emerald-600 px-6 text-white hover:bg-emerald-700"
+              onClick={onApprove}
+              disabled={isPending}
+            >
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Aprobar
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -4,10 +4,13 @@ import {
   getPurchaseOrderApprovalReadinessError,
   isPurchaseOrderDraftLike,
   isPurchaseRequestConversionReady,
+  canFinalizePurchaseRequestLineReview,
   PROCUREMENT_APPROVALS_ENABLED,
   purchaseOrderMeetsApprovalMinimum,
   purchaseOrderRequiresApproval,
   roundProcurementAmount,
+  summarizePurchaseRequestApprovalItems,
+  summarizePurchaseRequestLineDecisions,
 } from "@shared/procurement-approvals";
 
 describe("procurement approval limits", () => {
@@ -150,5 +153,86 @@ describe("procurement approval limits", () => {
     ).toBe(
       "Ingrese precio unitario y subtotal mayores que cero antes de emitir la OC"
     );
+  });
+});
+
+describe("purchase request line approval", () => {
+  it("summarizes a partially approved request from its item statuses", () => {
+    expect(
+      summarizePurchaseRequestApprovalItems([
+        { approvalStatus: "aprobada" },
+        { approvalStatus: "rechazada" },
+        { approvalStatus: "pendiente" },
+        { approvalStatus: "no_requiere" },
+      ])
+    ).toEqual({
+      totalItemCount: 4,
+      approvedItemCount: 1,
+      rejectedItemCount: 1,
+      pendingItemCount: 1,
+      noApprovalRequiredItemCount: 1,
+      isPartiallyApproved: true,
+    });
+  });
+
+  it("requires an explicit decision for every pending line", () => {
+    expect(summarizePurchaseRequestLineDecisions([10, 20], {})).toEqual({
+      approvedItemIds: [],
+      rejectedItemIds: [],
+      undecidedItemIds: [10, 20],
+      isComplete: false,
+    });
+    expect(
+      canFinalizePurchaseRequestLineReview({
+        pendingItemIds: [10, 20],
+        decisions: { 10: "approve", 20: "reject" },
+        rejectionComment: "No cumple la especificación",
+        approvedQuantitiesValid: true,
+      })
+    ).toBe(true);
+  });
+
+  it("allows a complete approval without a rejection note", () => {
+    expect(
+      canFinalizePurchaseRequestLineReview({
+        pendingItemIds: [10, 20],
+        decisions: { 10: "approve", 20: "approve" },
+        approvedQuantitiesValid: true,
+      })
+    ).toBe(true);
+    expect(
+      canFinalizePurchaseRequestLineReview({
+        pendingItemIds: [10, 20],
+        decisions: { 10: "approve", 20: "approve" },
+        approvedQuantitiesValid: false,
+      })
+    ).toBe(false);
+  });
+
+  it("requires a shared reason whenever at least one line is rejected", () => {
+    expect(
+      canFinalizePurchaseRequestLineReview({
+        pendingItemIds: [10, 20],
+        decisions: { 10: "approve", 20: "reject" },
+        rejectionComment: "No",
+        approvedQuantitiesValid: true,
+      })
+    ).toBe(false);
+    expect(
+      canFinalizePurchaseRequestLineReview({
+        pendingItemIds: [10],
+        decisions: { 10: "reject" },
+        rejectionComment: "x".repeat(1001),
+        approvedQuantitiesValid: true,
+      })
+    ).toBe(false);
+    expect(
+      canFinalizePurchaseRequestLineReview({
+        pendingItemIds: [10, 20],
+        decisions: { 10: "reject", 20: "reject" },
+        rejectionComment: "Compra no autorizada",
+        approvedQuantitiesValid: true,
+      })
+    ).toBe(true);
   });
 });

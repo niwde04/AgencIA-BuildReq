@@ -77,6 +77,80 @@ export type ProcurementApprovalDocumentType =
   | "purchase_request"
   | "purchase_order";
 
+export type PurchaseRequestApprovalSummary = {
+  totalItemCount: number;
+  approvedItemCount: number;
+  rejectedItemCount: number;
+  pendingItemCount: number;
+  noApprovalRequiredItemCount: number;
+  isPartiallyApproved: boolean;
+};
+
+export type PurchaseRequestLineDecision = "approve" | "reject";
+
+export function summarizePurchaseRequestApprovalItems(
+  items: Array<{ approvalStatus?: string | null }>
+): PurchaseRequestApprovalSummary {
+  const approvedItemCount = items.filter(
+    item => item.approvalStatus === "aprobada"
+  ).length;
+  const rejectedItemCount = items.filter(
+    item => item.approvalStatus === "rechazada"
+  ).length;
+
+  return {
+    totalItemCount: items.length,
+    approvedItemCount,
+    rejectedItemCount,
+    pendingItemCount: items.filter(item => item.approvalStatus === "pendiente")
+      .length,
+    noApprovalRequiredItemCount: items.filter(
+      item => item.approvalStatus === "no_requiere"
+    ).length,
+    isPartiallyApproved: approvedItemCount > 0 && rejectedItemCount > 0,
+  };
+}
+
+export function summarizePurchaseRequestLineDecisions(
+  pendingItemIds: number[],
+  decisions: Record<number, PurchaseRequestLineDecision | undefined>
+) {
+  const approvedItemIds = pendingItemIds.filter(
+    itemId => decisions[itemId] === "approve"
+  );
+  const rejectedItemIds = pendingItemIds.filter(
+    itemId => decisions[itemId] === "reject"
+  );
+  const undecidedItemIds = pendingItemIds.filter(
+    itemId => decisions[itemId] === undefined
+  );
+
+  return {
+    approvedItemIds,
+    rejectedItemIds,
+    undecidedItemIds,
+    isComplete: pendingItemIds.length > 0 && undecidedItemIds.length === 0,
+  };
+}
+
+export function canFinalizePurchaseRequestLineReview(params: {
+  pendingItemIds: number[];
+  decisions: Record<number, PurchaseRequestLineDecision | undefined>;
+  rejectionComment?: string | null;
+  approvedQuantitiesValid: boolean;
+  isPending?: boolean;
+}) {
+  if (params.isPending || !params.approvedQuantitiesValid) return false;
+  const summary = summarizePurchaseRequestLineDecisions(
+    params.pendingItemIds,
+    params.decisions
+  );
+  if (!summary.isComplete) return false;
+  if (summary.rejectedItemIds.length === 0) return true;
+  const rejectionCommentLength = params.rejectionComment?.trim().length ?? 0;
+  return rejectionCommentLength >= 5 && rejectionCommentLength <= 1000;
+}
+
 const PURCHASE_REQUEST_DRAFT_LIKE_STATUSES_WITH_APPROVALS_DISABLED = new Set([
   "pendiente",
   "en_revision",

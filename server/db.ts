@@ -138,6 +138,7 @@ import {
   DEFAULT_PROCUREMENT_APPROVAL_SETTINGS,
   purchaseOrderRequiresApproval,
   setRuntimeProcurementApprovalSettings,
+  summarizePurchaseRequestApprovalItems,
   type ProcurementApprovalSettings,
 } from "@shared/procurement-approvals";
 import {
@@ -5967,6 +5968,7 @@ export async function listPurchaseRequests(filters?: {
       purchaseRequestId: purchaseRequestItems.purchaseRequestId,
       requestedQuantity: purchaseRequestItems.quantity,
       convertedQuantity: purchaseRequestItems.convertedQuantity,
+      approvalStatus: purchaseRequestItems.approvalStatus,
       requestId: materialRequests.id,
       requestNumber: materialRequests.requestNumber,
       requestedById: materialRequests.requestedById,
@@ -5996,6 +5998,10 @@ export async function listPurchaseRequests(filters?: {
     number,
     { itemCount: number; quantity: number }
   >();
+  const approvalItemsByPurchaseRequestId = new Map<
+    number,
+    Array<{ approvalStatus: string | null }>
+  >();
   const addUserId = (
     map: Map<number, number[]>,
     purchaseRequestId: number,
@@ -6013,6 +6019,11 @@ export async function listPurchaseRequests(filters?: {
 
   for (const row of sourceRows) {
     if (!row.purchaseRequestId) continue;
+
+    const approvalItems =
+      approvalItemsByPurchaseRequestId.get(row.purchaseRequestId) ?? [];
+    approvalItems.push({ approvalStatus: row.approvalStatus });
+    approvalItemsByPurchaseRequestId.set(row.purchaseRequestId, approvalItems);
 
     if (row.requestNumber) {
       const current =
@@ -6176,6 +6187,9 @@ export async function listPurchaseRequests(filters?: {
       approvedBy: approvalActor,
       approvedByUsers: approvalActor ? [approvalActor] : [],
       approvalHistory,
+      approvalSummary: summarizePurchaseRequestApprovalItems(
+        approvalItemsByPurchaseRequestId.get(row.purchaseRequest.id) ?? []
+      ),
       createdBy: row.createdBy,
       projectSummary,
       sourceProjects,
@@ -6397,6 +6411,7 @@ export async function getPurchaseRequestById(id: number) {
     createdBy: usersById.get(rows[0].purchaseRequest.createdById) ?? null,
     approvedBy: mapApprovalActorFromHistory(approvalHistory),
     approvalHistory,
+    approvalSummary: summarizePurchaseRequestApprovalItems(items),
     items,
   };
 }

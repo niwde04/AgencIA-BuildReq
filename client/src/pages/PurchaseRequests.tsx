@@ -69,9 +69,12 @@ import {
   isProcurementApproverRole,
 } from "@shared/buildreq-roles";
 import {
+  canFinalizePurchaseRequestLineReview,
   isPurchaseRequestConversionReady,
   isPurchaseRequestDraftLike,
   isPurchaseRequestApprovalEnabled,
+  summarizePurchaseRequestLineDecisions,
+  type PurchaseRequestLineDecision,
 } from "@shared/procurement-approvals";
 
 const PAGE_SIZE = 50;
@@ -82,6 +85,7 @@ const STATUS_LABELS: Record<string, string> = {
   pendiente: "Borrador",
   en_revision: "Pendiente de aprobación",
   aprobada: "Aprobada",
+  parcialmente_aprobada: "Parcialmente aprobada",
   rechazada: "Rechazada",
   parcialmente_convertida: "Parcialmente convertida",
   convertida: "Convertida",
@@ -92,28 +96,35 @@ const STATUS_COLORS: Record<string, string> = {
   pendiente: "border-amber-300 bg-amber-50 text-amber-700",
   en_revision: "border-blue-300 bg-blue-50 text-blue-700",
   aprobada: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  parcialmente_aprobada: "border-cyan-300 bg-cyan-50 text-cyan-700",
   rechazada: "border-red-300 bg-red-50 text-red-700",
   parcialmente_convertida: "border-cyan-300 bg-cyan-50 text-cyan-700",
   convertida: "border-emerald-300 bg-emerald-50 text-emerald-700",
   anulada: "border-red-300 bg-red-50 text-red-700",
 };
-const getStatusFilterOptions = (approvalsEnabled: boolean) => Object.entries(STATUS_LABELS).filter(
+const getStatusFilterOptions = (approvalsEnabled: boolean) =>
+  Object.entries(STATUS_LABELS).filter(
   ([status]) =>
-    approvalsEnabled ||
-    !["en_revision", "rechazada"].includes(status)
+      approvalsEnabled || !["en_revision", "rechazada"].includes(status)
 );
 const getEffectivePurchaseRequestStatus = (
   status?: string | null,
-  approvalStatus?: string | null
-) =>
-  !isPurchaseRequestApprovalEnabled() &&
+  approvalStatus?: string | null,
+  approvalSummary?: { isPartiallyApproved?: boolean } | null
+) => {
+  if (status === "aprobada" && approvalSummary?.isPartiallyApproved) {
+    return "parcialmente_aprobada";
+  }
+  return !isPurchaseRequestApprovalEnabled() &&
   isPurchaseRequestDraftLike(status, approvalStatus)
     ? "pendiente"
     : (status ?? "");
+};
 
 const APPROVAL_STATUS_LABELS: Record<string, string> = {
   pendiente: "Pendiente",
   aprobada: "Aprobada",
+  parcialmente_aprobada: "Parcialmente aprobada",
   rechazada: "Rechazada",
   no_requiere: "No requiere",
 };
@@ -121,6 +132,7 @@ const APPROVAL_STATUS_LABELS: Record<string, string> = {
 const APPROVAL_STATUS_COLORS: Record<string, string> = {
   pendiente: "border-amber-300 bg-amber-50 text-amber-700",
   aprobada: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  parcialmente_aprobada: "border-cyan-300 bg-cyan-50 text-cyan-700",
   rechazada: "border-red-300 bg-red-50 text-red-700",
   no_requiere: "border-slate-300 bg-slate-50 text-slate-700",
 };
@@ -132,6 +144,7 @@ const APPROVAL_ACTION_LABELS: Record<string, string> = {
   approved: "Aprobada",
   approve: "Aprobada",
   aprobada: "Aprobada",
+  partially_approved: "Aprobada parcialmente",
   rejected: "Rechazada",
   reject: "Rechazada",
   rechazada: "Rechazada",
@@ -159,9 +172,25 @@ function getApprovalEventActorName(event: any) {
   return String(event?.actorName ?? "").trim();
 }
 
-function formatApprovalStatus(value?: string | null) {
-  if (!value) return "No enviada";
-  return APPROVAL_STATUS_LABELS[value] ?? value;
+function getPurchaseRequestApprovalDisplayStatus(
+  value?: string | null,
+  approvalSummary?: { isPartiallyApproved?: boolean } | null
+) {
+  return approvalSummary?.isPartiallyApproved
+    ? "parcialmente_aprobada"
+    : (value ?? "");
+}
+
+function formatApprovalStatus(
+  value?: string | null,
+  approvalSummary?: { isPartiallyApproved?: boolean } | null
+) {
+  const displayStatus = getPurchaseRequestApprovalDisplayStatus(
+    value,
+    approvalSummary
+  );
+  if (!displayStatus) return "No enviada";
+  return APPROVAL_STATUS_LABELS[displayStatus] ?? displayStatus;
 }
 
 function formatApprovalAction(value?: string | null) {
@@ -414,9 +443,9 @@ export default function PurchaseRequests() {
   const [approvalQuantities, setApprovalQuantities] = useState<
     Record<number, string>
   >({});
-  const [approvalSelectedItemIds, setApprovalSelectedItemIds] = useState<
-    number[]
-  >([]);
+  const [approvalItemDecisions, setApprovalItemDecisions] = useState<
+    Record<number, PurchaseRequestLineDecision | undefined>
+  >({});
   const [targetPopoverOpen, setTargetPopoverOpen] = useState<number | null>(
     null
   );
@@ -438,9 +467,6 @@ export default function PurchaseRequests() {
   const [rejectReason, setRejectReason] = useState("");
   const [isAnnulFormOpen, setIsAnnulFormOpen] = useState(false);
   const [approvalComment, setApprovalComment] = useState("");
-  const [compactApprovalDecision, setCompactApprovalDecision] = useState<
-    "approve" | "reject" | null
-  >(null);
   const [emailDialog, setEmailDialog] = useState<{
     to: string;
     subject: string;
@@ -595,8 +621,7 @@ export default function PurchaseRequests() {
             : "Solicitud rechazada"
         );
         setApprovalComment("");
-        setApprovalSelectedItemIds([]);
-        setCompactApprovalDecision(null);
+        setApprovalItemDecisions({});
         setSelectedId(null);
         void utils.purchaseRequests.invalidate();
       },
@@ -707,6 +732,8 @@ export default function PurchaseRequests() {
   }, [detail]);
   const isApprovedPurchaseRequest =
     detail?.purchaseRequest.approvalStatus === "aprobada";
+  const isPartiallyApprovedPurchaseRequest =
+    detail?.approvalSummary?.isPartiallyApproved === true;
   const pendingApprovalItemIds = useMemo(
     () =>
       selectedItems
@@ -714,6 +741,16 @@ export default function PurchaseRequests() {
         .map((item: any) => item.id),
     [selectedItems]
   );
+  const approvalLineDecisionSummary = useMemo(
+    () =>
+      summarizePurchaseRequestLineDecisions(
+        pendingApprovalItemIds,
+        approvalItemDecisions
+      ),
+    [approvalItemDecisions, pendingApprovalItemIds]
+  );
+  const approvalSelectedItemIds = approvalLineDecisionSummary.approvedItemIds;
+  const approvalRejectedItemIds = approvalLineDecisionSummary.rejectedItemIds;
   const allApprovalItemsSelected =
     pendingApprovalItemIds.length > 0 &&
     pendingApprovalItemIds.every(itemId =>
@@ -723,6 +760,12 @@ export default function PurchaseRequests() {
     pendingApprovalItemIds.some(itemId =>
       approvalSelectedItemIds.includes(itemId)
     ) && !allApprovalItemsSelected;
+
+  useEffect(() => {
+    if (approvalRejectedItemIds.length === 0) {
+      setApprovalComment("");
+    }
+  }, [approvalRejectedItemIds.length]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -737,7 +780,7 @@ export default function PurchaseRequests() {
       setEditItems({});
       setConvertQuantities({});
       setApprovalQuantities({});
-      setApprovalSelectedItemIds([]);
+      setApprovalItemDecisions({});
       return;
     }
 
@@ -768,12 +811,14 @@ export default function PurchaseRequests() {
         ])
       )
     );
-    setApprovalSelectedItemIds(current =>
-      current.filter(itemId =>
-        (detail.items ?? []).some(
-          (item: any) =>
-            item.id === itemId && item.approvalStatus === "pendiente"
-        )
+    setApprovalItemDecisions(current =>
+      Object.fromEntries(
+        (detail.items ?? []).flatMap((item: any) => {
+          const decision = current[item.id];
+          return item.approvalStatus === "pendiente" && decision
+            ? [[item.id, decision]]
+            : [];
+        })
       )
     );
   }, [detail]);
@@ -834,15 +879,53 @@ export default function PurchaseRequests() {
     }));
   };
 
-  const buildApprovalQuantityUpdates = () => {
+  const updateApprovalItemDecision = (
+    itemId: number,
+    decision: PurchaseRequestLineDecision,
+    checked: boolean
+  ) => {
+    setApprovalItemDecisions(current => {
+      const next = { ...current };
+      if (checked) {
+        next[itemId] = decision;
+      } else if (next[itemId] === decision) {
+        delete next[itemId];
+      }
+      return next;
+    });
+  };
+
+  const approvedApprovalQuantitiesValid = selectedItems
+    .filter((item: any) => approvalItemDecisions[item.id] === "approve")
+    .every((item: any) => {
+      const quantity = Number(getApprovalQuantityDraft(item).trim());
+      return (
+        Number.isFinite(quantity) &&
+        quantity > 0 &&
+        quantity >= getConvertedQuantity(item)
+      );
+    });
+  const isApprovalOperationPending =
+    reviewApprovalMutation.isPending ||
+    updatePendingQuantitiesMutation.isPending;
+  const canFinalizeApprovalReview = canFinalizePurchaseRequestLineReview({
+    pendingItemIds: pendingApprovalItemIds,
+    decisions: approvalItemDecisions,
+    rejectionComment: approvalComment,
+    approvedQuantitiesValid: approvedApprovalQuantitiesValid,
+    isPending: isApprovalOperationPending,
+  });
+
+  const buildApprovalQuantityUpdates = (approvedItemIds: number[]) => {
+    const approvedItemIdSet = new Set(approvedItemIds);
     const updates: Array<{ id: number; quantity: string }> = [];
-    for (const item of selectedItems) {
+    for (const item of selectedItems.filter((entry: any) =>
+      approvedItemIdSet.has(entry.id)
+    )) {
       const rawQuantity = getApprovalQuantityDraft(item).trim();
       const quantity = Number(rawQuantity);
       if (!Number.isFinite(quantity) || quantity <= 0) {
-        toast.error(
-          `La cantidad de ${item.itemName} debe ser mayor que cero`
-        );
+        toast.error(`La cantidad de ${item.itemName} debe ser mayor que cero`);
         return null;
       }
       if (quantity < getConvertedQuantity(item)) {
@@ -1288,11 +1371,10 @@ export default function PurchaseRequests() {
     setTargetSearch("");
     setDebouncedTargetSearch("");
     setSelectedItemIds([]);
-    setApprovalSelectedItemIds([]);
+    setApprovalItemDecisions({});
     setRejectReason("");
     setIsAnnulFormOpen(false);
     setApprovalComment("");
-    setCompactApprovalDecision(null);
   };
 
   const toggleRequestSelection = (id: number, checked: boolean) => {
@@ -1341,9 +1423,12 @@ export default function PurchaseRequests() {
     }
   };
 
-  const persistApprovalQuantityChanges = async (showNoChanges = false) => {
+  const persistApprovalQuantityChanges = async (
+    approvedItemIds: number[],
+    showNoChanges = false
+  ) => {
     if (!detail || !canReviewSelectedPurchaseRequest) return false;
-    const items = buildApprovalQuantityUpdates();
+    const items = buildApprovalQuantityUpdates(approvedItemIds);
     if (!items) return false;
     if (items.length === 0) {
       if (showNoChanges) toast.info("No hay cambios de cantidad por guardar");
@@ -1359,7 +1444,7 @@ export default function PurchaseRequests() {
 
   const handleSaveApprovalQuantities = async () => {
     try {
-      await persistApprovalQuantityChanges(true);
+      await persistApprovalQuantityChanges(approvalSelectedItemIds, true);
     } catch {
       // The mutation displays the server error.
     }
@@ -1394,7 +1479,9 @@ export default function PurchaseRequests() {
     }
 
     try {
-      const quantitiesSaved = await persistApprovalQuantityChanges();
+      const quantitiesSaved = await persistApprovalQuantityChanges(
+        decision === "approve" ? selectedApprovalIds : []
+      );
       if (!quantitiesSaved) return;
     } catch {
       return;
@@ -1404,9 +1491,16 @@ export default function PurchaseRequests() {
       id: detail.purchaseRequest.id,
       decision,
       comment: comment || undefined,
-      approvedItemIds:
-        decision === "approve" ? selectedApprovalIds : undefined,
+      approvedItemIds: decision === "approve" ? selectedApprovalIds : undefined,
     });
+  };
+
+  const handleFinalizeApprovalReview = () => {
+    if (approvalSelectedItemIds.length === 0) {
+      void handleReviewApproval("reject", []);
+      return;
+    }
+    void handleReviewApproval("approve", approvalSelectedItemIds);
   };
 
   const handleReopenRejected = () => {
@@ -1701,9 +1795,7 @@ export default function PurchaseRequests() {
           purchaseType:
             purchaseTypeFilter === "all" ? undefined : purchaseTypeFilter,
           status:
-            effectiveStatusFilter === "all"
-              ? undefined
-              : effectiveStatusFilter,
+            effectiveStatusFilter === "all" ? undefined : effectiveStatusFilter,
           page: exportPage,
           pageSize,
         })
@@ -1767,7 +1859,8 @@ export default function PurchaseRequests() {
             STATUS_LABELS[
               getEffectivePurchaseRequestStatus(
                 row.purchaseRequest.status,
-                row.purchaseRequest.approvalStatus
+                row.purchaseRequest.approvalStatus,
+                row.approvalSummary
               )
             ] || row.purchaseRequest.status,
         },
@@ -1908,11 +2001,11 @@ export default function PurchaseRequests() {
             <>
               <div className="space-y-3 p-3 md:hidden">
                 {filteredRequests.map((row: any) => {
-                  const canSelectForUnified =
-                    canConvertPurchaseRequestRow(row);
+                  const canSelectForUnified = canConvertPurchaseRequestRow(row);
                   const effectiveStatus = getEffectivePurchaseRequestStatus(
                     row.purchaseRequest.status,
-                    row.purchaseRequest.approvalStatus
+                    row.purchaseRequest.approvalStatus,
+                    row.approvalSummary
                   );
 
                   return (
@@ -2018,12 +2111,16 @@ export default function PurchaseRequests() {
                             variant="outline"
                             className={`text-[10px] ${
                               APPROVAL_STATUS_COLORS[
-                                row.purchaseRequest.approvalStatus
+                                getPurchaseRequestApprovalDisplayStatus(
+                                  row.purchaseRequest.approvalStatus,
+                                  row.approvalSummary
+                                )
                               ] || ""
                             }`}
                           >
                             {formatApprovalStatus(
-                              row.purchaseRequest.approvalStatus
+                              row.purchaseRequest.approvalStatus,
+                              row.approvalSummary
                             )}
                           </Badge>
                         ) : null}
@@ -2183,7 +2280,8 @@ export default function PurchaseRequests() {
                               STATUS_COLORS[
                                 getEffectivePurchaseRequestStatus(
                                   row.purchaseRequest.status,
-                                  row.purchaseRequest.approvalStatus
+                                  row.purchaseRequest.approvalStatus,
+                                  row.approvalSummary
                                 )
                               ] || ""
                             }`}
@@ -2191,7 +2289,8 @@ export default function PurchaseRequests() {
                             {STATUS_LABELS[
                               getEffectivePurchaseRequestStatus(
                                 row.purchaseRequest.status,
-                                row.purchaseRequest.approvalStatus
+                                row.purchaseRequest.approvalStatus,
+                                row.approvalSummary
                               )
                             ] || row.purchaseRequest.status}
                           </Badge>
@@ -2202,12 +2301,16 @@ export default function PurchaseRequests() {
                               variant="outline"
                               className={`text-xs ${
                                 APPROVAL_STATUS_COLORS[
-                                  row.purchaseRequest.approvalStatus
+                                  getPurchaseRequestApprovalDisplayStatus(
+                                    row.purchaseRequest.approvalStatus,
+                                    row.approvalSummary
+                                  )
                                 ] || ""
                               }`}
                             >
                               {formatApprovalStatus(
-                                row.purchaseRequest.approvalStatus
+                                row.purchaseRequest.approvalStatus,
+                                row.approvalSummary
                               )}
                             </Badge>
                           </td>
@@ -2228,7 +2331,9 @@ export default function PurchaseRequests() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => openRequest(row.purchaseRequest.id)}
+                              onClick={() =>
+                                openRequest(row.purchaseRequest.id)
+                              }
                           >
                             <Eye className="mr-2 h-4 w-4" />
                             Ver
@@ -2261,7 +2366,7 @@ export default function PurchaseRequests() {
             setSelectedId(null);
             setRejectReason("");
             setIsAnnulFormOpen(false);
-            setCompactApprovalDecision(null);
+            setApprovalItemDecisions({});
             setApprovalComment("");
           }
         }}
@@ -2275,9 +2380,7 @@ export default function PurchaseRequests() {
         >
           <DialogHeader
             className={`shrink-0 border-b border-border/70 px-5 py-5 pr-12 sm:px-8 ${
-              isCompactApprovalView
-                ? "px-4 py-3 sm:py-5"
-                : "lg:px-8"
+              isCompactApprovalView ? "px-4 py-3 sm:py-5" : "lg:px-8"
             }`}
           >
             <div className="flex flex-wrap items-end justify-between gap-3">
@@ -2303,6 +2406,8 @@ export default function PurchaseRequests() {
                           ? "La aprobación fue rechazada. El responsable debe reabrirla antes de corregirla y reenviarla."
                           : isPendingApprovalPurchaseRequest
                             ? "La solicitud está pendiente de decisión y permanece bloqueada para edición."
+                            : isPartiallyApprovedPurchaseRequest
+                              ? "La solicitud fue aprobada parcialmente; únicamente las líneas aprobadas pueden convertirse a orden de compra."
                             : isApprovedPurchaseRequest
                               ? "La solicitud fue aprobada y puede convertirse a orden de compra."
                               : "Revisa y completa la solicitud antes de enviarla a aprobación."}
@@ -2317,7 +2422,8 @@ export default function PurchaseRequests() {
                         STATUS_COLORS[
                           getEffectivePurchaseRequestStatus(
                             detail.purchaseRequest.status,
-                            detail.purchaseRequest.approvalStatus
+                            detail.purchaseRequest.approvalStatus,
+                            detail.approvalSummary
                           )
                         ] || ""
                       }`}
@@ -2325,7 +2431,8 @@ export default function PurchaseRequests() {
                       {STATUS_LABELS[
                         getEffectivePurchaseRequestStatus(
                           detail.purchaseRequest.status,
-                          detail.purchaseRequest.approvalStatus
+                          detail.purchaseRequest.approvalStatus,
+                          detail.approvalSummary
                         )
                       ] || detail.purchaseRequest.status}
                     </Badge>
@@ -2342,13 +2449,17 @@ export default function PurchaseRequests() {
                       variant="outline"
                       className={`rounded-full px-3 py-1 text-xs uppercase ${
                         APPROVAL_STATUS_COLORS[
-                          detail.purchaseRequest.approvalStatus ?? ""
+                          getPurchaseRequestApprovalDisplayStatus(
+                            detail.purchaseRequest.approvalStatus,
+                            detail.approvalSummary
+                          )
                         ] || ""
                       }`}
                     >
                       Aprobación:{" "}
                       {formatApprovalStatus(
-                        detail.purchaseRequest.approvalStatus
+                        detail.purchaseRequest.approvalStatus,
+                        detail.approvalSummary
                       )}
                     </Badge>
                   ) : null}
@@ -2398,7 +2509,7 @@ export default function PurchaseRequests() {
                     icon: "date",
                   },
                 ]}
-                detailTitle={`Ítems a aprobar (${selectedItems.length})`}
+                detailTitle={`Ítems por revisar (${selectedItems.length})`}
                 detailContent={
                   <>
                     <div className="space-y-3 p-3 md:hidden">
@@ -2439,6 +2550,8 @@ export default function PurchaseRequests() {
                                   )
                                 }
                                 disabled={
+                                  approvalItemDecisions[item.id] !==
+                                    "approve" ||
                                   updatePendingQuantitiesMutation.isPending ||
                                   reviewApprovalMutation.isPending
                                 }
@@ -2454,65 +2567,191 @@ export default function PurchaseRequests() {
                             </span>{" "}
                             {getItemTargetLabel(item)}
                           </div>
+                          <div className="grid grid-cols-2 gap-2 border-t border-border/70 pt-3">
+                            <label
+                              htmlFor={`compact-approve-item-${item.id}`}
+                              className={`flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors ${
+                                approvalItemDecisions[item.id] === "approve"
+                                  ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                                  : "border-border/70 text-muted-foreground hover:bg-muted/30"
+                              }`}
+                            >
+                              <Checkbox
+                                id={`compact-approve-item-${item.id}`}
+                                checked={
+                                  approvalItemDecisions[item.id] === "approve"
+                                }
+                                onCheckedChange={checked =>
+                                  updateApprovalItemDecision(
+                                    item.id,
+                                    "approve",
+                                    checked === true
+                                  )
+                                }
+                                disabled={isApprovalOperationPending}
+                                className="data-[state=checked]:border-emerald-600 data-[state=checked]:bg-emerald-600"
+                                aria-label={`Aprobar ${item.itemName}`}
+                              />
+                              Aprobar
+                            </label>
+                            <label
+                              htmlFor={`compact-reject-item-${item.id}`}
+                              className={`flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors ${
+                                approvalItemDecisions[item.id] === "reject"
+                                  ? "border-red-500 bg-red-50 text-red-700"
+                                  : "border-border/70 text-muted-foreground hover:bg-muted/30"
+                              }`}
+                            >
+                              <Checkbox
+                                id={`compact-reject-item-${item.id}`}
+                                checked={
+                                  approvalItemDecisions[item.id] === "reject"
+                                }
+                                onCheckedChange={checked =>
+                                  updateApprovalItemDecision(
+                                    item.id,
+                                    "reject",
+                                    checked === true
+                                  )
+                                }
+                                disabled={isApprovalOperationPending}
+                                className="data-[state=checked]:border-red-600 data-[state=checked]:bg-red-600"
+                                aria-label={`Rechazar ${item.itemName}`}
+                              />
+                              Rechazar
+                            </label>
+                          </div>
                         </article>
                       ))}
                     </div>
 
-                    <table className="hidden w-full min-w-[720px] text-sm md:table">
-                    <thead className="bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
-                      <tr>
-                        <th className="px-4 py-3 text-left">Artículo</th>
-                        <th className="px-4 py-3 text-left">SAP</th>
-                        <th className="px-4 py-3 text-right">
-                          Cantidad a aprobar
-                        </th>
-                        <th className="px-4 py-3 text-left">Destino</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/70">
-                      {selectedItems.map((item: any) => (
-                        <tr key={item.id}>
-                          <td className="px-4 py-3 font-medium">
-                            {item.itemName}
-                          </td>
-                          <td className="px-4 py-3 font-mono text-xs">
-                            {item.currentSapItemCode ||
-                              item.originalSapItemCode ||
-                              "—"}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center justify-end gap-2">
-                              <Input
-                                className="h-9 w-32 text-right font-mono"
-                                type="number"
-                                min="0.01"
-                                step="0.01"
-                                value={getApprovalQuantityDraft(item)}
-                                onChange={event =>
-                                  updateApprovalQuantityDraft(
-                                    item,
-                                    event.target.value
+                    <table className="hidden w-full min-w-[920px] text-sm md:table">
+                      <thead className="bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+                        <tr>
+                          <th className="px-4 py-3 text-left">Artículo</th>
+                          <th className="px-4 py-3 text-left">SAP</th>
+                          <th className="px-4 py-3 text-right">
+                            Cantidad a aprobar
+                          </th>
+                          <th className="px-4 py-3 text-left">Destino</th>
+                          <th className="px-3 py-3 text-center">Aprobar</th>
+                          <th className="px-3 py-3 text-center">Rechazar</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/70">
+                        {selectedItems.map((item: any) => (
+                          <tr key={item.id}>
+                            <td className="px-4 py-3 font-medium">
+                              {item.itemName}
+                            </td>
+                            <td className="px-4 py-3 font-mono text-xs">
+                              {item.currentSapItemCode ||
+                                item.originalSapItemCode ||
+                                "—"}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center justify-end gap-2">
+                                <Input
+                                  className="h-9 w-32 text-right font-mono"
+                                  type="number"
+                                  min="0.01"
+                                  step="0.01"
+                                  value={getApprovalQuantityDraft(item)}
+                                  onChange={event =>
+                                    updateApprovalQuantityDraft(
+                                      item,
+                                      event.target.value
+                                    )
+                                  }
+                                  disabled={
+                                    approvalItemDecisions[item.id] !==
+                                      "approve" ||
+                                    updatePendingQuantitiesMutation.isPending ||
+                                    reviewApprovalMutation.isPending
+                                  }
+                                  aria-label={`Cantidad a aprobar de ${item.itemName}`}
+                                />
+                                <span className="min-w-10 text-left text-xs text-muted-foreground">
+                                  {item.unit || ""}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-muted-foreground">
+                              {getItemTargetLabel(item)}
+                            </td>
+                            <td className="px-3 py-3 text-center">
+                              <Checkbox
+                                checked={
+                                  approvalItemDecisions[item.id] === "approve"
+                                }
+                                onCheckedChange={checked =>
+                                  updateApprovalItemDecision(
+                                    item.id,
+                                    "approve",
+                                    checked === true
                                   )
                                 }
-                                disabled={
-                                  updatePendingQuantitiesMutation.isPending ||
-                                  reviewApprovalMutation.isPending
-                                }
-                                aria-label={`Cantidad a aprobar de ${item.itemName}`}
+                                disabled={isApprovalOperationPending}
+                                className="mx-auto size-5 data-[state=checked]:border-emerald-600 data-[state=checked]:bg-emerald-600"
+                                aria-label={`Aprobar ${item.itemName}`}
                               />
-                              <span className="min-w-10 text-left text-xs text-muted-foreground">
-                                {item.unit || ""}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-muted-foreground">
-                            {getItemTargetLabel(item)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
+                            </td>
+                            <td className="px-3 py-3 text-center">
+                              <Checkbox
+                                checked={
+                                  approvalItemDecisions[item.id] === "reject"
+                                }
+                                onCheckedChange={checked =>
+                                  updateApprovalItemDecision(
+                                    item.id,
+                                    "reject",
+                                    checked === true
+                                  )
+                                }
+                                disabled={isApprovalOperationPending}
+                                className="mx-auto size-5 data-[state=checked]:border-red-600 data-[state=checked]:bg-red-600"
+                                aria-label={`Rechazar ${item.itemName}`}
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
                     </table>
                   </>
+                }
+                decisionContent={
+                  approvalRejectedItemIds.length > 0 ? (
+                    <section className="mt-4 rounded-xl border border-red-200 bg-red-50/30 p-4">
+                      <div className="space-y-2">
+                        <Label
+                          htmlFor="purchase-request-line-rejection-reason"
+                          className="text-sm font-semibold"
+                        >
+                          Motivo de rechazo
+                        </Label>
+                        <Textarea
+                          id="purchase-request-line-rejection-reason"
+                          value={approvalComment}
+                          onChange={event =>
+                            setApprovalComment(event.target.value)
+                          }
+                          placeholder="Explique por qué se rechazan las líneas seleccionadas"
+                          rows={3}
+                          minLength={5}
+                          maxLength={1000}
+                          disabled={isApprovalOperationPending}
+                          className="min-h-[96px] resize-y bg-background text-sm"
+                        />
+                        <div className="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+                          <span>
+                            Obligatorio, mínimo 5 caracteres. Se aplicará a{" "}
+                            {approvalRejectedItemIds.length} línea(s).
+                          </span>
+                          <span>{approvalComment.length}/1000</span>
+                        </div>
+                      </div>
+                    </section>
+                  ) : null
                 }
                 notes={detail.purchaseRequest.notes}
                 history={[...approvalHistory]
@@ -2539,18 +2778,20 @@ export default function PurchaseRequests() {
                 historyDescription="Registro de decisiones de esta SC."
                 emptyHistoryMessage="Esta solicitud todavía no tiene movimientos de aprobación."
                 onPrint={handlePrintDocument}
-                onReject={() => {
-                  setApprovalComment("");
-                  setCompactApprovalDecision("reject");
-                }}
-                onApprove={() => {
-                  setApprovalComment("");
-                  setCompactApprovalDecision("approve");
-                }}
-                isPending={
-                  reviewApprovalMutation.isPending ||
-                  updatePendingQuantitiesMutation.isPending
+                decisionActions={
+                  <Button
+                    type="button"
+                    className="h-11 min-w-48 px-6"
+                    onClick={handleFinalizeApprovalReview}
+                    disabled={!canFinalizeApprovalReview}
+                  >
+                    <Save className="mr-2 h-4 w-4" />
+                    {isApprovalOperationPending
+                      ? "Finalizando..."
+                      : "Finalizar revisión"}
+                  </Button>
                 }
+                isPending={isApprovalOperationPending}
               />
             ) : (
               <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-6 lg:px-8">
@@ -2671,7 +2912,8 @@ export default function PurchaseRequests() {
                         STATUS_COLORS[
                           getEffectivePurchaseRequestStatus(
                             detail.purchaseRequest.status,
-                            detail.purchaseRequest.approvalStatus
+                            detail.purchaseRequest.approvalStatus,
+                            detail.approvalSummary
                           )
                         ] || ""
                       }`}
@@ -2679,7 +2921,8 @@ export default function PurchaseRequests() {
                       {STATUS_LABELS[
                         getEffectivePurchaseRequestStatus(
                           detail.purchaseRequest.status,
-                          detail.purchaseRequest.approvalStatus
+                          detail.purchaseRequest.approvalStatus,
+                          detail.approvalSummary
                         )
                       ] || detail.purchaseRequest.status}
                     </Badge>
@@ -2707,18 +2950,22 @@ export default function PurchaseRequests() {
                         variant="outline"
                         className={`rounded-full px-3 py-1 text-sm ${
                           APPROVAL_STATUS_COLORS[
-                            detail.purchaseRequest.approvalStatus ?? ""
+                            getPurchaseRequestApprovalDisplayStatus(
+                              detail.purchaseRequest.approvalStatus,
+                              detail.approvalSummary
+                            )
                           ] || ""
                         }`}
                       >
                         {formatApprovalStatus(
-                          detail.purchaseRequest.approvalStatus
+                          detail.purchaseRequest.approvalStatus,
+                          detail.approvalSummary
                         )}
                       </Badge>
                     </div>
                     <p className="mt-2 text-sm text-muted-foreground">
                       {isApprovedPurchaseRequest
-                        ? `Aprobada por ${formatPurchaseRequestApprovedBy(detail)}.`
+                        ? `${isPartiallyApprovedPurchaseRequest ? "Aprobada parcialmente" : "Aprobada"} por ${formatPurchaseRequestApprovedBy(detail)}.`
                         : "Consulta abajo el historial completo de decisiones."}
                     </p>
                   </div>
@@ -2734,7 +2981,8 @@ export default function PurchaseRequests() {
                         Historial de aprobación
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        Registro de envíos, decisiones y reaperturas de esta SC.
+                          Registro de envíos, decisiones y reaperturas de esta
+                          SC.
                       </p>
                     </div>
                   </div>
@@ -2809,7 +3057,9 @@ export default function PurchaseRequests() {
                     </Label>
                     <Textarea
                       value={approvalComment}
-                      onChange={event => setApprovalComment(event.target.value)}
+                        onChange={event =>
+                          setApprovalComment(event.target.value)
+                        }
                       placeholder="Opcional si aprueba todos; obligatorio para justificar ítems no seleccionados o rechazar la solicitud"
                       rows={3}
                       className="min-h-[110px] resize-y bg-background text-sm"
@@ -2855,7 +3105,7 @@ export default function PurchaseRequests() {
                                 : "Los ítems permanecen bloqueados mientras se revisa la solicitud."
                               : canConvertSelectedPurchaseRequest
                                 ? isApprovedPurchaseRequest
-                                  ? "Solicitud aprobada y bloqueada. Se convertirán todos los ítems pendientes a la orden de compra."
+                              ? "Solicitud aprobada y bloqueada. Se convertirán los ítems aprobados pendientes a la orden de compra."
                                   : "Marca los renglones que deseas convertir a la próxima orden de compra."
                                 : "Detalle de ítems incluidos en la solicitud."}
                     </p>
@@ -2973,8 +3223,17 @@ export default function PurchaseRequests() {
                                       : false
                                 }
                                 onCheckedChange={checked =>
-                                  setApprovalSelectedItemIds(
-                                    checked ? pendingApprovalItemIds : []
+                                    setApprovalItemDecisions(
+                                      checked
+                                        ? Object.fromEntries(
+                                            pendingApprovalItemIds.map(
+                                              itemId => [
+                                                itemId,
+                                                "approve" as const,
+                                              ]
+                                            )
+                                          )
+                                        : {}
                                   )
                                 }
                                 aria-label="Seleccionar todos los ítems para aprobación"
@@ -3004,7 +3263,8 @@ export default function PurchaseRequests() {
                       {selectedItems.map((item: any) => {
                         const draft = getItemDraft(item);
                         const convertedQuantity = getConvertedQuantity(item);
-                        const requestedQuantityValue = canReviewSelectedPurchaseRequest
+                          const requestedQuantityValue =
+                            canReviewSelectedPurchaseRequest
                           ? Number(getApprovalQuantityDraft(item) || 0)
                           : Number(item.quantity ?? 0);
                         const requestedQuantity = Number.isFinite(
@@ -3033,7 +3293,9 @@ export default function PurchaseRequests() {
                               !isApprovedPurchaseRequest && (
                               <td className="p-4 align-top">
                                 <Checkbox
-                                  checked={selectedItemIds.includes(item.id)}
+                                      checked={selectedItemIds.includes(
+                                        item.id
+                                      )}
                                   disabled={!canConvertItem}
                                   onCheckedChange={checked => {
                                     setSelectedItemIds(current =>
@@ -3180,14 +3442,10 @@ export default function PurchaseRequests() {
                                     item.approvalStatus !== "pendiente"
                                   }
                                   onCheckedChange={checked =>
-                                    setApprovalSelectedItemIds(current =>
-                                      checked
-                                        ? Array.from(
-                                            new Set([...current, item.id])
-                                          )
-                                        : current.filter(
-                                            itemId => itemId !== item.id
-                                          )
+                                      updateApprovalItemDecision(
+                                        item.id,
+                                        "approve",
+                                        checked === true
                                     )
                                   }
                                   aria-label={`Aprobar ${item.itemName}`}
@@ -3401,7 +3659,9 @@ export default function PurchaseRequests() {
                         disabled={rejectMutation.isPending}
                       >
                         <XCircle className="mr-2 h-4 w-4" />
-                        {isAnnulFormOpen ? "Confirmar anulación" : "Anular SC"}
+                          {isAnnulFormOpen
+                            ? "Confirmar anulación"
+                            : "Anular SC"}
                       </Button>
                     </>
                   )}
@@ -3423,104 +3683,6 @@ export default function PurchaseRequests() {
               </div>
               </div>
             ))}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={compactApprovalDecision !== null}
-        onOpenChange={open => {
-          if (!open && !reviewApprovalMutation.isPending) {
-            setCompactApprovalDecision(null);
-            setApprovalComment("");
-          }
-        }}
-      >
-        <DialogContent className="max-w-lg rounded-2xl">
-          <DialogHeader>
-            <DialogTitle>
-              {compactApprovalDecision === "approve"
-                ? "Aprobar solicitud de compra"
-                : "Rechazar solicitud de compra"}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="rounded-xl border border-border/70 bg-muted/20 p-4 text-sm">
-              <p className="font-semibold">
-                {detail?.purchaseRequest.requestNumber ||
-                  "Solicitud de compra"}
-              </p>
-              <p className="mt-1 text-muted-foreground">
-                {compactApprovalDecision === "approve"
-                  ? `Se aprobarán ${pendingApprovalItemIds.length} ítem(s).`
-                  : "La solicitud completa será rechazada."}
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="purchase-request-approval-comment">
-                Comentario
-                {compactApprovalDecision === "reject"
-                  ? " (obligatorio)"
-                  : " (opcional)"}
-              </Label>
-              <Textarea
-                id="purchase-request-approval-comment"
-                value={approvalComment}
-                onChange={event => setApprovalComment(event.target.value)}
-                placeholder={
-                  compactApprovalDecision === "reject"
-                    ? "Explique el motivo del rechazo"
-                    : "Agregue una observación si lo necesita"
-                }
-                rows={4}
-                disabled={reviewApprovalMutation.isPending}
-              />
-              {compactApprovalDecision === "reject" ? (
-                <p className="text-xs text-muted-foreground">
-                  El motivo debe tener al menos 5 caracteres.
-                </p>
-              ) : null}
-            </div>
-            <div className="flex justify-end gap-3">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setCompactApprovalDecision(null);
-                  setApprovalComment("");
-                }}
-                disabled={reviewApprovalMutation.isPending}
-              >
-                Volver
-              </Button>
-              <Button
-                type="button"
-                variant={
-                  compactApprovalDecision === "reject"
-                    ? "destructive"
-                    : "default"
-                }
-                onClick={() => {
-                  if (!compactApprovalDecision) return;
-                  void handleReviewApproval(
-                    compactApprovalDecision,
-                    pendingApprovalItemIds
-                  );
-                }}
-                disabled={
-                  reviewApprovalMutation.isPending ||
-                  updatePendingQuantitiesMutation.isPending ||
-                  (compactApprovalDecision === "reject" &&
-                    approvalComment.trim().length < 5)
-                }
-              >
-                {reviewApprovalMutation.isPending
-                  ? "Procesando..."
-                  : compactApprovalDecision === "approve"
-                    ? "Confirmar aprobación"
-                    : "Confirmar rechazo"}
-              </Button>
-            </div>
-          </div>
         </DialogContent>
       </Dialog>
 
