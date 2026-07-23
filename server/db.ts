@@ -16480,6 +16480,16 @@ export class ProcurementAttachmentMutationError extends Error {
   }
 }
 
+export class InvoiceAttachmentReplacementError extends Error {
+  constructor(
+    public readonly reason: "not_found" | "legacy_multiple",
+    message: string
+  ) {
+    super(message);
+    this.name = "InvoiceAttachmentReplacementError";
+  }
+}
+
 const LOCKED_PURCHASE_ORDER_ATTACHMENT_STATUSES = new Set<string>([
   "pendiente_aprobacion",
   "aprobada",
@@ -16563,6 +16573,62 @@ export async function createAttachment(data: InsertAttachment) {
     .values(data)
     .returning({ id: attachments.id });
   return { id: attachment.id };
+}
+
+export async function replaceSingleInvoiceAttachment(
+  data: InsertAttachment & { entityType: "invoice" }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const [invoice] = await tx
+      .select({ id: invoices.id })
+      .from(invoices)
+      .where(eq(invoices.id, data.entityId))
+      .for("update");
+    if (!invoice) {
+      throw new InvoiceAttachmentReplacementError(
+        "not_found",
+        "Factura no encontrada"
+      );
+    }
+
+    const existingAttachments = await tx
+      .select()
+      .from(attachments)
+      .where(
+        and(
+          eq(attachments.entityType, "invoice"),
+          eq(attachments.entityId, data.entityId)
+        )
+      )
+      .orderBy(desc(attachments.createdAt));
+    if (existingAttachments.length > 1) {
+      throw new InvoiceAttachmentReplacementError(
+        "legacy_multiple",
+        "Esta factura conserva varios adjuntos históricos y no permite agregar más"
+      );
+    }
+
+    const [attachment] = await tx
+      .insert(attachments)
+      .values(data)
+      .returning({ id: attachments.id });
+    if (!attachment) throw new Error("No se pudo registrar el adjunto");
+
+    const replacedAttachment = existingAttachments[0] ?? null;
+    if (replacedAttachment) {
+      await tx
+        .delete(attachments)
+        .where(eq(attachments.id, replacedAttachment.id));
+    }
+
+    return {
+      id: attachment.id,
+      replacedAttachment,
+    };
+  });
 }
 
 export async function createProcurementDocumentAttachmentIfMutable(

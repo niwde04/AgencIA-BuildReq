@@ -47,6 +47,7 @@ type DocumentAttachmentsPanelProps = {
   canDelete?: boolean;
   className?: string;
   disabled?: boolean;
+  replaceSingleAttachment?: boolean;
   onUploadSuccess?: (result: UploadResult) => void;
   onStateChange?: (state: {
     attachments: AttachmentItem[];
@@ -67,6 +68,7 @@ export function DocumentAttachmentsPanel({
   canDelete = canManage,
   className = "",
   disabled = false,
+  replaceSingleAttachment = false,
   onUploadSuccess,
   onStateChange,
 }: DocumentAttachmentsPanelProps) {
@@ -93,7 +95,11 @@ export function DocumentAttachmentsPanel({
 
   const uploadMutation = trpc.attachments.upload.useMutation({
     onSuccess: result => {
-      toast.success("Adjunto subido");
+      toast.success(
+        replaceSingleAttachment && attachments.length === 1
+          ? "Adjunto reemplazado"
+          : "Adjunto subido"
+      );
       invalidateAttachments();
       onUploadSuccess?.(result);
     },
@@ -144,7 +150,14 @@ export function DocumentAttachmentsPanel({
   };
 
   const isBusy = processing || uploadMutation.isPending;
-  const uploadDisabled = !enabled || disabled || isBusy;
+  const preservesHistoricalAttachments =
+    replaceSingleAttachment && attachments.length > 1;
+  const uploadDisabled =
+    !enabled ||
+    disabled ||
+    isLoading ||
+    isBusy ||
+    preservesHistoricalAttachments;
 
   return (
     <section
@@ -168,11 +181,27 @@ export function DocumentAttachmentsPanel({
               disabled={uploadDisabled}
             >
               <Upload className="mr-2 h-4 w-4" />
-              {isBusy ? "Subiendo..." : "Adjuntar"}
+              {isBusy
+                ? "Subiendo..."
+                : replaceSingleAttachment && attachments.length === 1
+                  ? "Reemplazar"
+                  : "Adjuntar"}
             </Button>
           </div>
         ) : null}
       </div>
+
+      {replaceSingleAttachment && attachments.length === 1 ? (
+        <p className="text-xs text-muted-foreground">
+          Al cargar otro archivo, reemplazará el adjunto actual.
+        </p>
+      ) : null}
+      {preservesHistoricalAttachments ? (
+        <p className="text-xs text-muted-foreground">
+          Esta factura conserva varios adjuntos históricos. Se mantendrán sin
+          cambios.
+        </p>
+      ) : null}
 
       {isLoading ? (
         <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
@@ -207,7 +236,7 @@ export function DocumentAttachmentsPanel({
                     </p>
                   </div>
                 </div>
-                {canDelete ? (
+                {canDelete && !preservesHistoricalAttachments ? (
                   <Button
                     type="button"
                     variant="outline"
