@@ -136,6 +136,7 @@ import {
   isPurchaseOrderApprovalEnabled,
   isPurchaseRequestApprovalEnabled,
   PROCUREMENT_APPROVALS_DISABLED_MESSAGE,
+  PURCHASE_ORDER_APPROVED_SNAPSHOT_ACTIONS,
   DEFAULT_PROCUREMENT_APPROVAL_SETTINGS,
   purchaseOrderRequiresApproval,
   setRuntimeProcurementApprovalSettings,
@@ -9046,7 +9047,10 @@ export async function issuePurchaseOrder(params: {
           and(
             eq(procurementApprovalHistory.documentType, "purchase_order"),
             eq(procurementApprovalHistory.documentId, params.id),
-            eq(procurementApprovalHistory.action, "approved")
+            inArray(
+              procurementApprovalHistory.action,
+              PURCHASE_ORDER_APPROVED_SNAPSHOT_ACTIONS
+            )
           )
         )
         .orderBy(

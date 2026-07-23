@@ -9,6 +9,7 @@ import {
   isPurchaseRequestConversionReady,
   canFinalizePurchaseRequestLineReview,
   PROCUREMENT_APPROVALS_ENABLED,
+  PURCHASE_ORDER_APPROVED_SNAPSHOT_ACTIONS,
   purchaseOrderMeetsApprovalMinimum,
   purchaseOrderRequiresApproval,
   roundProcurementAmount,
@@ -103,6 +104,13 @@ describe("procurement approval limits", () => {
     expect(roundProcurementAmount(123.456)).toBe(123.46);
     expect(formatApprovalSnapshotAmount("123.456")).toBe("123.46");
     expect(formatApprovalSnapshotAmount(undefined)).toBe("0.00");
+  });
+
+  it("accepts full and partial approval snapshots when issuing a purchase order", () => {
+    expect(PURCHASE_ORDER_APPROVED_SNAPSHOT_ACTIONS).toEqual([
+      "approved",
+      "partially_approved",
+    ]);
   });
 
   it("requires a payment method for every CD classification", () => {

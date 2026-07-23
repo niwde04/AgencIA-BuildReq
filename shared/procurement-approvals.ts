@@ -77,6 +77,11 @@ export type ProcurementApprovalDocumentType =
   | "purchase_request"
   | "purchase_order";
 
+export const PURCHASE_ORDER_APPROVED_SNAPSHOT_ACTIONS = [
+  "approved",
+  "partially_approved",
+] as const;
+
 export type PurchaseRequestApprovalSummary = {
   totalItemCount: number;
   approvedItemCount: number;
