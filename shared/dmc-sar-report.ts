@@ -295,17 +295,6 @@ function validateInvoice(
       });
     }
   }
-  if (
-    invoice.purchaseType === "extranjera" &&
-    !invoice.dmcForeignSection
-  ) {
-    issues.push({
-      invoiceId: invoice.invoiceId,
-      invoiceNumber: invoice.invoiceNumber || invoice.invoiceDocumentNumber,
-      field: "dmcForeignSection",
-      message: "Clasifique la compra extranjera como FYDUCA o importación",
-    });
-  }
 }
 
 export function buildDmcSarReportPayload(
@@ -335,6 +324,9 @@ export function buildDmcSarReportPayload(
       ? invoice.oceResolutionNumber ?? ""
       : "";
 
+    const isUnclassifiedForeignPurchase =
+      invoice.purchaseType === "extranjera" && !invoice.dmcForeignSection;
+
     if (invoice.dmcForeignSection === "fyduca") {
       required(
         issues,
@@ -361,21 +353,26 @@ export function buildDmcSarReportPayload(
         oceNumber,
         oceResolutionNumber,
       });
-    } else if (invoice.dmcForeignSection === "importacion") {
-      required(
-        issues,
-        invoice,
-        "dmcForeignIdentification",
-        invoice.dmcForeignIdentification,
-        "Falta identificación extranjera"
-      );
-      required(
-        issues,
-        invoice,
-        "dmcDuaNumber",
-        invoice.dmcDuaNumber,
-        "Falta número DUA"
-      );
+    } else if (
+      invoice.dmcForeignSection === "importacion" ||
+      isUnclassifiedForeignPurchase
+    ) {
+      if (!isUnclassifiedForeignPurchase) {
+        required(
+          issues,
+          invoice,
+          "dmcForeignIdentification",
+          invoice.dmcForeignIdentification,
+          "Falta identificación extranjera"
+        );
+        required(
+          issues,
+          invoice,
+          "dmcDuaNumber",
+          invoice.dmcDuaNumber,
+          "Falta número DUA"
+        );
+      }
       const outside = invoice.dmcImportOutsideCentralAmerica === true;
       section52754.push({
         ...amounts,

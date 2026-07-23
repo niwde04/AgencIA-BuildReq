@@ -582,6 +582,36 @@ describe("DMC SAR 527 report mapper", () => {
     expect(roundTrip.Sheets["527-54"].Q2).toBeUndefined();
   });
 
+  it("exports an unclassified foreign purchase in 527-54 with blank foreign fields", () => {
+    const payload = buildDmcSarReportPayload([
+      sarInvoice({
+        invoiceId: 11,
+        purchaseType: "extranjera",
+        dmcForeignSection: null,
+        dmcForeignIdentification: null,
+        dmcDuaNumber: null,
+      }),
+    ]);
+
+    expect(payload.canExport).toBe(true);
+    expect(payload.issues).toEqual([]);
+    expect(payload.section52752).toHaveLength(0);
+    expect(payload.section52753).toHaveLength(0);
+    expect(payload.section52754).toHaveLength(1);
+    expect(payload.section52754[0]).toMatchObject({
+      foreignIdentification: "",
+      duaNumber: "",
+    });
+
+    const workbook = buildDmc527Workbook(XLSX, payload);
+    const roundTrip = XLSX.read(
+      XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }),
+      { type: "buffer", cellDates: true }
+    );
+    expect(roundTrip.Sheets["527-54"].A2?.v ?? "").toBe("");
+    expect(roundTrip.Sheets["527-54"].C2?.v ?? "").toBe("");
+  });
+
   it("serializes the exact DMC 527 sheet order and hides Lista", () => {
     const payload = buildDmcSarReportPayload([
       sarInvoice({
