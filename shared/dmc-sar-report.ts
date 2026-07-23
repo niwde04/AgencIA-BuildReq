@@ -16,9 +16,9 @@ type DmcAmounts = {
   exonerated18: number;
   base15: number;
   base18: number;
-  cost: number;
-  expense: number;
-  nonDeductible: number;
+  cost: number | null;
+  expense: number | null;
+  nonDeductible: number | null;
 };
 
 export type DmcSar52752Row = DmcAmounts & {
@@ -176,13 +176,29 @@ function taxAmounts(invoice: DmcReportSourceInvoice) {
 
 function destinationAmounts(invoice: DmcReportSourceInvoice) {
   const values = { cost: 0, expense: 0, nonDeductible: 0 };
+  let hasClassification = false;
+  let hasUnclassifiedAmount = false;
   for (const item of invoice.items) {
     const amount = money(item.subtotal);
-    if (item.dmcDestination === "costo") values.cost += amount;
-    else if (item.dmcDestination === "gasto") values.expense += amount;
-    else if (item.dmcDestination === "no_deducible") {
+    if (item.dmcDestination === "costo") {
+      hasClassification = true;
+      values.cost += amount;
+    } else if (item.dmcDestination === "gasto") {
+      hasClassification = true;
+      values.expense += amount;
+    } else if (item.dmcDestination === "no_deducible") {
+      hasClassification = true;
       values.nonDeductible += amount;
+    } else if (Math.abs(amount) > 0) {
+      hasUnclassifiedAmount = true;
     }
+  }
+  if (!hasClassification || hasUnclassifiedAmount) {
+    return {
+      cost: null,
+      expense: null,
+      nonDeductible: null,
+    };
   }
   return {
     cost: money(values.cost),
@@ -241,16 +257,6 @@ function validateInvoice(
       message: "La plantilla DMC 527 no puede representar ISV 4%",
     });
   }
-  invoice.items.forEach((item, index) => {
-    if (money(item.subtotal) > 0 && !item.dmcDestination) {
-      issues.push({
-        invoiceId: invoice.invoiceId,
-        invoiceNumber: invoice.invoiceNumber || invoice.invoiceDocumentNumber,
-        field: `items.${index}.dmcDestination`,
-        message: `Clasifique “${item.itemName}” como costo, gasto o no deducible`,
-      });
-    }
-  });
   if (invoice.hasOceExemption) {
     required(issues, invoice, "oceNumber", invoice.oceNumber, "Falta número OCE");
     required(

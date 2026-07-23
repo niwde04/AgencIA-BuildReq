@@ -474,7 +474,7 @@ describe("DMC SAR 527 report mapper", () => {
     expect(payload.canExport).toBe(false);
   });
 
-  it("blocks ISV 4% and missing DMC line classification", () => {
+  it("blocks ISV 4% but does not require DMC line classification", () => {
     const payload = buildDmcSarReportPayload([
       sarInvoice({
         invoiceId: 6,
@@ -508,11 +508,78 @@ describe("DMC SAR 527 report mapper", () => {
 
     expect(payload.canExport).toBe(false);
     expect(payload.issues.map(issue => issue.message)).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("ISV 4%"),
-        expect.stringContaining("Clasifique"),
-      ])
+      expect.arrayContaining([expect.stringContaining("ISV 4%")])
     );
+    expect(payload.issues.map(issue => issue.message)).not.toEqual(
+      expect.arrayContaining([expect.stringContaining("Clasifique")])
+    );
+    expect(payload.section52752[0]).toMatchObject({
+      cost: null,
+      expense: null,
+      nonDeductible: null,
+    });
+  });
+
+  it("exports blank cost, expense, and non-deductible columns without classification", () => {
+    const unclassifiedItem = (id: number) => ({
+      id,
+      itemName: "Compra sin clasificación DMC",
+      taxCode: "isv_15",
+      subtotal: "100.0000",
+      taxAmount: "15.0000",
+      total: "115.0000",
+      taxBreakdown: [],
+      dmcDestination: null,
+    });
+    const payload = buildDmcSarReportPayload([
+      sarInvoice({
+        invoiceId: 8,
+        items: [unclassifiedItem(8)],
+      }),
+      sarInvoice({
+        invoiceId: 9,
+        dmcForeignSection: "fyduca",
+        dmcForeignIdentification: "ID-FY-009",
+        dmcFyducaNumber: "FY-009",
+        items: [unclassifiedItem(9)],
+      }),
+      sarInvoice({
+        invoiceId: 10,
+        dmcForeignSection: "importacion",
+        dmcForeignIdentification: "ID-IMP-010",
+        dmcDuaNumber: "DUA-010",
+        items: [unclassifiedItem(10)],
+      }),
+    ]);
+
+    expect(payload.canExport).toBe(true);
+    expect(payload.issues).toEqual([]);
+    for (const row of [
+      payload.section52752[0],
+      payload.section52753[0],
+      payload.section52754[0],
+    ]) {
+      expect(row).toMatchObject({
+        cost: null,
+        expense: null,
+        nonDeductible: null,
+      });
+    }
+
+    const workbook = buildDmc527Workbook(XLSX, payload);
+    const roundTrip = XLSX.read(
+      XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }),
+      { type: "buffer", cellDates: true }
+    );
+    expect(roundTrip.Sheets["527-52"].O2).toBeUndefined();
+    expect(roundTrip.Sheets["527-52"].P2).toBeUndefined();
+    expect(roundTrip.Sheets["527-52"].Q2).toBeUndefined();
+    expect(roundTrip.Sheets["527-53"].N2).toBeUndefined();
+    expect(roundTrip.Sheets["527-53"].O2).toBeUndefined();
+    expect(roundTrip.Sheets["527-53"].P2).toBeUndefined();
+    expect(roundTrip.Sheets["527-54"].O2).toBeUndefined();
+    expect(roundTrip.Sheets["527-54"].P2).toBeUndefined();
+    expect(roundTrip.Sheets["527-54"].Q2).toBeUndefined();
   });
 
   it("serializes the exact DMC 527 sheet order and hides Lista", () => {
