@@ -4962,7 +4962,7 @@ export default function OrdenesCompra() {
                     icon: "date",
                   },
                   {
-                    label: "Total",
+                    label: "Total con impuestos",
                     value: formatPurchaseOrderCurrency(
                       orderTotal,
                       orderCurrency
@@ -5023,16 +5023,40 @@ export default function OrdenesCompra() {
                                   )}
                                 </dd>
                               </div>
-                              <div className="col-span-2 flex items-center justify-between border-t border-border/70 pt-2">
-                                <dt className="text-xs font-semibold text-muted-foreground">
-                                  Subtotal
-                                </dt>
-                                <dd className="font-semibold">
-                                  {formatPurchaseOrderCurrency(
-                                    lineAmounts.subtotal,
-                                    orderCurrency
-                                  )}
-                                </dd>
+                              <div className="col-span-2 grid grid-cols-3 gap-2 border-t border-border/70 pt-2">
+                                <div>
+                                  <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Subtotal
+                                  </dt>
+                                  <dd className="mt-1 font-medium">
+                                    {formatPurchaseOrderCurrency(
+                                      lineAmounts.subtotal,
+                                      orderCurrency
+                                    )}
+                                  </dd>
+                                </div>
+                                <div className="text-right">
+                                  <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Impuesto
+                                  </dt>
+                                  <dd className="mt-1 font-medium">
+                                    {formatPurchaseOrderCurrency(
+                                      lineAmounts.taxAmount,
+                                      orderCurrency
+                                    )}
+                                  </dd>
+                                </div>
+                                <div className="text-right">
+                                  <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Total línea
+                                  </dt>
+                                  <dd className="mt-1 font-semibold text-blue-600">
+                                    {formatPurchaseOrderCurrency(
+                                      lineAmounts.total,
+                                      orderCurrency
+                                    )}
+                                  </dd>
+                                </div>
                               </div>
                             </dl>
                             <div className="grid grid-cols-2 gap-2 border-t border-border/70 pt-3">
@@ -5103,7 +5127,9 @@ export default function OrdenesCompra() {
                           <th className="px-4 py-3 text-right">
                             Precio unitario
                           </th>
-                          <th className="px-4 py-3 text-right">Subtotal</th>
+                          <th className="px-4 py-3 text-right">
+                            Total línea
+                          </th>
                           <th className="px-3 py-3 text-center">Aprobar</th>
                           <th className="px-3 py-3 text-center">Rechazar</th>
                         </tr>
@@ -5143,11 +5169,25 @@ export default function OrdenesCompra() {
                                   orderCurrency
                                 )}
                               </td>
-                              <td className="px-4 py-3 text-right font-semibold">
-                                {formatPurchaseOrderCurrency(
-                                  lineAmounts.subtotal,
-                                  orderCurrency
-                                )}
+                              <td className="min-w-[170px] px-4 py-3 text-right">
+                                <div className="text-xs text-muted-foreground">
+                                  Base{" "}
+                                  {formatPurchaseOrderCurrency(
+                                    lineAmounts.subtotal,
+                                    orderCurrency
+                                  )}{" "}
+                                  + impuesto{" "}
+                                  {formatPurchaseOrderCurrency(
+                                    lineAmounts.taxAmount,
+                                    orderCurrency
+                                  )}
+                                </div>
+                                <div className="mt-1 font-semibold text-blue-600">
+                                  {formatPurchaseOrderCurrency(
+                                    lineAmounts.total,
+                                    orderCurrency
+                                  )}
+                                </div>
                               </td>
                               <td className="px-3 py-3 text-center">
                                 <Checkbox
@@ -5187,6 +5227,32 @@ export default function OrdenesCompra() {
                           );
                         })}
                       </tbody>
+                      <tfoot className="border-t border-border bg-muted/20">
+                        <tr>
+                          <td
+                            colSpan={4}
+                            className="px-4 py-3 text-right text-xs text-muted-foreground"
+                          >
+                            Subtotal{" "}
+                            {formatPurchaseOrderCurrency(
+                              pricingSummary.subtotal,
+                              orderCurrency
+                            )}{" "}
+                            · Impuestos{" "}
+                            {formatPurchaseOrderCurrency(
+                              pricingSummary.totalIsv,
+                              orderCurrency
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right font-bold text-blue-600">
+                            {formatPurchaseOrderCurrency(
+                              pricingSummary.total,
+                              orderCurrency
+                            )}
+                          </td>
+                          <td colSpan={2} />
+                        </tr>
+                      </tfoot>
                     </table>
                   </>
                 }
