@@ -917,6 +917,16 @@ function getTransferDestinationLabel(transferDetail: any, fallback: string) {
 
 function getTransferOriginLabel(transferDetail: any, fallback: string) {
   if (!transferDetail?.transferRequest) return fallback;
+  const labels = Array.from(
+    new Set<string>([
+      ...(transferDetail.sourceProjects || []).map((project: any) =>
+        formatProjectReference(project, fallback)
+      ),
+      ...(transferDetail.hasUnclassifiedSource ? ["Por clasificar"] : []),
+    ].filter(Boolean))
+  );
+  if (labels.length === 1) return labels[0];
+  if (labels.length > 1) return "Varios proyectos";
   return transferDetail.project
     ? formatProjectReference(transferDetail.project, fallback)
     : transferDetail.transferRequest.projectId
@@ -1453,7 +1463,9 @@ export default function Recepciones() {
     }
 
     const originProjectId = Number(
-      transferDetail?.transferRequest?.projectId ?? 0
+      item?.sourceProjectId ??
+        transferDetail?.transferRequest?.projectId ??
+        0
     );
     const destinationProjectId = Number(selectedReceiptProjectId ?? 0);
     if (

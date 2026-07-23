@@ -120,6 +120,38 @@ function getTransferSourceWarehouseSummary(detail: any) {
   return getWarehouseLabel(detail?.originWarehouse);
 }
 
+function getTransferSourceProjectSummary(detail: any) {
+  const labels = Array.from(
+    new Set<string>([
+      ...(detail?.sourceProjects || []).map((project: any) =>
+        [project?.code, project?.name].filter(Boolean).join(" — ")
+      ),
+      ...(detail?.hasUnclassifiedSource ? ["Por clasificar"] : []),
+    ].filter(Boolean))
+  );
+
+  if (labels.length === 1) return labels[0];
+  if (labels.length > 1) return "Varios proyectos";
+  if (detail?.project) {
+    return [detail.project.code, detail.project.name]
+      .filter(Boolean)
+      .join(" — ");
+  }
+  return detail?.transferRequest?.projectId
+    ? `Proyecto ${detail.transferRequest.projectId}`
+    : "-";
+}
+
+function getTransferItemSourceLabel(item: any) {
+  const projectLabel = item?.sourceProject
+    ? [item.sourceProject.code, item.sourceProject.name]
+        .filter(Boolean)
+        .join(" — ")
+    : "Por clasificar";
+  const warehouseLabel = getWarehouseLabel(item?.sourceWarehouse);
+  return `${projectLabel} / ${warehouseLabel}`;
+}
+
 function getTransferItemTargetLabel(item: any) {
   return item?.targetLabel || item?.target?.label || "-";
 }
@@ -239,11 +271,7 @@ export default function Transfers() {
 
     const transfer = detail.transfer;
     const transferRequest = detail.transferRequest;
-    const originProjectLabel = detail.project
-      ? `${detail.project.code} ${detail.project.name}`
-      : transferRequest?.projectId
-        ? `Proyecto ${transferRequest.projectId}`
-        : "-";
+    const originProjectLabel = getTransferSourceProjectSummary(detail);
     const originWarehouseLabel = getTransferSourceWarehouseSummary(detail);
     const destinationLabel = getDestinationLabel(detail) || "-";
     const destinationWarehouseLabel =
@@ -283,7 +311,7 @@ export default function Transfers() {
           <tr>
             <td>${escapeHtml(item.sapItemCode || "-")}</td>
             <td>${escapeHtml(item.itemName || "-")}</td>
-            <td>${escapeHtml(getWarehouseLabel(item.sourceWarehouse))}</td>
+            <td>${escapeHtml(getTransferItemSourceLabel(item))}</td>
             <td>${escapeHtml(getTransferItemTargetLabel(item))}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantity))}</td>
             <td class="center">${escapeHtml(item.unit || "-")}</td>
@@ -488,7 +516,7 @@ export default function Transfers() {
                 <tr>
                   <th style="width: 14%;">Código/No. Serie</th>
                   <th style="width: 19%;">Identificador</th>
-                  <th style="width: 14%;">Almacén origen</th>
+                  <th style="width: 14%;">Proyecto / almacén origen</th>
                   <th style="width: 18%;">Subproyecto / activo fijo</th>
                   <th style="width: 9%;" class="numeric">Cantidad</th>
                   <th style="width: 8%;" class="center">U Medida</th>
@@ -606,7 +634,7 @@ export default function Transfers() {
                       <td className="p-3 font-medium">{row.transfer.transferNumber}</td>
                       <td className="p-3 text-xs">{row.transferRequest?.requestNumber || "—"}</td>
                       <td className="p-3 text-xs">
-                        {row.project ? `${row.project.code} — ${row.project.name}` : "—"}
+                        {getTransferSourceProjectSummary(row)}
                       </td>
                       <td className="p-3 text-xs">{row.transfer.remissionGuideNumber || "—"}</td>
                       <td className="p-3 text-xs font-mono">{row.transfer.sapCorrelative || "—"}</td>
@@ -670,7 +698,7 @@ export default function Transfers() {
                     Proyecto origen
                   </p>
                   <p className="mt-2 text-sm font-medium">
-                    {detail.project ? `${detail.project.code} — ${detail.project.name}` : "-"}
+                    {getTransferSourceProjectSummary(detail)}
                   </p>
                 </div>
                 <div className="rounded-lg border border-border p-4">
@@ -748,7 +776,7 @@ export default function Transfers() {
                         Ítem
                       </th>
                       <th className="w-56 p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Bodega origen
+                        Proyecto / almacén origen
                       </th>
                       <th className="w-56 p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Subproyecto / activo fijo
@@ -776,7 +804,7 @@ export default function Transfers() {
                           <td className="p-3">{item.itemName}</td>
                           <td className="p-3">
                             <p className="max-w-[220px] truncate text-xs font-medium">
-                              {getWarehouseLabel(item.sourceWarehouse)}
+                              {getTransferItemSourceLabel(item)}
                             </p>
                           </td>
                           <td className="p-3">

@@ -26,6 +26,7 @@ import {
   requestItems,
   suppliers,
   supplyFlowRecords,
+  transferRequestItems,
   transferRequests,
   transfers,
   users,
@@ -672,7 +673,23 @@ export async function listTransfersPage(filters: TransferPageFilters) {
       sql`${transfers.status}::text in ('confirmado', 'en_transito', 'parcialmente_recibido')`
     );
   if (filters.sourceProjectId)
-    conditions.push(eq(transferRequests.projectId, filters.sourceProjectId));
+    conditions.push(
+      or(
+        eq(transferRequests.projectId, filters.sourceProjectId),
+        inArray(
+          transferRequests.id,
+          database
+            .select({ id: transferRequestItems.transferRequestId })
+            .from(transferRequestItems)
+            .where(
+              eq(
+                transferRequestItems.sourceProjectId,
+                filters.sourceProjectId
+              )
+            )
+        )
+      )!
+    );
   if (filters.destinationProjectId)
     conditions.push(
       eq(transferRequests.destinationProjectId, filters.destinationProjectId)
@@ -682,7 +699,19 @@ export async function listTransfersPage(filters: TransferPageFilters) {
       filters.projectIds.length > 0
         ? or(
             inArray(transferRequests.projectId, filters.projectIds),
-            inArray(transferRequests.destinationProjectId, filters.projectIds)
+            inArray(transferRequests.destinationProjectId, filters.projectIds),
+            inArray(
+              transferRequests.id,
+              database
+                .select({ id: transferRequestItems.transferRequestId })
+                .from(transferRequestItems)
+                .where(
+                  inArray(
+                    transferRequestItems.sourceProjectId,
+                    filters.projectIds
+                  )
+                )
+            )
           )!
         : sql`false`
     );

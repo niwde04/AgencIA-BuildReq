@@ -1025,22 +1025,6 @@ export default function TransferRequests() {
       toast.error("Debe enviar al menos una cantidad mayor que cero");
       return;
     }
-    const sourceOriginKeys = Array.from(
-      new Set(
-        validItems
-          .filter((item: TransferConversionItem) => Number(item.quantity) > 0)
-          .map((item: TransferConversionItem) =>
-            typeof item.sourceProjectId === "number"
-              ? `project:${item.sourceProjectId}`
-              : CENTRAL_SOURCE_PROJECT_KEY
-          )
-      )
-    );
-    if (sourceOriginKeys.length > 1) {
-      toast.error("Seleccione bodegas origen del mismo proyecto para convertir esta solicitud");
-      return;
-    }
-
     convertMutation.mutate({
       id: detail.transferRequest.id,
       items: validItems,

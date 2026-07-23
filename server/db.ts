@@ -9993,25 +9993,24 @@ export async function createTransferFromRequest(
         )
     )
   );
-  if (positiveSourceOrigins.length !== 1) {
-    throw new Error(
-      "Seleccione bodegas origen del mismo proyecto para convertir esta solicitud"
-    );
-  }
+  const hasMultipleSourceProjects = positiveSourceOrigins.length > 1;
   const selectedSourceOrigin = positiveSourceOrigins[0];
   const selectedSourceProjectId =
-    selectedSourceOrigin === "project:unclassified"
-      ? null
-      : Number(selectedSourceOrigin.replace("project:", ""));
+    !hasMultipleSourceProjects &&
+    selectedSourceOrigin !== "project:unclassified"
+      ? Number(selectedSourceOrigin.replace("project:", ""))
+      : null;
   const documentProjectId =
     selectedSourceProjectId ?? detail.transferRequest.projectId;
-  const sourceProject = selectedSourceProjectId
-    ? await getProjectById(selectedSourceProjectId)
-    : null;
-  const sourceProjectLabel =
-    selectedSourceProjectId === null
-      ? "Por clasificar"
-      : (sourceProject?.code ?? selectedSourceProjectId);
+  const sourceProjectLabels = await Promise.all(
+    positiveSourceOrigins.map(async sourceOrigin => {
+      if (sourceOrigin === "project:unclassified") return "Por clasificar";
+      const sourceProjectId = Number(sourceOrigin.replace("project:", ""));
+      const sourceProject = await getProjectById(sourceProjectId);
+      return String(sourceProject?.code ?? sourceProjectId);
+    })
+  );
+  const sourceProjectLabel = sourceProjectLabels.join(", ");
 
   const affectedRequestIds = new Set<number>();
 
@@ -10213,7 +10212,23 @@ export async function listTransfers(filters?: {
     );
   }
   if (filters?.sourceProjectId) {
-    conditions.push(eq(transferRequests.projectId, filters.sourceProjectId));
+    conditions.push(
+      or(
+        eq(transferRequests.projectId, filters.sourceProjectId),
+        inArray(
+          transferRequests.id,
+          db
+            .select({ id: transferRequestItems.transferRequestId })
+            .from(transferRequestItems)
+            .where(
+              eq(
+                transferRequestItems.sourceProjectId,
+                filters.sourceProjectId
+              )
+            )
+        )
+      )!
+    );
   }
   if (filters?.destinationProjectId) {
     conditions.push(
@@ -10227,7 +10242,19 @@ export async function listTransfers(filters?: {
       conditions.push(
         or(
           inArray(transferRequests.projectId, filters.projectIds),
-          inArray(transferRequests.destinationProjectId, filters.projectIds)
+          inArray(transferRequests.destinationProjectId, filters.projectIds),
+          inArray(
+            transferRequests.id,
+            db
+              .select({ id: transferRequestItems.transferRequestId })
+              .from(transferRequestItems)
+              .where(
+                inArray(
+                  transferRequestItems.sourceProjectId,
+                  filters.projectIds
+                )
+              )
+          )
         )!
       );
     }
@@ -10270,9 +10297,72 @@ export async function listTransfers(filters?: {
   const destinationProjectsById = new Map(
     destinationRows.map(project => [project.id, project])
   );
+  const transferRequestIds = rows
+    .map(row => row.transferRequest?.id)
+    .filter((value): value is number => typeof value === "number");
+  const sourceProjectAlias = alias(projects, "transfer_list_source_projects");
+  const sourceProjectRows =
+    transferRequestIds.length > 0
+      ? await db
+          .select({
+            transferRequestId: transferRequestItems.transferRequestId,
+            sourceProjectId: transferRequestItems.sourceProjectId,
+            sourceProject: sourceProjectAlias,
+          })
+          .from(transferRequestItems)
+          .leftJoin(
+            sourceProjectAlias,
+            eq(transferRequestItems.sourceProjectId, sourceProjectAlias.id)
+          )
+          .where(
+            inArray(
+              transferRequestItems.transferRequestId,
+              transferRequestIds
+            )
+          )
+      : [];
+  const sourceProjectMetadataByRequestId = new Map<
+    number,
+    {
+      sourceProjects: Array<(typeof sourceProjectRows)[number]["sourceProject"]>;
+      hasUnclassifiedSource: boolean;
+    }
+  >();
+  for (const sourceRow of sourceProjectRows) {
+    const metadata = sourceProjectMetadataByRequestId.get(
+      sourceRow.transferRequestId
+    ) ?? {
+      sourceProjects: [],
+      hasUnclassifiedSource: false,
+    };
+    if (sourceRow.sourceProject) {
+      if (
+        !metadata.sourceProjects.some(
+          project => project?.id === sourceRow.sourceProject?.id
+        )
+      ) {
+        metadata.sourceProjects.push(sourceRow.sourceProject);
+      }
+    } else if (sourceRow.sourceProjectId === null) {
+      metadata.hasUnclassifiedSource = true;
+    }
+    sourceProjectMetadataByRequestId.set(
+      sourceRow.transferRequestId,
+      metadata
+    );
+  }
 
   return rows.map(row => ({
     ...row,
+    ...(row.transferRequest?.id
+      ? (sourceProjectMetadataByRequestId.get(row.transferRequest.id) ?? {
+          sourceProjects: [],
+          hasUnclassifiedSource: false,
+        })
+      : {
+          sourceProjects: [],
+          hasUnclassifiedSource: false,
+        }),
     destinationProject:
       row.transferRequest?.destinationType === "proyecto" &&
       row.transferRequest.destinationProjectId
@@ -10347,6 +10437,23 @@ export async function getTransferById(id: number) {
         rows[0].transferRequest?.id ?? 0
       )
     );
+  const sourceProjectIds = Array.from(
+    new Set(
+      transferItems
+        .map(item => item.sourceProjectId)
+        .filter((value): value is number => typeof value === "number")
+    )
+  );
+  const sourceProjectRows =
+    sourceProjectIds.length > 0
+      ? await db
+          .select()
+          .from(projects)
+          .where(inArray(projects.id, sourceProjectIds))
+      : [];
+  const sourceProjectsById = new Map(
+    sourceProjectRows.map(sourceProject => [sourceProject.id, sourceProject])
+  );
   const items = await Promise.all(
     transferItems.map(async item => {
       const [requestItemTarget] = item.materialRequestItemId
@@ -10372,6 +10479,10 @@ export async function getTransferById(id: number) {
 
       return {
         ...item,
+        sourceProject:
+          typeof item.sourceProjectId === "number"
+            ? (sourceProjectsById.get(item.sourceProjectId) ?? null)
+            : null,
         sourceWarehouse: item.sourceWarehouseId
           ? ((await getWarehouseById(item.sourceWarehouseId)) ?? null)
           : null,
@@ -10392,6 +10503,10 @@ export async function getTransferById(id: number) {
 
   return {
     ...rows[0],
+    sourceProjects: sourceProjectRows,
+    hasUnclassifiedSource: transferItems.some(
+      item => item.sourceProjectId === null
+    ),
     originWarehouse: originProject?.warehouse ?? null,
     destinationProject,
     destinationWarehouse:

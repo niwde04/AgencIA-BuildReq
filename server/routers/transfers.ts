@@ -26,7 +26,8 @@ function assertProjectScopedAccess(
     assignedProjectId?: number | null;
     assignedProjectIds?: number[] | null;
   },
-  transferRequest: { projectId: number; destinationProjectId?: number | null } | null
+  transferRequest: { projectId: number; destinationProjectId?: number | null } | null,
+  items?: Array<{ sourceProjectId?: number | null }>
 ) {
   if (user.role === "admin") return;
   if (
@@ -38,7 +39,10 @@ function assertProjectScopedAccess(
   if (
     !transferRequest ||
     (!canAccessProject(user, transferRequest.projectId) &&
-      !canAccessProject(user, transferRequest.destinationProjectId))
+      !canAccessProject(user, transferRequest.destinationProjectId) &&
+      !(items ?? []).some(item =>
+        canAccessProject(user, item.sourceProjectId)
+      ))
   ) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -117,7 +121,11 @@ export const transfersRouter = router({
           message: "Traslado no encontrado",
         });
       }
-      assertProjectScopedAccess(ctx.user, detail.transferRequest);
+      assertProjectScopedAccess(
+        ctx.user,
+        detail.transferRequest,
+        detail.items
+      );
       return detail;
     }),
 
@@ -144,7 +152,11 @@ export const transfersRouter = router({
           message: "Traslado no encontrado",
         });
       }
-      assertProjectScopedAccess(ctx.user, detail.transferRequest);
+      assertProjectScopedAccess(
+        ctx.user,
+        detail.transferRequest,
+        detail.items
+      );
 
       return db.updateTransferPrintFields(input.id, {
         preparedByName: input.preparedByName,

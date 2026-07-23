@@ -1375,9 +1375,13 @@ export const receiptsRouter = router({
             requestedQuantity > 0 &&
             sourceItem.sourceWarehouseId &&
             item.warehouseId === Number(sourceItem.sourceWarehouseId) &&
-            (!detail.transferRequest?.projectId ||
+            (!(sourceItem.sourceProjectId ??
+              detail.transferRequest?.projectId) ||
               !destinationProjectId ||
-              Number(detail.transferRequest.projectId) ===
+              Number(
+                sourceItem.sourceProjectId ??
+                  detail.transferRequest?.projectId
+              ) ===
                 Number(destinationProjectId))
           ) {
             throw new TRPCError({

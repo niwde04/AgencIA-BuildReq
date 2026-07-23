@@ -18543,6 +18543,61 @@ describe("BuildReq - Transfer Requests", () => {
     createTransferFromRequestSpy.mockRestore();
   });
 
+  it("convertToTransfer accepts items from multiple source projects", async () => {
+    const { ctx } = createBodegaContext();
+    const caller = appRouter.createCaller(ctx);
+    const getTransferRequestByIdSpy = vi
+      .spyOn(db, "getTransferRequestById")
+      .mockResolvedValue({
+        transferRequest: {
+          id: 8,
+          requestNumber: "ST-2026-0003",
+          projectId: 4,
+          destinationProjectId: 2,
+          status: "pendiente",
+        },
+        items: [
+          { id: 51, materialRequestItemId: 31, quantity: "3.00" },
+          { id: 52, materialRequestItemId: 32, quantity: "4.00" },
+        ],
+      } as any);
+    const createTransferFromRequestSpy = vi
+      .spyOn(db, "createTransferFromRequest")
+      .mockResolvedValue({
+        id: 46,
+        transferNumber: "TR-2026-0003",
+        guideNumber: "GR-2026-0003",
+        sapCorrelative: "SAP-GR-2026-0003",
+      } as any);
+    const items = [
+      {
+        transferRequestItemId: 51,
+        quantity: "3.00",
+        sourceProjectId: 4,
+        sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+      },
+      {
+        transferRequestItemId: 52,
+        quantity: "4.00",
+        sourceProjectId: 6,
+        sourceWarehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+      },
+    ];
+
+    await expect(
+      caller.transferRequests.convertToTransfer({ id: 8, items })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 46,
+        transferNumber: "TR-2026-0003",
+      })
+    );
+    expect(createTransferFromRequestSpy).toHaveBeenCalledWith(8, 3, items);
+
+    getTransferRequestByIdSpy.mockRestore();
+    createTransferFromRequestSpy.mockRestore();
+  });
+
   it("Bodeguero de Proyecto cannot convert transfer requests from another project", async () => {
     const { ctx } = createProjectBodegueroContext({ assignedProjectId: 1 });
     const caller = appRouter.createCaller(ctx);
