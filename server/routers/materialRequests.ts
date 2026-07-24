@@ -654,6 +654,25 @@ export const materialRequestsRouter = router({
       return result;
     }),
 
+  itemsPreview: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .query(async ({ ctx, input }) => {
+      const result = await db.getMaterialRequestItemsPreview(input.id);
+      if (!result) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Requisición no encontrada",
+        });
+      }
+      if (!canAccessRequest(ctx.user, result.request)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a esta solicitud",
+        });
+      }
+      return result;
+    }),
+
   create: protectedProcedure
     .input(createMaterialRequestInput)
     .mutation(async ({ ctx, input }) => {

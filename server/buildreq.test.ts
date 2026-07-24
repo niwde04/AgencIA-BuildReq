@@ -3932,6 +3932,45 @@ describe("BuildReq - Role-based Access Control", () => {
     syncMaterialRequestFulfillmentStatusSpy.mockRestore();
   });
 
+  it("Superintendente can preview requisition items without loading the full detail", async () => {
+    const { ctx } = createSuperintendentContext({
+      assignedProjectId: 1,
+      assignedProjectIds: [1],
+    });
+    const caller = appRouter.createCaller(ctx);
+    const itemsPreview = {
+      request: {
+        id: 22,
+        requestedById: 99,
+        projectId: 1,
+        status: "en_proceso",
+      },
+      items: [
+        {
+          id: 101,
+          sapItemCode: "090503534",
+          fixedAssetSapItemCode: null,
+          itemName: "Taller de mecánica",
+          sapItemDescription: "Taller de mecánica",
+          quantity: "1.00",
+          unit: "unidad",
+        },
+      ],
+    };
+    const getMaterialRequestItemsPreviewSpy = vi
+      .spyOn(db, "getMaterialRequestItemsPreview")
+      .mockResolvedValue(itemsPreview as any);
+    const getMaterialRequestByIdSpy = vi.spyOn(db, "getMaterialRequestById");
+
+    await expect(
+      caller.materialRequests.itemsPreview({ id: 22 })
+    ).resolves.toEqual(itemsPreview);
+    expect(getMaterialRequestByIdSpy).not.toHaveBeenCalled();
+
+    getMaterialRequestItemsPreviewSpy.mockRestore();
+    getMaterialRequestByIdSpy.mockRestore();
+  });
+
   it("Superintendente cannot mutate requisitions", async () => {
     const { ctx } = createSuperintendentContext();
     const caller = appRouter.createCaller(ctx);

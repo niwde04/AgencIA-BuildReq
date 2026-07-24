@@ -84,3 +84,76 @@ describe("pagination index migration", () => {
     );
   });
 });
+
+describe("article search in operational document lists", () => {
+  const source = readFileSync(
+    new URL("./paginatedLists.ts", import.meta.url),
+    "utf8"
+  );
+
+  function functionBody(start: string, end?: string) {
+    const startIndex = source.indexOf(start);
+    const endIndex = end ? source.indexOf(end, startIndex + start.length) : -1;
+    return source.slice(startIndex, endIndex >= 0 ? endIndex : undefined);
+  }
+
+  it.each([
+    [
+      "requisitions",
+      functionBody(
+        "export async function listMaterialRequestsPage",
+        "export type SupplyFlowPageFilters"
+      ),
+      [
+        "requestItems.itemName",
+        "requestItems.sapItemCode",
+        "requestItems.sapItemDescription",
+      ],
+    ],
+    [
+      "purchase requests",
+      functionBody(
+        "export async function listPurchaseRequestsPage",
+        "export type PurchaseOrderPageFilters"
+      ),
+      [
+        "purchaseRequestItems.itemName",
+        "purchaseRequestItems.currentSapItemCode",
+        "purchaseRequestItems.originalSapItemCode",
+      ],
+    ],
+    [
+      "purchase orders",
+      functionBody(
+        "export async function listPurchaseOrdersPage",
+        "export type TransferRequestPageFilters"
+      ),
+      [
+        "purchaseOrderItems.itemName",
+        "purchaseOrderItems.currentSapItemCode",
+        "purchaseOrderItems.originalSapItemCode",
+      ],
+    ],
+    [
+      "receipts",
+      functionBody(
+        "export async function listReceiptsPage",
+        "export type InvoicePageFilters"
+      ),
+      ["receiptItems.itemName", "receiptItems.sapItemCode"],
+    ],
+    [
+      "invoices",
+      functionBody("export async function listInvoicesPage"),
+      [
+        "invoiceItems.itemName",
+        "invoiceItems.currentSapItemCode",
+        "invoiceItems.originalSapItemCode",
+      ],
+    ],
+  ])("matches code and description for %s", (_name, body, fields) => {
+    for (const field of fields) {
+      expect(body).toContain(`ilike(${field}, pattern)`);
+    }
+  });
+});

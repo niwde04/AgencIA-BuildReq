@@ -13,6 +13,11 @@ import {
   getPrintableRetentionConcepts,
 } from "@/lib/retention-print";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
+import {
+  DocumentItemsAccordionPanel,
+  DocumentItemsAccordionTrigger,
+} from "@/components/DocumentItemsAccordion";
+import { DocumentNumberButton } from "@/components/DocumentNumberButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -1337,6 +1342,7 @@ export default function Facturas() {
     userRole === "administrador_proyecto";
   const canReviewInvoices = canEditInvoices;
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [expandedItemsId, setExpandedItemsId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
@@ -1461,6 +1467,14 @@ export default function Facturas() {
       { id: selectedId ?? 0 },
       { enabled: selectedId !== null }
     );
+  const {
+    data: expandedItemsDetail,
+    isLoading: isLoadingExpandedItems,
+    error: expandedItemsError,
+  } = trpc.invoices.getById.useQuery(
+    { id: expandedItemsId ?? 0 },
+    { enabled: expandedItemsId !== null }
+  );
   const selectedInvoiceCurrency: PurchaseCurrency =
     detail?.invoice.currency ?? "HNL";
   const formatSelectedInvoiceCurrency = (
@@ -3431,7 +3445,7 @@ export default function Facturas() {
           <Input
             value={searchTerm}
             onChange={event => setSearchTerm(event.target.value)}
-            placeholder="Buscar por factura, OC, recepción, REQ, requiriente, creador, proveedor o proyecto..."
+            placeholder="Buscar por factura, OC, recepción, REQ, artículo, requiriente, creador, proveedor o proyecto..."
             className="h-10 pl-9"
           />
         </div>
@@ -3498,11 +3512,14 @@ export default function Facturas() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1750px] text-sm">
+              <table className="w-full min-w-[1870px] text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/30">
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Documento
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Artículos
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Proveedor
@@ -3542,20 +3559,38 @@ export default function Facturas() {
                 <tbody>
                   {filteredInvoices.map((row: any) => {
                     const statusNote = getInvoiceStatusNote(row.invoice);
+                    const itemsExpanded =
+                      expandedItemsId === row.invoice.id;
 
                     return (
-                      <tr
-                        key={row.invoice.id}
-                        className="border-b border-border last:border-0"
-                      >
+                      <Fragment key={row.invoice.id}>
+                        <tr className="border-b border-border last:border-0">
                         <td className="p-3">
-                          <div className="font-semibold">
+                          <DocumentNumberButton
+                            onClick={() => setSelectedId(row.invoice.id)}
+                            ariaLabel={`Abrir ${row.invoice.invoiceDocumentNumber}`}
+                          >
                             {row.invoice.invoiceDocumentNumber}
-                          </div>
+                          </DocumentNumberButton>
                           <div className="text-xs text-muted-foreground">
                             {row.invoice.invoiceNumber ||
                               "Documento sin número"}
-                          </div>
+                            </div>
+                        </td>
+                        <td className="p-3">
+                          <DocumentItemsAccordionTrigger
+                            expanded={itemsExpanded}
+                            count={
+                              itemsExpanded
+                                ? expandedItemsDetail?.items?.length
+                                : undefined
+                            }
+                            onToggle={() =>
+                              setExpandedItemsId(
+                                itemsExpanded ? null : row.invoice.id
+                              )
+                            }
+                          />
                         </td>
                         <td className="p-3">
                           {row.supplier ? (
@@ -3641,7 +3676,19 @@ export default function Facturas() {
                             Ver
                           </Button>
                         </td>
-                      </tr>
+                        </tr>
+                        {itemsExpanded ? (
+                          <tr className="border-b border-border">
+                            <td colSpan={13} className="p-0">
+                              <DocumentItemsAccordionPanel
+                                items={expandedItemsDetail?.items}
+                                isLoading={isLoadingExpandedItems}
+                                error={expandedItemsError}
+                              />
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     );
                   })}
                 </tbody>

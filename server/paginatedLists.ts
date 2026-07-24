@@ -137,6 +137,8 @@ export async function listMaterialRequestsPage(
       .where(
         or(
           ilike(requestItems.itemName, pattern),
+          ilike(requestItems.sapItemCode, pattern),
+          ilike(requestItems.sapItemDescription, pattern),
           ilike(projectSubprojects.code, pattern),
           ilike(projectSubprojects.name, pattern),
           sql`concat_ws(' ', ${projectSubprojects.code}, ${projectSubprojects.name}) ilike ${pattern}`,
@@ -368,6 +370,14 @@ export async function listPurchaseRequestsPage(
       .leftJoin(requestedBy, eq(materialRequests.requestedById, requestedBy.id))
       .where(
         or(
+          ilike(purchaseRequestItems.itemName, pattern),
+          ilike(purchaseRequestItems.currentSapItemCode, pattern),
+          ilike(purchaseRequestItems.originalSapItemCode, pattern),
+          ilike(purchaseRequestItems.fixedAssetSapItemCode, pattern),
+          ilike(purchaseRequestItems.fixedAssetName, pattern),
+          ilike(requestItems.itemName, pattern),
+          ilike(requestItems.sapItemCode, pattern),
+          ilike(requestItems.sapItemDescription, pattern),
           ilike(materialRequests.requestNumber, pattern),
           ilike(sourceProject.code, pattern),
           ilike(sourceProject.name, pattern),
@@ -505,6 +515,12 @@ export async function listPurchaseOrdersPage(
       .leftJoin(requestedBy, eq(materialRequests.requestedById, requestedBy.id))
       .where(
         or(
+          ilike(purchaseOrderItems.itemName, pattern),
+          ilike(purchaseOrderItems.currentSapItemCode, pattern),
+          ilike(purchaseOrderItems.originalSapItemCode, pattern),
+          ilike(requestItems.itemName, pattern),
+          ilike(requestItems.sapItemCode, pattern),
+          ilike(requestItems.sapItemDescription, pattern),
           ilike(materialRequests.requestNumber, pattern),
           ilike(requestedBy.name, pattern),
           ilike(requestedBy.email, pattern)
@@ -791,6 +807,18 @@ export async function listReceiptsPage(filters: ReceiptPageFilters) {
   if (search) {
     const pattern = `%${search}%`;
     const normalizedSearch = search.toLowerCase();
+    const itemRows = await database
+      .select({ id: receiptItems.receiptId })
+      .from(receiptItems)
+      .where(
+        or(
+          ilike(receiptItems.itemName, pattern),
+          ilike(receiptItems.sapItemCode, pattern),
+          ilike(receiptItems.fixedAssetSapItemCode, pattern),
+          ilike(receiptItems.fixedAssetName, pattern)
+        )
+      );
+    const receiptIds = uniqueIds(itemRows);
     conditions.push(
       or(
         ilike(receipts.receiptNumber, pattern),
@@ -809,7 +837,8 @@ export async function listReceiptsPage(filters: ReceiptPageFilters) {
           : sql`false`,
         "traslado".includes(normalizedSearch)
           ? eq(receipts.sourceType, "transfer" as any)
-          : sql`false`
+          : sql`false`,
+        receiptIds.length > 0 ? inArray(receipts.id, receiptIds) : sql`false`
       )!
     );
   }
@@ -917,6 +946,17 @@ export async function listInvoicesPage(filters: InvoicePageFilters) {
       .leftJoin(requestedBy, eq(materialRequests.requestedById, requestedBy.id))
       .where(
         or(
+          ilike(invoiceItems.itemName, pattern),
+          ilike(invoiceItems.currentSapItemCode, pattern),
+          ilike(invoiceItems.originalSapItemCode, pattern),
+          ilike(invoiceItems.fixedAssetSapItemCode, pattern),
+          ilike(invoiceItems.fixedAssetName, pattern),
+          ilike(purchaseOrderItems.itemName, pattern),
+          ilike(purchaseOrderItems.currentSapItemCode, pattern),
+          ilike(purchaseOrderItems.originalSapItemCode, pattern),
+          ilike(requestItems.itemName, pattern),
+          ilike(requestItems.sapItemCode, pattern),
+          ilike(requestItems.sapItemDescription, pattern),
           ilike(materialRequests.requestNumber, pattern),
           ilike(requestedBy.name, pattern),
           ilike(requestedBy.email, pattern)

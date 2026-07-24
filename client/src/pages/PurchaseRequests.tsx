@@ -5,6 +5,11 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { fetchAllFilteredPages } from "@/lib/paginated-export";
 import { trpc } from "@/lib/trpc";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
+import {
+  DocumentItemsAccordionPanel,
+  DocumentItemsAccordionTrigger,
+} from "@/components/DocumentItemsAccordion";
+import { DocumentNumberButton } from "@/components/DocumentNumberButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -60,7 +65,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
@@ -442,7 +447,7 @@ export default function PurchaseRequests() {
     useProcurementApprovalSettings();
   const utils = trpc.useUtils();
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [itemsPreviewId, setItemsPreviewId] = useState<number | null>(null);
+  const [expandedItemsId, setExpandedItemsId] = useState<number | null>(null);
   const [editNotes, setEditNotes] = useState("");
   const [editNeededBy, setEditNeededBy] = useState("");
   const [editPrintDestination, setEditPrintDestination] = useState("");
@@ -520,12 +525,12 @@ export default function PurchaseRequests() {
     { enabled: Boolean(selectedId) }
   );
   const {
-    data: itemsPreviewDetail,
-    isLoading: isLoadingItemsPreview,
-    error: itemsPreviewError,
+    data: expandedItemsDetail,
+    isLoading: isLoadingExpandedItems,
+    error: expandedItemsError,
   } = trpc.purchaseRequests.getById.useQuery(
-    { id: itemsPreviewId ?? 0 },
-    { enabled: Boolean(itemsPreviewId) }
+    { id: expandedItemsId ?? 0 },
+    { enabled: expandedItemsId !== null }
   );
   const selectedProjectIdNumber = detail?.purchaseRequest.projectId ?? 0;
   const { data: targetOptions, isLoading: isLoadingTargetOptions } =
@@ -2081,8 +2086,8 @@ export default function PurchaseRequests() {
             onChange={event => setSearchTerm(event.target.value)}
             placeholder={
               PROCUREMENT_APPROVALS_ENABLED
-                ? "Buscar por SC, REQ, proyecto, requiriente, aprobador o documento..."
-                : "Buscar por SC, REQ, proyecto, requiriente o documento..."
+                ? "Buscar por SC, REQ, artículo, proyecto, requiriente, aprobador o documento..."
+                : "Buscar por SC, REQ, artículo, proyecto, requiriente o documento..."
             }
             className="h-10 pl-9"
           />
@@ -2162,6 +2167,8 @@ export default function PurchaseRequests() {
                     row.purchaseRequest.approvalStatus,
                     row.approvalSummary
                   );
+                  const itemsExpanded =
+                    expandedItemsId === row.purchaseRequest.id;
 
                   return (
                     <article
@@ -2186,9 +2193,15 @@ export default function PurchaseRequests() {
                           />
                         ) : null}
                         <div className="min-w-0 flex-1">
-                          <p className="font-semibold leading-tight">
+                          <DocumentNumberButton
+                            className="leading-tight"
+                            onClick={() =>
+                              openRequest(row.purchaseRequest.id)
+                            }
+                            ariaLabel={`Abrir ${row.purchaseRequest.requestNumber}`}
+                          >
                             {row.purchaseRequest.requestNumber}
-                          </p>
+                          </DocumentNumberButton>
                           <p className="mt-1 text-xs text-muted-foreground">
                             {formatPurchaseRequestRequestNumbers(row)}
                           </p>
@@ -2260,6 +2273,25 @@ export default function PurchaseRequests() {
                         </div>
                       </dl>
 
+                      <div className="border-t border-border/70 pt-3">
+                        <DocumentItemsAccordionTrigger
+                          expanded={itemsExpanded}
+                          count={row.itemCount ?? 0}
+                          onToggle={() =>
+                            setExpandedItemsId(
+                              itemsExpanded ? null : row.purchaseRequest.id
+                            )
+                          }
+                        />
+                        {itemsExpanded ? (
+                          <DocumentItemsAccordionPanel
+                            items={expandedItemsDetail?.items}
+                            isLoading={isLoadingExpandedItems}
+                            error={expandedItemsError}
+                          />
+                        ) : null}
+                      </div>
+
                       <div className="flex flex-wrap items-center gap-2 border-t border-border/70 pt-3">
                         {PROCUREMENT_APPROVALS_ENABLED ? (
                           <Badge
@@ -2324,6 +2356,9 @@ export default function PurchaseRequests() {
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       No. Solicitud
                     </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Artículos
+                    </th>
                     {!isProcurementApprover ? (
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         No. Req.
@@ -2331,9 +2366,6 @@ export default function PurchaseRequests() {
                     ) : null}
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Proyecto
-                    </th>
-                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Ítems
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Requiriente
@@ -2358,7 +2390,7 @@ export default function PurchaseRequests() {
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Fecha necesaria
                     </th>
-                    <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <th className="sticky right-0 z-20 min-w-[112px] border-l border-border/60 bg-background p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
                       Acciones
                     </th>
                   </tr>
@@ -2367,12 +2399,12 @@ export default function PurchaseRequests() {
                   {filteredRequests.map((row: any) => {
                     const canSelectForUnified =
                       canConvertPurchaseRequestRow(row);
+                    const itemsExpanded =
+                      expandedItemsId === row.purchaseRequest.id;
 
                     return (
-                      <tr
-                        key={row.purchaseRequest.id}
-                        className="border-b border-border last:border-0"
-                      >
+                      <Fragment key={row.purchaseRequest.id}>
+                        <tr className="border-b border-border last:border-0">
                         {canConvert ? (
                           <td className="p-3">
                             <Checkbox
@@ -2391,7 +2423,25 @@ export default function PurchaseRequests() {
                           </td>
                         ) : null}
                         <td className="p-3 font-medium">
-                          {row.purchaseRequest.requestNumber}
+                          <DocumentNumberButton
+                            onClick={() =>
+                              openRequest(row.purchaseRequest.id)
+                            }
+                            ariaLabel={`Abrir ${row.purchaseRequest.requestNumber}`}
+                          >
+                            {row.purchaseRequest.requestNumber}
+                          </DocumentNumberButton>
+                        </td>
+                        <td className="p-3">
+                          <DocumentItemsAccordionTrigger
+                            expanded={itemsExpanded}
+                            count={row.itemCount ?? 0}
+                            onToggle={() =>
+                              setExpandedItemsId(
+                                itemsExpanded ? null : row.purchaseRequest.id
+                              )
+                            }
+                          />
                         </td>
                         {!isProcurementApprover ? (
                           <td className="p-3 text-xs font-medium">
@@ -2403,19 +2453,6 @@ export default function PurchaseRequests() {
                             (row.project
                               ? `${row.project.code} — ${row.project.name}`
                               : "—")}
-                        </td>
-                        <td className="p-3">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="whitespace-nowrap text-xs"
-                            onClick={() =>
-                              setItemsPreviewId(row.purchaseRequest.id)
-                            }
-                          >
-                            <Eye className="mr-1.5 h-3.5 w-3.5" />
-                            Ver ítems ({row.itemCount ?? 0})
-                          </Button>
                         </td>
                         <td className="p-3 text-xs">
                           {formatPurchaseRequestRequestedBy(row)}
@@ -2484,7 +2521,7 @@ export default function PurchaseRequests() {
                               ).toLocaleDateString("es-HN")
                             : "—"}
                         </td>
-                        <td className="p-3 text-right">
+                        <td className="sticky right-0 z-10 min-w-[112px] border-l border-border/60 bg-background p-3 text-right shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
                           <Button
                             variant="outline"
                             size="sm"
@@ -2496,7 +2533,30 @@ export default function PurchaseRequests() {
                             Ver
                           </Button>
                         </td>
-                      </tr>
+                        </tr>
+                        {itemsExpanded ? (
+                          <tr className="border-b border-border">
+                            <td
+                              colSpan={
+                                8 +
+                                (canConvert ? 1 : 0) +
+                                (!isProcurementApprover ? 2 : 0) +
+                                (PROCUREMENT_APPROVALS_ENABLED &&
+                                !isProcurementApprover
+                                  ? 1
+                                  : 0)
+                              }
+                              className="p-0"
+                            >
+                              <DocumentItemsAccordionPanel
+                                items={expandedItemsDetail?.items}
+                                isLoading={isLoadingExpandedItems}
+                                error={expandedItemsError}
+                              />
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -2515,79 +2575,6 @@ export default function PurchaseRequests() {
           ) : null}
         </CardContent>
       </Card>
-
-      <Dialog
-        open={Boolean(itemsPreviewId)}
-        onOpenChange={open => {
-          if (!open) setItemsPreviewId(null);
-        }}
-      >
-        <DialogContent className="max-h-[85vh] max-w-2xl overflow-hidden p-0">
-          <DialogHeader className="border-b border-border px-6 py-5">
-            <DialogTitle>Ítems de la solicitud</DialogTitle>
-            <p className="text-sm text-muted-foreground">
-              {itemsPreviewDetail?.purchaseRequest.requestNumber ??
-                "Cargando solicitud..."}
-            </p>
-          </DialogHeader>
-
-          <div className="max-h-[65vh] overflow-auto px-6 py-5">
-            {isLoadingItemsPreview ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                Cargando ítems...
-              </p>
-            ) : itemsPreviewError ? (
-              <p className="py-8 text-center text-sm text-destructive">
-                No se pudieron cargar los ítems: {itemsPreviewError.message}
-              </p>
-            ) : !itemsPreviewDetail?.items.length ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                Esta solicitud no tiene ítems registrados.
-              </p>
-            ) : (
-              <div className="overflow-hidden rounded-lg border border-border">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50">
-                    <tr className="border-b border-border">
-                      <th className="w-14 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">
-                        No.
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">
-                        Descripción
-                      </th>
-                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase text-muted-foreground">
-                        Cantidad
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">
-                        U.M.
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {itemsPreviewDetail.items.map((item: any, index: number) => (
-                      <tr
-                        key={item.id}
-                        className="border-b border-border last:border-0"
-                      >
-                        <td className="px-4 py-3 text-xs text-muted-foreground">
-                          {index + 1}
-                        </td>
-                        <td className="px-4 py-3 font-medium">
-                          {item.itemName}
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums">
-                          {formatQuantity(item.quantity)}
-                        </td>
-                        <td className="px-4 py-3">{item.unit || "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
 
       <Dialog
         open={Boolean(selectedId)}

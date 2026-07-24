@@ -11,9 +11,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Search, Eye, Pencil } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Input } from "@/components/ui/input";
+import {
+  DocumentItemsAccordionPanel,
+  DocumentItemsAccordionTrigger,
+} from "@/components/DocumentItemsAccordion";
+import { DocumentNumberButton } from "@/components/DocumentNumberButton";
 import {
   formatDateForDisplay,
   getDueDateStatus,
@@ -128,6 +133,7 @@ export default function Solicitudes() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [expandedItemsId, setExpandedItemsId] = useState<number | null>(null);
   const debouncedSearch = useDebouncedValue(search);
   const userRole = (user as any)?.buildreqRole || "";
   const isSuperintendent = isSuperintendentFamilyRole(userRole);
@@ -144,6 +150,14 @@ export default function Solicitudes() {
       { placeholderData: previousData => previousData }
     );
   const filteredRequests = data?.items ?? [];
+  const {
+    data: expandedItemsDetail,
+    isLoading: isLoadingExpandedItems,
+    error: expandedItemsError,
+  } = trpc.materialRequests.itemsPreview.useQuery(
+    { id: expandedItemsId ?? 0 },
+    { enabled: expandedItemsId !== null }
+  );
 
   useEffect(() => setPage(1), [debouncedSearch, statusFilter]);
   useEffect(() => {
@@ -169,7 +183,7 @@ export default function Solicitudes() {
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Buscar por número, proyecto o solicitante..."
+            placeholder="Buscar por número, artículo, proyecto o solicitante..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 h-9"
@@ -210,11 +224,14 @@ export default function Solicitudes() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1300px] text-sm">
+              <table className="w-full min-w-[1420px] text-sm">
                 <thead>
                   <tr className="border-b border-border">
                     <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                       No. Requisición
+                    </th>
+                    <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                      Artículos
                     </th>
                     <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                       Proyecto
@@ -240,7 +257,7 @@ export default function Solicitudes() {
                     <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
                       Fecha
                     </th>
-                    <th className="text-right p-3 font-semibold text-xs uppercase tracking-wider text-muted-foreground">
+                    <th className="sticky right-0 z-20 min-w-[88px] border-l border-border/60 bg-background p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
                       Acciones
                     </th>
                   </tr>
@@ -265,26 +282,46 @@ export default function Solicitudes() {
                       ) : (
                         <Eye className="h-4 w-4" />
                       );
+                    const itemsExpanded = expandedItemsId === r.request.id;
 
                     return (
-                      <tr
-                        key={r.request.id}
-                        className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors cursor-pointer"
-                        onClick={() => setLocation(targetPath)}
-                      >
-                        <td className="p-3">
-                          <span className="font-medium">{r.request.requestNumber}</span>
-                        </td>
-                        <td className="p-3">
-                          <div>
-                            <span className="font-medium text-xs">{r.project?.code}</span>
-                            <p className="text-xs text-muted-foreground">{r.project?.name}</p>
-                          </div>
-                        </td>
-                        <td className="p-3">
+                      <Fragment key={r.request.id}>
+                        <tr
+                          className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors cursor-pointer"
+                          onClick={() => setLocation(targetPath)}
+                        >
+                          <td className="p-3">
+                            <DocumentNumberButton
+                              onClick={event => {
+                                event.stopPropagation();
+                                setLocation(targetPath);
+                              }}
+                              ariaLabel={`Abrir ${r.request.requestNumber}`}
+                            >
+                              {r.request.requestNumber}
+                            </DocumentNumberButton>
+                          </td>
+                          <td className="p-3" onClick={event => event.stopPropagation()}>
+                            <DocumentItemsAccordionTrigger
+                              expanded={itemsExpanded}
+                              count={
+                                itemsExpanded ? expandedItemsDetail?.items?.length : undefined
+                              }
+                              onToggle={() =>
+                                setExpandedItemsId(itemsExpanded ? null : r.request.id)
+                              }
+                            />
+                          </td>
+                          <td className="p-3">
+                            <div>
+                              <span className="font-medium text-xs">{r.project?.code}</span>
+                              <p className="text-xs text-muted-foreground">{r.project?.name}</p>
+                            </div>
+                          </td>
+                          <td className="p-3">
                           <RequestTargetBadges labels={targetLabels} />
-                        </td>
-                        <td className="p-3">
+                          </td>
+                          <td className="p-3">
                           <div>
                             <span className="font-medium text-xs">{requestedByLabel}</span>
                             {r.requestedBy?.email &&
@@ -294,11 +331,11 @@ export default function Solicitudes() {
                               </p>
                             ) : null}
                           </div>
-                        </td>
-                        <td className="p-3 text-xs">
+                          </td>
+                          <td className="p-3 text-xs">
                           {RECIPIENT_LABELS[r.request.recipient] || r.request.recipient}
-                        </td>
-                        <td className="p-3">
+                          </td>
+                          <td className="p-3">
                           <Badge
                             variant="outline"
                             className={`text-xs ${URGENCY_COLORS[r.request.purchaseUrgency] || ""}`}
@@ -307,8 +344,8 @@ export default function Solicitudes() {
                               r.request.purchaseUrgency as "urgente" | "no_urgente"
                             ] || "No urgente"}
                           </Badge>
-                        </td>
-                        <td className="p-3 text-xs">
+                          </td>
+                          <td className="p-3 text-xs">
                           <p className="font-medium">
                             {formatDateForDisplay(neededByDate)}
                           </p>
@@ -317,19 +354,19 @@ export default function Solicitudes() {
                               {dueStatus.label}
                             </p>
                           )}
-                        </td>
-                        <td className="p-3">
+                          </td>
+                          <td className="p-3">
                           <Badge
                             variant="outline"
                             className={`text-xs ${STATUS_COLORS[r.request.status] || ""}`}
                           >
                             {STATUS_LABELS[r.request.status] || r.request.status}
                           </Badge>
-                        </td>
-                        <td className="p-3 text-xs text-muted-foreground">
+                          </td>
+                          <td className="p-3 text-xs text-muted-foreground">
                           {new Date(r.request.createdAt).toLocaleDateString("es")}
-                        </td>
-                        <td className="p-3 text-right">
+                          </td>
+                          <td className="sticky right-0 z-10 min-w-[88px] border-l border-border/60 bg-background p-3 text-right shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
                           <Button
                             variant="ghost"
                             size="sm"
@@ -340,8 +377,20 @@ export default function Solicitudes() {
                           >
                             {actionIcon}
                           </Button>
-                        </td>
-                      </tr>
+                          </td>
+                        </tr>
+                        {itemsExpanded ? (
+                          <tr className="border-b border-border">
+                            <td colSpan={11} className="p-0">
+                              <DocumentItemsAccordionPanel
+                                items={expandedItemsDetail?.items}
+                                isLoading={isLoadingExpandedItems}
+                                error={expandedItemsError}
+                              />
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     );
                   })}
                 </tbody>

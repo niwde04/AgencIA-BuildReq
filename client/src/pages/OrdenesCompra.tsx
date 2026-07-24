@@ -6,6 +6,11 @@ import { fetchAllFilteredPages } from "@/lib/paginated-export";
 import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import {
+  DocumentItemsAccordionPanel,
+  DocumentItemsAccordionTrigger,
+} from "@/components/DocumentItemsAccordion";
+import { DocumentNumberButton } from "@/components/DocumentNumberButton";
+import {
   FiscalSummaryCard,
   PurchaseOrderTaxControls,
 } from "@/components/PurchaseOrderFiscalControls";
@@ -79,7 +84,14 @@ import {
   Upload,
   XCircle,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
@@ -936,6 +948,7 @@ export default function OrdenesCompra() {
       userRole === "administrador_proyecto");
   const isProjectAdmin = userRole === "administrador_proyecto";
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [expandedItemsId, setExpandedItemsId] = useState<number | null>(null);
   const [newOrderDialogOpen, setNewOrderDialogOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [page, setPage] = useState(1);
@@ -1039,6 +1052,14 @@ export default function OrdenesCompra() {
   } = trpc.purchaseOrders.getById.useQuery(
     { id: selectedId ?? 0 },
     { enabled: Boolean(selectedId) }
+  );
+  const {
+    data: expandedItemsDetail,
+    isLoading: isLoadingExpandedItems,
+    error: expandedItemsError,
+  } = trpc.purchaseOrders.getById.useQuery(
+    { id: expandedItemsId ?? 0 },
+    { enabled: expandedItemsId !== null }
   );
   const { data: sapMatches } = trpc.requestItems.searchSapCatalog.useQuery(
     { search: replacementSearch },
@@ -3243,7 +3264,7 @@ export default function OrdenesCompra() {
           <Input
             value={searchTerm}
             onChange={event => setSearchTerm(event.target.value)}
-            placeholder="Buscar por OC, REQ, proyecto, proveedor, requiriente o creador..."
+            placeholder="Buscar por OC, REQ, artículo, proyecto, proveedor, requiriente o creador..."
             className="h-10 pl-9"
           />
         </div>
@@ -3315,6 +3336,8 @@ export default function OrdenesCompra() {
                     row.purchaseOrder.status,
                     row.purchaseOrder.approvalStatus
                   );
+                  const itemsExpanded =
+                    expandedItemsId === row.purchaseOrder.id;
                   return (
                     <article
                       key={row.purchaseOrder.id}
@@ -3322,9 +3345,15 @@ export default function OrdenesCompra() {
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="font-semibold leading-tight">
+                          <DocumentNumberButton
+                            className="leading-tight"
+                            onClick={() =>
+                              setSelectedId(row.purchaseOrder.id)
+                            }
+                            ariaLabel={`Abrir ${row.purchaseOrder.orderNumber}`}
+                          >
                             {row.purchaseOrder.orderNumber}
-                          </p>
+                          </DocumentNumberButton>
                           <p className="mt-1 text-xs text-muted-foreground">
                             {formatPurchaseOrderRequestNumbers(row)}
                           </p>
@@ -3392,6 +3421,29 @@ export default function OrdenesCompra() {
                         </div>
                       </dl>
 
+                      <div className="border-t border-border/70 pt-3">
+                        <DocumentItemsAccordionTrigger
+                          expanded={itemsExpanded}
+                          count={
+                            itemsExpanded
+                              ? expandedItemsDetail?.items?.length
+                              : undefined
+                          }
+                          onToggle={() =>
+                            setExpandedItemsId(
+                              itemsExpanded ? null : row.purchaseOrder.id
+                            )
+                          }
+                        />
+                        {itemsExpanded ? (
+                          <DocumentItemsAccordionPanel
+                            items={expandedItemsDetail?.items}
+                            isLoading={isLoadingExpandedItems}
+                            error={expandedItemsError}
+                          />
+                        ) : null}
+                      </div>
+
                       <div className="flex flex-wrap items-center gap-2 border-t border-border/70 pt-3">
                         {PROCUREMENT_APPROVALS_ENABLED ? (
                           <Badge
@@ -3434,11 +3486,14 @@ export default function OrdenesCompra() {
               </div>
 
               <div className="hidden overflow-x-auto md:block">
-                <table className="w-full min-w-[1720px] text-sm">
+                <table className="w-full min-w-[1840px] text-sm">
                   <thead>
                     <tr className="border-b border-border">
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         No. OC
+                      </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Artículos
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         No. Req.
@@ -3475,19 +3530,43 @@ export default function OrdenesCompra() {
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Emisión
                       </th>
-                      <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      <th className="sticky right-0 z-20 min-w-[104px] border-l border-border/60 bg-background p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
                         Acciones
                       </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredOrders.map((row: any) => (
-                      <tr
-                        key={row.purchaseOrder.id}
-                        className="border-b border-border last:border-0"
-                      >
+                    {filteredOrders.map((row: any) => {
+                      const itemsExpanded =
+                        expandedItemsId === row.purchaseOrder.id;
+
+                      return (
+                        <Fragment key={row.purchaseOrder.id}>
+                          <tr className="border-b border-border last:border-0">
                         <td className="p-3 font-medium">
-                          {row.purchaseOrder.orderNumber}
+                          <DocumentNumberButton
+                            onClick={() =>
+                              setSelectedId(row.purchaseOrder.id)
+                            }
+                            ariaLabel={`Abrir ${row.purchaseOrder.orderNumber}`}
+                          >
+                            {row.purchaseOrder.orderNumber}
+                          </DocumentNumberButton>
+                        </td>
+                        <td className="p-3">
+                          <DocumentItemsAccordionTrigger
+                            expanded={itemsExpanded}
+                            count={
+                              itemsExpanded
+                                ? expandedItemsDetail?.items?.length
+                                : undefined
+                            }
+                            onToggle={() =>
+                              setExpandedItemsId(
+                                itemsExpanded ? null : row.purchaseOrder.id
+                              )
+                            }
+                          />
                         </td>
                         <td className="p-3 text-xs font-medium">
                           {formatPurchaseOrderRequestNumbers(row)}
@@ -3583,7 +3662,7 @@ export default function OrdenesCompra() {
                           {EMISSION_STATUS_LABELS[row.purchaseOrder.status] ||
                             "Pendiente"}
                         </td>
-                        <td className="p-3 text-right">
+                        <td className="sticky right-0 z-10 min-w-[104px] border-l border-border/60 bg-background p-3 text-right shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
                           <Button
                             variant="outline"
                             size="sm"
@@ -3592,8 +3671,27 @@ export default function OrdenesCompra() {
                             Ver
                           </Button>
                         </td>
-                      </tr>
-                    ))}
+                          </tr>
+                          {itemsExpanded ? (
+                            <tr className="border-b border-border">
+                              <td
+                                colSpan={
+                                  13 +
+                                  (PROCUREMENT_APPROVALS_ENABLED ? 1 : 0)
+                                }
+                                className="p-0"
+                              >
+                                <DocumentItemsAccordionPanel
+                                  items={expandedItemsDetail?.items}
+                                  isLoading={isLoadingExpandedItems}
+                                  error={expandedItemsError}
+                                />
+                              </td>
+                            </tr>
+                          ) : null}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -4623,11 +4721,11 @@ export default function OrdenesCompra() {
                             <td className="p-3 align-middle sm:p-4">
                               <div className="flex items-center justify-end gap-2">
                                 <Input
-                                  type="number"
-                                  min="0.01"
-                                  max={pendingQuantity}
-                                  step="0.01"
+                                  type="text"
+                                  inputMode="decimal"
                                   value={draft.quantity}
+                                  onFocus={event => event.currentTarget.select()}
+                                  onClick={event => event.currentTarget.select()}
                                   onChange={event =>
                                     setOriginItemDrafts(current => ({
                                       ...current,
@@ -4652,12 +4750,11 @@ export default function OrdenesCompra() {
                             </td>
                             <td className="p-3 align-middle sm:p-4">
                               <Input
-                                type="number"
-                                min="0"
-                                step={
-                                  pricesIncludeTaxDraft ? "0.00000001" : "0.01"
-                                }
+                                type="text"
+                                inputMode="decimal"
                                 value={draft.unitPrice}
+                                onFocus={event => event.currentTarget.select()}
+                                onClick={event => event.currentTarget.select()}
                                 onChange={event =>
                                   setOriginItemDrafts(current => ({
                                     ...current,
@@ -4701,14 +4798,15 @@ export default function OrdenesCompra() {
                             </td>
                             <td className="p-3 align-middle sm:p-4">
                               <Input
-                                type="number"
-                                min="0"
-                                step="0.01"
+                                type="text"
+                                inputMode="decimal"
                                 value={
                                   pricesIncludeTaxDraft
                                     ? formatMoneyDisplay(lineAmounts.subtotal)
                                     : draft.subtotal
                                 }
+                                onFocus={event => event.currentTarget.select()}
+                                onClick={event => event.currentTarget.select()}
                                 onChange={event =>
                                   setOriginItemDrafts(current => ({
                                     ...current,
@@ -6120,10 +6218,11 @@ export default function OrdenesCompra() {
                             <td className="p-3 align-middle sm:p-4">
                               <div className="flex items-center justify-end gap-2">
                                 <Input
-                                  type="number"
-                                  min="0.01"
-                                  step="0.01"
+                                  type="text"
+                                  inputMode="decimal"
                                   value={draft.quantity}
+                                  onFocus={event => event.currentTarget.select()}
+                                  onClick={event => event.currentTarget.select()}
                                   onChange={event => {
                                     const nextQuantity = event.target.value;
                                     setItemDrafts(current => ({
@@ -6171,14 +6270,11 @@ export default function OrdenesCompra() {
                                 }`}
                               >
                                 <Input
-                                  type="number"
-                                  min="0"
-                                  step={
-                                    detail.purchaseOrder.pricesIncludeTax
-                                      ? "0.00000001"
-                                      : "0.01"
-                                  }
+                                  type="text"
+                                  inputMode="decimal"
                                   value={draft.unitPrice}
+                                  onFocus={event => event.currentTarget.select()}
+                                  onClick={event => event.currentTarget.select()}
                                   onChange={event => {
                                     const nextUnitPrice = event.target.value;
                                     setItemDrafts(current => ({
@@ -6235,14 +6331,15 @@ export default function OrdenesCompra() {
                             </td>
                             <td className="p-3 align-middle sm:p-4">
                               <Input
-                                type="number"
-                                min="0"
-                                step="0.01"
+                                type="text"
+                                inputMode="decimal"
                                 value={
                                   detail.purchaseOrder.pricesIncludeTax
                                     ? formatMoneyDisplay(lineAmounts.subtotal)
                                     : draft.subtotal
                                 }
+                                onFocus={event => event.currentTarget.select()}
+                                onClick={event => event.currentTarget.select()}
                                 onChange={event => {
                                   const nextSubtotal = event.target.value;
                                   setItemDrafts(current => ({

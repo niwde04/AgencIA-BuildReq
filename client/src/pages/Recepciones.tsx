@@ -1,5 +1,10 @@
 import { trpc } from "@/lib/trpc";
 import { DataPagination } from "@/components/DataPagination";
+import { DocumentNumberButton } from "@/components/DocumentNumberButton";
+import {
+  DocumentItemsAccordionPanel,
+  DocumentItemsAccordionTrigger,
+} from "@/components/DocumentItemsAccordion";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { fetchAllFilteredPages } from "@/lib/paginated-export";
 import { buildDatedCsvFileName, downloadCsv } from "@/lib/csv-export";
@@ -1063,6 +1068,7 @@ export default function Recepciones() {
   const lastFiscalRangeLookupKeyRef = useRef("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [viewReceiptId, setViewReceiptId] = useState<number | null>(null);
+  const [expandedItemsId, setExpandedItemsId] = useState<number | null>(null);
   const [editingDraftReceiptId, setEditingDraftReceiptId] = useState<
     number | null
   >(null);
@@ -1192,6 +1198,14 @@ export default function Recepciones() {
   } = trpc.receipts.getById.useQuery(
     { id: viewReceiptId ?? 0 },
     { enabled: viewReceiptId !== null }
+  );
+  const {
+    data: expandedItemsDetail,
+    isLoading: isLoadingExpandedItems,
+    error: expandedItemsError,
+  } = trpc.receipts.getById.useQuery(
+    { id: expandedItemsId ?? 0 },
+    { enabled: expandedItemsId !== null }
   );
   const { data: editingDraftReceiptDetail } = trpc.receipts.getById.useQuery(
     { id: editingDraftReceiptId ?? 0 },
@@ -2227,10 +2241,7 @@ export default function Recepciones() {
           : "Seleccione documento"
       : getTransferDestinationLabel(transferDetail, "Seleccione documento");
 
-  const sourceHeaderTitle =
-    sourceType === "purchase_order"
-      ? purchaseOrderDetail?.purchaseOrder.orderNumber || "Registrar recepción"
-      : transferDetail?.transfer?.transferNumber || "Registrar recepción";
+  const sourceHeaderTitle = "Registrar recepción";
 
   const sourceStatusKey =
     sourceType === "purchase_order"
@@ -6015,15 +6026,16 @@ export default function Recepciones() {
                                 <td className="p-4 text-right">
                                   {sourceType === "purchase_order" ? (
                                     <Input
-                                      type="number"
-                                      min="0"
-                                      step={
-                                        sourcePricesIncludeTax
-                                          ? "0.00000001"
-                                          : "0.01"
-                                      }
+                                      type="text"
+                                      inputMode="decimal"
                                       className="ml-auto w-36 text-right"
                                       value={receiptUnitPriceDraft}
+                                      onFocus={event =>
+                                        event.currentTarget.select()
+                                      }
+                                      onClick={event =>
+                                        event.currentTarget.select()
+                                      }
                                       onChange={event => {
                                         const nextUnitPrice =
                                           event.target.value;
@@ -6096,9 +6108,8 @@ export default function Recepciones() {
                                     </td>
                                     <td className="p-4 text-right">
                                       <Input
-                                        type="number"
-                                        min="0"
-                                        step="0.01"
+                                        type="text"
+                                        inputMode="decimal"
                                         className="ml-auto w-36 text-right font-semibold"
                                         value={
                                           sourcePricesIncludeTax
@@ -6106,6 +6117,12 @@ export default function Recepciones() {
                                                 lineAmounts.subtotal
                                               )
                                             : getReceiptLineSubtotalDraft(item)
+                                        }
+                                        onFocus={event =>
+                                          event.currentTarget.select()
+                                        }
+                                        onClick={event =>
+                                          event.currentTarget.select()
                                         }
                                         onChange={event => {
                                           const nextSubtotal =
@@ -6163,11 +6180,16 @@ export default function Recepciones() {
                                 ) : null}
                                 <td className="p-4 text-right">
                                   <Input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
+                                    type="text"
+                                    inputMode="decimal"
                                     className="ml-auto w-36 text-right"
                                     value={receivedMap[item.id] ?? ""}
+                                    onFocus={event =>
+                                      event.currentTarget.select()
+                                    }
+                                    onClick={event =>
+                                      event.currentTarget.select()
+                                    }
                                     onChange={event =>
                                       handleReceivedQuantityChange(
                                         item,
@@ -6849,10 +6871,11 @@ export default function Recepciones() {
                               disabled={registerMutation.isPending}
                             />
                             <Input
-                              type="number"
-                              min="0"
-                              step="0.0001"
+                              type="text"
+                              inputMode="decimal"
                               value={charge.amount}
+                              onFocus={event => event.currentTarget.select()}
+                              onClick={event => event.currentTarget.select()}
                               onChange={event =>
                                 setOtherChargeDrafts(current =>
                                   current.map(entry =>
@@ -7947,7 +7970,7 @@ export default function Recepciones() {
           <Input
             value={searchTerm}
             onChange={event => setSearchTerm(event.target.value)}
-            placeholder="Buscar por recepción, origen, proveedor o proyecto..."
+            placeholder="Buscar por recepción, origen, artículo, proveedor o proyecto..."
             className="h-10 pl-9"
           />
         </div>
@@ -7992,11 +8015,14 @@ export default function Recepciones() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[1120px] text-sm">
                 <thead>
                   <tr className="border-b border-border">
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       No. Recepción
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Artículos
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Proyecto
@@ -8019,81 +8045,125 @@ export default function Recepciones() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredReceipts.map((row: any) => (
-                    (() => {
-                      const canEditDraft =
-                        canManageReceipts && row.receipt.status === "borrador";
-                      return (
-                    <tr
-                      key={row.receipt.id}
-                      className="border-b border-border last:border-0"
-                    >
-                      <td className="p-3 font-medium">
-                        {row.receipt.receiptNumber}
-                      </td>
-                      <td className="p-3 text-xs">
-                        {row.project
-                          ? `${row.project.code} — ${row.project.name}`
-                          : "—"}
-                      </td>
-                      <td className="p-3 text-xs">
-                        {row.supplier ? (
-                          <div className="space-y-1">
-                            <div className="font-medium text-foreground">
-                              {row.supplier.supplierCode} — {row.supplier.name}
-                            </div>
-                            <div className="text-muted-foreground">
-                              RTN: {formatSupplierRtnLabel(row.supplier)}
-                            </div>
-                          </div>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="p-3 text-xs">
-                        {row.receipt.sourceType === "purchase_order"
-                          ? SOURCE_TYPE_LABELS.purchase_order
-                          : SOURCE_TYPE_LABELS.transfer}
-                      </td>
-                      <td className="p-3">
-                        <Badge
-                          variant="outline"
-                          className={`text-xs ${getReceiptStatusColor(
-                            row.receipt,
-                            row.invoice
-                          )}`}
-                        >
-                          {getReceiptStatusLabel(row.receipt, row.invoice)}
-                        </Badge>
-                      </td>
-                      <td className="p-3 text-xs">
-                        {formatDateLabel(
-                          row.receipt.receiptDate || row.receipt.createdAt
-                        )}
-                      </td>
-                      <td className="p-3">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="gap-2"
-                          onClick={() =>
-                            canEditDraft
-                              ? openDraftReceiptForEdit(row)
-                              : setViewReceiptId(row.receipt.id)
-                          }
-                        >
-                          {canEditDraft ? (
-                            <Pencil className="h-4 w-4" />
-                          ) : (
-                            <Eye className="h-4 w-4" />
-                          )}
-                          {canEditDraft ? "Editar" : "Ver"}
-                        </Button>
-                      </td>
-                    </tr>
-                      );
-                    })()
-                  ))}
+                  {filteredReceipts.map((row: any) => {
+                    const canEditDraft =
+                      canManageReceipts && row.receipt.status === "borrador";
+                    const itemsExpanded =
+                      expandedItemsId === row.receipt.id;
+
+                    return (
+                      <Fragment key={row.receipt.id}>
+                        <tr className="border-b border-border last:border-0">
+                          <td className="p-3 font-medium">
+                            <DocumentNumberButton
+                              onClick={() =>
+                                canEditDraft
+                                  ? openDraftReceiptForEdit(row)
+                                  : setViewReceiptId(row.receipt.id)
+                              }
+                              ariaLabel={`Abrir ${row.receipt.receiptNumber}`}
+                            >
+                              {row.receipt.receiptNumber}
+                            </DocumentNumberButton>
+                          </td>
+                          <td className="p-3">
+                            <DocumentItemsAccordionTrigger
+                              expanded={itemsExpanded}
+                              count={
+                                itemsExpanded
+                                  ? expandedItemsDetail?.items?.length
+                                  : undefined
+                              }
+                              onToggle={() =>
+                                setExpandedItemsId(
+                                  itemsExpanded ? null : row.receipt.id
+                                )
+                              }
+                            />
+                          </td>
+                          <td className="p-3 text-xs">
+                            {row.project
+                              ? `${row.project.code} — ${row.project.name}`
+                              : "—"}
+                          </td>
+                          <td className="p-3 text-xs">
+                            {row.supplier ? (
+                              <div className="space-y-1">
+                                <div className="font-medium text-foreground">
+                                  {row.supplier.supplierCode} —{" "}
+                                  {row.supplier.name}
+                                </div>
+                                <div className="text-muted-foreground">
+                                  RTN: {formatSupplierRtnLabel(row.supplier)}
+                                </div>
+                              </div>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td className="p-3 text-xs">
+                            {row.receipt.sourceType === "purchase_order"
+                              ? SOURCE_TYPE_LABELS.purchase_order
+                              : SOURCE_TYPE_LABELS.transfer}
+                          </td>
+                          <td className="p-3">
+                            <Badge
+                              variant="outline"
+                              className={`text-xs ${getReceiptStatusColor(
+                                row.receipt,
+                                row.invoice
+                              )}`}
+                            >
+                              {getReceiptStatusLabel(
+                                row.receipt,
+                                row.invoice
+                              )}
+                            </Badge>
+                          </td>
+                          <td className="p-3 text-xs">
+                            {formatDateLabel(
+                              row.receipt.receiptDate || row.receipt.createdAt
+                            )}
+                          </td>
+                          <td className="p-3">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-2"
+                              onClick={() =>
+                                canEditDraft
+                                  ? openDraftReceiptForEdit(row)
+                                  : setViewReceiptId(row.receipt.id)
+                              }
+                            >
+                              {canEditDraft ? (
+                                <Pencil className="h-4 w-4" />
+                              ) : (
+                                <Eye className="h-4 w-4" />
+                              )}
+                              {canEditDraft ? "Editar" : "Ver"}
+                            </Button>
+                          </td>
+                        </tr>
+                        {itemsExpanded ? (
+                          <tr className="border-b border-border">
+                            <td colSpan={8} className="p-0">
+                              <DocumentItemsAccordionPanel
+                                items={expandedItemsDetail?.items?.map(
+                                  (item: any) => ({
+                                    ...item,
+                                    quantity: item.quantityReceived,
+                                  })
+                                )}
+                                isLoading={isLoadingExpandedItems}
+                                error={expandedItemsError}
+                              />
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

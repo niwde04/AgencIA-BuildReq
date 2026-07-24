@@ -3116,6 +3116,35 @@ export async function listVisibleWarehouseStockForItems(params: {
   });
 }
 
+export async function getMaterialRequestItemsPreview(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const requestRows = await db
+    .select({ request: materialRequests })
+    .from(materialRequests)
+    .where(eq(materialRequests.id, id))
+    .limit(1);
+  const request = requestRows[0]?.request;
+  if (!request) return undefined;
+
+  const items = await db
+    .select({
+      id: requestItems.id,
+      sapItemCode: requestItems.sapItemCode,
+      fixedAssetSapItemCode: requestItems.fixedAssetSapItemCode,
+      itemName: requestItems.itemName,
+      sapItemDescription: requestItems.sapItemDescription,
+      quantity: requestItems.quantity,
+      unit: requestItems.unit,
+    })
+    .from(requestItems)
+    .where(eq(requestItems.requestId, id))
+    .orderBy(asc(requestItems.id));
+
+  return { request, items };
+}
+
 export async function getMaterialRequestById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
