@@ -5505,6 +5505,23 @@ function buildPurchaseOrderDocument(params: {
       taxBreakdown: item.taxBreakdown,
     }))
   );
+  const normalizedStatus = params.status?.trim().toLowerCase() ?? "";
+  const isCancelled = [
+    "anulada",
+    "anulado",
+    "cancelada",
+    "cancelado",
+  ].includes(normalizedStatus);
+  const watermarkText = isCancelled
+    ? "ANULADA"
+    : ![
+          "emitida",
+          "enviada",
+          "parcialmente_recibida",
+          "recibida",
+        ].includes(normalizedStatus)
+      ? "NO OFICIAL"
+      : null;
 
   return buildPurchaseOrderPrintPdfBase64({
     orderNumber: params.orderNumber,
@@ -5525,6 +5542,7 @@ function buildPurchaseOrderDocument(params: {
     paymentMethodLabel: params.paymentMethodLabel?.trim() || "-",
     currencyLabel: getPurchaseCurrencyLabel(params.currency),
     pricesIncludeTax: params.pricesIncludeTax === true,
+    watermarkText,
     observations: params.observations?.trim() || "-",
     quoteLabel: params.quoteLabel?.trim() || "-",
     items: params.items.map((item, index) => {

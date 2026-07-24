@@ -95,10 +95,6 @@ import {
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
-import {
-  getReadablePrintStyles,
-  getReadablePurchaseOrderPrintStyles,
-} from "@/lib/readable-print-styles";
 import { useProcurementApprovalSettings } from "@/hooks/useProcurementApprovalSettings";
 import {
   calculatePurchaseOrderLineAmounts,
@@ -2686,15 +2682,26 @@ export default function OrdenesCompra() {
     if (!detail) return;
 
     const purchaseOrder = detail.purchaseOrder;
-    const shouldPrintDraftWatermark = ![
-      "emitida",
-      "enviada",
-      "parcialmente_recibida",
-      "recibida",
+    const normalizedPrintStatus = String(purchaseOrder.status ?? "")
+      .trim()
+      .toLowerCase();
+    const isCancelledPrint = [
       "anulada",
-    ].includes(purchaseOrder.status);
+      "anulado",
+      "cancelada",
+      "cancelado",
+    ].includes(normalizedPrintStatus);
+    const printWatermarkText = isCancelledPrint
+      ? "ANULADA"
+      : ![
+            "emitida",
+            "enviada",
+            "parcialmente_recibida",
+            "recibida",
+          ].includes(normalizedPrintStatus)
+        ? "NO OFICIAL"
+        : null;
     const supplierName = detail.supplier?.name ?? "Proveedor pendiente";
-    const supplierRtn = detail.supplier?.rtn || "-";
     const projectLabel = detail.project
       ? `${detail.project.code} ${detail.project.name}`
       : `Proyecto ${purchaseOrder.projectId}`;
@@ -2710,19 +2717,6 @@ export default function OrdenesCompra() {
       createdByLabel !== "—"
         ? createdByLabel
         : user?.name || user?.email || "-";
-    const originalRequestNumbers = Array.isArray(
-      (detail as any).originalRequestNumbers
-    )
-      ? ((detail as any).originalRequestNumbers as unknown[])
-          .map(value => String(value ?? "").trim())
-          .filter(Boolean)
-      : [];
-    const originalRequestLabel =
-      originalRequestNumbers.length > 0
-        ? Array.from(new Set(originalRequestNumbers)).join(", ")
-        : detail.purchaseRequest?.materialRequestId
-          ? `REQ #${detail.purchaseRequest.materialRequestId}`
-          : "-";
     const salesAdvisorLabel = formatSupplierContactPrintLabel(
       detail.preferredSupplierContact
     );
@@ -2736,6 +2730,15 @@ export default function OrdenesCompra() {
     const quoteLabel = detail.purchaseRequest?.quoteAttachmentId
       ? String(detail.purchaseRequest.quoteAttachmentId)
       : "-";
+    const destinationLabels = Array.from(
+      new Set(
+        items
+          .map((item: any) => formatPurchaseOrderItemTargetLabel(item).trim())
+          .filter((value: string) => value && value !== "-")
+      )
+    );
+    const destinationLabel =
+      destinationLabels.length > 0 ? destinationLabels.join(" / ") : "-";
     const itemRows = items
       .map((item: any, index: number) => {
         const draft = getItemDraft(item);
@@ -2745,7 +2748,6 @@ export default function OrdenesCompra() {
           item.currentSapItemCode ||
           item.originalSapItemCode ||
           "-";
-        const targetLabel = formatPurchaseOrderItemTargetLabel(item);
         const brandLine =
           item.brand || item.catalogItem?.brand
             ? `<div class="item-meta">Marca: ${escapeHtml(
@@ -2770,7 +2772,6 @@ export default function OrdenesCompra() {
           <tr>
             <td class="center">${index + 1}</td>
             <td>${escapeHtml(printItemName)}${brandLine}</td>
-            <td>${escapeHtml(targetLabel)}</td>
             <td class="center">${escapeHtml(partNumberLabel)}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(draft.quantity))}</td>
             <td class="numeric">${escapeHtml(formatPrintMoney(draft.unitPrice))}</td>
@@ -2811,16 +2812,17 @@ export default function OrdenesCompra() {
           <meta charset="utf-8" />
           <title>${escapeHtml(purchaseOrder.orderNumber)}</title>
           <style>
-            @page { size: A4 portrait; margin: 7mm; }
+            @page { size: A4 portrait; margin: 9mm 10mm; }
             * { box-sizing: border-box; }
             body {
+              background: #fff;
               color: #000;
               font-family: Arial, Helvetica, sans-serif;
-              font-size: 9.8px;
+              font-size: 7.4px;
+              line-height: 1.15;
               margin: 0;
-              background: #fff;
             }
-            .draft-watermark {
+            .print-watermark {
               align-items: center;
               color: rgba(120, 120, 120, 0.18);
               display: flex;
@@ -2836,84 +2838,92 @@ export default function OrdenesCompra() {
               transform: rotate(-32deg);
               z-index: 0;
             }
+            .print-watermark.cancelled {
+              color: rgba(198, 0, 0, 0.16);
+              font-size: 84px;
+            }
             .sheet {
               margin: 0 auto;
-              max-width: 196mm;
-              padding: 0 1mm 3mm;
+              max-width: 190mm;
               position: relative;
               z-index: 1;
             }
             .header {
               align-items: start;
               display: grid;
-              grid-template-columns: 112px 1fr 86px;
-              gap: 8px;
+              gap: 7px;
+              grid-template-columns: 78px 1fr 78px;
             }
             .logo {
               display: block;
-              height: 56px;
+              height: 43px;
               object-fit: contain;
-              width: 108px;
+              width: 74px;
             }
             .title {
-              font-size: 13px;
+              font-size: 9.2px;
               font-weight: 800;
-              line-height: 1.15;
+              line-height: 1.18;
               text-align: center;
               text-transform: uppercase;
             }
             .title .company {
-              font-size: 15px;
+              font-size: 10.2px;
             }
             .rule {
-              border-top: 4px double #111;
-              margin: 3px 0 8px;
+              border-top: 3px double #111;
+              margin: 3px 0 9px;
             }
             .meta {
               display: grid;
-              gap: 8px;
-              grid-template-columns: 1.08fr 0.78fr 1fr;
+              gap: 18px;
+              grid-template-columns: minmax(0, 1fr) 164px;
             }
             .meta-left,
-            .meta-mid,
             .meta-right {
               display: grid;
+              align-content: start;
               gap: 3px;
             }
             .field {
+              align-items: start;
               display: grid;
-              gap: 4px;
-              grid-template-columns: 86px 1fr;
-            }
-            .meta-mid .field {
-              grid-template-columns: 66px 1fr;
+              gap: 5px;
+              grid-template-columns: 58px minmax(0, 1fr);
+              min-height: 9px;
             }
             .meta-right .field {
-              grid-template-columns: 86px 1fr;
+              grid-template-columns: 44px minmax(0, 1fr);
             }
             .label {
               font-weight: 800;
             }
-              .value {
-                font-weight: 700;
-                overflow-wrap: anywhere;
-              }
-              table {
-                border-collapse: collapse;
-                margin-top: 8px;
-                table-layout: fixed;
-                width: 100%;
-              }
-            th {
-              border-bottom: 2px solid #111;
+            .value {
+              font-weight: 700;
+              overflow-wrap: anywhere;
+            }
+            .document-number {
+              color: #d60000;
+              font-size: 9.2px;
               font-weight: 800;
-                padding: 3px 4px;
+              line-height: 1;
+            }
+            table {
+              border-collapse: collapse;
+              margin-top: 9px;
+              table-layout: fixed;
+              width: 100%;
+            }
+            th {
+              border-bottom: 1px solid #111;
+              font-weight: 800;
+              padding: 2px 3px;
               text-align: center;
             }
             td {
-              border-bottom: 1px solid #111;
-                padding: 3px 4px;
-                overflow-wrap: anywhere;
+              border-bottom: 1px solid #bcbcbc;
+              overflow-wrap: anywhere;
+              padding: 2px 3px;
               vertical-align: top;
             }
             .center { text-align: center; }
@@ -2921,85 +2931,115 @@ export default function OrdenesCompra() {
               font-variant-numeric: tabular-nums;
               text-align: right;
             }
-              .item-meta {
-                color: #000;
-                font-size: 8.4px;
-                margin-top: 1px;
-              }
-            .summary-row {
-              display: flex;
-              justify-content: flex-end;
-              margin-top: 4px;
+            .item-meta {
+              color: #000;
+              font-size: 6.8px;
+              margin-top: 1px;
+            }
+            .after-table {
+              align-items: start;
+              break-inside: avoid;
+              display: grid;
+              gap: 18px;
+              grid-template-columns: minmax(0, 1fr) 164px;
+              margin-top: 8px;
+              page-break-inside: avoid;
+            }
+            .delivery-meta {
+              display: grid;
+              gap: 3px;
+            }
+            .delivery-meta .field {
+              grid-template-columns: 66px minmax(0, 1fr);
             }
             .summary {
               border-collapse: collapse;
-              display: inline-table;
-              font-size: 8px;
-              line-height: 0.95;
               margin-top: 0;
-              table-layout: auto;
-              width: auto;
+              table-layout: fixed;
+              width: 100%;
             }
             .summary td {
               border-bottom: 1px solid #111;
-              font-weight: 800;
-              height: 11px;
-              padding: 0 3px;
+              font-weight: 700;
+              padding: 1px 2px;
               white-space: nowrap;
             }
             .summary td:first-child {
-              min-width: 0;
-              padding-right: 10px;
+              padding-right: 6px;
               text-align: left;
             }
             .summary td.numeric {
-              min-width: 54px;
+              font-weight: 800;
+              width: 56px;
             }
             .signatures {
               display: grid;
-              gap: 48px;
-              grid-template-columns: repeat(2, 150px);
+              gap: 104px;
+              grid-template-columns: repeat(2, 92px);
               justify-content: center;
-              margin: 16px 0 10px;
+              margin: 28px 0 8px;
+              page-break-inside: avoid;
             }
             .signature {
-              font-size: 9.4px;
+              font-size: 7.1px;
               font-weight: 700;
               text-align: center;
             }
             .signature-name {
-              font-size: 9px;
-              min-height: 18px;
+              font-size: 7.2px;
+              min-height: 17px;
               overflow-wrap: anywhere;
             }
             .signature-line {
-              border-top: 2px solid #111;
-              padding-top: 5px;
+              border-top: 1px solid #111;
+              padding-top: 3px;
             }
             .note {
-              border: 2px solid #111;
-              border-radius: 10px;
-              font-size: 9.2px;
-              line-height: 1.2;
-              margin: 8px auto 0;
-              max-width: 100%;
-              padding: 6px 10px;
+              border: 1px solid #111;
+              border-radius: 9px;
+              font-size: 7.2px;
+              line-height: 1.22;
+              margin: 22px auto 0;
+              max-width: calc(100% - 18mm);
+              padding: 6px 9px;
+              page-break-inside: avoid;
               text-align: center;
             }
             .note-title {
+              color: #d60000;
               display: block;
               font-weight: 800;
               margin-bottom: 2px;
             }
-            @media print {
-              .sheet { max-width: none; padding: 0; }
+            .print-footer {
+              display: flex;
+              font-size: 6.9px;
+              justify-content: space-between;
+              margin-top: 15px;
             }
-            ${getReadablePrintStyles()}
-            ${getReadablePurchaseOrderPrintStyles()}
+            @media print {
+              html,
+              body {
+                height: auto;
+                overflow: visible;
+              }
+              .sheet { max-width: none; }
+              thead { display: table-header-group; }
+              tr {
+                break-inside: avoid;
+                page-break-inside: avoid;
+              }
+            }
           </style>
         </head>
         <body>
-          ${shouldPrintDraftWatermark ? '<div class="draft-watermark">NO OFICIAL</div>' : ""}
+          ${
+            printWatermarkText
+              ? `<div class="print-watermark${
+                  isCancelledPrint ? " cancelled" : ""
+                }">${printWatermarkText}</div>`
+              : ""
+          }
           <main class="sheet">
             <section class="header">
               ${getPrintLogoMarkup()}
@@ -3024,15 +3064,15 @@ export default function OrdenesCompra() {
                   <div class="value">${escapeHtml(supplierName)}</div>
                 </div>
                 <div class="field">
-                  <div class="label">RTN Proveedor:</div>
-                  <div class="value">${escapeHtml(supplierRtn)}</div>
-                </div>
-                <div class="field">
                   <div class="label">Asesor Vta:</div>
                   <div class="value">${escapeHtml(salesAdvisorLabel)}</div>
                 </div>
+                <div class="field">
+                  <div class="label">Destino:</div>
+                  <div class="value">${escapeHtml(destinationLabel)}</div>
+                </div>
               </div>
-              <div class="meta-mid">
+              <div class="meta-right">
                 <div class="field">
                   <div class="label">Pedido:</div>
                   <div class="value">${escapeHtml(purchaseOrder.id)}</div>
@@ -3048,28 +3088,43 @@ export default function OrdenesCompra() {
                   )}</div>
                 </div>
                 <div class="field">
-                  <div class="label">Precios:</div>
-                  <div class="value">${
-                    purchaseOrder.pricesIncludeTax ? "INCLUYEN ISV" : "SIN ISV"
-                  }</div>
-                </div>
-                <div class="field">
                   <div class="label">O Compra:</div>
-                  <div class="value">${escapeHtml(purchaseOrder.orderNumber)}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Entrega:</div>
-                  <div class="value">${escapeHtml(deliveryDate)}</div>
+                  <div class="value document-number">${escapeHtml(
+                    purchaseOrder.orderNumber
+                  )}</div>
                 </div>
               </div>
-              <div class="meta-right">
+            </section>
+
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 9.6%;">Ítem</th>
+                  <th style="width: 39.9%;">Descripcion</th>
+                  <th style="width: 14%;">No. Parte</th>
+                  <th style="width: 9.6%;">Cantidad</th>
+                  <th style="width: 13.4%;">${
+                    purchaseOrder.pricesIncludeTax ? "Valor U c/ISV" : "Valor U"
+                  }</th>
+                  <th style="width: 13.5%;">${
+                    purchaseOrder.pricesIncludeTax ? "Base" : "Valor T"
+                  }</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemRows || `<tr><td colspan="6">Sin ítems</td></tr>`}
+              </tbody>
+            </table>
+
+            <section class="after-table">
+              <div class="delivery-meta">
+                <div class="field">
+                  <div class="label">Fecha Entrega:</div>
+                  <div class="value">${escapeHtml(deliveryDate)}</div>
+                </div>
                 <div class="field">
                   <div class="label">Solicitado:</div>
                   <div class="value">${escapeHtml(requestedByLabel)}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Requisición:</div>
-                  <div class="value">${escapeHtml(originalRequestLabel)}</div>
                 </div>
                 <div class="field">
                   <div class="label">Observaciones:</div>
@@ -3080,30 +3135,6 @@ export default function OrdenesCompra() {
                   <div class="value">${escapeHtml(quoteLabel)}</div>
                 </div>
               </div>
-            </section>
-
-            <table>
-              <thead>
-                <tr>
-                  <th style="width: 8%;">Ítem</th>
-                  <th style="width: 28%;">Descripcion</th>
-                  <th style="width: 20%;">Destino</th>
-                  <th style="width: 14%;">No. Parte</th>
-                  <th style="width: 10%;">Cantidad</th>
-                  <th style="width: 10%;">${
-                    purchaseOrder.pricesIncludeTax ? "Valor U c/ISV" : "Valor U"
-                  }</th>
-                  <th style="width: 10%;">${
-                    purchaseOrder.pricesIncludeTax ? "Base" : "Valor T"
-                  }</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${itemRows || `<tr><td colspan="7">Sin ítems</td></tr>`}
-              </tbody>
-            </table>
-
-            <section class="summary-row">
               <table class="summary">
                 <tbody>
                   ${fiscalSummaryRows}
@@ -3130,6 +3161,11 @@ export default function OrdenesCompra() {
               Presentar con la factura su constancia de estar sujetos al RÉGIMEN DE PAGOS A CUENTA vigente,
               caso contrario se procederá con las retenciones correspondientes.
             </section>
+
+            <footer class="print-footer">
+              <span>${escapeHtml(preparedByLabel)}</span>
+              <span>1</span>
+            </footer>
           </main>
         </body>
       </html>

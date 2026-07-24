@@ -9,6 +9,10 @@ export const ACCOUNT_PAYMENT_ALLOWED_RETENTION_TAX_CODE = "RT15";
 export const ACCOUNT_PAYMENT_ALLOWED_RETENTION_RATE_PERCENT = 15;
 export const MISSING_CPC_REQUIRED_RETENTION_TAX_CODE = "RT01";
 export const MISSING_CPC_REQUIRED_RETENTION_RATE_PERCENT = 1;
+const MISSING_CPC_REQUIRED_RETENTION_LEGACY_TAX_CODES = new Set([
+  MISSING_CPC_REQUIRED_RETENTION_TAX_CODE,
+  "RT1",
+]);
 
 export type SupplierAccountPaymentCertificateStatus =
   | "vigente"
@@ -94,7 +98,7 @@ export function isMissingCpcRequiredRetention(value: {
     .toUpperCase();
   const ratePercent = Number(value.ratePercent);
   return (
-    taxCode === MISSING_CPC_REQUIRED_RETENTION_TAX_CODE &&
+    MISSING_CPC_REQUIRED_RETENTION_LEGACY_TAX_CODES.has(taxCode) &&
     Number.isFinite(ratePercent) &&
     Math.abs(ratePercent - MISSING_CPC_REQUIRED_RETENTION_RATE_PERCENT) <
       0.000001

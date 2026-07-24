@@ -13206,6 +13206,43 @@ describe("BuildReq - Purchase Orders", () => {
     expect(pdfText).toContain("/Subtype /Image");
   });
 
+  it("prints the ANULADA watermark on cancelled purchase orders", () => {
+    const pdf = buildPurchaseOrderPrintPdfBase64({
+      orderNumber: "OC-018-00000078",
+      orderId: "599",
+      projectLabel: "018 CA 6 - PINARES DE UYUCA - EL ZAMORANO",
+      supplierLabel: "Proveedor pendiente",
+      createdDateLabel: "24/07/2026",
+      deliveryDateLabel: "29/07/2026",
+      requestedByLabel: "BAYRON ISAAC ARAMBU TREJO",
+      salesAdvisorLabel: "-",
+      observations: "MEJORAS MOTOCARGADOR",
+      quoteLabel: "-",
+      watermarkText: "ANULADA",
+      items: [
+        {
+          itemNumber: "1",
+          description: "HILO DE CORTE REDONDO ROJO 2.7X69",
+          partNumber: "9302571",
+          quantityLabel: "1",
+          unitPriceLabel: "0.00",
+          subtotalLabel: "0.00",
+        },
+      ],
+      summaryRows: [
+        { label: "Subtotal", value: "0.00" },
+        { label: "Total", value: "0.00", emphasized: true },
+      ],
+    });
+
+    const pdfText = Buffer.from(pdf, "base64").toString("latin1");
+    const encodedWatermark = Buffer.from("ANULADA", "latin1")
+      .toString("hex")
+      .toUpperCase();
+
+    expect(pdfText).toContain(`<${encodedWatermark}> Tj`);
+  });
+
   it("prints the actual direct purchase payment method on purchase orders", () => {
     const pdf = buildPurchaseOrderPrintPdfBase64({
       orderNumber: "CD-010-00000011",
@@ -13240,18 +13277,14 @@ describe("BuildReq - Purchase Orders", () => {
     });
 
     const pdfText = Buffer.from(pdf, "base64").toString("latin1");
-    const encodedFundPrefix = Buffer.from("FONDO DEL", "latin1")
-      .toString("hex")
-      .toUpperCase();
-    const encodedFundSuffix = Buffer.from("PROYECTO", "latin1")
+    const encodedFund = Buffer.from("FONDO DEL PROYECTO", "latin1")
       .toString("hex")
       .toUpperCase();
     const encodedCredit = Buffer.from("CREDITO", "latin1")
       .toString("hex")
       .toUpperCase();
 
-    expect(pdfText).toContain(`<${encodedFundPrefix}> Tj`);
-    expect(pdfText).toContain(`<${encodedFundSuffix}> Tj`);
+    expect(pdfText).toContain(`<${encodedFund}> Tj`);
     expect(pdfText).not.toContain(`<${encodedCredit}> Tj`);
   });
 

@@ -76,10 +76,16 @@ describe("supplier account payment certificates", () => {
     ).toBe(false);
   });
 
-  it("recognizes only RT01 at one percent as the required retention without CPC", () => {
+  it("recognizes RT01 and the legacy RT1 code at one percent as the required retention without CPC", () => {
     expect(
       isMissingCpcRequiredRetention({
         taxCode: "rt01",
+        ratePercent: "1.0000",
+      })
+    ).toBe(true);
+    expect(
+      isMissingCpcRequiredRetention({
+        taxCode: "rt1",
         ratePercent: "1.0000",
       })
     ).toBe(true);
