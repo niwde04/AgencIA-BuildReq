@@ -124,7 +124,9 @@ export function CompactProcurementApprovalPanel({
             ? "xl:grid-cols-5"
             : summaryFields.length === 4
               ? "lg:grid-cols-4"
-              : "lg:grid-cols-3"
+              : summaryFields.length === 3
+                ? "lg:grid-cols-3"
+                : "lg:grid-cols-2"
         }`}
       >
         {summaryFields.map(field => {

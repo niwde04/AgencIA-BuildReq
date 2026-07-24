@@ -5072,34 +5072,6 @@ export default function OrdenesCompra() {
                     value: detail.supplier?.name || "Proveedor pendiente",
                     icon: "supplier",
                   },
-                  {
-                    label: "Tipo de compra",
-                    value:
-                      PURCHASE_TYPE_LABELS[
-                        detail.purchaseOrder.purchaseType ?? ""
-                      ] ||
-                      detail.purchaseOrder.purchaseType ||
-                      "—",
-                    icon: "purchase",
-                  },
-                  {
-                    label: "Fecha necesaria",
-                    value: detail.purchaseOrder.neededBy
-                      ? new Date(
-                          detail.purchaseOrder.neededBy
-                        ).toLocaleDateString("es-HN")
-                      : "—",
-                    icon: "date",
-                  },
-                  {
-                    label: "Total con impuestos",
-                    value: formatPurchaseOrderCurrency(
-                      orderTotal,
-                      orderCurrency
-                    ),
-                    icon: "total",
-                    accent: true,
-                  },
                 ]}
                 detailTitle={`Ítems a aprobar (${items.length})`}
                 detailContent={
@@ -5126,11 +5098,6 @@ export default function OrdenesCompra() {
                               <p className="font-medium leading-snug">
                                 {getTemporaryFixedAssetDisplayName(item)}
                               </p>
-                              <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
-                                {item.currentSapItemCode ||
-                                  item.originalSapItemCode ||
-                                  "—"}
-                              </span>
                             </div>
                             <dl className="grid grid-cols-2 gap-3 border-t border-border/70 pt-3 text-sm">
                               <div>
@@ -5248,11 +5215,10 @@ export default function OrdenesCompra() {
                       })}
                     </div>
 
-                    <table className="hidden w-full min-w-[900px] text-sm md:table">
+                    <table className="hidden w-full min-w-[780px] text-sm md:table">
                       <thead className="bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
                         <tr>
                           <th className="px-4 py-3 text-left">Artículo</th>
-                          <th className="px-4 py-3 text-left">SAP</th>
                           <th className="px-4 py-3 text-right">Cantidad</th>
                           <th className="px-4 py-3 text-right">
                             Precio unitario
@@ -5281,11 +5247,6 @@ export default function OrdenesCompra() {
                             <tr key={item.id}>
                               <td className="px-4 py-3 font-medium">
                                 {getTemporaryFixedAssetDisplayName(item)}
-                              </td>
-                              <td className="px-4 py-3 font-mono text-xs">
-                                {item.currentSapItemCode ||
-                                  item.originalSapItemCode ||
-                                  "—"}
                               </td>
                               <td className="px-4 py-3 text-right font-medium">
                                 {formatQuantity(draft.quantity)}{" "}
@@ -5358,7 +5319,7 @@ export default function OrdenesCompra() {
                       <tfoot className="border-t border-border bg-muted/20">
                         <tr>
                           <td
-                            colSpan={4}
+                            colSpan={3}
                             className="px-4 py-3 text-right text-xs text-muted-foreground"
                           >
                             Subtotal{" "}
@@ -5489,8 +5450,8 @@ export default function OrdenesCompra() {
                   >
                     <Save className="mr-2 h-4 w-4" />
                     {reviewApprovalMutation.isPending
-                      ? "Finalizando..."
-                      : "Finalizar revisión"}
+                      ? "Aprobando..."
+                      : "Aprobar orden de compra"}
                   </Button>
                 }
                 isPending={reviewApprovalMutation.isPending}
