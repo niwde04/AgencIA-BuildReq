@@ -406,6 +406,41 @@ function formatReceiptLineTargetLabel(
   );
 }
 
+function formatReceiptPrintLineTargetLabel(
+  item: any,
+  sourceItem?: any,
+  projectId?: number | null
+) {
+  const selection =
+    mapReceiptLineTargetToSelection(item, projectId) ??
+    mapReceiptLineTargetToSelection(sourceItem, projectId);
+
+  if (!selection) return null;
+  if (selection.targetType === "subproyecto") {
+    return selection.label.replace(/^Subproyecto:\s*/i, "").trim() || null;
+  }
+
+  const assetName = selection.fixedAssetName.trim();
+  if (assetName) return assetName;
+
+  const labelWithoutPrefix = selection.label
+    .replace(/^Activo fijo:\s*/i, "")
+    .trim();
+  const assetCode = selection.fixedAssetSapItemCode.trim();
+  if (!assetCode || !labelWithoutPrefix.startsWith(assetCode)) {
+    return labelWithoutPrefix || null;
+  }
+
+  return (
+    labelWithoutPrefix
+      .slice(assetCode.length)
+      .replace(/^\s*-\s*/, "")
+      .trim() ||
+    labelWithoutPrefix ||
+    null
+  );
+}
+
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
   "emitida",
   "enviada",
@@ -4150,11 +4185,6 @@ export default function Recepciones() {
         receiptDetail.supplier?.name ||
         "-"
       : "-";
-    const supplierRtnLabel = isPurchaseOrderReceipt
-      ? receiptPurchaseOrderDetail?.supplier?.rtn ||
-        receiptDetail.supplier?.rtn ||
-        "-"
-      : "-";
     const documentTypeLabel = isPurchaseOrderReceipt
       ? receipt.isFiscalDocument
         ? getDocumentTypeLabelFromNumber(receipt.invoiceNumber) ||
@@ -4222,7 +4252,11 @@ export default function Recepciones() {
         summaryLines.push(summaryInput);
         const assetDetails = parseFixedAssetDetails(item.assetDetails);
         const targetLabel = isPurchaseOrderReceipt
-          ? formatReceiptLineTargetLabel(item, sourceItem, receipt.projectId)
+          ? formatReceiptPrintLineTargetLabel(
+              item,
+              sourceItem,
+              receipt.projectId
+            )
           : null;
         const targetCellLabel = targetLabel || "-";
         const itemWarehouseLabel = formatReceiptItemWarehouseLabel(
@@ -4367,7 +4401,7 @@ export default function Recepciones() {
             .title {
               color: #000;
               font-size: 11.5px;
-              font-weight: 800;
+              font-weight: 700;
               line-height: 1.25;
               text-align: center;
               text-transform: uppercase;
@@ -4375,13 +4409,14 @@ export default function Recepciones() {
             .company {
               color: #000;
               font-size: 13px;
+              font-weight: 700;
               margin-bottom: 2px;
             }
             .document-number {
-              border: 4px double #222;
+              border: 3px double #666;
               color: #000;
               font-size: 12px;
-              font-weight: 800;
+              font-weight: 700;
               margin-top: 1mm;
               padding: 3px 6px;
               text-align: center;
@@ -4406,10 +4441,10 @@ export default function Recepciones() {
               grid-template-columns: 96px 1fr;
             }
             .label {
-              font-weight: 800;
+              font-weight: 600;
             }
             .value {
-              font-weight: 700;
+              font-weight: 500;
               overflow-wrap: anywhere;
             }
             table {
@@ -4419,15 +4454,15 @@ export default function Recepciones() {
               width: 100%;
             }
             th {
-              border-bottom: 2px solid #111;
-              border-top: 2px solid #111;
+              border-bottom: 1px solid #777;
+              border-top: 1px solid #777;
               font-size: 8.5px;
-              font-weight: 800;
+              font-weight: 600;
               padding: 3px 4px;
               text-align: left;
             }
             td {
-              border-bottom: 1px solid #111;
+              border-bottom: 1px solid #aaa;
               padding: 3px 4px;
               overflow-wrap: anywhere;
               vertical-align: top;
@@ -4440,7 +4475,7 @@ export default function Recepciones() {
               margin-top: 1px;
             }
             .charge-row td {
-              font-weight: 800;
+              font-weight: 600;
             }
             .center { text-align: center; }
             .numeric {
@@ -4460,8 +4495,8 @@ export default function Recepciones() {
               width: 100%;
             }
             .summary-table td {
-              border-bottom: 1px solid #111;
-              font-weight: 800;
+              border-bottom: 1px solid #777;
+              font-weight: 600;
               padding: 3px 4px;
               white-space: nowrap;
             }
@@ -4475,10 +4510,13 @@ export default function Recepciones() {
               margin-top: 10mm;
             }
             .signature-line {
-              border-top: 2px solid #111;
-              font-weight: 700;
+              border-top: 1px solid #777;
+              font-weight: 500;
               padding-top: 4px;
               text-align: center;
+            }
+            strong {
+              font-weight: 600;
             }
             @media print {
               .sheet { max-width: none; padding: 0; }
@@ -4501,16 +4539,8 @@ export default function Recepciones() {
             <section class="meta">
               <div class="meta-column">
                 <div class="field">
-                  <div class="label">Fecha Documento:</div>
+                  <div class="label">Fecha Factura:</div>
                   <div class="value">${escapeHtml(formatPrintDate(receipt.documentDate))}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Fecha Vencimiento (crédito):</div>
-                  <div class="value">${escapeHtml(formatPrintDate(receipt.documentDueDate))}</div>
-                </div>
-                <div class="field">
-                  <div class="label">No Pedido:</div>
-                  <div class="value">${escapeHtml(receiptSourceHeaderTitle)}</div>
                 </div>
                 <div class="field">
                   <div class="label">Job:</div>
@@ -4535,46 +4565,19 @@ export default function Recepciones() {
                   <div class="value">${escapeHtml(supplierLabel)}</div>
                 </div>
                 <div class="field">
-                  <div class="label">RTN Proveedor:</div>
-                  <div class="value">${escapeHtml(supplierRtnLabel)}</div>
-                </div>
-                <div class="field">
                   <div class="label">Tipo Documento:</div>
                   <div class="value">${escapeHtml(documentTypeLabel)}</div>
                 </div>
                 <div class="field">
-                  <div class="label">No Documento:</div>
+                  <div class="label">No Factura:</div>
                   <div class="value">${escapeHtml(receipt.invoiceNumber || "-")}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Rango Autorizado Inicial:</div>
-                  <div class="value">${escapeHtml(receipt.documentRangeStart || "-")}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Rango Autorizado Final:</div>
-                  <div class="value">${escapeHtml(receipt.documentRangeEnd || "-")}</div>
                 </div>
                 <div class="field">
                   <div class="label">Referencia:</div>
                   <div class="value">${escapeHtml(referenceLabel)}</div>
                 </div>
                 <div class="field">
-                  <div class="label">Moneda:</div>
-                  <div class="value">${escapeHtml(
-                    getPurchaseCurrencyLabel(receipt.currency)
-                  )}</div>
-                </div>
-                ${isPurchaseOrderReceipt ? `
-                <div class="field">
-                  <div class="label">Precios:</div>
-                  <div class="value">${
-                    receipt.pricesIncludeTax === true
-                      ? "INCLUYEN ISV"
-                      : "SIN ISV"
-                  }</div>
-                </div>` : ""}
-                <div class="field">
-                  <div class="label">Observacion:</div>
+                  <div class="label">Observación:</div>
                   <div class="value">${escapeHtml(observations)}</div>
                 </div>
               </div>
