@@ -8014,8 +8014,8 @@ export default function Recepciones() {
               No hay recepciones que coincidan con los filtros
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1120px] text-sm">
+            <div className="relative isolate max-w-full overflow-x-auto">
+              <table className="w-full min-w-[1120px] border-separate border-spacing-0 text-sm">
                 <thead>
                   <tr className="border-b border-border">
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -8039,7 +8039,7 @@ export default function Recepciones() {
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Fecha
                     </th>
-                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <th className="sticky right-0 z-30 w-[120px] min-w-[120px] border-l border-border/60 bg-card p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground shadow-[-10px_0_14px_-12px_rgba(0,0,0,0.55)]">
                       Acciones
                     </th>
                   </tr>
@@ -8066,7 +8066,7 @@ export default function Recepciones() {
                               {row.receipt.receiptNumber}
                             </DocumentNumberButton>
                           </td>
-                          <td className="p-3">
+                          <td className="sticky right-0 z-20 w-[120px] min-w-[120px] border-l border-border/60 bg-card p-3 text-right shadow-[-10px_0_14px_-12px_rgba(0,0,0,0.55)]">
                             <DocumentItemsAccordionTrigger
                               expanded={itemsExpanded}
                               count={

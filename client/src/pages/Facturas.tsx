@@ -3511,8 +3511,8 @@ export default function Facturas() {
               No hay facturas registradas
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1870px] text-sm">
+            <div className="relative isolate max-w-full overflow-x-auto">
+              <table className="w-full min-w-[1870px] border-separate border-spacing-0 text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/30">
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -3551,7 +3551,7 @@ export default function Facturas() {
                     <th className="min-w-[280px] p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Estado
                     </th>
-                    <th className="sticky right-0 z-20 min-w-[104px] border-l border-border/60 bg-muted/30 p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
+                    <th className="sticky right-0 z-30 w-[112px] min-w-[112px] border-l border-border/60 bg-card p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground shadow-[-10px_0_14px_-12px_rgba(0,0,0,0.55)]">
                       Acciones
                     </th>
                   </tr>
@@ -3667,7 +3667,7 @@ export default function Facturas() {
                             ) : null}
                           </div>
                         </td>
-                        <td className="sticky right-0 z-10 min-w-[104px] border-l border-border/60 bg-background p-3 text-right align-top shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
+                        <td className="sticky right-0 z-20 w-[112px] min-w-[112px] border-l border-border/60 bg-card p-3 text-right align-top shadow-[-10px_0_14px_-12px_rgba(0,0,0,0.55)]">
                           <Button
                             variant="outline"
                             size="sm"

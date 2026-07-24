@@ -935,6 +935,9 @@ export default function OrdenesCompra() {
   } = useProcurementApprovalSettings();
   const userRole = (user as any)?.buildreqRole;
   const isProcurementApprover = isProcurementApproverRole(userRole);
+  const purchaseOrderTableColumnCount = isProcurementApprover
+    ? 9
+    : 13 + (PROCUREMENT_APPROVALS_ENABLED ? 1 : 0);
   const canManagePurchaseOrders =
     !isProcurementApprover &&
     (user?.role === "admin" ||
@@ -3354,19 +3357,23 @@ export default function OrdenesCompra() {
                           >
                             {row.purchaseOrder.orderNumber}
                           </DocumentNumberButton>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {formatPurchaseOrderRequestNumbers(row)}
-                          </p>
+                          {!isProcurementApprover ? (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {formatPurchaseOrderRequestNumbers(row)}
+                            </p>
+                          ) : null}
                         </div>
-                        <Badge
-                          variant="outline"
-                          className={`shrink-0 text-[10px] ${
-                            STATUS_COLORS[effectiveStatus] || ""
-                          }`}
-                        >
-                          {STATUS_LABELS[effectiveStatus] ||
-                            row.purchaseOrder.status}
-                        </Badge>
+                        {!isProcurementApprover ? (
+                          <Badge
+                            variant="outline"
+                            className={`shrink-0 text-[10px] ${
+                              STATUS_COLORS[effectiveStatus] || ""
+                            }`}
+                          >
+                            {STATUS_LABELS[effectiveStatus] ||
+                              row.purchaseOrder.status}
+                          </Badge>
+                        ) : null}
                       </div>
 
                       <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
@@ -3380,16 +3387,18 @@ export default function OrdenesCompra() {
                               : "—"}
                           </dd>
                         </div>
-                        <div className="min-w-0">
-                          <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                            Tipo
-                          </dt>
-                          <dd className="mt-1 text-xs">
-                            {PURCHASE_TYPE_LABELS[
-                              row.purchaseOrder.purchaseType
-                            ] || "—"}
-                          </dd>
-                        </div>
+                        {!isProcurementApprover ? (
+                          <div className="min-w-0">
+                            <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                              Tipo
+                            </dt>
+                            <dd className="mt-1 text-xs">
+                              {PURCHASE_TYPE_LABELS[
+                                row.purchaseOrder.purchaseType
+                              ] || "—"}
+                            </dd>
+                          </div>
+                        ) : null}
                         <div className="col-span-2 min-w-0">
                           <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                             Proveedor
@@ -3445,7 +3454,8 @@ export default function OrdenesCompra() {
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2 border-t border-border/70 pt-3">
-                        {PROCUREMENT_APPROVALS_ENABLED ? (
+                        {PROCUREMENT_APPROVALS_ENABLED &&
+                        !isProcurementApprover ? (
                           <Badge
                             variant="outline"
                             className={`text-[10px] ${getApprovalStatusColor(
@@ -3485,8 +3495,14 @@ export default function OrdenesCompra() {
                 })}
               </div>
 
-              <div className="hidden overflow-x-auto md:block">
-                <table className="w-full min-w-[1840px] text-sm">
+              <div className="relative isolate hidden max-w-full overflow-x-auto md:block">
+                <table
+                  className={`w-full border-separate border-spacing-0 text-sm ${
+                    isProcurementApprover
+                      ? "min-w-[1180px]"
+                      : "min-w-[1840px]"
+                  }`}
+                >
                   <thead>
                     <tr className="border-b border-border">
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -3495,9 +3511,11 @@ export default function OrdenesCompra() {
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Artículos
                       </th>
-                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        No. Req.
-                      </th>
+                      {!isProcurementApprover ? (
+                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          No. Req.
+                        </th>
+                      ) : null}
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Clasificación
                       </th>
@@ -3510,16 +3528,21 @@ export default function OrdenesCompra() {
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Creada por
                       </th>
-                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Tipo Compra
-                      </th>
+                      {!isProcurementApprover ? (
+                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Tipo Compra
+                        </th>
+                      ) : null}
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Proveedor
                       </th>
-                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Estatus
-                      </th>
-                      {PROCUREMENT_APPROVALS_ENABLED ? (
+                      {!isProcurementApprover ? (
+                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Estatus
+                        </th>
+                      ) : null}
+                      {PROCUREMENT_APPROVALS_ENABLED &&
+                      !isProcurementApprover ? (
                         <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                           Aprobación
                         </th>
@@ -3527,10 +3550,12 @@ export default function OrdenesCompra() {
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Contrato
                       </th>
-                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Emisión
-                      </th>
-                      <th className="sticky right-0 z-20 min-w-[104px] border-l border-border/60 bg-background p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
+                      {!isProcurementApprover ? (
+                        <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Emisión
+                        </th>
+                      ) : null}
+                      <th className="sticky right-0 z-30 w-[112px] min-w-[112px] border-l border-border/60 bg-card p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground shadow-[-10px_0_14px_-12px_rgba(0,0,0,0.55)]">
                         Acciones
                       </th>
                     </tr>
@@ -3568,9 +3593,11 @@ export default function OrdenesCompra() {
                             }
                           />
                         </td>
-                        <td className="p-3 text-xs font-medium">
-                          {formatPurchaseOrderRequestNumbers(row)}
-                        </td>
+                        {!isProcurementApprover ? (
+                          <td className="p-3 text-xs font-medium">
+                            {formatPurchaseOrderRequestNumbers(row)}
+                          </td>
+                        ) : null}
                         <td className="p-3 text-xs uppercase">
                           {row.purchaseOrder.classification}
                         </td>
@@ -3585,11 +3612,13 @@ export default function OrdenesCompra() {
                         <td className="p-3 text-xs">
                           {formatPurchaseOrderCreatedBy(row)}
                         </td>
-                        <td className="p-3 text-xs">
-                          {PURCHASE_TYPE_LABELS[
-                            row.purchaseOrder.purchaseType
-                          ] || "—"}
-                        </td>
+                        {!isProcurementApprover ? (
+                          <td className="p-3 text-xs">
+                            {PURCHASE_TYPE_LABELS[
+                              row.purchaseOrder.purchaseType
+                            ] || "—"}
+                          </td>
+                        ) : null}
                         <td className="p-3 text-xs">
                           {row.supplier ? (
                             <div className="space-y-1">
@@ -3604,27 +3633,30 @@ export default function OrdenesCompra() {
                             "Proveedor pendiente"
                           )}
                         </td>
-                        <td className="p-3">
-                          <Badge
-                            variant="outline"
-                            className={`text-xs ${
-                              STATUS_COLORS[
+                        {!isProcurementApprover ? (
+                          <td className="p-3">
+                            <Badge
+                              variant="outline"
+                              className={`text-xs ${
+                                STATUS_COLORS[
+                                  getEffectivePurchaseOrderStatus(
+                                    row.purchaseOrder.status,
+                                    row.purchaseOrder.approvalStatus
+                                  )
+                                ] || ""
+                              }`}
+                            >
+                              {STATUS_LABELS[
                                 getEffectivePurchaseOrderStatus(
                                   row.purchaseOrder.status,
                                   row.purchaseOrder.approvalStatus
                                 )
-                              ] || ""
-                            }`}
-                          >
-                            {STATUS_LABELS[
-                              getEffectivePurchaseOrderStatus(
-                                row.purchaseOrder.status,
-                                row.purchaseOrder.approvalStatus
-                              )
-                            ] || row.purchaseOrder.status}
-                          </Badge>
-                        </td>
-                        {PROCUREMENT_APPROVALS_ENABLED ? (
+                              ] || row.purchaseOrder.status}
+                            </Badge>
+                          </td>
+                        ) : null}
+                        {PROCUREMENT_APPROVALS_ENABLED &&
+                        !isProcurementApprover ? (
                           <td className="p-3">
                             <Badge
                               variant="outline"
@@ -3658,11 +3690,13 @@ export default function OrdenesCompra() {
                             </span>
                           )}
                         </td>
-                        <td className="p-3 text-xs">
-                          {EMISSION_STATUS_LABELS[row.purchaseOrder.status] ||
-                            "Pendiente"}
-                        </td>
-                        <td className="sticky right-0 z-10 min-w-[104px] border-l border-border/60 bg-background p-3 text-right shadow-[-8px_0_12px_-12px_rgba(0,0,0,0.45)]">
+                        {!isProcurementApprover ? (
+                          <td className="p-3 text-xs">
+                            {EMISSION_STATUS_LABELS[row.purchaseOrder.status] ||
+                              "Pendiente"}
+                          </td>
+                        ) : null}
+                        <td className="sticky right-0 z-20 w-[112px] min-w-[112px] border-l border-border/60 bg-card p-3 text-right shadow-[-10px_0_14px_-12px_rgba(0,0,0,0.55)]">
                           <Button
                             variant="outline"
                             size="sm"
@@ -3675,10 +3709,7 @@ export default function OrdenesCompra() {
                           {itemsExpanded ? (
                             <tr className="border-b border-border">
                               <td
-                                colSpan={
-                                  13 +
-                                  (PROCUREMENT_APPROVALS_ENABLED ? 1 : 0)
-                                }
+                                colSpan={purchaseOrderTableColumnCount}
                                 className="p-0"
                               >
                                 <DocumentItemsAccordionPanel
