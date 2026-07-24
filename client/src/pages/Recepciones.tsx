@@ -8066,7 +8066,7 @@ export default function Recepciones() {
                               {row.receipt.receiptNumber}
                             </DocumentNumberButton>
                           </td>
-                          <td className="sticky right-0 z-20 w-[120px] min-w-[120px] border-l border-border/60 bg-card p-3 text-right shadow-[-10px_0_14px_-12px_rgba(0,0,0,0.55)]">
+                          <td className="p-3">
                             <DocumentItemsAccordionTrigger
                               expanded={itemsExpanded}
                               count={
@@ -8125,7 +8125,7 @@ export default function Recepciones() {
                               row.receipt.receiptDate || row.receipt.createdAt
                             )}
                           </td>
-                          <td className="p-3">
+                          <td className="sticky right-0 z-20 w-[120px] min-w-[120px] border-l border-border/60 bg-card p-3 text-right shadow-[-10px_0_14px_-12px_rgba(0,0,0,0.55)]">
                             <Button
                               variant="outline"
                               size="sm"
