@@ -15935,6 +15935,13 @@ describe("BuildReq - Invoices", () => {
     },
     items: [],
     retentions: [],
+    accountPaymentCertificate: {
+      id: 20,
+      documentDate: new Date("2026-01-01T12:00:00"),
+      expirationDate: new Date("2026-12-31T12:00:00"),
+      status: "vigente",
+    },
+    retentionPolicy: "rt15_only",
   } as any;
 
   it("Bodeguero de Proyecto can list invoices only for their assigned project", async () => {
@@ -16215,6 +16222,73 @@ describe("BuildReq - Invoices", () => {
     reviewInvoiceSpy.mockRestore();
   });
 
+  it("blocks reviewing a fiscal invoice without a CPC valid on its issue date or RT01", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      accountPaymentCertificate: null,
+      retentionPolicy: "manual",
+      retentions: [],
+    } as any);
+    const getAttachmentsByEntitySpy = vi.spyOn(db, "getAttachmentsByEntity");
+    const reviewInvoiceSpy = vi.spyOn(db, "reviewInvoice");
+
+    await expect(caller.invoices.review({ id: 10 })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message:
+        "El proveedor no tiene una CPC vigente para la fecha de emisión de la factura. Registre la retención RT01 (1%) antes de continuar.",
+    });
+    expect(getAttachmentsByEntitySpy).not.toHaveBeenCalled();
+    expect(reviewInvoiceSpy).not.toHaveBeenCalled();
+
+    getInvoiceByIdSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
+    reviewInvoiceSpy.mockRestore();
+  });
+
+  it("allows reviewing a fiscal invoice without valid CPC when RT01 is registered", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        retentionDocumentDate: new Date("2026-05-02T12:00:00"),
+      },
+      accountPaymentCertificate: {
+        id: 21,
+        documentDate: new Date("2025-01-01T12:00:00"),
+        expirationDate: new Date("2026-04-30T12:00:00"),
+        status: "vencido",
+      },
+      retentionPolicy: "manual",
+      retentions: [
+        {
+          id: 30,
+          retentionCode: "RT01",
+          percentage: "1.0000",
+        },
+      ],
+    } as any);
+    const getAttachmentsByEntitySpy = vi
+      .spyOn(db, "getAttachmentsByEntity")
+      .mockResolvedValue([{ id: 99 }] as any);
+    const reviewInvoiceSpy = vi.spyOn(db, "reviewInvoice").mockResolvedValue({
+      ...invoiceDetail.invoice,
+      status: "revisada",
+    } as any);
+
+    await expect(caller.invoices.review({ id: 10 })).resolves.toEqual(
+      expect.objectContaining({ status: "revisada" })
+    );
+    expect(reviewInvoiceSpy).toHaveBeenCalledWith(10, ctx.user!.id);
+
+    getInvoiceByIdSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
+    reviewInvoiceSpy.mockRestore();
+  });
+
   it("blocks reviewing invoices without attachments", async () => {
     const { ctx } = createProjectAdminContext();
     const caller = appRouter.createCaller(ctx);
@@ -16312,6 +16386,32 @@ describe("BuildReq - Invoices", () => {
       accountedById: ctx.user!.id,
       accountingComment: "Listo",
     });
+
+    getInvoiceByIdSpy.mockRestore();
+    accountInvoiceSpy.mockRestore();
+  });
+
+  it("blocks accounting a reviewed invoice without valid CPC or RT01", async () => {
+    const { ctx } = createContableContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      invoice: {
+        ...invoiceDetail.invoice,
+        status: "revisada",
+      },
+      accountPaymentCertificate: null,
+      retentionPolicy: "manual",
+      retentions: [],
+    } as any);
+    const accountInvoiceSpy = vi.spyOn(db, "accountInvoice");
+
+    await expect(caller.invoices.account({ id: 10 })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message:
+        "El proveedor no tiene una CPC vigente para la fecha de emisión de la factura. Registre la retención RT01 (1%) antes de continuar.",
+    });
+    expect(accountInvoiceSpy).not.toHaveBeenCalled();
 
     getInvoiceByIdSpy.mockRestore();
     accountInvoiceSpy.mockRestore();

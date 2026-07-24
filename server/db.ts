@@ -148,6 +148,7 @@ import {
   getSupplierAccountPaymentCertificateStatus,
   getSupplierRetentionPolicy,
   isAccountPaymentAllowedRetention,
+  isMissingCpcRequiredRetention,
   SUPPLIER_ACCOUNT_PAYMENT_CERTIFICATE_CODES,
 } from "../shared/supplier-documents";
 import { ENV } from "./_core/env";
@@ -13083,7 +13084,7 @@ export async function getInvoiceById(id: number) {
     ? await findSupplierAccountPaymentCertificate(
         db,
         rows[0].supplier.id,
-        new Date()
+        rows[0].invoice.documentDate ?? new Date()
       )
     : null;
   const retentionPolicy = getSupplierRetentionPolicy({
@@ -13833,7 +13834,7 @@ export async function replaceInvoiceRetentions(
       ? await findSupplierAccountPaymentCertificate(
           tx,
           invoiceRow.supplier.id,
-          new Date()
+          invoice.documentDate ?? new Date()
         )
       : null;
     const hasValidAccountPaymentCertificate =
@@ -14014,7 +14015,13 @@ export async function replaceInvoiceRetentions(
     if (
       hasRetentions &&
       !hasValidAccountPaymentCertificate &&
-      invoiceRow.supplier?.allowsTaxWithholding === false
+      invoiceRow.supplier?.allowsTaxWithholding === false &&
+      !normalizedRetentions.some(retention =>
+        isMissingCpcRequiredRetention({
+          taxCode: retention.retentionCode,
+          ratePercent: retention.percentage,
+        })
+      )
     ) {
       throw new Error("El proveedor no permite retención de impuestos");
     }

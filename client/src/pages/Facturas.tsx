@@ -83,7 +83,10 @@ import {
   parseFixedAssetDetails,
   type FixedAssetDetail,
 } from "@shared/fixed-assets";
-import { isAccountPaymentAllowedRetention } from "@shared/supplier-documents";
+import {
+  isAccountPaymentAllowedRetention,
+  isMissingCpcRequiredRetention,
+} from "@shared/supplier-documents";
 
 const PAGE_SIZE = 50;
 const STATUS_LABELS: Record<string, string> = {
@@ -106,8 +109,7 @@ const EMISSION_DEADLINE_ISSUE_COLOR =
 const SAVED_BUTTON_CLASS =
   "border-emerald-200 bg-emerald-50 text-emerald-700 shadow-none hover:bg-emerald-100 hover:text-emerald-800 disabled:bg-emerald-50 disabled:text-emerald-700 disabled:opacity-100";
 const RETENTION_DOCUMENT_NUMBER_PLACEHOLDER = "000-000-00-00000000";
-const RETENTION_CAI_PLACEHOLDER =
-  "000000-000000-000000-000000-000000-00";
+const RETENTION_CAI_PLACEHOLDER = "000000-000000-000000-000000-000000-00";
 
 type InvoiceDraft = {
   isFiscalDocument: boolean;
@@ -241,9 +243,7 @@ type InvoiceAssetBreakdownRow = FixedAssetDetail & {
 };
 
 function getInvoiceFixedAssetArticles(item: any): InvoiceFixedAssetArticle[] {
-  return Array.isArray(item?.fixedAssetArticles)
-    ? item.fixedAssetArticles
-    : [];
+  return Array.isArray(item?.fixedAssetArticles) ? item.fixedAssetArticles : [];
 }
 
 function getInvoiceAssetBreakdownRows(
@@ -283,12 +283,9 @@ function getInvoiceAssetBreakdownRows(
             matchingArticle.fixedAssetCondition ??
             fallbackDetail?.condition ??
             "nuevo",
-          color:
-            matchingArticle.fixedAssetColor ?? fallbackDetail?.color ?? "",
-          model:
-            matchingArticle.fixedAssetModel ?? fallbackDetail?.model ?? "",
-          brand:
-            matchingArticle.fixedAssetBrand ?? fallbackDetail?.brand ?? "",
+          color: matchingArticle.fixedAssetColor ?? fallbackDetail?.color ?? "",
+          model: matchingArticle.fixedAssetModel ?? fallbackDetail?.model ?? "",
+          brand: matchingArticle.fixedAssetBrand ?? fallbackDetail?.brand ?? "",
           chassisSeries:
             matchingArticle.fixedAssetChassisSeries ??
             fallbackDetail?.chassisSeries ??
@@ -341,14 +338,18 @@ function getInvoiceAssetBreakdownRows(
 }
 
 function getFixedAssetStatusLabel(status: string | null | undefined) {
-  const normalized = String(status ?? "").trim().toLowerCase();
+  const normalized = String(status ?? "")
+    .trim()
+    .toLowerCase();
   if (normalized === "resuelto") return "Resuelto";
   if (normalized === "pendiente") return "Pendiente";
   return normalized || "Pendiente";
 }
 
 function getFixedAssetStatusBadgeClass(status: string | null | undefined) {
-  return String(status ?? "").trim().toLowerCase() === "resuelto"
+  return String(status ?? "")
+    .trim()
+    .toLowerCase() === "resuelto"
     ? "border-emerald-300 text-emerald-700"
     : "border-amber-300 text-amber-700";
 }
@@ -465,7 +466,10 @@ function InvoiceLineRetentionCell({
               ))}
             </div>
           ) : canEditRetentions ? null : (
-            <Badge variant="outline" className="border-amber-300 text-amber-700">
+            <Badge
+              variant="outline"
+              className="border-amber-300 text-amber-700"
+            >
               Sin retención
             </Badge>
           )}
@@ -546,9 +550,7 @@ function formatDateLabel(value: string | Date | null | undefined) {
   return formatRetentionCalendarDate(value) || "—";
 }
 
-function formatExchangeRateLabel(
-  value: string | number | null | undefined
-) {
+function formatExchangeRateLabel(value: string | number | null | undefined) {
   const raw = String(value ?? "");
   return raw.includes(".") ? raw.replace(/0+$/, "").replace(/\.$/, "") : raw;
 }
@@ -607,7 +609,9 @@ function calculateOceExemptAmountSuggestion(detail: any) {
   for (const item of items) {
     const itemSubtotal = toMoneyNumber(item?.subtotal);
     const breakdown = parseTaxBreakdown(item?.taxBreakdown);
-    const baseRows = breakdown.filter((entry: any) => entry?.taxType === "base");
+    const baseRows = breakdown.filter(
+      (entry: any) => entry?.taxType === "base"
+    );
 
     if (baseRows.length === 0) {
       const itemTaxAmount = toMoneyNumber(item?.taxAmount);
@@ -660,11 +664,7 @@ function formatInvoiceRequestedBy(row: any) {
       ? [row.requestedBy]
       : [];
   const labels = Array.from(
-    new Set(
-      users
-        .map((user: any) => getUserLabel(user, ""))
-        .filter(Boolean)
-    )
+    new Set(users.map((user: any) => getUserLabel(user, "")).filter(Boolean))
   );
   return labels.length > 0 ? labels.join(", ") : "—";
 }
@@ -1665,8 +1665,7 @@ export default function Facturas() {
       retentionCai: detail.invoice.retentionCai ?? "",
       retentionDocumentRangeStart:
         detail.invoice.retentionDocumentRangeStart ?? "",
-      retentionDocumentRangeEnd:
-        detail.invoice.retentionDocumentRangeEnd ?? "",
+      retentionDocumentRangeEnd: detail.invoice.retentionDocumentRangeEnd ?? "",
       retentionEmissionDeadline: dateInputValue(
         detail.invoice.retentionEmissionDeadline
       ),
@@ -1684,8 +1683,7 @@ export default function Facturas() {
       oceExemptAmount15: formatMoneyInput(detail.invoice.oceExemptAmount15),
       oceExemptAmount18: formatMoneyInput(detail.invoice.oceExemptAmount18),
       dmcForeignSection: detail.invoice.dmcForeignSection ?? "",
-      dmcForeignIdentification:
-        detail.invoice.dmcForeignIdentification ?? "",
+      dmcForeignIdentification: detail.invoice.dmcForeignIdentification ?? "",
       dmcFyducaNumber: detail.invoice.dmcFyducaNumber ?? "",
       dmcDuaNumber: detail.invoice.dmcDuaNumber ?? "",
       dmcImportOutsideCentralAmerica:
@@ -1785,7 +1783,11 @@ export default function Facturas() {
     [dateFrom, dateTo, debouncedSearchTerm, statusFilter]
   );
   useEffect(() => {
-    if (!isPlaceholderData && invoicesPage?.page && invoicesPage.page !== page) {
+    if (
+      !isPlaceholderData &&
+      invoicesPage?.page &&
+      invoicesPage.page !== page
+    ) {
       setPage(invoicesPage.page);
     }
   }, [invoicesPage?.page, isPlaceholderData, page]);
@@ -1830,49 +1832,70 @@ export default function Facturas() {
   const accountPaymentCertificate = detail?.accountPaymentCertificate ?? null;
   const hasValidAccountPaymentCertificate =
     accountPaymentCertificate?.status === "vigente";
+  const requiresMissingCpcRetention = Boolean(
+    detail &&
+      detail.invoice.isFiscalDocument !== false &&
+      !hasValidAccountPaymentCertificate
+  );
+  const hasRequiredMissingCpcRetention = retentionDrafts.some(retention =>
+    isMissingCpcRequiredRetention({
+      taxCode: retention.retentionCode,
+      ratePercent: retention.percentage,
+    })
+  );
+  const isMissingRequiredCpcRetention =
+    requiresMissingCpcRetention && !hasRequiredMissingCpcRetention;
   const retentionPolicy =
     detail?.retentionPolicy ??
     (detail?.supplier?.allowsTaxWithholding !== false ? "manual" : "none");
   const supplierAllowsTaxWithholding =
     retentionPolicy === "rt15_only"
       ? false
-      : detail?.supplier?.allowsTaxWithholding !== false;
+      : requiresMissingCpcRetention
+        ? true
+        : detail?.supplier?.allowsTaxWithholding !== false;
   const supplierSubjectToAccountPayments =
     hasValidAccountPaymentCertificate ||
     detail?.supplier?.subjectToAccountPayments !== false;
   const hasAvailableRt15Retention = retentionOptions.some(option =>
     isAccountPaymentAllowedRetention(option)
   );
+  const hasAvailableRequiredCpcRetention = retentionOptions.some(option =>
+    isMissingCpcRequiredRetention(option)
+  );
   const canRetainSelectedInvoice =
     (retentionPolicy === "rt15_only"
       ? hasAvailableRt15Retention
-      : supplierAllowsTaxWithholding) && withholdingBase > 0;
+      : requiresMissingCpcRetention
+        ? hasAvailableRequiredCpcRetention
+        : supplierAllowsTaxWithholding) && withholdingBase > 0;
   const retentionDisabledReason =
     retentionPolicy === "rt15_only" && !hasAvailableRt15Retention
       ? "La retención RT15 (15%) no está disponible en el catálogo."
-      : retentionPolicy !== "rt15_only" && !supplierAllowsTaxWithholding
-        ? "El proveedor no permite retención de impuestos."
-        : withholdingBase <= 0
-          ? "La factura no tiene líneas habilitadas para retención."
-          : "";
-  const incompatibleAccountPaymentRetentions =
-    hasValidAccountPaymentCertificate
-      ? retentionDrafts.filter(
-          retention =>
-            !isAccountPaymentAllowedRetention({
-              taxCode: retention.retentionCode,
-              ratePercent: retention.percentage,
-            })
-        )
-      : [];
+      : requiresMissingCpcRetention && !hasAvailableRequiredCpcRetention
+        ? "La retención RT01 (1%) no está disponible en el catálogo."
+        : retentionPolicy !== "rt15_only" && !supplierAllowsTaxWithholding
+          ? "El proveedor no permite retención de impuestos."
+          : withholdingBase <= 0
+            ? "La factura no tiene líneas habilitadas para retención."
+            : "";
+  const incompatibleAccountPaymentRetentions = hasValidAccountPaymentCertificate
+    ? retentionDrafts.filter(
+        retention =>
+          !isAccountPaymentAllowedRetention({
+            taxCode: retention.retentionCode,
+            ratePercent: retention.percentage,
+          })
+      )
+    : [];
   const accountPaymentCertificateLabel = !accountPaymentCertificate
-    ? "Sin constancia"
+    ? "Sin constancia para la emisión"
     : accountPaymentCertificate.status === "vigente"
-      ? `Vigente hasta ${formatDateLabel(accountPaymentCertificate.expirationDate)}`
+      ? `Vigente a la emisión · vence ${formatDateLabel(accountPaymentCertificate.expirationDate)}`
       : accountPaymentCertificate.status === "futuro"
-        ? `Vigente desde ${formatDateLabel(accountPaymentCertificate.documentDate)}`
+        ? `Aún no vigente · inicia ${formatDateLabel(accountPaymentCertificate.documentDate)}`
         : accountPaymentCertificate.status === "vencido"
-          ? `Vencida el ${formatDateLabel(accountPaymentCertificate.expirationDate)}`
+          ? `Vencida al emitir · venció ${formatDateLabel(accountPaymentCertificate.expirationDate)}`
           : "Sin vencimiento válido";
   const netPayable = Math.max(invoiceTotal - retentionTotal, 0);
   const handlePrintInvoiceDetail = () => {
@@ -1891,7 +1914,9 @@ export default function Facturas() {
     const requestedByLabel = formatInvoiceRequestedBy(detail);
     const createdByLabel = formatInvoiceCreatedBy(detail);
     const documentTypeLabel =
-      invoiceDraft.isFiscalDocument !== false ? "Factura" : "Documento extranjero";
+      invoiceDraft.isFiscalDocument !== false
+        ? "Factura"
+        : "Documento extranjero";
     const observations =
       invoiceDraft.notes?.trim() || invoice.notes?.trim() || "-";
 
@@ -1917,16 +1942,14 @@ export default function Facturas() {
 
     const getTargetLabel = (item: any) => {
       if (item.targetType === "activo_fijo") {
-        return [
-          "Activo fijo:",
-          item.fixedAssetSapItemCode,
-          item.fixedAssetName,
-        ]
+        return ["Activo fijo:", item.fixedAssetSapItemCode, item.fixedAssetName]
           .filter(Boolean)
           .join(" ");
       }
       if (item.targetType === "subproyecto") {
-        return item.subProjectId ? `Subproyecto #${item.subProjectId}` : "Subproyecto";
+        return item.subProjectId
+          ? `Subproyecto #${item.subProjectId}`
+          : "Subproyecto";
       }
       return "-";
     };
@@ -2022,7 +2045,10 @@ export default function Facturas() {
           ]
         : []),
       { label: `I.S.V. ${invoiceSummaryCurrency}`, value: invoice.taxAmount },
-      { label: `Total factura ${invoiceSummaryCurrency}`, value: invoice.total },
+      {
+        label: `Total factura ${invoiceSummaryCurrency}`,
+        value: invoice.total,
+      },
       {
         label: `Total retenciones ${invoiceSummaryCurrency}`,
         value: retentionTotal,
@@ -2654,17 +2680,15 @@ export default function Facturas() {
     postingDate: invoiceDraft.postingDate,
     receiptDate: invoiceDraft.receiptDate,
     emissionDeadline: invoiceDraft.emissionDeadline,
-    retentionReceiptNumber:
-      invoiceDraft.retentionReceiptNumber.trim()
-        ? formatInvoiceNumberInput(invoiceDraft.retentionReceiptNumber)
-        : undefined,
+    retentionReceiptNumber: invoiceDraft.retentionReceiptNumber.trim()
+      ? formatInvoiceNumberInput(invoiceDraft.retentionReceiptNumber)
+      : undefined,
     retentionCai: invoiceDraft.retentionCai.trim()
       ? formatCaiInput(invoiceDraft.retentionCai)
       : undefined,
-    retentionDocumentRangeStart:
-      invoiceDraft.retentionDocumentRangeStart.trim()
-        ? formatInvoiceNumberInput(invoiceDraft.retentionDocumentRangeStart)
-        : undefined,
+    retentionDocumentRangeStart: invoiceDraft.retentionDocumentRangeStart.trim()
+      ? formatInvoiceNumberInput(invoiceDraft.retentionDocumentRangeStart)
+      : undefined,
     retentionDocumentRangeEnd: invoiceDraft.retentionDocumentRangeEnd.trim()
       ? formatInvoiceNumberInput(invoiceDraft.retentionDocumentRangeEnd)
       : undefined,
@@ -2697,8 +2721,7 @@ export default function Facturas() {
       invoiceDraft.dmcForeignIdentification.trim() || undefined,
     dmcFyducaNumber: invoiceDraft.dmcFyducaNumber.trim() || undefined,
     dmcDuaNumber: invoiceDraft.dmcDuaNumber.trim() || undefined,
-    dmcImportOutsideCentralAmerica:
-      invoiceDraft.dmcImportOutsideCentralAmerica,
+    dmcImportOutsideCentralAmerica: invoiceDraft.dmcImportOutsideCentralAmerica,
     notes: invoiceDraft.notes,
   });
 
@@ -2893,10 +2916,9 @@ export default function Facturas() {
     setActionFeedback(current => ({ ...current, retentionsSavedId: null }));
     replaceRetentionsMutation.mutate({
       id: selectedId,
-      retentionReceiptNumber:
-        invoiceDraft.retentionReceiptNumber.trim()
-          ? formatInvoiceNumberInput(invoiceDraft.retentionReceiptNumber)
-          : undefined,
+      retentionReceiptNumber: invoiceDraft.retentionReceiptNumber.trim()
+        ? formatInvoiceNumberInput(invoiceDraft.retentionReceiptNumber)
+        : undefined,
       retentionCai: invoiceDraft.retentionCai.trim()
         ? formatCaiInput(invoiceDraft.retentionCai)
         : undefined,
@@ -2909,8 +2931,7 @@ export default function Facturas() {
         : undefined,
       retentionEmissionDeadline:
         invoiceDraft.retentionEmissionDeadline || undefined,
-      retentionDocumentDate:
-        invoiceDraft.retentionDocumentDate || undefined,
+      retentionDocumentDate: invoiceDraft.retentionDocumentDate || undefined,
       retentions: retentionDrafts.map(retention => ({
         invoiceItemId: retention.invoiceItemId ?? undefined,
         retentionCatalogId: Number(retention.retentionCatalogId),
@@ -3396,9 +3417,7 @@ export default function Facturas() {
           type="button"
           variant="outline"
           onClick={() => void exportInvoicesExcel()}
-          disabled={
-            isLoading || !invoicesPage?.total || isExportingExcel
-          }
+          disabled={isLoading || !invoicesPage?.total || isExportingExcel}
           className="gap-2"
         >
           <Download className="h-4 w-4" />
@@ -3761,6 +3780,23 @@ export default function Facturas() {
                   </div>
                 ) : null}
 
+                {isMissingRequiredCpcRetention && !isVoided ? (
+                  <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div>
+                      <p className="font-semibold">
+                        Retención RT01 (1%) requerida
+                      </p>
+                      <p>
+                        El proveedor no tiene una CPC vigente para la fecha de
+                        emisión {formatDateLabel(detail.invoice.documentDate)}.
+                        Registre la retención antes de enviar o contabilizar la
+                        factura.
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+
                 {isRejected && detail.invoice.rejectionComment ? (
                   <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800">
                     <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -3830,18 +3866,22 @@ export default function Facturas() {
                       <Badge
                         variant="outline"
                         className={`text-xs ${
-                          retentionPolicy === "rt15_only"
-                            ? "border-blue-300 text-blue-700"
-                            : supplierAllowsTaxWithholding
-                            ? "border-emerald-300 text-emerald-700"
-                            : "border-amber-300 text-amber-700"
+                          requiresMissingCpcRetention
+                            ? "border-amber-300 text-amber-700"
+                            : retentionPolicy === "rt15_only"
+                              ? "border-blue-300 text-blue-700"
+                              : supplierAllowsTaxWithholding
+                                ? "border-emerald-300 text-emerald-700"
+                                : "border-amber-300 text-amber-700"
                         }`}
                       >
-                        {retentionPolicy === "rt15_only"
-                          ? "Solo RT15 (15%)"
-                          : supplierAllowsTaxWithholding
-                            ? "Permite retención"
-                            : "No permite retención"}
+                        {requiresMissingCpcRetention
+                          ? "Requiere RT01 (1%)"
+                          : retentionPolicy === "rt15_only"
+                            ? "Solo RT15 (15%)"
+                            : supplierAllowsTaxWithholding
+                              ? "Permite retención"
+                              : "No permite retención"}
                       </Badge>
                       <Badge
                         variant="outline"
@@ -3887,11 +3927,9 @@ export default function Facturas() {
                     </p>
                     {selectedInvoiceCurrency === "USD" ? (
                       <p className="break-words text-sm text-muted-foreground">
-                        1 USD = {formatExchangeRateLabel(
-                          detail.invoice.exchangeRate
-                        )} HNL · {formatDateLabel(
-                          detail.invoice.exchangeRateDate
-                        )}
+                        1 USD ={" "}
+                        {formatExchangeRateLabel(detail.invoice.exchangeRate)}{" "}
+                        HNL · {formatDateLabel(detail.invoice.exchangeRateDate)}
                       </p>
                     ) : null}
                     <Badge variant="outline" className="mt-2 text-xs">
@@ -4426,7 +4464,9 @@ export default function Facturas() {
                             onChange={event =>
                               updateInvoiceDraft(current => ({
                                 ...current,
-                                retentionCai: formatCaiInput(event.target.value),
+                                retentionCai: formatCaiInput(
+                                  event.target.value
+                                ),
                               }))
                             }
                             placeholder={RETENTION_CAI_PLACEHOLDER}
@@ -4619,7 +4659,10 @@ export default function Facturas() {
                             const assetUnitCount = assetBreakdownRows.length;
                             const unitPrice =
                               toNumber(item.unitPrice) ||
-                              getInvoiceUnitAmount(item.subtotal, assetUnitCount);
+                              getInvoiceUnitAmount(
+                                item.subtotal,
+                                assetUnitCount
+                              );
                             const unitSubtotal = getInvoiceUnitAmount(
                               item.subtotal,
                               assetUnitCount
@@ -4700,7 +4743,9 @@ export default function Facturas() {
                                           1.00 {item.unit || ""}
                                         </td>
                                         <td className="p-3 text-right">
-                                          {formatSelectedInvoiceCurrency(unitPrice)}
+                                          {formatSelectedInvoiceCurrency(
+                                            unitPrice
+                                          )}
                                         </td>
                                         <td className="p-3 text-right">
                                           {formatSelectedInvoiceCurrency(
@@ -4713,7 +4758,9 @@ export default function Facturas() {
                                           )}
                                         </td>
                                         <td className="p-3 text-right font-semibold">
-                                          {formatSelectedInvoiceCurrency(unitTotal)}
+                                          {formatSelectedInvoiceCurrency(
+                                            unitTotal
+                                          )}
                                         </td>
                                         {index === 0 ? (
                                           <InvoiceLineRetentionCell
@@ -4809,13 +4856,17 @@ export default function Facturas() {
                                   {item.quantity} {item.unit || ""}
                                 </td>
                                 <td className="p-3 text-right">
-                                  {formatSelectedInvoiceCurrency(item.unitPrice)}
+                                  {formatSelectedInvoiceCurrency(
+                                    item.unitPrice
+                                  )}
                                 </td>
                                 <td className="p-3 text-right">
                                   {formatSelectedInvoiceCurrency(item.subtotal)}
                                 </td>
                                 <td className="p-3 text-right">
-                                  {formatSelectedInvoiceCurrency(item.taxAmount)}
+                                  {formatSelectedInvoiceCurrency(
+                                    item.taxAmount
+                                  )}
                                 </td>
                                 <td className="p-3 text-right font-semibold">
                                   {formatSelectedInvoiceCurrency(item.total)}
@@ -4880,7 +4931,9 @@ export default function Facturas() {
                     {invoiceOtherChargesTotal > 0 ? (
                       <span>
                         Otros cargos:{" "}
-                        {formatSelectedInvoiceCurrency(invoiceOtherChargesTotal)}
+                        {formatSelectedInvoiceCurrency(
+                          invoiceOtherChargesTotal
+                        )}
                       </span>
                     ) : null}
                     <span>
@@ -5113,7 +5166,9 @@ export default function Facturas() {
                     <div className="flex justify-between gap-3 text-sm">
                       <span className="text-muted-foreground">ISV</span>
                       <span className="font-medium">
-                        {formatSelectedInvoiceCurrency(detail.invoice.taxAmount)}
+                        {formatSelectedInvoiceCurrency(
+                          detail.invoice.taxAmount
+                        )}
                       </span>
                     </div>
                     {invoiceOtherChargesTotal > 0 ? (

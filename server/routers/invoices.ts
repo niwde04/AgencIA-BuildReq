@@ -17,7 +17,11 @@ import {
   ASSET_CONDITION_VALUES,
   normalizeFixedAssetDetails,
 } from "@shared/fixed-assets";
+import { isMissingCpcRequiredRetention } from "@shared/supplier-documents";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
+
+const MISSING_CPC_RETENTION_MESSAGE =
+  "El proveedor no tiene una CPC vigente para la fecha de emisión de la factura. Registre la retención RT01 (1%) antes de continuar.";
 
 function canAccessInvoices(user: {
   role: string;
@@ -142,6 +146,33 @@ function assertInvoiceReviewed(
   }
 }
 
+function assertRequiredMissingCpcRetention(
+  detail: NonNullable<Awaited<ReturnType<typeof db.getInvoiceById>>>
+) {
+  if (detail.invoice.isFiscalDocument === false) return;
+  if (!detail.invoice.documentDate) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "Seleccione la fecha de emisión de la factura antes de continuar",
+    });
+  }
+  if (detail.accountPaymentCertificate?.status === "vigente") return;
+
+  const hasRequiredRetention = (detail.retentions ?? []).some(retention =>
+    isMissingCpcRequiredRetention({
+      taxCode: retention.retentionCode,
+      ratePercent: retention.percentage,
+    })
+  );
+  if (!hasRequiredRetention) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: MISSING_CPC_RETENTION_MESSAGE,
+    });
+  }
+}
+
 function assertInvoiceReadyForReview(
   detail: NonNullable<Awaited<ReturnType<typeof db.getInvoiceById>>>
 ) {
@@ -226,6 +257,13 @@ function assertInvoiceReadyForReview(
           "Seleccione la fecha de vencimiento del documento antes de enviar a revisión",
       });
     }
+    if (!invoice.documentDate) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message:
+          "Seleccione la fecha de emisión de la factura antes de enviar a revisión",
+      });
+    }
     if (!invoice.emissionDeadline) {
       throw new TRPCError({
         code: "BAD_REQUEST",
@@ -234,6 +272,7 @@ function assertInvoiceReadyForReview(
       });
     }
   }
+  assertRequiredMissingCpcRetention(detail);
   if ((detail.retentions?.length ?? 0) > 0) {
     assertRetentionFiscalData(invoice, true);
   }
@@ -298,7 +337,8 @@ function assertRetentionFiscalData(
   if (required && !rangeStart) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "Ingrese el rango autorizado inicial del comprobante de retención",
+      message:
+        "Ingrese el rango autorizado inicial del comprobante de retención",
     });
   }
   if (rangeStart && !isValidInvoiceNumber(rangeStart)) {
@@ -427,15 +467,24 @@ export const invoicesRouter = router({
           .optional(),
         supplierId: z.number().optional(),
         search: z.string().trim().optional(),
-        dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-        dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        dateFrom: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional(),
+        dateTo: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional(),
         page: z.number().int().min(1).optional(),
         pageSize: z.number().int().min(10).max(200).optional(),
       })
     )
     .query(async ({ ctx, input }) => {
       if (!canAccessInvoices(ctx.user)) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "No tiene acceso a facturas" });
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a facturas",
+        });
       }
       const status = input.status;
       const excludeStatus =
@@ -851,7 +900,8 @@ export const invoicesRouter = router({
       ) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "El importe exento no puede exceder el subtotal de la factura",
+          message:
+            "El importe exento no puede exceder el subtotal de la factura",
         });
       }
 
@@ -898,13 +948,16 @@ export const invoicesRouter = router({
               )
             : null,
         retentionDocumentRangeEnd: retentionFiscalData.retentionDocumentRangeEnd
-          ? formatInvoiceNumberInput(retentionFiscalData.retentionDocumentRangeEnd)
+          ? formatInvoiceNumberInput(
+              retentionFiscalData.retentionDocumentRangeEnd
+            )
           : null,
-        retentionEmissionDeadline: parseDateInput(
-          typeof retentionFiscalData.retentionEmissionDeadline === "string"
-            ? retentionFiscalData.retentionEmissionDeadline
-            : null
-        ) ??
+        retentionEmissionDeadline:
+          parseDateInput(
+            typeof retentionFiscalData.retentionEmissionDeadline === "string"
+              ? retentionFiscalData.retentionEmissionDeadline
+              : null
+          ) ??
           (retentionFiscalData.retentionEmissionDeadline instanceof Date
             ? retentionFiscalData.retentionEmissionDeadline
             : null),
@@ -935,8 +988,9 @@ export const invoicesRouter = router({
           ? oceExemptAmount18.toFixed(4)
           : null,
         dmcForeignSection: input.dmcForeignSection ?? null,
-        dmcForeignIdentification:
-          input.dmcForeignSection ? input.dmcForeignIdentification?.trim() || null : null,
+        dmcForeignIdentification: input.dmcForeignSection
+          ? input.dmcForeignIdentification?.trim() || null
+          : null,
         dmcFyducaNumber:
           input.dmcForeignSection === "fyduca"
             ? input.dmcFyducaNumber?.trim() || null
@@ -1015,6 +1069,7 @@ export const invoicesRouter = router({
         });
       }
       assertInvoiceReviewed(detail);
+      assertRequiredMissingCpcRetention(detail);
 
       return db.accountInvoice({
         id: input.id,
@@ -1149,8 +1204,7 @@ export const invoicesRouter = router({
         retentionReceiptNumber:
           input.retentionReceiptNumber?.trim() ||
           detail.invoice.retentionReceiptNumber,
-        retentionCai:
-          input.retentionCai?.trim() || detail.invoice.retentionCai,
+        retentionCai: input.retentionCai?.trim() || detail.invoice.retentionCai,
         retentionDocumentRangeStart:
           input.retentionDocumentRangeStart?.trim() ||
           detail.invoice.retentionDocumentRangeStart,
@@ -1210,12 +1264,13 @@ export const invoicesRouter = router({
                     effectiveRetentionFiscalData.retentionDocumentRangeEnd
                   )
                 : null,
-            retentionEmissionDeadline: parseDateInput(
-              typeof effectiveRetentionFiscalData.retentionEmissionDeadline ===
-                "string"
-                ? effectiveRetentionFiscalData.retentionEmissionDeadline
-                : null
-            ) ??
+            retentionEmissionDeadline:
+              parseDateInput(
+                typeof effectiveRetentionFiscalData.retentionEmissionDeadline ===
+                  "string"
+                  ? effectiveRetentionFiscalData.retentionEmissionDeadline
+                  : null
+              ) ??
               (effectiveRetentionFiscalData.retentionEmissionDeadline instanceof
               Date
                 ? effectiveRetentionFiscalData.retentionEmissionDeadline
@@ -1227,7 +1282,8 @@ export const invoicesRouter = router({
                   ? effectiveRetentionFiscalData.retentionDocumentDate
                   : null
               ) ??
-              (effectiveRetentionFiscalData.retentionDocumentDate instanceof Date
+              (effectiveRetentionFiscalData.retentionDocumentDate instanceof
+              Date
                 ? effectiveRetentionFiscalData.retentionDocumentDate
                 : null),
           }
@@ -1281,8 +1337,7 @@ export const invoicesRouter = router({
         if (!isValidFixedAssetQuantity) {
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message:
-              "Activo fijo requiere cantidad entera mayor que cero",
+            message: "Activo fijo requiere cantidad entera mayor que cero",
           });
         }
         if (invoiceItem.targetType !== "activo_fijo") {

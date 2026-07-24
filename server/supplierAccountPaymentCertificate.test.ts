@@ -4,6 +4,7 @@ import {
   getSupplierAccountPaymentCertificateStatus,
   getSupplierRetentionPolicy,
   isAccountPaymentAllowedRetention,
+  isMissingCpcRequiredRetention,
   isSupplierAccountPaymentCertificateCode,
   normalizeSupplierDocumentTypeCode,
 } from "../shared/supplier-documents";
@@ -71,6 +72,27 @@ describe("supplier account payment certificates", () => {
       isAccountPaymentAllowedRetention({
         taxCode: "RT15",
         ratePercent: "10.0000",
+      })
+    ).toBe(false);
+  });
+
+  it("recognizes only RT01 at one percent as the required retention without CPC", () => {
+    expect(
+      isMissingCpcRequiredRetention({
+        taxCode: "rt01",
+        ratePercent: "1.0000",
+      })
+    ).toBe(true);
+    expect(
+      isMissingCpcRequiredRetention({
+        taxCode: "RT15",
+        ratePercent: "1.0000",
+      })
+    ).toBe(false);
+    expect(
+      isMissingCpcRequiredRetention({
+        taxCode: "RT01",
+        ratePercent: "15.0000",
       })
     ).toBe(false);
   });
