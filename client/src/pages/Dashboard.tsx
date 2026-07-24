@@ -311,7 +311,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1>Dashboard</h1>
         <div className="w-8 h-8 bg-primary" />
@@ -431,7 +431,11 @@ export default function Dashboard() {
       </div>
 
       {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div
+        className={`grid grid-cols-1 gap-6 lg:grid-cols-2 ${
+          isProcurementApprover ? "order-last" : ""
+        }`}
+      >
         {/* Requests by Status */}
         <Card>
           <CardHeader className="pb-2">
@@ -506,7 +510,7 @@ export default function Dashboard() {
       </div>
 
       {/* Requests by Project */}
-      {projectData.length > 0 && (
+      {!isProcurementApprover && projectData.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
