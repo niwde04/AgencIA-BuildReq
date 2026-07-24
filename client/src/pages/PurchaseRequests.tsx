@@ -442,6 +442,7 @@ export default function PurchaseRequests() {
     useProcurementApprovalSettings();
   const utils = trpc.useUtils();
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [itemsPreviewId, setItemsPreviewId] = useState<number | null>(null);
   const [editNotes, setEditNotes] = useState("");
   const [editNeededBy, setEditNeededBy] = useState("");
   const [editPrintDestination, setEditPrintDestination] = useState("");
@@ -517,6 +518,14 @@ export default function PurchaseRequests() {
   } = trpc.purchaseRequests.getById.useQuery(
     { id: selectedId ?? 0 },
     { enabled: Boolean(selectedId) }
+  );
+  const {
+    data: itemsPreviewDetail,
+    isLoading: isLoadingItemsPreview,
+    error: itemsPreviewError,
+  } = trpc.purchaseRequests.getById.useQuery(
+    { id: itemsPreviewId ?? 0 },
+    { enabled: Boolean(itemsPreviewId) }
   );
   const selectedProjectIdNumber = detail?.purchaseRequest.projectId ?? 0;
   const { data: targetOptions, isLoading: isLoadingTargetOptions } =
@@ -2315,42 +2324,39 @@ export default function PurchaseRequests() {
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       No. Solicitud
                     </th>
-                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      No. Req.
-                    </th>
+                    {!isProcurementApprover ? (
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        No. Req.
+                      </th>
+                    ) : null}
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Proyecto
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Ítems
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Requiriente
                     </th>
-                    {PROCUREMENT_APPROVALS_ENABLED ? (
-                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Aprobado por
-                      </th>
-                    ) : null}
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Tipo de Compra
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Fecha creación
                     </th>
-                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Doc SAP
-                    </th>
-                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Estado SC
-                    </th>
-                    {PROCUREMENT_APPROVALS_ENABLED ? (
+                    {!isProcurementApprover ? (
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Estado SC
+                      </th>
+                    ) : null}
+                    {PROCUREMENT_APPROVALS_ENABLED &&
+                    !isProcurementApprover ? (
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Aprobación
                       </th>
                     ) : null}
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Fecha necesaria
-                    </th>
-                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Documento
                     </th>
                     <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Acciones
@@ -2387,23 +2393,33 @@ export default function PurchaseRequests() {
                         <td className="p-3 font-medium">
                           {row.purchaseRequest.requestNumber}
                         </td>
-                        <td className="p-3 text-xs font-medium">
-                          {formatPurchaseRequestRequestNumbers(row)}
-                        </td>
+                        {!isProcurementApprover ? (
+                          <td className="p-3 text-xs font-medium">
+                            {formatPurchaseRequestRequestNumbers(row)}
+                          </td>
+                        ) : null}
                         <td className="p-3 text-xs">
                           {row.projectSummary?.label ||
                             (row.project
                               ? `${row.project.code} — ${row.project.name}`
                               : "—")}
                         </td>
+                        <td className="p-3">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="whitespace-nowrap text-xs"
+                            onClick={() =>
+                              setItemsPreviewId(row.purchaseRequest.id)
+                            }
+                          >
+                            <Eye className="mr-1.5 h-3.5 w-3.5" />
+                            Ver ítems ({row.itemCount ?? 0})
+                          </Button>
+                        </td>
                         <td className="p-3 text-xs">
                           {formatPurchaseRequestRequestedBy(row)}
                         </td>
-                        {PROCUREMENT_APPROVALS_ENABLED ? (
-                          <td className="p-3 text-xs">
-                            {formatPurchaseRequestApprovedBy(row)}
-                          </td>
-                        ) : null}
                         <td className="p-3 text-xs">
                           {getPurchaseTypeLabel(
                             row.purchaseRequest.purchaseType
@@ -2416,32 +2432,32 @@ export default function PurchaseRequests() {
                               ).toLocaleDateString("es-HN")
                             : "—"}
                         </td>
-                        <td className="p-3 text-xs">
-                          {row.purchaseRequest.sapDocumentNumber || "—"}
-                        </td>
-                        <td className="p-3">
-                          <Badge
-                            variant="outline"
-                            className={`text-xs ${
-                              STATUS_COLORS[
+                        {!isProcurementApprover ? (
+                          <td className="p-3">
+                            <Badge
+                              variant="outline"
+                              className={`text-xs ${
+                                STATUS_COLORS[
+                                  getEffectivePurchaseRequestStatus(
+                                    row.purchaseRequest.status,
+                                    row.purchaseRequest.approvalStatus,
+                                    row.approvalSummary
+                                  )
+                                ] || ""
+                              }`}
+                            >
+                              {STATUS_LABELS[
                                 getEffectivePurchaseRequestStatus(
                                   row.purchaseRequest.status,
                                   row.purchaseRequest.approvalStatus,
                                   row.approvalSummary
                                 )
-                              ] || ""
-                            }`}
-                          >
-                            {STATUS_LABELS[
-                              getEffectivePurchaseRequestStatus(
-                                row.purchaseRequest.status,
-                                row.purchaseRequest.approvalStatus,
-                                row.approvalSummary
-                              )
-                            ] || row.purchaseRequest.status}
-                          </Badge>
-                        </td>
-                        {PROCUREMENT_APPROVALS_ENABLED ? (
+                              ] || row.purchaseRequest.status}
+                            </Badge>
+                          </td>
+                        ) : null}
+                        {PROCUREMENT_APPROVALS_ENABLED &&
+                        !isProcurementApprover ? (
                           <td className="p-3">
                             <Badge
                               variant="outline"
@@ -2467,11 +2483,6 @@ export default function PurchaseRequests() {
                                 row.purchaseRequest.neededBy
                               ).toLocaleDateString("es-HN")
                             : "—"}
-                        </td>
-                        <td className="p-3 text-xs">
-                          {row.purchaseRequest.printedDocumentContent
-                            ? "Listo"
-                            : "Pendiente"}
                         </td>
                         <td className="p-3 text-right">
                           <Button
@@ -2504,6 +2515,79 @@ export default function PurchaseRequests() {
           ) : null}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={Boolean(itemsPreviewId)}
+        onOpenChange={open => {
+          if (!open) setItemsPreviewId(null);
+        }}
+      >
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-hidden p-0">
+          <DialogHeader className="border-b border-border px-6 py-5">
+            <DialogTitle>Ítems de la solicitud</DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              {itemsPreviewDetail?.purchaseRequest.requestNumber ??
+                "Cargando solicitud..."}
+            </p>
+          </DialogHeader>
+
+          <div className="max-h-[65vh] overflow-auto px-6 py-5">
+            {isLoadingItemsPreview ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                Cargando ítems...
+              </p>
+            ) : itemsPreviewError ? (
+              <p className="py-8 text-center text-sm text-destructive">
+                No se pudieron cargar los ítems: {itemsPreviewError.message}
+              </p>
+            ) : !itemsPreviewDetail?.items.length ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                Esta solicitud no tiene ítems registrados.
+              </p>
+            ) : (
+              <div className="overflow-hidden rounded-lg border border-border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50">
+                    <tr className="border-b border-border">
+                      <th className="w-14 px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">
+                        No.
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">
+                        Descripción
+                      </th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase text-muted-foreground">
+                        Cantidad
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-muted-foreground">
+                        U.M.
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {itemsPreviewDetail.items.map((item: any, index: number) => (
+                      <tr
+                        key={item.id}
+                        className="border-b border-border last:border-0"
+                      >
+                        <td className="px-4 py-3 text-xs text-muted-foreground">
+                          {index + 1}
+                        </td>
+                        <td className="px-4 py-3 font-medium">
+                          {item.itemName}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {formatQuantity(item.quantity)}
+                        </td>
+                        <td className="px-4 py-3">{item.unit || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={Boolean(selectedId)}

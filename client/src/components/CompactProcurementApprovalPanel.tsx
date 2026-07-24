@@ -10,6 +10,7 @@ import {
   Flag,
   FolderOpen,
   Package,
+  Paperclip,
   Printer,
   ShoppingBag,
   XCircle,
@@ -44,6 +45,8 @@ type CompactProcurementApprovalPanelProps = {
   detailContent: ReactNode;
   decisionContent?: ReactNode;
   notes?: string | null;
+  documentsContent?: ReactNode;
+  documentsDescription?: string;
   history: CompactApprovalHistoryEntry[];
   historyDescription: string;
   emptyHistoryMessage: string;
@@ -69,6 +72,8 @@ export function CompactProcurementApprovalPanel({
   detailContent,
   decisionContent,
   notes,
+  documentsContent,
+  documentsDescription = "Archivos asociados al documento.",
   history,
   historyDescription,
   emptyHistoryMessage,
@@ -80,6 +85,7 @@ export function CompactProcurementApprovalPanel({
 }: CompactProcurementApprovalPanelProps) {
   const [isDetailOpen, setIsDetailOpen] = useState(true);
   const [isNotesOpen, setIsNotesOpen] = useState(false);
+  const [isDocumentsOpen, setIsDocumentsOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
   return (
@@ -191,6 +197,35 @@ export function CompactProcurementApprovalPanel({
           </p>
         ) : null}
       </section>
+
+      {documentsContent ? (
+        <section className="mt-4 overflow-hidden rounded-xl border border-border/70 bg-card">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/30"
+            onClick={() => setIsDocumentsOpen(current => !current)}
+            aria-expanded={isDocumentsOpen}
+          >
+            <span className="flex min-w-0 items-start gap-2">
+              <Paperclip className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              <span>
+                <span className="block font-semibold">Documentos adjuntos</span>
+                <span className="block text-xs text-muted-foreground">
+                  {documentsDescription}
+                </span>
+              </span>
+            </span>
+            <ChevronDown
+              className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+                isDocumentsOpen ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+          {isDocumentsOpen ? (
+            <div className="border-t border-border/70">{documentsContent}</div>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="mt-4 overflow-hidden rounded-xl border border-border/70 bg-card">
         <button

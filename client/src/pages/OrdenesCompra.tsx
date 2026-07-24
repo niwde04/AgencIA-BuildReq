@@ -5128,9 +5128,7 @@ export default function OrdenesCompra() {
                           <th className="px-4 py-3 text-right">
                             Precio unitario
                           </th>
-                          <th className="px-4 py-3 text-right">
-                            Total línea
-                          </th>
+                          <th className="px-4 py-3 text-right">Total línea</th>
                           <th className="px-3 py-3 text-center">Aprobar</th>
                           <th className="px-3 py-3 text-center">Rechazar</th>
                         </tr>
@@ -5324,6 +5322,18 @@ export default function OrdenesCompra() {
                   </>
                 }
                 notes={detail.purchaseOrder.notes}
+                documentsDescription="Consulta los archivos de soporte antes de finalizar la revisión."
+                documentsContent={
+                  <DocumentAttachmentsPanel
+                    entityType="purchase_order"
+                    entityId={detail.purchaseOrder.id}
+                    category="orden_compra"
+                    title="Archivos disponibles"
+                    canManage={false}
+                    canDelete={false}
+                    className="rounded-none border-0"
+                  />
+                }
                 history={approvalHistory.map((entry: any, index: number) => ({
                   id: entry.id ?? `${entry.createdAt}-${index}`,
                   title: formatApprovalAction(entry.action),
@@ -6390,8 +6400,7 @@ export default function OrdenesCompra() {
                                     {formatApprovalAction(entry.action)}
                                   </p>
                                   <p className="text-xs text-muted-foreground">
-                                    {entry.actorName ||
-                                      "Usuario no disponible"}{" "}
+                                    {entry.actorName || "Usuario no disponible"}{" "}
                                     · {formatApprovalActorRole(entry.actorRole)}
                                   </p>
                                 </div>

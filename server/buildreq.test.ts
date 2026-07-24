@@ -3388,6 +3388,65 @@ describe("BuildReq - Role-based Access Control", () => {
     getDashboardStatsSpy.mockRestore();
   });
 
+  it("scopes the dashboard financial report and applies the selected period", async () => {
+    const { ctx } = createIngenieroContext();
+    const caller = appRouter.createCaller(ctx);
+    const getDashboardFinancialReportSpy = vi
+      .spyOn(db, "getDashboardFinancialReport")
+      .mockResolvedValue({
+        projects: [
+          {
+            projectId: 1,
+            projectCode: "001",
+            projectName: "Proyecto Uno",
+            purchaseOrdersHnl: 125000,
+            invoicesHnl: 80000,
+            purchaseOrderCount: 2,
+            invoiceCount: 1,
+          },
+        ],
+        totals: {
+          purchaseOrdersHnl: 125000,
+          invoicesHnl: 80000,
+          purchaseOrderCount: 2,
+          invoiceCount: 1,
+        },
+      });
+
+    await expect(
+      caller.dashboard.financialReport({
+        dateFrom: "2026-01-01",
+        dateTo: "2026-01-31",
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        totals: expect.objectContaining({
+          purchaseOrdersHnl: 125000,
+          invoicesHnl: 80000,
+        }),
+      })
+    );
+    expect(getDashboardFinancialReportSpy).toHaveBeenCalledWith({
+      projectIds: [1],
+      dateFrom: new Date("2026-01-01T00:00:00.000"),
+      dateTo: new Date("2026-01-31T23:59:59.999"),
+    });
+
+    getDashboardFinancialReportSpy.mockRestore();
+  });
+
+  it("rejects an invalid dashboard financial report period", async () => {
+    const { ctx } = createIngenieroContext();
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(
+      caller.dashboard.financialReport({
+        dateFrom: "2026-02-01",
+        dateTo: "2026-01-31",
+      })
+    ).rejects.toThrow("La fecha inicial no puede ser mayor que la fecha final");
+  });
+
   it("Ingeniero Residente sees sidebar flow counts scoped to their requests", async () => {
     const { ctx } = createIngenieroContext();
     const caller = appRouter.createCaller(ctx);
@@ -17954,6 +18013,75 @@ describe("BuildReq - Document attachments", () => {
     storagePutSpy.mockRestore();
   });
 
+  it.each(["superintendente_aprobador", "gerente"] as const)(
+    "lets %s view pending purchase order attachments without managing them",
+    async buildreqRole => {
+      const { ctx } = createProcurementApproverContext(buildreqRole);
+      const caller = appRouter.createCaller(ctx);
+      const getPurchaseOrderByIdSpy = vi
+        .spyOn(db, "getPurchaseOrderById")
+        .mockResolvedValue({
+          purchaseOrder: {
+            id: 44,
+            projectId: 1,
+            status: "pendiente_aprobacion",
+            approvalStatus: "pendiente",
+            currency: "HNL",
+          },
+          approvalHistory: [{ id: 1, action: "submitted" }],
+          summary: { total: 300000 },
+        } as any);
+      const getAttachmentsByEntitySpy = vi
+        .spyOn(db, "getAttachmentsByEntity")
+        .mockResolvedValue([
+          {
+            id: 99,
+            fileName: "soporte-oc.pdf",
+            fileKey: "buildreq/purchase_order/44/soporte-oc.pdf",
+          },
+        ] as any);
+      const storageGetSpy = vi.spyOn(storage, "storageGet").mockResolvedValue({
+        key: "buildreq/purchase_order/44/soporte-oc.pdf",
+        url: "https://storage.local/soporte-oc.pdf",
+      });
+      const storagePutSpy = vi.spyOn(storage, "storagePut");
+
+      await expect(
+        caller.attachments.getByEntity({
+          entityType: "purchase_order",
+          entityId: 44,
+        })
+      ).resolves.toEqual([
+        expect.objectContaining({
+          id: 99,
+          fileUrl: "https://storage.local/soporte-oc.pdf",
+        }),
+      ]);
+
+      await expect(
+        caller.attachments.upload({
+          entityType: "purchase_order",
+          entityId: 44,
+          fileName: "otro-soporte.pdf",
+          fileData: pdfBuffer.toString("base64"),
+          mimeType: "application/pdf",
+          fileSize: pdfBuffer.byteLength,
+          category: "orden_compra",
+        })
+      ).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        message:
+          "No tiene permisos para administrar adjuntos de órdenes de compra",
+      });
+      expect(storagePutSpy).not.toHaveBeenCalled();
+
+      getPurchaseOrderByIdSpy.mockRestore();
+      getAttachmentsByEntitySpy.mockRestore();
+      storageGetSpy.mockRestore();
+      storagePutSpy.mockRestore();
+    }
+  );
+
   it("lets Contable view purchase order attachments but not upload them", async () => {
     const { ctx } = createContableContext();
     const caller = appRouter.createCaller(ctx);
@@ -20013,9 +20141,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
       await expect(
         caller.purchaseOrders.createFromPurchaseRequest({
           purchaseRequestId: 75,
-          itemsToConvert: [
-            { purchaseRequestItemId: 7501, quantity: "5.00" },
-          ],
+          itemsToConvert: [{ purchaseRequestItemId: 7501, quantity: "5.00" }],
         })
       ).rejects.toMatchObject({
         code: "BAD_REQUEST",

@@ -5995,6 +5995,7 @@ export async function listPurchaseRequests(filters?: {
 
   const sourceRows = await db
     .select({
+      purchaseRequestItemId: purchaseRequestItems.id,
       purchaseRequestId: purchaseRequestItems.purchaseRequestId,
       requestedQuantity: purchaseRequestItems.quantity,
       convertedQuantity: purchaseRequestItems.convertedQuantity,
@@ -6032,6 +6033,7 @@ export async function listPurchaseRequests(filters?: {
     number,
     Array<{ approvalStatus: string | null }>
   >();
+  const itemCountByPurchaseRequestId = new Map<number, number>();
   const addUserId = (
     map: Map<number, number[]>,
     purchaseRequestId: number,
@@ -6049,6 +6051,11 @@ export async function listPurchaseRequests(filters?: {
 
   for (const row of sourceRows) {
     if (!row.purchaseRequestId) continue;
+
+    itemCountByPurchaseRequestId.set(
+      row.purchaseRequestId,
+      (itemCountByPurchaseRequestId.get(row.purchaseRequestId) ?? 0) + 1
+    );
 
     const approvalItems =
       approvalItemsByPurchaseRequestId.get(row.purchaseRequestId) ?? [];
@@ -6223,6 +6230,7 @@ export async function listPurchaseRequests(filters?: {
       createdBy: row.createdBy,
       projectSummary,
       sourceProjects,
+      itemCount: itemCountByPurchaseRequestId.get(row.purchaseRequest.id) ?? 0,
       pendingConversionItemCount:
         pendingConversionByPurchaseRequestId.get(row.purchaseRequest.id)
           ?.itemCount ?? 0,
@@ -10221,10 +10229,7 @@ export async function listTransfers(filters?: {
             .select({ id: transferRequestItems.transferRequestId })
             .from(transferRequestItems)
             .where(
-              eq(
-                transferRequestItems.sourceProjectId,
-                filters.sourceProjectId
-              )
+              eq(transferRequestItems.sourceProjectId, filters.sourceProjectId)
             )
         )
       )!
@@ -10315,16 +10320,15 @@ export async function listTransfers(filters?: {
             eq(transferRequestItems.sourceProjectId, sourceProjectAlias.id)
           )
           .where(
-            inArray(
-              transferRequestItems.transferRequestId,
-              transferRequestIds
-            )
+            inArray(transferRequestItems.transferRequestId, transferRequestIds)
           )
       : [];
   const sourceProjectMetadataByRequestId = new Map<
     number,
     {
-      sourceProjects: Array<(typeof sourceProjectRows)[number]["sourceProject"]>;
+      sourceProjects: Array<
+        (typeof sourceProjectRows)[number]["sourceProject"]
+      >;
       hasUnclassifiedSource: boolean;
     }
   >();
@@ -10346,10 +10350,7 @@ export async function listTransfers(filters?: {
     } else if (sourceRow.sourceProjectId === null) {
       metadata.hasUnclassifiedSource = true;
     }
-    sourceProjectMetadataByRequestId.set(
-      sourceRow.transferRequestId,
-      metadata
-    );
+    sourceProjectMetadataByRequestId.set(sourceRow.transferRequestId, metadata);
   }
 
   return rows.map(row => ({
@@ -12838,8 +12839,7 @@ export async function listDmcReportSourceInvoices(filters?: {
       dmcForeignIdentification: invoice.dmcForeignIdentification,
       dmcFyducaNumber: invoice.dmcFyducaNumber,
       dmcDuaNumber: invoice.dmcDuaNumber,
-      dmcImportOutsideCentralAmerica:
-        invoice.dmcImportOutsideCentralAmerica,
+      dmcImportOutsideCentralAmerica: invoice.dmcImportOutsideCentralAmerica,
       subtotal: invoice.subtotal,
       taxAmount: invoice.taxAmount,
       total: invoice.total,
@@ -12924,7 +12924,10 @@ export async function listSystemReportPurchaseOrderLines(filters?: {
     materialRequests,
     "system_report_purchase_request_requests"
   );
-  const systemDirectRequesters = alias(users, "system_report_direct_requesters");
+  const systemDirectRequesters = alias(
+    users,
+    "system_report_direct_requesters"
+  );
   const systemPurchaseRequestCreators = alias(
     users,
     "system_report_purchase_request_creators"
@@ -12964,10 +12967,7 @@ export async function listSystemReportPurchaseOrderLines(filters?: {
     )
     .leftJoin(
       systemDirectRequestItems,
-      eq(
-        purchaseOrderItems.materialRequestItemId,
-        systemDirectRequestItems.id
-      )
+      eq(purchaseOrderItems.materialRequestItemId, systemDirectRequestItems.id)
     )
     .leftJoin(
       systemDirectRequests,
@@ -12985,7 +12985,11 @@ export async function listSystemReportPurchaseOrderLines(filters?: {
       )
     )
     .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(asc(purchaseOrders.createdAt), asc(purchaseOrders.id), asc(purchaseOrderItems.id));
+    .orderBy(
+      asc(purchaseOrders.createdAt),
+      asc(purchaseOrders.id),
+      asc(purchaseOrderItems.id)
+    );
 
   const itemIndexByOrderId = new Map<number, number>();
   return rows.map(row => {
@@ -13026,8 +13030,7 @@ export async function listSystemReportPurchaseOrderLines(filters?: {
       purchaseType: row.order.purchaseType ?? "",
       requestedBy:
         row.directRequesterName ?? row.purchaseRequestCreatorName ?? "",
-      deliveryDate:
-        row.order.neededBy ?? row.purchaseRequest?.neededBy ?? null,
+      deliveryDate: row.order.neededBy ?? row.purchaseRequest?.neededBy ?? null,
       destination:
         row.purchaseRequest?.printDestination ||
         row.project?.location ||
@@ -20096,6 +20099,178 @@ export async function getDashboardStats(filters?: {
     requestsByProject,
     requestsByFlow,
     recentRequests,
+  };
+}
+
+export async function getDashboardFinancialReport(filters?: {
+  projectIds?: number[];
+  dateFrom?: Date | null;
+  dateTo?: Date | null;
+}) {
+  const db = await getDb();
+  if (!db) {
+    return {
+      projects: [],
+      totals: {
+        purchaseOrdersHnl: 0,
+        invoicesHnl: 0,
+        purchaseOrderCount: 0,
+        invoiceCount: 0,
+      },
+    };
+  }
+
+  const purchaseOrderConditions = [
+    eq(procurementApprovalHistory.documentType, "purchase_order"),
+    inArray(
+      procurementApprovalHistory.action,
+      PURCHASE_ORDER_APPROVED_SNAPSHOT_ACTIONS
+    ),
+    eq(purchaseOrders.approvalStatus, "aprobada"),
+    sql`${purchaseOrders.status}::text <> 'anulada'`,
+  ];
+  const invoiceConditions = [
+    eq(invoices.status, "registrada"),
+    isNotNull(invoices.accountedAt),
+  ];
+
+  if (filters?.projectIds !== undefined) {
+    applyProjectScope(
+      purchaseOrderConditions,
+      purchaseOrders.projectId,
+      filters.projectIds
+    );
+    applyProjectScope(
+      invoiceConditions,
+      invoices.projectId,
+      filters.projectIds
+    );
+  }
+  if (filters?.dateFrom) {
+    purchaseOrderConditions.push(
+      gte(procurementApprovalHistory.createdAt, filters.dateFrom)
+    );
+    invoiceConditions.push(gte(invoices.accountedAt, filters.dateFrom));
+  }
+  if (filters?.dateTo) {
+    purchaseOrderConditions.push(
+      lte(procurementApprovalHistory.createdAt, filters.dateTo)
+    );
+    invoiceConditions.push(lte(invoices.accountedAt, filters.dateTo));
+  }
+
+  const [purchaseOrderRows, invoiceRows] = await Promise.all([
+    db
+      .select({
+        projectId: purchaseOrders.projectId,
+        projectCode: projects.code,
+        projectName: projects.name,
+        amountHnl: sql<number>`coalesce(sum(
+          case
+            when ${procurementApprovalHistory.currency} = 'USD'
+              then coalesce(${procurementApprovalHistory.amount}, 0)::numeric
+                * coalesce(${purchaseOrders.exchangeRate}, 0)::numeric
+            else coalesce(${procurementApprovalHistory.amount}, 0)::numeric
+          end
+        ), 0)::double precision`,
+        documentCount: sql<number>`count(distinct ${purchaseOrders.id})::integer`,
+      })
+      .from(procurementApprovalHistory)
+      .innerJoin(
+        purchaseOrders,
+        eq(procurementApprovalHistory.documentId, purchaseOrders.id)
+      )
+      .leftJoin(projects, eq(purchaseOrders.projectId, projects.id))
+      .where(and(...purchaseOrderConditions))
+      .groupBy(purchaseOrders.projectId, projects.code, projects.name),
+    db
+      .select({
+        projectId: invoices.projectId,
+        projectCode: projects.code,
+        projectName: projects.name,
+        amountHnl: sql<number>`coalesce(sum(
+          case
+            when ${invoices.currency} = 'USD'
+              then ${invoices.total}::numeric
+                * coalesce(${invoices.exchangeRate}, 0)::numeric
+            else ${invoices.total}::numeric
+          end
+        ), 0)::double precision`,
+        documentCount: sql<number>`count(${invoices.id})::integer`,
+      })
+      .from(invoices)
+      .leftJoin(projects, eq(invoices.projectId, projects.id))
+      .where(and(...invoiceConditions))
+      .groupBy(invoices.projectId, projects.code, projects.name),
+  ]);
+
+  const byProject = new Map<
+    number,
+    {
+      projectId: number;
+      projectCode: string;
+      projectName: string;
+      purchaseOrdersHnl: number;
+      invoicesHnl: number;
+      purchaseOrderCount: number;
+      invoiceCount: number;
+    }
+  >();
+  const getProjectRow = (row: {
+    projectId: number;
+    projectCode: string | null;
+    projectName: string | null;
+  }) => {
+    const existing = byProject.get(row.projectId);
+    if (existing) return existing;
+    const created = {
+      projectId: row.projectId,
+      projectCode: row.projectCode ?? `P-${row.projectId}`,
+      projectName: row.projectName ?? "Proyecto sin nombre",
+      purchaseOrdersHnl: 0,
+      invoicesHnl: 0,
+      purchaseOrderCount: 0,
+      invoiceCount: 0,
+    };
+    byProject.set(row.projectId, created);
+    return created;
+  };
+
+  for (const row of purchaseOrderRows) {
+    const project = getProjectRow(row);
+    project.purchaseOrdersHnl = Number(row.amountHnl) || 0;
+    project.purchaseOrderCount = Number(row.documentCount) || 0;
+  }
+  for (const row of invoiceRows) {
+    const project = getProjectRow(row);
+    project.invoicesHnl = Number(row.amountHnl) || 0;
+    project.invoiceCount = Number(row.documentCount) || 0;
+  }
+
+  const projectRows = Array.from(byProject.values()).sort(
+    (left, right) =>
+      right.purchaseOrdersHnl +
+      right.invoicesHnl -
+      (left.purchaseOrdersHnl + left.invoicesHnl)
+  );
+
+  return {
+    projects: projectRows,
+    totals: projectRows.reduce(
+      (totals, project) => ({
+        purchaseOrdersHnl: totals.purchaseOrdersHnl + project.purchaseOrdersHnl,
+        invoicesHnl: totals.invoicesHnl + project.invoicesHnl,
+        purchaseOrderCount:
+          totals.purchaseOrderCount + project.purchaseOrderCount,
+        invoiceCount: totals.invoiceCount + project.invoiceCount,
+      }),
+      {
+        purchaseOrdersHnl: 0,
+        invoicesHnl: 0,
+        purchaseOrderCount: 0,
+        invoiceCount: 0,
+      }
+    ),
   };
 }
 

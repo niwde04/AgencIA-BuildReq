@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { procurementProcedure as protectedProcedure, router } from "../_core/trpc";
+import { TRPCError } from "@trpc/server";
+import {
+  procurementProcedure as protectedProcedure,
+  router,
+} from "../_core/trpc";
 import * as db from "../db";
 import { getProjectScopeIds, hasAllProjectAccess } from "../projectAccess";
 import { isProcurementApproverRole } from "@shared/buildreq-roles";
@@ -7,6 +11,27 @@ import {
   isPurchaseOrderApprovalEnabled,
   isPurchaseRequestApprovalEnabled,
 } from "@shared/procurement-approvals";
+
+const dashboardDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .optional();
+
+function parseDashboardDateBoundary(
+  value: string | undefined,
+  boundary: "start" | "end"
+) {
+  if (!value) return null;
+  const suffix = boundary === "start" ? "T00:00:00.000" : "T23:59:59.999";
+  const date = new Date(`${value}${suffix}`);
+  if (Number.isNaN(date.getTime())) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Fecha de informe inválida",
+    });
+  }
+  return date;
+}
 
 export const dashboardRouter = router({
   stats: protectedProcedure.query(async ({ ctx }) => {
@@ -33,6 +58,32 @@ export const dashboardRouter = router({
         : {}),
     });
   }),
+
+  financialReport: protectedProcedure
+    .input(
+      z.object({
+        dateFrom: dashboardDateSchema,
+        dateTo: dashboardDateSchema,
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const dateFrom = parseDashboardDateBoundary(input.dateFrom, "start");
+      const dateTo = parseDashboardDateBoundary(input.dateTo, "end");
+      if (dateFrom && dateTo && dateFrom > dateTo) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "La fecha inicial no puede ser mayor que la fecha final",
+        });
+      }
+      const scopedProjectIds = getProjectScopeIds(ctx.user);
+      return db.getDashboardFinancialReport({
+        ...(scopedProjectIds !== undefined
+          ? { projectIds: scopedProjectIds }
+          : {}),
+        dateFrom,
+        dateTo,
+      });
+    }),
 
   sidebarCounts: protectedProcedure.query(async ({ ctx }) => {
     const user = ctx.user;
@@ -144,8 +195,7 @@ export const dashboardRouter = router({
           })
         : Promise.resolve([]),
       canAccessPurchaseOrders &&
-      (!isProcurementApproverRole(userRole) ||
-        isPurchaseOrderApprovalEnabled())
+      (!isProcurementApproverRole(userRole) || isPurchaseOrderApprovalEnabled())
         ? db.listPurchaseOrders({
             status: isProcurementApproverRole(userRole)
               ? "pendiente_aprobacion"
