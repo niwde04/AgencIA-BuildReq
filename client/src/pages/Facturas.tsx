@@ -3512,7 +3512,7 @@ export default function Facturas() {
             </div>
           ) : (
             <div className="relative isolate max-w-full overflow-x-auto">
-              <table className="w-full min-w-[1870px] border-separate border-spacing-0 text-sm">
+              <table className="w-full min-w-[1990px] border-separate border-spacing-0 text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/30">
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -3520,6 +3520,9 @@ export default function Facturas() {
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Artículos
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      No. factura fiscal
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Proveedor
@@ -3572,10 +3575,6 @@ export default function Facturas() {
                           >
                             {row.invoice.invoiceDocumentNumber}
                           </DocumentNumberButton>
-                          <div className="text-xs text-muted-foreground">
-                            {row.invoice.invoiceNumber ||
-                              "Documento sin número"}
-                            </div>
                         </td>
                         <td className="p-3">
                           <DocumentItemsAccordionTrigger
@@ -3592,20 +3591,13 @@ export default function Facturas() {
                             }
                           />
                         </td>
+                        <td className="p-3 font-medium">
+                          {row.invoice.invoiceNumber || "—"}
+                        </td>
                         <td className="p-3">
-                          {row.supplier ? (
-                            <div className="space-y-1">
-                              <div className="font-medium">
-                                {row.supplier.supplierCode} —{" "}
-                                {row.supplier.name}
-                              </div>
-                              <div className="text-xs text-muted-foreground">
-                                RTN: {formatSupplierRtnLabel(row.supplier)}
-                              </div>
-                            </div>
-                          ) : (
-                            "Proveedor pendiente"
-                          )}
+                          <span className="font-medium">
+                            {row.supplier?.name || "Proveedor pendiente"}
+                          </span>
                         </td>
                         <td className="p-3">
                           <div>{row.purchaseOrder?.orderNumber || "OC"}</div>
@@ -3679,7 +3671,7 @@ export default function Facturas() {
                         </tr>
                         {itemsExpanded ? (
                           <tr className="border-b border-border">
-                            <td colSpan={13} className="p-0">
+                            <td colSpan={14} className="p-0">
                               <DocumentItemsAccordionPanel
                                 items={expandedItemsDetail?.items}
                                 isLoading={isLoadingExpandedItems}
