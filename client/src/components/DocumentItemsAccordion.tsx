@@ -112,17 +112,22 @@ export function DocumentItemsAccordionPanel({
           Este documento no tiene artículos registrados.
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border bg-background">
-          <table className="w-full min-w-[560px] text-sm">
+        <div className="w-fit max-w-full overflow-x-auto rounded-lg border border-border bg-background">
+          <table className="w-[900px] min-w-[700px] table-fixed text-sm">
+            <colgroup>
+              <col className="w-[190px]" />
+              <col className="w-[550px]" />
+              <col className="w-[160px]" />
+            </colgroup>
             <thead className="bg-muted/40">
               <tr className="border-b border-border">
-                <th className="w-52 px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Código
                 </th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Descripción
                 </th>
-                <th className="w-44 px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Cantidad
                 </th>
               </tr>
@@ -136,8 +141,10 @@ export function DocumentItemsAccordionPanel({
                   <td className="px-4 py-2.5 font-mono text-xs font-medium">
                     {getItemCode(item)}
                   </td>
-                  <td className="px-4 py-2.5">{getItemDescription(item)}</td>
-                  <td className="px-4 py-2.5 text-right tabular-nums">
+                  <td className="break-words px-4 py-2.5">
+                    {getItemDescription(item)}
+                  </td>
+                  <td className="px-4 py-2.5 text-left tabular-nums">
                     {formatQuantity(item.quantity)}
                     {item.unit?.trim() ? (
                       <span className="ml-1 text-xs text-muted-foreground">
