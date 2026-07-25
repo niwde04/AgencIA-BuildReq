@@ -5506,20 +5506,14 @@ function buildPurchaseOrderDocument(params: {
     }))
   );
   const normalizedStatus = params.status?.trim().toLowerCase() ?? "";
-  const isCancelled = [
-    "anulada",
-    "anulado",
-    "cancelada",
-    "cancelado",
-  ].includes(normalizedStatus);
+  const isCancelled = ["anulada", "anulado", "cancelada", "cancelado"].includes(
+    normalizedStatus
+  );
   const watermarkText = isCancelled
     ? "ANULADA"
-    : ![
-          "emitida",
-          "enviada",
-          "parcialmente_recibida",
-          "recibida",
-        ].includes(normalizedStatus)
+    : !["emitida", "enviada", "parcialmente_recibida", "recibida"].includes(
+          normalizedStatus
+        )
       ? "NO OFICIAL"
       : null;
 
@@ -12591,6 +12585,7 @@ export async function listDmcReportSourceInvoices(filters?: {
   projectIds?: number[] | null;
   statuses?: string[];
   excludeStatus?: string;
+  search?: string | null;
   dateFrom?: Date | null;
   dateTo?: Date | null;
 }) {
@@ -12610,6 +12605,22 @@ export async function listDmcReportSourceInvoices(filters?: {
   }
   if (filters?.excludeStatus) {
     conditions.push(sql`${invoices.status} <> ${filters.excludeStatus}`);
+  }
+  const search = filters?.search?.trim();
+  if (search) {
+    const pattern = `%${search}%`;
+    conditions.push(
+      or(
+        ilike(invoices.invoiceDocumentNumber, pattern),
+        ilike(invoices.invoiceNumber, pattern),
+        ilike(purchaseOrders.orderNumber, pattern),
+        ilike(receipts.receiptNumber, pattern),
+        ilike(suppliers.name, pattern),
+        ilike(suppliers.rtn, pattern),
+        ilike(projects.code, pattern),
+        ilike(projects.name, pattern)
+      )!
+    );
   }
   if (filters?.dateFrom) {
     conditions.push(
@@ -12939,6 +12950,9 @@ export async function listDmcReportSourceInvoices(filters?: {
 export async function listSystemReportPurchaseOrderLines(filters?: {
   projectId?: number | null;
   projectIds?: number[] | null;
+  statuses?: string[];
+  purchaseType?: string | null;
+  search?: string | null;
   dateFrom?: Date | null;
   dateTo?: Date | null;
 }): Promise<SystemPurchaseOrderLine[]> {
@@ -12952,6 +12966,14 @@ export async function listSystemReportPurchaseOrderLines(filters?: {
   if (filters?.projectIds) {
     if (filters.projectIds.length === 0) return [];
     conditions.push(inArray(purchaseOrders.projectId, filters.projectIds));
+  }
+  if (filters?.statuses?.length) {
+    conditions.push(inArray(purchaseOrders.status, filters.statuses as any));
+  }
+  if (filters?.purchaseType) {
+    conditions.push(
+      eq(purchaseOrders.purchaseType, filters.purchaseType as any)
+    );
   }
   if (filters?.dateFrom) {
     conditions.push(gte(purchaseOrders.createdAt, filters.dateFrom));
@@ -12980,6 +13002,27 @@ export async function listSystemReportPurchaseOrderLines(filters?: {
     users,
     "system_report_purchase_request_creators"
   );
+  const search = filters?.search?.trim();
+  if (search) {
+    const pattern = `%${search}%`;
+    conditions.push(
+      or(
+        ilike(purchaseOrders.orderNumber, pattern),
+        ilike(purchaseOrderItems.itemName, pattern),
+        ilike(purchaseOrderItems.currentSapItemCode, pattern),
+        ilike(purchaseOrderItems.originalSapItemCode, pattern),
+        ilike(suppliers.name, pattern),
+        ilike(suppliers.rtn, pattern),
+        ilike(projects.code, pattern),
+        ilike(projects.name, pattern),
+        ilike(purchaseRequests.requestNumber, pattern),
+        ilike(systemDirectRequests.requestNumber, pattern),
+        ilike(systemPurchaseRequestRequests.requestNumber, pattern),
+        ilike(systemDirectRequesters.name, pattern),
+        ilike(systemPurchaseRequestCreators.name, pattern)
+      )!
+    );
+  }
 
   const rows = await db
     .select({

@@ -3,10 +3,8 @@ import { DataPagination } from "@/components/DataPagination";
 import { CompactProcurementApprovalPanel } from "@/components/CompactProcurementApprovalPanel";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { fetchAllFilteredPages } from "@/lib/paginated-export";
-import {
-  buildDatedExcelFileName,
-  downloadExcel,
-} from "@/lib/excel-export";
+import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
+import { downloadSystemPurchaseOrdersWorkbook } from "@/lib/dmc-export";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import {
   DocumentItemsAccordionPanel,
@@ -948,6 +946,10 @@ export default function OrdenesCompra() {
     (user?.role === "admin" ||
       userRole === "administracion_central" ||
       userRole === "administrador_proyecto");
+  const canExportInternalReport =
+    userRole === "administracion_central" ||
+    userRole === "administrador_proyecto" ||
+    userRole === "contable";
   const isProjectAdmin = userRole === "administrador_proyecto";
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [expandedItemsId, setExpandedItemsId] = useState<number | null>(null);
@@ -956,6 +958,8 @@ export default function OrdenesCompra() {
   const [page, setPage] = useState(1);
   const debouncedSearchTerm = useDebouncedValue(searchTerm);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [isExportingInternalReport, setIsExportingInternalReport] =
+    useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [purchaseTypeFilter, setPurchaseTypeFilter] = useState("all");
   const [originPopoverOpen, setOriginPopoverOpen] = useState(false);
@@ -2696,12 +2700,9 @@ export default function OrdenesCompra() {
     ].includes(normalizedPrintStatus);
     const printWatermarkText = isCancelledPrint
       ? "ANULADA"
-      : ![
-            "emitida",
-            "enviada",
-            "parcialmente_recibida",
-            "recibida",
-          ].includes(normalizedPrintStatus)
+      : !["emitida", "enviada", "parcialmente_recibida", "recibida"].includes(
+            normalizedPrintStatus
+          )
         ? "NO OFICIAL"
         : null;
     const supplierName = detail.supplier?.name ?? "Proveedor pendiente";
@@ -3281,6 +3282,37 @@ export default function OrdenesCompra() {
     }
   };
 
+  const exportInternalPurchaseOrdersReport = async () => {
+    if (isExportingInternalReport) return;
+    setIsExportingInternalReport(true);
+    try {
+      const payload = await utils.reports.systemPurchaseOrders.fetch({
+        dateFrom: null,
+        dateTo: null,
+        search: debouncedSearchTerm.trim() || null,
+        purchaseType: purchaseTypeFilter === "all" ? null : purchaseTypeFilter,
+        status:
+          isProcurementApprover || statusFilter === "all" ? null : statusFilter,
+      });
+      if (payload.summary.purchaseOrderLineCount === 0) {
+        toast.error("No hay órdenes de compra para generar el libro interno");
+        return;
+      }
+      await downloadSystemPurchaseOrdersWorkbook(payload);
+      toast.success(
+        `Libro interno generado con ${payload.summary.purchaseOrderLineCount.toLocaleString("es-HN")} línea(s)`
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar el libro interno de órdenes de compra"
+      );
+    } finally {
+      setIsExportingInternalReport(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -3290,11 +3322,31 @@ export default function OrdenesCompra() {
             type="button"
             variant="outline"
             onClick={() => void exportPurchaseOrdersExcel()}
-            disabled={!ordersPage?.total || isExportingExcel}
+            disabled={
+              !ordersPage?.total ||
+              isExportingExcel ||
+              isExportingInternalReport
+            }
           >
             <Download className="mr-2 h-4 w-4" />
             {isExportingExcel ? "Exportando..." : "Exportar Excel"}
           </Button>
+          {canExportInternalReport ? (
+            <Button
+              type="button"
+              onClick={() => void exportInternalPurchaseOrdersReport()}
+              disabled={
+                !ordersPage?.total ||
+                isExportingExcel ||
+                isExportingInternalReport
+              }
+            >
+              <Download className="mr-2 h-4 w-4" />
+              {isExportingInternalReport
+                ? "Generando..."
+                : "Libro interno BuildReq"}
+            </Button>
+          ) : null}
           {canCreatePurchaseOrder ? (
             <Button onClick={() => setNewOrderDialogOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
@@ -3393,9 +3445,7 @@ export default function OrdenesCompra() {
                         <div className="min-w-0">
                           <DocumentNumberButton
                             className="leading-tight"
-                            onClick={() =>
-                              setSelectedId(row.purchaseOrder.id)
-                            }
+                            onClick={() => setSelectedId(row.purchaseOrder.id)}
                             ariaLabel={`Abrir ${row.purchaseOrder.orderNumber}`}
                           >
                             {row.purchaseOrder.orderNumber}
@@ -3541,9 +3591,7 @@ export default function OrdenesCompra() {
               <div className="relative isolate hidden max-w-full overflow-x-auto md:block">
                 <table
                   className={`w-full border-separate border-spacing-0 text-sm ${
-                    isProcurementApprover
-                      ? "min-w-[1180px]"
-                      : "min-w-[1840px]"
+                    isProcurementApprover ? "min-w-[1180px]" : "min-w-[1840px]"
                   }`}
                 >
                   <thead>
@@ -3611,143 +3659,147 @@ export default function OrdenesCompra() {
                       return (
                         <Fragment key={row.purchaseOrder.id}>
                           <tr className="border-b border-border last:border-0">
-                        <td className="p-3 font-medium">
-                          <DocumentNumberButton
-                            onClick={() =>
-                              setSelectedId(row.purchaseOrder.id)
-                            }
-                            ariaLabel={`Abrir ${row.purchaseOrder.orderNumber}`}
-                          >
-                            {row.purchaseOrder.orderNumber}
-                          </DocumentNumberButton>
-                        </td>
-                        <td className="p-3">
-                          <DocumentItemsAccordionTrigger
-                            expanded={itemsExpanded}
-                            count={
-                              itemsExpanded
-                                ? expandedItemsDetail?.items?.length
-                                : undefined
-                            }
-                            onToggle={() =>
-                              setExpandedItemsId(
-                                itemsExpanded ? null : row.purchaseOrder.id
-                              )
-                            }
-                          />
-                        </td>
-                        {!isProcurementApprover ? (
-                          <td className="p-3 text-xs font-medium">
-                            {formatPurchaseOrderRequestNumbers(row)}
-                          </td>
-                        ) : null}
-                        <td className="p-3 text-xs uppercase">
-                          {row.purchaseOrder.classification}
-                        </td>
-                        <td className="p-3 text-xs">
-                          {row.project
-                            ? `${row.project.code} — ${row.project.name}`
-                            : "—"}
-                        </td>
-                        <td className="p-3 text-xs">
-                          {formatPurchaseOrderRequestedBy(row)}
-                        </td>
-                        <td className="p-3 text-xs">
-                          {formatPurchaseOrderCreatedBy(row)}
-                        </td>
-                        {!isProcurementApprover ? (
-                          <td className="p-3 text-xs">
-                            {PURCHASE_TYPE_LABELS[
-                              row.purchaseOrder.purchaseType
-                            ] || "—"}
-                          </td>
-                        ) : null}
-                        <td className="p-3 text-xs">
-                          {row.supplier ? (
-                            <div className="space-y-1">
-                              <div className="font-medium text-foreground">
-                                {row.supplier.name}
-                              </div>
-                              <div className="text-muted-foreground">
-                                RTN: {formatSupplierRtnLabel(row.supplier)}
-                              </div>
-                            </div>
-                          ) : (
-                            "Proveedor pendiente"
-                          )}
-                        </td>
-                        {!isProcurementApprover ? (
-                          <td className="p-3">
-                            <Badge
-                              variant="outline"
-                              className={`text-xs ${
-                                STATUS_COLORS[
-                                  getEffectivePurchaseOrderStatus(
-                                    row.purchaseOrder.status,
-                                    row.purchaseOrder.approvalStatus
+                            <td className="p-3 font-medium">
+                              <DocumentNumberButton
+                                onClick={() =>
+                                  setSelectedId(row.purchaseOrder.id)
+                                }
+                                ariaLabel={`Abrir ${row.purchaseOrder.orderNumber}`}
+                              >
+                                {row.purchaseOrder.orderNumber}
+                              </DocumentNumberButton>
+                            </td>
+                            <td className="p-3">
+                              <DocumentItemsAccordionTrigger
+                                expanded={itemsExpanded}
+                                count={
+                                  itemsExpanded
+                                    ? expandedItemsDetail?.items?.length
+                                    : undefined
+                                }
+                                onToggle={() =>
+                                  setExpandedItemsId(
+                                    itemsExpanded ? null : row.purchaseOrder.id
                                   )
-                                ] || ""
-                              }`}
-                            >
-                              {STATUS_LABELS[
-                                getEffectivePurchaseOrderStatus(
-                                  row.purchaseOrder.status,
-                                  row.purchaseOrder.approvalStatus
-                                )
-                              ] || row.purchaseOrder.status}
-                            </Badge>
-                          </td>
-                        ) : null}
-                        {PROCUREMENT_APPROVALS_ENABLED &&
-                        !isProcurementApprover ? (
-                          <td className="p-3">
-                            <Badge
-                              variant="outline"
-                              className={`text-xs ${getApprovalStatusColor(
-                                row.purchaseOrder.approvalStatus
-                              )}`}
-                            >
-                              {getApprovalStatusLabel(
-                                row.purchaseOrder.approvalStatus
+                                }
+                              />
+                            </td>
+                            {!isProcurementApprover ? (
+                              <td className="p-3 text-xs font-medium">
+                                {formatPurchaseOrderRequestNumbers(row)}
+                              </td>
+                            ) : null}
+                            <td className="p-3 text-xs uppercase">
+                              {row.purchaseOrder.classification}
+                            </td>
+                            <td className="p-3 text-xs">
+                              {row.project
+                                ? `${row.project.code} — ${row.project.name}`
+                                : "—"}
+                            </td>
+                            <td className="p-3 text-xs">
+                              {formatPurchaseOrderRequestedBy(row)}
+                            </td>
+                            <td className="p-3 text-xs">
+                              {formatPurchaseOrderCreatedBy(row)}
+                            </td>
+                            {!isProcurementApprover ? (
+                              <td className="p-3 text-xs">
+                                {PURCHASE_TYPE_LABELS[
+                                  row.purchaseOrder.purchaseType
+                                ] || "—"}
+                              </td>
+                            ) : null}
+                            <td className="p-3 text-xs">
+                              {row.supplier ? (
+                                <div className="space-y-1">
+                                  <div className="font-medium text-foreground">
+                                    {row.supplier.name}
+                                  </div>
+                                  <div className="text-muted-foreground">
+                                    RTN: {formatSupplierRtnLabel(row.supplier)}
+                                  </div>
+                                </div>
+                              ) : (
+                                "Proveedor pendiente"
                               )}
-                            </Badge>
-                          </td>
-                        ) : null}
-                        <td className="p-3">
-                          {row.purchaseOrder.appliesContract ? (
-                            <Badge
-                              variant="outline"
-                              className={`text-xs ${
-                                row.contractSummary?.isExpired
-                                  ? "border-rose-300 bg-rose-50 text-rose-700"
-                                  : row.contractSummary?.expiresSoon
-                                    ? "border-amber-300 bg-amber-50 text-amber-800"
-                                    : "border-cyan-300 bg-cyan-50 text-cyan-700"
-                              }`}
-                            >
-                              {row.contractSummary?.statusLabel || "Contrato"}
-                            </Badge>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">
-                              No aplica
-                            </span>
-                          )}
-                        </td>
-                        {!isProcurementApprover ? (
-                          <td className="p-3 text-xs">
-                            {EMISSION_STATUS_LABELS[row.purchaseOrder.status] ||
-                              "Pendiente"}
-                          </td>
-                        ) : null}
-                        <td className="sticky right-0 z-20 w-[112px] min-w-[112px] border-l border-border/60 bg-card p-3 text-right shadow-[-10px_0_14px_-12px_rgba(0,0,0,0.55)]">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setSelectedId(row.purchaseOrder.id)}
-                          >
-                            Ver
-                          </Button>
-                        </td>
+                            </td>
+                            {!isProcurementApprover ? (
+                              <td className="p-3">
+                                <Badge
+                                  variant="outline"
+                                  className={`text-xs ${
+                                    STATUS_COLORS[
+                                      getEffectivePurchaseOrderStatus(
+                                        row.purchaseOrder.status,
+                                        row.purchaseOrder.approvalStatus
+                                      )
+                                    ] || ""
+                                  }`}
+                                >
+                                  {STATUS_LABELS[
+                                    getEffectivePurchaseOrderStatus(
+                                      row.purchaseOrder.status,
+                                      row.purchaseOrder.approvalStatus
+                                    )
+                                  ] || row.purchaseOrder.status}
+                                </Badge>
+                              </td>
+                            ) : null}
+                            {PROCUREMENT_APPROVALS_ENABLED &&
+                            !isProcurementApprover ? (
+                              <td className="p-3">
+                                <Badge
+                                  variant="outline"
+                                  className={`text-xs ${getApprovalStatusColor(
+                                    row.purchaseOrder.approvalStatus
+                                  )}`}
+                                >
+                                  {getApprovalStatusLabel(
+                                    row.purchaseOrder.approvalStatus
+                                  )}
+                                </Badge>
+                              </td>
+                            ) : null}
+                            <td className="p-3">
+                              {row.purchaseOrder.appliesContract ? (
+                                <Badge
+                                  variant="outline"
+                                  className={`text-xs ${
+                                    row.contractSummary?.isExpired
+                                      ? "border-rose-300 bg-rose-50 text-rose-700"
+                                      : row.contractSummary?.expiresSoon
+                                        ? "border-amber-300 bg-amber-50 text-amber-800"
+                                        : "border-cyan-300 bg-cyan-50 text-cyan-700"
+                                  }`}
+                                >
+                                  {row.contractSummary?.statusLabel ||
+                                    "Contrato"}
+                                </Badge>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">
+                                  No aplica
+                                </span>
+                              )}
+                            </td>
+                            {!isProcurementApprover ? (
+                              <td className="p-3 text-xs">
+                                {EMISSION_STATUS_LABELS[
+                                  row.purchaseOrder.status
+                                ] || "Pendiente"}
+                              </td>
+                            ) : null}
+                            <td className="sticky right-0 z-20 w-[112px] min-w-[112px] border-l border-border/60 bg-card p-3 text-right shadow-[-10px_0_14px_-12px_rgba(0,0,0,0.55)]">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  setSelectedId(row.purchaseOrder.id)
+                                }
+                              >
+                                Ver
+                              </Button>
+                            </td>
                           </tr>
                           {itemsExpanded ? (
                             <tr className="border-b border-border">
@@ -4798,8 +4850,12 @@ export default function OrdenesCompra() {
                                   type="text"
                                   inputMode="decimal"
                                   value={draft.quantity}
-                                  onFocus={event => event.currentTarget.select()}
-                                  onClick={event => event.currentTarget.select()}
+                                  onFocus={event =>
+                                    event.currentTarget.select()
+                                  }
+                                  onClick={event =>
+                                    event.currentTarget.select()
+                                  }
                                   onChange={event =>
                                     setOriginItemDrafts(current => ({
                                       ...current,
@@ -6256,8 +6312,12 @@ export default function OrdenesCompra() {
                                   type="text"
                                   inputMode="decimal"
                                   value={draft.quantity}
-                                  onFocus={event => event.currentTarget.select()}
-                                  onClick={event => event.currentTarget.select()}
+                                  onFocus={event =>
+                                    event.currentTarget.select()
+                                  }
+                                  onClick={event =>
+                                    event.currentTarget.select()
+                                  }
                                   onChange={event => {
                                     const nextQuantity = event.target.value;
                                     setItemDrafts(current => ({
@@ -6308,8 +6368,12 @@ export default function OrdenesCompra() {
                                   type="text"
                                   inputMode="decimal"
                                   value={draft.unitPrice}
-                                  onFocus={event => event.currentTarget.select()}
-                                  onClick={event => event.currentTarget.select()}
+                                  onFocus={event =>
+                                    event.currentTarget.select()
+                                  }
+                                  onClick={event =>
+                                    event.currentTarget.select()
+                                  }
                                   onChange={event => {
                                     const nextUnitPrice = event.target.value;
                                     setItemDrafts(current => ({

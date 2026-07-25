@@ -15,7 +15,6 @@ import { Spinner } from "@/components/ui/spinner";
 import {
   downloadDmcSarReport,
   downloadRetentionSarReport,
-  downloadSystemWorkbook,
 } from "@/lib/dmc-export";
 import { trpc } from "@/lib/trpc";
 import type { FiscalReportIssue } from "@shared/dmc-sar-report";
@@ -77,10 +76,6 @@ export default function Reportes() {
     () => ({ dateFrom: dateFrom || null, dateTo: dateTo || null, statusMode }),
     [dateFrom, dateTo, statusMode]
   );
-  const systemQuery = trpc.reports.systemWorkbook.useQuery(baseInput, {
-    enabled: false,
-    retry: false,
-  });
   const dmcQuery = trpc.reports.dmcSarPurchases.useQuery(baseInput, {
     enabled: false,
     retry: false,
@@ -164,21 +159,15 @@ export default function Reportes() {
 
   const buttons = [
     {
-      key: "system",
-      label: "Libro interno BuildReq",
-      action: () =>
-        run(
-          "system",
-          () => systemQuery.refetch(),
-          downloadSystemWorkbook,
-          "Libro interno BuildReq"
-        ),
-    },
-    {
       key: "dmc",
       label: "DMC SAR 527",
       action: () =>
-        run("dmc", () => dmcQuery.refetch(), downloadDmcSarReport, "DMC SAR 527"),
+        run(
+          "dmc",
+          () => dmcQuery.refetch(),
+          downloadDmcSarReport,
+          "DMC SAR 527"
+        ),
     },
     {
       key: "rt01",
@@ -220,7 +209,7 @@ export default function Reportes() {
       <div>
         <h1>Reportes</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Plantillas fiscales SAR y libro operativo del cliente.
+          Plantillas fiscales SAR.
         </p>
       </div>
 
@@ -259,22 +248,26 @@ export default function Reportes() {
                 value={statusMode}
                 onValueChange={value => setStatusMode(value as DmcStatusMode)}
               >
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="non_void">No anuladas</SelectItem>
-                  <SelectItem value="registered_only">Solo contabilizadas</SelectItem>
+                  <SelectItem value="registered_only">
+                    Solo contabilizadas
+                  </SelectItem>
                   <SelectItem value="all">Todos los estados</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {buttons.map(button => (
               <Button
                 key={button.key}
                 type="button"
-                variant={button.key === "system" ? "default" : "outline"}
+                variant="outline"
                 disabled={activeDownload !== null}
                 onClick={() => void button.action()}
                 className="justify-start"

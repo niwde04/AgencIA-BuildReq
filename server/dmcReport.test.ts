@@ -8,6 +8,8 @@ import { buildDmcSarReportPayload } from "@shared/dmc-sar-report";
 import {
   buildDmc527Workbook,
   buildRetentionSarWorkbook,
+  buildSystemInvoicesWorkbook,
+  buildSystemPurchaseOrdersWorkbook,
   buildSystemWorkbook,
 } from "../client/src/lib/dmc-export";
 import { buildRetentionSarPayload } from "@shared/retention-sar-report";
@@ -86,11 +88,9 @@ function sarInvoice(
     status: overrides.status ?? "borrador",
     isFiscalDocument: overrides.isFiscalDocument ?? true,
     cai: overrides.cai ?? "338827-15203E-A419E0-63BE03-0909A6-53",
-    documentDate:
-      overrides.documentDate ?? new Date("2026-07-01T12:00:00.000"),
+    documentDate: overrides.documentDate ?? new Date("2026-07-01T12:00:00.000"),
     documentDueDate: overrides.documentDueDate ?? null,
-    postingDate:
-      overrides.postingDate ?? new Date("2026-07-02T12:00:00.000"),
+    postingDate: overrides.postingDate ?? new Date("2026-07-02T12:00:00.000"),
     receiptDate: overrides.receiptDate ?? null,
     retentionReceiptNumber: overrides.retentionReceiptNumber ?? null,
     retentionCai: overrides.retentionCai ?? null,
@@ -103,8 +103,7 @@ function sarInvoice(
     oceExemptAmount15: overrides.oceExemptAmount15 ?? null,
     oceExemptAmount18: overrides.oceExemptAmount18 ?? null,
     dmcForeignSection: overrides.dmcForeignSection ?? null,
-    dmcForeignIdentification:
-      overrides.dmcForeignIdentification ?? null,
+    dmcForeignIdentification: overrides.dmcForeignIdentification ?? null,
     dmcFyducaNumber: overrides.dmcFyducaNumber ?? null,
     dmcDuaNumber: overrides.dmcDuaNumber ?? null,
     dmcImportOutsideCentralAmerica:
@@ -289,15 +288,11 @@ describe("DMC report mapper", () => {
     expect(payload.rows.map(row => row.numeroRegistro)).toEqual([1, 1]);
     expect(cementRow.codFinanzas).toBe("02019901");
     expect(serviceRow.codFinanzas).toBe("02029902");
-    expect(cementRow.nombreGrupoFinanciero).toBe(
-      "Materiales de construcción"
-    );
+    expect(cementRow.nombreGrupoFinanciero).toBe("Materiales de construcción");
     expect(serviceRow.nombreGrupoFinanciero).toBe("Servicios técnicos");
     expect(cementRow.codigoSap).toBe("01010100001");
     expect(serviceRow.codigoSap).toBe("02020200002");
-    expect(cementRow.descripcionFactura).toBe(
-      "Cemento gris Portland tipo I"
-    );
+    expect(cementRow.descripcionFactura).toBe("Cemento gris Portland tipo I");
     expect(serviceRow.descripcionFactura).toBe("Servicio técnico exento");
     expect(cementRow.establecimiento).toBe("000");
     expect(cementRow.puntoEmision).toBe("001");
@@ -567,6 +562,9 @@ describe("DMC SAR 527 report mapper", () => {
     }
 
     const workbook = buildDmc527Workbook(XLSX, payload);
+    Object.values(workbook.Sheets).forEach(sheet => {
+      expect(sheet["!protect"]).toBeUndefined();
+    });
     const roundTrip = XLSX.read(
       XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }),
       { type: "buffer", cellDates: true }
@@ -722,6 +720,9 @@ describe("retention SAR workbooks", () => {
     const workbook = buildRetentionSarWorkbook(XLSX, payload);
     expect(workbook.SheetNames).toEqual(["General", "Lista", "217-6"]);
     expect(workbook.Workbook?.Sheets?.[1]?.Hidden).toBe(1);
+    Object.values(workbook.Sheets).forEach(sheet => {
+      expect(sheet["!protect"]).toBeUndefined();
+    });
     const values = XLSX.utils.sheet_to_json(workbook.Sheets["217-6"], {
       header: 1,
     }) as unknown[][];
@@ -822,6 +823,18 @@ describe("internal BuildReq workbook", () => {
       "Órdenes de Compra",
       "Registro Facturacion",
     ]);
+    const purchaseOrderWorkbook = buildSystemPurchaseOrdersWorkbook(
+      XLSX,
+      payload
+    );
+    const invoiceWorkbook = buildSystemInvoicesWorkbook(XLSX, payload);
+    expect(purchaseOrderWorkbook.SheetNames).toEqual(["Órdenes de Compra"]);
+    expect(invoiceWorkbook.SheetNames).toEqual(["Registro Facturacion"]);
+    [workbook, purchaseOrderWorkbook, invoiceWorkbook].forEach(reportWorkbook =>
+      Object.values(reportWorkbook.Sheets).forEach(sheet => {
+        expect(sheet["!protect"]).toBeUndefined();
+      })
+    );
     const rows = XLSX.utils.sheet_to_json(
       workbook.Sheets["Registro Facturacion"],
       { header: 1 }
@@ -831,10 +844,9 @@ describe("internal BuildReq workbook", () => {
     const financialCodeColumn = header.indexOf("Cod_Finanzas");
     const invoiceDescriptionColumn = header.indexOf("Descripcion_Fac.");
     expect(
-      rows.slice(2, 4).map(row => [
-        row[financialCodeColumn],
-        row[invoiceDescriptionColumn],
-      ])
+      rows
+        .slice(2, 4)
+        .map(row => [row[financialCodeColumn], row[invoiceDescriptionColumn]])
     ).toEqual([
       ["02010101", "ARTÍCULO DE CATÁLOGO A"],
       ["02020202", "ARTÍCULO DE CATÁLOGO B"],
@@ -845,6 +857,46 @@ describe("internal BuildReq workbook", () => {
 });
 
 describe("DMC report authorization", () => {
+  it("builds each internal module report with its own filtered source", async () => {
+    const invoiceSpy = vi
+      .spyOn(db, "listDmcReportSourceInvoices")
+      .mockResolvedValue([]);
+    const orderSpy = vi
+      .spyOn(db, "listSystemReportPurchaseOrderLines")
+      .mockResolvedValue([]);
+    const caller = appRouter.createCaller(createUserContext());
+
+    const orderPayload = await caller.reports.systemPurchaseOrders({
+      dateFrom: null,
+      dateTo: null,
+      search: "OC-001",
+      purchaseType: "local",
+      status: "emitida",
+    });
+    expect(orderPayload.invoices).toEqual([]);
+    expect(orderSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        search: "OC-001",
+        purchaseType: "local",
+        statuses: ["emitida"],
+      })
+    );
+
+    const invoicePayload = await caller.reports.systemInvoices({
+      dateFrom: "2026-07-01",
+      dateTo: "2026-07-31",
+      search: "FAC-001",
+      status: null,
+    });
+    expect(invoicePayload.purchaseOrders).toEqual([]);
+    expect(invoiceSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        search: "FAC-001",
+        excludeStatus: "anulada",
+      })
+    );
+  });
+
   it.each([
     "administracion_central",
     "administrador_proyecto",

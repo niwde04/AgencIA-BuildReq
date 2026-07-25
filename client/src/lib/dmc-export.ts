@@ -156,11 +156,7 @@ function makeSheet(
   sheet["!cols"] = widths.map(wch => ({ wch }));
   const range = sheet["!ref"] ? XLSX.utils.decode_range(sheet["!ref"]) : null;
   if (range) {
-    for (
-      let row = options.dataStartRow ?? 1;
-      row <= range.e.r;
-      row += 1
-    ) {
+    for (let row = options.dataStartRow ?? 1; row <= range.e.r; row += 1) {
       for (const column of options.dateColumns ?? []) {
         const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
         if (cell?.v instanceof Date) cell.z = "dd/mm/yyyy";
@@ -171,7 +167,6 @@ function makeSheet(
       }
     }
   }
-  sheet["!protect"] = { selectLockedCells: false, selectUnlockedCells: false };
   return sheet;
 }
 
@@ -274,7 +269,14 @@ export function buildDmc527Workbook(XLSX: Xlsx, payload: DmcSarReportPayload) {
   appendHiddenSheet(
     XLSX,
     workbook,
-    makeSheet(XLSX, [[null, "FA-Factura"], [null, "OC-Otros comprobantes de pago"]], [2, 34]),
+    makeSheet(
+      XLSX,
+      [
+        [null, "FA-Factura"],
+        [null, "OC-Otros comprobantes de pago"],
+      ],
+      [2, 34]
+    ),
     "Lista"
   );
   XLSX.utils.book_append_sheet(
@@ -340,11 +342,7 @@ function retentionRows(type: RetentionSarType, rows: RetentionSarRow[]) {
     row.stateInstitutionCode,
   ];
   return type === "RT15"
-    ? rows.map(row => [
-        ...common(row),
-        row.retainedBase15,
-        row.retainedBase18,
-      ])
+    ? rows.map(row => [...common(row), row.retainedBase15, row.retainedBase18])
     : rows.map(row => [...common(row), row.retainedBase]);
 }
 
@@ -396,7 +394,10 @@ export function buildRetentionSarWorkbook(
   const listRows =
     payload.type === "RT125"
       ? [[]]
-      : [[null, "CF-Comprobantes fiscales"], [null, "OC-Otros comprobantes de pago"]];
+      : [
+          [null, "CF-Comprobantes fiscales"],
+          [null, "OC-Otros comprobantes de pago"],
+        ];
   appendHiddenSheet(
     XLSX,
     workbook,
@@ -445,8 +446,10 @@ function appendTotals(rows: unknown[][], numericColumns: number[]) {
   rows.push(totalRow);
 }
 
-export function buildSystemWorkbook(XLSX: Xlsx, payload: SystemWorkbookPayload) {
-  const workbook = XLSX.utils.book_new();
+function buildSystemPurchaseOrderSheet(
+  XLSX: Xlsx,
+  payload: SystemWorkbookPayload
+) {
   const orderRows: unknown[][] = [
     [null, null, null, "Llave principal (Financiera)"],
     [null, ...SYSTEM_ORDER_HEADERS],
@@ -484,8 +487,10 @@ export function buildSystemWorkbook(XLSX: Xlsx, payload: SystemWorkbookPayload) 
     [2, ...Array(SYSTEM_ORDER_HEADERS.length).fill(17)],
     { dateColumns: systemDateColumns(SYSTEM_ORDER_HEADERS), dataStartRow: 2 }
   );
-  XLSX.utils.book_append_sheet(workbook, orderSheet, "Órdenes de Compra");
+  return orderSheet;
+}
 
+function buildSystemInvoiceSheet(XLSX: Xlsx, payload: SystemWorkbookPayload) {
   const invoiceRows: unknown[][] = [
     [null, null, "Llave principal (Financiera)"],
     [null, ...SYSTEM_INVOICE_HEADERS],
@@ -504,9 +509,48 @@ export function buildSystemWorkbook(XLSX: Xlsx, payload: SystemWorkbookPayload) 
     [2, ...Array(SYSTEM_INVOICE_HEADERS.length).fill(17)],
     { dateColumns: systemDateColumns(SYSTEM_INVOICE_HEADERS), dataStartRow: 2 }
   );
+  return invoiceSheet;
+}
+
+export function buildSystemPurchaseOrdersWorkbook(
+  XLSX: Xlsx,
+  payload: SystemWorkbookPayload
+) {
+  const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(
     workbook,
-    invoiceSheet,
+    buildSystemPurchaseOrderSheet(XLSX, payload),
+    "Órdenes de Compra"
+  );
+  return workbook;
+}
+
+export function buildSystemInvoicesWorkbook(
+  XLSX: Xlsx,
+  payload: SystemWorkbookPayload
+) {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildSystemInvoiceSheet(XLSX, payload),
+    "Registro Facturacion"
+  );
+  return workbook;
+}
+
+export function buildSystemWorkbook(
+  XLSX: Xlsx,
+  payload: SystemWorkbookPayload
+) {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildSystemPurchaseOrderSheet(XLSX, payload),
+    "Órdenes de Compra"
+  );
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildSystemInvoiceSheet(XLSX, payload),
     "Registro Facturacion"
   );
   return workbook;
@@ -526,7 +570,9 @@ export async function downloadDmcSarReport(payload: DmcSarReportPayload) {
 
 export async function downloadRetentionSarReport(payload: RetentionSarPayload) {
   if (!payload.canExport) {
-    throw new Error("Corrija los datos faltantes antes de generar la retención SAR");
+    throw new Error(
+      "Corrija los datos faltantes antes de generar la retención SAR"
+    );
   }
   const XLSX = await import("xlsx");
   const code = RETENTION_TEMPLATE[payload.type].fileCode;
@@ -542,6 +588,28 @@ export async function downloadSystemWorkbook(payload: SystemWorkbookPayload) {
   XLSX.writeFile(
     buildSystemWorkbook(XLSX, payload),
     `BuildReq-Reportes-${datePart(payload.summary.dateFrom)}-${datePart(payload.summary.dateTo)}.xlsx`,
+    { bookType: "xlsx", cellDates: true }
+  );
+}
+
+export async function downloadSystemPurchaseOrdersWorkbook(
+  payload: SystemWorkbookPayload
+) {
+  const XLSX = await import("xlsx");
+  XLSX.writeFile(
+    buildSystemPurchaseOrdersWorkbook(XLSX, payload),
+    `BuildReq-Ordenes-Compra-${datePart(payload.summary.dateFrom)}-${datePart(payload.summary.dateTo)}.xlsx`,
+    { bookType: "xlsx", cellDates: true }
+  );
+}
+
+export async function downloadSystemInvoicesWorkbook(
+  payload: SystemWorkbookPayload
+) {
+  const XLSX = await import("xlsx");
+  XLSX.writeFile(
+    buildSystemInvoicesWorkbook(XLSX, payload),
+    `BuildReq-Registro-Facturacion-${datePart(payload.summary.dateFrom)}-${datePart(payload.summary.dateTo)}.xlsx`,
     { bookType: "xlsx", cellDates: true }
   );
 }

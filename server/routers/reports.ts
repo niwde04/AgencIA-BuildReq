@@ -68,7 +68,10 @@ export const reportsRouter = router({
     )
     .query(async ({ ctx, input }) => {
       if (!canAccessReports(ctx.user)) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "No tiene acceso a reportes" });
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a reportes",
+        });
       }
       const dateFrom = parseDateBoundary(input.dateFrom, "start");
       const dateTo = parseDateBoundary(input.dateTo, "end");
@@ -99,6 +102,99 @@ export const reportsRouter = router({
         dateFrom,
         dateTo,
         statusMode: input.statusMode,
+      });
+    }),
+  systemPurchaseOrders: protectedProcedure
+    .input(
+      z.object({
+        dateFrom: dateInputSchema,
+        dateTo: dateInputSchema,
+        search: z.string().trim().max(200).nullish(),
+        purchaseType: z.string().trim().max(50).nullish(),
+        status: z.string().trim().max(50).nullish(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      if (!canAccessReports(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a reportes",
+        });
+      }
+      const dateFrom = parseDateBoundary(input.dateFrom, "start");
+      const dateTo = parseDateBoundary(input.dateTo, "end");
+      if (dateFrom && dateTo && dateFrom > dateTo) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "La fecha inicial no puede ser mayor que la fecha final",
+        });
+      }
+      const purchaseOrderFilters: Parameters<
+        typeof db.listSystemReportPurchaseOrderLines
+      >[0] = {
+        dateFrom,
+        dateTo,
+        search: input.search,
+        purchaseType: input.purchaseType,
+        statuses: input.status ? [input.status] : undefined,
+      };
+      const purchaseOrderLines = await db.listSystemReportPurchaseOrderLines(
+        applyProjectScope(purchaseOrderFilters, ctx.user)
+      );
+      return buildSystemWorkbookPayload([], purchaseOrderLines, {
+        generatedAt: new Date(),
+        dateFrom,
+        dateTo,
+        statusMode: "all",
+      });
+    }),
+  systemInvoices: protectedProcedure
+    .input(
+      z.object({
+        dateFrom: dateInputSchema,
+        dateTo: dateInputSchema,
+        search: z.string().trim().max(200).nullish(),
+        status: z
+          .enum(["borrador", "revisada", "rechazada", "registrada", "anulada"])
+          .nullish(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      if (!canAccessReports(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a reportes",
+        });
+      }
+      const dateFrom = parseDateBoundary(input.dateFrom, "start");
+      const dateTo = parseDateBoundary(input.dateTo, "end");
+      if (dateFrom && dateTo && dateFrom > dateTo) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "La fecha inicial no puede ser mayor que la fecha final",
+        });
+      }
+      const invoiceFilters: DmcReportFilters = {
+        dateFrom,
+        dateTo,
+        search: input.search,
+        ...(input.status
+          ? { statuses: [input.status] }
+          : { excludeStatus: "anulada" }),
+      };
+      const sourceInvoices = await db.listDmcReportSourceInvoices(
+        applyProjectScope(invoiceFilters, ctx.user)
+      );
+      return buildSystemWorkbookPayload(sourceInvoices, [], {
+        generatedAt: new Date(),
+        dateFrom,
+        dateTo,
+        statusMode:
+          input.status === "registrada"
+            ? "registered_only"
+            : input.status
+              ? "all"
+              : "non_void",
       });
     }),
   dmcPurchases: protectedProcedure
@@ -202,7 +298,10 @@ export const reportsRouter = router({
     )
     .query(async ({ ctx, input }) => {
       if (!canAccessReports(ctx.user)) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "No tiene acceso a reportes" });
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a reportes",
+        });
       }
       const dateFrom = parseDateBoundary(input.dateFrom, "start");
       const dateTo = parseDateBoundary(input.dateTo, "end");

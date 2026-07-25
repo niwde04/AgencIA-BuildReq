@@ -3,6 +3,7 @@ import { DataPagination } from "@/components/DataPagination";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
+import { downloadSystemInvoicesWorkbook } from "@/lib/dmc-export";
 import { fetchAllFilteredPages } from "@/lib/paginated-export";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { getReadablePrintStyles } from "@/lib/readable-print-styles";
@@ -1341,6 +1342,10 @@ export default function Facturas() {
     userRole === "administracion_central" ||
     userRole === "administrador_proyecto";
   const canReviewInvoices = canEditInvoices;
+  const canExportInternalReport =
+    userRole === "administracion_central" ||
+    userRole === "administrador_proyecto" ||
+    userRole === "contable";
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [expandedItemsId, setExpandedItemsId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -1350,6 +1355,8 @@ export default function Facturas() {
   const [page, setPage] = useState(1);
   const debouncedSearchTerm = useDebouncedValue(searchTerm);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [isExportingInternalReport, setIsExportingInternalReport] =
+    useState(false);
   const [accountingComment, setAccountingComment] = useState("");
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectionComment, setRejectionComment] = useState("");
@@ -3418,6 +3425,43 @@ export default function Facturas() {
     }
   };
 
+  const exportInternalInvoicesReport = async () => {
+    if (isExportingInternalReport) return;
+    setIsExportingInternalReport(true);
+    try {
+      const payload = await utils.reports.systemInvoices.fetch({
+        dateFrom: dateFrom || null,
+        dateTo: dateTo || null,
+        search: debouncedSearchTerm.trim() || null,
+        status:
+          statusFilter === "all"
+            ? null
+            : (statusFilter as
+                | "borrador"
+                | "revisada"
+                | "rechazada"
+                | "registrada"
+                | "anulada"),
+      });
+      if (payload.summary.invoiceLineCount === 0) {
+        toast.error("No hay facturas para generar el libro interno");
+        return;
+      }
+      await downloadSystemInvoicesWorkbook(payload);
+      toast.success(
+        `Libro interno generado con ${payload.summary.invoiceLineCount.toLocaleString("es-HN")} línea(s)`
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar el libro interno de facturas"
+      );
+    } finally {
+      setIsExportingInternalReport(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -3427,16 +3471,41 @@ export default function Facturas() {
             Documentos generados desde recepciones de órdenes de compra.
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => void exportInvoicesExcel()}
-          disabled={isLoading || !invoicesPage?.total || isExportingExcel}
-          className="gap-2"
-        >
-          <Download className="h-4 w-4" />
-          {isExportingExcel ? "Exportando..." : "Exportar Excel"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void exportInvoicesExcel()}
+            disabled={
+              isLoading ||
+              !invoicesPage?.total ||
+              isExportingExcel ||
+              isExportingInternalReport
+            }
+            className="gap-2"
+          >
+            <Download className="h-4 w-4" />
+            {isExportingExcel ? "Exportando..." : "Exportar Excel"}
+          </Button>
+          {canExportInternalReport ? (
+            <Button
+              type="button"
+              onClick={() => void exportInternalInvoicesReport()}
+              disabled={
+                isLoading ||
+                !invoicesPage?.total ||
+                isExportingExcel ||
+                isExportingInternalReport
+              }
+              className="gap-2"
+            >
+              <Download className="h-4 w-4" />
+              {isExportingInternalReport
+                ? "Generando..."
+                : "Libro interno BuildReq"}
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
@@ -3562,112 +3631,111 @@ export default function Facturas() {
                 <tbody>
                   {filteredInvoices.map((row: any) => {
                     const statusNote = getInvoiceStatusNote(row.invoice);
-                    const itemsExpanded =
-                      expandedItemsId === row.invoice.id;
+                    const itemsExpanded = expandedItemsId === row.invoice.id;
 
                     return (
                       <Fragment key={row.invoice.id}>
                         <tr className="border-b border-border last:border-0">
-                        <td className="p-3">
-                          <DocumentNumberButton
-                            onClick={() => setSelectedId(row.invoice.id)}
-                            ariaLabel={`Abrir ${row.invoice.invoiceDocumentNumber}`}
-                          >
-                            {row.invoice.invoiceDocumentNumber}
-                          </DocumentNumberButton>
-                        </td>
-                        <td className="p-3">
-                          <DocumentItemsAccordionTrigger
-                            expanded={itemsExpanded}
-                            count={
-                              itemsExpanded
-                                ? expandedItemsDetail?.items?.length
-                                : undefined
-                            }
-                            onToggle={() =>
-                              setExpandedItemsId(
-                                itemsExpanded ? null : row.invoice.id
-                              )
-                            }
-                          />
-                        </td>
-                        <td className="p-3 font-medium">
-                          {row.invoice.invoiceNumber || "—"}
-                        </td>
-                        <td className="p-3">
-                          <span className="font-medium">
-                            {row.supplier?.name || "Proveedor pendiente"}
-                          </span>
-                        </td>
-                        <td className="p-3">
-                          <div>{row.purchaseOrder?.orderNumber || "OC"}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {row.receipt?.receiptNumber || "Recepción"}
-                          </div>
-                        </td>
-                        <td className="p-3 font-medium">
-                          {formatInvoiceRequestNumbers(row)}
-                        </td>
-                        <td className="p-3 text-xs">
-                          {formatInvoiceRequestedBy(row)}
-                        </td>
-                        <td className="p-3 text-xs">
-                          {formatInvoiceCreatedBy(row)}
-                        </td>
-                        <td className="p-3">
-                          <div>
-                            {formatDateLabel(row.invoice.documentDueDate)}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            Límite emisión:{" "}
-                            {formatDateLabel(row.invoice.emissionDeadline)}
-                          </div>
-                        </td>
-                        <td className="p-3 text-right font-medium">
-                          {formatPurchaseOrderCurrency(
-                            row.invoice.total,
-                            row.invoice.currency ?? "HNL"
-                          )}
-                        </td>
-                        <td className="p-3 text-right font-medium">
-                          {formatPurchaseOrderCurrency(
-                            row.invoice.retentionTotal,
-                            row.invoice.currency ?? "HNL"
-                          )}
-                        </td>
-                        <td className="p-3 text-right font-semibold">
-                          {formatPurchaseOrderCurrency(
-                            row.invoice.netPayable,
-                            row.invoice.currency ?? "HNL"
-                          )}
-                        </td>
-                        <td className="min-w-[280px] max-w-[320px] p-3 align-top">
-                          <div className="max-w-72">
-                            <Badge
-                              variant="outline"
-                              className={`max-w-full text-xs ${getInvoiceStatusColor(row.invoice)}`}
+                          <td className="p-3">
+                            <DocumentNumberButton
+                              onClick={() => setSelectedId(row.invoice.id)}
+                              ariaLabel={`Abrir ${row.invoice.invoiceDocumentNumber}`}
                             >
-                              {getInvoiceStatusLabel(row.invoice)}
-                            </Badge>
-                            {statusNote ? (
-                              <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-snug text-muted-foreground">
-                                <span className="font-medium text-foreground/70">
-                                  {statusNote.label}:
-                                </span>{" "}
-                                {statusNote.text}
-                              </p>
-                            ) : null}
-                          </div>
-                        </td>
-                        <td className="sticky right-0 z-20 w-[112px] min-w-[112px] border-l border-border/60 bg-card p-3 text-right align-top shadow-[-10px_0_14px_-12px_rgba(0,0,0,0.55)]">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setSelectedId(row.invoice.id)}
-                          >
-                            Ver
-                          </Button>
-                        </td>
+                              {row.invoice.invoiceDocumentNumber}
+                            </DocumentNumberButton>
+                          </td>
+                          <td className="p-3">
+                            <DocumentItemsAccordionTrigger
+                              expanded={itemsExpanded}
+                              count={
+                                itemsExpanded
+                                  ? expandedItemsDetail?.items?.length
+                                  : undefined
+                              }
+                              onToggle={() =>
+                                setExpandedItemsId(
+                                  itemsExpanded ? null : row.invoice.id
+                                )
+                              }
+                            />
+                          </td>
+                          <td className="p-3 font-medium">
+                            {row.invoice.invoiceNumber || "—"}
+                          </td>
+                          <td className="p-3">
+                            <span className="font-medium">
+                              {row.supplier?.name || "Proveedor pendiente"}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <div>{row.purchaseOrder?.orderNumber || "OC"}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {row.receipt?.receiptNumber || "Recepción"}
+                            </div>
+                          </td>
+                          <td className="p-3 font-medium">
+                            {formatInvoiceRequestNumbers(row)}
+                          </td>
+                          <td className="p-3 text-xs">
+                            {formatInvoiceRequestedBy(row)}
+                          </td>
+                          <td className="p-3 text-xs">
+                            {formatInvoiceCreatedBy(row)}
+                          </td>
+                          <td className="p-3">
+                            <div>
+                              {formatDateLabel(row.invoice.documentDueDate)}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              Límite emisión:{" "}
+                              {formatDateLabel(row.invoice.emissionDeadline)}
+                            </div>
+                          </td>
+                          <td className="p-3 text-right font-medium">
+                            {formatPurchaseOrderCurrency(
+                              row.invoice.total,
+                              row.invoice.currency ?? "HNL"
+                            )}
+                          </td>
+                          <td className="p-3 text-right font-medium">
+                            {formatPurchaseOrderCurrency(
+                              row.invoice.retentionTotal,
+                              row.invoice.currency ?? "HNL"
+                            )}
+                          </td>
+                          <td className="p-3 text-right font-semibold">
+                            {formatPurchaseOrderCurrency(
+                              row.invoice.netPayable,
+                              row.invoice.currency ?? "HNL"
+                            )}
+                          </td>
+                          <td className="min-w-[280px] max-w-[320px] p-3 align-top">
+                            <div className="max-w-72">
+                              <Badge
+                                variant="outline"
+                                className={`max-w-full text-xs ${getInvoiceStatusColor(row.invoice)}`}
+                              >
+                                {getInvoiceStatusLabel(row.invoice)}
+                              </Badge>
+                              {statusNote ? (
+                                <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-snug text-muted-foreground">
+                                  <span className="font-medium text-foreground/70">
+                                    {statusNote.label}:
+                                  </span>{" "}
+                                  {statusNote.text}
+                                </p>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td className="sticky right-0 z-20 w-[112px] min-w-[112px] border-l border-border/60 bg-card p-3 text-right align-top shadow-[-10px_0_14px_-12px_rgba(0,0,0,0.55)]">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setSelectedId(row.invoice.id)}
+                            >
+                              Ver
+                            </Button>
+                          </td>
                         </tr>
                         {itemsExpanded ? (
                           <tr className="border-b border-border">
