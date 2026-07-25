@@ -66,6 +66,19 @@ async function assertTreasuryEnabled() {
       message: "El módulo de Tesorería está deshabilitado.",
     });
   }
+  return settings;
+}
+
+async function assertTreasuryBatchApprovalsEnabled() {
+  const settings = await treasury.getTreasurySettings();
+  if (!settings.treasuryBatchApprovalsEnabled) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message:
+        "Las aprobaciones de lotes de pago están desactivadas en Configuración.",
+    });
+  }
+  return settings;
 }
 
 async function assertBatchAccess(user: User, batchId: number) {
@@ -93,6 +106,12 @@ function parseDate(value: string) {
 
 function rethrowTreasuryError(error: unknown): never {
   if (error instanceof TRPCError) throw error;
+  if (error instanceof treasury.TreasuryApprovalsDisabledError) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: error.message,
+    });
+  }
   if (error instanceof treasury.TreasuryRuleError) {
     throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
   }
@@ -123,12 +142,24 @@ export const treasuryRouter = router({
   })),
 
   updateSettings: adminProcedure
-    .input(z.object({ treasuryEnabled: z.boolean() }))
+    .input(
+      z
+        .object({
+          treasuryEnabled: z.boolean().optional(),
+          treasuryBatchApprovalsEnabled: z.boolean().optional(),
+        })
+        .refine(
+          input =>
+            input.treasuryEnabled !== undefined ||
+            input.treasuryBatchApprovalsEnabled !== undefined,
+          "Indique al menos una configuración para actualizar."
+        )
+    )
     .mutation(async ({ ctx, input }) => {
       try {
         return await treasury.updateTreasurySettings({
-          treasuryEnabled: input.treasuryEnabled,
-          updatedByUserId: ctx.user.id,
+          ...input,
+          actor: ctx.user,
         });
       } catch (error) {
         rethrowTreasuryError(error);
@@ -297,6 +328,7 @@ export const treasuryRouter = router({
           message: "Solo Administración Central puede revisar lotes.",
         });
       }
+      await assertTreasuryBatchApprovalsEnabled();
       try {
         return await treasury.saveTreasuryReview({
           batchId: input.id,
@@ -323,6 +355,7 @@ export const treasuryRouter = router({
             "Solo Administración Central puede consolidar lotes para aprobación.",
         });
       }
+      await assertTreasuryBatchApprovalsEnabled();
       for (const batchId of Array.from(new Set(input.batchIds))) {
         await assertBatchAccess(ctx.user, batchId);
       }
@@ -348,6 +381,7 @@ export const treasuryRouter = router({
           message: "Solo el rol Financiero puede aprobar lotes de Tesorería.",
         });
       }
+      await assertTreasuryBatchApprovalsEnabled();
       try {
         return await treasury.approveTreasuryBatch({
           batchId: input.id,
@@ -374,6 +408,7 @@ export const treasuryRouter = router({
           message: "Solo el rol Financiero puede rechazar lotes de Tesorería.",
         });
       }
+      await assertTreasuryBatchApprovalsEnabled();
       try {
         return await treasury.rejectTreasuryBatch({
           batchId: input.id,
@@ -394,6 +429,7 @@ export const treasuryRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
+      await assertTreasuryBatchApprovalsEnabled();
       const detail = await assertBatchAccess(ctx.user, input.id);
       const allowed =
         detail.batch.status === "enviado_depuracion" && isCentral(ctx.user);
@@ -446,7 +482,8 @@ export const treasuryRouter = router({
       if (!isCentral(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo Administración Central puede registrar el pago bancario.",
+          message:
+            "Solo Administración Central puede registrar el pago bancario.",
         });
       }
       try {
@@ -559,13 +596,17 @@ export const treasuryRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      await assertTreasuryEnabled();
+      const settings = await assertTreasuryEnabled();
       await assertBatchAccess(ctx.user, input.id);
-      if (!isCentral(ctx.user) && ctx.user.buildreqRole !== "financiero") {
+      const canReopen =
+        isCentral(ctx.user) ||
+        (settings.treasuryBatchApprovalsEnabled &&
+          ctx.user.buildreqRole === "financiero");
+      if (!canReopen) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo Administración Central o Financiero pueden reabrir lotes rechazados.",
+            "Solo Administración Central puede reabrir el lote con las aprobaciones desactivadas.",
         });
       }
       try {

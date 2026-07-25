@@ -47,6 +47,7 @@ import {
   TREASURY_BATCH_STATUS_CODES,
   TREASURY_BATCH_STATUS_LABELS,
   TREASURY_ITEM_STATUS_LABELS,
+  getTreasuryBatchStatusLabel,
   type TreasuryBatchStatus,
 } from "@shared/treasury";
 import {
@@ -217,6 +218,7 @@ function statusVariant(status: string) {
 function auditActionLabel(action: string) {
   const reviewLabels: Record<string, string> = {
     enviar_depuracion: "enviar a revisión",
+    enviar_sin_aprobacion: "enviar directamente a banco",
     finalizar_depuracion: "finalizar revisión",
     ajustar_depuracion: "ajustar en revisión",
     excluir_depuracion: "excluir en revisión",
@@ -227,6 +229,8 @@ function auditActionLabel(action: string) {
     enviar_aprobacion: "enviar a aprobación",
     rechazar_lote: "rechazar lote",
     reabrir_lote_rechazado: "reabrir lote rechazado",
+    reabrir_sin_aprobacion: "reabrir directamente para banco",
+    omitir_aprobacion_configuracion: "omitir aprobación por configuración",
     registrar_pago_banco: "registrar pago bancario",
     reabrir_respuesta_bancaria: "restaurar respuesta bancaria",
     reabrir_lote: "reabrir lote para corregir respuesta bancaria",
@@ -745,9 +749,17 @@ function BatchDetailDialog({
     },
     onError: (error: { message: string }) => toast.error(error.message),
   });
-  const submitMutation = trpc.treasury.submit.useMutation(
-    mutationOptions("Lote enviado a revisión")
-  );
+  const submitMutation = trpc.treasury.submit.useMutation({
+    onSuccess: async data => {
+      toast.success(
+        data.approvalBypassed
+          ? "Lote listo para banco"
+          : "Lote enviado a revisión"
+      );
+      await refresh();
+    },
+    onError: error => toast.error(error.message),
+  });
   const saveReviewMutation = trpc.treasury.saveReview.useMutation(
     mutationOptions("Revisión guardada")
   );
@@ -792,9 +804,17 @@ function BatchDetailDialog({
   const reopenMutation = trpc.treasury.reopenClosed.useMutation(
     mutationOptions("Lote reabierto en Enviado al banco")
   );
-  const reopenRejectedMutation = trpc.treasury.reopenRejected.useMutation(
-    mutationOptions("Lote reabierto para aprobación")
-  );
+  const reopenRejectedMutation = trpc.treasury.reopenRejected.useMutation({
+    onSuccess: async data => {
+      toast.success(
+        data.approvalBypassed
+          ? "Lote reabierto y listo para banco"
+          : "Lote reabierto para aprobación"
+      );
+      await refresh();
+    },
+    onError: error => toast.error(error.message),
+  });
 
   const detail = detailQuery.data;
   const batch = detail?.batch;
@@ -805,9 +825,12 @@ function BatchDetailDialog({
     user?.role === "admin" || user?.buildreqRole === "administrador_proyecto";
   const isAccountant =
     user?.role === "admin" || user?.buildreqRole === "contable";
+  const approvalsEnabled =
+    settingsQuery.data?.treasuryBatchApprovalsEnabled === true;
   const isApprover = settingsQuery.data?.isApprover === true;
   const canManageBankResponse = isCentral;
-  const editableAdjustments = status === "enviado_depuracion" && isCentral;
+  const editableAdjustments =
+    approvalsEnabled && status === "enviado_depuracion" && isCentral;
   const canReopenClosedBatch =
     status === "cerrado" &&
     isCentral &&
@@ -818,7 +841,7 @@ function BatchDetailDialog({
       ["rechazada_banco", "excluida"].includes(item.status)
     );
   const canReopenRejectedBatch =
-    status === "rechazado" && (isCentral || isApprover);
+    status === "rechazado" && (isCentral || (approvalsEnabled && isApprover));
 
   function currentPaymentAmount(item: any) {
     if (item.status === "excluida" || excludedIds.has(item.id)) return 0;
@@ -977,7 +1000,10 @@ function BatchDetailDialog({
             {batch?.batchNumber || "Lote de Tesorería"}
             {status && (
               <Badge variant={statusVariant(status)}>
-                {TREASURY_BATCH_STATUS_LABELS[status]}
+                {getTreasuryBatchStatusLabel(
+                  status,
+                  batch?.approvalBypassed === true
+                )}
               </Badge>
             )}
           </DialogTitle>
@@ -1041,7 +1067,11 @@ function BatchDetailDialog({
               </Card>
               <Card>
                 <CardContent className="pt-5">
-                  <div className="text-xs text-muted-foreground">Aprobado</div>
+                  <div className="text-xs text-muted-foreground">
+                    {detail.batch.approvalBypassed
+                      ? "Listo para banco"
+                      : "Aprobado"}
+                  </div>
                   <div className="text-lg font-semibold">
                     {formatMoney(
                       detail.items.reduce(
@@ -1148,9 +1178,12 @@ function BatchDetailDialog({
                       </TableCell>
                       <TableCell>
                         <Badge variant={statusVariant(item.status)}>
-                          {TREASURY_ITEM_STATUS_LABELS[
-                            item.status as keyof typeof TREASURY_ITEM_STATUS_LABELS
-                          ] ?? item.status}
+                          {detail.batch.approvalBypassed &&
+                          item.status === "aprobada"
+                            ? "Lista para banco"
+                            : (TREASURY_ITEM_STATUS_LABELS[
+                                item.status as keyof typeof TREASURY_ITEM_STATUS_LABELS
+                              ] ?? item.status)}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
@@ -1281,8 +1314,8 @@ function BatchDetailDialog({
                   <Banknote />
                   <AlertTitle>Pago completo del lote</AlertTitle>
                   <AlertDescription>
-                    Al registrar, todas las facturas aprobadas se marcarán como
-                    pagadas por el monto aprobado.
+                    Al registrar, todas las facturas listas se marcarán como
+                    pagadas por el monto preparado para banco.
                   </AlertDescription>
                 </Alert>
                 <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
@@ -1379,7 +1412,9 @@ function BatchDetailDialog({
                           {item.supplierName} · {item.invoiceDocumentNumber}
                         </div>
                         <div className="text-sm text-muted-foreground">
-                          Aprobado{" "}
+                          {detail.batch.approvalBypassed
+                            ? "Listo para banco "
+                            : "Aprobado "}
                           {formatMoney(
                             item.approvedAmount,
                             detail.batch.currency
@@ -1492,43 +1527,52 @@ function BatchDetailDialog({
                       }
                       disabled={pending}
                     >
-                      <Send className="mr-2 h-4 w-4" /> Enviar a revisión
+                      <Send className="mr-2 h-4 w-4" />{" "}
+                      {approvalsEnabled
+                        ? "Enviar a revisión"
+                        : "Enviar y dejar listo para banco"}
                     </Button>
                   </>
                 )}
-              {status === "enviado_depuracion" && isCentral && (
-                <Button
-                  onClick={() =>
-                    saveReviewMutation.mutate({
-                      id: detail.batch.id,
-                      adjustments: adjustments(),
-                    })
-                  }
-                  disabled={pending}
-                >
-                  <Save className="mr-2 h-4 w-4" /> Guardar
-                </Button>
-              )}
-              {status === "pendiente_aprobacion" && isApprover && (
-                <>
+              {approvalsEnabled &&
+                status === "enviado_depuracion" &&
+                isCentral && (
                   <Button
                     onClick={() =>
-                      approveMutation.mutate({ id: detail.batch.id })
+                      saveReviewMutation.mutate({
+                        id: detail.batch.id,
+                        adjustments: adjustments(),
+                      })
                     }
                     disabled={pending}
                   >
-                    <CheckCircle2 className="mr-2 h-4 w-4" /> Aprobar lote
+                    <Save className="mr-2 h-4 w-4" /> Guardar
                   </Button>
-                  <Button
-                    variant="destructive"
-                    disabled={pending}
-                    onClick={() => requestReason({ type: "reject" })}
-                  >
-                    <XCircle className="mr-2 h-4 w-4" /> Rechazar lote
-                  </Button>
-                </>
-              )}
-              {status === "enviado_depuracion" && isCentral ? (
+                )}
+              {approvalsEnabled &&
+                status === "pendiente_aprobacion" &&
+                isApprover && (
+                  <>
+                    <Button
+                      onClick={() =>
+                        approveMutation.mutate({ id: detail.batch.id })
+                      }
+                      disabled={pending}
+                    >
+                      <CheckCircle2 className="mr-2 h-4 w-4" /> Aprobar lote
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      disabled={pending}
+                      onClick={() => requestReason({ type: "reject" })}
+                    >
+                      <XCircle className="mr-2 h-4 w-4" /> Rechazar lote
+                    </Button>
+                  </>
+                )}
+              {approvalsEnabled &&
+              status === "enviado_depuracion" &&
+              isCentral ? (
                 <Button
                   variant="outline"
                   disabled={pending}
@@ -1687,8 +1731,10 @@ function BatchDetailDialog({
                 : pendingReasonAction?.type === "reject"
                   ? "El lote completo quedará rechazado. Escriba el motivo obligatorio para registrarlo en la auditoría."
                   : pendingReasonAction?.type === "reopenRejected"
-                    ? "El lote volverá a quedar pendiente de aprobación. Escriba el motivo de la reapertura."
-                : "Escriba un motivo de al menos 5 caracteres para registrar esta acción en la auditoría."}
+                    ? approvalsEnabled
+                      ? "El lote volverá a quedar pendiente de aprobación. Escriba el motivo de la reapertura."
+                      : "El lote quedará listo para banco sin revisión ni aprobación. Escriba el motivo de la reapertura."
+                    : "Escriba un motivo de al menos 5 caracteres para registrar esta acción en la auditoría."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2">
@@ -1731,6 +1777,20 @@ export default function Tesoreria() {
   const [selectedConsolidationBatchIds, setSelectedConsolidationBatchIds] =
     useState<Set<number>>(new Set());
   const settingsQuery = trpc.treasury.settings.useQuery();
+  const approvalsEnabled =
+    settingsQuery.data?.treasuryBatchApprovalsEnabled === true;
+  const canConsolidate =
+    approvalsEnabled && settingsQuery.data?.permissions.canDepurate === true;
+
+  useEffect(() => {
+    if (
+      !approvalsEnabled &&
+      ["enviado_depuracion", "pendiente_aprobacion"].includes(statusFilter)
+    ) {
+      setStatusFilter("todos");
+    }
+  }, [approvalsEnabled, statusFilter]);
+
   const batchesQuery = trpc.treasury.list.useQuery(
     statusFilter === "todos"
       ? undefined
@@ -1770,6 +1830,10 @@ export default function Tesoreria() {
           row.project.code,
           row.project.name,
           row.batch.status,
+          getTreasuryBatchStatusLabel(
+            row.batch.status as TreasuryBatchStatus,
+            row.batch.approvalBypassed === true
+          ),
         ]
           .join(" ")
           .toLocaleLowerCase("es-HN")
@@ -1781,12 +1845,14 @@ export default function Tesoreria() {
   }, [batchesQuery.data, dateFrom, dateTo, search]);
   const visibleConsolidatableBatches = useMemo(
     () =>
-      visibleBatches.filter((row: any) =>
-        ["enviado_depuracion", "pendiente_aprobacion"].includes(
-          row.batch.status
-        )
-      ),
-    [visibleBatches]
+      approvalsEnabled
+        ? visibleBatches.filter((row: any) =>
+            ["enviado_depuracion", "pendiente_aprobacion"].includes(
+              row.batch.status
+            )
+          )
+        : [],
+    [approvalsEnabled, visibleBatches]
   );
   const allVisibleConsolidatableBatchesSelected =
     visibleConsolidatableBatches.length > 0 &&
@@ -1896,9 +1962,10 @@ export default function Tesoreria() {
           {
             header: "Estado",
             value: (row: any) =>
-              TREASURY_BATCH_STATUS_LABELS[
-                row.batch.status as TreasuryBatchStatus
-              ] ?? row.batch.status,
+              getTreasuryBatchStatusLabel(
+                row.batch.status as TreasuryBatchStatus,
+                row.batch.approvalBypassed === true
+              ),
             width: 28,
           },
           {
@@ -1929,7 +1996,7 @@ export default function Tesoreria() {
             numFmt: "#,##0.0000",
           },
           {
-            header: "Aprobado",
+            header: "Monto aprobado/listo para banco",
             value: (row: any) => Number(row.approvedTotal ?? 0),
             width: 18,
             numFmt: "#,##0.0000",
@@ -1993,8 +2060,7 @@ export default function Tesoreria() {
         <WalletCards />
         <AlertTitle>Tesorería todavía no está habilitada</AlertTitle>
         <AlertDescription>
-          Un administrador debe configurar los aprobadores y activar el módulo
-          en Configuración.
+          Un administrador debe activar el módulo en Configuración.
         </AlertDescription>
       </Alert>
     );
@@ -2008,7 +2074,9 @@ export default function Tesoreria() {
             <WalletCards className="h-6 w-6" /> Tesorería
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Lotes, abonos parciales, aprobación, banco y contabilización.
+            {approvalsEnabled
+              ? "Lotes, abonos parciales, aprobación, banco y contabilización."
+              : "Lotes, abonos parciales, banco y contabilización."}
           </p>
         </div>
         {settingsQuery.data.permissions.canCreate && (
@@ -2022,6 +2090,18 @@ export default function Tesoreria() {
           </Button>
         )}
       </div>
+
+      {!approvalsEnabled && (
+        <Alert>
+          <Banknote />
+          <AlertTitle>Aprobaciones de lotes desactivadas</AlertTitle>
+          <AlertDescription>
+            Los lotes enviados pasan directamente a Listo para banco.
+            Administración Central conserva la exportación y el registro del
+            pago bancario.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Card>
         <CardHeader className="pb-3">
@@ -2050,9 +2130,17 @@ export default function Tesoreria() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todos">Todos los estados</SelectItem>
-                  {TREASURY_BATCH_STATUS_CODES.map(status => (
+                  {TREASURY_BATCH_STATUS_CODES.filter(
+                    status =>
+                      approvalsEnabled ||
+                      !["enviado_depuracion", "pendiente_aprobacion"].includes(
+                        status
+                      )
+                  ).map(status => (
                     <SelectItem key={status} value={status}>
-                      {TREASURY_BATCH_STATUS_LABELS[status]}
+                      {status === "aprobado" && !approvalsEnabled
+                        ? "Listo para banco"
+                        : TREASURY_BATCH_STATUS_LABELS[status]}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -2129,7 +2217,7 @@ export default function Tesoreria() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  {settingsQuery.data.permissions.canDepurate && (
+                  {canConsolidate && (
                     <TableHead className="w-10">
                       <Checkbox
                         checked={
@@ -2163,9 +2251,7 @@ export default function Tesoreria() {
                 {batchesQuery.isLoading ? (
                   <TableRow>
                     <TableCell
-                      colSpan={
-                        8 + (settingsQuery.data.permissions.canDepurate ? 1 : 0)
-                      }
+                      colSpan={8 + (canConsolidate ? 1 : 0)}
                       className="py-12 text-center"
                     >
                       <Loader2 className="mx-auto h-6 w-6 animate-spin" />
@@ -2174,7 +2260,7 @@ export default function Tesoreria() {
                 ) : visibleBatches.length ? (
                   visibleBatches.map((row: any) => (
                     <TableRow key={row.batch.id}>
-                      {settingsQuery.data.permissions.canDepurate && (
+                      {canConsolidate && (
                         <TableCell>
                           <Checkbox
                             checked={selectedConsolidationBatchIds.has(
@@ -2215,11 +2301,10 @@ export default function Tesoreria() {
                       </TableCell>
                       <TableCell>
                         <Badge variant={statusVariant(row.batch.status)}>
-                          {
-                            TREASURY_BATCH_STATUS_LABELS[
-                              row.batch.status as TreasuryBatchStatus
-                            ]
-                          }
+                          {getTreasuryBatchStatusLabel(
+                            row.batch.status as TreasuryBatchStatus,
+                            row.batch.approvalBypassed === true
+                          )}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -2246,9 +2331,7 @@ export default function Tesoreria() {
                 ) : (
                   <TableRow>
                     <TableCell
-                      colSpan={
-                        8 + (settingsQuery.data.permissions.canDepurate ? 1 : 0)
-                      }
+                      colSpan={8 + (canConsolidate ? 1 : 0)}
                       className="py-12 text-center text-muted-foreground"
                     >
                       No hay lotes con estos filtros.
@@ -2258,7 +2341,7 @@ export default function Tesoreria() {
               </TableBody>
             </Table>
           </div>
-          {settingsQuery.data.permissions.canDepurate && (
+          {canConsolidate && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/20 p-4">
               <div className="text-sm text-muted-foreground">
                 <span className="font-medium text-foreground">

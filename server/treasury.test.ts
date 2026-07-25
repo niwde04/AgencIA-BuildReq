@@ -2,14 +2,17 @@ import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import {
   buildTreasuryMoneySummary,
+  getTreasuryBatchStatusLabel,
   getTreasuryPaymentStatus,
   roundTreasuryMoney,
 } from "../shared/treasury";
 import {
   buildTreasuryFullPaymentRows,
+  getTreasuryApprovalRouting,
   getTreasuryReopenTargetStatus,
   parseTreasuryBankWorkbook,
   prepareTreasuryBankAttachment,
+  resolveTreasurySettingsUpdate,
   TreasuryRuleError,
 } from "./treasury";
 
@@ -76,6 +79,74 @@ describe("treasury partial-payment math", () => {
   });
 });
 
+describe("treasury approval-bypass labels", () => {
+  it("labels only bypassed approved batches as ready for bank", () => {
+    expect(getTreasuryBatchStatusLabel("aprobado", true)).toBe(
+      "Listo para banco"
+    );
+    expect(getTreasuryBatchStatusLabel("aprobado", false)).toBe("Aprobado");
+    expect(getTreasuryBatchStatusLabel("enviado_banco", true)).toBe(
+      "Enviado al banco"
+    );
+  });
+});
+
+describe("treasury approval routing", () => {
+  it("sends submitted and reopened batches directly to bank when approvals are disabled", () => {
+    expect(getTreasuryApprovalRouting(false)).toEqual({
+      approvalBypassed: true,
+      submissionStatus: "aprobado",
+      rejectedReopenStatus: "aprobado",
+      activeItemStatus: "aprobada",
+    });
+  });
+
+  it("preserves the complete review and approval flow when enabled", () => {
+    expect(getTreasuryApprovalRouting(true)).toEqual({
+      approvalBypassed: false,
+      submissionStatus: "enviado_depuracion",
+      rejectedReopenStatus: "pendiente_aprobacion",
+      activeItemStatus: "incluida",
+    });
+  });
+
+  it("requires Financiero only when an enabled flow will use approvals", () => {
+    expect(
+      resolveTreasurySettingsUpdate(
+        {
+          treasuryEnabled: false,
+          treasuryBatchApprovalsEnabled: false,
+        },
+        { treasuryEnabled: true }
+      )
+    ).toMatchObject({
+      treasuryEnabled: true,
+      treasuryBatchApprovalsEnabled: false,
+      requiresFinancialRole: false,
+    });
+
+    expect(
+      resolveTreasurySettingsUpdate(
+        {
+          treasuryEnabled: true,
+          treasuryBatchApprovalsEnabled: false,
+        },
+        { treasuryBatchApprovalsEnabled: true }
+      ).requiresFinancialRole
+    ).toBe(true);
+
+    expect(
+      resolveTreasurySettingsUpdate(
+        {
+          treasuryEnabled: false,
+          treasuryBatchApprovalsEnabled: true,
+        },
+        { treasuryEnabled: true }
+      ).requiresFinancialRole
+    ).toBe(true);
+  });
+});
+
 describe("treasury bank workbook", () => {
   it("parses paid and rejected lines from the bank response", () => {
     const rows = parseTreasuryBankWorkbook(
@@ -137,10 +208,7 @@ describe("treasury bank workbook", () => {
 describe("treasury closed batch reopening", () => {
   it("returns a fully rejected closed batch to the bank-response stage", () => {
     expect(
-      getTreasuryReopenTargetStatus("cerrado", [
-        "rechazada_banco",
-        "excluida",
-      ])
+      getTreasuryReopenTargetStatus("cerrado", ["rechazada_banco", "excluida"])
     ).toBe("enviado_banco");
   });
 
@@ -215,9 +283,7 @@ describe("treasury full batch payment", () => {
     expect(rows).toHaveLength(2);
     expect(rows.map(row => row.paidAmount)).toEqual([3844.49, 224016.8]);
     expect(rows.every(row => row.bankStatus === "PAGADO")).toBe(true);
-    expect(rows.every(row => row.bankReference === "REF-LOTE-100")).toBe(
-      true
-    );
+    expect(rows.every(row => row.bankReference === "REF-LOTE-100")).toBe(true);
     expect(rows.every(row => row.paidDate === paidDate)).toBe(true);
   });
 

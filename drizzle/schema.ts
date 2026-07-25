@@ -370,6 +370,9 @@ export const systemSettings = pgTable("systemSettings", {
     scale: 2,
   }).notNull(),
   treasuryEnabled: boolean("treasuryEnabled").default(false).notNull(),
+  treasuryBatchApprovalsEnabled: boolean("treasuryBatchApprovalsEnabled")
+    .default(false)
+    .notNull(),
   updatedByUserId: integer("updatedByUserId").references(() => users.id, {
     onDelete: "set null",
   }),
@@ -1354,9 +1357,7 @@ export const invoices = pgTable(
     }),
     dmcFyducaNumber: varchar("dmcFyducaNumber", { length: 100 }),
     dmcDuaNumber: varchar("dmcDuaNumber", { length: 100 }),
-    dmcImportOutsideCentralAmerica: boolean(
-      "dmcImportOutsideCentralAmerica"
-    ),
+    dmcImportOutsideCentralAmerica: boolean("dmcImportOutsideCentralAmerica"),
     notes: text("notes"),
     subtotal: decimal("subtotal", { precision: 14, scale: 4 })
       .default("0.0000")
@@ -1495,6 +1496,7 @@ export const treasuryPaymentBatches = pgTable(
       onDelete: "set null",
     }),
     approvedAt: timestamp("approvedAt"),
+    approvalBypassed: boolean("approvalBypassed").default(false).notNull(),
     exportedById: integer("exportedById").references(() => users.id, {
       onDelete: "set null",
     }),

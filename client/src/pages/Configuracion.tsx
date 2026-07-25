@@ -6,7 +6,13 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import { useProcurementApprovalSettings } from "@/hooks/useProcurementApprovalSettings";
-import { Settings2, ShieldCheck, WalletCards, UserCheck } from "lucide-react";
+import {
+  AlertTriangle,
+  Settings2,
+  ShieldCheck,
+  WalletCards,
+  UserCheck,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -81,14 +87,23 @@ export default function Configuracion() {
     enabled: user?.role === "admin",
   });
   const approversQuery = trpc.treasury.approvers.useQuery(undefined, {
-    enabled: user?.role === "admin",
+    enabled:
+      user?.role === "admin" &&
+      treasurySettingsQuery.data?.treasuryBatchApprovalsEnabled === true,
   });
   const updateTreasuryMutation = trpc.treasury.updateSettings.useMutation({
-    onSuccess: async () => {
-      toast.success("Configuración de Tesorería actualizada");
+    onSuccess: async result => {
+      toast.success(
+        result.bypassedBatchCount > 0
+          ? `Configuración actualizada: ${result.bypassedBatchCount} ${
+              result.bypassedBatchCount === 1 ? "lote quedó" : "lotes quedaron"
+            } listo${result.bypassedBatchCount === 1 ? "" : "s"} para banco.`
+          : "Configuración de Tesorería actualizada"
+      );
       await Promise.all([
         utils.treasury.settings.invalidate(),
         utils.treasury.list.invalidate(),
+        utils.treasury.getById.invalidate(),
       ]);
     },
     onError: error => toast.error(error.message),
@@ -286,8 +301,8 @@ export default function Configuracion() {
             <div className="space-y-1">
               <p className="font-medium">Habilitar módulo de Tesorería</p>
               <p className="text-sm text-muted-foreground">
-                Activa lotes, abonos parciales, aprobación, conciliación
-                bancaria y contabilización de pagos.
+                Activa lotes, abonos parciales, gestión bancaria y
+                contabilización de pagos.
               </p>
             </div>
             <Switch
@@ -303,45 +318,86 @@ export default function Configuracion() {
             />
           </div>
 
-          <div className="space-y-3 rounded-lg border p-4">
-            <div className="flex items-center gap-2">
-              <UserCheck className="h-4 w-4" />
-              <p className="font-medium">Aprobadores autorizados</p>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Todos los usuarios con rol Financiero pueden aprobar lotes de
-              Tesorería. El rol se asigna desde la administración de usuarios.
-            </p>
-            {approversQuery.isLoading ? (
-              <p className="text-sm text-muted-foreground">
-                Cargando usuarios financieros...
-              </p>
-            ) : approversQuery.data?.length ? (
-              <div className="divide-y rounded-md border">
-                {approversQuery.data.map(approver => (
-                  <div
-                    key={approver.id}
-                    className="flex items-center gap-3 p-3"
-                  >
-                    <UserCheck className="h-4 w-4 text-primary" />
-                    <span className="min-w-0">
-                      <span className="block font-medium">
-                        {approver.name || `Usuario ${approver.id}`}
-                      </span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {approver.email || "Sin correo"}
-                      </span>
-                    </span>
-                  </div>
-                ))}
+          <div className="space-y-4 rounded-lg border p-4">
+            <div className="flex items-center justify-between gap-6">
+              <div className="space-y-1">
+                <p className="font-medium">Aprobar lotes de pago</p>
+                <p className="text-sm text-muted-foreground">
+                  Exige revisión de Administración Central y aprobación del rol
+                  Financiero antes de enviar un lote al banco.
+                </p>
               </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No hay usuarios con rol Financiero. Asigne el rol antes de
-                enviar lotes a aprobación.
-              </p>
+              <Switch
+                checked={
+                  treasurySettingsQuery.data?.treasuryBatchApprovalsEnabled ===
+                  true
+                }
+                onCheckedChange={treasuryBatchApprovalsEnabled =>
+                  updateTreasuryMutation.mutate({
+                    treasuryBatchApprovalsEnabled,
+                  })
+                }
+                disabled={
+                  treasurySettingsQuery.isLoading ||
+                  updateTreasuryMutation.isPending
+                }
+                aria-label="Aprobar lotes de pago"
+              />
+            </div>
+
+            {!treasurySettingsQuery.data?.treasuryBatchApprovalsEnabled && (
+              <div className="flex gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <p className="text-sm">
+                  Las aprobaciones están desactivadas. Los lotes enviados
+                  pasarán directamente a <strong>Listo para banco</strong>, sin
+                  revisión central ni aprobación financiera.
+                </p>
+              </div>
             )}
           </div>
+
+          {treasurySettingsQuery.data?.treasuryBatchApprovalsEnabled && (
+            <div className="space-y-3 rounded-lg border p-4">
+              <div className="flex items-center gap-2">
+                <UserCheck className="h-4 w-4" />
+                <p className="font-medium">Aprobadores autorizados</p>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Todos los usuarios con rol Financiero pueden aprobar lotes de
+                Tesorería. El rol se asigna desde la administración de usuarios.
+              </p>
+              {approversQuery.isLoading ? (
+                <p className="text-sm text-muted-foreground">
+                  Cargando usuarios financieros...
+                </p>
+              ) : approversQuery.data?.length ? (
+                <div className="divide-y rounded-md border">
+                  {approversQuery.data.map(approver => (
+                    <div
+                      key={approver.id}
+                      className="flex items-center gap-3 p-3"
+                    >
+                      <UserCheck className="h-4 w-4 text-primary" />
+                      <span className="min-w-0">
+                        <span className="block font-medium">
+                          {approver.name || `Usuario ${approver.id}`}
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {approver.email || "Sin correo"}
+                        </span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No hay usuarios con rol Financiero. Asigne el rol antes de
+                  activar las aprobaciones.
+                </p>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

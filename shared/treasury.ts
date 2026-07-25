@@ -34,6 +34,14 @@ export const TREASURY_BATCH_STATUS_LABELS: Readonly<
   consolidado: "Consolidado",
 };
 
+export function getTreasuryBatchStatusLabel(
+  status: TreasuryBatchStatus,
+  approvalBypassed = false
+) {
+  if (status === "aprobado" && approvalBypassed) return "Listo para banco";
+  return TREASURY_BATCH_STATUS_LABELS[status];
+}
+
 export const TREASURY_ITEM_STATUS_CODES = [
   "incluida",
   "excluida",

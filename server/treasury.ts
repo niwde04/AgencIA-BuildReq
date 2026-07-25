@@ -67,6 +67,57 @@ export class TreasuryRuleError extends Error {
   }
 }
 
+export class TreasuryApprovalsDisabledError extends TreasuryRuleError {
+  constructor() {
+    super(
+      "Las aprobaciones de lotes de pago están desactivadas en Configuración."
+    );
+    this.name = "TreasuryApprovalsDisabledError";
+  }
+}
+
+export function resolveTreasurySettingsUpdate(
+  current: {
+    treasuryEnabled: boolean;
+    treasuryBatchApprovalsEnabled: boolean;
+  },
+  update: {
+    treasuryEnabled?: boolean;
+    treasuryBatchApprovalsEnabled?: boolean;
+  }
+) {
+  const treasuryEnabled = update.treasuryEnabled ?? current.treasuryEnabled;
+  const treasuryBatchApprovalsEnabled =
+    update.treasuryBatchApprovalsEnabled ??
+    current.treasuryBatchApprovalsEnabled;
+  return {
+    treasuryEnabled,
+    treasuryBatchApprovalsEnabled,
+    requiresFinancialRole:
+      (update.treasuryBatchApprovalsEnabled === true &&
+        !current.treasuryBatchApprovalsEnabled) ||
+      (update.treasuryEnabled === true &&
+        !current.treasuryEnabled &&
+        treasuryBatchApprovalsEnabled),
+  };
+}
+
+export function getTreasuryApprovalRouting(approvalsEnabled: boolean) {
+  const approvalBypassed = !approvalsEnabled;
+  return {
+    approvalBypassed,
+    submissionStatus: (approvalBypassed
+      ? "aprobado"
+      : "enviado_depuracion") as TreasuryBatchStatus,
+    rejectedReopenStatus: (approvalBypassed
+      ? "aprobado"
+      : "pendiente_aprobacion") as TreasuryBatchStatus,
+    activeItemStatus: (approvalBypassed
+      ? "aprobada"
+      : "incluida") as TreasuryItemStatus,
+  };
+}
+
 const FINAL_ITEM_STATUSES = new Set<TreasuryItemStatus>([
   "excluida",
   "rechazada_banco",
@@ -355,54 +406,214 @@ async function getInvoiceSnapshots(
   }));
 }
 
-export async function getTreasurySettings() {
-  const db = await getDb();
-  if (!db) return { treasuryEnabled: false, updatedAt: null };
-  const [settings] = await db
+async function readTreasurySettings(
+  executor: any,
+  options: { forUpdate?: boolean } = {}
+) {
+  const query = executor
     .select({
       treasuryEnabled: systemSettings.treasuryEnabled,
+      treasuryBatchApprovalsEnabled:
+        systemSettings.treasuryBatchApprovalsEnabled,
       updatedAt: systemSettings.updatedAt,
     })
     .from(systemSettings)
     .where(eq(systemSettings.id, 1));
+  const [settings] = options.forUpdate
+    ? await query.for("update")
+    : await query;
   return {
     treasuryEnabled: settings?.treasuryEnabled === true,
+    treasuryBatchApprovalsEnabled:
+      settings?.treasuryBatchApprovalsEnabled === true,
     updatedAt: settings?.updatedAt ?? null,
   };
 }
 
+async function assertTreasuryBatchApprovalsEnabled(executor: any) {
+  const settings = await readTreasurySettings(executor, { forUpdate: true });
+  if (!settings.treasuryBatchApprovalsEnabled) {
+    throw new TreasuryApprovalsDisabledError();
+  }
+  return settings;
+}
+
+async function markActiveItemsApprovedWithoutWorkflow(
+  executor: any,
+  batchIds: number[],
+  now: Date
+) {
+  if (!batchIds.length) return [];
+  return executor
+    .update(treasuryPaymentItems)
+    .set({
+      status: "aprobada",
+      approvedAmount: treasuryPaymentItems.requestedAmount,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        inArray(treasuryPaymentItems.batchId, batchIds),
+        eq(treasuryPaymentItems.activeReservation, true),
+        ne(treasuryPaymentItems.status, "excluida")
+      )
+    )
+    .returning({ id: treasuryPaymentItems.id });
+}
+
+export async function getTreasurySettings() {
+  const db = await getDb();
+  if (!db) {
+    return {
+      treasuryEnabled: false,
+      treasuryBatchApprovalsEnabled: false,
+      updatedAt: null,
+    };
+  }
+  return readTreasurySettings(db);
+}
+
 export async function updateTreasurySettings(input: {
-  treasuryEnabled: boolean;
-  updatedByUserId: number;
+  treasuryEnabled?: boolean;
+  treasuryBatchApprovalsEnabled?: boolean;
+  actor: TreasuryActor;
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  if (input.treasuryEnabled) {
-    const [approver] = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.buildreqRole, "financiero"))
-      .limit(1);
-    if (!approver) {
-      throw new TreasuryRuleError(
-        "Asigne el rol Financiero al menos a un usuario antes de habilitar Tesorería."
-      );
-    }
+  if (
+    input.treasuryEnabled === undefined &&
+    input.treasuryBatchApprovalsEnabled === undefined
+  ) {
+    throw new TreasuryRuleError(
+      "Indique al menos una configuración de Tesorería para actualizar."
+    );
   }
-  const [settings] = await db
-    .update(systemSettings)
-    .set({
-      treasuryEnabled: input.treasuryEnabled,
-      updatedByUserId: input.updatedByUserId,
-      updatedAt: new Date(),
-    })
-    .where(eq(systemSettings.id, 1))
-    .returning({
-      treasuryEnabled: systemSettings.treasuryEnabled,
-      updatedAt: systemSettings.updatedAt,
-    });
-  if (!settings) throw new Error("Configuración del sistema no disponible");
-  return settings;
+
+  const result = await db.transaction(async tx => {
+    const current = await readTreasurySettings(tx, { forUpdate: true });
+    const resolved = resolveTreasurySettingsUpdate(current, input);
+    const {
+      treasuryEnabled,
+      treasuryBatchApprovalsEnabled,
+      requiresFinancialRole,
+    } = resolved;
+
+    if (requiresFinancialRole) {
+      const [approver] = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.buildreqRole, "financiero"))
+        .limit(1);
+      if (!approver) {
+        throw new TreasuryRuleError(
+          "Asigne el rol Financiero al menos a un usuario antes de activar las aprobaciones de lotes."
+        );
+      }
+    }
+
+    const now = new Date();
+    const [settings] = await tx
+      .update(systemSettings)
+      .set({
+        treasuryEnabled,
+        treasuryBatchApprovalsEnabled,
+        updatedByUserId: input.actor.id,
+        updatedAt: now,
+      })
+      .where(eq(systemSettings.id, 1))
+      .returning({
+        treasuryEnabled: systemSettings.treasuryEnabled,
+        treasuryBatchApprovalsEnabled:
+          systemSettings.treasuryBatchApprovalsEnabled,
+        updatedAt: systemSettings.updatedAt,
+      });
+    if (!settings) throw new Error("Configuración del sistema no disponible");
+
+    let bypassedBatches: Array<{
+      id: number;
+      batchNumber: string;
+      status: TreasuryBatchStatus;
+    }> = [];
+    if (!treasuryBatchApprovalsEnabled) {
+      const pendingBatches = (await tx
+        .select()
+        .from(treasuryPaymentBatches)
+        .where(
+          inArray(treasuryPaymentBatches.status, [
+            "enviado_depuracion",
+            "pendiente_aprobacion",
+          ])
+        )
+        .orderBy(asc(treasuryPaymentBatches.id))
+        .for("update")) as Array<typeof treasuryPaymentBatches.$inferSelect>;
+      const batchIds = pendingBatches.map(batch => batch.id);
+      await markActiveItemsApprovedWithoutWorkflow(tx, batchIds, now);
+
+      if (batchIds.length) {
+        const updatedBatches = await tx
+          .update(treasuryPaymentBatches)
+          .set({
+            status: "aprobado",
+            approvalBypassed: true,
+            approvedById: null,
+            approvedAt: now,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              inArray(treasuryPaymentBatches.id, batchIds),
+              inArray(treasuryPaymentBatches.status, [
+                "enviado_depuracion",
+                "pendiente_aprobacion",
+              ])
+            )
+          )
+          .returning({
+            id: treasuryPaymentBatches.id,
+            batchNumber: treasuryPaymentBatches.batchNumber,
+            status: treasuryPaymentBatches.status,
+          });
+        if (updatedBatches.length !== pendingBatches.length) {
+          throw new TreasuryRuleError(
+            "Uno o más lotes cambiaron de estado mientras se desactivaban las aprobaciones."
+          );
+        }
+        bypassedBatches = updatedBatches;
+        for (const batch of pendingBatches) {
+          await insertEvent(tx, {
+            batchId: batch.id,
+            action: "omitir_aprobacion_configuracion",
+            previousStatus: batch.status,
+            newStatus: "aprobado",
+            actor: input.actor,
+            metadata: {
+              reason: "treasury_batch_approvals_disabled",
+              source: "settings",
+            },
+          });
+        }
+      }
+    }
+
+    return { ...settings, bypassedBatches };
+  });
+
+  await Promise.all(
+    result.bypassedBatches.map(batch =>
+      notifyRole("administracion_central", {
+        title: "Lote listo para banco",
+        message: `El lote ${batch.batchNumber} quedó listo para banco porque las aprobaciones fueron desactivadas.`,
+        batchId: batch.id,
+      })
+    )
+  );
+
+  return {
+    treasuryEnabled: result.treasuryEnabled,
+    treasuryBatchApprovalsEnabled: result.treasuryBatchApprovalsEnabled,
+    updatedAt: result.updatedAt,
+    bypassedBatchCount: result.bypassedBatches.length,
+  };
 }
 
 export async function listTreasuryApprovers() {
@@ -857,6 +1068,7 @@ export async function submitTreasuryBatch(
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const result = await db.transaction(async tx => {
+    const settings = await readTreasurySettings(tx, { forUpdate: true });
     const batch = await readBatch(tx, batchId);
     if (batch.status !== "borrador" && batch.status !== "devuelto") {
       throw new TreasuryRuleError(
@@ -874,10 +1086,20 @@ export async function submitTreasuryBatch(
       );
     }
     const now = new Date();
+    const routing = getTreasuryApprovalRouting(
+      settings.treasuryBatchApprovalsEnabled
+    );
+    const { approvalBypassed } = routing;
+    if (approvalBypassed) {
+      await markActiveItemsApprovedWithoutWorkflow(tx, [batchId], now);
+    }
     const [updated] = await tx
       .update(treasuryPaymentBatches)
       .set({
-        status: "enviado_depuracion",
+        status: routing.submissionStatus,
+        approvalBypassed,
+        approvedById: null,
+        approvedAt: approvalBypassed ? now : null,
         version:
           batch.status === "devuelto" ? batch.version + 1 : batch.version,
         submittedById: actor.id,
@@ -891,16 +1113,23 @@ export async function submitTreasuryBatch(
       .returning();
     await insertEvent(tx, {
       batchId,
-      action: "enviar_depuracion",
+      action: approvalBypassed ? "enviar_sin_aprobacion" : "enviar_depuracion",
       previousStatus: batch.status,
       newStatus: updated.status,
       actor,
+      metadata: approvalBypassed
+        ? { reason: "treasury_batch_approvals_disabled" }
+        : undefined,
     });
     return updated;
   });
   await notifyRole("administracion_central", {
-    title: "Lote pendiente de revisión",
-    message: `El lote ${result.batchNumber} fue enviado a Tesorería.`,
+    title: result.approvalBypassed
+      ? "Lote listo para banco"
+      : "Lote pendiente de revisión",
+    message: result.approvalBypassed
+      ? `El lote ${result.batchNumber} está listo para exportarse al banco; la aprobación fue omitida por configuración.`
+      : `El lote ${result.batchNumber} fue enviado a Tesorería.`,
     batchId,
   });
   return result;
@@ -993,6 +1222,7 @@ export async function saveTreasuryReview(input: {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   return db.transaction(async tx => {
+    await assertTreasuryBatchApprovalsEnabled(tx);
     const batch = await readBatch(tx, input.batchId);
     if (batch.status !== "enviado_depuracion") {
       throw new TreasuryRuleError("El lote no está pendiente de revisión.");
@@ -1037,6 +1267,7 @@ export async function consolidateTreasuryBatchesForApproval(input: {
   }
   if (batchIds.length === 1) {
     const result = await db.transaction(async tx => {
+      await assertTreasuryBatchApprovalsEnabled(tx);
       const batch = await readBatch(tx, batchIds[0]!);
       if (batch.status !== "enviado_depuracion") {
         throw new TreasuryRuleError(
@@ -1100,6 +1331,7 @@ export async function consolidateTreasuryBatchesForApproval(input: {
     return result;
   }
   const result = await db.transaction(async tx => {
+    await assertTreasuryBatchApprovalsEnabled(tx);
     const batches = (
       await tx
         .select()
@@ -1299,6 +1531,7 @@ export async function approveTreasuryBatch(input: {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const result = await db.transaction(async tx => {
+    await assertTreasuryBatchApprovalsEnabled(tx);
     const batch = await readBatch(tx, input.batchId);
     if (batch.status !== "pendiente_aprobacion") {
       throw new TreasuryRuleError("El lote no está pendiente de aprobación.");
@@ -1309,6 +1542,7 @@ export async function approveTreasuryBatch(input: {
       .update(treasuryPaymentBatches)
       .set({
         status: "aprobado",
+        approvalBypassed: false,
         approvedById: input.actor.id,
         approvedAt: now,
         updatedAt: now,
@@ -1341,6 +1575,7 @@ export async function rejectTreasuryBatch(input: {
   if (!db) throw new Error("DB not available");
   const reason = input.reason.trim();
   const result = await db.transaction(async tx => {
+    await assertTreasuryBatchApprovalsEnabled(tx);
     const batch = await readBatch(tx, input.batchId);
     if (batch.status !== "pendiente_aprobacion") {
       throw new TreasuryRuleError("El lote no está pendiente de aprobación.");
@@ -1384,36 +1619,61 @@ export async function reopenRejectedTreasuryBatch(input: {
   if (!db) throw new Error("DB not available");
   const reason = input.reason.trim();
   const result = await db.transaction(async tx => {
+    const settings = await readTreasurySettings(tx, { forUpdate: true });
     const batch = await readBatch(tx, input.batchId);
     if (batch.status !== "rechazado") {
       throw new TreasuryRuleError("Solo se puede reabrir un lote rechazado.");
     }
+    const routing = getTreasuryApprovalRouting(
+      settings.treasuryBatchApprovalsEnabled
+    );
+    const { approvalBypassed } = routing;
+    const now = new Date();
+    if (approvalBypassed) {
+      await markActiveItemsApprovedWithoutWorkflow(tx, [input.batchId], now);
+    }
     const [updated] = await tx
       .update(treasuryPaymentBatches)
       .set({
-        status: "pendiente_aprobacion",
+        status: routing.rejectedReopenStatus,
+        approvalBypassed,
+        approvedById: null,
+        approvedAt: approvalBypassed ? now : null,
         returnedById: null,
         returnedAt: null,
         returnReason: null,
-        updatedAt: new Date(),
+        updatedAt: now,
       })
       .where(eq(treasuryPaymentBatches.id, input.batchId))
       .returning();
     await insertEvent(tx, {
       batchId: input.batchId,
-      action: "reabrir_lote_rechazado",
+      action: approvalBypassed
+        ? "reabrir_sin_aprobacion"
+        : "reabrir_lote_rechazado",
       previousStatus: batch.status,
-      newStatus: "pendiente_aprobacion",
+      newStatus: updated.status,
       actor: input.actor,
       comment: reason,
+      metadata: approvalBypassed
+        ? { reason: "treasury_batch_approvals_disabled" }
+        : undefined,
     });
     return updated;
   });
-  await notifyTreasuryApprovers({
-    title: "Lote reabierto para aprobación",
-    message: `El lote ${result.batchNumber} volvió a quedar pendiente de aprobación.`,
-    batchId: input.batchId,
-  });
+  if (result.approvalBypassed) {
+    await notifyRole("administracion_central", {
+      title: "Lote listo para banco",
+      message: `El lote ${result.batchNumber} fue reabierto y quedó listo para banco sin aprobación.`,
+      batchId: input.batchId,
+    });
+  } else {
+    await notifyTreasuryApprovers({
+      title: "Lote reabierto para aprobación",
+      message: `El lote ${result.batchNumber} volvió a quedar pendiente de aprobación.`,
+      batchId: input.batchId,
+    });
+  }
   return result;
 }
 
@@ -1425,6 +1685,7 @@ export async function returnTreasuryBatch(input: {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const result = await db.transaction(async tx => {
+    await assertTreasuryBatchApprovalsEnabled(tx);
     const batch = await readBatch(tx, input.batchId);
     if (
       !["enviado_depuracion", "pendiente_aprobacion"].includes(batch.status)
@@ -1549,7 +1810,9 @@ export async function exportTreasuryBankWorkbook(
   const detail = await getTreasuryBatchById(batchId);
   if (!detail) throw new TreasuryRuleError("Lote de Tesorería no encontrado.");
   if (!["aprobado", "enviado_banco"].includes(detail.batch.status)) {
-    throw new TreasuryRuleError("Solo se puede exportar un lote aprobado.");
+    throw new TreasuryRuleError(
+      "Solo se puede exportar un lote listo para banco."
+    );
   }
   const buffer = buildBankWorkbook(detail);
   const fileName = `${detail.batch.batchNumber}-v${detail.batch.version}-banco.xlsx`;
