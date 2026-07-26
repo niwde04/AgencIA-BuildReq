@@ -26,6 +26,7 @@ import {
   isProcurementApproverRole,
   isProjectScopedRole,
 } from "@shared/buildreq-roles";
+import { isPurchaseOrderNonInventoryLine } from "@shared/receipt-inventory";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
@@ -457,38 +458,6 @@ function canCloseTransferReceiptLine(
     user.buildreqRole === "administrador_proyecto" &&
     destinationProjectId !== null &&
     canAccessProject(user, destinationProjectId)
-  );
-}
-
-function isPurchaseOrderNonInventoryLine(params: {
-  item?: { isFixedAsset?: boolean | null };
-  sourceItem?: any;
-  catalogItem?: {
-    tipoArticulo?: number | null;
-    itemCode?: string | null;
-  } | null;
-}) {
-  const tipoArticulo = Number(
-    params.sourceItem?.catalogItem?.tipoArticulo ??
-      params.sourceItem?.tipoArticulo ??
-      params.catalogItem?.tipoArticulo ??
-      0
-  );
-  const sourceCode = String(
-    params.sourceItem?.currentSapItemCode ??
-      params.sourceItem?.originalSapItemCode ??
-      params.catalogItem?.itemCode ??
-      ""
-  )
-    .trim()
-    .toUpperCase();
-  return (
-    tipoArticulo === 2 ||
-    tipoArticulo === 3 ||
-    params.item?.isFixedAsset === true ||
-    params.sourceItem?.isFixedAsset === true ||
-    Boolean(params.sourceItem?.fixedAssetArticleId) ||
-    sourceCode.startsWith("AFT")
   );
 }
 

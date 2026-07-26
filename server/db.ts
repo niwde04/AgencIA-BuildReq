@@ -184,6 +184,10 @@ import {
   normalizeOptionalArticleDescription,
 } from "@shared/article-descriptions";
 import {
+  INVENTORY_POSTED_RECEIPT_STATUSES,
+  isPurchaseOrderNonInventoryLine,
+} from "@shared/receipt-inventory";
+import {
   getDemoImportWorkload,
   type ParsedDemoImportPayload,
 } from "./_core/demoData";
@@ -11047,35 +11051,21 @@ export async function registerReceipt(
     }) => {
       if (item.sourceItemId) {
         const detailItem = purchaseOrderDetailItemsById.get(item.sourceItemId);
-        const tipoArticulo = Number(
-          detailItem?.catalogItem?.tipoArticulo ?? detailItem?.tipoArticulo ?? 0
-        );
-        const sourceCode = String(
-          detailItem?.currentSapItemCode ??
-            detailItem?.originalSapItemCode ??
-            ""
-        )
-          .trim()
-          .toUpperCase();
-        return (
-          tipoArticulo === 2 ||
-          tipoArticulo === 3 ||
-          detailItem?.isFixedAsset === true ||
-          Boolean(detailItem?.fixedAssetArticleId) ||
-          sourceCode.startsWith("AFT")
-        );
+        return isPurchaseOrderNonInventoryLine({
+          item,
+          sourceItem: detailItem,
+        });
       }
 
-      if (item.isFixedAsset === true) return true;
       const sapItemCode = item.sapItemCode?.trim();
-      if (!sapItemCode) return false;
-      const catalogItem = await lookupSapItemByCode(sapItemCode);
-      const tipoArticulo = Number(catalogItem?.tipoArticulo ?? 0);
-      return (
-        tipoArticulo === 2 ||
-        tipoArticulo === 3 ||
-        sapItemCode.toUpperCase().startsWith("AFT")
-      );
+      const catalogItem = sapItemCode
+        ? await lookupSapItemByCode(sapItemCode)
+        : null;
+      return isPurchaseOrderNonInventoryLine({
+        item,
+        sourceItem: sapItemCode ? { sapItemCode } : null,
+        catalogItem,
+      });
     };
 
     for (const item of items) {
@@ -11277,35 +11267,21 @@ export async function registerReceipt(
     }) => {
       if (item.sourceItemId) {
         const detailItem = purchaseOrderDetailItemsById.get(item.sourceItemId);
-        const tipoArticulo = Number(
-          detailItem?.catalogItem?.tipoArticulo ?? detailItem?.tipoArticulo ?? 0
-        );
-        const sourceCode = String(
-          detailItem?.currentSapItemCode ??
-            detailItem?.originalSapItemCode ??
-            ""
-        )
-          .trim()
-          .toUpperCase();
-        return (
-          tipoArticulo === 2 ||
-          tipoArticulo === 3 ||
-          detailItem?.isFixedAsset === true ||
-          Boolean(detailItem?.fixedAssetArticleId) ||
-          sourceCode.startsWith("AFT")
-        );
+        return isPurchaseOrderNonInventoryLine({
+          item,
+          sourceItem: detailItem,
+        });
       }
 
-      if (item.isFixedAsset === true) return true;
       const sapItemCode = item.sapItemCode?.trim();
-      if (!sapItemCode) return false;
-      const catalogItem = await lookupSapItemByCode(sapItemCode);
-      const tipoArticulo = Number(catalogItem?.tipoArticulo ?? 0);
-      return (
-        tipoArticulo === 2 ||
-        tipoArticulo === 3 ||
-        sapItemCode.toUpperCase().startsWith("AFT")
-      );
+      const catalogItem = sapItemCode
+        ? await lookupSapItemByCode(sapItemCode)
+        : null;
+      return isPurchaseOrderNonInventoryLine({
+        item,
+        sourceItem: sapItemCode ? { sapItemCode } : null,
+        catalogItem,
+      });
     };
 
     for (const item of items) {
@@ -13551,6 +13527,10 @@ export async function correctInvoiceReceiptFromInvoice(params: {
   let affectedPurchaseOrderId = initialRow.invoice.purchaseOrderId;
 
   const result = await db.transaction(async tx => {
+    await tx.execute(
+      sql`select ${invoices.id} from ${invoices} where ${invoices.id} = ${params.invoiceId} for update`
+    );
+
     const [row] = await tx
       .select({
         invoice: invoices,
@@ -13683,16 +13663,18 @@ export async function correctInvoiceReceiptFromInvoice(params: {
       const catalogItem =
         catalogByCode.get(sapItemCode?.trim() ?? "") ??
         catalogByCode.get(item.sapItemCode?.trim() ?? "");
-      const tipoArticulo = Number(catalogItem?.tipoArticulo ?? 0);
-      const isNonInventoryLine =
-        tipoArticulo === 2 ||
-        tipoArticulo === 3 ||
-        Boolean(sourceItem?.fixedAssetArticleId) ||
-        Boolean(item.fixedAssetSapItemCode) ||
-        String(sapItemCode ?? "")
-          .trim()
-          .toUpperCase()
-          .startsWith("AFT");
+      const isNonInventoryLine = isPurchaseOrderNonInventoryLine({
+        item,
+        sourceItem: sourceItem
+          ? {
+              ...sourceItem,
+              sapItemCode,
+            }
+          : {
+              sapItemCode,
+            },
+        catalogItem,
+      });
 
       if (!isNonInventoryLine) {
         await consumeInventoryStockWithClient(tx, {
@@ -19335,6 +19317,7 @@ export async function getInventoryKardex(params: {
 
   const purchaseReceiptConditions = [
     eq(receipts.sourceType, "purchase_order"),
+    inArray(receipts.status, [...INVENTORY_POSTED_RECEIPT_STATUSES]),
     or(
       eq(purchaseOrderItems.currentSapItemCode, sapItemCode),
       eq(purchaseOrderItems.originalSapItemCode, sapItemCode)
@@ -19353,6 +19336,7 @@ export async function getInventoryKardex(params: {
 
   const transferReceiptConditions = [
     eq(receipts.sourceType, "transfer"),
+    inArray(receipts.status, [...INVENTORY_POSTED_RECEIPT_STATUSES]),
     eq(transferRequestItems.sapItemCode, sapItemCode),
   ];
   applyProjectScope(

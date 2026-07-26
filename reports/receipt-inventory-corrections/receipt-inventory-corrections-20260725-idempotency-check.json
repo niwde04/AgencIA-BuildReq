@@ -1,0 +1,309 @@
+{
+  "generatedAt": "2026-07-25T23:59:51.978Z",
+  "mode": "apply",
+  "manifestPath": "E:\\AIB\\agencIA\\buildreq\\reports\\receipt-inventory-corrections\\receipt-inventory-corrections-20260725-dry-run.json",
+  "backup": {
+    "createdAt": "2026-07-25T23:51:44.5418348Z",
+    "databaseHost": "aws-1-us-east-1.pooler.supabase.com",
+    "databasePort": 5432,
+    "databaseName": "postgres",
+    "databaseServerVersion": "17.6",
+    "pgDumpVersion": "pg_dump (PostgreSQL) 17.9",
+    "format": "custom",
+    "sizeBytes": 3808474,
+    "sha256": "644a732c208dc238b667658061fb33d38b9ddf0d325bbc0c398a1546a9e99f44",
+    "catalogEntryCount": 1051,
+    "backupFile": "buildreq-before-receipt-inventory-fix-20260725-175058.dump",
+    "catalogFile": "buildreq-before-receipt-inventory-fix-20260725-175058.toc.txt",
+    "metadataPath": "E:\\AIB\\agencIA\\buildreq\\backups\\buildreq-before-receipt-inventory-fix-20260725-175058.metadata.json",
+    "backupPath": "E:\\AIB\\agencIA\\buildreq\\backups\\buildreq-before-receipt-inventory-fix-20260725-175058.dump"
+  },
+  "summary": {
+    "candidateReceipts": 17,
+    "candidateLines": 45,
+    "plannedInventoryRows": 27,
+    "plannedQuantity": "719.00",
+    "exceptionGroups": 5
+  },
+  "exceptions": [
+    {
+      "code": "insufficient_current_stock",
+      "message": "El saldo actual de 070200129 (0.00) no cubre la reversión omitida (7.00).",
+      "sourceLines": [
+        {
+          "receiptId": 335,
+          "receiptNumber": "RE-023-00000010",
+          "replacementReceiptId": 406,
+          "replacementReceiptNumber": "RE-023-00000014",
+          "replacementReceiptStatus": "borrador",
+          "receiptItemId": 564,
+          "sourceItemId": 658,
+          "sapItemCode": "070200129",
+          "projectId": 20,
+          "warehouseId": 31,
+          "storageLocation": null,
+          "quantity": "7.00",
+          "fixedAssetSapItemCode": "070200129"
+        }
+      ],
+      "inventoryItemIds": [
+        28895
+      ]
+    },
+    {
+      "code": "insufficient_current_stock",
+      "message": "El saldo actual de 090500031 (0.00) no cubre la reversión omitida (2.00).",
+      "sourceLines": [
+        {
+          "receiptId": 241,
+          "receiptNumber": "RE-018-00000020",
+          "replacementReceiptId": 297,
+          "replacementReceiptNumber": "RE-018-00000024",
+          "replacementReceiptStatus": "completa",
+          "receiptItemId": 360,
+          "sourceItemId": 215,
+          "sapItemCode": "090500031",
+          "projectId": 22,
+          "warehouseId": 23,
+          "storageLocation": null,
+          "quantity": "2.00",
+          "fixedAssetSapItemCode": "120100028"
+        }
+      ],
+      "inventoryItemIds": [
+        28812
+      ]
+    },
+    {
+      "code": "insufficient_current_stock",
+      "message": "El saldo actual de 090503142 (0.00) no cubre la reversión omitida (4.00).",
+      "sourceLines": [
+        {
+          "receiptId": 241,
+          "receiptNumber": "RE-018-00000020",
+          "replacementReceiptId": 297,
+          "replacementReceiptNumber": "RE-018-00000024",
+          "replacementReceiptStatus": "completa",
+          "receiptItemId": 357,
+          "sourceItemId": 212,
+          "sapItemCode": "090503142",
+          "projectId": 22,
+          "warehouseId": 23,
+          "storageLocation": null,
+          "quantity": "2.00",
+          "fixedAssetSapItemCode": "120100028"
+        },
+        {
+          "receiptId": 241,
+          "receiptNumber": "RE-018-00000020",
+          "replacementReceiptId": 297,
+          "replacementReceiptNumber": "RE-018-00000024",
+          "replacementReceiptStatus": "completa",
+          "receiptItemId": 361,
+          "sourceItemId": 216,
+          "sapItemCode": "090503142",
+          "projectId": 22,
+          "warehouseId": 23,
+          "storageLocation": null,
+          "quantity": "2.00",
+          "fixedAssetSapItemCode": "120100028"
+        }
+      ],
+      "inventoryItemIds": [
+        28809
+      ]
+    },
+    {
+      "code": "insufficient_current_stock",
+      "message": "El saldo actual de 090503221 (0.00) no cubre la reversión omitida (2.00).",
+      "sourceLines": [
+        {
+          "receiptId": 241,
+          "receiptNumber": "RE-018-00000020",
+          "replacementReceiptId": 297,
+          "replacementReceiptNumber": "RE-018-00000024",
+          "replacementReceiptStatus": "completa",
+          "receiptItemId": 359,
+          "sourceItemId": 214,
+          "sapItemCode": "090503221",
+          "projectId": 22,
+          "warehouseId": 23,
+          "storageLocation": null,
+          "quantity": "2.00",
+          "fixedAssetSapItemCode": "120100028"
+        }
+      ],
+      "inventoryItemIds": [
+        28811
+      ]
+    },
+    {
+      "code": "insufficient_current_stock",
+      "message": "El saldo actual de 090503798 (0.00) no cubre la reversión omitida (2.00).",
+      "sourceLines": [
+        {
+          "receiptId": 241,
+          "receiptNumber": "RE-018-00000020",
+          "replacementReceiptId": 297,
+          "replacementReceiptNumber": "RE-018-00000024",
+          "replacementReceiptStatus": "completa",
+          "receiptItemId": 358,
+          "sourceItemId": 213,
+          "sapItemCode": "090503798",
+          "projectId": 22,
+          "warehouseId": 23,
+          "storageLocation": null,
+          "quantity": "2.00",
+          "fixedAssetSapItemCode": "120100028"
+        }
+      ],
+      "inventoryItemIds": [
+        28810
+      ]
+    }
+  ],
+  "applyResult": {
+    "appliedAt": "2026-07-25T23:59:51.623Z",
+    "manifestSha256": "e2c9eafbb48f03c50e2411ba1ebc19bdefafc5eb6f4aa6028f4792b54195ea20",
+    "status": "already_applied",
+    "updatedRows": 0,
+    "alreadyAppliedRows": 27,
+    "verification": [
+      {
+        "inventoryItemId": 28677,
+        "expectedStock": "4.00",
+        "actualStock": "4.00"
+      },
+      {
+        "inventoryItemId": 28687,
+        "expectedStock": "1.00",
+        "actualStock": "1.00"
+      },
+      {
+        "inventoryItemId": 28730,
+        "expectedStock": "0.00",
+        "actualStock": "0.00"
+      },
+      {
+        "inventoryItemId": 28770,
+        "expectedStock": "0.00",
+        "actualStock": "0.00"
+      },
+      {
+        "inventoryItemId": 28784,
+        "expectedStock": "4.00",
+        "actualStock": "4.00"
+      },
+      {
+        "inventoryItemId": 28785,
+        "expectedStock": "2.00",
+        "actualStock": "2.00"
+      },
+      {
+        "inventoryItemId": 28806,
+        "expectedStock": "3.00",
+        "actualStock": "3.00"
+      },
+      {
+        "inventoryItemId": 28807,
+        "expectedStock": "6.00",
+        "actualStock": "6.00"
+      },
+      {
+        "inventoryItemId": 28816,
+        "expectedStock": "4.00",
+        "actualStock": "4.00"
+      },
+      {
+        "inventoryItemId": 28817,
+        "expectedStock": "4.00",
+        "actualStock": "4.00"
+      },
+      {
+        "inventoryItemId": 28857,
+        "expectedStock": "50.00",
+        "actualStock": "50.00"
+      },
+      {
+        "inventoryItemId": 28858,
+        "expectedStock": "100.00",
+        "actualStock": "100.00"
+      },
+      {
+        "inventoryItemId": 28859,
+        "expectedStock": "50.00",
+        "actualStock": "50.00"
+      },
+      {
+        "inventoryItemId": 28860,
+        "expectedStock": "50.00",
+        "actualStock": "50.00"
+      },
+      {
+        "inventoryItemId": 28861,
+        "expectedStock": "75.00",
+        "actualStock": "75.00"
+      },
+      {
+        "inventoryItemId": 28862,
+        "expectedStock": "75.00",
+        "actualStock": "75.00"
+      },
+      {
+        "inventoryItemId": 28863,
+        "expectedStock": "75.00",
+        "actualStock": "75.00"
+      },
+      {
+        "inventoryItemId": 28864,
+        "expectedStock": "75.00",
+        "actualStock": "75.00"
+      },
+      {
+        "inventoryItemId": 28900,
+        "expectedStock": "2.00",
+        "actualStock": "2.00"
+      },
+      {
+        "inventoryItemId": 28901,
+        "expectedStock": "1.00",
+        "actualStock": "1.00"
+      },
+      {
+        "inventoryItemId": 28948,
+        "expectedStock": "0.00",
+        "actualStock": "0.00"
+      },
+      {
+        "inventoryItemId": 28949,
+        "expectedStock": "0.00",
+        "actualStock": "0.00"
+      },
+      {
+        "inventoryItemId": 28950,
+        "expectedStock": "0.00",
+        "actualStock": "0.00"
+      },
+      {
+        "inventoryItemId": 28951,
+        "expectedStock": "0.00",
+        "actualStock": "0.00"
+      },
+      {
+        "inventoryItemId": 28952,
+        "expectedStock": "0.00",
+        "actualStock": "0.00"
+      },
+      {
+        "inventoryItemId": 28953,
+        "expectedStock": "0.00",
+        "actualStock": "0.00"
+      },
+      {
+        "inventoryItemId": 29074,
+        "expectedStock": "0.00",
+        "actualStock": "0.00"
+      }
+    ]
+  }
+}

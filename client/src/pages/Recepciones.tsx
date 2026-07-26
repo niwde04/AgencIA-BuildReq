@@ -112,6 +112,7 @@ import {
   type PurchaseOrderTaxCode,
   type SalesTaxCatalogItem,
 } from "@shared/purchase-orders";
+import { isPurchaseOrderNonInventoryLine } from "@shared/receipt-inventory";
 import {
   CAI_FORMAT_EXAMPLE,
   INVOICE_NUMBER_FORMAT_EXAMPLE,
@@ -822,22 +823,10 @@ function isReceiptServiceItem(item: any) {
 }
 
 function isReceiptNonInventoryItem(item: any) {
-  const tipoArticulo = Number(
-    item?.tipoArticulo ??
-      item?.catalogItem?.tipoArticulo ??
-      item?.catalog?.tipoArticulo ??
-      0
-  );
-  const sourceCode = String(getSourceItemCode(item) ?? "")
-    .trim()
-    .toUpperCase();
-  return (
-    tipoArticulo === 2 ||
-    tipoArticulo === 3 ||
-    item?.isFixedAsset === true ||
-    Boolean(item?.fixedAssetArticleId) ||
-    sourceCode.startsWith("AFT")
-  );
+  return isPurchaseOrderNonInventoryLine({
+    item,
+    sourceItem: item,
+  });
 }
 
 function receiptItemHasStoredFinancials(item: any) {
