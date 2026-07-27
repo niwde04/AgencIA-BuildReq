@@ -82,11 +82,11 @@ describe("reporte de detalle de pago de Tesorería", () => {
     expect(html).toContain("L 18.70");
     expect(html).toContain("L 2,032.31");
     expect(html).toContain("Elaborado por.");
-    expect(html).toContain("Autorizado por.");
+    expect(html).toContain("Aprobado por.");
     expect(html).toContain("María Elaboradora");
-    expect(html).toContain("Ana Autorizadora");
-    expect(html).not.toContain("Aprobado por.");
-    expect(html).not.toContain("Carlos Aprobador");
+    expect(html).toContain("Carlos Aprobador");
+    expect(html).not.toContain("Autorizado por.");
+    expect(html).not.toContain("Ana Autorizadora");
     expect(html).toContain('src="/logo_heh.png"');
     expect(html).toContain("border-bottom: 0.35pt solid #111");
   });

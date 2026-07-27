@@ -538,8 +538,8 @@ export function buildTreasuryPaymentReportHtml(
           <div class="signature-role">Elaborado por.</div>
         </div>
         <div class="signature">
-          <div class="signature-name">${signatureName(payload.signatures.authorizedBy)}</div>
-          <div class="signature-role">Autorizado por.</div>
+          <div class="signature-name">${signatureName(payload.signatures.approvedBy)}</div>
+          <div class="signature-role">Aprobado por.</div>
         </div>
       </section>
     </main>
