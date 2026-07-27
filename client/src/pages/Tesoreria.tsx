@@ -13,7 +13,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -41,6 +47,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { downloadTreasuryInvoiceSummaryWorkbook } from "@/lib/dmc-export";
 import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import { trpc } from "@/lib/trpc";
 import {
@@ -84,6 +91,21 @@ type PendingReasonAction =
   | { type: "reject" }
   | { type: "reopenRejected" }
   | { type: "resolve"; itemId: number; resolution: "accept" | "reject" };
+
+type InvoiceReportStatus =
+  | "borrador"
+  | "revisada"
+  | "rechazada"
+  | "registrada"
+  | "anulada";
+
+const INVOICE_REPORT_STATUS_LABELS: Record<InvoiceReportStatus, string> = {
+  borrador: "Borrador",
+  revisada: "Enviada a revisión",
+  rechazada: "Rechazada",
+  registrada: "Contabilizada",
+  anulada: "Anulada",
+};
 
 const CURRENCY_FORMATTERS = {
   HNL: new Intl.NumberFormat("es-HN", {
@@ -1766,6 +1788,12 @@ function BatchDetailDialog({
 
 export default function Tesoreria() {
   const utils = trpc.useUtils();
+  const [invoiceReportStatus, setInvoiceReportStatus] = useState<
+    InvoiceReportStatus | "all"
+  >("all");
+  const [invoiceReportDateFrom, setInvoiceReportDateFrom] = useState("");
+  const [invoiceReportDateTo, setInvoiceReportDateTo] = useState("");
+  const [exportingInvoiceSummary, setExportingInvoiceSummary] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("todos");
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -1927,6 +1955,34 @@ export default function Tesoreria() {
     consolidateMutation.mutate({
       batchIds: Array.from(selectedConsolidationBatchIds),
     });
+  }
+
+  async function exportInvoiceSummary() {
+    if (exportingInvoiceSummary) return;
+    setExportingInvoiceSummary(true);
+    try {
+      const payload = await utils.treasury.invoiceSummaryReport.fetch({
+        status: invoiceReportStatus === "all" ? null : invoiceReportStatus,
+        dateFrom: invoiceReportDateFrom || null,
+        dateTo: invoiceReportDateTo || null,
+      });
+      if (payload.summary.invoiceCount === 0) {
+        toast.error("No hay facturas para exportar con los filtros actuales.");
+        return;
+      }
+      await downloadTreasuryInvoiceSummaryWorkbook(payload);
+      toast.success(
+        `Reporte resumido generado con ${payload.summary.invoiceCount.toLocaleString("es-HN")} factura(s).`
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar el reporte resumido de facturas."
+      );
+    } finally {
+      setExportingInvoiceSummary(false);
+    }
   }
 
   async function exportFilteredBatches() {
@@ -2102,6 +2158,96 @@ export default function Tesoreria() {
           </AlertDescription>
         </Alert>
       )}
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg">
+            Reporte resumido de facturas
+          </CardTitle>
+          <CardDescription>
+            Genera una fila por factura con su total, retenciones y neto a
+            pagar, sin detalle por artículo.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-[15rem_11rem_11rem_auto]">
+            <div className="space-y-2">
+              <Label>Estado de factura</Label>
+              <Select
+                value={invoiceReportStatus}
+                onValueChange={value =>
+                  setInvoiceReportStatus(value as InvoiceReportStatus | "all")
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos los estados</SelectItem>
+                  {Object.entries(INVOICE_REPORT_STATUS_LABELS).map(
+                    ([status, label]) => (
+                      <SelectItem key={status} value={status}>
+                        {label}
+                      </SelectItem>
+                    )
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="treasury-invoice-date-from">Desde</Label>
+              <Input
+                id="treasury-invoice-date-from"
+                type="date"
+                value={invoiceReportDateFrom}
+                max={invoiceReportDateTo || undefined}
+                onChange={event => {
+                  const value = event.target.value;
+                  setInvoiceReportDateFrom(value);
+                  if (
+                    value &&
+                    invoiceReportDateTo &&
+                    value > invoiceReportDateTo
+                  ) {
+                    setInvoiceReportDateTo(value);
+                  }
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="treasury-invoice-date-to">Hasta</Label>
+              <Input
+                id="treasury-invoice-date-to"
+                type="date"
+                value={invoiceReportDateTo}
+                min={invoiceReportDateFrom || undefined}
+                onChange={event => {
+                  const value = event.target.value;
+                  setInvoiceReportDateTo(value);
+                  if (
+                    value &&
+                    invoiceReportDateFrom &&
+                    value < invoiceReportDateFrom
+                  ) {
+                    setInvoiceReportDateFrom(value);
+                  }
+                }}
+              />
+            </div>
+            <Button
+              onClick={() => void exportInvoiceSummary()}
+              disabled={exportingInvoiceSummary}
+            >
+              {exportingInvoiceSummary ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-2 h-4 w-4" />
+              )}
+              Exportar Excel
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="pb-3">

@@ -12,7 +12,9 @@ import type {
 import {
   SYSTEM_INVOICE_HEADERS,
   SYSTEM_ORDER_HEADERS,
+  TREASURY_INVOICE_SUMMARY_HEADERS,
   type SystemWorkbookPayload,
+  type TreasuryInvoiceSummaryPayload,
 } from "@shared/system-workbook-report";
 
 type Xlsx = typeof import("xlsx");
@@ -425,8 +427,10 @@ function systemDateColumns(headers: readonly string[]) {
     "Fecha",
     "F Entrega",
     "Fecha Factura",
+    "Fecha factura",
     "Fech_Cpte_Retención",
     "Fecha Vencimiento Crédito",
+    "Fecha vencimiento",
   ]);
   return headers
     .map((header, index) => (dateNames.has(header) ? index + 1 : -1))
@@ -512,6 +516,41 @@ function buildSystemInvoiceSheet(XLSX: Xlsx, payload: SystemWorkbookPayload) {
   return invoiceSheet;
 }
 
+function buildTreasuryInvoiceSummarySheet(
+  XLSX: Xlsx,
+  payload: TreasuryInvoiceSummaryPayload
+) {
+  const rows: unknown[][] = [
+    [null, ...TREASURY_INVOICE_SUMMARY_HEADERS],
+    ...payload.invoices.map(row => [
+      null,
+      ...TREASURY_INVOICE_SUMMARY_HEADERS.map(header => row[header]),
+    ]),
+  ];
+  const sheet = makeSheet(
+    XLSX,
+    rows,
+    [
+      2, 14, 20, 24, 20, 18, 16, 18, 22, 34, 18, 18, 36, 12, 16, 16, 18, 16, 16,
+      20,
+    ],
+    {
+      dateColumns: systemDateColumns(TREASURY_INVOICE_SUMMARY_HEADERS),
+      dataStartRow: 1,
+    }
+  );
+  if (sheet["!ref"]) {
+    const range = XLSX.utils.decode_range(sheet["!ref"]);
+    sheet["!autofilter"] = {
+      ref: XLSX.utils.encode_range({
+        s: { r: 0, c: 1 },
+        e: { r: range.e.r, c: range.e.c },
+      }),
+    };
+  }
+  return sheet;
+}
+
 export function buildSystemPurchaseOrdersWorkbook(
   XLSX: Xlsx,
   payload: SystemWorkbookPayload
@@ -534,6 +573,19 @@ export function buildSystemInvoicesWorkbook(
     workbook,
     buildSystemInvoiceSheet(XLSX, payload),
     "Registro Facturacion"
+  );
+  return workbook;
+}
+
+export function buildTreasuryInvoiceSummaryWorkbook(
+  XLSX: Xlsx,
+  payload: TreasuryInvoiceSummaryPayload
+) {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    buildTreasuryInvoiceSummarySheet(XLSX, payload),
+    "Resumen facturas"
   );
   return workbook;
 }
@@ -610,6 +662,17 @@ export async function downloadSystemInvoicesWorkbook(
   XLSX.writeFile(
     buildSystemInvoicesWorkbook(XLSX, payload),
     `BuildReq-Registro-Facturacion-${datePart(payload.summary.dateFrom)}-${datePart(payload.summary.dateTo)}.xlsx`,
+    { bookType: "xlsx", cellDates: true }
+  );
+}
+
+export async function downloadTreasuryInvoiceSummaryWorkbook(
+  payload: TreasuryInvoiceSummaryPayload
+) {
+  const XLSX = await import("xlsx");
+  XLSX.writeFile(
+    buildTreasuryInvoiceSummaryWorkbook(XLSX, payload),
+    `Tesoreria-Resumen-Facturas-${datePart(payload.summary.dateFrom)}-${datePart(payload.summary.dateTo)}.xlsx`,
     { bookType: "xlsx", cellDates: true }
   );
 }

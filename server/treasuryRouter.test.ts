@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TrpcContext } from "./_core/context";
 import { appRouter } from "./routers";
+import * as db from "./db";
 import * as treasury from "./treasury";
 
 function createTreasuryContext(
@@ -87,5 +88,67 @@ describe("treasury approval endpoint preconditions", () => {
       caller.treasury.consolidateForApproval({ batchIds: [40, 41] })
     ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
     expect(consolidateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("treasury invoice summary report", () => {
+  it("allows Financiero to export one row per filtered invoice", async () => {
+    mockDisabledApprovalSettings();
+    const invoiceSpy = vi
+      .spyOn(db, "listDmcReportSourceInvoices")
+      .mockResolvedValue([
+        {
+          invoiceId: 50,
+          invoiceDocumentNumber: "FT-020-00000050",
+          invoiceNumber: "000-001-01-00000050",
+          status: "registrada",
+          documentDate: new Date("2026-07-15T12:00:00.000Z"),
+          documentDueDate: new Date("2026-08-15T12:00:00.000Z"),
+          subtotal: "100.0000",
+          taxAmount: "15.0000",
+          total: "115.0000",
+          retentionTotal: "1.1500",
+          netPayable: "113.8500",
+          currency: "HNL",
+          items: [
+            {
+              id: 1,
+              itemName: "Artículo A",
+              taxCode: "isv_15",
+              subtotal: "100.0000",
+              taxAmount: "15.0000",
+              total: "115.0000",
+              taxBreakdown: [],
+              dmcDestination: "costo",
+            },
+          ],
+          retentions: [],
+          materialRequests: [],
+          subProjectLabels: [],
+        } as any,
+      ]);
+    const caller = appRouter.createCaller(createTreasuryContext("financiero"));
+
+    const payload = await caller.treasury.invoiceSummaryReport({
+      status: "registrada",
+      dateFrom: "2026-07-01",
+      dateTo: "2026-07-31",
+    });
+
+    expect(invoiceSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statuses: ["registrada"],
+        dateFrom: expect.any(Date),
+        dateTo: expect.any(Date),
+      })
+    );
+    expect(payload.summary.invoiceCount).toBe(1);
+    expect(payload.invoices).toHaveLength(1);
+    expect(payload.invoices[0]).toMatchObject({
+      "Documento interno": "FT-020-00000050",
+      Estado: "Contabilizada",
+      "Total factura": 115,
+      "Neto a pagar": 113.85,
+    });
   });
 });

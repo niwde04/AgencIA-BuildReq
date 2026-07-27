@@ -11,9 +11,13 @@ import {
   buildSystemInvoicesWorkbook,
   buildSystemPurchaseOrdersWorkbook,
   buildSystemWorkbook,
+  buildTreasuryInvoiceSummaryWorkbook,
 } from "../client/src/lib/dmc-export";
 import { buildRetentionSarPayload } from "@shared/retention-sar-report";
-import { buildSystemWorkbookPayload } from "@shared/system-workbook-report";
+import {
+  buildSystemWorkbookPayload,
+  buildTreasuryInvoiceSummaryPayload,
+} from "@shared/system-workbook-report";
 import * as XLSX from "xlsx";
 import { appRouter } from "./routers";
 import * as db from "./db";
@@ -853,6 +857,67 @@ describe("internal BuildReq workbook", () => {
     ]);
     expect(rows.flat()).not.toContain("Data");
     expect(rows.flat()).not.toContain("Campos");
+  });
+
+  it("contains one treasury summary row per invoice without article detail", () => {
+    const payload = buildTreasuryInvoiceSummaryPayload([
+      sarInvoice({
+        status: "registrada",
+        subtotal: "100.0000",
+        taxAmount: "15.0000",
+        total: "115.0000",
+        retentionTotal: "1.1500",
+        netPayable: "113.8500",
+        documentDueDate: new Date("2026-07-31T12:00:00.000"),
+        items: [
+          {
+            id: 1,
+            itemName: "Artículo A",
+            taxCode: "isv_15",
+            subtotal: "40.0000",
+            taxAmount: "6.0000",
+            total: "46.0000",
+            taxBreakdown: [],
+            dmcDestination: "costo",
+          },
+          {
+            id: 2,
+            itemName: "Artículo B",
+            taxCode: "isv_15",
+            subtotal: "60.0000",
+            taxAmount: "9.0000",
+            total: "69.0000",
+            taxBreakdown: [],
+            dmcDestination: "gasto",
+          },
+        ],
+      }),
+    ]);
+
+    expect(payload.invoices).toHaveLength(1);
+    expect(payload.invoices[0]).toMatchObject({
+      "N° Registro": 1,
+      "Documento interno": "FT-2026-0001",
+      Estado: "Contabilizada",
+      Subtotal: 100,
+      Impuesto: 15,
+      "Total factura": 115,
+      Retenciones: 1.15,
+      "Neto a pagar": 113.85,
+    });
+    expect(payload.summary.invoiceCount).toBe(1);
+
+    const workbook = buildTreasuryInvoiceSummaryWorkbook(XLSX, payload);
+    expect(workbook.SheetNames).toEqual(["Resumen facturas"]);
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets["Resumen facturas"], {
+      header: 1,
+    }) as unknown[][];
+    expect(rows).toHaveLength(2);
+    const header = rows[0];
+    const totalColumn = header.indexOf("Total factura");
+    expect(rows[1][totalColumn]).toBe(115);
+    expect(rows.flat()).not.toContain("Artículo A");
+    expect(rows.flat()).not.toContain("Artículo B");
   });
 });
 

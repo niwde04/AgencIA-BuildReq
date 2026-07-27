@@ -66,6 +66,28 @@ export const SYSTEM_INVOICE_HEADERS = [
   "Tipo_de_compra",
 ] as const;
 
+export const TREASURY_INVOICE_SUMMARY_HEADERS = [
+  "N° Registro",
+  "Documento interno",
+  "Nro. Factura",
+  "Orden de compra",
+  "Recepción",
+  "Fecha factura",
+  "Fecha vencimiento",
+  "Estado",
+  "Proyecto",
+  "Código proveedor",
+  "Rtn",
+  "Proveedor",
+  "Moneda",
+  "Subtotal",
+  "Impuesto",
+  "Total factura",
+  "Retenciones",
+  "Neto a pagar",
+  "Tipo de compra",
+] as const;
+
 export type SystemPurchaseOrderLine = {
   orderNumber: string;
   job: string;
@@ -94,7 +116,12 @@ export type SystemPurchaseOrderLine = {
 
 export type SystemWorkbookPayload = {
   purchaseOrders: SystemPurchaseOrderLine[];
-  invoices: Array<Record<(typeof SYSTEM_INVOICE_HEADERS)[number], string | number | Date | null>>;
+  invoices: Array<
+    Record<
+      (typeof SYSTEM_INVOICE_HEADERS)[number],
+      string | number | Date | null
+    >
+  >;
   summary: {
     generatedAt: Date;
     dateFrom: Date | null;
@@ -110,6 +137,29 @@ export type SystemWorkbookPayload = {
   };
 };
 
+export type TreasuryInvoiceSummaryPayload = {
+  invoices: Array<
+    Record<
+      (typeof TREASURY_INVOICE_SUMMARY_HEADERS)[number],
+      string | number | Date | null
+    >
+  >;
+  summary: {
+    generatedAt: Date;
+    dateFrom: Date | null;
+    dateTo: Date | null;
+    invoiceCount: number;
+  };
+};
+
+const INVOICE_STATUS_LABELS: Record<string, string> = {
+  borrador: "Borrador",
+  revisada: "Enviada a revisión",
+  rechazada: "Rechazada",
+  registrada: "Contabilizada",
+  anulada: "Anulada",
+};
+
 function dateValue(value: Date | string | null | undefined) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -119,6 +169,47 @@ function dateValue(value: Date | string | null | undefined) {
 function money(value: unknown) {
   const parsed = Number(value ?? 0);
   return roundPurchaseOrderMoney(Number.isFinite(parsed) ? parsed : 0);
+}
+
+export function buildTreasuryInvoiceSummaryPayload(
+  invoices: DmcReportSourceInvoice[],
+  params: {
+    generatedAt?: Date;
+    dateFrom?: Date | string | null;
+    dateTo?: Date | string | null;
+  } = {}
+): TreasuryInvoiceSummaryPayload {
+  return {
+    invoices: invoices.map((invoice, index) => ({
+      "N° Registro": index + 1,
+      "Documento interno": invoice.invoiceDocumentNumber,
+      "Nro. Factura": invoice.invoiceNumber ?? "",
+      "Orden de compra": invoice.purchaseOrderNumber ?? "",
+      Recepción: invoice.receiptNumber ?? "",
+      "Fecha factura": dateValue(invoice.documentDate),
+      "Fecha vencimiento": dateValue(invoice.documentDueDate),
+      Estado: INVOICE_STATUS_LABELS[invoice.status] ?? invoice.status,
+      Proyecto: [invoice.projectCode, invoice.projectName]
+        .filter(Boolean)
+        .join(" - "),
+      "Código proveedor": invoice.supplierCode ?? "",
+      Rtn: invoice.supplierRtn ?? "",
+      Proveedor: invoice.supplierName ?? "",
+      Moneda: invoice.currency ?? "HNL",
+      Subtotal: money(invoice.subtotal),
+      Impuesto: money(invoice.taxAmount),
+      "Total factura": money(invoice.total),
+      Retenciones: money(invoice.retentionTotal),
+      "Neto a pagar": money(invoice.netPayable),
+      "Tipo de compra": invoice.purchaseType ?? "",
+    })),
+    summary: {
+      generatedAt: params.generatedAt ?? new Date(),
+      dateFrom: dateValue(params.dateFrom),
+      dateTo: dateValue(params.dateTo),
+      invoiceCount: invoices.length,
+    },
+  };
 }
 
 export function buildSystemWorkbookPayload(
@@ -147,8 +238,7 @@ export function buildSystemWorkbookPayload(
         Sistema_De_Pago: String(row.sistemaDePago ?? ""),
         Tipo_De_Comprobante: String(row.tipoDeComprobante ?? ""),
         "Fecha Factura": dateValue(row.fechaFactura as Date | string | null),
-        "Nro. Factura":
-          invoice.invoiceNumber || invoice.invoiceDocumentNumber,
+        "Nro. Factura": invoice.invoiceNumber || invoice.invoiceDocumentNumber,
         "Cai Factura": String(row.cai ?? ""),
         "Descripcion_Fac.": String(
           invoiceItem?.articleDescription ||
@@ -161,9 +251,9 @@ export function buildSystemWorkbookPayload(
         "Isv_4%": money(row.baseIsv4),
         "Base_Isv_0%": money(row.baseIsv0),
         Anticipo: money(row.anticipo),
-        "No_Cpte_Retención": String(row.noComprobanteRetencion ?? ""),
+        No_Cpte_Retención: String(row.noComprobanteRetencion ?? ""),
         "Cai Ret.": invoice.retentionCai ?? "",
-        "Fech_Cpte_Retención": dateValue(invoice.retentionDocumentDate),
+        Fech_Cpte_Retención: dateValue(invoice.retentionDocumentDate),
         Empresa: [invoice.projectCode, invoice.projectName]
           .filter(Boolean)
           .join(" - "),
@@ -178,7 +268,9 @@ export function buildSystemWorkbookPayload(
         "Ret_Isv 15%.": money(row.retIsv),
         "Total_Retencion.": money(row.totalRetencion),
         Neto_Pagar: money(row.netoPagar),
-        "Fecha Vencimiento Crédito": dateValue(row.fechaVencimiento as Date | string | null),
+        "Fecha Vencimiento Crédito": dateValue(
+          row.fechaVencimiento as Date | string | null
+        ),
         Tipo_de_compra: invoice.purchaseType ?? "",
       };
     });

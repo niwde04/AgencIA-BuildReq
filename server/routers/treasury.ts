@@ -1,13 +1,30 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { TREASURY_BATCH_STATUS_CODES } from "@shared/treasury";
-import { canAccessProject, getProjectScopeIds } from "../projectAccess";
+import { buildTreasuryInvoiceSummaryPayload } from "@shared/system-workbook-report";
+import {
+  applyProjectScope,
+  canAccessProject,
+  getProjectScopeIds,
+} from "../projectAccess";
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
+import * as db from "../db";
 import * as treasury from "../treasury";
 
 type User = treasury.TreasuryActor;
 
 const currencySchema = z.enum(["HNL", "USD"]);
+const invoiceStatusSchema = z.enum([
+  "borrador",
+  "revisada",
+  "rechazada",
+  "registrada",
+  "anulada",
+]);
+const reportDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .nullish();
 const draftItemSchema = z.object({
   invoiceId: z.number().int().positive(),
   requestedAmount: z.number().positive().max(999_999_999),
@@ -100,6 +117,22 @@ function parseDate(value: string) {
   const date = new Date(`${value}T00:00:00.000Z`);
   if (Number.isNaN(date.getTime())) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "Fecha inválida." });
+  }
+  return date;
+}
+
+function parseReportDateBoundary(
+  value: string | null | undefined,
+  boundary: "start" | "end"
+) {
+  if (!value) return null;
+  const suffix = boundary === "start" ? "T00:00:00.000" : "T23:59:59.999";
+  const date = new Date(`${value}${suffix}`);
+  if (Number.isNaN(date.getTime())) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Fecha de reporte inválida.",
+    });
   }
   return date;
 }
@@ -199,6 +232,44 @@ export const treasuryRouter = router({
         currency: input.currency,
         excludeBatchId: input.batchId,
         projectIds: input.projectId ? undefined : getProjectScopeIds(ctx.user),
+      });
+    }),
+
+  invoiceSummaryReport: protectedProcedure
+    .input(
+      z.object({
+        status: invoiceStatusSchema.nullish(),
+        dateFrom: reportDateSchema,
+        dateTo: reportDateSchema,
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      await assertTreasuryAccess(ctx.user);
+      const dateFrom = parseReportDateBoundary(input.dateFrom, "start");
+      const dateTo = parseReportDateBoundary(input.dateTo, "end");
+      if (dateFrom && dateTo && dateFrom > dateTo) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "La fecha inicial no puede ser mayor que la fecha final.",
+        });
+      }
+      const invoiceFilters: Parameters<
+        typeof db.listDmcReportSourceInvoices
+      >[0] = {
+        dateFrom,
+        dateTo,
+        ...(input.status
+          ? { statuses: [input.status] }
+          : { excludeStatus: "anulada" }),
+      };
+      const sourceInvoices = await db.listDmcReportSourceInvoices(
+        applyProjectScope(invoiceFilters, ctx.user)
+      );
+      return buildTreasuryInvoiceSummaryPayload(sourceInvoices, {
+        generatedAt: new Date(),
+        dateFrom,
+        dateTo,
       });
     }),
 
