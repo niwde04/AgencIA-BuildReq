@@ -55,11 +55,13 @@ import {
   buildTreasuryPaymentReportHtml,
   type TreasuryPaymentReportPayload,
 } from "@/lib/treasury-payment-report";
+import { formatPurchaseOrderCurrency } from "@shared/purchase-orders";
 import {
   TREASURY_BATCH_STATUS_CODES,
   TREASURY_BATCH_STATUS_LABELS,
   TREASURY_ITEM_STATUS_LABELS,
   getTreasuryBatchStatusLabel,
+  roundTreasuryMoney,
   type TreasuryBatchStatus,
 } from "@shared/treasury";
 import {
@@ -113,26 +115,17 @@ const INVOICE_REPORT_STATUS_LABELS: Record<InvoiceReportStatus, string> = {
   anulada: "Anulada",
 };
 
-const CURRENCY_FORMATTERS = {
-  HNL: new Intl.NumberFormat("es-HN", {
-    style: "currency",
-    currency: "HNL",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 4,
-  }),
-  USD: new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 4,
-  }),
-};
-
 function formatMoney(value: unknown, currency: "HNL" | "USD" = "HNL") {
   const amount = Number(value ?? 0);
-  return CURRENCY_FORMATTERS[currency].format(
-    Number.isFinite(amount) ? amount : 0
+  return formatPurchaseOrderCurrency(
+    Number.isFinite(amount) ? roundTreasuryMoney(amount) : 0,
+    currency
   );
+}
+
+function formatMoneyInputValue(value: unknown) {
+  const amount = Number(value ?? 0);
+  return roundTreasuryMoney(Number.isFinite(amount) ? amount : 0).toFixed(2);
 }
 
 function formatDate(value: unknown) {
@@ -331,7 +324,10 @@ function BatchFormDialog({
       setSelectedIds(new Set(included.map((item: any) => item.invoiceId)));
       setAmounts(
         Object.fromEntries(
-          included.map((item: any) => [item.invoiceId, item.requestedAmount])
+          included.map((item: any) => [
+            item.invoiceId,
+            formatMoneyInputValue(item.requestedAmount),
+          ])
         )
       );
       return;
@@ -404,7 +400,9 @@ function BatchFormDialog({
             next[row.invoice.id] === undefined ||
             next[row.invoice.id] === ""
           ) {
-            next[row.invoice.id] = String(row.money.availableAmount);
+            next[row.invoice.id] = formatMoneyInputValue(
+              row.money.availableAmount
+            );
           }
         });
         return next;
@@ -422,7 +420,7 @@ function BatchFormDialog({
     if (checked && !amounts[row.invoice.id]) {
       setAmounts(current => ({
         ...current,
-        [row.invoice.id]: String(row.money.availableAmount),
+        [row.invoice.id]: formatMoneyInputValue(row.money.availableAmount),
       }));
     }
   }
@@ -671,8 +669,8 @@ function BatchFormDialog({
                             <Input
                               className="ml-auto w-32 text-right tabular-nums"
                               type="number"
-                              min="0.0001"
-                              step="0.0001"
+                              min="0.01"
+                              step="0.01"
                               max={row.money.availableAmount}
                               disabled={!checked}
                               value={amounts[row.invoice.id] ?? ""}
@@ -769,7 +767,9 @@ function BatchDetailDialog({
       Object.fromEntries(
         items.map((item: any) => [
           item.id,
-          item.approvedAmount ?? item.requestedAmount,
+          formatMoneyInputValue(
+            item.approvedAmount ?? item.requestedAmount
+          ),
         ])
       )
     );
@@ -903,17 +903,21 @@ function BatchDetailDialog({
       ? amounts[item.id]
       : (item.bankPaidAmount ?? item.approvedAmount ?? item.requestedAmount);
     const amount = Number(value ?? 0);
-    return Number.isFinite(amount) ? amount : 0;
+    return roundTreasuryMoney(Number.isFinite(amount) ? amount : 0);
   }
 
   function pendingInvoiceBalance(item: any) {
-    const invoiceTotal = Number(item.invoiceNetPayable ?? 0);
-    const advancePaid = Number(item.previousPaidAmount ?? 0);
+    const invoiceTotal = roundTreasuryMoney(
+      Number(item.invoiceNetPayable ?? 0)
+    );
+    const advancePaid = roundTreasuryMoney(
+      Number(item.previousPaidAmount ?? 0)
+    );
     const balance =
       (Number.isFinite(invoiceTotal) ? invoiceTotal : 0) -
       (Number.isFinite(advancePaid) ? advancePaid : 0) -
       currentPaymentAmount(item);
-    return Math.max(0, balance);
+    return roundTreasuryMoney(Math.max(0, balance));
   }
 
   function adjustments() {
@@ -1155,7 +1159,8 @@ function BatchDetailDialog({
                         .filter((item: any) => item.status !== "excluida")
                         .reduce(
                           (sum: number, item: any) =>
-                            sum + Number(item.requestedAmount),
+                            sum +
+                            roundTreasuryMoney(Number(item.requestedAmount)),
                           0
                         ),
                       detail.batch.currency
@@ -1174,7 +1179,10 @@ function BatchDetailDialog({
                     {formatMoney(
                       detail.items.reduce(
                         (sum: number, item: any) =>
-                          sum + Number(item.approvedAmount ?? 0),
+                          sum +
+                          roundTreasuryMoney(
+                            Number(item.approvedAmount ?? 0)
+                          ),
                         0
                       ),
                       detail.batch.currency
@@ -1191,7 +1199,10 @@ function BatchDetailDialog({
                     {formatMoney(
                       detail.items.reduce(
                         (sum: number, item: any) =>
-                          sum + Number(item.bankPaidAmount ?? 0),
+                          sum +
+                          roundTreasuryMoney(
+                            Number(item.bankPaidAmount ?? 0)
+                          ),
                         0
                       ),
                       detail.batch.currency
@@ -1332,8 +1343,8 @@ function BatchDetailDialog({
                           <Input
                             className="ml-auto w-36 text-right tabular-nums"
                             type="number"
-                            min="0.0001"
-                            step="0.0001"
+                            min="0.01"
+                            step="0.01"
                             max={item.requestedAmount}
                             disabled={excludedIds.has(item.id)}
                             value={amounts[item.id] ?? ""}

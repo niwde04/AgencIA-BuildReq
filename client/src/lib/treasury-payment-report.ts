@@ -360,12 +360,12 @@ export function buildTreasuryPaymentReportHtml(
 
     const retention = retentionBreakdown(line.invoice.retentions);
     const amounts: ReportAmounts = {
-      totalInvoice: toNumber(line.invoice.total),
-      advances: toNumber(line.paymentItem.previousPaidAmount),
+      totalInvoice: roundMoney(toNumber(line.invoice.total)),
+      advances: roundMoney(toNumber(line.paymentItem.previousPaidAmount)),
       retIsv: retention.retIsv,
       retIsr1: retention.retIsr1,
       otherRetentions: retention.otherRetentions,
-      netPaid: toNumber(line.paymentItem.bankPaidAmount),
+      netPaid: roundMoney(toNumber(line.paymentItem.bankPaidAmount)),
     };
     addAmounts(group.totals, amounts);
     addAmounts(generalTotals, amounts);

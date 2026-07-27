@@ -95,7 +95,7 @@ export const TREASURY_ACTIVE_ITEM_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 export function roundTreasuryMoney(value: number) {
-  return Math.round((value + Number.EPSILON) * 10_000) / 10_000;
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
 export function getTreasuryPaymentStatus(
@@ -105,7 +105,7 @@ export function getTreasuryPaymentStatus(
   const total = roundTreasuryMoney(Math.max(0, invoiceNetPayable));
   const paid = roundTreasuryMoney(Math.max(0, paidAmount));
   if (paid <= 0) return "sin_pago";
-  if (paid + 0.0001 >= total) return "pagada";
+  if (paid >= total) return "pagada";
   return "parcialmente_pagada";
 }
 

@@ -138,8 +138,19 @@ describe("treasury partial-payment math", () => {
     ).toMatchObject({ availableAmount: 0, paymentStatus: "pagada" });
   });
 
-  it("uses four-decimal precision for abonos", () => {
-    expect(roundTreasuryMoney(10.123456)).toBe(10.1235);
+  it("uses two-decimal currency precision for invoices and payments", () => {
+    expect(roundTreasuryMoney(10.123456)).toBe(10.12);
+    expect(roundTreasuryMoney(10.125)).toBe(10.13);
+    expect(roundTreasuryMoney(600.001)).toBe(600);
+    expect(
+      buildTreasuryMoneySummary({
+        currency: "HNL",
+        invoiceNetPayable: "600.0010",
+      })
+    ).toMatchObject({
+      invoiceNetPayable: 600,
+      availableAmount: 600,
+    });
     expect(getTreasuryPaymentStatus(100, 99.9999)).toBe("pagada");
     expect(getTreasuryPaymentStatus(100, 99.99)).toBe("parcialmente_pagada");
   });
@@ -243,7 +254,7 @@ describe("treasury bank workbook", () => {
     expect(rows[0]).toMatchObject({
       itemId: 10,
       bankStatus: "PAGADO",
-      paidAmount: 250.125,
+      paidAmount: 250.13,
       bankReference: "REF-100",
     });
     expect(rows[0]?.paidDate).toBeInstanceOf(Date);
@@ -351,6 +362,24 @@ describe("treasury full batch payment", () => {
     expect(rows.every(row => row.bankStatus === "PAGADO")).toBe(true);
     expect(rows.every(row => row.bankReference === "REF-LOTE-100")).toBe(true);
     expect(rows.every(row => row.paidDate === paidDate)).toBe(true);
+  });
+
+  it("rounds legacy four-decimal approved amounts to invoice cents", () => {
+    const rows = buildTreasuryFullPaymentRows({
+      batch: { batchNumber: "TES-2026-000006", version: 1 },
+      bankReference: "REF-CENTAVOS",
+      paidDate: new Date("2026-07-21T00:00:00.000Z"),
+      items: [
+        {
+          id: 10,
+          status: "aprobada",
+          approvedAmount: "600.0010",
+          requestedAmount: "600.0010",
+        },
+      ],
+    });
+
+    expect(rows[0]?.paidAmount).toBe(600);
   });
 
   it("requires one bank reference for the whole batch", () => {

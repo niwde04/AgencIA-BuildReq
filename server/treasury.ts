@@ -289,7 +289,7 @@ function getActorRole(actor: TreasuryActor) {
 }
 
 function toMoneyString(value: number) {
-  return roundTreasuryMoney(value).toFixed(4);
+  return roundTreasuryMoney(value).toFixed(2);
 }
 
 function parseMoney(value: unknown, label: string) {
@@ -414,13 +414,17 @@ async function getInvoiceFinancialMap(
     for (const payment of paymentRows) {
       if (payment.invoiceId !== invoice.id) continue;
       if (payment.status === "contabilizada") {
-        paidAmount += Number(payment.bankPaidAmount ?? 0);
+        paidAmount += roundTreasuryMoney(
+          Number(payment.bankPaidAmount ?? 0)
+        );
       }
       if (payment.activeReservation && payment.batchId !== excludeBatchId) {
-        reservedAmount += Number(
-          payment.bankPaidAmount ??
-            payment.approvedAmount ??
-            payment.requestedAmount
+        reservedAmount += roundTreasuryMoney(
+          Number(
+            payment.bankPaidAmount ??
+              payment.approvedAmount ??
+              payment.requestedAmount
+          )
         );
       }
     }
@@ -818,17 +822,23 @@ export async function listTreasuryBatches(filters?: {
         included.map(item => item.supplierId ?? item.supplierCode)
       ).size,
       requestedTotal: roundTreasuryMoney(
-        included.reduce((sum, item) => sum + Number(item.requestedAmount), 0)
+        included.reduce(
+          (sum, item) =>
+            sum + roundTreasuryMoney(Number(item.requestedAmount)),
+          0
+        )
       ),
       approvedTotal: roundTreasuryMoney(
         included.reduce(
-          (sum, item) => sum + Number(item.approvedAmount ?? 0),
+          (sum, item) =>
+            sum + roundTreasuryMoney(Number(item.approvedAmount ?? 0)),
           0
         )
       ),
       paidTotal: roundTreasuryMoney(
         included.reduce(
-          (sum, item) => sum + Number(item.bankPaidAmount ?? 0),
+          (sum, item) =>
+            sum + roundTreasuryMoney(Number(item.bankPaidAmount ?? 0)),
           0
         )
       ),
@@ -1010,7 +1020,7 @@ export async function createTreasuryBatch(input: {
       const amount = amountByInvoiceId.get(row.invoice.id) ?? 0;
       if (amount <= 0 || amount > row.money.availableAmount + 0.0001) {
         throw new TreasuryRuleError(
-          `El abono de ${row.invoice.invoiceDocumentNumber} debe ser mayor que cero y no superar ${row.money.availableAmount.toFixed(4)} ${input.currency}.`
+          `El abono de ${row.invoice.invoiceDocumentNumber} debe ser mayor que cero y no superar ${row.money.availableAmount.toFixed(2)} ${input.currency}.`
         );
       }
     }
@@ -1105,7 +1115,7 @@ export async function updateTreasuryDraft(input: {
       const amount = amountByInvoiceId.get(row.invoice.id) ?? 0;
       if (amount <= 0 || amount > row.money.availableAmount + 0.0001) {
         throw new TreasuryRuleError(
-          `El abono de ${row.invoice.invoiceDocumentNumber} no puede superar ${row.money.availableAmount.toFixed(4)} ${batch.currency}.`
+          `El abono de ${row.invoice.invoiceDocumentNumber} no puede superar ${row.money.availableAmount.toFixed(2)} ${batch.currency}.`
         );
       }
     }
@@ -1315,8 +1325,10 @@ async function applyAdjustments(
       });
       continue;
     }
-    const currentLimit = Number(
-      phase === "aprobacion" ? item.requestedAmount : item.requestedAmount
+    const currentLimit = roundTreasuryMoney(
+      Number(
+        phase === "aprobacion" ? item.requestedAmount : item.requestedAmount
+      )
     );
     const amount = roundTreasuryMoney(adjustment?.amount ?? currentLimit);
     if (amount <= 0 || amount > currentLimit + 0.0001) {
@@ -1885,13 +1897,17 @@ function buildBankWorkbook(
       [BANK_EXPORT_HEADERS.invoiceDocumentNumber]: item.invoiceDocumentNumber,
       [BANK_EXPORT_HEADERS.invoiceNumber]: item.invoiceNumber ?? "",
       [BANK_EXPORT_HEADERS.currency]: item.currency,
-      [BANK_EXPORT_HEADERS.invoiceNetPayable]: Number(item.invoiceNetPayable),
-      [BANK_EXPORT_HEADERS.previousPaidAmount]: Number(item.previousPaidAmount),
+      [BANK_EXPORT_HEADERS.invoiceNetPayable]: roundTreasuryMoney(
+        Number(item.invoiceNetPayable)
+      ),
+      [BANK_EXPORT_HEADERS.previousPaidAmount]: roundTreasuryMoney(
+        Number(item.previousPaidAmount)
+      ),
       [BANK_EXPORT_HEADERS.availableBefore]: roundTreasuryMoney(
         Number(item.invoiceNetPayable) - Number(item.previousPaidAmount)
       ),
-      [BANK_EXPORT_HEADERS.approvedAmount]: Number(
-        item.approvedAmount ?? item.requestedAmount
+      [BANK_EXPORT_HEADERS.approvedAmount]: roundTreasuryMoney(
+        Number(item.approvedAmount ?? item.requestedAmount)
       ),
       [BANK_EXPORT_HEADERS.requestedPaymentDate]: toDateOnly(
         detail.batch.requestedPaymentDate
@@ -1908,6 +1924,23 @@ function buildBankWorkbook(
   worksheet["!cols"] = Object.values(BANK_EXPORT_HEADERS).map(header => ({
     wch: Math.min(32, Math.max(12, header.length + 2)),
   }));
+  const moneyHeaders = new Set<string>([
+    BANK_EXPORT_HEADERS.invoiceNetPayable,
+    BANK_EXPORT_HEADERS.previousPaidAmount,
+    BANK_EXPORT_HEADERS.availableBefore,
+    BANK_EXPORT_HEADERS.approvedAmount,
+    BANK_EXPORT_HEADERS.bankPaidAmount,
+  ]);
+  const headerValues = Object.values(BANK_EXPORT_HEADERS);
+  for (let rowIndex = 1; rowIndex <= rows.length; rowIndex += 1) {
+    headerValues.forEach((header, columnIndex) => {
+      if (!moneyHeaders.has(header)) return;
+      const cell = worksheet[
+        XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })
+      ];
+      if (cell) cell.z = "#,##0.00";
+    });
+  }
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Pagos");
   return Buffer.from(
@@ -2106,7 +2139,9 @@ function matchTreasuryBankRows(
         `Fila ${row.rowNumber}: la línea no pertenece al lote aprobado.`
       );
     }
-    const approved = Number(item.approvedAmount ?? item.requestedAmount);
+    const approved = roundTreasuryMoney(
+      Number(item.approvedAmount ?? item.requestedAmount)
+    );
     if (row.paidAmount > approved + 0.0001) {
       throw new TreasuryRuleError(
         `Fila ${row.rowNumber}: el banco no puede pagar más que el abono aprobado.`
@@ -2477,7 +2512,7 @@ export async function accountTreasuryItems(input: {
         input.batchId
       );
       const money = financials.get(item.invoiceId)!;
-      const paid = Number(item.bankPaidAmount ?? 0);
+      const paid = roundTreasuryMoney(Number(item.bankPaidAmount ?? 0));
       if (paid <= 0 || paid > money.availableAmount + 0.0001) {
         throw new TreasuryRuleError(
           `El abono de ${item.invoiceDocumentNumber} supera el saldo vigente de la factura.`

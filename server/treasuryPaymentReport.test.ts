@@ -120,6 +120,18 @@ describe("reporte de detalle de pago de Tesorería", () => {
     expect(html).toContain("L 125.00");
   });
 
+  it("imprime a dos decimales los valores heredados de cuatro decimales", () => {
+    const payload = reportPayload();
+    payload.lines[0].invoice.total = "600.0010";
+    payload.lines[0].paymentItem.previousPaidAmount = "0.0000";
+    payload.lines[0].paymentItem.bankPaidAmount = "600.0010";
+
+    const html = buildTreasuryPaymentReportHtml(payload);
+
+    expect(html).toContain("L 600.00");
+    expect(html).not.toContain("L 600.001");
+  });
+
   it("escapa textos de facturas y proveedores antes de imprimir", () => {
     const payload = reportPayload();
     payload.lines[0].invoice.supplierName = "<script>alert(1)</script>";
