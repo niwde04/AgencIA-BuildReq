@@ -152,6 +152,13 @@ function toDateKey(value: unknown) {
   return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
 }
 
+function formatDateOnly(value: unknown) {
+  const dateKey = toDateKey(value);
+  if (!dateKey) return "—";
+  const [year, month, day] = dateKey.split("-");
+  return `${day}/${month}/${year}`;
+}
+
 function toExcelDate(value: unknown) {
   const dateKey = toDateKey(value);
   if (!dateKey) return undefined;
@@ -557,7 +564,7 @@ function BatchFormDialog({
           </div>
 
           <div className="overflow-hidden rounded-lg border bg-card [&_[data-slot=table-container]]:max-h-[38vh] [&_[data-slot=table-container]]:overflow-auto">
-              <Table className="min-w-[1320px]">
+              <Table className="min-w-[1440px]">
                 <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-muted">
                   <TableRow>
                     <TableHead className="w-10">
@@ -588,6 +595,9 @@ function BatchFormDialog({
                     <TableHead className="min-w-48">Proveedor</TableHead>
                     <TableHead className="min-w-40">Factura</TableHead>
                     <TableHead className="min-w-40">Factura fiscal</TableHead>
+                    <TableHead className="min-w-32">
+                      Fecha documento
+                    </TableHead>
                     <TableHead className="text-right">Subtotal</TableHead>
                     <TableHead className="text-right">ISV</TableHead>
                     <TableHead className="text-right">
@@ -605,7 +615,7 @@ function BatchFormDialog({
                 <TableBody>
                   {eligibleQuery.isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={12} className="py-12 text-center">
+                      <TableCell colSpan={13} className="py-12 text-center">
                         <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-muted-foreground" />
                         <span className="text-sm text-muted-foreground">
                           Cargando facturas...
@@ -643,6 +653,9 @@ function BatchFormDialog({
                           </TableCell>
                           <TableCell className="whitespace-normal">
                             {row.invoice.invoiceNumber || "Sin número fiscal"}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            {formatDateOnly(row.invoice.documentDate)}
                           </TableCell>
                           <TableCell className="text-right tabular-nums">
                             {formatMoney(row.invoice.subtotal, currency)}
@@ -688,7 +701,7 @@ function BatchFormDialog({
                   ) : (
                     <TableRow>
                       <TableCell
-                        colSpan={12}
+                        colSpan={13}
                         className="py-12 text-center text-muted-foreground"
                       >
                         {projectId
