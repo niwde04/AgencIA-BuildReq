@@ -36,6 +36,7 @@ import {
   getAttachmentsByEntity,
   getDb,
   getUsersByBuildreqRole,
+  listDmcReportSourceInvoices,
 } from "./db";
 import { storageDelete, storageGet, storagePut } from "./storage";
 
@@ -778,26 +779,45 @@ export async function getTreasuryBatchById(batchId: number) {
     .where(eq(treasuryPaymentBatches.id, batchId))
     .limit(1);
   if (!row) return undefined;
-  const [items, events, attachmentRows, sourceBatches] = await Promise.all([
-    readBatchItems(db, batchId),
-    db
-      .select()
-      .from(treasuryPaymentEvents)
-      .where(eq(treasuryPaymentEvents.batchId, batchId))
-      .orderBy(
-        desc(treasuryPaymentEvents.createdAt),
-        desc(treasuryPaymentEvents.id)
-      ),
-    getAttachmentsByEntity("treasury_payment_batch", batchId),
-    db
-      .select({
-        id: treasuryPaymentBatches.id,
-        batchNumber: treasuryPaymentBatches.batchNumber,
-      })
-      .from(treasuryPaymentBatches)
-      .where(eq(treasuryPaymentBatches.consolidatedIntoBatchId, batchId))
-      .orderBy(asc(treasuryPaymentBatches.id)),
-  ]);
+  const [items, events, attachmentRows, sourceBatches, invoiceFinancialRows] =
+    await Promise.all([
+      readBatchItems(db, batchId),
+      db
+        .select()
+        .from(treasuryPaymentEvents)
+        .where(eq(treasuryPaymentEvents.batchId, batchId))
+        .orderBy(
+          desc(treasuryPaymentEvents.createdAt),
+          desc(treasuryPaymentEvents.id)
+        ),
+      getAttachmentsByEntity("treasury_payment_batch", batchId),
+      db
+        .select({
+          id: treasuryPaymentBatches.id,
+          batchNumber: treasuryPaymentBatches.batchNumber,
+        })
+        .from(treasuryPaymentBatches)
+        .where(eq(treasuryPaymentBatches.consolidatedIntoBatchId, batchId))
+        .orderBy(asc(treasuryPaymentBatches.id)),
+      db
+        .select({
+          invoiceId: invoices.id,
+          invoiceSubtotal: invoices.subtotal,
+          invoiceTaxAmount: invoices.taxAmount,
+          invoiceTotal: invoices.total,
+          invoiceRetentionTotal: invoices.retentionTotal,
+        })
+        .from(treasuryPaymentItems)
+        .innerJoin(invoices, eq(treasuryPaymentItems.invoiceId, invoices.id))
+        .where(eq(treasuryPaymentItems.batchId, batchId)),
+    ]);
+  const invoiceFinancialsById = new Map(
+    invoiceFinancialRows.map(invoice => [invoice.invoiceId, invoice])
+  );
+  const detailedItems = items.map((item: any) => ({
+    ...item,
+    ...invoiceFinancialsById.get(item.invoiceId),
+  }));
   const signedAttachments = await Promise.all(
     attachmentRows.map(async attachment => {
       try {
@@ -810,10 +830,68 @@ export async function getTreasuryBatchById(batchId: number) {
   );
   return {
     ...row,
-    items,
+    items: detailedItems,
     events,
     attachments: signedAttachments,
     sourceBatches,
+  };
+}
+
+export async function getTreasuryPaymentDetailReport(batchId: number) {
+  const detail = await getTreasuryBatchById(batchId);
+  if (!detail) {
+    throw new TreasuryRuleError("Lote de Tesorería no encontrado.");
+  }
+  if (
+    !["pendiente_contabilizacion", "cerrado"].includes(detail.batch.status)
+  ) {
+    throw new TreasuryRuleError(
+      "El detalle de pago se genera después de registrar el pago bancario."
+    );
+  }
+
+  const paidItems = detail.items.filter(
+    (item: any) =>
+      ["pagada", "contabilizada"].includes(item.status) &&
+      Number(item.bankPaidAmount ?? 0) > 0
+  );
+  if (!paidItems.length) {
+    throw new TreasuryRuleError(
+      "El lote no tiene pagos bancarios registrados para reportar."
+    );
+  }
+
+  const sourceInvoices = await listDmcReportSourceInvoices({
+    invoiceIds: paidItems.map((item: any) => item.invoiceId),
+  });
+  const invoicesById = new Map(
+    sourceInvoices.map(invoice => [invoice.invoiceId, invoice])
+  );
+  const lines = paidItems.map((paymentItem: any) => {
+    const invoice = invoicesById.get(paymentItem.invoiceId);
+    if (!invoice) {
+      throw new TreasuryRuleError(
+        `No se encontró la factura ${paymentItem.invoiceDocumentNumber}.`
+      );
+    }
+    return { paymentItem, invoice };
+  });
+
+  return {
+    generatedAt: new Date(),
+    batch: {
+      id: detail.batch.id,
+      batchNumber: detail.batch.batchNumber,
+      status: detail.batch.status,
+      currency: detail.batch.currency,
+      requestedPaymentDate: detail.batch.requestedPaymentDate,
+    },
+    project: {
+      id: detail.project.id,
+      code: detail.project.code,
+      name: detail.project.name,
+    },
+    lines,
   };
 }
 

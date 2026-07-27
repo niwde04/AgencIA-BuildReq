@@ -184,3 +184,44 @@ describe("treasury invoice summary report", () => {
     });
   });
 });
+
+describe("treasury payment detail report", () => {
+  it("returns the paid batch data used to print the supplier report", async () => {
+    mockDisabledApprovalSettings();
+    vi.spyOn(treasury, "getTreasuryBatchById").mockResolvedValue({
+      batch: { id: 81, projectId: 17 },
+    } as any);
+    const reportSpy = vi
+      .spyOn(treasury, "getTreasuryPaymentDetailReport")
+      .mockResolvedValue({
+        generatedAt: new Date("2026-07-27T15:00:00.000Z"),
+        batch: {
+          id: 81,
+          batchNumber: "TES-2026-000081",
+          status: "pendiente_contabilizacion",
+          currency: "HNL",
+          requestedPaymentDate: new Date("2026-07-26T00:00:00.000Z"),
+        },
+        project: {
+          id: 17,
+          code: "017",
+          name: "CA-4 Ocotepeque - El Portillo",
+        },
+        lines: [],
+      } as any);
+    const caller = appRouter.createCaller(
+      createTreasuryContext("administracion_central")
+    );
+
+    const result = await caller.treasury.paymentDetailReport({ id: 81 });
+
+    expect(reportSpy).toHaveBeenCalledWith(81);
+    expect(result).toMatchObject({
+      batch: {
+        batchNumber: "TES-2026-000081",
+        status: "pendiente_contabilizacion",
+      },
+      project: { code: "017" },
+    });
+  });
+});

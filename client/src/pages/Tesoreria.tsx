@@ -49,7 +49,12 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { downloadTreasuryInvoiceSummaryWorkbook } from "@/lib/dmc-export";
 import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
+import { printWindowWhenReady } from "@/lib/print-logo";
 import { trpc } from "@/lib/trpc";
+import {
+  buildTreasuryPaymentReportHtml,
+  type TreasuryPaymentReportPayload,
+} from "@/lib/treasury-payment-report";
 import {
   TREASURY_BATCH_STATUS_CODES,
   TREASURY_BATCH_STATUS_LABELS,
@@ -66,6 +71,7 @@ import {
   FileSpreadsheet,
   Loader2,
   Plus,
+  Printer,
   RefreshCcw,
   RotateCcw,
   Save,
@@ -455,7 +461,7 @@ function BatchFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="grid max-h-[94vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-5xl xl:max-w-6xl">
+      <DialogContent className="grid max-h-[96vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-[calc(100vw-1.5rem)]">
         <DialogHeader className="border-b px-6 py-5 pr-14">
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -512,7 +518,7 @@ function BatchFormDialog({
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Fecha prevista</Label>
+              <Label>Fecha prevista de pago</Label>
               <Input
                 type="date"
                 value={paymentDate}
@@ -552,10 +558,9 @@ function BatchFormDialog({
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-lg border bg-card">
-            <div className="max-h-[38vh] overflow-y-auto">
-              <Table className="min-w-[860px]">
-                <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
+          <div className="overflow-hidden rounded-lg border bg-card [&_[data-slot=table-container]]:max-h-[38vh] [&_[data-slot=table-container]]:overflow-auto">
+              <Table className="min-w-[1320px]">
+                <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-muted">
                   <TableRow>
                     <TableHead className="w-10">
                       <Checkbox
@@ -582,13 +587,19 @@ function BatchFormDialog({
                         }
                       />
                     </TableHead>
-                    <TableHead className="min-w-72">
-                      Proveedor / Factura
+                    <TableHead className="min-w-48">Proveedor</TableHead>
+                    <TableHead className="min-w-40">Factura</TableHead>
+                    <TableHead className="min-w-40">Factura fiscal</TableHead>
+                    <TableHead className="text-right">Subtotal</TableHead>
+                    <TableHead className="text-right">ISV</TableHead>
+                    <TableHead className="text-right">
+                      Total factura
                     </TableHead>
-                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="text-right">Retenciones</TableHead>
+                    <TableHead className="text-right">Neto a pagar</TableHead>
                     <TableHead className="text-right">Pagado</TableHead>
                     <TableHead className="text-right">Saldo</TableHead>
-                    <TableHead className="w-48 text-right">
+                    <TableHead className="w-40 text-right">
                       Abono solicitado
                     </TableHead>
                   </TableRow>
@@ -596,7 +607,7 @@ function BatchFormDialog({
                 <TableBody>
                   {eligibleQuery.isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="py-12 text-center">
+                      <TableCell colSpan={12} className="py-12 text-center">
                         <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-muted-foreground" />
                         <span className="text-sm text-muted-foreground">
                           Cargando facturas...
@@ -624,11 +635,30 @@ function BatchFormDialog({
                               {row.supplier.name}
                             </div>
                             <div className="mt-0.5 text-xs text-muted-foreground">
-                              {row.invoice.invoiceDocumentNumber} ·{" "}
-                              {row.invoice.invoiceNumber || "Sin número fiscal"}
+                              {row.supplier.supplierCode || "Sin código"}
                             </div>
                           </TableCell>
+                          <TableCell className="whitespace-normal">
+                            <div className="font-medium">
+                              {row.invoice.invoiceDocumentNumber}
+                            </div>
+                          </TableCell>
+                          <TableCell className="whitespace-normal">
+                            {row.invoice.invoiceNumber || "Sin número fiscal"}
+                          </TableCell>
                           <TableCell className="text-right tabular-nums">
+                            {formatMoney(row.invoice.subtotal, currency)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatMoney(row.invoice.taxAmount, currency)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatMoney(row.invoice.total, currency)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatMoney(row.invoice.retentionTotal, currency)}
+                          </TableCell>
+                          <TableCell className="text-right font-medium tabular-nums">
                             {formatMoney(row.money.invoiceNetPayable, currency)}
                           </TableCell>
                           <TableCell className="text-right tabular-nums">
@@ -639,7 +669,7 @@ function BatchFormDialog({
                           </TableCell>
                           <TableCell>
                             <Input
-                              className="ml-auto w-40 text-right tabular-nums"
+                              className="ml-auto w-32 text-right tabular-nums"
                               type="number"
                               min="0.0001"
                               step="0.0001"
@@ -660,7 +690,7 @@ function BatchFormDialog({
                   ) : (
                     <TableRow>
                       <TableCell
-                        colSpan={6}
+                        colSpan={12}
                         className="py-12 text-center text-muted-foreground"
                       >
                         {projectId
@@ -671,7 +701,6 @@ function BatchFormDialog({
                   )}
                 </TableBody>
               </Table>
-            </div>
           </div>
         </div>
 
@@ -725,6 +754,7 @@ function BatchDetailDialog({
   const [bankAttachment, setBankAttachment] =
     useState<PreparedBankAttachment>();
   const [preparingBankAttachment, setPreparingBankAttachment] = useState(false);
+  const [generatingPaymentReport, setGeneratingPaymentReport] = useState(false);
   const [removingItem, setRemovingItem] = useState<any>();
   const [pendingReasonAction, setPendingReasonAction] =
     useState<PendingReasonAction>();
@@ -918,6 +948,50 @@ function BatchDetailDialog({
     });
   }
 
+  async function generatePaymentReport() {
+    if (!batch || generatingPaymentReport) return;
+    const reportWindow = window.open(
+      "",
+      "_blank",
+      "width=1200,height=800,noopener=no"
+    );
+    if (!reportWindow) {
+      toast.error(
+        "El navegador bloqueó la ventana del reporte. Habilite las ventanas emergentes e intente de nuevo."
+      );
+      return;
+    }
+
+    reportWindow.document.open();
+    reportWindow.document.write(
+      "<!doctype html><html lang=\"es\"><head><title>Generando reporte...</title></head><body style=\"font-family:Arial,sans-serif;padding:32px\">Generando detalle de pago...</body></html>"
+    );
+    reportWindow.document.close();
+    setGeneratingPaymentReport(true);
+    try {
+      const payload = await utils.treasury.paymentDetailReport.fetch({
+        id: batch.id,
+      });
+      reportWindow.document.open();
+      reportWindow.document.write(
+        buildTreasuryPaymentReportHtml(
+          payload as TreasuryPaymentReportPayload
+        )
+      );
+      reportWindow.document.close();
+      printWindowWhenReady(reportWindow);
+    } catch (error) {
+      reportWindow.close();
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar el reporte de pago."
+      );
+    } finally {
+      setGeneratingPaymentReport(false);
+    }
+  }
+
   function removeDraftItem() {
     if (!batch || !detail || !removingItem || status !== "borrador") return;
     const remainingItems = detail.items.filter(
@@ -1016,7 +1090,7 @@ function BatchDetailDialog({
 
   return (
     <Dialog open={Boolean(batchId)} onOpenChange={open => !open && onClose()}>
-      <DialogContent className="grid max-h-[94vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-6xl xl:max-w-7xl">
+      <DialogContent className="grid max-h-[96vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-[calc(100vw-1.5rem)]">
         <DialogHeader className="border-b px-6 py-5 pr-14">
           <DialogTitle className="flex flex-wrap items-center gap-2">
             {batch?.batchNumber || "Lote de Tesorería"}
@@ -1133,27 +1207,29 @@ function BatchDetailDialog({
               </Card>
             </div>
 
-            <div className="overflow-hidden rounded-lg border bg-card">
+            <div className="overflow-hidden rounded-lg border bg-card [&_[data-slot=table-container]]:max-h-[42vh] [&_[data-slot=table-container]]:overflow-auto">
               <Table
                 className={
                   status === "borrador" && canManageDrafts
-                    ? "min-w-[1180px]"
-                    : "min-w-[1100px]"
+                    ? "min-w-[1740px]"
+                    : "min-w-[1640px]"
                 }
               >
-                <TableHeader className="bg-muted/95">
+                <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-muted">
                   <TableRow>
                     {status === "pendiente_contabilizacion" && isAccountant && (
                       <TableHead className="w-10" />
                     )}
-                    <TableHead className="min-w-72">
-                      Proveedor / Factura
-                    </TableHead>
+                    <TableHead className="min-w-48">Proveedor</TableHead>
+                    <TableHead className="min-w-40">Factura</TableHead>
+                    <TableHead className="min-w-40">Factura fiscal</TableHead>
                     <TableHead>Estado</TableHead>
+                    <TableHead className="text-right">Subtotal</TableHead>
+                    <TableHead className="text-right">ISV</TableHead>
                     <TableHead className="text-right">Total factura</TableHead>
-                    <TableHead className="text-right">
-                      Anticipo pagado
-                    </TableHead>
+                    <TableHead className="text-right">Retenciones</TableHead>
+                    <TableHead className="text-right">Neto a pagar</TableHead>
+                    <TableHead className="text-right">Pagado</TableHead>
                     <TableHead className="text-right">Abono</TableHead>
                     <TableHead className="text-right">
                       Saldo pendiente
@@ -1189,14 +1265,19 @@ function BatchDetailDialog({
                       <TableCell className="whitespace-normal">
                         <div className="font-medium">{item.supplierName}</div>
                         <div className="text-xs text-muted-foreground">
-                          {item.invoiceDocumentNumber} ·{" "}
-                          {item.invoiceNumber || "Sin número fiscal"}
+                          {item.supplierCode || "Sin código"}
                         </div>
                         {item.exclusionReason && (
                           <div className="mt-1 text-xs text-destructive">
                             {item.exclusionReason}
                           </div>
                         )}
+                      </TableCell>
+                      <TableCell className="whitespace-normal font-medium">
+                        {item.invoiceDocumentNumber}
+                      </TableCell>
+                      <TableCell className="whitespace-normal">
+                        {item.invoiceNumber || "Sin número fiscal"}
                       </TableCell>
                       <TableCell>
                         <Badge variant={statusVariant(item.status)}>
@@ -1209,6 +1290,30 @@ function BatchDetailDialog({
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
+                        {formatMoney(
+                          item.invoiceSubtotal,
+                          detail.batch.currency
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMoney(
+                          item.invoiceTaxAmount,
+                          detail.batch.currency
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMoney(
+                          item.invoiceTotal,
+                          detail.batch.currency
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMoney(
+                          item.invoiceRetentionTotal,
+                          detail.batch.currency
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-medium tabular-nums">
                         {formatMoney(
                           item.invoiceNetPayable,
                           detail.batch.currency
@@ -1552,7 +1657,7 @@ function BatchDetailDialog({
                       <Send className="mr-2 h-4 w-4" />{" "}
                       {approvalsEnabled
                         ? "Enviar a revisión"
-                        : "Enviar y dejar listo para banco"}
+                        : "Generar detalle de pago"}
                     </Button>
                   </>
                 )}
@@ -1643,6 +1748,27 @@ function BatchDetailDialog({
                   <Banknote className="mr-2 h-4 w-4" /> Contabilizar abonos
                 </Button>
               )}
+              {canManageBankResponse &&
+                status &&
+                ["pendiente_contabilizacion", "cerrado"].includes(status) &&
+                detail.items.some(
+                  (item: any) => Number(item.bankPaidAmount ?? 0) > 0
+                ) && (
+                  <Button
+                    variant="outline"
+                    onClick={() => void generatePaymentReport()}
+                    disabled={pending || generatingPaymentReport}
+                  >
+                    {generatingPaymentReport ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Printer className="mr-2 h-4 w-4" />
+                    )}
+                    {generatingPaymentReport
+                      ? "Generando reporte..."
+                      : "Generar reporte de pago"}
+                  </Button>
+                )}
               {canReopenClosedBatch && (
                 <Button
                   variant="outline"

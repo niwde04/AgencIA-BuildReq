@@ -299,6 +299,18 @@ export const treasuryRouter = router({
       return assertBatchAccess(ctx.user, input.id);
     }),
 
+  paymentDetailReport: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      await assertBatchAccess(ctx.user, input.id);
+      try {
+        return await treasury.getTreasuryPaymentDetailReport(input.id);
+      } catch (error) {
+        rethrowTreasuryError(error);
+      }
+    }),
+
   create: protectedProcedure
     .input(
       z.object({

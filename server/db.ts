@@ -12557,6 +12557,7 @@ export async function listInvoices(filters?: {
 }
 
 export async function listDmcReportSourceInvoices(filters?: {
+  invoiceIds?: number[];
   projectId?: number | null;
   projectIds?: number[] | null;
   statuses?: string[];
@@ -12569,6 +12570,10 @@ export async function listDmcReportSourceInvoices(filters?: {
   if (!db) return [];
 
   const conditions = [];
+  if (filters?.invoiceIds) {
+    if (filters.invoiceIds.length === 0) return [];
+    conditions.push(inArray(invoices.id, filters.invoiceIds));
+  }
   if (filters?.projectId) {
     conditions.push(eq(invoices.projectId, filters.projectId));
   }
