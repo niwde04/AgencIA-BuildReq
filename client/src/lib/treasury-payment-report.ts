@@ -462,7 +462,7 @@ export function buildTreasuryPaymentReportHtml(
       .supplier-total td { border-top: 0.35pt solid #111; font-weight: 700; }
       .general-total td { border-top: 0.6pt solid #111; border-bottom: 0.6pt solid #111; font-weight: 700; }
       .amount-words { margin-top: 6px; font-size: 7px; }
-      .signatures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 70px; margin: 42px auto 0; width: 75%; break-inside: avoid; page-break-inside: avoid; }
+      .signatures { display: grid; grid-template-columns: repeat(2, 1fr); gap: 120px; margin: 42px auto 0; width: 65%; break-inside: avoid; page-break-inside: avoid; }
       .signature { border-top: 0.45pt solid #111; padding-top: 4px; text-align: center; font-size: 8px; }
       .signature-name { min-height: 10px; font-weight: 700; text-transform: uppercase; }
       .signature-role { margin-top: 2px; }
@@ -536,10 +536,6 @@ export function buildTreasuryPaymentReportHtml(
         <div class="signature">
           <div class="signature-name">${signatureName(payload.signatures.preparedBy)}</div>
           <div class="signature-role">Elaborado por.</div>
-        </div>
-        <div class="signature">
-          <div class="signature-name">${signatureName(payload.signatures.approvedBy)}</div>
-          <div class="signature-role">Aprobado por.</div>
         </div>
         <div class="signature">
           <div class="signature-name">${signatureName(payload.signatures.authorizedBy)}</div>
