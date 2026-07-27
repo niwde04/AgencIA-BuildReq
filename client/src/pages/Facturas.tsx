@@ -2,9 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { DataPagination } from "@/components/DataPagination";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import { downloadSystemInvoicesWorkbook } from "@/lib/dmc-export";
-import { fetchAllFilteredPages } from "@/lib/paginated-export";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { getReadablePrintStyles } from "@/lib/readable-print-styles";
 import {
@@ -1354,7 +1352,6 @@ export default function Facturas() {
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
   const debouncedSearchTerm = useDebouncedValue(searchTerm);
-  const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [isExportingInternalReport, setIsExportingInternalReport] =
     useState(false);
   const [accountingComment, setAccountingComment] = useState("");
@@ -3273,158 +3270,6 @@ export default function Facturas() {
     });
   };
 
-  const exportInvoicesExcel = async () => {
-    if (isLoading || isExportingExcel) return;
-    setIsExportingExcel(true);
-    try {
-      const exportRows = await fetchAllFilteredPages((exportPage, pageSize) =>
-        utils.invoices.listPage.fetch({
-          status:
-            statusFilter === "all"
-              ? undefined
-              : (statusFilter as
-                  | "borrador"
-                  | "revisada"
-                  | "rechazada"
-                  | "registrada"
-                  | "anulada"),
-          search: debouncedSearchTerm.trim() || undefined,
-          dateFrom: dateFrom || undefined,
-          dateTo: dateTo || undefined,
-          page: exportPage,
-          pageSize,
-        })
-      );
-      if (exportRows.length === 0) {
-        toast.error("No hay facturas para exportar");
-        return;
-      }
-      await downloadExcel(
-        buildDatedExcelFileName("facturas"),
-        "Facturas",
-        [
-          {
-            header: "Documento interno",
-            value: (row: any) => row.invoice.invoiceDocumentNumber,
-            width: 18,
-          },
-          {
-            header: "Número factura",
-            value: (row: any) => row.invoice.invoiceNumber || "",
-            width: 24,
-          },
-          {
-            header: "Proveedor",
-            value: (row: any) =>
-              row.supplier
-                ? `${row.supplier.supplierCode} - ${row.supplier.name}`
-                : "Proveedor pendiente",
-            width: 42,
-          },
-          {
-            header: "RTN proveedor",
-            value: (row: any) =>
-              row.supplier ? formatSupplierRtnLabel(row.supplier) : "",
-            width: 18,
-          },
-          {
-            header: "Orden de compra",
-            value: (row: any) => row.purchaseOrder?.orderNumber || "",
-            width: 18,
-          },
-          {
-            header: "Recepción",
-            value: (row: any) => row.receipt?.receiptNumber || "",
-            width: 18,
-          },
-          {
-            header: "Requisición",
-            value: (row: any) => formatInvoiceRequestNumbers(row),
-            width: 22,
-          },
-          {
-            header: "Requiriente",
-            value: (row: any) => formatInvoiceRequestedBy(row),
-            width: 32,
-          },
-          {
-            header: "Creada por",
-            value: (row: any) => formatInvoiceCreatedBy(row),
-            width: 32,
-          },
-          {
-            header: "Proyecto",
-            value: (row: any) =>
-              row.project ? `${row.project.code} - ${row.project.name}` : "",
-            width: 36,
-          },
-          {
-            header: "Fecha documento",
-            value: (row: any) => formatDateLabel(row.invoice.documentDate),
-            width: 16,
-          },
-          {
-            header: "Fecha vencimiento",
-            value: (row: any) => formatDateLabel(row.invoice.documentDueDate),
-            width: 16,
-          },
-          {
-            header: "Fecha recepción",
-            value: (row: any) => formatDateLabel(row.invoice.receiptDate),
-            width: 16,
-          },
-          {
-            header: "Límite emisión",
-            value: (row: any) => formatDateLabel(row.invoice.emissionDeadline),
-            width: 16,
-          },
-          {
-            header: "Moneda",
-            value: (row: any) => row.invoice.currency ?? "HNL",
-            width: 12,
-          },
-          {
-            header: "Total",
-            value: (row: any) => toMoneyNumber(row.invoice.total),
-            width: 14,
-            numFmt: "#,##0.00",
-          },
-          {
-            header: "Retenciones",
-            value: (row: any) => toMoneyNumber(row.invoice.retentionTotal),
-            width: 14,
-            numFmt: "#,##0.00",
-          },
-          {
-            header: "Neto",
-            value: (row: any) => toMoneyNumber(row.invoice.netPayable),
-            width: 14,
-            numFmt: "#,##0.00",
-          },
-          {
-            header: "Estado",
-            value: (row: any) => getInvoiceStatusLabel(row.invoice),
-            width: 20,
-          },
-          {
-            header: "Comentario estado",
-            value: (row: any) => getInvoiceStatusNote(row.invoice)?.text || "",
-            width: 42,
-          },
-        ],
-        exportRows
-      );
-
-      toast.success(
-        `Se exportaron ${exportRows.length.toLocaleString("es-HN")} factura(s)`
-      );
-    } catch {
-      toast.error("No se pudo exportar el archivo Excel");
-    } finally {
-      setIsExportingExcel(false);
-    }
-  };
-
   const exportInternalInvoicesReport = async () => {
     if (isExportingInternalReport) return;
     setIsExportingInternalReport(true);
@@ -3472,21 +3317,6 @@ export default function Facturas() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void exportInvoicesExcel()}
-            disabled={
-              isLoading ||
-              !invoicesPage?.total ||
-              isExportingExcel ||
-              isExportingInternalReport
-            }
-            className="gap-2"
-          >
-            <Download className="h-4 w-4" />
-            {isExportingExcel ? "Exportando..." : "Exportar Excel"}
-          </Button>
           {canExportInternalReport ? (
             <Button
               type="button"
@@ -3494,7 +3324,6 @@ export default function Facturas() {
               disabled={
                 isLoading ||
                 !invoicesPage?.total ||
-                isExportingExcel ||
                 isExportingInternalReport
               }
               className="gap-2"
@@ -3502,7 +3331,7 @@ export default function Facturas() {
               <Download className="h-4 w-4" />
               {isExportingInternalReport
                 ? "Generando..."
-                : "Libro interno BuildReq"}
+                : "Exportar Excel"}
             </Button>
           ) : null}
         </div>

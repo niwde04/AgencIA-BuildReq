@@ -2,8 +2,6 @@ import { trpc } from "@/lib/trpc";
 import { DataPagination } from "@/components/DataPagination";
 import { CompactProcurementApprovalPanel } from "@/components/CompactProcurementApprovalPanel";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import { fetchAllFilteredPages } from "@/lib/paginated-export";
-import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
 import { downloadSystemPurchaseOrdersWorkbook } from "@/lib/dmc-export";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import {
@@ -957,7 +955,6 @@ export default function OrdenesCompra() {
   const [searchTerm, setSearchTerm] = useState("");
   const [page, setPage] = useState(1);
   const debouncedSearchTerm = useDebouncedValue(searchTerm);
-  const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [isExportingInternalReport, setIsExportingInternalReport] =
     useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -3178,110 +3175,6 @@ export default function OrdenesCompra() {
     printWindowWhenReady(printWindow);
   };
 
-  const exportPurchaseOrdersExcel = async () => {
-    if (isExportingExcel) return;
-    setIsExportingExcel(true);
-    try {
-      const exportRows = await fetchAllFilteredPages((exportPage, pageSize) =>
-        utils.purchaseOrders.listPage.fetch({
-          search: debouncedSearchTerm.trim() || undefined,
-          purchaseType:
-            purchaseTypeFilter === "all" ? undefined : purchaseTypeFilter,
-          status:
-            isProcurementApprover || statusFilter === "all"
-              ? undefined
-              : statusFilter,
-          page: exportPage,
-          pageSize,
-        })
-      );
-
-      if (exportRows.length === 0) {
-        toast.error("No hay órdenes de compra para exportar");
-        return;
-      }
-
-      await downloadExcel(
-        buildDatedExcelFileName("ordenes-compra"),
-        "Órdenes de Compra",
-        [
-          {
-            header: "No. OC",
-            value: (row: any) => row.purchaseOrder.orderNumber,
-          },
-          {
-            header: "No. Req.",
-            value: (row: any) => formatPurchaseOrderRequestNumbers(row),
-          },
-          {
-            header: "Clasificación",
-            value: (row: any) => row.purchaseOrder.classification,
-          },
-          {
-            header: "Moneda",
-            value: (row: any) => row.purchaseOrder.currency ?? "HNL",
-          },
-          {
-            header: "Total OC",
-            value: (row: any) => Number(row.totalAmount ?? 0),
-            numFmt: "#,##0.00",
-          },
-          {
-            header: "Proyecto",
-            value: (row: any) =>
-              row.project ? `${row.project.code} — ${row.project.name}` : "—",
-          },
-          {
-            header: "Requiriente",
-            value: (row: any) => formatPurchaseOrderRequestedBy(row),
-          },
-          {
-            header: "Creada por",
-            value: (row: any) => formatPurchaseOrderCreatedBy(row),
-          },
-          {
-            header: "Tipo Compra",
-            value: (row: any) =>
-              PURCHASE_TYPE_LABELS[row.purchaseOrder.purchaseType] || "—",
-          },
-          {
-            header: "Proveedor",
-            value: (row: any) => row.supplier?.name || "Proveedor pendiente",
-          },
-          {
-            header: "RTN proveedor",
-            value: (row: any) => row.supplier?.rtn || "—",
-          },
-          {
-            header: "Estatus",
-            value: (row: any) =>
-              row.purchaseOrder.appliesContract
-                ? row.contractSummary?.statusLabel || "Contrato"
-                : STATUS_LABELS[
-                    getEffectivePurchaseOrderStatus(
-                      row.purchaseOrder.status,
-                      row.purchaseOrder.approvalStatus
-                    )
-                  ] || row.purchaseOrder.status,
-          },
-          {
-            header: "Emisión",
-            value: (row: any) =>
-              EMISSION_STATUS_LABELS[row.purchaseOrder.status] || "Pendiente",
-          },
-        ],
-        exportRows
-      );
-      toast.success(
-        `Se exportaron ${exportRows.length.toLocaleString("es-HN")} orden(es) de compra`
-      );
-    } catch {
-      toast.error("No se pudo exportar el archivo Excel");
-    } finally {
-      setIsExportingExcel(false);
-    }
-  };
-
   const exportInternalPurchaseOrdersReport = async () => {
     if (isExportingInternalReport) return;
     setIsExportingInternalReport(true);
@@ -3318,33 +3211,16 @@ export default function OrdenesCompra() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1>Órdenes de Compra</h1>
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void exportPurchaseOrdersExcel()}
-            disabled={
-              !ordersPage?.total ||
-              isExportingExcel ||
-              isExportingInternalReport
-            }
-          >
-            <Download className="mr-2 h-4 w-4" />
-            {isExportingExcel ? "Exportando..." : "Exportar Excel"}
-          </Button>
           {canExportInternalReport ? (
             <Button
               type="button"
               onClick={() => void exportInternalPurchaseOrdersReport()}
-              disabled={
-                !ordersPage?.total ||
-                isExportingExcel ||
-                isExportingInternalReport
-              }
+              disabled={!ordersPage?.total || isExportingInternalReport}
             >
               <Download className="mr-2 h-4 w-4" />
               {isExportingInternalReport
                 ? "Generando..."
-                : "Libro interno BuildReq"}
+                : "Exportar Excel"}
             </Button>
           ) : null}
           {canCreatePurchaseOrder ? (
