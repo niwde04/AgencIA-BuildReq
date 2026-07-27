@@ -159,6 +159,47 @@ function formatDateOnly(value: unknown) {
   return `${day}/${month}/${year}`;
 }
 
+function treasuryProjectSummary(source: any) {
+  const projectMap = new Map<
+    number | string,
+    { id?: number; code: string; name: string }
+  >();
+  const sourceProjects =
+    Array.isArray(source?.projects) && source.projects.length > 0
+      ? source.projects
+      : source?.project
+        ? [source.project]
+        : [];
+  for (const project of sourceProjects) {
+    const code = String(project?.code ?? "").trim();
+    const name = String(project?.name ?? "").trim();
+    const key = Number(project?.id) || `${code}:${name}`;
+    projectMap.set(key, { id: project?.id, code, name });
+  }
+  const projects = Array.from(projectMap.values());
+  if (projects.length === 1) {
+    return {
+      projects,
+      code: projects[0]!.code,
+      name: projects[0]!.name,
+      label: [projects[0]!.code, projects[0]!.name]
+        .filter(Boolean)
+        .join(" - "),
+    };
+  }
+  const labels = projects.map(project =>
+    [project.code, project.name].filter(Boolean).join(" - ")
+  );
+  return {
+    projects,
+    code: projects.length ? "Varios proyectos" : "Sin proyecto",
+    name: labels.join(" · "),
+    label: projects.length
+      ? `Varios proyectos (${labels.join(" · ")})`
+      : "Sin proyecto",
+  };
+}
+
 function currentLocalDateInput() {
   const date = new Date();
   const year = date.getFullYear();
@@ -262,6 +303,8 @@ function auditActionLabel(action: string) {
     consolidar_enviar_aprobacion: "consolidar y enviar a aprobación",
     consolidar_en_lote: "integrar en lote consolidado",
     crear_lote_consolidado: "crear lote consolidado y enviar a aprobación",
+    crear_lote_consolidado_sin_aprobacion:
+      "crear lote consolidado listo para banco",
     enviar_aprobacion: "enviar a aprobación",
     rechazar_lote: "rechazar lote",
     reabrir_lote_rechazado: "reabrir lote rechazado",
@@ -1141,7 +1184,7 @@ function BatchDetailDialog({
           </DialogTitle>
           <DialogDescription className="max-w-5xl leading-relaxed">
             {detail
-              ? `${detail.project.code} - ${detail.project.name} · ${detail.batch.currency} · Pago previsto ${formatDate(detail.batch.requestedPaymentDate)}`
+              ? `${treasuryProjectSummary(detail).label} · ${detail.batch.currency} · Pago previsto ${formatDate(detail.batch.requestedPaymentDate)}`
               : "Cargando..."}
           </DialogDescription>
         </DialogHeader>
@@ -1254,8 +1297,8 @@ function BatchDetailDialog({
               <Table
                 className={
                   status === "borrador" && canManageDrafts
-                    ? "min-w-[1740px]"
-                    : "min-w-[1640px]"
+                    ? "min-w-[1900px]"
+                    : "min-w-[1800px]"
                 }
               >
                 <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-muted">
@@ -1266,6 +1309,7 @@ function BatchDetailDialog({
                     <TableHead className="min-w-48">Proveedor</TableHead>
                     <TableHead className="min-w-40">Factura</TableHead>
                     <TableHead className="min-w-40">Factura fiscal</TableHead>
+                    <TableHead className="min-w-48">Proyecto</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead className="text-right">Subtotal</TableHead>
                     <TableHead className="text-right">ISV</TableHead>
@@ -1318,6 +1362,12 @@ function BatchDetailDialog({
                       </TableCell>
                       <TableCell className="whitespace-normal">
                         {item.invoiceNumber || "Sin número fiscal"}
+                      </TableCell>
+                      <TableCell className="whitespace-normal">
+                        <div>{item.invoiceProjectCode}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {item.invoiceProjectName}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <Badge variant={statusVariant(item.status)}>
@@ -1984,7 +2034,7 @@ export default function Tesoreria() {
   const approvalsEnabled =
     settingsQuery.data?.treasuryBatchApprovalsEnabled === true;
   const canConsolidate =
-    approvalsEnabled && settingsQuery.data?.permissions.canDepurate === true;
+    settingsQuery.data?.permissions.canDepurate === true;
 
   useEffect(() => {
     if (
@@ -2010,7 +2060,9 @@ export default function Tesoreria() {
       setSelectedConsolidationBatchIds(new Set());
       toast.success(
         data.consolidated
-          ? `Lote consolidado ${data.batchNumber} creado con ${data.sourceBatchIds.length} lotes y enviado a aprobación.`
+          ? data.approvalBypassed
+            ? `Lote consolidado ${data.batchNumber} creado con ${data.sourceBatchIds.length} lotes y listo para banco.`
+            : `Lote consolidado ${data.batchNumber} creado con ${data.sourceBatchIds.length} lotes y enviado a aprobación.`
           : `Lote ${data.batchNumber} enviado a aprobación.`
       );
       await Promise.all([
@@ -2027,12 +2079,13 @@ export default function Tesoreria() {
     const term = search.trim().toLocaleLowerCase("es-HN");
     return (batchesQuery.data ?? []).filter((row: any) => {
       const requestedPaymentDate = toDateKey(row.batch.requestedPaymentDate);
+      const projectSummary = treasuryProjectSummary(row);
       const matchesSearch =
         !term ||
         [
           row.batch.batchNumber,
-          row.project.code,
-          row.project.name,
+          projectSummary.code,
+          projectSummary.name,
           row.batch.status,
           getTreasuryBatchStatusLabel(
             row.batch.status as TreasuryBatchStatus,
@@ -2049,13 +2102,12 @@ export default function Tesoreria() {
   }, [batchesQuery.data, dateFrom, dateTo, search]);
   const visibleConsolidatableBatches = useMemo(
     () =>
-      approvalsEnabled
-        ? visibleBatches.filter((row: any) =>
-            ["enviado_depuracion", "pendiente_aprobacion"].includes(
-              row.batch.status
-            )
-          )
-        : [],
+      visibleBatches.filter((row: any) =>
+        (approvalsEnabled
+          ? ["enviado_depuracion", "pendiente_aprobacion"]
+          : ["aprobado"]
+        ).includes(row.batch.status)
+      ),
     [approvalsEnabled, visibleBatches]
   );
   const allVisibleConsolidatableBatchesSelected =
@@ -2071,8 +2123,11 @@ export default function Tesoreria() {
     (row: any) => selectedConsolidationBatchIds.has(row.batch.id)
   );
   const singleSelectedBatchAlreadyPendingApproval =
+    approvalsEnabled &&
     selectedConsolidationBatches.length === 1 &&
     selectedConsolidationBatches[0]?.batch.status === "pendiente_aprobacion";
+  const needsMoreBatchesWithoutApproval =
+    !approvalsEnabled && selectedConsolidationBatches.length === 1;
 
   useEffect(() => {
     const visibleIds = new Set(
@@ -2101,12 +2156,9 @@ export default function Tesoreria() {
       toast.error("Seleccione al menos un lote.");
       return;
     }
-    const projects = new Set(
-      selectedRows.map((row: any) => row.batch.projectId)
-    );
-    if (projects.size > 1) {
+    if (!approvalsEnabled && selectedRows.length < 2) {
       toast.error(
-        "Seleccione lotes de un solo proyecto para crear el consolidado."
+        "Seleccione al menos dos lotes para crear un consolidado listo para banco."
       );
       return;
     }
@@ -2183,12 +2235,18 @@ export default function Tesoreria() {
           },
           {
             header: "Código de proyecto",
-            value: (row: any) => row.project.code,
+            value: (row: any) =>
+              treasuryProjectSummary(row).projects
+                .map(project => project.code)
+                .join(", "),
             width: 20,
           },
           {
             header: "Proyecto",
-            value: (row: any) => row.project.name,
+            value: (row: any) =>
+              treasuryProjectSummary(row).projects
+                .map(project => project.name)
+                .join(", "),
             width: 36,
           },
           {
@@ -2590,10 +2648,13 @@ export default function Tesoreria() {
                             )}
                             disabled={
                               consolidateMutation.isPending ||
-                              ![
-                                "enviado_depuracion",
-                                "pendiente_aprobacion",
-                              ].includes(row.batch.status)
+                              !(approvalsEnabled
+                                ? [
+                                    "enviado_depuracion",
+                                    "pendiente_aprobacion",
+                                  ]
+                                : ["aprobado"]
+                              ).includes(row.batch.status)
                             }
                             onCheckedChange={checked =>
                               setSelectedConsolidationBatchIds(current => {
@@ -2616,9 +2677,9 @@ export default function Tesoreria() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <div>{row.project.code}</div>
+                        <div>{treasuryProjectSummary(row).code}</div>
                         <div className="max-w-64 truncate text-xs text-muted-foreground">
-                          {row.project.name}
+                          {treasuryProjectSummary(row).name}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -2678,7 +2739,8 @@ export default function Tesoreria() {
                 disabled={
                   consolidateMutation.isPending ||
                   selectedConsolidationBatchIds.size === 0 ||
-                  singleSelectedBatchAlreadyPendingApproval
+                  singleSelectedBatchAlreadyPendingApproval ||
+                  needsMoreBatchesWithoutApproval
                 }
               >
                 {consolidateMutation.isPending ? (
@@ -2688,9 +2750,13 @@ export default function Tesoreria() {
                 )}
                 {singleSelectedBatchAlreadyPendingApproval
                   ? "Ya enviado a aprobación"
-                  : selectedConsolidationBatchIds.size === 1
-                    ? "Enviar a aprobación"
-                    : "Consolidar y enviar a aprobación"}
+                  : needsMoreBatchesWithoutApproval
+                    ? "Seleccione al menos 2 lotes"
+                    : approvalsEnabled
+                      ? selectedConsolidationBatchIds.size === 1
+                        ? "Enviar a aprobación"
+                        : "Consolidar y enviar a aprobación"
+                      : "Consolidar y dejar listo para banco"}
               </Button>
             </div>
           )}

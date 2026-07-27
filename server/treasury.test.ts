@@ -8,8 +8,10 @@ import {
 } from "../shared/treasury";
 import {
   assertTreasuryBatchCanBeCancelled,
+  assertTreasuryBatchesCanBeConsolidated,
   buildTreasuryFullPaymentRows,
   getTreasuryApprovalRouting,
+  getTreasuryConsolidationRouting,
   getTreasuryReopenTargetStatus,
   parseTreasuryBankWorkbook,
   prepareTreasuryBankAttachment,
@@ -253,6 +255,65 @@ describe("treasury approval routing", () => {
       ).requiresFinancialRole
     ).toBe(true);
   });
+});
+
+describe("treasury consolidation routing", () => {
+  it("creates a bank-ready consolidated batch when approvals are disabled", () => {
+    expect(getTreasuryConsolidationRouting(false)).toEqual({
+      approvalBypassed: true,
+      consolidatableStatuses: ["aprobado"],
+      consolidatedStatus: "aprobado",
+      consolidatedItemStatus: "aprobada",
+    });
+  });
+
+  it("keeps the approval flow when approvals are enabled", () => {
+    expect(getTreasuryConsolidationRouting(true)).toEqual({
+      approvalBypassed: false,
+      consolidatableStatuses: [
+        "enviado_depuracion",
+        "pendiente_aprobacion",
+      ],
+      consolidatedStatus: "pendiente_aprobacion",
+      consolidatedItemStatus: "incluida",
+    });
+  });
+
+  it.each([
+    {
+      approvalsEnabled: true,
+      status: "enviado_depuracion" as const,
+    },
+    {
+      approvalsEnabled: false,
+      status: "aprobado" as const,
+    },
+  ])(
+    "allows different projects when approvalsEnabled is $approvalsEnabled",
+    ({ approvalsEnabled, status }) => {
+      expect(() =>
+        assertTreasuryBatchesCanBeConsolidated(
+          [
+            {
+              batchNumber: "TES-2026-000040",
+              projectId: 1,
+              currency: "HNL",
+              requestedPaymentDate: "2026-07-31",
+              status,
+            },
+            {
+              batchNumber: "TES-2026-000041",
+              projectId: 17,
+              currency: "HNL",
+              requestedPaymentDate: "2026-07-31",
+              status,
+            },
+          ],
+          approvalsEnabled
+        )
+      ).not.toThrow();
+    }
+  );
 });
 
 describe("treasury bank workbook", () => {

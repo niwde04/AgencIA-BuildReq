@@ -108,10 +108,14 @@ async function assertBatchAccess(user: User, batchId: number) {
   if (!detail) {
     throw new TRPCError({ code: "NOT_FOUND", message: "Lote no encontrado." });
   }
-  if (!canAccessProject(user, detail.batch.projectId)) {
+  const projectIds =
+    detail.projectIds?.length > 0
+      ? detail.projectIds
+      : [detail.batch.projectId];
+  if (!projectIds.every(projectId => canAccessProject(user, projectId))) {
     throw new TRPCError({
       code: "FORBIDDEN",
-      message: "No tiene acceso a lotes de otro proyecto.",
+      message: "No tiene acceso a uno o más proyectos de este lote.",
     });
   }
   return detail;
@@ -438,11 +442,9 @@ export const treasuryRouter = router({
       if (!isCentral(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message:
-            "Solo Administración Central puede consolidar lotes para aprobación.",
+          message: "Solo Administración Central puede consolidar lotes.",
         });
       }
-      await assertTreasuryBatchApprovalsEnabled();
       for (const batchId of Array.from(new Set(input.batchIds))) {
         await assertBatchAccess(ctx.user, batchId);
       }

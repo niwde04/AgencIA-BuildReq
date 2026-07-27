@@ -39,6 +39,8 @@ function reportPayload(): TreasuryPaymentReportPayload {
         invoice: {
           invoiceDocumentNumber: "FT-017-00000033",
           invoiceNumber: "000-013-01-00083329",
+          projectCode: "017",
+          projectName: "CA-4 Ocotepeque - El Portillo",
           documentDate: "2026-07-22",
           total: "2151.01",
           supplierCode: "PROV-000114",
@@ -145,6 +147,31 @@ describe("reporte de detalle de pago de Tesorería", () => {
 
     expect(html).toContain("L 600.00");
     expect(html).not.toContain("L 600.001");
+  });
+
+  it("muestra el proyecto real de cada factura en un lote multiproyecto", () => {
+    const payload = reportPayload();
+    payload.project = { code: "VARIOS", name: "Varios proyectos" };
+    payload.lines.push({
+      ...payload.lines[0],
+      paymentItem: {
+        ...payload.lines[0].paymentItem,
+        invoiceDocumentNumber: "FT-001-00000010",
+      },
+      invoice: {
+        ...payload.lines[0].invoice,
+        invoiceDocumentNumber: "FT-001-00000010",
+        projectCode: "001",
+        projectName: "Oficina Central",
+      },
+    });
+
+    const html = buildTreasuryPaymentReportHtml(payload);
+
+    expect(html).toContain(
+      "<td>017 - CA-4 Ocotepeque - El Portillo</td>"
+    );
+    expect(html).toContain("<td>001 - Oficina Central</td>");
   });
 
   it("muestra el monto solicitado antes del pago bancario", () => {

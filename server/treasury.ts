@@ -120,6 +120,57 @@ export function getTreasuryApprovalRouting(approvalsEnabled: boolean) {
   };
 }
 
+export function getTreasuryConsolidationRouting(approvalsEnabled: boolean) {
+  return {
+    approvalBypassed: !approvalsEnabled,
+    consolidatableStatuses: (approvalsEnabled
+      ? ["enviado_depuracion", "pendiente_aprobacion"]
+      : ["aprobado"]) as TreasuryBatchStatus[],
+    consolidatedStatus: (approvalsEnabled
+      ? "pendiente_aprobacion"
+      : "aprobado") as TreasuryBatchStatus,
+    consolidatedItemStatus: (approvalsEnabled
+      ? "incluida"
+      : "aprobada") as TreasuryItemStatus,
+  };
+}
+
+export function assertTreasuryBatchesCanBeConsolidated(
+  batches: Array<{
+    batchNumber: string;
+    projectId: number;
+    currency: PurchaseCurrency;
+    requestedPaymentDate: Date | string;
+    status: TreasuryBatchStatus;
+  }>,
+  approvalsEnabled: boolean
+) {
+  const routing = getTreasuryConsolidationRouting(approvalsEnabled);
+  const invalidBatch = batches.find(
+    batch => !routing.consolidatableStatuses.includes(batch.status)
+  );
+  if (invalidBatch) {
+    throw new TreasuryRuleError(
+      `El lote ${invalidBatch.batchNumber} ya no está disponible para consolidar.`
+    );
+  }
+  if (new Set(batches.map(batch => batch.currency)).size !== 1) {
+    throw new TreasuryRuleError(
+      "Todos los lotes del consolidado deben utilizar la misma moneda."
+    );
+  }
+  if (
+    new Set(
+      batches.map(batch => toDateOnly(batch.requestedPaymentDate))
+    ).size !== 1
+  ) {
+    throw new TreasuryRuleError(
+      "Todos los lotes del consolidado deben tener la misma fecha prevista."
+    );
+  }
+  return routing;
+}
+
 const FINAL_ITEM_STATUSES = new Set<TreasuryItemStatus>([
   "excluida",
   "rechazada_banco",
@@ -788,13 +839,6 @@ export async function listTreasuryBatches(filters?: {
   if (!filters?.status) {
     conditions.push(isNull(treasuryPaymentBatches.consolidatedIntoBatchId));
   }
-  if (filters?.projectIds) {
-    conditions.push(
-      filters.projectIds.length
-        ? inArray(treasuryPaymentBatches.projectId, filters.projectIds)
-        : eq(treasuryPaymentBatches.id, -1)
-    );
-  }
   if (filters?.status)
     conditions.push(eq(treasuryPaymentBatches.status, filters.status));
   const batchRows = await db
@@ -807,13 +851,69 @@ export async function listTreasuryBatches(filters?: {
       desc(treasuryPaymentBatches.id)
     );
   if (!batchRows.length) return [];
+  const batchProjectRows = await db
+    .select({
+      batchId: treasuryPaymentItems.batchId,
+      id: projects.id,
+      code: projects.code,
+      name: projects.name,
+    })
+    .from(treasuryPaymentItems)
+    .innerJoin(invoices, eq(treasuryPaymentItems.invoiceId, invoices.id))
+    .innerJoin(projects, eq(invoices.projectId, projects.id))
+    .where(
+      inArray(
+        treasuryPaymentItems.batchId,
+        batchRows.map(row => row.batch.id)
+      )
+    );
+  const batchRowsWithProjects = batchRows.map(row => {
+    const projectMap = new Map<
+      number,
+      { id: number; code: string; name: string }
+    >();
+    for (const project of batchProjectRows) {
+      if (project.batchId === row.batch.id) {
+        projectMap.set(project.id, {
+          id: project.id,
+          code: project.code,
+          name: project.name,
+        });
+      }
+    }
+    if (!projectMap.size) {
+      projectMap.set(row.project.id, row.project);
+    }
+    const batchProjects = Array.from(projectMap.values()).sort((left, right) =>
+      left.code.localeCompare(right.code, "es-HN", {
+        numeric: true,
+        sensitivity: "base",
+      })
+    );
+    return {
+      ...row,
+      projects: batchProjects,
+      projectIds: batchProjects.map(project => project.id),
+    };
+  });
+  const scopedProjectIds = filters?.projectIds
+    ? new Set(filters.projectIds)
+    : null;
+  const accessibleBatchRows = scopedProjectIds
+    ? batchRowsWithProjects.filter(
+        row =>
+          row.projectIds.length > 0 &&
+          row.projectIds.every(projectId => scopedProjectIds.has(projectId))
+      )
+    : batchRowsWithProjects;
+  if (!accessibleBatchRows.length) return [];
   const items = await db
     .select()
     .from(treasuryPaymentItems)
     .where(
       inArray(
         treasuryPaymentItems.batchId,
-        batchRows.map(row => row.batch.id)
+        accessibleBatchRows.map(row => row.batch.id)
       )
     );
   const sourceBatches = await db
@@ -825,10 +925,10 @@ export async function listTreasuryBatches(filters?: {
     .where(
       inArray(
         treasuryPaymentBatches.consolidatedIntoBatchId,
-        batchRows.map(row => row.batch.id)
+        accessibleBatchRows.map(row => row.batch.id)
       )
     );
-  return batchRows.map(row => {
+  return accessibleBatchRows.map(row => {
     const batchItems = items.filter(item => item.batchId === row.batch.id);
     const included = batchItems.filter(item => item.status !== "excluida");
     return {
@@ -898,6 +998,9 @@ export async function getTreasuryBatchById(batchId: number) {
       db
         .select({
           invoiceId: invoices.id,
+          invoiceProjectId: projects.id,
+          invoiceProjectCode: projects.code,
+          invoiceProjectName: projects.name,
           invoiceSubtotal: invoices.subtotal,
           invoiceTaxAmount: invoices.taxAmount,
           invoiceTotal: invoices.total,
@@ -905,6 +1008,7 @@ export async function getTreasuryBatchById(batchId: number) {
         })
         .from(treasuryPaymentItems)
         .innerJoin(invoices, eq(treasuryPaymentItems.invoiceId, invoices.id))
+        .innerJoin(projects, eq(invoices.projectId, projects.id))
         .where(eq(treasuryPaymentItems.batchId, batchId)),
     ]);
   const invoiceFinancialsById = new Map(
@@ -914,6 +1018,26 @@ export async function getTreasuryBatchById(batchId: number) {
     ...item,
     ...invoiceFinancialsById.get(item.invoiceId),
   }));
+  const batchProjects = Array.from(
+    new Map(
+      invoiceFinancialRows.map(invoice => [
+        invoice.invoiceProjectId,
+        {
+          id: invoice.invoiceProjectId,
+          code: invoice.invoiceProjectCode,
+          name: invoice.invoiceProjectName,
+        },
+      ])
+    ).values()
+  ).sort((left, right) =>
+    left.code.localeCompare(right.code, "es-HN", {
+      numeric: true,
+      sensitivity: "base",
+    })
+  );
+  if (!batchProjects.length) {
+    batchProjects.push(row.project);
+  }
   const signedAttachments = await Promise.all(
     attachmentRows.map(async attachment => {
       try {
@@ -930,6 +1054,8 @@ export async function getTreasuryBatchById(batchId: number) {
     events,
     attachments: signedAttachments,
     sourceBatches,
+    projects: batchProjects,
+    projectIds: batchProjects.map(project => project.id),
   };
 }
 
@@ -990,11 +1116,15 @@ export async function getTreasuryPaymentDetailReport(batchId: number) {
             detail.batch.approvalBypassed === true
           ).toUpperCase(),
     },
-    project: {
-      id: detail.project.id,
-      code: detail.project.code,
-      name: detail.project.name,
-    },
+    project:
+      detail.projects.length === 1
+        ? detail.projects[0]
+        : {
+            id: 0,
+            code: "VARIOS",
+            name: "Varios proyectos",
+          },
+    projects: detail.projects,
     signatures: resolveTreasuryPaymentSignatures(detail.events),
     lines,
   };
@@ -1445,7 +1575,12 @@ export async function consolidateTreasuryBatchesForApproval(input: {
   }
   if (batchIds.length === 1) {
     const result = await db.transaction(async tx => {
-      await assertTreasuryBatchApprovalsEnabled(tx);
+      const settings = await readTreasurySettings(tx, { forUpdate: true });
+      if (!settings.treasuryBatchApprovalsEnabled) {
+        throw new TreasuryRuleError(
+          "Seleccione al menos dos lotes para crear un consolidado listo para banco."
+        );
+      }
       const batch = await readBatch(tx, batchIds[0]!);
       if (batch.status !== "enviado_depuracion") {
         throw new TreasuryRuleError(
@@ -1499,6 +1634,8 @@ export async function consolidateTreasuryBatchesForApproval(input: {
         sourceBatchNumbers: [updated.batchNumber],
         currency: updated.currency,
         consolidated: false,
+        approvalBypassed: false,
+        status: updated.status,
       };
     });
     await notifyTreasuryApprovers({
@@ -1509,7 +1646,7 @@ export async function consolidateTreasuryBatchesForApproval(input: {
     return result;
   }
   const result = await db.transaction(async tx => {
-    await assertTreasuryBatchApprovalsEnabled(tx);
+    const settings = await readTreasurySettings(tx, { forUpdate: true });
     const batches = (
       await tx
         .select()
@@ -1521,38 +1658,10 @@ export async function consolidateTreasuryBatchesForApproval(input: {
         "Uno o más lotes seleccionados ya no existen."
       );
     }
-    const consolidatableStatuses: TreasuryBatchStatus[] = [
-      "enviado_depuracion",
-      "pendiente_aprobacion",
-    ];
-    const invalidBatch = batches.find(
-      batch => !consolidatableStatuses.includes(batch.status)
+    const routing = assertTreasuryBatchesCanBeConsolidated(
+      batches,
+      settings.treasuryBatchApprovalsEnabled
     );
-    if (invalidBatch) {
-      throw new TreasuryRuleError(
-        `El lote ${invalidBatch.batchNumber} ya no está disponible para consolidar.`
-      );
-    }
-    const projects = new Set(batches.map(batch => batch.projectId));
-    if (projects.size !== 1) {
-      throw new TreasuryRuleError(
-        "Todos los lotes del consolidado deben pertenecer al mismo proyecto."
-      );
-    }
-    const currencies = new Set(batches.map(batch => batch.currency));
-    if (currencies.size !== 1) {
-      throw new TreasuryRuleError(
-        "Todos los lotes del consolidado deben utilizar la misma moneda."
-      );
-    }
-    const paymentDates = new Set(
-      batches.map(batch => toDateOnly(batch.requestedPaymentDate))
-    );
-    if (paymentDates.size !== 1) {
-      throw new TreasuryRuleError(
-        "Todos los lotes del consolidado deben tener la misma fecha prevista."
-      );
-    }
     const activeItems = await tx
       .select()
       .from(treasuryPaymentItems)
@@ -1583,13 +1692,16 @@ export async function consolidateTreasuryBatchesForApproval(input: {
         projectId: baseBatch.projectId,
         currency: baseBatch.currency,
         requestedPaymentDate: baseBatch.requestedPaymentDate,
-        status: "pendiente_aprobacion",
+        status: routing.consolidatedStatus,
         notes: `Consolidado de ${sourceBatchNumbers.join(", ")}`,
         createdById: input.actor.id,
         submittedById: input.actor.id,
         submittedAt: now,
         purifiedById: input.actor.id,
         purifiedAt: now,
+        approvalBypassed: routing.approvalBypassed,
+        approvedById: null,
+        approvedAt: routing.approvalBypassed ? now : null,
       })
       .returning();
     const batchNumber = `TES-${new Date(baseBatch.requestedPaymentDate).getUTCFullYear()}-${String(consolidatedBatch.id).padStart(6, "0")}`;
@@ -1628,7 +1740,10 @@ export async function consolidateTreasuryBatchesForApproval(input: {
           invoiceNetPayable: item.invoiceNetPayable,
           previousPaidAmount: item.previousPaidAmount,
           requestedAmount: item.requestedAmount,
-          status: "incluida" as const,
+          approvedAmount: routing.approvalBypassed
+            ? item.requestedAmount
+            : null,
+          status: routing.consolidatedItemStatus,
           activeReservation: true,
         }))
       )
@@ -1651,7 +1766,10 @@ export async function consolidateTreasuryBatchesForApproval(input: {
       .where(
         and(
           inArray(treasuryPaymentBatches.id, batchIds),
-          inArray(treasuryPaymentBatches.status, consolidatableStatuses)
+          inArray(
+            treasuryPaymentBatches.status,
+            routing.consolidatableStatuses
+          )
         )
       )
       .returning({ id: treasuryPaymentBatches.id });
@@ -1676,13 +1794,17 @@ export async function consolidateTreasuryBatchesForApproval(input: {
     }
     await insertEvent(tx, {
       batchId: consolidatedBatch.id,
-      action: "crear_lote_consolidado",
-      newStatus: "pendiente_aprobacion",
+      action: routing.approvalBypassed
+        ? "crear_lote_consolidado_sin_aprobacion"
+        : "crear_lote_consolidado",
+      newStatus: routing.consolidatedStatus,
       actor: input.actor,
       metadata: {
         sourceBatchIds: batchIds,
         sourceBatchNumbers,
         itemCount: copiedItems.length,
+        projectIds: Array.from(new Set(batches.map(batch => batch.projectId))),
+        approvalBypassed: routing.approvalBypassed,
       },
     });
     return {
@@ -1692,13 +1814,17 @@ export async function consolidateTreasuryBatchesForApproval(input: {
       sourceBatchNumbers,
       currency: baseBatch.currency,
       consolidated: true,
+      approvalBypassed: routing.approvalBypassed,
+      status: routing.consolidatedStatus,
     };
   });
-  await notifyTreasuryApprovers({
-    title: "Consolidado pendiente de aprobación",
-    message: `El lote consolidado ${result.batchNumber}, creado a partir de ${result.sourceBatchIds.length} lotes, requiere aprobación.`,
-    batchId: result.batchId,
-  });
+  if (!result.approvalBypassed) {
+    await notifyTreasuryApprovers({
+      title: "Consolidado pendiente de aprobación",
+      message: `El lote consolidado ${result.batchNumber}, creado a partir de ${result.sourceBatchIds.length} lotes, requiere aprobación.`,
+      batchId: result.batchId,
+    });
+  }
   return result;
 }
 
@@ -1916,7 +2042,12 @@ function buildBankWorkbook(
       [BANK_EXPORT_HEADERS.batchNumber]: detail.batch.batchNumber,
       [BANK_EXPORT_HEADERS.version]: detail.batch.version,
       [BANK_EXPORT_HEADERS.itemId]: item.id,
-      [BANK_EXPORT_HEADERS.project]: `${detail.project.code} - ${detail.project.name}`,
+      [BANK_EXPORT_HEADERS.project]: [
+        item.invoiceProjectCode,
+        item.invoiceProjectName,
+      ]
+        .filter(Boolean)
+        .join(" - "),
       [BANK_EXPORT_HEADERS.supplierCode]: item.supplierCode,
       [BANK_EXPORT_HEADERS.supplierName]: item.supplierName,
       [BANK_EXPORT_HEADERS.invoiceDocumentNumber]: item.invoiceDocumentNumber,

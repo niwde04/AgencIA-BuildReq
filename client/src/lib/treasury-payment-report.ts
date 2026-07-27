@@ -11,6 +11,8 @@ type TreasuryPaymentReportRetention = {
 type TreasuryPaymentReportInvoice = {
   invoiceNumber?: string | null;
   invoiceDocumentNumber: string;
+  projectCode?: string | null;
+  projectName?: string | null;
   documentDate?: string | Date | null;
   total?: string | number | null;
   supplierCode?: string | null;
@@ -343,7 +345,7 @@ export function buildTreasuryPaymentReportHtml(
     }
   >();
   const generalTotals = emptyAmounts();
-  const projectLabel =
+  const defaultProjectLabel =
     [payload.project.code, payload.project.name]
       .map(value => value?.trim())
       .filter(Boolean)
@@ -392,6 +394,11 @@ export function buildTreasuryPaymentReportHtml(
       line.paymentItem.invoiceNumber ||
       line.invoice.invoiceDocumentNumber ||
       line.paymentItem.invoiceDocumentNumber;
+    const projectLabel =
+      [line.invoice.projectCode, line.invoice.projectName]
+        .map(value => value?.trim())
+        .filter(Boolean)
+        .join(" - ") || defaultProjectLabel;
 
     group.rows.push(`
       <tr class="detail-row">

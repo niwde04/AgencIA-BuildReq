@@ -74,20 +74,46 @@ describe("treasury approval endpoint preconditions", () => {
     }
   );
 
-  it("blocks consolidation before changing any batch", async () => {
+  it("allows Administración Central to consolidate while approvals are disabled", async () => {
     mockDisabledApprovalSettings();
-    const consolidateSpy = vi.spyOn(
-      treasury,
-      "consolidateTreasuryBatchesForApproval"
+    vi.spyOn(treasury, "getTreasuryBatchById").mockImplementation(
+      async batchId =>
+        ({
+          batch: { id: batchId, projectId: batchId },
+          projectIds: [batchId],
+        }) as any
     );
+    const consolidateSpy = vi
+      .spyOn(treasury, "consolidateTreasuryBatchesForApproval")
+      .mockResolvedValue({
+        batchId: 42,
+        batchNumber: "TES-2026-000042",
+        sourceBatchIds: [40, 41],
+        sourceBatchNumbers: ["TES-2026-000040", "TES-2026-000041"],
+        currency: "HNL",
+        consolidated: true,
+        approvalBypassed: true,
+        status: "aprobado",
+      });
     const caller = appRouter.createCaller(
       createTreasuryContext("administracion_central")
     );
 
     await expect(
       caller.treasury.consolidateForApproval({ batchIds: [40, 41] })
-    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
-    expect(consolidateSpy).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({
+      batchId: 42,
+      consolidated: true,
+      approvalBypassed: true,
+    });
+    expect(consolidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchIds: [40, 41],
+        actor: expect.objectContaining({
+          buildreqRole: "administracion_central",
+        }),
+      })
+    );
   });
 });
 
