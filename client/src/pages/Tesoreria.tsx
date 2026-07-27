@@ -466,9 +466,9 @@ function BatchFormDialog({
                 {existing ? "Editar lote" : "Nuevo lote de abonos"}
               </DialogTitle>
               <DialogDescription className="max-w-3xl leading-relaxed">
-                Seleccione facturas de línea de crédito y defina el abono
-                solicitado. El valor inicial corresponde al saldo completo
-                disponible y puede reducirse para registrar un pago parcial.
+                Seleccione facturas contabilizadas y defina el abono solicitado.
+                El valor inicial corresponde al saldo completo disponible y
+                puede reducirse para registrar un pago parcial.
               </DialogDescription>
             </div>
           </div>

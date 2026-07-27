@@ -643,7 +643,6 @@ export async function listEligibleTreasuryInvoices(filters?: {
   if (!db) return [];
   const conditions = [
     eq(invoices.status, "registrada"),
-    eq(purchaseOrders.paymentMethod, "linea_credito"),
     isNotNull(invoices.supplierId),
   ];
   if (filters?.projectId)
@@ -855,11 +854,6 @@ export async function createTreasuryBatch(input: {
           "Solo se pueden pagar facturas contabilizadas."
         );
       }
-      if (row.purchaseOrder.paymentMethod !== "linea_credito") {
-        throw new TreasuryRuleError(
-          "Solo se pueden incluir facturas de línea de crédito."
-        );
-      }
       if (!row.supplier) {
         throw new TreasuryRuleError(
           "Todas las facturas deben tener un proveedor."
@@ -954,7 +948,6 @@ export async function updateTreasuryDraft(input: {
       }
       if (
         row.invoice.status !== "registrada" ||
-        row.purchaseOrder.paymentMethod !== "linea_credito" ||
         !row.supplier
       ) {
         throw new TreasuryRuleError(
