@@ -130,6 +130,76 @@ const REOPENABLE_CLOSED_ITEM_STATUSES = new Set<TreasuryItemStatus>([
   "rechazada_banco",
 ]);
 
+const CANCELLABLE_BATCH_STATUSES = new Set<TreasuryBatchStatus>([
+  "borrador",
+  "enviado_depuracion",
+  "pendiente_aprobacion",
+  "aprobado",
+  "enviado_banco",
+  "devuelto",
+  "rechazado",
+]);
+
+const BANK_RESPONSE_ITEM_STATUSES = new Set<TreasuryItemStatus>([
+  "pagada",
+  "rechazada_banco",
+  "con_diferencia",
+  "contabilizada",
+]);
+
+export function assertTreasuryBatchCanBeCancelled(
+  batchStatus: TreasuryBatchStatus,
+  items: Array<{
+    status: TreasuryItemStatus;
+    bankPaidAmount?: string | number | null;
+    bankPaidDate?: Date | string | null;
+    bankReference?: string | null;
+  }>
+) {
+  if (!CANCELLABLE_BATCH_STATUSES.has(batchStatus)) {
+    throw new TreasuryRuleError(
+      "El lote ya tiene una respuesta o pago bancario registrado y no puede anularse."
+    );
+  }
+  if (
+    items.some(
+      item =>
+        BANK_RESPONSE_ITEM_STATUSES.has(item.status) ||
+        item.bankPaidAmount != null ||
+        item.bankPaidDate != null ||
+        Boolean(item.bankReference?.trim())
+    )
+  ) {
+    throw new TreasuryRuleError(
+      "El lote ya tiene una respuesta o pago bancario registrado y no puede anularse."
+    );
+  }
+}
+
+export function resolveTreasuryPaymentSignatures(
+  events: Array<{ action: string; actorName?: string | null }>
+) {
+  const actorForActions = (actions: string[]) => {
+    for (const action of actions) {
+      const actorName = events.find(event => event.action === action)?.actorName;
+      if (actorName?.trim()) return actorName.trim();
+    }
+    return null;
+  };
+  return {
+    preparedBy: actorForActions(["crear_lote", "crear_lote_consolidado"]),
+    approvedBy: actorForActions([
+      "aprobar_lote",
+      "omitir_aprobacion_configuracion",
+      "enviar_sin_aprobacion",
+    ]),
+    authorizedBy: actorForActions([
+      "registrar_pago_banco",
+      "importar_respuesta_banco",
+    ]),
+  };
+}
+
 export function getTreasuryReopenTargetStatus(
   batchStatus: TreasuryBatchStatus,
   itemStatuses: TreasuryItemStatus[]
@@ -876,7 +946,6 @@ export async function getTreasuryPaymentDetailReport(batchId: number) {
     }
     return { paymentItem, invoice };
   });
-
   return {
     generatedAt: new Date(),
     batch: {
@@ -891,6 +960,7 @@ export async function getTreasuryPaymentDetailReport(batchId: number) {
       code: detail.project.code,
       name: detail.project.name,
     },
+    signatures: resolveTreasuryPaymentSignatures(detail.events),
     lines,
   };
 }
@@ -2545,19 +2615,8 @@ export async function cancelTreasuryBatch(input: {
   if (!db) throw new Error("DB not available");
   return db.transaction(async tx => {
     const batch = await readBatch(tx, input.batchId);
-    if (
-      [
-        "enviado_banco",
-        "conciliacion",
-        "pendiente_contabilizacion",
-        "cerrado",
-        "rechazado",
-        "anulado",
-        "consolidado",
-      ].includes(batch.status)
-    ) {
-      throw new TreasuryRuleError("El lote ya no puede anularse.");
-    }
+    const items = await readBatchItems(tx, input.batchId);
+    assertTreasuryBatchCanBeCancelled(batch.status, items);
     const now = new Date();
     await tx
       .update(treasuryPaymentItems)

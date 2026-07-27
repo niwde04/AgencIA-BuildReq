@@ -45,6 +45,11 @@ export type TreasuryPaymentReportPayload = {
     code: string;
     name: string;
   };
+  signatures: {
+    preparedBy?: string | null;
+    approvedBy?: string | null;
+    authorizedBy?: string | null;
+  };
   lines: Array<{
     paymentItem: TreasuryPaymentReportItem;
     invoice: TreasuryPaymentReportInvoice;
@@ -413,6 +418,8 @@ export function buildTreasuryPaymentReportHtml(
   const bankReferences =
     joinUnique(payload.lines.map(line => line.paymentItem.bankReference)) || "-";
   const currencyLabel = currency === "USD" ? "Dolares" : "Lempiras";
+  const signatureName = (value: string | null | undefined) =>
+    escapeHtml(value?.trim() || "Sin registrar");
 
   return `<!doctype html>
 <html lang="es">
@@ -422,31 +429,36 @@ export function buildTreasuryPaymentReportHtml(
     <style>
       @page { size: letter landscape; margin: 9mm 7mm 12mm; }
       * { box-sizing: border-box; }
-      html, body { margin: 0; padding: 0; color: #111827; font-family: Arial, Helvetica, sans-serif; }
+      html, body { margin: 0; padding: 0; color: #111; font-family: Arial, Helvetica, sans-serif; }
       body { font-size: 7.5px; }
       .report { width: 100%; }
+      .report-header { position: relative; display: flex; min-height: 54px; justify-content: center; padding: 2px 105px 0; }
+      .logo { position: absolute; top: 0; left: 0; width: 82px; height: auto; }
+      .heading { text-align: center; }
       .company { text-align: center; font-size: 10px; font-weight: 700; }
       .title { margin-top: 2px; text-align: center; font-size: 9px; font-weight: 700; text-transform: uppercase; text-decoration: underline; }
-      .meta { display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 10px; margin-top: 18px; border-bottom: 1px solid #2563eb; padding-bottom: 5px; }
-      .meta-line { display: grid; grid-template-columns: auto 1fr; gap: 6px; border-bottom: 1px solid #2563eb; padding: 2px 0; }
+      .meta { display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 10px; margin-top: 8px; border-bottom: 0.35pt solid #111; padding-bottom: 5px; }
+      .meta-line { display: grid; grid-template-columns: auto 1fr; gap: 6px; border-bottom: 0.35pt solid #111; padding: 2px 0; }
       .meta-label { font-weight: 700; }
       .location { margin: 8px 0 5px; text-align: right; }
       .values-label { margin: 0 0 3px; text-align: center; font-weight: 700; }
       table { width: 100%; border-collapse: collapse; table-layout: fixed; }
       thead { display: table-header-group; }
       tr { break-inside: avoid; page-break-inside: avoid; }
-      th, td { border-bottom: 1px solid #93c5fd; padding: 4px 3px; vertical-align: top; }
-      th { border-top: 1px solid #2563eb; border-bottom: 1px solid #2563eb; font-size: 6.8px; text-align: center; }
+      th, td { border-bottom: 0.35pt solid #111; padding: 4px 3px; vertical-align: top; }
+      th { border-top: 0.35pt solid #111; border-bottom: 0.35pt solid #111; font-size: 6.8px; text-align: center; }
       td { font-size: 6.8px; }
       .money { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
       .description { line-height: 1.35; }
       .supplier-name { font-weight: 600; }
       .muted { margin-top: 1px; color: #4b5563; font-size: 6.2px; }
-      .supplier-total td { border-top: 1px solid #2563eb; font-weight: 700; }
-      .general-total td { border-top: 1.5px solid #1d4ed8; border-bottom: 1.5px solid #1d4ed8; font-weight: 700; }
+      .supplier-total td { border-top: 0.35pt solid #111; font-weight: 700; }
+      .general-total td { border-top: 0.6pt solid #111; border-bottom: 0.6pt solid #111; font-weight: 700; }
       .amount-words { margin-top: 6px; font-size: 7px; }
       .signatures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 70px; margin: 42px auto 0; width: 75%; break-inside: avoid; page-break-inside: avoid; }
-      .signature { border-top: 1px solid #111827; padding-top: 4px; text-align: center; font-size: 8px; }
+      .signature { border-top: 0.45pt solid #111; padding-top: 4px; text-align: center; font-size: 8px; }
+      .signature-name { min-height: 10px; font-weight: 700; text-transform: uppercase; }
+      .signature-role { margin-top: 2px; }
       .footer { display: flex; justify-content: space-between; margin-top: 18px; color: #4b5563; font-size: 6px; }
       col.reason { width: 14%; }
       col.invoice { width: 7%; }
@@ -458,8 +470,13 @@ export function buildTreasuryPaymentReportHtml(
   </head>
   <body>
     <main class="report">
-      <div class="company">HIDALGO e HIDALGO HONDURAS SA DE CV</div>
-      <div class="title">DETALLE PAGO A PROVEEDORES OFICINA CENTRAL</div>
+      <header class="report-header">
+        <img class="logo" src="/logo_heh.png" alt="Hidalgo e Hidalgo Constructores" />
+        <div class="heading">
+          <div class="company">HIDALGO e HIDALGO HONDURAS SA DE CV</div>
+          <div class="title">DETALLE PAGO A PROVEEDORES OFICINA CENTRAL</div>
+        </div>
+      </header>
 
       <section class="meta">
         <div class="meta-line"><span class="meta-label">Estado del pago</span><span>REGISTRADO</span></div>
@@ -509,9 +526,18 @@ export function buildTreasuryPaymentReportHtml(
 
       <div class="amount-words"><strong>Son:</strong> ${escapeHtml(amountInWords(generalTotals.netPaid, currency))}.</div>
       <section class="signatures">
-        <div class="signature">Elaborado por.</div>
-        <div class="signature">Aprobado por.</div>
-        <div class="signature">Autorizado por.</div>
+        <div class="signature">
+          <div class="signature-name">${signatureName(payload.signatures.preparedBy)}</div>
+          <div class="signature-role">Elaborado por.</div>
+        </div>
+        <div class="signature">
+          <div class="signature-name">${signatureName(payload.signatures.approvedBy)}</div>
+          <div class="signature-role">Aprobado por.</div>
+        </div>
+        <div class="signature">
+          <div class="signature-name">${signatureName(payload.signatures.authorizedBy)}</div>
+          <div class="signature-role">Autorizado por.</div>
+        </div>
       </section>
     </main>
     <div class="footer"><span>${escapeHtml(payload.project.code)} - ${escapeHtml(payload.project.name)}</span><span>${escapeHtml(payload.batch.batchNumber)}</span></div>

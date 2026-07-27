@@ -16,6 +16,11 @@ function reportPayload(): TreasuryPaymentReportPayload {
       code: "017",
       name: "CA-4 Ocotepeque - El Portillo",
     },
+    signatures: {
+      preparedBy: "María Elaboradora",
+      approvedBy: "Carlos Aprobador",
+      authorizedBy: "Ana Autorizadora",
+    },
     lines: [
       {
         paymentItem: {
@@ -78,6 +83,11 @@ describe("reporte de detalle de pago de Tesorería", () => {
     expect(html).toContain("Elaborado por.");
     expect(html).toContain("Aprobado por.");
     expect(html).toContain("Autorizado por.");
+    expect(html).toContain("María Elaboradora");
+    expect(html).toContain("Carlos Aprobador");
+    expect(html).toContain("Ana Autorizadora");
+    expect(html).toContain('src="/logo_heh.png"');
+    expect(html).toContain("border-bottom: 0.35pt solid #111");
   });
 
   it("separa retención ISV, ISR 1% y otras retenciones", () => {

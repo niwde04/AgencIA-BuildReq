@@ -7,14 +7,80 @@ import {
   roundTreasuryMoney,
 } from "../shared/treasury";
 import {
+  assertTreasuryBatchCanBeCancelled,
   buildTreasuryFullPaymentRows,
   getTreasuryApprovalRouting,
   getTreasuryReopenTargetStatus,
   parseTreasuryBankWorkbook,
   prepareTreasuryBankAttachment,
+  resolveTreasuryPaymentSignatures,
   resolveTreasurySettingsUpdate,
   TreasuryRuleError,
 } from "./treasury";
+
+describe("treasury batch cancellation", () => {
+  it("allows cancelling a batch sent to the bank before a response is registered", () => {
+    expect(() =>
+      assertTreasuryBatchCanBeCancelled("enviado_banco", [
+        {
+          status: "aprobada",
+          bankPaidAmount: null,
+          bankPaidDate: null,
+          bankReference: null,
+        },
+      ])
+    ).not.toThrow();
+  });
+
+  it("blocks cancellation after any bank response or payment is registered", () => {
+    expect(() =>
+      assertTreasuryBatchCanBeCancelled("pendiente_contabilizacion", [
+        {
+          status: "pagada",
+          bankPaidAmount: "1399.9985",
+          bankPaidDate: "2026-07-27",
+          bankReference: "REF-001",
+        },
+      ])
+    ).toThrow("ya tiene una respuesta o pago bancario registrado");
+
+    expect(() =>
+      assertTreasuryBatchCanBeCancelled("enviado_banco", [
+        {
+          status: "aprobada",
+          bankPaidAmount: "1399.9985",
+          bankReference: "REF-001",
+        },
+      ])
+    ).toThrow("ya tiene una respuesta o pago bancario registrado");
+  });
+});
+
+describe("treasury payment report signatures", () => {
+  it("maps each workflow participant to the corresponding signature", () => {
+    expect(
+      resolveTreasuryPaymentSignatures([
+        { action: "registrar_pago_banco", actorName: "Ana Autorizadora" },
+        { action: "aprobar_lote", actorName: "Carlos Aprobador" },
+        { action: "crear_lote", actorName: "María Elaboradora" },
+      ])
+    ).toEqual({
+      preparedBy: "María Elaboradora",
+      approvedBy: "Carlos Aprobador",
+      authorizedBy: "Ana Autorizadora",
+    });
+  });
+
+  it("uses the submitter as approver when approvals were bypassed", () => {
+    expect(
+      resolveTreasuryPaymentSignatures([
+        { action: "registrar_pago_banco", actorName: "Ana Autorizadora" },
+        { action: "enviar_sin_aprobacion", actorName: "César Administrador" },
+        { action: "crear_lote", actorName: "César Administrador" },
+      ]).approvedBy
+    ).toBe("César Administrador");
+  });
+});
 
 function bankWorkbook(rows: Array<Record<string, unknown>>) {
   const workbook = XLSX.utils.book_new();

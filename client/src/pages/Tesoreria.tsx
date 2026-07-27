@@ -825,7 +825,9 @@ function BatchDetailDialog({
     mutationOptions("Lote devuelto")
   );
   const cancelMutation = trpc.treasury.cancel.useMutation(
-    mutationOptions("Lote anulado")
+    mutationOptions(
+      "Lote anulado; sus facturas ya están disponibles para otro lote"
+    )
   );
   const exportMutation = trpc.treasury.exportBankWorkbook.useMutation({
     onSuccess: async data => {
@@ -1791,11 +1793,9 @@ function BatchDetailDialog({
             <div className="flex gap-2">
               {status &&
                 ![
-                  "enviado_banco",
                   "conciliacion",
                   "pendiente_contabilizacion",
                   "cerrado",
-                  "rechazado",
                   "anulado",
                   "consolidado",
                 ].includes(status) &&
@@ -1876,6 +1876,8 @@ function BatchDetailDialog({
             <AlertDialogDescription>
               {pendingReasonAction?.type === "reopen"
                 ? "El lote volverá a Enviado al banco y las líneas rechazadas regresarán a Aprobada. Escriba el motivo para registrarlo en la auditoría."
+                : pendingReasonAction?.type === "cancel"
+                  ? "El lote quedará anulado y sus facturas volverán a estar disponibles para incluirlas en otro lote. Esta acción solo se permite antes de registrar una respuesta o pago bancario."
                 : pendingReasonAction?.type === "reject"
                   ? "El lote completo quedará rechazado. Escriba el motivo obligatorio para registrarlo en la auditoría."
                   : pendingReasonAction?.type === "reopenRejected"
