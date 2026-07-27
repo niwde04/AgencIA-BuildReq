@@ -16567,6 +16567,13 @@ export class ProcurementAttachmentMutationError extends Error {
   }
 }
 
+export class InvoiceAttachmentReplacementError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvoiceAttachmentReplacementError";
+  }
+}
+
 const LOCKED_PURCHASE_ORDER_ATTACHMENT_STATUSES = new Set<string>([
   "pendiente_aprobacion",
   "aprobada",
@@ -16650,6 +16657,57 @@ export async function createAttachment(data: InsertAttachment) {
     .values(data)
     .returning({ id: attachments.id });
   return { id: attachment.id };
+}
+
+export async function replaceInvoiceAttachments(
+  data: InsertAttachment & { entityType: "invoice" }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const [invoice] = await tx
+      .select({ id: invoices.id })
+      .from(invoices)
+      .where(eq(invoices.id, data.entityId))
+      .for("update");
+    if (!invoice) {
+      throw new InvoiceAttachmentReplacementError("Factura no encontrada");
+    }
+
+    const replacedAttachments = await tx
+      .select()
+      .from(attachments)
+      .where(
+        and(
+          eq(attachments.entityType, "invoice"),
+          eq(attachments.entityId, data.entityId)
+        )
+      )
+      .orderBy(desc(attachments.createdAt));
+
+    if (replacedAttachments.length > 0) {
+      await tx
+        .delete(attachments)
+        .where(
+          and(
+            eq(attachments.entityType, "invoice"),
+            eq(attachments.entityId, data.entityId)
+          )
+        );
+    }
+
+    const [attachment] = await tx
+      .insert(attachments)
+      .values(data)
+      .returning({ id: attachments.id });
+    if (!attachment) throw new Error("No se pudo registrar el adjunto");
+
+    return {
+      id: attachment.id,
+      replacedAttachments,
+    };
+  });
 }
 
 export async function createProcurementDocumentAttachmentIfMutable(

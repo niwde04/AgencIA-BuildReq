@@ -100,6 +100,31 @@ function throwProcurementAttachmentMutationError(error: unknown): never {
   throw error;
 }
 
+function throwInvoiceAttachmentReplacementError(error: unknown): never {
+  if (error instanceof db.InvoiceAttachmentReplacementError) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: error.message,
+    });
+  }
+  throw error;
+}
+
+async function deleteReplacedInvoiceFiles(
+  replacedAttachments: Array<{ fileKey: string }>
+) {
+  await Promise.all(
+    replacedAttachments.map(attachment =>
+      storageDelete(attachment.fileKey).catch(error => {
+        console.error(
+          `[Attachments] No se pudo eliminar el adjunto reemplazado ${attachment.fileKey}`,
+          error
+        );
+      })
+    )
+  );
+}
+
 function normalizeMimeType(value: string) {
   return value.split(";")[0]?.trim().toLowerCase() ?? "";
 }
@@ -488,7 +513,7 @@ async function mirrorReceiptAttachmentToInvoice(params: {
   const { url } = await storagePut(fileKey, params.buffer, params.mimeType);
 
   try {
-    await db.createAttachment({
+    const result = await db.replaceInvoiceAttachments({
       entityType: "invoice",
       entityId: invoice.id,
       fileName: params.fileName,
@@ -499,8 +524,12 @@ async function mirrorReceiptAttachmentToInvoice(params: {
       category: "factura",
       uploadedById: params.uploadedById,
     });
+    await deleteReplacedInvoiceFiles(result.replacedAttachments);
   } catch (error) {
     await storageDelete(fileKey).catch(() => undefined);
+    if (error instanceof db.InvoiceAttachmentReplacementError) {
+      return;
+    }
     throw error;
   }
 }
@@ -863,8 +892,16 @@ export const attachmentsRouter = router({
         uploadedById: ctx.user.id,
       };
       let result: { id: number };
+      let replacedInvoiceAttachments: Array<{ fileKey: string }> = [];
       try {
-        if (isProcurementDocumentAttachmentEntityType(input.entityType)) {
+        if (input.entityType === "invoice") {
+          const replacement = await db.replaceInvoiceAttachments({
+            ...attachmentData,
+            entityType: "invoice",
+          });
+          result = replacement;
+          replacedInvoiceAttachments = replacement.replacedAttachments;
+        } else if (isProcurementDocumentAttachmentEntityType(input.entityType)) {
           result = await db.createProcurementDocumentAttachmentIfMutable({
             ...attachmentData,
             entityType: input.entityType,
@@ -884,8 +921,12 @@ export const attachmentsRouter = router({
         if (error instanceof db.ProcurementAttachmentMutationError) {
           throwProcurementAttachmentMutationError(error);
         }
+        if (error instanceof db.InvoiceAttachmentReplacementError) {
+          throwInvoiceAttachmentReplacementError(error);
+        }
         throw error;
       }
+      await deleteReplacedInvoiceFiles(replacedInvoiceAttachments);
 
       if (input.entityType === "receipt") {
         await mirrorReceiptAttachmentToInvoice({

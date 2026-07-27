@@ -17773,7 +17773,7 @@ describe("BuildReq - Document attachments", () => {
     createAttachmentSpy.mockRestore();
   });
 
-  it("adds another attachment when uploading an invoice file", async () => {
+  it("replaces every current attachment when uploading an invoice file", async () => {
     const { ctx } = createProjectAdminContext();
     const caller = appRouter.createCaller(ctx);
     const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
@@ -17787,9 +17787,24 @@ describe("BuildReq - Document attachments", () => {
       key: "buildreq/invoice/10/nueva-factura.pdf",
       url: "https://storage.local/nueva-factura.pdf",
     });
-    const createAttachmentSpy = vi
-      .spyOn(db, "createAttachment")
-      .mockResolvedValue({ id: 701 });
+    const replaceInvoiceAttachmentsSpy = vi
+      .spyOn(db, "replaceInvoiceAttachments")
+      .mockResolvedValue({
+        id: 701,
+        replacedAttachments: [
+          {
+            id: 699,
+            fileKey: "buildreq/invoice/10/recepcion.pdf",
+          },
+          {
+            id: 700,
+            fileKey: "buildreq/invoice/10/factura-anterior.pdf",
+          },
+        ],
+      } as any);
+    const storageDeleteSpy = vi
+      .spyOn(storage, "storageDelete")
+      .mockImplementation(async fileKey => ({ key: fileKey }));
 
     await expect(
       caller.attachments.upload({
@@ -17807,7 +17822,7 @@ describe("BuildReq - Document attachments", () => {
         url: "https://storage.local/nueva-factura.pdf",
       })
     );
-    expect(createAttachmentSpy).toHaveBeenCalledWith(
+    expect(replaceInvoiceAttachmentsSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         entityType: "invoice",
         entityId: 10,
@@ -17815,10 +17830,18 @@ describe("BuildReq - Document attachments", () => {
         category: "factura",
       })
     );
+    expect(storageDeleteSpy).toHaveBeenCalledTimes(2);
+    expect(storageDeleteSpy).toHaveBeenCalledWith(
+      "buildreq/invoice/10/recepcion.pdf"
+    );
+    expect(storageDeleteSpy).toHaveBeenCalledWith(
+      "buildreq/invoice/10/factura-anterior.pdf"
+    );
 
     getInvoiceByIdSpy.mockRestore();
     storagePutSpy.mockRestore();
-    createAttachmentSpy.mockRestore();
+    replaceInvoiceAttachmentsSpy.mockRestore();
+    storageDeleteSpy.mockRestore();
   });
 
   it("allows deleting an attachment from a draft invoice with historical files", async () => {
@@ -18077,8 +18100,13 @@ describe("BuildReq - Document attachments", () => {
       });
     const createAttachmentSpy = vi
       .spyOn(db, "createAttachment")
-      .mockResolvedValueOnce({ id: 701 })
-      .mockResolvedValueOnce({ id: 702 });
+      .mockResolvedValueOnce({ id: 701 });
+    const replaceInvoiceAttachmentsSpy = vi
+      .spyOn(db, "replaceInvoiceAttachments")
+      .mockResolvedValue({
+        id: 702,
+        replacedAttachments: [],
+      });
 
     await expect(
       caller.attachments.upload({
@@ -18098,8 +18126,7 @@ describe("BuildReq - Document attachments", () => {
     );
 
     expect(storagePutSpy).toHaveBeenCalledTimes(2);
-    expect(createAttachmentSpy).toHaveBeenNthCalledWith(
-      1,
+    expect(createAttachmentSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         entityType: "receipt",
         entityId: 81,
@@ -18107,8 +18134,7 @@ describe("BuildReq - Document attachments", () => {
         category: "comprobante_entrega",
       })
     );
-    expect(createAttachmentSpy).toHaveBeenNthCalledWith(
-      2,
+    expect(replaceInvoiceAttachmentsSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         entityType: "invoice",
         entityId: 910,
@@ -18120,6 +18146,7 @@ describe("BuildReq - Document attachments", () => {
     getReceiptByIdSpy.mockRestore();
     storagePutSpy.mockRestore();
     createAttachmentSpy.mockRestore();
+    replaceInvoiceAttachmentsSpy.mockRestore();
   });
 
   it("blocks project warehouse users from uploading purchase order attachments", async () => {

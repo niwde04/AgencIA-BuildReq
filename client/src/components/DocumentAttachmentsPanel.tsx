@@ -93,7 +93,11 @@ export function DocumentAttachmentsPanel({
 
   const uploadMutation = trpc.attachments.upload.useMutation({
     onSuccess: result => {
-      toast.success("Adjunto subido");
+      toast.success(
+        entityType === "invoice" && attachments.length > 0
+          ? "Adjunto reemplazado"
+          : "Adjunto subido"
+      );
       invalidateAttachments();
       onUploadSuccess?.(result);
     },
@@ -145,6 +149,8 @@ export function DocumentAttachmentsPanel({
 
   const isBusy = processing || uploadMutation.isPending;
   const uploadDisabled = !enabled || disabled || isLoading || isBusy;
+  const replacesInvoiceAttachments =
+    entityType === "invoice" && attachments.length > 0;
 
   return (
     <section
@@ -168,11 +174,21 @@ export function DocumentAttachmentsPanel({
               disabled={uploadDisabled}
             >
               <Upload className="mr-2 h-4 w-4" />
-              {isBusy ? "Subiendo..." : "Adjuntar"}
+              {isBusy
+                ? "Subiendo..."
+                : replacesInvoiceAttachments
+                  ? "Reemplazar"
+                  : "Adjuntar"}
             </Button>
           </div>
         ) : null}
       </div>
+
+      {replacesInvoiceAttachments ? (
+        <p className="text-xs text-muted-foreground">
+          Al cargar otro archivo, se eliminarán todos los adjuntos actuales.
+        </p>
+      ) : null}
 
       {isLoading ? (
         <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
