@@ -2162,7 +2162,7 @@ export default function Tesoreria() {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">
-            Reporte resumido de facturas
+            Reporte de Facturas
           </CardTitle>
           <CardDescription>
             Genera una fila por factura con su total, retenciones y neto a
