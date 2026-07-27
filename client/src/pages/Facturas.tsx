@@ -5091,7 +5091,6 @@ export default function Facturas() {
                   entityId={selectedId}
                   category="factura"
                   canManage={canManageInvoiceAttachments}
-                  replaceSingleAttachment
                   onStateChange={handleInvoiceAttachmentsState}
                 />
               </main>
