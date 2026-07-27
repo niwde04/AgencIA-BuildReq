@@ -63,12 +63,13 @@ describe("treasury payment report signatures", () => {
       resolveTreasuryPaymentSignatures([
         { action: "registrar_pago_banco", actorName: "Ana Autorizadora" },
         { action: "aprobar_lote", actorName: "Carlos Aprobador" },
+        { action: "enviar_aprobacion", actorName: "Rosa Revisora" },
         { action: "crear_lote", actorName: "María Elaboradora" },
       ])
     ).toEqual({
       preparedBy: "María Elaboradora",
+      reviewedBy: "Rosa Revisora",
       approvedBy: "Carlos Aprobador",
-      authorizedBy: "Ana Autorizadora",
     });
   });
 

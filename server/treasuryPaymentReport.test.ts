@@ -19,8 +19,8 @@ function reportPayload(): TreasuryPaymentReportPayload {
     },
     signatures: {
       preparedBy: "María Elaboradora",
+      reviewedBy: "Rosa Revisora",
       approvedBy: "Carlos Aprobador",
-      authorizedBy: "Ana Autorizadora",
     },
     lines: [
       {
@@ -64,29 +64,39 @@ function reportPayload(): TreasuryPaymentReportPayload {
 }
 
 describe("reporte de detalle de pago de Tesorería", () => {
-  it("incluye la información fiscal, financiera y bancaria del pago", () => {
+  it("incluye la información fiscal y los responsables del pago", () => {
     const html = buildTreasuryPaymentReportHtml(reportPayload());
 
-    expect(html).toContain("DETALLE PAGO A PROVEEDORES OFICINA CENTRAL");
+    expect(html).toContain("DETALLE PAGO A PROVEEDORES");
+    expect(html).not.toContain(
+      "DETALLE PAGO A PROVEEDORES OFICINA CENTRAL"
+    );
+    expect(html).toContain("Ref Lote de Pago:");
     expect(html).toContain("TES-2026-000001");
-    expect(html).toContain("TRX-778899");
+    expect(html).not.toContain("Referencia bancaria");
+    expect(html).not.toContain("TRX-778899");
     expect(html).toContain(
       "ACCESORIOS PARA COMPUTADORAS Y OFICINAS SA DE CV"
     );
     expect(html).toContain("000-013-01-00083329");
     expect(html).toContain("22/07/2026");
-    expect(html).toContain("FG-4100");
+    expect(html).toContain("<th>Job o Proyecto</th>");
+    expect(html).toContain(
+      "<td>017 - CA-4 Ocotepeque - El Portillo</td>"
+    );
+    expect(html).not.toContain("Cód. Finanzas");
+    expect(html).not.toContain("FG-4100");
     expect(html).toContain("Servicio de mantenimiento");
     expect(html).toContain("L 2,151.01");
     expect(html).toContain("L 100.00");
     expect(html).toContain("L 18.70");
     expect(html).toContain("L 2,032.31");
     expect(html).toContain("Elaborado por.");
+    expect(html).toContain("Revisado por.");
     expect(html).toContain("Aprobado por.");
     expect(html).toContain("María Elaboradora");
+    expect(html).toContain("Rosa Revisora");
     expect(html).toContain("Carlos Aprobador");
-    expect(html).not.toContain("Autorizado por.");
-    expect(html).not.toContain("Ana Autorizadora");
     expect(html).toContain('src="/logo_heh.png"');
     expect(html).toContain("border-bottom: 0.35pt solid #111");
   });
@@ -133,7 +143,7 @@ describe("reporte de detalle de pago de Tesorería", () => {
     expect(html).not.toContain("L 600.001");
   });
 
-  it("muestra el estado y el monto solicitado antes del pago bancario", () => {
+  it("muestra el monto solicitado antes del pago bancario", () => {
     const payload = reportPayload();
     payload.batch.paymentStatusLabel = "BORRADOR";
     payload.lines[0].paymentItem.bankPaidAmount = null;
@@ -142,11 +152,9 @@ describe("reporte de detalle de pago de Tesorería", () => {
 
     const html = buildTreasuryPaymentReportHtml(payload);
 
-    expect(html).toContain("BORRADOR");
+    expect(html).not.toContain("BORRADOR");
     expect(html).toContain("L 1,250.50");
-    expect(html).toContain(
-      '<span class="meta-label">Referencia bancaria</span><span>-</span>'
-    );
+    expect(html).not.toContain("Referencia bancaria");
   });
 
   it("escapa textos de facturas y proveedores antes de imprimir", () => {

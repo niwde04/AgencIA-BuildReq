@@ -159,6 +159,14 @@ function formatDateOnly(value: unknown) {
   return `${day}/${month}/${year}`;
 }
 
+function currentLocalDateInput() {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function toExcelDate(value: unknown) {
   const dateKey = toDateKey(value);
   if (!dateKey) return undefined;
@@ -762,6 +770,9 @@ function BatchDetailDialog({
   >({});
   const [accountItemIds, setAccountItemIds] = useState<Set<number>>(new Set());
   const [batchBankReference, setBatchBankReference] = useState("");
+  const [bankPaymentDate, setBankPaymentDate] = useState(
+    currentLocalDateInput
+  );
   const [bankAttachment, setBankAttachment] =
     useState<PreparedBankAttachment>();
   const [preparingBankAttachment, setPreparingBankAttachment] = useState(false);
@@ -775,6 +786,7 @@ function BatchDetailDialog({
     const items = detailQuery.data?.items ?? [];
     setRemovingItem(undefined);
     setBatchBankReference("");
+    setBankPaymentDate(currentLocalDateInput());
     setBankAttachment(undefined);
     setAmounts(
       Object.fromEntries(
@@ -952,6 +964,10 @@ function BatchDetailDialog({
       toast.error("Ingrese la referencia bancaria del lote.");
       return;
     }
+    if (!bankPaymentDate) {
+      toast.error("Ingrese la fecha de registro o pago.");
+      return;
+    }
     if (!bankAttachment) {
       toast.error("Adjunte el comprobante de pago del banco.");
       return;
@@ -959,6 +975,7 @@ function BatchDetailDialog({
     recordBankResponseMutation.mutate({
       id: batch.id,
       bankReference: batchBankReference.trim(),
+      paidDate: bankPaymentDate,
       attachment: {
         fileName: bankAttachment.fileName,
         mimeType: bankAttachment.mimeType,
@@ -1459,8 +1476,8 @@ function BatchDetailDialog({
                 <div>
                   <h3 className="font-semibold">Registrar pago bancario</h3>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Ingrese la referencia del lote y adjunte el comprobante de
-                    pago emitido por el banco.
+                    Ingrese la fecha y referencia del lote, y adjunte el
+                    comprobante de pago emitido por el banco.
                   </p>
                 </div>
                 <Alert>
@@ -1472,20 +1489,36 @@ function BatchDetailDialog({
                   </AlertDescription>
                 </Alert>
                 <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="batch-bank-reference">
-                      Referencia bancaria del lote
-                    </Label>
-                    <Input
-                      id="batch-bank-reference"
-                      value={batchBankReference}
-                      onChange={event =>
-                        setBatchBankReference(event.target.value)
-                      }
-                      placeholder="Ingrese la referencia bancaria"
-                      maxLength={255}
-                      disabled={pending}
-                    />
+                  <div className="grid gap-3 md:grid-cols-[minmax(0,2fr)_minmax(220px,1fr)]">
+                    <div className="space-y-2">
+                      <Label htmlFor="batch-bank-reference">
+                        Referencia bancaria del lote
+                      </Label>
+                      <Input
+                        id="batch-bank-reference"
+                        value={batchBankReference}
+                        onChange={event =>
+                          setBatchBankReference(event.target.value)
+                        }
+                        placeholder="Ingrese la referencia bancaria"
+                        maxLength={255}
+                        disabled={pending}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="bank-payment-date">
+                        Fecha de registro o pago
+                      </Label>
+                      <Input
+                        id="bank-payment-date"
+                        type="date"
+                        value={bankPaymentDate}
+                        onChange={event =>
+                          setBankPaymentDate(event.target.value)
+                        }
+                        disabled={pending}
+                      />
+                    </div>
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor="bank-response-attachment">
@@ -1752,6 +1785,7 @@ function BatchDetailDialog({
                     pending ||
                     preparingBankAttachment ||
                     !batchBankReference.trim() ||
+                    !bankPaymentDate ||
                     !bankAttachment ||
                     detail.items.every(
                       (item: any) => item.status !== "aprobada"

@@ -225,3 +225,37 @@ describe("treasury payment detail report", () => {
     });
   });
 });
+
+describe("treasury bank payment registration", () => {
+  it("passes the selected payment date to the treasury service", async () => {
+    mockDisabledApprovalSettings();
+    vi.spyOn(treasury, "getTreasuryBatchById").mockResolvedValue({
+      batch: { id: 81, projectId: 17 },
+    } as any);
+    const recordSpy = vi
+      .spyOn(treasury, "recordTreasuryBankResponse")
+      .mockResolvedValue({ id: 81 } as any);
+    const caller = appRouter.createCaller(
+      createTreasuryContext("administracion_central")
+    );
+
+    await caller.treasury.recordBankResponse({
+      id: 81,
+      bankReference: "REF-2026-001",
+      paidDate: "2026-07-25",
+      attachment: {
+        fileName: "comprobante.pdf",
+        mimeType: "application/pdf",
+        base64: Buffer.from("%PDF-1.4").toString("base64"),
+      },
+    });
+
+    expect(recordSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchId: 81,
+        bankReference: "REF-2026-001",
+        paidDate: new Date("2026-07-25T00:00:00.000Z"),
+      })
+    );
+  });
+});

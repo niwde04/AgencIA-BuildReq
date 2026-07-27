@@ -560,6 +560,7 @@ export const treasuryRouter = router({
       z.object({
         id: z.number().int().positive(),
         bankReference: z.string().trim().min(1).max(255),
+        paidDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         attachment: bankResponseAttachmentSchema,
       })
     )
@@ -578,6 +579,7 @@ export const treasuryRouter = router({
           batchId: input.id,
           actor: ctx.user,
           bankReference: input.bankReference,
+          paidDate: parseDate(input.paidDate),
           attachment: input.attachment,
         });
       } catch (error) {

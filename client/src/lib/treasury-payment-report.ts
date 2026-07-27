@@ -49,8 +49,8 @@ export type TreasuryPaymentReportPayload = {
   };
   signatures: {
     preparedBy?: string | null;
+    reviewedBy?: string | null;
     approvedBy?: string | null;
-    authorizedBy?: string | null;
   };
   lines: Array<{
     paymentItem: TreasuryPaymentReportItem;
@@ -343,6 +343,11 @@ export function buildTreasuryPaymentReportHtml(
     }
   >();
   const generalTotals = emptyAmounts();
+  const projectLabel =
+    [payload.project.code, payload.project.name]
+      .map(value => value?.trim())
+      .filter(Boolean)
+      .join(" - ") || "-";
 
   for (const line of payload.lines) {
     const supplierName =
@@ -377,10 +382,6 @@ export function buildTreasuryPaymentReportHtml(
     addAmounts(group.totals, amounts);
     addAmounts(generalTotals, amounts);
 
-    const financialCodes =
-      joinUnique(
-        (line.invoice.items ?? []).map(item => item.financialGroupCode)
-      ) || "-";
     const descriptions =
       joinUnique(
         (line.invoice.items ?? []).map(
@@ -401,7 +402,7 @@ export function buildTreasuryPaymentReportHtml(
         </td>
         <td>${escapeHtml(invoiceNumber)}</td>
         <td>${escapeHtml(formatDate(line.invoice.documentDate))}</td>
-        <td>${escapeHtml(financialCodes)}</td>
+        <td>${escapeHtml(projectLabel)}</td>
         <td class="description">${escapeHtml(descriptions)}</td>
         ${amountCells(amounts, currency)}
       </tr>
@@ -422,11 +423,9 @@ export function buildTreasuryPaymentReportHtml(
   const firstPaymentDate =
     payload.lines.find(line => line.paymentItem.bankPaidDate)?.paymentItem
       .bankPaidDate ?? payload.generatedAt;
-  const bankReferences =
-    joinUnique(payload.lines.map(line => line.paymentItem.bankReference)) || "-";
   const currencyLabel = currency === "USD" ? "Dolares" : "Lempiras";
   const signatureName = (value: string | null | undefined) =>
-    escapeHtml(value?.trim() || "Sin registrar");
+    escapeHtml(value?.trim() || "");
 
   return `<!doctype html>
 <html lang="es">
@@ -434,26 +433,26 @@ export function buildTreasuryPaymentReportHtml(
     <meta charset="utf-8" />
     <title>${escapeHtml(payload.batch.batchNumber)} - Detalle de pago</title>
     <style>
-      @page { size: letter landscape; margin: 9mm 7mm 12mm; }
+      @page { size: letter landscape; margin: 9mm 7mm 10mm; }
       * { box-sizing: border-box; }
       html, body { margin: 0; padding: 0; color: #111; font-family: Arial, Helvetica, sans-serif; }
       body { font-size: 7.5px; }
       .report { width: 100%; }
-      .report-header { position: relative; display: flex; min-height: 54px; justify-content: center; padding: 2px 105px 0; }
-      .logo { position: absolute; top: 0; left: 0; width: 82px; height: auto; }
+      .report-header { position: relative; display: flex; min-height: 66px; justify-content: center; padding: 2px 105px 0; }
+      .logo { position: absolute; top: 0; left: 0; width: 76px; height: auto; }
       .heading { text-align: center; }
       .company { text-align: center; font-size: 10px; font-weight: 700; }
       .title { margin-top: 2px; text-align: center; font-size: 9px; font-weight: 700; text-transform: uppercase; text-decoration: underline; }
-      .meta { display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 10px; margin-top: 8px; border-bottom: 0.35pt solid #111; padding-bottom: 5px; }
-      .meta-line { display: grid; grid-template-columns: auto 1fr; gap: 6px; border-bottom: 0.35pt solid #111; padding: 2px 0; }
+      .meta { width: 31%; margin-top: 7px; border-bottom: 0.45pt solid #111; padding: 2px 0 4px; }
+      .meta-line { display: flex; gap: 8px; }
       .meta-label { font-weight: 700; }
-      .location { margin: 8px 0 5px; text-align: right; }
+      .location { margin: 16px 0 5px; text-align: right; }
       .values-label { margin: 0 0 3px; text-align: center; font-weight: 700; }
       table { width: 100%; border-collapse: collapse; table-layout: fixed; }
       thead { display: table-header-group; }
       tr { break-inside: avoid; page-break-inside: avoid; }
-      th, td { border-bottom: 0.35pt solid #111; padding: 4px 3px; vertical-align: top; }
-      th { border-top: 0.35pt solid #111; border-bottom: 0.35pt solid #111; font-size: 6.8px; text-align: center; }
+      th, td { border-bottom: 0.35pt solid #111; padding: 3px; vertical-align: top; }
+      th { border-top: 0.45pt solid #111; border-bottom: 0.45pt solid #111; font-size: 6.8px; text-align: center; }
       td { font-size: 6.8px; }
       .money { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
       .description { line-height: 1.35; }
@@ -462,16 +461,16 @@ export function buildTreasuryPaymentReportHtml(
       .supplier-total td { border-top: 0.35pt solid #111; font-weight: 700; }
       .general-total td { border-top: 0.6pt solid #111; border-bottom: 0.6pt solid #111; font-weight: 700; }
       .amount-words { margin-top: 6px; font-size: 7px; }
-      .signatures { display: grid; grid-template-columns: repeat(2, 1fr); gap: 120px; margin: 42px auto 0; width: 65%; break-inside: avoid; page-break-inside: avoid; }
+      .signatures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 70px; margin: 48px auto 0; width: 76%; break-inside: avoid; page-break-inside: avoid; }
       .signature { border-top: 0.45pt solid #111; padding-top: 4px; text-align: center; font-size: 8px; }
       .signature-name { min-height: 10px; font-weight: 700; text-transform: uppercase; }
       .signature-role { margin-top: 2px; }
-      .footer { display: flex; justify-content: space-between; margin-top: 18px; color: #4b5563; font-size: 6px; }
+      .footer { display: flex; justify-content: flex-end; margin-top: 22px; color: #4b5563; font-size: 6px; }
       col.reason { width: 14%; }
       col.invoice { width: 7%; }
       col.date { width: 6%; }
-      col.code { width: 10%; }
-      col.description { width: 24%; }
+      col.project { width: 13%; }
+      col.description { width: 21%; }
       col.amount { width: 6.5%; }
     </style>
   </head>
@@ -481,14 +480,12 @@ export function buildTreasuryPaymentReportHtml(
         <img class="logo" src="/logo_heh.png" alt="Hidalgo e Hidalgo Constructores" />
         <div class="heading">
           <div class="company">HIDALGO e HIDALGO HONDURAS SA DE CV</div>
-          <div class="title">DETALLE PAGO A PROVEEDORES OFICINA CENTRAL</div>
+          <div class="title">DETALLE PAGO A PROVEEDORES</div>
         </div>
       </header>
 
       <section class="meta">
-        <div class="meta-line"><span class="meta-label">Estado del pago</span><span>${escapeHtml(payload.batch.paymentStatusLabel || "REGISTRADO")}</span></div>
-        <div class="meta-line"><span class="meta-label">Lote</span><span>${escapeHtml(payload.batch.batchNumber)}</span></div>
-        <div class="meta-line"><span class="meta-label">Referencia bancaria</span><span>${escapeHtml(bankReferences)}</span></div>
+        <div class="meta-line"><span class="meta-label">Ref Lote de Pago:</span><span>${escapeHtml(payload.batch.batchNumber)}</span></div>
       </section>
       <div class="location">Oficina Central, Tegucigalpa, ${escapeHtml(formatLongDate(firstPaymentDate))}</div>
       <div class="values-label">Valores en ${escapeHtml(currencyLabel)}</div>
@@ -498,7 +495,7 @@ export function buildTreasuryPaymentReportHtml(
           <col class="reason" />
           <col class="invoice" />
           <col class="date" />
-          <col class="code" />
+          <col class="project" />
           <col class="description" />
           <col class="amount" />
           <col class="amount" />
@@ -512,7 +509,7 @@ export function buildTreasuryPaymentReportHtml(
             <th>Razón Social</th>
             <th>No. Factura</th>
             <th>F. emisión</th>
-            <th>Cód. Finanzas</th>
+            <th>Job o Proyecto</th>
             <th>Descripción Compra</th>
             <th>Total Factura</th>
             <th>Anticipos</th>
@@ -538,12 +535,16 @@ export function buildTreasuryPaymentReportHtml(
           <div class="signature-role">Elaborado por.</div>
         </div>
         <div class="signature">
+          <div class="signature-name">${signatureName(payload.signatures.reviewedBy)}</div>
+          <div class="signature-role">Revisado por.</div>
+        </div>
+        <div class="signature">
           <div class="signature-name">${signatureName(payload.signatures.approvedBy)}</div>
           <div class="signature-role">Aprobado por.</div>
         </div>
       </section>
     </main>
-    <div class="footer"><span>${escapeHtml(payload.project.code)} - ${escapeHtml(payload.project.name)}</span><span>${escapeHtml(payload.batch.batchNumber)}</span></div>
+    <div class="footer">${escapeHtml(payload.batch.batchNumber)}</div>
   </body>
 </html>`;
 }

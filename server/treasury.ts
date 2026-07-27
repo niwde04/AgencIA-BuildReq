@@ -189,14 +189,15 @@ export function resolveTreasuryPaymentSignatures(
   };
   return {
     preparedBy: actorForActions(["crear_lote", "crear_lote_consolidado"]),
+    reviewedBy: actorForActions([
+      "enviar_aprobacion",
+      "guardar_revision",
+      "crear_lote_consolidado",
+    ]),
     approvedBy: actorForActions([
       "aprobar_lote",
       "omitir_aprobacion_configuracion",
       "enviar_sin_aprobacion",
-    ]),
-    authorizedBy: actorForActions([
-      "registrar_pago_banco",
-      "importar_respuesta_banco",
     ]),
   };
 }
@@ -2348,6 +2349,7 @@ export async function recordTreasuryBankResponse(input: {
   batchId: number;
   actor: TreasuryActor;
   bankReference: string;
+  paidDate: Date;
   attachment: TreasuryBankResponseAttachmentInput;
 }) {
   const db = await getDb();
@@ -2359,7 +2361,7 @@ export async function recordTreasuryBankResponse(input: {
     batch,
     items: batchItems,
     bankReference,
-    paidDate: new Date(),
+    paidDate: input.paidDate,
   });
   matchTreasuryBankRows(parsedRows, batch, batchItems);
   const preparedAttachment = prepareTreasuryBankAttachment(input.attachment);
@@ -2381,6 +2383,7 @@ export async function recordTreasuryBankResponse(input: {
       eventMetadata: {
         source: "manual",
         bankReference,
+        paidDate: toDateOnly(input.paidDate),
         attachmentFileName: preparedAttachment.fileName,
       },
     });
