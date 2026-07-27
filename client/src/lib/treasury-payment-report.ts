@@ -30,6 +30,7 @@ type TreasuryPaymentReportItem = {
   invoiceNumber?: string | null;
   previousPaidAmount?: string | number | null;
   bankPaidAmount?: string | number | null;
+  reportAmount?: string | number | null;
   bankPaidDate?: string | Date | null;
   bankReference?: string | null;
 };
@@ -40,6 +41,7 @@ export type TreasuryPaymentReportPayload = {
     batchNumber: string;
     currency: TreasuryPaymentReportCurrency;
     requestedPaymentDate: string | Date;
+    paymentStatusLabel?: string | null;
   };
   project: {
     code: string;
@@ -365,7 +367,12 @@ export function buildTreasuryPaymentReportHtml(
       retIsv: retention.retIsv,
       retIsr1: retention.retIsr1,
       otherRetentions: retention.otherRetentions,
-      netPaid: roundMoney(toNumber(line.paymentItem.bankPaidAmount)),
+      netPaid: roundMoney(
+        toNumber(
+          line.paymentItem.reportAmount ??
+            line.paymentItem.bankPaidAmount
+        )
+      ),
     };
     addAmounts(group.totals, amounts);
     addAmounts(generalTotals, amounts);
@@ -479,7 +486,7 @@ export function buildTreasuryPaymentReportHtml(
       </header>
 
       <section class="meta">
-        <div class="meta-line"><span class="meta-label">Estado del pago</span><span>REGISTRADO</span></div>
+        <div class="meta-line"><span class="meta-label">Estado del pago</span><span>${escapeHtml(payload.batch.paymentStatusLabel || "REGISTRADO")}</span></div>
         <div class="meta-line"><span class="meta-label">Lote</span><span>${escapeHtml(payload.batch.batchNumber)}</span></div>
         <div class="meta-line"><span class="meta-label">Referencia bancaria</span><span>${escapeHtml(bankReferences)}</span></div>
       </section>

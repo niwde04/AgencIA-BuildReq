@@ -11,6 +11,7 @@ function reportPayload(): TreasuryPaymentReportPayload {
       batchNumber: "TES-2026-000001",
       currency: "HNL",
       requestedPaymentDate: "2026-07-26",
+      paymentStatusLabel: "REGISTRADO",
     },
     project: {
       code: "017",
@@ -130,6 +131,22 @@ describe("reporte de detalle de pago de Tesorería", () => {
 
     expect(html).toContain("L 600.00");
     expect(html).not.toContain("L 600.001");
+  });
+
+  it("muestra el estado y el monto solicitado antes del pago bancario", () => {
+    const payload = reportPayload();
+    payload.batch.paymentStatusLabel = "BORRADOR";
+    payload.lines[0].paymentItem.bankPaidAmount = null;
+    payload.lines[0].paymentItem.bankReference = null;
+    payload.lines[0].paymentItem.reportAmount = "1,250.50".replace(",", "");
+
+    const html = buildTreasuryPaymentReportHtml(payload);
+
+    expect(html).toContain("BORRADOR");
+    expect(html).toContain("L 1,250.50");
+    expect(html).toContain(
+      '<span class="meta-label">Referencia bancaria</span><span>-</span>'
+    );
   });
 
   it("escapa textos de facturas y proveedores antes de imprimir", () => {

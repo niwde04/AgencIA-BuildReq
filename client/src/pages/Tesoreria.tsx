@@ -1774,27 +1774,20 @@ function BatchDetailDialog({
                   <Banknote className="mr-2 h-4 w-4" /> Contabilizar abonos
                 </Button>
               )}
-              {canManageBankResponse &&
-                status &&
-                ["pendiente_contabilizacion", "cerrado"].includes(status) &&
-                detail.items.some(
-                  (item: any) => Number(item.bankPaidAmount ?? 0) > 0
-                ) && (
-                  <Button
-                    variant="outline"
-                    onClick={() => void generatePaymentReport()}
-                    disabled={pending || generatingPaymentReport}
-                  >
-                    {generatingPaymentReport ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Printer className="mr-2 h-4 w-4" />
-                    )}
-                    {generatingPaymentReport
-                      ? "Generando reporte..."
-                      : "Generar reporte de pago"}
-                  </Button>
+              <Button
+                variant="outline"
+                onClick={() => void generatePaymentReport()}
+                disabled={pending || generatingPaymentReport}
+              >
+                {generatingPaymentReport ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Printer className="mr-2 h-4 w-4" />
                 )}
+                {generatingPaymentReport
+                  ? "Generando reporte..."
+                  : "Generar reporte de pago"}
+              </Button>
               {canReopenClosedBatch && (
                 <Button
                   variant="outline"

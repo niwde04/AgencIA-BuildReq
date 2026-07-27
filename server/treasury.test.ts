@@ -13,6 +13,7 @@ import {
   getTreasuryReopenTargetStatus,
   parseTreasuryBankWorkbook,
   prepareTreasuryBankAttachment,
+  resolveTreasuryPaymentReportAmount,
   resolveTreasuryPaymentSignatures,
   resolveTreasurySettingsUpdate,
   TreasuryRuleError,
@@ -79,6 +80,35 @@ describe("treasury payment report signatures", () => {
         { action: "crear_lote", actorName: "César Administrador" },
       ]).approvedBy
     ).toBe("César Administrador");
+  });
+});
+
+describe("treasury payment report amounts", () => {
+  it("uses the requested amount immediately after creating the batch", () => {
+    expect(
+      resolveTreasuryPaymentReportAmount({
+        requestedAmount: "600.0010",
+      })
+    ).toBe(600);
+  });
+
+  it("prefers the approved amount before the bank payment", () => {
+    expect(
+      resolveTreasuryPaymentReportAmount({
+        requestedAmount: "600.00",
+        approvedAmount: "550.25",
+      })
+    ).toBe(550.25);
+  });
+
+  it("prefers the registered bank payment over previous amounts", () => {
+    expect(
+      resolveTreasuryPaymentReportAmount({
+        requestedAmount: "600.00",
+        approvedAmount: "550.25",
+        bankPaidAmount: "525.10",
+      })
+    ).toBe(525.1);
   });
 });
 

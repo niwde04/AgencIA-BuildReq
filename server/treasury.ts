@@ -26,6 +26,7 @@ import {
 import type { PurchaseCurrency } from "../shared/purchase-orders";
 import {
   buildTreasuryMoneySummary,
+  getTreasuryBatchStatusLabel,
   roundTreasuryMoney,
   type TreasuryBatchStatus,
   type TreasuryItemStatus,
@@ -198,6 +199,20 @@ export function resolveTreasuryPaymentSignatures(
       "importar_respuesta_banco",
     ]),
   };
+}
+
+export function resolveTreasuryPaymentReportAmount(item: {
+  requestedAmount?: string | number | null;
+  approvedAmount?: string | number | null;
+  bankPaidAmount?: string | number | null;
+}) {
+  const value =
+    item.bankPaidAmount ??
+    item.approvedAmount ??
+    item.requestedAmount ??
+    0;
+  const amount = Number(value);
+  return roundTreasuryMoney(Number.isFinite(amount) ? amount : 0);
 }
 
 export function getTreasuryReopenTargetStatus(
@@ -922,40 +937,42 @@ export async function getTreasuryPaymentDetailReport(batchId: number) {
   if (!detail) {
     throw new TreasuryRuleError("Lote de Tesorería no encontrado.");
   }
-  if (
-    !["pendiente_contabilizacion", "cerrado"].includes(detail.batch.status)
-  ) {
-    throw new TreasuryRuleError(
-      "El detalle de pago se genera después de registrar el pago bancario."
-    );
-  }
 
-  const paidItems = detail.items.filter(
+  const reportItems = detail.items.filter(
     (item: any) =>
-      ["pagada", "contabilizada"].includes(item.status) &&
-      Number(item.bankPaidAmount ?? 0) > 0
+      !["excluida", "rechazada_banco"].includes(item.status) &&
+      resolveTreasuryPaymentReportAmount(item) > 0
   );
-  if (!paidItems.length) {
+  if (!reportItems.length) {
     throw new TreasuryRuleError(
-      "El lote no tiene pagos bancarios registrados para reportar."
+      "El lote no tiene facturas con monto disponible para reportar."
     );
   }
 
   const sourceInvoices = await listDmcReportSourceInvoices({
-    invoiceIds: paidItems.map((item: any) => item.invoiceId),
+    invoiceIds: reportItems.map((item: any) => item.invoiceId),
   });
   const invoicesById = new Map(
     sourceInvoices.map(invoice => [invoice.invoiceId, invoice])
   );
-  const lines = paidItems.map((paymentItem: any) => {
+  const lines = reportItems.map((paymentItem: any) => {
     const invoice = invoicesById.get(paymentItem.invoiceId);
     if (!invoice) {
       throw new TreasuryRuleError(
         `No se encontró la factura ${paymentItem.invoiceDocumentNumber}.`
       );
     }
-    return { paymentItem, invoice };
+    return {
+      paymentItem: {
+        ...paymentItem,
+        reportAmount: resolveTreasuryPaymentReportAmount(paymentItem),
+      },
+      invoice,
+    };
   });
+  const hasRegisteredPayment = reportItems.some(
+    (item: any) => Number(item.bankPaidAmount ?? 0) > 0
+  );
   return {
     generatedAt: new Date(),
     batch: {
@@ -964,6 +981,12 @@ export async function getTreasuryPaymentDetailReport(batchId: number) {
       status: detail.batch.status,
       currency: detail.batch.currency,
       requestedPaymentDate: detail.batch.requestedPaymentDate,
+      paymentStatusLabel: hasRegisteredPayment
+        ? "REGISTRADO"
+        : getTreasuryBatchStatusLabel(
+            detail.batch.status,
+            detail.batch.approvalBypassed === true
+          ).toUpperCase(),
     },
     project: {
       id: detail.project.id,
