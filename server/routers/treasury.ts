@@ -53,6 +53,10 @@ function isProjectManager(user: User) {
   );
 }
 
+function canManageTreasuryDrafts(user: User) {
+  return isCentral(user) || isProjectManager(user);
+}
+
 function isAccountant(user: User) {
   return user.role === "admin" || user.buildreqRole === "contable";
 }
@@ -168,7 +172,7 @@ export const treasuryRouter = router({
     canAccess: await canAccessTreasury(ctx.user),
     isApprover: ctx.user.buildreqRole === "financiero",
     permissions: {
-      canCreate: isProjectManager(ctx.user),
+      canCreate: canManageTreasuryDrafts(ctx.user),
       canDepurate: isCentral(ctx.user),
       canAccount: isAccountant(ctx.user),
     },
@@ -308,13 +312,13 @@ export const treasuryRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
       if (
-        !isProjectManager(ctx.user) ||
+        !canManageTreasuryDrafts(ctx.user) ||
         !canAccessProject(ctx.user, input.projectId)
       ) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message:
-            "Solo Administración de Proyecto puede crear lotes de sus proyectos.",
+            "Solo Administración Central o Administración de Proyecto pueden crear lotes.",
         });
       }
       try {
@@ -341,7 +345,7 @@ export const treasuryRouter = router({
       await assertTreasuryEnabled();
       const detail = await assertBatchAccess(ctx.user, input.id);
       if (
-        !isProjectManager(ctx.user) ||
+        !canManageTreasuryDrafts(ctx.user) ||
         !canAccessProject(ctx.user, detail.batch.projectId)
       ) {
         throw new TRPCError({
@@ -368,7 +372,7 @@ export const treasuryRouter = router({
       await assertTreasuryEnabled();
       const detail = await assertBatchAccess(ctx.user, input.id);
       if (
-        !isProjectManager(ctx.user) ||
+        !canManageTreasuryDrafts(ctx.user) ||
         !canAccessProject(ctx.user, detail.batch.projectId)
       ) {
         throw new TRPCError({

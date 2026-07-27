@@ -843,8 +843,8 @@ function BatchDetailDialog({
   const status = batch?.status as TreasuryBatchStatus | undefined;
   const isCentral =
     user?.role === "admin" || user?.buildreqRole === "administracion_central";
-  const isProjectManager =
-    user?.role === "admin" || user?.buildreqRole === "administrador_proyecto";
+  const canManageDrafts =
+    isCentral || user?.buildreqRole === "administrador_proyecto";
   const isAccountant =
     user?.role === "admin" || user?.buildreqRole === "contable";
   const approvalsEnabled =
@@ -1136,7 +1136,7 @@ function BatchDetailDialog({
             <div className="overflow-hidden rounded-lg border bg-card">
               <Table
                 className={
-                  status === "borrador" && isProjectManager
+                  status === "borrador" && canManageDrafts
                     ? "min-w-[1180px]"
                     : "min-w-[1100px]"
                 }
@@ -1159,7 +1159,7 @@ function BatchDetailDialog({
                       Saldo pendiente
                     </TableHead>
                     {editableAdjustments && <TableHead>Excluir</TableHead>}
-                    {status === "borrador" && isProjectManager && (
+                    {status === "borrador" && canManageDrafts && (
                       <TableHead className="w-24 text-right">
                         Acciones
                       </TableHead>
@@ -1291,7 +1291,7 @@ function BatchDetailDialog({
                           )}
                         </TableCell>
                       )}
-                      {status === "borrador" && isProjectManager && (
+                      {status === "borrador" && canManageDrafts && (
                         <TableCell className="text-right">
                           <Button
                             type="button"
@@ -1534,7 +1534,7 @@ function BatchDetailDialog({
           <DialogFooter className="flex-wrap border-t bg-muted/20 px-6 py-4 sm:items-center sm:justify-between">
             <div className="flex flex-wrap gap-2">
               {(status === "borrador" || status === "devuelto") &&
-                isProjectManager && (
+                canManageDrafts && (
                   <>
                     <Button
                       variant="outline"
@@ -1675,7 +1675,7 @@ function BatchDetailDialog({
                 ].includes(status) &&
                 (isCentral ||
                   ((status === "borrador" || status === "devuelto") &&
-                    isProjectManager)) && (
+                    canManageDrafts)) && (
                   <Button
                     variant="destructive"
                     disabled={pending}

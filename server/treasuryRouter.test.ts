@@ -91,6 +91,38 @@ describe("treasury approval endpoint preconditions", () => {
   });
 });
 
+describe("treasury draft permissions", () => {
+  it("allows Administración Central to create and manage treasury drafts", async () => {
+    mockDisabledApprovalSettings();
+    const createSpy = vi
+      .spyOn(treasury, "createTreasuryBatch")
+      .mockResolvedValue({ id: 70 } as any);
+    const caller = appRouter.createCaller(
+      createTreasuryContext("administracion_central")
+    );
+
+    const settings = await caller.treasury.settings();
+    expect(settings.permissions.canCreate).toBe(true);
+
+    await caller.treasury.create({
+      projectId: 1,
+      currency: "HNL",
+      requestedPaymentDate: "2026-07-31",
+      items: [{ invoiceId: 50, requestedAmount: 100 }],
+    });
+
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 1,
+        currency: "HNL",
+        actor: expect.objectContaining({
+          buildreqRole: "administracion_central",
+        }),
+      })
+    );
+  });
+});
+
 describe("treasury invoice summary report", () => {
   it("allows Financiero to export one row per filtered invoice", async () => {
     mockDisabledApprovalSettings();
