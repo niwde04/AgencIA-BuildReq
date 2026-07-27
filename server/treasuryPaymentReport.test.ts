@@ -12,6 +12,7 @@ function reportPayload(): TreasuryPaymentReportPayload {
       currency: "HNL",
       requestedPaymentDate: "2026-07-26",
       paymentStatusLabel: "REGISTRADO",
+      notes: "Pagar según instrucciones del contrato.",
     },
     project: {
       code: "017",
@@ -78,6 +79,7 @@ describe("reporte de detalle de pago de Tesorería", () => {
     expect(html).toContain(
       "ACCESORIOS PARA COMPUTADORAS Y OFICINAS SA DE CV"
     );
+    expect(html).not.toContain("PROV-000114");
     expect(html).toContain("000-013-01-00083329");
     expect(html).toContain("22/07/2026");
     expect(html).toContain("<th>Job o Proyecto</th>");
@@ -91,12 +93,14 @@ describe("reporte de detalle de pago de Tesorería", () => {
     expect(html).toContain("L 100.00");
     expect(html).toContain("L 18.70");
     expect(html).toContain("L 2,032.31");
+    expect(html).toContain("Notas:");
+    expect(html).toContain("Pagar según instrucciones del contrato.");
     expect(html).toContain("Elaborado por.");
     expect(html).toContain("Revisado por.");
     expect(html).toContain("Aprobado por.");
-    expect(html).toContain("María Elaboradora");
-    expect(html).toContain("Rosa Revisora");
-    expect(html).toContain("Carlos Aprobador");
+    expect(html).not.toContain("María Elaboradora");
+    expect(html).not.toContain("Rosa Revisora");
+    expect(html).not.toContain("Carlos Aprobador");
     expect(html).toContain('src="/logo_heh.png"');
     expect(html).toContain("border-bottom: 0.35pt solid #111");
   });
@@ -160,10 +164,15 @@ describe("reporte de detalle de pago de Tesorería", () => {
   it("escapa textos de facturas y proveedores antes de imprimir", () => {
     const payload = reportPayload();
     payload.lines[0].invoice.supplierName = "<script>alert(1)</script>";
+    payload.batch.notes = "<script>alert('nota')</script>";
 
     const html = buildTreasuryPaymentReportHtml(payload);
 
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("<script>alert('nota')</script>");
+    expect(html).toContain(
+      "&lt;script&gt;alert(&#039;nota&#039;)&lt;/script&gt;"
+    );
   });
 });

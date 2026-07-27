@@ -1307,9 +1307,6 @@ function BatchDetailDialog({
                         )}
                       <TableCell className="whitespace-normal">
                         <div className="font-medium">{item.supplierName}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {item.supplierCode || "Sin código"}
-                        </div>
                         {item.exclusionReason && (
                           <div className="mt-1 text-xs text-destructive">
                             {item.exclusionReason}

@@ -982,6 +982,7 @@ export async function getTreasuryPaymentDetailReport(batchId: number) {
       status: detail.batch.status,
       currency: detail.batch.currency,
       requestedPaymentDate: detail.batch.requestedPaymentDate,
+      notes: detail.batch.notes,
       paymentStatusLabel: hasRegisteredPayment
         ? "REGISTRADO"
         : getTreasuryBatchStatusLabel(

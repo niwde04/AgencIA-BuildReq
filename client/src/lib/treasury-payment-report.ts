@@ -42,6 +42,7 @@ export type TreasuryPaymentReportPayload = {
     currency: TreasuryPaymentReportCurrency;
     requestedPaymentDate: string | Date;
     paymentStatusLabel?: string | null;
+    notes?: string | null;
   };
   project: {
     code: string;
@@ -337,7 +338,6 @@ export function buildTreasuryPaymentReportHtml(
     string,
     {
       supplierName: string;
-      supplierCode: string;
       rows: string[];
       totals: ReportAmounts;
     }
@@ -359,7 +359,6 @@ export function buildTreasuryPaymentReportHtml(
     const groupKey = `${supplierCode}:${supplierName}`;
     const group = groups.get(groupKey) ?? {
       supplierName,
-      supplierCode,
       rows: [],
       totals: emptyAmounts(),
     };
@@ -398,7 +397,6 @@ export function buildTreasuryPaymentReportHtml(
       <tr class="detail-row">
         <td>
           <div class="supplier-name">${escapeHtml(supplierName)}</div>
-          ${supplierCode ? `<div class="muted">${escapeHtml(supplierCode)}</div>` : ""}
         </td>
         <td>${escapeHtml(invoiceNumber)}</td>
         <td>${escapeHtml(formatDate(line.invoice.documentDate))}</td>
@@ -424,8 +422,7 @@ export function buildTreasuryPaymentReportHtml(
     payload.lines.find(line => line.paymentItem.bankPaidDate)?.paymentItem
       .bankPaidDate ?? payload.generatedAt;
   const currencyLabel = currency === "USD" ? "Dolares" : "Lempiras";
-  const signatureName = (value: string | null | undefined) =>
-    escapeHtml(value?.trim() || "");
+  const batchNotes = payload.batch.notes?.trim();
 
   return `<!doctype html>
 <html lang="es">
@@ -457,14 +454,13 @@ export function buildTreasuryPaymentReportHtml(
       .money { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
       .description { line-height: 1.35; }
       .supplier-name { font-weight: 600; }
-      .muted { margin-top: 1px; color: #4b5563; font-size: 6.2px; }
       .supplier-total td { border-top: 0.35pt solid #111; font-weight: 700; }
       .general-total td { border-top: 0.6pt solid #111; border-bottom: 0.6pt solid #111; font-weight: 700; }
       .amount-words { margin-top: 6px; font-size: 7px; }
       .signatures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 70px; margin: 48px auto 0; width: 76%; break-inside: avoid; page-break-inside: avoid; }
-      .signature { border-top: 0.45pt solid #111; padding-top: 4px; text-align: center; font-size: 8px; }
-      .signature-name { min-height: 10px; font-weight: 700; text-transform: uppercase; }
-      .signature-role { margin-top: 2px; }
+      .signature { border-top: 0.45pt solid #111; padding-top: 12px; text-align: center; font-size: 8px; }
+      .batch-notes { margin-top: 22px; font-size: 7px; line-height: 1.4; white-space: pre-wrap; break-inside: avoid; page-break-inside: avoid; }
+      .batch-notes-label { font-weight: 700; }
       .footer { display: flex; justify-content: flex-end; margin-top: 22px; color: #4b5563; font-size: 6px; }
       col.reason { width: 14%; }
       col.invoice { width: 7%; }
@@ -530,19 +526,11 @@ export function buildTreasuryPaymentReportHtml(
 
       <div class="amount-words"><strong>Son:</strong> ${escapeHtml(amountInWords(generalTotals.netPaid, currency))}.</div>
       <section class="signatures">
-        <div class="signature">
-          <div class="signature-name">${signatureName(payload.signatures.preparedBy)}</div>
-          <div class="signature-role">Elaborado por.</div>
-        </div>
-        <div class="signature">
-          <div class="signature-name">${signatureName(payload.signatures.reviewedBy)}</div>
-          <div class="signature-role">Revisado por.</div>
-        </div>
-        <div class="signature">
-          <div class="signature-name">${signatureName(payload.signatures.approvedBy)}</div>
-          <div class="signature-role">Aprobado por.</div>
-        </div>
+        <div class="signature">Elaborado por.</div>
+        <div class="signature">Revisado por.</div>
+        <div class="signature">Aprobado por.</div>
       </section>
+      ${batchNotes ? `<div class="batch-notes"><span class="batch-notes-label">Notas:</span> ${escapeHtml(batchNotes)}</div>` : ""}
     </main>
     <div class="footer">${escapeHtml(payload.batch.batchNumber)}</div>
   </body>
