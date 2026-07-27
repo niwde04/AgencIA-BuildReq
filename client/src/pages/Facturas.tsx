@@ -1347,11 +1347,30 @@ export default function Facturas() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [expandedItemsId, setExpandedItemsId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [projectFilter, setProjectFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
   const debouncedSearchTerm = useDebouncedValue(searchTerm);
+  const { data: projects } = trpc.projects.list.useQuery();
+  const projectOptions = useMemo(
+    () =>
+      [...(projects ?? [])].sort(
+        (left: any, right: any) =>
+          String(left.code ?? "").localeCompare(
+            String(right.code ?? ""),
+            "es-HN",
+            { numeric: true, sensitivity: "base" }
+          ) ||
+          String(left.name ?? "").localeCompare(
+            String(right.name ?? ""),
+            "es-HN",
+            { sensitivity: "base" }
+          )
+      ),
+    [projects]
+  );
   const [isExportingInternalReport, setIsExportingInternalReport] =
     useState(false);
   const [accountingComment, setAccountingComment] = useState("");
@@ -1440,6 +1459,8 @@ export default function Facturas() {
   );
   const listFilters = useMemo(
     () => ({
+      projectId:
+        projectFilter === "all" ? undefined : Number(projectFilter),
       status:
         statusFilter === "all"
           ? undefined
@@ -1455,7 +1476,14 @@ export default function Facturas() {
       page,
       pageSize: PAGE_SIZE,
     }),
-    [dateFrom, dateTo, debouncedSearchTerm, page, statusFilter]
+    [
+      dateFrom,
+      dateTo,
+      debouncedSearchTerm,
+      page,
+      projectFilter,
+      statusFilter,
+    ]
   );
 
   const {
@@ -1798,7 +1826,7 @@ export default function Facturas() {
 
   useEffect(
     () => setPage(1),
-    [dateFrom, dateTo, debouncedSearchTerm, statusFilter]
+    [dateFrom, dateTo, debouncedSearchTerm, projectFilter, statusFilter]
   );
   useEffect(() => {
     if (
@@ -3275,6 +3303,8 @@ export default function Facturas() {
     setIsExportingInternalReport(true);
     try {
       const payload = await utils.reports.systemInvoices.fetch({
+        projectId:
+          projectFilter === "all" ? null : Number(projectFilter),
         dateFrom: dateFrom || null,
         dateTo: dateTo || null,
         search: debouncedSearchTerm.trim() || null,
@@ -3383,6 +3413,19 @@ export default function Facturas() {
             />
           </div>
         </div>
+        <Select value={projectFilter} onValueChange={setProjectFilter}>
+          <SelectTrigger className="h-10 w-full lg:w-64">
+            <SelectValue placeholder="Todos los proyectos" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos los proyectos</SelectItem>
+            {projectOptions.map((project: any) => (
+              <SelectItem key={project.id} value={String(project.id)}>
+                {project.code} - {project.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="h-10 w-full lg:w-56">
             <SelectValue />

@@ -151,6 +151,7 @@ export const reportsRouter = router({
   systemInvoices: protectedProcedure
     .input(
       z.object({
+        projectId: z.number().int().positive().nullish(),
         dateFrom: dateInputSchema,
         dateTo: dateInputSchema,
         search: z.string().trim().max(200).nullish(),
@@ -175,6 +176,7 @@ export const reportsRouter = router({
         });
       }
       const invoiceFilters: DmcReportFilters = {
+        projectId: input.projectId,
         dateFrom,
         dateTo,
         search: input.search,

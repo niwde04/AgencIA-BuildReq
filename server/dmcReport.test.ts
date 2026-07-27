@@ -948,6 +948,7 @@ describe("DMC report authorization", () => {
     );
 
     const invoicePayload = await caller.reports.systemInvoices({
+      projectId: 15,
       dateFrom: "2026-07-01",
       dateTo: "2026-07-31",
       search: "FAC-001",
@@ -956,6 +957,7 @@ describe("DMC report authorization", () => {
     expect(invoicePayload.purchaseOrders).toEqual([]);
     expect(invoiceSpy).toHaveBeenCalledWith(
       expect.objectContaining({
+        projectId: 15,
         search: "FAC-001",
         excludeStatus: "anulada",
       })
