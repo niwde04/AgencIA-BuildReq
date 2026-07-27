@@ -944,6 +944,23 @@ function getTransferDestinationLabel(transferDetail: any, fallback: string) {
       : fallback;
 }
 
+function formatPurchaseOrderReceiptSourceLabel(row: any) {
+  const orderNumber = row?.purchaseOrder?.orderNumber ?? "Orden pendiente";
+  const supplierName = row?.supplier?.name || "Proveedor pendiente";
+  const contractStatus =
+    row?.purchaseOrder?.appliesContract && row?.contractSummary?.statusLabel
+      ? ` — ${row.contractSummary.statusLabel}`
+      : "";
+  return `${orderNumber} — ${supplierName}${contractStatus}`;
+}
+
+function formatTransferReceiptSourceLabel(row: any) {
+  const transferNumber = row?.transfer?.transferNumber ?? "Traslado pendiente";
+  const requestNumber = row?.transferRequest?.requestNumber || "Solicitud";
+  const destination = getTransferDestinationLabel(row, "Destino pendiente");
+  return `${transferNumber} — ${requestNumber} — ${destination}`;
+}
+
 function getTransferOriginLabel(transferDetail: any, fallback: string) {
   if (!transferDetail?.transferRequest) return fallback;
   const labels = Array.from(
@@ -1100,6 +1117,8 @@ export default function Recepciones() {
     "purchase_order"
   );
   const [sourceId, setSourceId] = useState("");
+  const [sourceDocumentPopoverOpen, setSourceDocumentPopoverOpen] =
+    useState(false);
   const [notes, setNotes] = useState("");
   const [isFiscalDocument, setIsFiscalDocument] = useState(true);
   const [cai, setCai] = useState("");
@@ -1348,6 +1367,7 @@ export default function Recepciones() {
     setEditingDraftReceiptId(null);
     setSourceType("purchase_order");
     setSourceId("");
+    setSourceDocumentPopoverOpen(false);
     setNotes("");
     setIsFiscalDocument(true);
     setCai("");
@@ -2232,6 +2252,53 @@ export default function Recepciones() {
       ),
     [transfers]
   );
+
+  const selectedSourceDocumentRow =
+    sourceType === "purchase_order"
+      ? availablePurchaseOrders.find(
+          (row: any) => String(row.purchaseOrder.id) === sourceId
+        )
+      : availableTransfers.find(
+          (row: any) => String(row.transfer.id) === sourceId
+        );
+  const selectedSourceDocumentLabel = selectedSourceDocumentRow
+    ? sourceType === "purchase_order"
+      ? formatPurchaseOrderReceiptSourceLabel(selectedSourceDocumentRow)
+      : formatTransferReceiptSourceLabel(selectedSourceDocumentRow)
+    : "Seleccione documento";
+
+  function selectSourceDocument(value: string) {
+    fiscalRangeAutofillRef.current = null;
+    lastFiscalRangeLookupKeyRef.current = "";
+    setSourceId(value);
+    setSourceDocumentPopoverOpen(false);
+    setReceivedMap({});
+    setWarehouseByItemId({});
+    setStorageLocationByItemId({});
+    setStorageLocationSuggestionItemId(null);
+    setReceiptProjectId("");
+    setPriceMap({});
+    setSubtotalMap({});
+    setTaxCodeByItemId({});
+    setAdditionalTaxCodesByItemId({});
+    setTargetByItemId({});
+    setTargetPopoverOpen(null);
+    setTargetSearch("");
+    setManualReceiptItems([]);
+    setManualItemSearch("");
+    setManualItemPopoverOpen(false);
+    setIsFiscalDocument(true);
+    setCai("");
+    setInvoiceNumber("");
+    setDocumentRangeStart("");
+    setDocumentRangeEnd("");
+    setDocumentDate("");
+    setDocumentDueDate("");
+    setEmissionDeadline("");
+    setPostingDate(todayDateValue());
+    setReceiptDate(todayDateValue());
+    setTransferClosureDrafts({});
+  }
 
   const canCloseTransferLines =
     canManageReceipts &&
@@ -4841,6 +4908,7 @@ export default function Recepciones() {
                         lastFiscalRangeLookupKeyRef.current = "";
                         setSourceType(value as "purchase_order" | "transfer");
                         setSourceId("");
+                        setSourceDocumentPopoverOpen(false);
                         setReceivedMap({});
                         setWarehouseByItemId({});
                         setStorageLocationByItemId({});
@@ -4886,77 +4954,126 @@ export default function Recepciones() {
                     <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                       Documento origen
                     </Label>
-                    <Select
-                      value={sourceId}
-                      onValueChange={value => {
-                        fiscalRangeAutofillRef.current = null;
-                        lastFiscalRangeLookupKeyRef.current = "";
-                        setSourceId(value);
-                        setReceivedMap({});
-                        setWarehouseByItemId({});
-                        setStorageLocationByItemId({});
-                        setStorageLocationSuggestionItemId(null);
-                        setReceiptProjectId("");
-                        setPriceMap({});
-                        setSubtotalMap({});
-                        setTaxCodeByItemId({});
-                        setAdditionalTaxCodesByItemId({});
-                        setTargetByItemId({});
-                        setTargetPopoverOpen(null);
-                        setTargetSearch("");
-                        setManualReceiptItems([]);
-                        setManualItemSearch("");
-                        setManualItemPopoverOpen(false);
-                        setIsFiscalDocument(true);
-                        setCai("");
-                        setInvoiceNumber("");
-                        setDocumentRangeStart("");
-                        setDocumentRangeEnd("");
-                        setDocumentDate("");
-                        setDocumentDueDate("");
-                        setEmissionDeadline("");
-                        setPostingDate(todayDateValue());
-                        setReceiptDate(todayDateValue());
-                        setTransferClosureDrafts({});
-                      }}
+                    <Popover
+                      open={sourceDocumentPopoverOpen}
+                      onOpenChange={setSourceDocumentPopoverOpen}
                     >
-                      <SelectTrigger className="h-11 w-full text-sm sm:h-12 sm:text-base">
-                        <SelectValue placeholder="Seleccione documento" />
-                      </SelectTrigger>
-                      <SelectContent className="max-h-[320px]">
-                        {sourceType === "purchase_order"
-                          ? availablePurchaseOrders.map((row: any) => (
-                              <SelectItem
-                                key={row.purchaseOrder.id}
-                                value={String(row.purchaseOrder.id)}
-                                className="py-2.5"
-                              >
-                                {row.purchaseOrder.orderNumber} —{" "}
-                                {row.supplier?.name || "Proveedor pendiente"}
-                                {row.purchaseOrder.appliesContract &&
-                                row.contractSummary?.statusLabel
-                                  ? ` — ${row.contractSummary.statusLabel}`
-                                  : ""}
-                              </SelectItem>
-                            ))
-                          : availableTransfers.map((row: any) => (
-                              <SelectItem
-                                key={row.transfer.id}
-                                value={String(row.transfer.id)}
-                                className="py-2.5"
-                              >
-                                {row.transfer.transferNumber} —{" "}
-                                {row.transferRequest?.requestNumber ||
-                                  "Solicitud"}
-                                {" — "}
-                                {getTransferDestinationLabel(
-                                  row,
-                                  "Destino pendiente"
-                                )}
-                              </SelectItem>
-                            ))}
-                      </SelectContent>
-                    </Select>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={sourceDocumentPopoverOpen}
+                          className="h-11 w-full justify-between overflow-hidden px-3 text-sm font-normal sm:h-12 sm:text-base"
+                        >
+                          <span
+                            className={`truncate text-left ${
+                              sourceId ? "" : "text-muted-foreground"
+                            }`}
+                          >
+                            {selectedSourceDocumentLabel}
+                          </span>
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        className="w-[var(--radix-popover-trigger-width)] p-0"
+                      >
+                        <Command>
+                          <CommandInput
+                            placeholder={
+                              sourceType === "purchase_order"
+                                ? "Buscar por orden, proveedor o proyecto..."
+                                : "Buscar por traslado, solicitud o destino..."
+                            }
+                          />
+                          <CommandList className="max-h-[320px]">
+                            <CommandEmpty>
+                              No se encontraron documentos disponibles.
+                            </CommandEmpty>
+                            <CommandGroup>
+                              {sourceType === "purchase_order"
+                                ? availablePurchaseOrders.map((row: any) => {
+                                    const value = String(
+                                      row.purchaseOrder.id
+                                    );
+                                    const label =
+                                      formatPurchaseOrderReceiptSourceLabel(
+                                        row
+                                      );
+                                    const searchValue = [
+                                      row.purchaseOrder.orderNumber,
+                                      row.supplier?.supplierCode,
+                                      row.supplier?.name,
+                                      row.project?.code,
+                                      row.project?.name,
+                                      row.contractSummary?.statusLabel,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" ");
+                                    return (
+                                      <CommandItem
+                                        key={row.purchaseOrder.id}
+                                        value={searchValue}
+                                        onSelect={() =>
+                                          selectSourceDocument(value)
+                                        }
+                                        className="py-2.5"
+                                      >
+                                        <Check
+                                          className={`mr-2 h-4 w-4 ${
+                                            sourceId === value
+                                              ? "opacity-100"
+                                              : "opacity-0"
+                                          }`}
+                                        />
+                                        <span className="truncate">
+                                          {label}
+                                        </span>
+                                      </CommandItem>
+                                    );
+                                  })
+                                : availableTransfers.map((row: any) => {
+                                    const value = String(row.transfer.id);
+                                    const label =
+                                      formatTransferReceiptSourceLabel(row);
+                                    const searchValue = [
+                                      row.transfer.transferNumber,
+                                      row.transferRequest?.requestNumber,
+                                      getTransferDestinationLabel(row, ""),
+                                      row.destinationProject?.code,
+                                      row.destinationProject?.name,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" ");
+                                    return (
+                                      <CommandItem
+                                        key={row.transfer.id}
+                                        value={searchValue}
+                                        onSelect={() =>
+                                          selectSourceDocument(value)
+                                        }
+                                        className="py-2.5"
+                                      >
+                                        <Check
+                                          className={`mr-2 h-4 w-4 ${
+                                            sourceId === value
+                                              ? "opacity-100"
+                                              : "opacity-0"
+                                          }`}
+                                        />
+                                        <span className="truncate">
+                                          {label}
+                                        </span>
+                                      </CommandItem>
+                                    );
+                                  })}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                     <p className="text-sm leading-relaxed text-muted-foreground">
                       {sourceType === "purchase_order"
                         ? "Solo aparecen órdenes emitidas con saldo pendiente o contratos vigentes por facturar."
