@@ -826,11 +826,15 @@ function BatchDetailDialog({
   const [actionReason, setActionReason] = useState("");
 
   useEffect(() => {
-    const items = detailQuery.data?.items ?? [];
-    setRemovingItem(undefined);
     setBatchBankReference("");
     setBankPaymentDate(currentLocalDateInput());
     setBankAttachment(undefined);
+    setPreparingBankAttachment(false);
+  }, [batchId]);
+
+  useEffect(() => {
+    const items = detailQuery.data?.items ?? [];
+    setRemovingItem(undefined);
     setAmounts(
       Object.fromEntries(
         items.map((item: any) => [
