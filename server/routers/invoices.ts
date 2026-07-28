@@ -17,7 +17,10 @@ import {
   ASSET_CONDITION_VALUES,
   normalizeFixedAssetDetails,
 } from "@shared/fixed-assets";
-import { isMissingCpcRequiredRetention } from "@shared/supplier-documents";
+import {
+  isMissingCpcRequiredRetention,
+  requiresMissingCpcRetention,
+} from "@shared/supplier-documents";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 const MISSING_CPC_RETENTION_MESSAGE =
@@ -149,7 +152,22 @@ function assertInvoiceReviewed(
 function assertRequiredMissingCpcRetention(
   detail: NonNullable<Awaited<ReturnType<typeof db.getInvoiceById>>>
 ) {
-  if (detail.invoice.isFiscalDocument === false) return;
+  const withholdingBase = (detail.items ?? [])
+    .filter(item => item.allowsTaxWithholding !== false)
+    .reduce((sum, item) => {
+      const subtotal = Number(String(item.subtotal ?? 0).replace(/,/g, ""));
+      return sum + (Number.isFinite(subtotal) ? subtotal : 0);
+    }, 0);
+  if (
+    !requiresMissingCpcRetention({
+      isFiscalDocument: detail.invoice.isFiscalDocument,
+      certificateStatus: detail.accountPaymentCertificate?.status,
+      retentionPolicy: detail.retentionPolicy,
+      withholdingBase,
+    })
+  ) {
+    return;
+  }
   if (!detail.invoice.documentDate) {
     throw new TRPCError({
       code: "BAD_REQUEST",
@@ -157,7 +175,6 @@ function assertRequiredMissingCpcRetention(
         "Seleccione la fecha de emisión de la factura antes de continuar",
     });
   }
-  if (detail.accountPaymentCertificate?.status === "vigente") return;
 
   const hasRequiredRetention = (detail.retentions ?? []).some(retention =>
     isMissingCpcRequiredRetention({

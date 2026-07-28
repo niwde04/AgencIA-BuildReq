@@ -90,6 +90,7 @@ import {
 import {
   isAccountPaymentAllowedRetention,
   isMissingCpcRequiredRetention,
+  requiresMissingCpcRetention,
 } from "@shared/supplier-documents";
 
 const PAGE_SIZE = 50;
@@ -1878,11 +1879,15 @@ export default function Facturas() {
   const accountPaymentCertificate = detail?.accountPaymentCertificate ?? null;
   const hasValidAccountPaymentCertificate =
     accountPaymentCertificate?.status === "vigente";
-  const requiresMissingCpcRetention = Boolean(
-    detail &&
-      detail.invoice.isFiscalDocument !== false &&
-      !hasValidAccountPaymentCertificate
-  );
+  const retentionPolicy =
+    detail?.retentionPolicy ??
+    (detail?.supplier?.allowsTaxWithholding !== false ? "manual" : "none");
+  const isMissingCpcRetentionRequired = requiresMissingCpcRetention({
+    isFiscalDocument: detail?.invoice.isFiscalDocument,
+    certificateStatus: accountPaymentCertificate?.status,
+    retentionPolicy,
+    withholdingBase,
+  });
   const hasRequiredMissingCpcRetention = retentionDrafts.some(retention =>
     isMissingCpcRequiredRetention({
       taxCode: retention.retentionCode,
@@ -1890,16 +1895,8 @@ export default function Facturas() {
     })
   );
   const isMissingRequiredCpcRetention =
-    requiresMissingCpcRetention && !hasRequiredMissingCpcRetention;
-  const retentionPolicy =
-    detail?.retentionPolicy ??
-    (detail?.supplier?.allowsTaxWithholding !== false ? "manual" : "none");
-  const supplierAllowsTaxWithholding =
-    retentionPolicy === "rt15_only"
-      ? false
-      : requiresMissingCpcRetention
-        ? true
-        : detail?.supplier?.allowsTaxWithholding !== false;
+    isMissingCpcRetentionRequired && !hasRequiredMissingCpcRetention;
+  const supplierAllowsTaxWithholding = retentionPolicy === "manual";
   const supplierSubjectToAccountPayments =
     hasValidAccountPaymentCertificate ||
     detail?.supplier?.subjectToAccountPayments !== false;
@@ -1912,13 +1909,13 @@ export default function Facturas() {
   const canRetainSelectedInvoice =
     (retentionPolicy === "rt15_only"
       ? hasAvailableRt15Retention
-      : requiresMissingCpcRetention
+      : isMissingCpcRetentionRequired
         ? hasAvailableRequiredCpcRetention
         : supplierAllowsTaxWithholding) && withholdingBase > 0;
   const retentionDisabledReason =
     retentionPolicy === "rt15_only" && !hasAvailableRt15Retention
       ? "La retención RT15 (15%) no está disponible en el catálogo."
-      : requiresMissingCpcRetention && !hasAvailableRequiredCpcRetention
+      : isMissingCpcRetentionRequired && !hasAvailableRequiredCpcRetention
         ? "La retención RT01 (1%) no está disponible en el catálogo."
         : retentionPolicy !== "rt15_only" && !supplierAllowsTaxWithholding
           ? "El proveedor no permite retención de impuestos."
@@ -3845,7 +3842,7 @@ export default function Facturas() {
                       <Badge
                         variant="outline"
                         className={`text-xs ${
-                          requiresMissingCpcRetention
+                          isMissingCpcRetentionRequired
                             ? "border-amber-300 text-amber-700"
                             : retentionPolicy === "rt15_only"
                               ? "border-blue-300 text-blue-700"
@@ -3854,7 +3851,7 @@ export default function Facturas() {
                                 : "border-amber-300 text-amber-700"
                         }`}
                       >
-                        {requiresMissingCpcRetention
+                        {isMissingCpcRetentionRequired
                           ? "Requiere RT01 (1%)"
                           : retentionPolicy === "rt15_only"
                             ? "Solo RT15 (15%)"

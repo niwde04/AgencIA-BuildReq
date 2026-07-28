@@ -148,7 +148,7 @@ import {
   getSupplierAccountPaymentCertificateStatus,
   getSupplierRetentionPolicy,
   isAccountPaymentAllowedRetention,
-  isMissingCpcRequiredRetention,
+  resolveInvoiceItemAllowsTaxWithholding,
   SUPPLIER_ACCOUNT_PAYMENT_CERTIFICATE_CODES,
 } from "../shared/supplier-documents";
 import { ENV } from "./_core/env";
@@ -13163,10 +13163,20 @@ export async function getInvoiceById(id: number) {
     allowsTaxWithholding: rows[0].supplier?.allowsTaxWithholding,
   });
 
-  const [items, retentions, otherCharges] = await Promise.all([
+  const [itemRows, retentions, otherCharges] = await Promise.all([
     db
-      .select()
+      .select({
+        item: invoiceItems,
+        catalogAllowsTaxWithholding: sapCatalog.allowsTaxWithholding,
+      })
       .from(invoiceItems)
+      .leftJoin(
+        sapCatalog,
+        eq(
+          sapCatalog.itemCode,
+          sql<string>`coalesce(nullif(${invoiceItems.currentSapItemCode}, ''), nullif(${invoiceItems.originalSapItemCode}, ''))`
+        )
+      )
       .where(eq(invoiceItems.invoiceId, id))
       .orderBy(asc(invoiceItems.id)),
     db
@@ -13180,6 +13190,14 @@ export async function getInvoiceById(id: number) {
       .where(eq(invoiceOtherCharges.invoiceId, id))
       .orderBy(asc(invoiceOtherCharges.id)),
   ]);
+  const items = itemRows.map(({ item, catalogAllowsTaxWithholding }) => ({
+    ...item,
+    allowsTaxWithholding: resolveInvoiceItemAllowsTaxWithholding({
+      invoiceStatus: rows[0].invoice.status,
+      snapshotAllowsTaxWithholding: item.allowsTaxWithholding,
+      catalogAllowsTaxWithholding,
+    }),
+  }));
 
   const purchaseOrderItemIds = Array.from(
     new Set(
@@ -13418,29 +13436,50 @@ export async function updateInvoiceItemAssetDetails(
   return updated;
 }
 
+function buildDraftInvoiceItemTaxWithholdingSync(invoiceId: number) {
+  return sql`
+    update "invoiceItems" as item
+    set "allowsTaxWithholding" = catalog."allowsTaxWithholding"
+    from "invoices" as invoice, "sapCatalog" as catalog
+    where item."invoiceId" = ${invoiceId}
+      and invoice."id" = item."invoiceId"
+      and invoice."status" in ('borrador', 'rechazada')
+      and catalog."itemCode" = coalesce(
+        nullif(item."currentSapItemCode", ''),
+        nullif(item."originalSapItemCode", '')
+      )
+      and item."allowsTaxWithholding"
+        is distinct from catalog."allowsTaxWithholding"
+  `;
+}
+
 export async function reviewInvoice(id: number, reviewedById: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
   const now = new Date();
-  const [updated] = await db
-    .update(invoices)
-    .set({
-      status: "revisada",
-      reviewedById,
-      reviewedAt: now,
-      accountedById: null,
-      accountedAt: null,
-      accountingComment: null,
-      rejectionComment: null,
-      rejectedById: null,
-      rejectedAt: null,
-      updatedAt: now,
-    })
-    .where(eq(invoices.id, id))
-    .returning();
+  return db.transaction(async tx => {
+    await tx.execute(buildDraftInvoiceItemTaxWithholdingSync(id));
 
-  return updated;
+    const [updated] = await tx
+      .update(invoices)
+      .set({
+        status: "revisada",
+        reviewedById,
+        reviewedAt: now,
+        accountedById: null,
+        accountedAt: null,
+        accountingComment: null,
+        rejectionComment: null,
+        rejectedById: null,
+        rejectedAt: null,
+        updatedAt: now,
+      })
+      .where(eq(invoices.id, id))
+      .returning();
+
+    return updated;
+  });
 }
 
 export async function accountInvoice(params: {
@@ -13916,6 +13955,13 @@ export async function replaceInvoiceRetentions(
       : null;
     const hasValidAccountPaymentCertificate =
       accountPaymentCertificate?.status === "vigente";
+    const retentionPolicy = getSupplierRetentionPolicy({
+      certificateStatus: accountPaymentCertificate?.status,
+      allowsTaxWithholding: invoiceRow.supplier?.allowsTaxWithholding,
+    });
+    if (hasRetentions && retentionPolicy === "none") {
+      throw new Error("El proveedor no permite retención de impuestos");
+    }
     const normalizedRetentionReceiptNumber =
       retentionReceiptNumber?.trim() ||
       invoice.retentionReceiptNumber?.trim() ||
@@ -13960,10 +14006,28 @@ export async function replaceInvoiceRetentions(
         "Complete los datos fiscales del comprobante de retención antes de guardar retenciones"
       );
     }
-    const items = await tx
-      .select()
+    const itemRows = await tx
+      .select({
+        item: invoiceItems,
+        catalogAllowsTaxWithholding: sapCatalog.allowsTaxWithholding,
+      })
       .from(invoiceItems)
+      .leftJoin(
+        sapCatalog,
+        eq(
+          sapCatalog.itemCode,
+          sql<string>`coalesce(nullif(${invoiceItems.currentSapItemCode}, ''), nullif(${invoiceItems.originalSapItemCode}, ''))`
+        )
+      )
       .where(eq(invoiceItems.invoiceId, invoiceId));
+    const items = itemRows.map(({ item, catalogAllowsTaxWithholding }) => ({
+      ...item,
+      allowsTaxWithholding: resolveInvoiceItemAllowsTaxWithholding({
+        invoiceStatus: invoice.status,
+        snapshotAllowsTaxWithholding: item.allowsTaxWithholding,
+        catalogAllowsTaxWithholding,
+      }),
+    }));
     const itemsById = new Map(items.map(item => [item.id, item]));
     const withholdingBase = roundMoney(
       items
@@ -14088,20 +14152,6 @@ export async function replaceInvoiceRetentions(
         amount: toMoneyString4(amount),
       };
     });
-
-    if (
-      hasRetentions &&
-      !hasValidAccountPaymentCertificate &&
-      invoiceRow.supplier?.allowsTaxWithholding === false &&
-      !normalizedRetentions.some(retention =>
-        isMissingCpcRequiredRetention({
-          taxCode: retention.retentionCode,
-          ratePercent: retention.percentage,
-        })
-      )
-    ) {
-      throw new Error("El proveedor no permite retención de impuestos");
-    }
 
     const retentionTotal = roundMoney(
       normalizedRetentions.reduce(

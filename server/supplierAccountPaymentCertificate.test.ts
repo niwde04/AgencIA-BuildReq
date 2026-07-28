@@ -7,6 +7,8 @@ import {
   isMissingCpcRequiredRetention,
   isSupplierAccountPaymentCertificateCode,
   normalizeSupplierDocumentTypeCode,
+  requiresMissingCpcRetention,
+  resolveInvoiceItemAllowsTaxWithholding,
 } from "../shared/supplier-documents";
 
 describe("supplier account payment certificates", () => {
@@ -99,6 +101,89 @@ describe("supplier account payment certificates", () => {
       isMissingCpcRequiredRetention({
         taxCode: "RT01",
         ratePercent: "15.0000",
+      })
+    ).toBe(false);
+  });
+
+  it("requires RT01 only for fiscal invoices without a valid CPC under the manual policy and with an eligible base", () => {
+    expect(
+      requiresMissingCpcRetention({
+        isFiscalDocument: true,
+        certificateStatus: null,
+        retentionPolicy: "manual",
+        withholdingBase: 100,
+      })
+    ).toBe(true);
+
+    expect(
+      requiresMissingCpcRetention({
+        isFiscalDocument: true,
+        certificateStatus: null,
+        retentionPolicy: "none",
+        withholdingBase: 100,
+      })
+    ).toBe(false);
+    expect(
+      requiresMissingCpcRetention({
+        isFiscalDocument: true,
+        certificateStatus: null,
+        retentionPolicy: "rt15_only",
+        withholdingBase: 100,
+      })
+    ).toBe(false);
+    expect(
+      requiresMissingCpcRetention({
+        isFiscalDocument: true,
+        certificateStatus: null,
+        retentionPolicy: "manual",
+        withholdingBase: 0,
+      })
+    ).toBe(false);
+    expect(
+      requiresMissingCpcRetention({
+        isFiscalDocument: true,
+        certificateStatus: "vigente",
+        retentionPolicy: "manual",
+        withholdingBase: 100,
+      })
+    ).toBe(false);
+    expect(
+      requiresMissingCpcRetention({
+        isFiscalDocument: false,
+        certificateStatus: null,
+        retentionPolicy: "manual",
+        withholdingBase: 100,
+      })
+    ).toBe(false);
+  });
+
+  it("uses the current catalog retention flag only while the invoice remains editable", () => {
+    expect(
+      resolveInvoiceItemAllowsTaxWithholding({
+        invoiceStatus: "borrador",
+        snapshotAllowsTaxWithholding: true,
+        catalogAllowsTaxWithholding: false,
+      })
+    ).toBe(false);
+    expect(
+      resolveInvoiceItemAllowsTaxWithholding({
+        invoiceStatus: "rechazada",
+        snapshotAllowsTaxWithholding: true,
+        catalogAllowsTaxWithholding: false,
+      })
+    ).toBe(false);
+    expect(
+      resolveInvoiceItemAllowsTaxWithholding({
+        invoiceStatus: "revisada",
+        snapshotAllowsTaxWithholding: true,
+        catalogAllowsTaxWithholding: false,
+      })
+    ).toBe(true);
+    expect(
+      resolveInvoiceItemAllowsTaxWithholding({
+        invoiceStatus: "registrada",
+        snapshotAllowsTaxWithholding: false,
+        catalogAllowsTaxWithholding: true,
       })
     ).toBe(false);
   });

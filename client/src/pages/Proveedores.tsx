@@ -394,7 +394,8 @@ export default function Proveedores() {
   const updateMutation = trpc.suppliers.update.useMutation({
     onSuccess: () => {
       toast.success("Proveedor actualizado");
-      utils.suppliers.list.invalidate();
+      void utils.suppliers.list.invalidate();
+      void utils.invoices.invalidate();
       closeSupplierDialog();
     },
     onError: (e) => toast.error(e.message),
@@ -454,6 +455,7 @@ export default function Proveedores() {
       if (documentFileInputRef.current) documentFileInputRef.current.value = "";
       void utils.suppliers.listDocuments.invalidate();
       void utils.suppliers.list.invalidate();
+      void utils.invoices.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -466,6 +468,7 @@ export default function Proveedores() {
       setSelectedDocumentFile(null);
       void utils.suppliers.listDocuments.invalidate();
       void utils.suppliers.list.invalidate();
+      void utils.invoices.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -474,6 +477,7 @@ export default function Proveedores() {
       toast.success("Documento eliminado");
       void utils.suppliers.listDocuments.invalidate();
       void utils.suppliers.list.invalidate();
+      void utils.invoices.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });

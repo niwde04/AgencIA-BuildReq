@@ -459,7 +459,8 @@ export default function Articulos() {
   const updateMutation = trpc.articles.update.useMutation({
     onSuccess: () => {
       toast.success("Artículo actualizado");
-      utils.articles.list.invalidate();
+      void utils.articles.list.invalidate();
+      void utils.invoices.invalidate();
       setSelectedArticle(null);
     },
     onError: (e) => toast.error(e.message),

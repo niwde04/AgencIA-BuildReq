@@ -16301,6 +16301,13 @@ describe("BuildReq - Invoices", () => {
       ...invoiceDetail,
       accountPaymentCertificate: null,
       retentionPolicy: "manual",
+      items: [
+        {
+          id: 40,
+          allowsTaxWithholding: true,
+          subtotal: "1000.0000",
+        },
+      ],
       retentions: [],
     } as any);
     const getAttachmentsByEntitySpy = vi.spyOn(db, "getAttachmentsByEntity");
@@ -16313,6 +16320,81 @@ describe("BuildReq - Invoices", () => {
     });
     expect(getAttachmentsByEntitySpy).not.toHaveBeenCalled();
     expect(reviewInvoiceSpy).not.toHaveBeenCalled();
+
+    getInvoiceByIdSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
+    reviewInvoiceSpy.mockRestore();
+  });
+
+  it("allows reviewing a fiscal invoice without CPC or RT01 when the supplier retention policy is none", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      supplier: {
+        ...invoiceDetail.supplier,
+        allowsTaxWithholding: false,
+        subjectToAccountPayments: false,
+      },
+      accountPaymentCertificate: null,
+      retentionPolicy: "none",
+      items: [
+        {
+          id: 40,
+          allowsTaxWithholding: true,
+          subtotal: "1000.0000",
+        },
+      ],
+      retentions: [],
+    } as any);
+    const getAttachmentsByEntitySpy = vi
+      .spyOn(db, "getAttachmentsByEntity")
+      .mockResolvedValue([{ id: 99 }] as any);
+    const reviewInvoiceSpy = vi.spyOn(db, "reviewInvoice").mockResolvedValue({
+      ...invoiceDetail.invoice,
+      status: "revisada",
+    } as any);
+
+    await expect(caller.invoices.review({ id: 10 })).resolves.toEqual(
+      expect.objectContaining({ status: "revisada" })
+    );
+    expect(getAttachmentsByEntitySpy).toHaveBeenCalledWith("invoice", 10);
+    expect(reviewInvoiceSpy).toHaveBeenCalledWith(10, ctx.user!.id);
+
+    getInvoiceByIdSpy.mockRestore();
+    getAttachmentsByEntitySpy.mockRestore();
+    reviewInvoiceSpy.mockRestore();
+  });
+
+  it("allows reviewing a manual fiscal invoice without CPC or RT01 when every line is ineligible", async () => {
+    const { ctx } = createProjectAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi.spyOn(db, "getInvoiceById").mockResolvedValue({
+      ...invoiceDetail,
+      accountPaymentCertificate: null,
+      retentionPolicy: "manual",
+      items: [
+        {
+          id: 40,
+          allowsTaxWithholding: false,
+          subtotal: "1000.0000",
+        },
+      ],
+      retentions: [],
+    } as any);
+    const getAttachmentsByEntitySpy = vi
+      .spyOn(db, "getAttachmentsByEntity")
+      .mockResolvedValue([{ id: 99 }] as any);
+    const reviewInvoiceSpy = vi.spyOn(db, "reviewInvoice").mockResolvedValue({
+      ...invoiceDetail.invoice,
+      status: "revisada",
+    } as any);
+
+    await expect(caller.invoices.review({ id: 10 })).resolves.toEqual(
+      expect.objectContaining({ status: "revisada" })
+    );
+    expect(getAttachmentsByEntitySpy).toHaveBeenCalledWith("invoice", 10);
+    expect(reviewInvoiceSpy).toHaveBeenCalledWith(10, ctx.user!.id);
 
     getInvoiceByIdSpy.mockRestore();
     getAttachmentsByEntitySpy.mockRestore();
@@ -16474,6 +16556,13 @@ describe("BuildReq - Invoices", () => {
       },
       accountPaymentCertificate: null,
       retentionPolicy: "manual",
+      items: [
+        {
+          id: 40,
+          allowsTaxWithholding: true,
+          subtotal: "1000.0000",
+        },
+      ],
       retentions: [],
     } as any);
     const accountInvoiceSpy = vi.spyOn(db, "accountInvoice");

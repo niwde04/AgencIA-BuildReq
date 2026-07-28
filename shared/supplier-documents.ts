@@ -20,6 +20,12 @@ export type SupplierAccountPaymentCertificateStatus =
   | "futuro"
   | "sin_vencimiento";
 export type SupplierRetentionPolicy = "rt15_only" | "manual" | "none";
+export type InvoiceRetentionEligibilityStatus =
+  | "borrador"
+  | "revisada"
+  | "rechazada"
+  | "registrada"
+  | "anulada";
 
 const SUPPLIER_ACCOUNT_PAYMENT_CERTIFICATE_CODE_SET = new Set<string>(
   SUPPLIER_ACCOUNT_PAYMENT_CERTIFICATE_CODES
@@ -103,6 +109,42 @@ export function isMissingCpcRequiredRetention(value: {
     Math.abs(ratePercent - MISSING_CPC_REQUIRED_RETENTION_RATE_PERCENT) <
       0.000001
   );
+}
+
+export function requiresMissingCpcRetention(value: {
+  isFiscalDocument?: boolean | null;
+  certificateStatus?: SupplierAccountPaymentCertificateStatus | null;
+  retentionPolicy?: SupplierRetentionPolicy | null;
+  withholdingBase?: string | number | null;
+}) {
+  const withholdingBase =
+    typeof value.withholdingBase === "string"
+      ? Number(value.withholdingBase.replace(/,/g, "").trim())
+      : Number(value.withholdingBase);
+
+  return (
+    value.isFiscalDocument === true &&
+    value.certificateStatus !== "vigente" &&
+    value.retentionPolicy === "manual" &&
+    Number.isFinite(withholdingBase) &&
+    withholdingBase > 0
+  );
+}
+
+export function resolveInvoiceItemAllowsTaxWithholding(value: {
+  invoiceStatus?: InvoiceRetentionEligibilityStatus | string | null;
+  snapshotAllowsTaxWithholding?: boolean | null;
+  catalogAllowsTaxWithholding?: boolean | null;
+}) {
+  const usesCurrentCatalog =
+    value.invoiceStatus === "borrador" || value.invoiceStatus === "rechazada";
+  if (
+    usesCurrentCatalog &&
+    typeof value.catalogAllowsTaxWithholding === "boolean"
+  ) {
+    return value.catalogAllowsTaxWithholding;
+  }
+  return value.snapshotAllowsTaxWithholding !== false;
 }
 
 export function getSupplierRetentionPolicy(value: {
