@@ -3705,7 +3705,7 @@ export default function Facturas() {
                           ? "Enviando..."
                           : reviewSendConfirmed
                             ? "Enviada a revisión"
-                            : "Enviar a revisión"}
+                            : "Registrar Factura"}
                     </Button>
                   ) : null}
                   {canAccountSelectedInvoice ? (
