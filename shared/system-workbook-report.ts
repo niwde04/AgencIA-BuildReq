@@ -8,6 +8,7 @@ import { roundPurchaseOrderMoney } from "./purchase-orders";
 export const SYSTEM_ORDER_HEADERS = [
   "Orden Compra",
   "Job",
+  "Proyecto",
   "Código Finanzas",
   "Fecha",
   "Rtn",
@@ -91,6 +92,7 @@ export const TREASURY_INVOICE_SUMMARY_HEADERS = [
 export type SystemPurchaseOrderLine = {
   orderNumber: string;
   job: string;
+  project: string;
   financialCode: string;
   date: Date | string | null;
   supplierRtn: string;

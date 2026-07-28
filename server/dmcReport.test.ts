@@ -776,6 +776,7 @@ describe("internal BuildReq workbook", () => {
         {
           orderNumber: "OC-001",
           job: "REQ-001",
+          project: "018 — CA 6 - Pinares de Uyuca",
           financialCode: "0201",
           date: new Date("2026-07-01"),
           supplierRtn: "08019002274414",
@@ -834,6 +835,24 @@ describe("internal BuildReq workbook", () => {
     const invoiceWorkbook = buildSystemInvoicesWorkbook(XLSX, payload);
     expect(purchaseOrderWorkbook.SheetNames).toEqual(["Órdenes de Compra"]);
     expect(invoiceWorkbook.SheetNames).toEqual(["Registro Facturacion"]);
+    const purchaseOrderRows = XLSX.utils.sheet_to_json(
+      purchaseOrderWorkbook.Sheets["Órdenes de Compra"],
+      { header: 1 }
+    ) as unknown[][];
+    const purchaseOrderHeader = purchaseOrderRows[1];
+    const projectColumn = purchaseOrderHeader.indexOf("Proyecto");
+    expect(projectColumn).toBeGreaterThan(0);
+    expect(purchaseOrderRows[2][projectColumn]).toBe(
+      "018 — CA 6 - Pinares de Uyuca"
+    );
+    const purchaseOrderTotalRow =
+      purchaseOrderRows[purchaseOrderRows.length - 1];
+    expect(purchaseOrderTotalRow[purchaseOrderHeader.indexOf("Cantidad")]).toBe(
+      1
+    );
+    expect(purchaseOrderTotalRow[purchaseOrderHeader.indexOf("Total")]).toBe(
+      115
+    );
     [workbook, purchaseOrderWorkbook, invoiceWorkbook].forEach(reportWorkbook =>
       Object.values(reportWorkbook.Sheets).forEach(sheet => {
         expect(sheet["!protect"]).toBeUndefined();

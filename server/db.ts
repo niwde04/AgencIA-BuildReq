@@ -13083,6 +13083,9 @@ export async function listSystemReportPurchaseOrderLines(filters?: {
         row.purchaseRequestNumber ||
         row.purchaseRequest?.requestNumber ||
         "",
+      project: [row.project?.code, row.project?.name]
+        .filter(Boolean)
+        .join(" — "),
       financialCode: row.financialGroupCode ?? "",
       date: row.order.createdAt,
       supplierRtn: row.supplier?.rtn ?? "",

@@ -461,6 +461,7 @@ function buildSystemPurchaseOrderSheet(
       null,
       row.orderNumber,
       row.job,
+      row.project,
       row.financialCode,
       row.date ? new Date(row.date) : null,
       row.supplierRtn,
@@ -484,7 +485,7 @@ function buildSystemPurchaseOrderSheet(
       row.status,
     ]),
   ];
-  appendTotals(orderRows, [13, 14, 15, 16, 17]);
+  appendTotals(orderRows, [14, 15, 16, 17, 18]);
   const orderSheet = makeSheet(
     XLSX,
     orderRows,
