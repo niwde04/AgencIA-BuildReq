@@ -148,11 +148,31 @@ function generalRows(taxLabel: string, sections: string[]) {
   return rows;
 }
 
+const exportNumberFormatter = new Intl.NumberFormat("en-US", {
+  useGrouping: false,
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+function roundExportNumber(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return value;
+  const rounded = Number(exportNumberFormatter.format(value));
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+function roundExportRow(row: unknown[]) {
+  return row.map(roundExportNumber);
+}
+
 function makeSheet(
   XLSX: Xlsx,
   rows: unknown[][],
   widths: number[],
-  options: { dateColumns?: number[]; dataStartRow?: number } = {}
+  options: {
+    dateColumns?: number[];
+    dataStartRow?: number;
+    roundNumericValues?: boolean;
+  } = {}
 ) {
   const sheet = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
   sheet["!cols"] = widths.map(wch => ({ wch }));
@@ -165,7 +185,13 @@ function makeSheet(
       }
       for (let column = 0; column <= range.e.c; column += 1) {
         const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
-        if (cell && typeof cell.v === "number") cell.z = "#,##0.00";
+        if (cell && typeof cell.v === "number") {
+          if (options.roundNumericValues) {
+            cell.v = roundExportNumber(cell.v) as number;
+            delete cell.w;
+          }
+          cell.z = "#,##0.00";
+        }
       }
     }
   }
@@ -287,7 +313,7 @@ export function buildDmc527Workbook(XLSX: Xlsx, payload: DmcSarReportPayload) {
       XLSX,
       [Array.from(DMC_52_HEADERS), ...payload.section52752.map(row52752)],
       Array(DMC_52_HEADERS.length).fill(18.55),
-      { dateColumns: [5, 6] }
+      { dateColumns: [5, 6], roundNumericValues: true }
     ),
     "527-52"
   );
@@ -297,7 +323,7 @@ export function buildDmc527Workbook(XLSX: Xlsx, payload: DmcSarReportPayload) {
       XLSX,
       [Array.from(DMC_53_HEADERS), ...payload.section52753.map(row52753)],
       Array(DMC_53_HEADERS.length).fill(13),
-      { dateColumns: [4, 5] }
+      { dateColumns: [4, 5], roundNumericValues: true }
     ),
     "527-53"
   );
@@ -307,7 +333,7 @@ export function buildDmc527Workbook(XLSX: Xlsx, payload: DmcSarReportPayload) {
       XLSX,
       [Array.from(DMC_54_HEADERS), ...payload.section52754.map(row52754)],
       Array(DMC_54_HEADERS.length).fill(14.1),
-      { dateColumns: [3, 4] }
+      { dateColumns: [3, 4], roundNumericValues: true }
     ),
     "527-54"
   );
@@ -415,7 +441,10 @@ export function buildRetentionSarWorkbook(
         ...retentionRows(payload.type, payload.rows),
       ],
       Array(template.headers.length).fill(template.widths),
-      { dateColumns: Array.from(template.dateColumns) }
+      {
+        dateColumns: Array.from(template.dateColumns),
+        roundNumericValues: true,
+      }
     ),
     template.sheetName
   );
@@ -442,7 +471,7 @@ function appendTotals(rows: unknown[][], numericColumns: number[]) {
   totalRow[0] = "TOTAL";
   const dataRows = rows.slice(1);
   numericColumns.forEach(column => {
-    totalRow[column] = roundSystemWorkbookNumber(
+    totalRow[column] = roundExportNumber(
       dataRows.reduce((sum, row) => {
         const value = Number(row[column] ?? 0);
         return sum + (Number.isFinite(value) ? value : 0);
@@ -450,22 +479,6 @@ function appendTotals(rows: unknown[][], numericColumns: number[]) {
     );
   });
   rows.push(totalRow);
-}
-
-const systemWorkbookNumberFormatter = new Intl.NumberFormat("en-US", {
-  useGrouping: false,
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-
-function roundSystemWorkbookNumber(value: unknown) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return value;
-  const rounded = Number(systemWorkbookNumberFormatter.format(value));
-  return Object.is(rounded, -0) ? 0 : rounded;
-}
-
-function roundSystemWorkbookRow(row: unknown[]) {
-  return row.map(roundSystemWorkbookNumber);
 }
 
 function buildSystemPurchaseOrderSheet(
@@ -476,7 +489,7 @@ function buildSystemPurchaseOrderSheet(
     [null, null, null, "Llave principal (Financiera)"],
     [null, ...SYSTEM_ORDER_HEADERS],
     ...payload.purchaseOrders.map(row =>
-      roundSystemWorkbookRow([
+      roundExportRow([
         null,
         row.orderNumber,
         row.job,
@@ -518,7 +531,7 @@ function buildSystemInvoiceSheet(XLSX: Xlsx, payload: SystemWorkbookPayload) {
     [null, null, "Llave principal (Financiera)"],
     [null, ...SYSTEM_INVOICE_HEADERS],
     ...payload.invoices.map(row =>
-      roundSystemWorkbookRow([
+      roundExportRow([
         null,
         ...SYSTEM_INVOICE_HEADERS.map(header => row[header]),
       ])
@@ -558,6 +571,7 @@ function buildTreasuryInvoiceSummarySheet(
     {
       dateColumns: systemDateColumns(TREASURY_INVOICE_SUMMARY_HEADERS),
       dataStartRow: 1,
+      roundNumericValues: true,
     }
   );
   if (sheet["!ref"]) {

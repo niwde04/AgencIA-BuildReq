@@ -13,7 +13,10 @@ import {
   buildSystemWorkbook,
   buildTreasuryInvoiceSummaryWorkbook,
 } from "../client/src/lib/dmc-export";
-import { buildRetentionSarPayload } from "@shared/retention-sar-report";
+import {
+  buildRetentionSarPayload,
+  type RetentionSarPayload,
+} from "@shared/retention-sar-report";
 import {
   buildSystemWorkbookPayload,
   buildTreasuryInvoiceSummaryPayload,
@@ -620,10 +623,11 @@ describe("DMC SAR 527 report mapper", () => {
         invoiceId: 7,
       }),
     ]);
+    payload.section52752[0].base15 = 531.5295;
     const workbook = buildDmc527Workbook(XLSX, payload);
     const roundTrip = XLSX.read(
       XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }),
-      { type: "buffer", cellDates: true }
+      { type: "buffer", cellDates: true, cellNF: true }
     );
     expect(roundTrip.SheetNames).toEqual([
       "General",
@@ -644,6 +648,17 @@ describe("DMC SAR 527 report mapper", () => {
     expect(
       XLSX.utils.sheet_to_json(roundTrip.Sheets["527-52"], { header: 1 })[0]
     ).toEqual(expect.arrayContaining(["200-RTN", "290-Valor no deducible"]));
+    const rows52752 = XLSX.utils.sheet_to_json(roundTrip.Sheets["527-52"], {
+      header: 1,
+      raw: true,
+    }) as unknown[][];
+    const base15Column = rows52752[0].indexOf("1511-Importe base 15%");
+    expect(rows52752[1][base15Column]).toBe(531.53);
+    expect(
+      roundTrip.Sheets["527-52"][
+        XLSX.utils.encode_cell({ r: 1, c: base15Column })
+      ]?.z
+    ).toBe("#,##0.00");
   });
 });
 
@@ -733,6 +748,83 @@ describe("retention SAR workbooks", () => {
     expect(values[0]).toHaveLength(13);
     expect(values[1].slice(-2)).toEqual([20, 13.33]);
   });
+
+  it.each([
+    {
+      type: "RT01",
+      sheetName: "135-6",
+      amountHeader: "44-Importe base mensual retención",
+    },
+    {
+      type: "RT125",
+      sheetName: "112-6",
+      amountHeader: "44-Importe base mensual retención",
+    },
+    {
+      type: "RT15",
+      sheetName: "217-6",
+      amountHeader: "39-Importe base 15%",
+    },
+  ] as const)(
+    "serializes $type amounts as real two-decimal values",
+    ({ type, sheetName, amountHeader }) => {
+      const payload = {
+        type,
+        rows: [
+          {
+            invoiceId: 1,
+            supplierRtn: "08019002274414",
+            documentClass: "CF",
+            invoiceCai: "338827-15203E-A419E0-63BE03-0909A6-53",
+            fiscalDocumentNumber: "000-001-01-00000001",
+            otherDocumentNumber: "",
+            invoiceDate: new Date("2026-07-01T12:00:00.000"),
+            retentionDocumentDate: new Date("2026-07-03T12:00:00.000"),
+            justificationNumber: "1",
+            f01Code: "",
+            retentionCai: "338827-15203E-A419E0-63BE03-0909A6-53",
+            retentionDocumentNumber: "001-001-11-00000001",
+            stateInstitutionCode: "",
+            retainedBase: 531.5295,
+            retainedBase15: 531.5295,
+            retainedBase18: 0,
+          },
+        ],
+        issues: [],
+        canExport: true,
+        summary: {
+          generatedAt: new Date("2026-07-29T12:00:00.000"),
+          source: "facturas",
+          dateFrom: null,
+          dateTo: null,
+          statusMode: "non_void",
+          invoiceCount: 1,
+          rowCount: 1,
+          issueCount: 0,
+          retainedBase: 531.5295,
+          retentionAmount: 0,
+        },
+      } satisfies RetentionSarPayload;
+      const roundTrip = XLSX.read(
+        XLSX.write(buildRetentionSarWorkbook(XLSX, payload), {
+          type: "buffer",
+          bookType: "xlsx",
+        }),
+        { type: "buffer", cellDates: true, cellNF: true }
+      );
+      const sheet = roundTrip.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, {
+        header: 1,
+        raw: true,
+      }) as unknown[][];
+      const amountColumn = rows[0].indexOf(amountHeader);
+
+      expect(rows[1][amountColumn]).toBe(531.53);
+      expect(
+        sheet[XLSX.utils.encode_cell({ r: 1, c: amountColumn })]?.z
+      ).toBe("#,##0.00");
+    }
+  );
 });
 
 describe("internal BuildReq workbook", () => {
@@ -970,11 +1062,11 @@ describe("internal BuildReq workbook", () => {
     const payload = buildTreasuryInvoiceSummaryPayload([
       sarInvoice({
         status: "registrada",
-        subtotal: "100.0000",
-        taxAmount: "15.0000",
-        total: "115.0000",
-        retentionTotal: "1.1500",
-        netPayable: "113.8500",
+        subtotal: "531.5295",
+        taxAmount: "79.7294",
+        total: "611.2589",
+        retentionTotal: "10.1234",
+        netPayable: "601.1355",
         documentDueDate: new Date("2026-07-31T12:00:00.000"),
         items: [
           {
@@ -1006,15 +1098,21 @@ describe("internal BuildReq workbook", () => {
       "N° Registro": 1,
       "Documento interno": "FT-2026-0001",
       Estado: "Contabilizada",
-      Subtotal: 100,
-      Impuesto: 15,
-      "Total factura": 115,
-      Retenciones: 1.15,
-      "Neto a pagar": 113.85,
+      Subtotal: 531.5295,
+      Impuesto: 79.7294,
+      "Total factura": 611.2589,
+      Retenciones: 10.1234,
+      "Neto a pagar": 601.1355,
     });
     expect(payload.summary.invoiceCount).toBe(1);
 
-    const workbook = buildTreasuryInvoiceSummaryWorkbook(XLSX, payload);
+    const workbook = XLSX.read(
+      XLSX.write(buildTreasuryInvoiceSummaryWorkbook(XLSX, payload), {
+        type: "buffer",
+        bookType: "xlsx",
+      }),
+      { type: "buffer", cellDates: true, cellNF: true }
+    );
     expect(workbook.SheetNames).toEqual(["Resumen facturas"]);
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets["Resumen facturas"], {
       header: 1,
@@ -1022,7 +1120,11 @@ describe("internal BuildReq workbook", () => {
     expect(rows).toHaveLength(2);
     const header = rows[0];
     const totalColumn = header.indexOf("Total factura");
-    expect(rows[1][totalColumn]).toBe(115);
+    const subtotalColumn = header.indexOf("Subtotal");
+    const retentionColumn = header.indexOf("Retenciones");
+    expect(rows[1][subtotalColumn]).toBe(531.53);
+    expect(rows[1][totalColumn]).toBe(611.26);
+    expect(rows[1][retentionColumn]).toBe(10.12);
     expect(rows.flat()).not.toContain("Artículo A");
     expect(rows.flat()).not.toContain("Artículo B");
   });
