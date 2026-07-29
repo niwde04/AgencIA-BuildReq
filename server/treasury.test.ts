@@ -11,6 +11,7 @@ import {
   assertTreasuryBatchesCanBeConsolidated,
   buildTreasuryFullPaymentRows,
   getTreasuryApprovalRouting,
+  getTreasuryBusinessDate,
   getTreasuryConsolidationRouting,
   getTreasuryReopenTargetStatus,
   parseTreasuryBankWorkbook,
@@ -289,7 +290,7 @@ describe("treasury consolidation routing", () => {
       status: "aprobado" as const,
     },
   ])(
-    "allows different projects when approvalsEnabled is $approvalsEnabled",
+    "allows different projects and dates when approvalsEnabled is $approvalsEnabled",
     ({ approvalsEnabled, status }) => {
       expect(() =>
         assertTreasuryBatchesCanBeConsolidated(
@@ -305,7 +306,7 @@ describe("treasury consolidation routing", () => {
               batchNumber: "TES-2026-000041",
               projectId: 17,
               currency: "HNL",
-              requestedPaymentDate: "2026-07-31",
+              requestedPaymentDate: "2026-08-05",
               status,
             },
           ],
@@ -314,6 +315,19 @@ describe("treasury consolidation routing", () => {
       ).not.toThrow();
     }
   );
+
+  it("uses the Tegucigalpa calendar date when the consolidation is created", () => {
+    expect(
+      getTreasuryBusinessDate(new Date("2026-07-29T03:00:00.000Z"))
+        .toISOString()
+        .slice(0, 10)
+    ).toBe("2026-07-28");
+    expect(
+      getTreasuryBusinessDate(new Date("2026-07-29T15:00:00.000Z"))
+        .toISOString()
+        .slice(0, 10)
+    ).toBe("2026-07-29");
+  });
 });
 
 describe("treasury bank workbook", () => {

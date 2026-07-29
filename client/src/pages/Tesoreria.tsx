@@ -2175,15 +2175,6 @@ export default function Tesoreria() {
       );
       return;
     }
-    const paymentDates = new Set(
-      selectedRows.map((row: any) => toDateKey(row.batch.requestedPaymentDate))
-    );
-    if (paymentDates.size > 1) {
-      toast.error(
-        "Seleccione lotes con la misma fecha prevista para crear el consolidado."
-      );
-      return;
-    }
     consolidateMutation.mutate({
       batchIds: Array.from(selectedConsolidationBatchIds),
     });

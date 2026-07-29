@@ -159,16 +159,21 @@ export function assertTreasuryBatchesCanBeConsolidated(
       "Todos los lotes del consolidado deben utilizar la misma moneda."
     );
   }
-  if (
-    new Set(
-      batches.map(batch => toDateOnly(batch.requestedPaymentDate))
-    ).size !== 1
-  ) {
-    throw new TreasuryRuleError(
-      "Todos los lotes del consolidado deben tener la misma fecha prevista."
-    );
-  }
   return routing;
+}
+
+export function getTreasuryBusinessDate(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Tegucigalpa",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const valueByType = new Map(parts.map(part => [part.type, part.value]));
+  const year = Number(valueByType.get("year"));
+  const month = Number(valueByType.get("month"));
+  const day = Number(valueByType.get("day"));
+  return new Date(Date.UTC(year, month - 1, day));
 }
 
 const FINAL_ITEM_STATUSES = new Set<TreasuryItemStatus>([
@@ -1682,6 +1687,7 @@ export async function consolidateTreasuryBatchesForApproval(input: {
     }
 
     const now = new Date();
+    const consolidatedPaymentDate = getTreasuryBusinessDate(now);
     const sourceBatchNumbers = batches.map(batch => batch.batchNumber);
     const baseBatch = batches[0]!;
     const tempNumber = `TEMP-${randomUUID()}`;
@@ -1691,7 +1697,7 @@ export async function consolidateTreasuryBatchesForApproval(input: {
         batchNumber: tempNumber,
         projectId: baseBatch.projectId,
         currency: baseBatch.currency,
-        requestedPaymentDate: baseBatch.requestedPaymentDate,
+        requestedPaymentDate: consolidatedPaymentDate,
         status: routing.consolidatedStatus,
         notes: `Consolidado de ${sourceBatchNumbers.join(", ")}`,
         createdById: input.actor.id,
@@ -1704,7 +1710,7 @@ export async function consolidateTreasuryBatchesForApproval(input: {
         approvedAt: routing.approvalBypassed ? now : null,
       })
       .returning();
-    const batchNumber = `TES-${new Date(baseBatch.requestedPaymentDate).getUTCFullYear()}-${String(consolidatedBatch.id).padStart(6, "0")}`;
+    const batchNumber = `TES-${consolidatedPaymentDate.getUTCFullYear()}-${String(consolidatedBatch.id).padStart(6, "0")}`;
     await tx
       .update(treasuryPaymentBatches)
       .set({ batchNumber })
