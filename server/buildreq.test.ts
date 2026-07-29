@@ -16288,6 +16288,66 @@ describe("BuildReq - Invoices", () => {
     lookupSupplierFiscalDocumentRangeSpy.mockRestore();
   });
 
+  it("looks up retention fiscal data by receipt number", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const emissionDeadline = new Date("2026-12-31T12:00:00");
+    const getInvoiceByIdSpy = vi
+      .spyOn(db, "getInvoiceById")
+      .mockResolvedValue(invoiceDetail);
+    const lookupRetentionFiscalDocumentRangeSpy = vi
+      .spyOn(db, "lookupRetentionFiscalDocumentRange")
+      .mockResolvedValue({
+        cai: VALID_CAI,
+        documentRangeStart: VALID_RETENTION_RANGE_START,
+        documentRangeEnd: VALID_RETENTION_RANGE_END,
+        emissionDeadline,
+      } as any);
+
+    await expect(
+      caller.invoices.lookupRetentionFiscalDocumentRange({
+        id: 10,
+        retentionReceiptNumber: VALID_RETENTION_RECEIPT_NUMBER,
+      })
+    ).resolves.toEqual({
+      cai: VALID_CAI,
+      documentRangeStart: VALID_RETENTION_RANGE_START,
+      documentRangeEnd: VALID_RETENTION_RANGE_END,
+      emissionDeadline,
+    });
+
+    expect(lookupRetentionFiscalDocumentRangeSpy).toHaveBeenCalledWith({
+      retentionReceiptNumber: VALID_RETENTION_RECEIPT_NUMBER,
+    });
+
+    getInvoiceByIdSpy.mockRestore();
+    lookupRetentionFiscalDocumentRangeSpy.mockRestore();
+  });
+
+  it("does not look up retention fiscal data for invalid receipt numbers", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi
+      .spyOn(db, "getInvoiceById")
+      .mockResolvedValue(invoiceDetail);
+    const lookupRetentionFiscalDocumentRangeSpy = vi.spyOn(
+      db,
+      "lookupRetentionFiscalDocumentRange"
+    );
+
+    await expect(
+      caller.invoices.lookupRetentionFiscalDocumentRange({
+        id: 10,
+        retentionReceiptNumber: "1234",
+      })
+    ).resolves.toBeNull();
+
+    expect(lookupRetentionFiscalDocumentRangeSpy).not.toHaveBeenCalled();
+
+    getInvoiceByIdSpy.mockRestore();
+    lookupRetentionFiscalDocumentRangeSpy.mockRestore();
+  });
+
   it("Project administrator can review a draft invoice with attachments", async () => {
     const { ctx } = createProjectAdminContext();
     const caller = appRouter.createCaller(ctx);

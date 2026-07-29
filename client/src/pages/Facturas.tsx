@@ -155,6 +155,16 @@ type FiscalRangeAutofill = Pick<
   invoiceNumber: string;
 };
 
+type RetentionFiscalRangeAutofill = Pick<
+  InvoiceDraft,
+  | "retentionCai"
+  | "retentionDocumentRangeStart"
+  | "retentionDocumentRangeEnd"
+  | "retentionEmissionDeadline"
+> & {
+  retentionReceiptNumber: string;
+};
+
 type InvoiceActionFeedback = {
   invoiceSavedId: number | null;
   retentionsSavedId: number | null;
@@ -1420,6 +1430,9 @@ export default function Facturas() {
   const oceExemptAmountTouchedRef = useRef(false);
   const fiscalRangeAutofillRef = useRef<FiscalRangeAutofill | null>(null);
   const lastFiscalRangeLookupKeyRef = useRef("");
+  const retentionFiscalRangeAutofillRef =
+    useRef<RetentionFiscalRangeAutofill | null>(null);
+  const lastRetentionFiscalRangeLookupKeyRef = useRef("");
   const [retentionDrafts, setRetentionDrafts] = useState<RetentionDraft[]>([]);
   const [actionFeedback, setActionFeedback] = useState<InvoiceActionFeedback>({
     invoiceSavedId: null,
@@ -1500,6 +1513,10 @@ export default function Facturas() {
       { id: selectedId ?? 0 },
       { enabled: selectedId !== null }
     );
+  const retentionPolicy =
+    detail?.retentionPolicy ??
+    (detail?.supplier?.allowsTaxWithholding !== false ? "manual" : "none");
+  const shouldShowRetentionFiscalData = retentionPolicy !== "none";
   const {
     data: expandedItemsDetail,
     isLoading: isLoadingExpandedItems,
@@ -1607,6 +1624,79 @@ export default function Facturas() {
         fiscalRangeAutofillRef.current = null;
       },
     });
+  const retentionFiscalRangeLookupMutation =
+    trpc.invoices.lookupRetentionFiscalDocumentRange.useMutation({
+      onSuccess: (range, variables) => {
+        const lookupReceiptNumber = formatInvoiceNumberInput(
+          variables.retentionReceiptNumber
+        );
+        const previousAutofill = retentionFiscalRangeAutofillRef.current;
+
+        updateInvoiceDraft(current => {
+          if (
+            !shouldShowRetentionFiscalData ||
+            formatInvoiceNumberInput(current.retentionReceiptNumber) !==
+              lookupReceiptNumber
+          ) {
+            return current;
+          }
+
+          if (!range) {
+            if (!previousAutofill) return current;
+            const next = { ...current };
+            let changed = false;
+            (
+              [
+                "retentionCai",
+                "retentionDocumentRangeStart",
+                "retentionDocumentRangeEnd",
+                "retentionEmissionDeadline",
+              ] as const
+            ).forEach(field => {
+              if (next[field] === previousAutofill[field]) {
+                next[field] = "";
+                changed = true;
+              }
+            });
+            retentionFiscalRangeAutofillRef.current = null;
+            return changed ? next : current;
+          }
+
+          const nextAutofill: RetentionFiscalRangeAutofill = {
+            retentionReceiptNumber: lookupReceiptNumber,
+            retentionCai: range.cai ?? "",
+            retentionDocumentRangeStart: range.documentRangeStart ?? "",
+            retentionDocumentRangeEnd: range.documentRangeEnd ?? "",
+            retentionEmissionDeadline: dateInputValue(range.emissionDeadline),
+          };
+          const next = { ...current };
+          let changed = false;
+          (
+            [
+              "retentionCai",
+              "retentionDocumentRangeStart",
+              "retentionDocumentRangeEnd",
+              "retentionEmissionDeadline",
+            ] as const
+          ).forEach(field => {
+            const canApply =
+              !next[field].trim() ||
+              Boolean(
+                previousAutofill && next[field] === previousAutofill[field]
+              );
+            if (canApply && next[field] !== nextAutofill[field]) {
+              next[field] = nextAutofill[field];
+              changed = true;
+            }
+          });
+          retentionFiscalRangeAutofillRef.current = nextAutofill;
+          return changed ? next : current;
+        });
+      },
+      onError: () => {
+        retentionFiscalRangeAutofillRef.current = null;
+      },
+    });
   const replaceRetentionsMutation = trpc.invoices.replaceRetentions.useMutation(
     {
       onSuccess: (_data, variables) => {
@@ -1697,6 +1787,8 @@ export default function Facturas() {
     oceExemptAmountTouchedRef.current = false;
     fiscalRangeAutofillRef.current = null;
     lastFiscalRangeLookupKeyRef.current = "";
+    retentionFiscalRangeAutofillRef.current = null;
+    lastRetentionFiscalRangeLookupKeyRef.current = "";
     setInvoiceDraft({
       isFiscalDocument: detail.invoice.isFiscalDocument ?? true,
       cai: detail.invoice.cai ?? "",
@@ -1823,6 +1915,59 @@ export default function Facturas() {
     updateInvoiceDraft,
   ]);
 
+  useEffect(() => {
+    if (
+      !selectedId ||
+      !canLookupFiscalRange ||
+      !shouldShowRetentionFiscalData ||
+      !isValidInvoiceNumber(invoiceDraft.retentionReceiptNumber)
+    ) {
+      const previousAutofill = retentionFiscalRangeAutofillRef.current;
+      if (previousAutofill) {
+        updateInvoiceDraft(current => {
+          const next = { ...current };
+          let changed = false;
+          (
+            [
+              "retentionCai",
+              "retentionDocumentRangeStart",
+              "retentionDocumentRangeEnd",
+              "retentionEmissionDeadline",
+            ] as const
+          ).forEach(field => {
+            if (next[field] === previousAutofill[field]) {
+              next[field] = "";
+              changed = true;
+            }
+          });
+          return changed ? next : current;
+        });
+        retentionFiscalRangeAutofillRef.current = null;
+      }
+      lastRetentionFiscalRangeLookupKeyRef.current = "";
+      return;
+    }
+
+    const lookupReceiptNumber = formatInvoiceNumberInput(
+      invoiceDraft.retentionReceiptNumber
+    );
+    const lookupKey = `${selectedId}:${lookupReceiptNumber}`;
+    if (lastRetentionFiscalRangeLookupKeyRef.current === lookupKey) return;
+
+    lastRetentionFiscalRangeLookupKeyRef.current = lookupKey;
+    retentionFiscalRangeLookupMutation.mutate({
+      id: selectedId,
+      retentionReceiptNumber: lookupReceiptNumber,
+    });
+  }, [
+    canLookupFiscalRange,
+    invoiceDraft.retentionReceiptNumber,
+    retentionFiscalRangeLookupMutation,
+    selectedId,
+    shouldShowRetentionFiscalData,
+    updateInvoiceDraft,
+  ]);
+
   const filteredInvoices = invoices;
 
   useEffect(
@@ -1879,9 +2024,6 @@ export default function Facturas() {
   const accountPaymentCertificate = detail?.accountPaymentCertificate ?? null;
   const hasValidAccountPaymentCertificate =
     accountPaymentCertificate?.status === "vigente";
-  const retentionPolicy =
-    detail?.retentionPolicy ??
-    (detail?.supplier?.allowsTaxWithholding !== false ? "manual" : "none");
   const isMissingCpcRetentionRequired = requiresMissingCpcRetention({
     isFiscalDocument: detail?.invoice.isFiscalDocument,
     certificateStatus: accountPaymentCertificate?.status,
@@ -4403,128 +4545,136 @@ export default function Facturas() {
                         />
                       </div>
                     </div>
-                    <div className="space-y-3 border-t border-border pt-4">
-                      <div>
-                        <h3 className="text-sm font-semibold">
-                          Datos fiscales del comprobante de retención
-                        </h3>
+                    {shouldShowRetentionFiscalData ? (
+                      <div className="space-y-3 border-t border-border pt-4">
+                        <div>
+                          <h3 className="text-sm font-semibold">
+                            Datos fiscales del comprobante de retención
+                          </h3>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                          <div className="space-y-2">
+                            <Label>
+                              Número comprobante
+                              {retentionDrafts.length > 0 ? " *" : ""}
+                            </Label>
+                            <Input
+                              value={invoiceDraft.retentionReceiptNumber}
+                              disabled={!canEditSelectedInvoice}
+                              onChange={event =>
+                                updateInvoiceDraft(current => ({
+                                  ...current,
+                                  retentionReceiptNumber:
+                                    formatInvoiceNumberInput(event.target.value),
+                                }))
+                              }
+                              placeholder={
+                                RETENTION_DOCUMENT_NUMBER_PLACEHOLDER
+                              }
+                              inputMode="numeric"
+                              maxLength={INVOICE_NUMBER_FORMAT_EXAMPLE.length}
+                            />
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <Label>
+                              CAI{retentionDrafts.length > 0 ? " *" : ""}
+                            </Label>
+                            <Input
+                              value={invoiceDraft.retentionCai}
+                              disabled={!canEditSelectedInvoice}
+                              onChange={event =>
+                                updateInvoiceDraft(current => ({
+                                  ...current,
+                                  retentionCai: formatCaiInput(
+                                    event.target.value
+                                  ),
+                                }))
+                              }
+                              placeholder={RETENTION_CAI_PLACEHOLDER}
+                              maxLength={CAI_FORMAT_EXAMPLE.length}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>
+                              Rango autorizado inicial
+                              {retentionDrafts.length > 0 ? " *" : ""}
+                            </Label>
+                            <Input
+                              value={invoiceDraft.retentionDocumentRangeStart}
+                              disabled={!canEditSelectedInvoice}
+                              onChange={event =>
+                                updateInvoiceDraft(current => ({
+                                  ...current,
+                                  retentionDocumentRangeStart:
+                                    formatInvoiceNumberInput(event.target.value),
+                                }))
+                              }
+                              placeholder={
+                                RETENTION_DOCUMENT_NUMBER_PLACEHOLDER
+                              }
+                              inputMode="numeric"
+                              maxLength={INVOICE_NUMBER_FORMAT_EXAMPLE.length}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>
+                              Rango autorizado final
+                              {retentionDrafts.length > 0 ? " *" : ""}
+                            </Label>
+                            <Input
+                              value={invoiceDraft.retentionDocumentRangeEnd}
+                              disabled={!canEditSelectedInvoice}
+                              onChange={event =>
+                                updateInvoiceDraft(current => ({
+                                  ...current,
+                                  retentionDocumentRangeEnd:
+                                    formatInvoiceNumberInput(event.target.value),
+                                }))
+                              }
+                              placeholder={
+                                RETENTION_DOCUMENT_NUMBER_PLACEHOLDER
+                              }
+                              inputMode="numeric"
+                              maxLength={INVOICE_NUMBER_FORMAT_EXAMPLE.length}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>
+                              Fecha límite de emisión
+                              {retentionDrafts.length > 0 ? " *" : ""}
+                            </Label>
+                            <Input
+                              type="date"
+                              value={invoiceDraft.retentionEmissionDeadline}
+                              disabled={!canEditSelectedInvoice}
+                              onChange={event =>
+                                updateInvoiceDraft(current => ({
+                                  ...current,
+                                  retentionEmissionDeadline: event.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>
+                              Fecha del comprobante
+                              {retentionDrafts.length > 0 ? " *" : ""}
+                            </Label>
+                            <Input
+                              type="date"
+                              value={invoiceDraft.retentionDocumentDate}
+                              disabled={!canEditSelectedInvoice}
+                              onChange={event =>
+                                updateInvoiceDraft(current => ({
+                                  ...current,
+                                  retentionDocumentDate: event.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
                       </div>
-                      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                        <div className="space-y-2">
-                          <Label>
-                            Número comprobante
-                            {retentionDrafts.length > 0 ? " *" : ""}
-                          </Label>
-                          <Input
-                            value={invoiceDraft.retentionReceiptNumber}
-                            disabled={!canEditSelectedInvoice}
-                            onChange={event =>
-                              updateInvoiceDraft(current => ({
-                                ...current,
-                                retentionReceiptNumber:
-                                  formatInvoiceNumberInput(event.target.value),
-                              }))
-                            }
-                            placeholder={RETENTION_DOCUMENT_NUMBER_PLACEHOLDER}
-                            inputMode="numeric"
-                            maxLength={INVOICE_NUMBER_FORMAT_EXAMPLE.length}
-                          />
-                        </div>
-                        <div className="space-y-2 md:col-span-2">
-                          <Label>
-                            CAI{retentionDrafts.length > 0 ? " *" : ""}
-                          </Label>
-                          <Input
-                            value={invoiceDraft.retentionCai}
-                            disabled={!canEditSelectedInvoice}
-                            onChange={event =>
-                              updateInvoiceDraft(current => ({
-                                ...current,
-                                retentionCai: formatCaiInput(
-                                  event.target.value
-                                ),
-                              }))
-                            }
-                            placeholder={RETENTION_CAI_PLACEHOLDER}
-                            maxLength={CAI_FORMAT_EXAMPLE.length}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>
-                            Rango autorizado inicial
-                            {retentionDrafts.length > 0 ? " *" : ""}
-                          </Label>
-                          <Input
-                            value={invoiceDraft.retentionDocumentRangeStart}
-                            disabled={!canEditSelectedInvoice}
-                            onChange={event =>
-                              updateInvoiceDraft(current => ({
-                                ...current,
-                                retentionDocumentRangeStart:
-                                  formatInvoiceNumberInput(event.target.value),
-                              }))
-                            }
-                            placeholder={RETENTION_DOCUMENT_NUMBER_PLACEHOLDER}
-                            inputMode="numeric"
-                            maxLength={INVOICE_NUMBER_FORMAT_EXAMPLE.length}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>
-                            Rango autorizado final
-                            {retentionDrafts.length > 0 ? " *" : ""}
-                          </Label>
-                          <Input
-                            value={invoiceDraft.retentionDocumentRangeEnd}
-                            disabled={!canEditSelectedInvoice}
-                            onChange={event =>
-                              updateInvoiceDraft(current => ({
-                                ...current,
-                                retentionDocumentRangeEnd:
-                                  formatInvoiceNumberInput(event.target.value),
-                              }))
-                            }
-                            placeholder={RETENTION_DOCUMENT_NUMBER_PLACEHOLDER}
-                            inputMode="numeric"
-                            maxLength={INVOICE_NUMBER_FORMAT_EXAMPLE.length}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>
-                            Fecha límite de emisión
-                            {retentionDrafts.length > 0 ? " *" : ""}
-                          </Label>
-                          <Input
-                            type="date"
-                            value={invoiceDraft.retentionEmissionDeadline}
-                            disabled={!canEditSelectedInvoice}
-                            onChange={event =>
-                              updateInvoiceDraft(current => ({
-                                ...current,
-                                retentionEmissionDeadline: event.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>
-                            Fecha del comprobante
-                            {retentionDrafts.length > 0 ? " *" : ""}
-                          </Label>
-                          <Input
-                            type="date"
-                            value={invoiceDraft.retentionDocumentDate}
-                            disabled={!canEditSelectedInvoice}
-                            onChange={event =>
-                              updateInvoiceDraft(current => ({
-                                ...current,
-                                retentionDocumentDate: event.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                      </div>
-                    </div>
+                    ) : null}
                     <div className="space-y-2">
                       <Label>Notas</Label>
                       <Textarea

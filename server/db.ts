@@ -63,6 +63,7 @@ import {
   sapCatalog,
   suppliers,
   supplierFiscalDocumentRanges,
+  retentionFiscalDocumentRanges,
   supplierContacts,
   supplierDocumentTypes,
   supplierDocuments,
@@ -111,6 +112,7 @@ import type {
   InsertSapCatalogItem,
   InsertSupplier,
   InsertSupplierFiscalDocumentRange,
+  InsertRetentionFiscalDocumentRange,
   Invoice,
   Supplier,
   InsertSupplierContact,
@@ -202,6 +204,7 @@ import {
   formatInvoiceNumberInput,
   getFiscalInvoiceNumberKey,
   isFiscalInvoiceRangeOrdered,
+  isInvoiceNumberWithinFiscalRange,
   isValidCai,
   isValidInvoiceNumber,
   normalizeFiscalRtn,
@@ -10766,6 +10769,103 @@ async function upsertSupplierFiscalDocumentRangeForInvoiceId(
   return upsertSupplierFiscalDocumentRange(row);
 }
 
+type RetentionFiscalRangeInvoiceSnapshot = Pick<
+  Invoice,
+  | "id"
+  | "retentionReceiptNumber"
+  | "retentionCai"
+  | "retentionDocumentRangeStart"
+  | "retentionDocumentRangeEnd"
+  | "retentionEmissionDeadline"
+>;
+
+function buildRetentionFiscalDocumentRangePayload(
+  invoice: RetentionFiscalRangeInvoiceSnapshot
+): InsertRetentionFiscalDocumentRange | null {
+  if (!invoice.retentionReceiptNumber || !invoice.retentionEmissionDeadline) {
+    return null;
+  }
+
+  const cai = formatCaiInput(invoice.retentionCai);
+  const documentRangeStart = formatInvoiceNumberInput(
+    invoice.retentionDocumentRangeStart
+  );
+  const documentRangeEnd = formatInvoiceNumberInput(
+    invoice.retentionDocumentRangeEnd
+  );
+  if (
+    !isValidCai(cai) ||
+    !isValidInvoiceNumber(documentRangeStart) ||
+    !isValidInvoiceNumber(documentRangeEnd) ||
+    !isFiscalInvoiceRangeOrdered({ documentRangeStart, documentRangeEnd }) ||
+    !isInvoiceNumberWithinFiscalRange({
+      invoiceNumber: invoice.retentionReceiptNumber,
+      documentRangeStart,
+      documentRangeEnd,
+    })
+  ) {
+    return null;
+  }
+
+  const documentRangeStartKey = getFiscalInvoiceNumberKey(documentRangeStart);
+  const documentRangeEndKey = getFiscalInvoiceNumberKey(documentRangeEnd);
+  if (!documentRangeStartKey || !documentRangeEndKey) return null;
+
+  return {
+    cai,
+    documentRangeStart,
+    documentRangeEnd,
+    documentRangeStartKey,
+    documentRangeEndKey,
+    emissionDeadline: invoice.retentionEmissionDeadline,
+    sourceInvoiceId: invoice.id,
+    updatedAt: new Date(),
+  };
+}
+
+async function upsertRetentionFiscalDocumentRangeForInvoiceId(
+  invoiceId: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const [invoice] = await db
+    .select({
+      id: invoices.id,
+      retentionReceiptNumber: invoices.retentionReceiptNumber,
+      retentionCai: invoices.retentionCai,
+      retentionDocumentRangeStart: invoices.retentionDocumentRangeStart,
+      retentionDocumentRangeEnd: invoices.retentionDocumentRangeEnd,
+      retentionEmissionDeadline: invoices.retentionEmissionDeadline,
+    })
+    .from(invoices)
+    .where(eq(invoices.id, invoiceId))
+    .limit(1);
+  if (!invoice) return null;
+
+  const payload = buildRetentionFiscalDocumentRangePayload(invoice);
+  if (!payload) return null;
+
+  const [range] = await db
+    .insert(retentionFiscalDocumentRanges)
+    .values(payload)
+    .onConflictDoUpdate({
+      target: [
+        retentionFiscalDocumentRanges.cai,
+        retentionFiscalDocumentRanges.documentRangeStartKey,
+        retentionFiscalDocumentRanges.documentRangeEndKey,
+      ],
+      set: {
+        emissionDeadline: payload.emissionDeadline,
+        sourceInvoiceId: payload.sourceInvoiceId,
+        updatedAt: new Date(),
+      },
+    })
+    .returning();
+
+  return range ?? null;
+}
+
 async function createInvoiceFromPurchaseOrderReceipt(params: {
   receiptId: number;
   purchaseOrderDetail: NonNullable<
@@ -13341,6 +13441,41 @@ export async function lookupSupplierFiscalDocumentRangeBySupplier(params: {
   return range ?? null;
 }
 
+export async function lookupRetentionFiscalDocumentRange(params: {
+  retentionReceiptNumber: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const receiptNumberKey = getFiscalInvoiceNumberKey(
+    params.retentionReceiptNumber
+  );
+  if (!receiptNumberKey) return null;
+
+  const [range] = await db
+    .select()
+    .from(retentionFiscalDocumentRanges)
+    .where(
+      and(
+        lte(
+          retentionFiscalDocumentRanges.documentRangeStartKey,
+          receiptNumberKey
+        ),
+        gte(
+          retentionFiscalDocumentRanges.documentRangeEndKey,
+          receiptNumberKey
+        )
+      )
+    )
+    .orderBy(
+      desc(retentionFiscalDocumentRanges.updatedAt),
+      desc(retentionFiscalDocumentRanges.id)
+    )
+    .limit(1);
+
+  return range ?? null;
+}
+
 export async function updateInvoice(
   id: number,
   data: Partial<
@@ -13410,7 +13545,10 @@ export async function updateInvoice(
     .returning();
 
   if (updated) {
-    await upsertSupplierFiscalDocumentRangeForInvoiceId(updated.id);
+    await Promise.all([
+      upsertSupplierFiscalDocumentRangeForInvoiceId(updated.id),
+      upsertRetentionFiscalDocumentRangeForInvoiceId(updated.id),
+    ]);
   }
 
   return updated;
@@ -13934,7 +14072,7 @@ export async function replaceInvoiceRetentions(
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  return db.transaction(async tx => {
+  const updatedInvoice = await db.transaction(async tx => {
     const [invoiceRow] = await tx
       .select({
         invoice: invoices,
@@ -14209,6 +14347,11 @@ export async function replaceInvoiceRetentions(
 
     return updatedInvoice;
   });
+
+  if (updatedInvoice) {
+    await upsertRetentionFiscalDocumentRangeForInvoiceId(updatedInvoice.id);
+  }
+  return updatedInvoice;
 }
 
 // ============================================================

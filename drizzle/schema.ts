@@ -2598,6 +2598,55 @@ export type SupplierFiscalDocumentRange =
 export type InsertSupplierFiscalDocumentRange =
   typeof supplierFiscalDocumentRanges.$inferInsert;
 
+export const retentionFiscalDocumentRanges = pgTable(
+  "retentionFiscalDocumentRanges",
+  {
+    id: serial("id").primaryKey(),
+    cai: varchar("cai", { length: 100 }).notNull(),
+    documentRangeStart: varchar("documentRangeStart", {
+      length: 100,
+    }).notNull(),
+    documentRangeEnd: varchar("documentRangeEnd", {
+      length: 100,
+    }).notNull(),
+    documentRangeStartKey: varchar("documentRangeStartKey", {
+      length: 32,
+    }).notNull(),
+    documentRangeEndKey: varchar("documentRangeEndKey", {
+      length: 32,
+    }).notNull(),
+    emissionDeadline: timestamp("emissionDeadline").notNull(),
+    sourceInvoiceId: integer("sourceInvoiceId").references(() => invoices.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    lookupIdx: index("ret_fiscal_range_lookup_idx").on(
+      table.documentRangeStartKey,
+      table.documentRangeEndKey
+    ),
+    sourceInvoiceIdx: index("ret_fiscal_range_source_invoice_idx").on(
+      table.sourceInvoiceId
+    ),
+    uniqueRangeIdx: uniqueIndex("ret_fiscal_range_unique_idx").on(
+      table.cai,
+      table.documentRangeStartKey,
+      table.documentRangeEndKey
+    ),
+    rangeOrderCheck: check(
+      "ret_fiscal_range_order_check",
+      sql`${table.documentRangeStartKey} <= ${table.documentRangeEndKey}`
+    ),
+  })
+);
+
+export type RetentionFiscalDocumentRange =
+  typeof retentionFiscalDocumentRanges.$inferSelect;
+export type InsertRetentionFiscalDocumentRange =
+  typeof retentionFiscalDocumentRanges.$inferInsert;
+
 export const supplierContacts = pgTable(
   "supplierContacts",
   {

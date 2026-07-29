@@ -633,6 +633,48 @@ export const invoicesRouter = router({
       };
     }),
 
+  lookupRetentionFiscalDocumentRange: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        retentionReceiptNumber: z.string().trim().max(100),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!canEditInvoices(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para editar facturas",
+        });
+      }
+
+      const detail = await db.getInvoiceById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Factura no encontrada",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.invoice.projectId);
+      assertInvoiceDraft(detail);
+
+      if (!isValidInvoiceNumber(input.retentionReceiptNumber)) return null;
+
+      const range = await db.lookupRetentionFiscalDocumentRange({
+        retentionReceiptNumber: formatInvoiceNumberInput(
+          input.retentionReceiptNumber
+        ),
+      });
+      if (!range) return null;
+
+      return {
+        cai: range.cai,
+        documentRangeStart: range.documentRangeStart,
+        documentRangeEnd: range.documentRangeEnd,
+        emissionDeadline: range.emissionDeadline,
+      };
+    }),
+
   update: protectedProcedure
     .input(
       z
