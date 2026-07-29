@@ -15,7 +15,6 @@ export const SYSTEM_ORDER_HEADERS = [
   "Proveedor",
   "Asesor De Venta",
   "Moneda",
-  "Pedido:",
   "Item",
   "No. Parte",
   "Descripcion",
@@ -28,7 +27,6 @@ export const SYSTEM_ORDER_HEADERS = [
   "Solicitado",
   "F Entrega",
   "Destino",
-  "Cotizacion",
   "Estado",
 ] as const;
 

@@ -842,6 +842,8 @@ describe("internal BuildReq workbook", () => {
     const purchaseOrderHeader = purchaseOrderRows[1];
     const projectColumn = purchaseOrderHeader.indexOf("Proyecto");
     expect(projectColumn).toBeGreaterThan(0);
+    expect(purchaseOrderHeader).not.toContain("Pedido:");
+    expect(purchaseOrderHeader).not.toContain("Cotizacion");
     expect(purchaseOrderRows[2][projectColumn]).toBe(
       "018 — CA 6 - Pinares de Uyuca"
     );
@@ -876,6 +878,92 @@ describe("internal BuildReq workbook", () => {
     ]);
     expect(rows.flat()).not.toContain("Data");
     expect(rows.flat()).not.toContain("Campos");
+  });
+
+  it("exports the same two-decimal numeric values shown in invoices and purchase orders", () => {
+    const payload = buildSystemWorkbookPayload(
+      [sarInvoice()],
+      [
+        {
+          orderNumber: "OC-DECIMALES",
+          job: "REQ-DECIMALES",
+          project: "017 — CA-4 Ocotepeque",
+          financialCode: "0201",
+          date: new Date("2026-07-01"),
+          supplierRtn: "08019002274414",
+          supplierName: "Proveedor Demo",
+          salesAdvisor: "Asesor",
+          currency: "HNL",
+          orderId: 1,
+          itemNumber: 1,
+          partNumber: "SAP-001",
+          description: "Material",
+          quantity: 1,
+          unitPrice: 531.5295,
+          subtotal: 531.5295,
+          tax: 79.729425,
+          total: 611.258925,
+          purchaseType: "local",
+          requestedBy: "Solicitante",
+          deliveryDate: new Date("2026-07-10"),
+          destination: "Proyecto",
+          quoteReference: "55",
+          status: "emitida",
+        },
+      ]
+    );
+    payload.invoices[0].Total_Base = 531.5295;
+    payload.invoices[0]["Isv_15%"] = 79.729425;
+    payload.invoices[0].Total_Factura = 611.258925;
+
+    const roundTrip = (workbook: XLSX.WorkBook) =>
+      XLSX.read(
+        XLSX.write(workbook, {
+          type: "buffer",
+          bookType: "xlsx",
+          cellDates: true,
+        }),
+        { type: "buffer", cellDates: true, cellNF: true }
+      );
+
+    const purchaseOrderWorkbook = roundTrip(
+      buildSystemPurchaseOrdersWorkbook(XLSX, payload)
+    );
+    const purchaseOrderSheet =
+      purchaseOrderWorkbook.Sheets["Órdenes de Compra"];
+    const purchaseOrderRows = XLSX.utils.sheet_to_json(purchaseOrderSheet, {
+      header: 1,
+      raw: true,
+    }) as unknown[][];
+    const purchaseOrderHeader = purchaseOrderRows[1];
+    const unitPriceColumn = purchaseOrderHeader.indexOf("V Unitario");
+    const purchaseOrderTotalColumn = purchaseOrderHeader.indexOf("Total");
+
+    expect(purchaseOrderRows[2][unitPriceColumn]).toBe(531.53);
+    expect(purchaseOrderRows[2][purchaseOrderTotalColumn]).toBe(611.26);
+    expect(
+      purchaseOrderSheet[
+        XLSX.utils.encode_cell({ r: 2, c: unitPriceColumn })
+      ]?.z
+    ).toBe("#,##0.00");
+
+    const invoiceWorkbook = roundTrip(
+      buildSystemInvoicesWorkbook(XLSX, payload)
+    );
+    const invoiceSheet = invoiceWorkbook.Sheets["Registro Facturacion"];
+    const invoiceRows = XLSX.utils.sheet_to_json(invoiceSheet, {
+      header: 1,
+      raw: true,
+    }) as unknown[][];
+    const invoiceHeader = invoiceRows[1];
+    const invoiceBaseColumn = invoiceHeader.indexOf("Total_Base");
+    const invoiceTotalColumn = invoiceHeader.indexOf("Total_Factura");
+
+    expect(invoiceRows[2][invoiceBaseColumn]).toBe(531.53);
+    expect(invoiceRows[2][invoiceTotalColumn]).toBe(611.26);
+    expect(
+      invoiceSheet[XLSX.utils.encode_cell({ r: 2, c: invoiceBaseColumn })]?.z
+    ).toBe("#,##0.00");
   });
 
   it("contains one treasury summary row per invoice without article detail", () => {

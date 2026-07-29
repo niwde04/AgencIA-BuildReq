@@ -442,12 +442,30 @@ function appendTotals(rows: unknown[][], numericColumns: number[]) {
   totalRow[0] = "TOTAL";
   const dataRows = rows.slice(1);
   numericColumns.forEach(column => {
-    totalRow[column] = dataRows.reduce((sum, row) => {
-      const value = Number(row[column] ?? 0);
-      return sum + (Number.isFinite(value) ? value : 0);
-    }, 0);
+    totalRow[column] = roundSystemWorkbookNumber(
+      dataRows.reduce((sum, row) => {
+        const value = Number(row[column] ?? 0);
+        return sum + (Number.isFinite(value) ? value : 0);
+      }, 0)
+    );
   });
   rows.push(totalRow);
+}
+
+const systemWorkbookNumberFormatter = new Intl.NumberFormat("en-US", {
+  useGrouping: false,
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+function roundSystemWorkbookNumber(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return value;
+  const rounded = Number(systemWorkbookNumberFormatter.format(value));
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+function roundSystemWorkbookRow(row: unknown[]) {
+  return row.map(roundSystemWorkbookNumber);
 }
 
 function buildSystemPurchaseOrderSheet(
@@ -457,35 +475,35 @@ function buildSystemPurchaseOrderSheet(
   const orderRows: unknown[][] = [
     [null, null, null, "Llave principal (Financiera)"],
     [null, ...SYSTEM_ORDER_HEADERS],
-    ...payload.purchaseOrders.map(row => [
-      null,
-      row.orderNumber,
-      row.job,
-      row.project,
-      row.financialCode,
-      row.date ? new Date(row.date) : null,
-      row.supplierRtn,
-      row.supplierName,
-      row.salesAdvisor,
-      row.currency,
-      row.orderId,
-      row.itemNumber,
-      row.partNumber,
-      row.description,
-      row.quantity,
-      row.unitPrice,
-      row.subtotal,
-      row.tax,
-      row.total,
-      row.purchaseType,
-      row.requestedBy,
-      row.deliveryDate ? new Date(row.deliveryDate) : null,
-      row.destination,
-      row.quoteReference,
-      row.status,
-    ]),
+    ...payload.purchaseOrders.map(row =>
+      roundSystemWorkbookRow([
+        null,
+        row.orderNumber,
+        row.job,
+        row.project,
+        row.financialCode,
+        row.date ? new Date(row.date) : null,
+        row.supplierRtn,
+        row.supplierName,
+        row.salesAdvisor,
+        row.currency,
+        row.itemNumber,
+        row.partNumber,
+        row.description,
+        row.quantity,
+        row.unitPrice,
+        row.subtotal,
+        row.tax,
+        row.total,
+        row.purchaseType,
+        row.requestedBy,
+        row.deliveryDate ? new Date(row.deliveryDate) : null,
+        row.destination,
+        row.status,
+      ])
+    ),
   ];
-  appendTotals(orderRows, [14, 15, 16, 17, 18]);
+  appendTotals(orderRows, [13, 14, 15, 16, 17]);
   const orderSheet = makeSheet(
     XLSX,
     orderRows,
@@ -499,10 +517,12 @@ function buildSystemInvoiceSheet(XLSX: Xlsx, payload: SystemWorkbookPayload) {
   const invoiceRows: unknown[][] = [
     [null, null, "Llave principal (Financiera)"],
     [null, ...SYSTEM_INVOICE_HEADERS],
-    ...payload.invoices.map(row => [
-      null,
-      ...SYSTEM_INVOICE_HEADERS.map(header => row[header]),
-    ]),
+    ...payload.invoices.map(row =>
+      roundSystemWorkbookRow([
+        null,
+        ...SYSTEM_INVOICE_HEADERS.map(header => row[header]),
+      ])
+    ),
   ];
   appendTotals(
     invoiceRows,
