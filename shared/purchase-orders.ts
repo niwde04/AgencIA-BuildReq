@@ -40,7 +40,7 @@ export function formatPurchaseOrderPaymentMethodPrintLabel(
 ) {
   if (value === "linea_credito") return "CREDITO";
   if (value === "fondo_proyecto" || value === "caja_chica") {
-    return "FONDO DEL PROYECTO";
+    return "EFECTIVO";
   }
   return "-";
 }

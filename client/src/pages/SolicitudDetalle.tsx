@@ -104,9 +104,9 @@ const PURCHASE_TYPE_LABELS: Record<string, string> = {
   compra_directa: "Compra Directa",
 };
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
-  linea_credito: "Línea de Crédito",
-  fondo_proyecto: "Fondo del proyecto",
-  caja_chica: "Fondo del proyecto",
+  linea_credito: "Línea de crédito",
+  fondo_proyecto: "Efectivo",
+  caja_chica: "Efectivo",
 };
 
 const WORKFLOW_STAGE_LABELS: Record<string, string> = {

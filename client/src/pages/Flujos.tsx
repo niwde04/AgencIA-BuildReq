@@ -52,9 +52,9 @@ const getPurchaseTypeLabel = (value?: string | null) =>
   PURCHASE_TYPE_LABELS[value as PurchaseType] ?? "—";
 
 const PAYMENT_METHOD_LABELS: Record<DirectPurchasePaymentMethod, string> = {
-  linea_credito: "Línea de Crédito",
-  fondo_proyecto: "Fondo del proyecto",
-  caja_chica: "Fondo del proyecto",
+  linea_credito: "Línea de crédito",
+  fondo_proyecto: "Efectivo",
+  caja_chica: "Efectivo",
 };
 
 const getPaymentMethodLabel = (value?: string | null) =>

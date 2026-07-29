@@ -14,6 +14,7 @@ import {
   calculatePurchaseOrderLineAmounts,
   calculateContractPaymentDates,
   formatPurchaseOrderCurrency,
+  formatPurchaseOrderPaymentMethodPrintLabel,
   getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderContractSummary,
   getPurchaseOrderTaxSelectionError,
@@ -3301,7 +3302,7 @@ describe("BuildReq - Role-based Access Control", () => {
       caller.supplyFlows.createDirectPurchase({
         requestId: 1,
         requestItemId: 1,
-        paymentMethod: "caja_chica",
+        paymentMethod: "fondo_proyecto",
       })
     ).rejects.toThrow("No tiene permisos para registrar compras directas");
   });
@@ -4593,7 +4594,7 @@ describe("BuildReq - Role-based Access Control", () => {
       caller.supplyFlows.createDirectPurchase({
         requestId: 1,
         requestItemId: 1,
-        paymentMethod: "caja_chica",
+        paymentMethod: "fondo_proyecto",
       })
     ).rejects.toThrow("No tiene permisos para registrar compras directas");
   });
@@ -9064,6 +9065,14 @@ describe("BuildReq - Supply Flow Validations", () => {
         paymentMethod: "invalid" as any,
       })
     ).rejects.toThrow();
+
+    await expect(
+      caller.supplyFlows.createDirectPurchase({
+        requestId: 1,
+        requestItemId: 1,
+        paymentMethod: "caja_chica" as any,
+      })
+    ).rejects.toThrow();
   });
 
   it("Validates purchase type for purchase request", async () => {
@@ -13244,6 +13253,16 @@ describe("BuildReq - Purchase Orders", () => {
   });
 
   it("prints the actual direct purchase payment method on purchase orders", () => {
+    expect(formatPurchaseOrderPaymentMethodPrintLabel("linea_credito")).toBe(
+      "CREDITO"
+    );
+    expect(formatPurchaseOrderPaymentMethodPrintLabel("fondo_proyecto")).toBe(
+      "EFECTIVO"
+    );
+    expect(formatPurchaseOrderPaymentMethodPrintLabel("caja_chica")).toBe(
+      "EFECTIVO"
+    );
+
     const pdf = buildPurchaseOrderPrintPdfBase64({
       orderNumber: "CD-010-00000011",
       orderId: "11",
@@ -13252,7 +13271,7 @@ describe("BuildReq - Purchase Orders", () => {
       createdDateLabel: "10/07/2026",
       destinationLabel: "010 SISTEMA DE AGUA POTABLE SAN JOSE",
       deliveryDateLabel: "13/07/2026",
-      paymentMethodLabel: "FONDO DEL PROYECTO",
+      paymentMethodLabel: "EFECTIVO",
       requestedByLabel: "WILSON OSWALDO MOLINA VARGAS",
       preparedByLabel: "EDWIN BARAHONA",
       originalRequestLabel: "REQ-010-00000016",
@@ -13277,14 +13296,14 @@ describe("BuildReq - Purchase Orders", () => {
     });
 
     const pdfText = Buffer.from(pdf, "base64").toString("latin1");
-    const encodedFund = Buffer.from("FONDO DEL PROYECTO", "latin1")
+    const encodedCash = Buffer.from("EFECTIVO", "latin1")
       .toString("hex")
       .toUpperCase();
     const encodedCredit = Buffer.from("CREDITO", "latin1")
       .toString("hex")
       .toUpperCase();
 
-    expect(pdfText).toContain(`<${encodedFund}> Tj`);
+    expect(pdfText).toContain(`<${encodedCash}> Tj`);
     expect(pdfText).not.toContain(`<${encodedCredit}> Tj`);
   });
 
@@ -19652,7 +19671,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
       await caller.supplyFlows.createDirectPurchase({
         requestId: 999,
         requestItemId: 999,
-        paymentMethod: "caja_chica",
+        paymentMethod: "fondo_proyecto",
         // No supplierId - should be fine
       });
     } catch (e: any) {

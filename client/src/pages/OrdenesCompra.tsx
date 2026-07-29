@@ -197,15 +197,11 @@ function formatContractAuditValue(field: string, value?: string | null) {
 }
 type DirectPurchasePaymentMethod =
   | "linea_credito"
-  | "fondo_proyecto"
-  | "caja_chica";
-const DIRECT_PURCHASE_PAYMENT_METHOD_LABELS: Record<
-  DirectPurchasePaymentMethod,
-  string
-> = {
-  linea_credito: "Línea de Crédito",
-  fondo_proyecto: "Fondo del proyecto",
-  caja_chica: "Fondo del proyecto",
+  | "fondo_proyecto";
+const DIRECT_PURCHASE_PAYMENT_METHOD_LABELS: Record<string, string> = {
+  linea_credito: "Línea de crédito",
+  fondo_proyecto: "Efectivo",
+  caja_chica: "Efectivo",
 };
 function formatDirectPurchasePaymentMethod(value?: string | null) {
   return (
@@ -213,6 +209,15 @@ function formatDirectPurchasePaymentMethod(value?: string | null) {
       value as DirectPurchasePaymentMethod
     ] ?? "Pendiente"
   );
+}
+function normalizeDirectPurchasePaymentMethod(
+  value?: string | null
+): DirectPurchasePaymentMethod | undefined {
+  if (value === "linea_credito") return value;
+  if (value === "fondo_proyecto" || value === "caja_chica") {
+    return "fondo_proyecto";
+  }
+  return undefined;
 }
 
 const EMISSION_STATUS_LABELS: Record<string, string> = {
@@ -5452,9 +5457,10 @@ export default function OrdenesCompra() {
                       {canEditOrderStructure ? (
                         <Select
                           value={
-                            detail.purchaseOrder.paymentMethod ??
-                            detail.directPurchasePaymentMethod ??
-                            undefined
+                            normalizeDirectPurchasePaymentMethod(
+                              detail.purchaseOrder.paymentMethod ??
+                                detail.directPurchasePaymentMethod
+                            )
                           }
                           onValueChange={handlePaymentMethodChange}
                           disabled={updateMutation.isPending}

@@ -195,8 +195,8 @@ const STATUS_LABELS: Record<string, string> = {
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   linea_credito: "Línea de crédito",
-  fondo_proyecto: "Fondo de proyecto",
-  caja_chica: "Caja chica",
+  fondo_proyecto: "Efectivo",
+  caja_chica: "Efectivo",
 };
 
 const FLOW_LABELS: Record<string, string> = {

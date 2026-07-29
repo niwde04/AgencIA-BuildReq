@@ -52,13 +52,12 @@ const purchaseTypeSchema = z.enum(["local", "extranjera", "compra_directa"]);
 const directPurchasePaymentMethodSchema = z.enum([
   "linea_credito",
   "fondo_proyecto",
-  "caja_chica",
 ]);
 
 function getPaymentMethodLabel(paymentMethod?: string | null) {
   if (paymentMethod === "linea_credito") return "Línea de crédito";
   if (paymentMethod === "fondo_proyecto" || paymentMethod === "caja_chica") {
-    return "Fondo del proyecto";
+    return "Efectivo";
   }
   return paymentMethod ?? "Sin método";
 }

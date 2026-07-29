@@ -274,7 +274,6 @@ const fixedAssetDetailSchema = z.object({
 const directPurchasePaymentMethodSchema = z.enum([
   "linea_credito",
   "fondo_proyecto",
-  "caja_chica",
 ]);
 
 function getPendingConversionQuantity(item: {
