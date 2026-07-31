@@ -1750,6 +1750,7 @@ function BatchDetailDialog({
   const isAdvanceBatch = batch?.paymentKind === "purchase_order_advance";
   const isQualityReleaseBatch =
     batch?.paymentKind === "quality_retention_release";
+  const isInvoiceBatch = (batch?.paymentKind ?? "invoice") === "invoice";
   const status = batch?.status as TreasuryBatchStatus | undefined;
   const isCentral =
     user?.role === "admin" || user?.buildreqRole === "administracion_central";
@@ -2130,8 +2131,12 @@ function BatchDetailDialog({
               <Table
                 className={
                   status === "borrador" && canManageDrafts
-                    ? "min-w-[2100px]"
-                    : "min-w-[2000px]"
+                    ? isInvoiceBatch
+                      ? "min-w-[2250px]"
+                      : "min-w-[2100px]"
+                    : isInvoiceBatch
+                      ? "min-w-[2150px]"
+                      : "min-w-[2000px]"
                 }
               >
                 <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-muted">
@@ -2150,6 +2155,11 @@ function BatchDetailDialog({
                     <TableHead className="min-w-40">
                       {isAdvanceBatch ? "Orden de compra" : "Factura fiscal"}
                     </TableHead>
+                    {isInvoiceBatch && (
+                      <TableHead className="min-w-36">
+                        Fecha de vencimiento
+                      </TableHead>
+                    )}
                     <TableHead className="min-w-48">Proyecto</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead className="text-right">Subtotal</TableHead>
@@ -2228,6 +2238,11 @@ function BatchDetailDialog({
                         {item.invoiceNumber ||
                           (isAdvanceBatch ? "Sin OC" : "Sin número fiscal")}
                       </TableCell>
+                      {isInvoiceBatch && (
+                        <TableCell className="whitespace-nowrap">
+                          {formatDateOnly(item.invoiceDocumentDueDate)}
+                        </TableCell>
+                      )}
                       <TableCell className="whitespace-normal">
                         <div>{item.invoiceProjectCode}</div>
                         <div className="text-xs text-muted-foreground">

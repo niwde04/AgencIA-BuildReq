@@ -1115,6 +1115,7 @@ export async function getTreasuryBatchById(batchId: number) {
         invoiceProjectId: projects.id,
         invoiceProjectCode: projects.code,
         invoiceProjectName: projects.name,
+        invoiceDocumentDueDate: invoices.documentDueDate,
         invoiceSubtotal: invoices.subtotal,
         invoiceTaxAmount: invoices.taxAmount,
         invoiceTotal: invoices.total,
