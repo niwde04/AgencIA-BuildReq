@@ -147,7 +147,7 @@ export function PurchaseOrderAdvanceDialog({
     createMutation.isPending || uploadMutation.isPending;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-h-[calc(100vh-2rem)] !w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] overflow-y-auto sm:!w-[calc(100vw-3rem)] sm:!max-w-[calc(100vw-3rem)] lg:!max-w-5xl">
         <DialogHeader>
           <DialogTitle>Solicitar anticipo a proveedor</DialogTitle>
           <DialogDescription>
@@ -196,7 +196,7 @@ export function PurchaseOrderAdvanceDialog({
                     }
                   }}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full min-w-0">
                     <SelectValue placeholder="Seleccione una OC emitida" />
                   </SelectTrigger>
                   <SelectContent>
