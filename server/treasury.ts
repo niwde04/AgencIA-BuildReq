@@ -13,6 +13,7 @@ import {
 import * as XLSX from "xlsx";
 import {
   attachments,
+  invoiceDocumentAdjustments,
   invoices,
   projects,
   purchaseOrderAdvances,
@@ -1056,6 +1057,7 @@ export async function getTreasuryBatchById(batchId: number) {
     attachmentRows,
     sourceBatches,
     invoiceFinancialRows,
+    invoiceOtherRetentionRows,
     advanceFinancialRows,
   ] = await Promise.all([
     readBatchItems(db, batchId),
@@ -1095,6 +1097,32 @@ export async function getTreasuryBatchById(batchId: number) {
       .where(eq(treasuryPaymentItems.batchId, batchId)),
     db
       .select({
+        invoiceId: invoiceDocumentAdjustments.invoiceId,
+        adjustmentType: invoiceDocumentAdjustments.adjustmentType,
+        percentage: invoiceDocumentAdjustments.percentage,
+        baseAmount: invoiceDocumentAdjustments.baseAmount,
+        amount: invoiceDocumentAdjustments.amount,
+      })
+      .from(treasuryPaymentItems)
+      .innerJoin(
+        invoiceDocumentAdjustments,
+        eq(treasuryPaymentItems.invoiceId, invoiceDocumentAdjustments.invoiceId)
+      )
+      .where(
+        and(
+          eq(treasuryPaymentItems.batchId, batchId),
+          inArray(invoiceDocumentAdjustments.adjustmentType, [
+            "quality_retention",
+            "advance_amortization",
+          ])
+        )
+      )
+      .orderBy(
+        asc(invoiceDocumentAdjustments.invoiceId),
+        asc(invoiceDocumentAdjustments.id)
+      ),
+    db
+      .select({
         purchaseOrderAdvanceId: purchaseOrderAdvances.id,
         purchaseOrderId: purchaseOrders.id,
         orderNumber: purchaseOrders.orderNumber,
@@ -1132,11 +1160,24 @@ export async function getTreasuryBatchById(batchId: number) {
       advance,
     ])
   );
+  const otherRetentionsByInvoiceId = new Map<
+    number,
+    typeof invoiceOtherRetentionRows
+  >();
+  invoiceOtherRetentionRows.forEach(adjustment => {
+    const current = otherRetentionsByInvoiceId.get(adjustment.invoiceId) ?? [];
+    current.push(adjustment);
+    otherRetentionsByInvoiceId.set(adjustment.invoiceId, current);
+  });
   const detailedItems = items.map((item: any) => ({
     ...item,
     ...(item.sourceType === "purchase_order_advance"
       ? advanceFinancialsById.get(item.purchaseOrderAdvanceId)
       : invoiceFinancialsById.get(item.invoiceId)),
+    otherRetentionAdjustments:
+      item.sourceType === "purchase_order_advance"
+        ? []
+        : (otherRetentionsByInvoiceId.get(item.invoiceId) ?? []),
   }));
   const allFinancialRows = [...invoiceFinancialRows, ...advanceFinancialRows];
   const batchProjects = Array.from(

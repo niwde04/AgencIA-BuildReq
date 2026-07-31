@@ -2,6 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -127,6 +133,75 @@ function formatMoney(value: unknown, currency: "HNL" | "USD" = "HNL") {
 function formatMoneyInputValue(value: unknown) {
   const amount = Number(value ?? 0);
   return roundTreasuryMoney(Number.isFinite(amount) ? amount : 0).toFixed(2);
+}
+
+const OTHER_RETENTION_LABELS: Record<string, string> = {
+  quality_retention: "Retención de calidad",
+  advance_amortization: "Amortización de anticipo",
+};
+
+function TreasuryOtherRetentionsAccordion({
+  total,
+  adjustments,
+  currency,
+}: {
+  total: unknown;
+  adjustments?: Array<{
+    adjustmentType?: string | null;
+    percentage?: string | number | null;
+    baseAmount?: string | number | null;
+    amount?: string | number | null;
+  }>;
+  currency: "HNL" | "USD";
+}) {
+  const detailRows = (adjustments ?? []).filter(adjustment =>
+    Object.prototype.hasOwnProperty.call(
+      OTHER_RETENTION_LABELS,
+      adjustment.adjustmentType ?? ""
+    )
+  );
+
+  if (detailRows.length === 0) {
+    return <span>{formatMoney(total, currency)}</span>;
+  }
+
+  return (
+    <Accordion type="single" collapsible className="ml-auto w-64">
+      <AccordionItem value="other-retentions" className="border-b-0">
+        <AccordionTrigger className="justify-end gap-2 py-1 text-right hover:no-underline">
+          <span className="font-medium tabular-nums">
+            {formatMoney(total, currency)}
+          </span>
+        </AccordionTrigger>
+        <AccordionContent className="pb-1 pt-2">
+          <div className="space-y-2 rounded-md border border-border/70 bg-background p-2 text-left shadow-sm">
+            {detailRows.map(adjustment => (
+              <div
+                key={adjustment.adjustmentType}
+                className="border-b border-border/60 pb-2 last:border-b-0 last:pb-0"
+              >
+                <div className="flex items-start justify-between gap-3 text-xs">
+                  <span className="font-medium">
+                    {OTHER_RETENTION_LABELS[adjustment.adjustmentType ?? ""] ??
+                      "Otra retención"}
+                  </span>
+                  <span className="shrink-0 font-semibold tabular-nums">
+                    {formatMoney(adjustment.amount, currency)}
+                  </span>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                  <span>
+                    Base {formatMoney(adjustment.baseAmount, currency)}
+                  </span>
+                  <span>{Number(adjustment.percentage ?? 0).toFixed(2)}%</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
+  );
 }
 
 function formatDate(value: unknown) {
@@ -1816,10 +1891,11 @@ function BatchDetailDialog({
                         )}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {formatMoney(
-                          item.invoiceOtherRetentionTotal,
-                          detail.batch.currency
-                        )}
+                        <TreasuryOtherRetentionsAccordion
+                          total={item.invoiceOtherRetentionTotal}
+                          adjustments={item.otherRetentionAdjustments}
+                          currency={detail.batch.currency}
+                        />
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {formatMoney(
