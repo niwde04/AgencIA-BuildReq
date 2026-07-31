@@ -1,5 +1,9 @@
 import { trpc } from "@/lib/trpc";
 import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
+import {
+  buildInventoryExportRows,
+  normalizeInventoryUnit,
+} from "@/lib/inventory-export";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
   normalizeArticleDescription,
@@ -653,6 +657,7 @@ export default function Inventario() {
 
     for (const item of items as any[]) {
       const itemKey = item.sapItemCode?.trim() || item.name?.trim().toLowerCase();
+      const normalizedUnit = normalizeInventoryUnit(item.unit);
       const warehouseId = item.warehouse?.id ?? item.warehouseId ?? null;
       const warehouseLocation =
         item.warehouseLocation || item.warehouse?.displayName || "Sin almacén";
@@ -660,11 +665,16 @@ export default function Inventario() {
         typeof warehouseId === "number"
           ? `warehouse:${warehouseId}`
           : `location:${String(warehouseLocation).trim().toLowerCase()}`;
-      const groupKey = `${itemKey}:${warehouseKey}`;
+      const groupKey = [
+        itemKey,
+        warehouseKey,
+        normalizedUnit.toLocaleLowerCase("es-HN"),
+      ].join(":");
       const existing =
         groups.get(groupKey) ??
         {
           ...item,
+          unit: normalizedUnit,
           id: groupKey,
           sourceIds: [],
           projectBreakdownByKey: new Map<string, any>(),
@@ -940,9 +950,7 @@ export default function Inventario() {
         nextPage += 1;
       }
 
-      const rowsWithStock = rows.filter(
-        row => parseQuantity(row.currentStock) > 0
-      );
+      const rowsWithStock = buildInventoryExportRows(rows);
       if (rowsWithStock.length === 0) {
         toast.info("No hay registros con stock mayor a cero para exportar");
         return;
