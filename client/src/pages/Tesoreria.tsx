@@ -1056,7 +1056,7 @@ function QualityReleaseBatchFormDialog({
   const pending = createMutation.isPending || updateMutation.isPending;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="grid max-h-[96vh] w-[calc(100vw-1rem)] max-w-6xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0">
+      <DialogContent className="grid max-h-[96vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-[calc(100vw-2rem)] xl:max-w-[1400px]">
         <DialogHeader className="border-b px-6 py-5 pr-14">
           <DialogTitle>
             {existing
