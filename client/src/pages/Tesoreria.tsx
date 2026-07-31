@@ -140,10 +140,17 @@ const OTHER_RETENTION_LABELS: Record<string, string> = {
   advance_amortization: "Amortización de anticipo",
 };
 
-function TreasuryOtherRetentionsAccordion({
+const DOCUMENT_DISCOUNT_LABELS: Record<string, string> = {
+  prompt_payment_discount: "Pronto pago",
+  tc_discount: "TC",
+};
+
+function TreasuryDocumentAdjustmentsAccordion({
   total,
   adjustments,
   currency,
+  labels,
+  fallbackLabel,
 }: {
   total: unknown;
   adjustments?: Array<{
@@ -153,10 +160,12 @@ function TreasuryOtherRetentionsAccordion({
     amount?: string | number | null;
   }>;
   currency: "HNL" | "USD";
+  labels: Record<string, string>;
+  fallbackLabel: string;
 }) {
   const detailRows = (adjustments ?? []).filter(adjustment =>
     Object.prototype.hasOwnProperty.call(
-      OTHER_RETENTION_LABELS,
+      labels,
       adjustment.adjustmentType ?? ""
     )
   );
@@ -182,8 +191,7 @@ function TreasuryOtherRetentionsAccordion({
               >
                 <div className="flex items-start justify-between gap-3 text-xs">
                   <span className="font-medium">
-                    {OTHER_RETENTION_LABELS[adjustment.adjustmentType ?? ""] ??
-                      "Otra retención"}
+                    {labels[adjustment.adjustmentType ?? ""] ?? fallbackLabel}
                   </span>
                   <span className="shrink-0 font-semibold tabular-nums">
                     {formatMoney(adjustment.amount, currency)}
@@ -1891,17 +1899,22 @@ function BatchDetailDialog({
                         )}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
-                        <TreasuryOtherRetentionsAccordion
+                        <TreasuryDocumentAdjustmentsAccordion
                           total={item.invoiceOtherRetentionTotal}
                           adjustments={item.otherRetentionAdjustments}
                           currency={detail.batch.currency}
+                          labels={OTHER_RETENTION_LABELS}
+                          fallbackLabel="Otra retención"
                         />
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {formatMoney(
-                          item.invoiceDocumentDiscountTotal,
-                          detail.batch.currency
-                        )}
+                        <TreasuryDocumentAdjustmentsAccordion
+                          total={item.invoiceDocumentDiscountTotal}
+                          adjustments={item.documentDiscountAdjustments}
+                          currency={detail.batch.currency}
+                          labels={DOCUMENT_DISCOUNT_LABELS}
+                          fallbackLabel="Descuento"
+                        />
                       </TableCell>
                       <TableCell className="text-right font-medium tabular-nums">
                         {formatMoney(
