@@ -17,6 +17,12 @@ import {
   DocumentItemsAccordionTrigger,
 } from "@/components/DocumentItemsAccordion";
 import { DocumentNumberButton } from "@/components/DocumentNumberButton";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -5072,193 +5078,208 @@ export default function Facturas() {
                   </div>
                 </section>
 
-                <section className="min-w-0 rounded-lg border border-border/70">
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-4 py-3">
-                    <div>
-                      <h3 className="font-semibold">
-                        Retenciones y descuentos por documento
-                      </h3>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Cálculos independientes de las retenciones fiscales y
-                        del anticipo aplicado por Tesorería.
-                      </p>
-                    </div>
-                    <div className="text-right text-sm">
-                      <p className="font-semibold text-rose-700">
-                        Otras retenciones:{" "}
-                        {formatSelectedInvoiceCurrency(otherRetentionTotal)}
-                      </p>
-                      <p className="font-semibold text-amber-700">
-                        Descuentos:{" "}
-                        {formatSelectedInvoiceCurrency(documentDiscountTotal)}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="space-y-5 p-4">
-                    <div className="space-y-3">
-                      <div>
-                        <h4 className="text-sm font-semibold">
-                          Otras retenciones por documento
-                        </h4>
-                        <p className="text-xs text-muted-foreground">
-                          La base corresponde al subtotal de la factura.
-                        </p>
-                      </div>
-                      <DocumentAdjustmentPercentageRow
-                        label="Retención de calidad"
-                        description="Porcentaje contractual retenido por calidad."
-                        baseAmount={toMoneyNumber(detail.invoice.subtotal)}
-                        percentage={
-                          documentAdjustmentDraft.qualityRetentionPercent
-                        }
-                        amount={toMoneyNumber(
-                          qualityRetentionAdjustment?.amount
-                        )}
-                        disabled={!canEditDocumentAdjustments}
-                        formatCurrency={formatSelectedInvoiceCurrency}
-                        onPercentageChange={value =>
-                          updateDocumentAdjustmentDraft(current => ({
-                            ...current,
-                            qualityRetentionPercent: value,
-                          }))
-                        }
-                      />
-                      <DocumentAdjustmentPercentageRow
-                        label="Amortización de anticipo"
-                        description="Deducción documental independiente del anticipo real de Tesorería."
-                        baseAmount={toMoneyNumber(detail.invoice.subtotal)}
-                        percentage={
-                          documentAdjustmentDraft.advanceAmortizationPercent
-                        }
-                        amount={toMoneyNumber(
-                          advanceAmortizationAdjustment?.amount
-                        )}
-                        disabled={!canEditDocumentAdjustments}
-                        formatCurrency={formatSelectedInvoiceCurrency}
-                        onPercentageChange={value =>
-                          updateDocumentAdjustmentDraft(current => ({
-                            ...current,
-                            advanceAmortizationPercent: value,
-                          }))
-                        }
-                      />
-                    </div>
-
-                    <div className="space-y-3 border-t border-border/70 pt-5">
-                      <div>
-                        <h4 className="text-sm font-semibold">
-                          Descuentos por documento
-                        </h4>
-                        <p className="text-xs text-muted-foreground">
-                          Pronto pago usa el subtotal; TC usa únicamente el ISV
-                          base gravado.
-                        </p>
-                      </div>
-                      <DocumentAdjustmentPercentageRow
-                        label="Pronto pago"
-                        description="Porcentaje variable calculado sobre el subtotal."
-                        baseAmount={toMoneyNumber(detail.invoice.subtotal)}
-                        percentage={
-                          documentAdjustmentDraft.promptPaymentPercent
-                        }
-                        amount={toMoneyNumber(promptPaymentAdjustment?.amount)}
-                        disabled={!canEditDocumentAdjustments}
-                        formatCurrency={formatSelectedInvoiceCurrency}
-                        onPercentageChange={value =>
-                          updateDocumentAdjustmentDraft(current => ({
-                            ...current,
-                            promptPaymentPercent: value,
-                          }))
-                        }
-                      />
-                      <div className="grid gap-3 rounded-lg border border-border/70 p-3 md:grid-cols-[minmax(220px,1fr)_150px_130px_150px] md:items-end">
+                <Accordion
+                  type="single"
+                  collapsible
+                  className="min-w-0 rounded-lg border border-border/70"
+                >
+                  <AccordionItem
+                    value="document-adjustments"
+                    className="border-b-0"
+                  >
+                    <AccordionTrigger className="px-4 py-3 hover:no-underline">
+                      <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3 pr-2">
                         <div>
-                          <div className="flex items-center gap-3">
-                            <Switch
-                              checked={documentAdjustmentDraft.tcEnabled}
-                              disabled={!canEditDocumentAdjustments}
-                              onCheckedChange={checked =>
-                                updateDocumentAdjustmentDraft(current => ({
-                                  ...current,
-                                  tcEnabled: checked,
-                                }))
-                              }
-                            />
-                            <p className="font-medium">TC</p>
-                          </div>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Activación manual; tasa fija del 8% sobre el ISV
-                            base gravado.
+                          <h3 className="font-semibold">
+                            Retenciones y descuentos por documento
+                          </h3>
+                          <p className="mt-1 text-xs font-normal text-muted-foreground">
+                            Cálculos independientes de las retenciones fiscales
+                            y del anticipo aplicado por Tesorería.
                           </p>
                         </div>
-                        <div className="space-y-1.5">
-                          <Label>Base ISV</Label>
-                          <Input
-                            value={formatSelectedInvoiceCurrency(
-                              documentBaseIsvAmount
+                        <div className="text-right text-sm">
+                          <p className="font-semibold text-rose-700">
+                            Otras retenciones:{" "}
+                            {formatSelectedInvoiceCurrency(otherRetentionTotal)}
+                          </p>
+                          <p className="font-semibold text-amber-700">
+                            Descuentos:{" "}
+                            {formatSelectedInvoiceCurrency(
+                              documentDiscountTotal
                             )}
-                            disabled
-                            className="text-right disabled:cursor-default disabled:opacity-100"
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label>Porcentaje</Label>
-                          <Input
-                            value="8.00%"
-                            disabled
-                            className="text-right disabled:cursor-default disabled:opacity-100"
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label>Monto</Label>
-                          <Input
-                            value={formatSelectedInvoiceCurrency(
-                              tcDiscountAdjustment?.amount ?? 0
-                            )}
-                            disabled
-                            className="text-right font-semibold disabled:cursor-default disabled:opacity-100"
-                          />
+                          </p>
                         </div>
                       </div>
-                    </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-5 border-t border-border/70 p-4">
+                      <div className="space-y-3">
+                        <div>
+                          <h4 className="text-sm font-semibold">
+                            Otras retenciones por documento
+                          </h4>
+                          <p className="text-xs text-muted-foreground">
+                            La base corresponde al subtotal de la factura.
+                          </p>
+                        </div>
+                        <DocumentAdjustmentPercentageRow
+                          label="Retención de calidad"
+                          description="Porcentaje contractual retenido por calidad."
+                          baseAmount={toMoneyNumber(detail.invoice.subtotal)}
+                          percentage={
+                            documentAdjustmentDraft.qualityRetentionPercent
+                          }
+                          amount={toMoneyNumber(
+                            qualityRetentionAdjustment?.amount
+                          )}
+                          disabled={!canEditDocumentAdjustments}
+                          formatCurrency={formatSelectedInvoiceCurrency}
+                          onPercentageChange={value =>
+                            updateDocumentAdjustmentDraft(current => ({
+                              ...current,
+                              qualityRetentionPercent: value,
+                            }))
+                          }
+                        />
+                        <DocumentAdjustmentPercentageRow
+                          label="Amortización de anticipo"
+                          description="Deducción documental independiente del anticipo real de Tesorería."
+                          baseAmount={toMoneyNumber(detail.invoice.subtotal)}
+                          percentage={
+                            documentAdjustmentDraft.advanceAmortizationPercent
+                          }
+                          amount={toMoneyNumber(
+                            advanceAmortizationAdjustment?.amount
+                          )}
+                          disabled={!canEditDocumentAdjustments}
+                          formatCurrency={formatSelectedInvoiceCurrency}
+                          onPercentageChange={value =>
+                            updateDocumentAdjustmentDraft(current => ({
+                              ...current,
+                              advanceAmortizationPercent: value,
+                            }))
+                          }
+                        />
+                      </div>
 
-                    {documentAdjustmentsDirty ? (
-                      <p className="text-sm font-medium text-amber-700">
-                        Hay cambios pendientes de guardar.
-                      </p>
-                    ) : null}
-                    {canEditDocumentAdjustments ? (
-                      <Button
-                        onClick={handleSaveDocumentAdjustments}
-                        variant={
-                          documentAdjustmentsSaveConfirmed
-                            ? "outline"
-                            : "default"
-                        }
-                        className={
-                          documentAdjustmentsSaveConfirmed
-                            ? SAVED_BUTTON_CLASS
-                            : undefined
-                        }
-                        disabled={
-                          replaceDocumentAdjustmentsMutation.isPending ||
-                          !documentAdjustmentsDirty
-                        }
-                      >
-                        {documentAdjustmentsSaveConfirmed ? (
-                          <CheckCircle2 className="mr-2 h-4 w-4" />
-                        ) : (
-                          <Save className="mr-2 h-4 w-4" />
-                        )}
-                        {replaceDocumentAdjustmentsMutation.isPending
-                          ? "Guardando..."
-                          : documentAdjustmentsSaveConfirmed
-                            ? "Retenciones y descuentos guardados"
-                            : "Guardar retenciones y descuentos"}
-                      </Button>
-                    ) : null}
-                  </div>
-                </section>
+                      <div className="space-y-3 border-t border-border/70 pt-5">
+                        <div>
+                          <h4 className="text-sm font-semibold">
+                            Descuentos por documento
+                          </h4>
+                          <p className="text-xs text-muted-foreground">
+                            Pronto pago usa el subtotal; TC usa únicamente el
+                            ISV base gravado.
+                          </p>
+                        </div>
+                        <DocumentAdjustmentPercentageRow
+                          label="Pronto pago"
+                          description="Porcentaje variable calculado sobre el subtotal."
+                          baseAmount={toMoneyNumber(detail.invoice.subtotal)}
+                          percentage={
+                            documentAdjustmentDraft.promptPaymentPercent
+                          }
+                          amount={toMoneyNumber(
+                            promptPaymentAdjustment?.amount
+                          )}
+                          disabled={!canEditDocumentAdjustments}
+                          formatCurrency={formatSelectedInvoiceCurrency}
+                          onPercentageChange={value =>
+                            updateDocumentAdjustmentDraft(current => ({
+                              ...current,
+                              promptPaymentPercent: value,
+                            }))
+                          }
+                        />
+                        <div className="grid gap-3 rounded-lg border border-border/70 p-3 md:grid-cols-[minmax(220px,1fr)_150px_130px_150px] md:items-end">
+                          <div>
+                            <div className="flex items-center gap-3">
+                              <Switch
+                                checked={documentAdjustmentDraft.tcEnabled}
+                                disabled={!canEditDocumentAdjustments}
+                                onCheckedChange={checked =>
+                                  updateDocumentAdjustmentDraft(current => ({
+                                    ...current,
+                                    tcEnabled: checked,
+                                  }))
+                                }
+                              />
+                              <p className="font-medium">TC</p>
+                            </div>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Activación manual; tasa fija del 8% sobre el ISV
+                              base gravado.
+                            </p>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Base ISV</Label>
+                            <Input
+                              value={formatSelectedInvoiceCurrency(
+                                documentBaseIsvAmount
+                              )}
+                              disabled
+                              className="text-right disabled:cursor-default disabled:opacity-100"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Porcentaje</Label>
+                            <Input
+                              value="8.00%"
+                              disabled
+                              className="text-right disabled:cursor-default disabled:opacity-100"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Monto</Label>
+                            <Input
+                              value={formatSelectedInvoiceCurrency(
+                                tcDiscountAdjustment?.amount ?? 0
+                              )}
+                              disabled
+                              className="text-right font-semibold disabled:cursor-default disabled:opacity-100"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {documentAdjustmentsDirty ? (
+                        <p className="text-sm font-medium text-amber-700">
+                          Hay cambios pendientes de guardar.
+                        </p>
+                      ) : null}
+                      {canEditDocumentAdjustments ? (
+                        <Button
+                          onClick={handleSaveDocumentAdjustments}
+                          variant={
+                            documentAdjustmentsSaveConfirmed
+                              ? "outline"
+                              : "default"
+                          }
+                          className={
+                            documentAdjustmentsSaveConfirmed
+                              ? SAVED_BUTTON_CLASS
+                              : undefined
+                          }
+                          disabled={
+                            replaceDocumentAdjustmentsMutation.isPending ||
+                            !documentAdjustmentsDirty
+                          }
+                        >
+                          {documentAdjustmentsSaveConfirmed ? (
+                            <CheckCircle2 className="mr-2 h-4 w-4" />
+                          ) : (
+                            <Save className="mr-2 h-4 w-4" />
+                          )}
+                          {replaceDocumentAdjustmentsMutation.isPending
+                            ? "Guardando..."
+                            : documentAdjustmentsSaveConfirmed
+                              ? "Retenciones y descuentos guardados"
+                              : "Guardar retenciones y descuentos"}
+                        </Button>
+                      ) : null}
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
 
                 <section className="min-w-0 rounded-lg border border-border/70">
                   <div className="border-b border-border/70 px-4 py-3">
