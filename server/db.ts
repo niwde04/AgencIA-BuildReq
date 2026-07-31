@@ -18904,8 +18904,8 @@ export type InventoryListFilters = {
 };
 
 const effectiveInventoryCategory = sql<string | null>`coalesce(
-  nullif(btrim(${inventoryItems.category}), ''),
-  nullif(btrim(${sapCatalog.itemGroup}), '')
+  nullif(btrim(${sapCatalog.itemGroup}), ''),
+  nullif(btrim(${inventoryItems.category}), '')
 )`;
 
 function buildInventorySearchTerms(search: string) {
