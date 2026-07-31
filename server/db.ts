@@ -13293,8 +13293,13 @@ export async function getInvoiceById(id: number) {
     allowsTaxWithholding: rows[0].supplier?.allowsTaxWithholding,
   });
 
-  const [itemRows, retentions, otherCharges, advanceApplications] =
-    await Promise.all([
+  const [
+    itemRows,
+    retentions,
+    otherCharges,
+    advanceApplications,
+    purchaseOrderAdvanceSummary,
+  ] = await Promise.all([
     db
       .select({
         item: invoiceItems,
@@ -13325,6 +13330,12 @@ export async function getInvoiceById(id: number) {
       .from(purchaseOrderAdvanceApplications)
       .where(eq(purchaseOrderAdvanceApplications.invoiceId, id))
       .orderBy(asc(purchaseOrderAdvanceApplications.appliedAt)),
+    rows[0].purchaseOrder?.id
+      ? import("./purchaseOrderAdvances").then(
+          ({ getPurchaseOrderAdvancesSummary }) =>
+            getPurchaseOrderAdvancesSummary(db, rows[0].purchaseOrder!.id)
+        )
+      : Promise.resolve(null),
   ]);
   const items = itemRows.map(({ item, catalogAllowsTaxWithholding }) => ({
     ...item,
@@ -13386,6 +13397,7 @@ export async function getInvoiceById(id: number) {
     retentions,
     otherCharges,
     advanceApplications,
+    purchaseOrderAdvanceSummary,
     appliedAdvanceAmount: toMoneyString4(
       advanceApplications.reduce(
         (sum, application) => sum + parseDecimal(application.amount),

@@ -83,6 +83,17 @@ export type PurchaseOrderAdvanceMoneySummary = {
     | "anulado";
 };
 
+export type PurchaseOrderAdvancesSummary = {
+  count: number;
+  requestedAmount: number;
+  accountedAmount: number;
+  reservedAmount: number;
+  bankPaidPendingAmount: number;
+  appliedAmount: number;
+  availableToPayAmount: number;
+  unappliedAmount: number;
+};
+
 export function buildPurchaseOrderAdvanceMoneySummary(input: {
   requestedAmount: string | number;
   accountedAmount?: string | number | null;
@@ -125,6 +136,44 @@ export function buildPurchaseOrderAdvanceMoneySummary(input: {
     availableToPayAmount,
     unappliedAmount,
     status,
+  };
+}
+
+export function buildPurchaseOrderAdvancesSummary(
+  summaries: PurchaseOrderAdvanceMoneySummary[]
+): PurchaseOrderAdvancesSummary {
+  const totals = summaries.reduce(
+    (result, summary) => ({
+      requestedAmount: result.requestedAmount + summary.requestedAmount,
+      accountedAmount: result.accountedAmount + summary.accountedAmount,
+      reservedAmount: result.reservedAmount + summary.reservedAmount,
+      bankPaidPendingAmount:
+        result.bankPaidPendingAmount + summary.bankPaidPendingAmount,
+      appliedAmount: result.appliedAmount + summary.appliedAmount,
+      availableToPayAmount:
+        result.availableToPayAmount + summary.availableToPayAmount,
+      unappliedAmount: result.unappliedAmount + summary.unappliedAmount,
+    }),
+    {
+      requestedAmount: 0,
+      accountedAmount: 0,
+      reservedAmount: 0,
+      bankPaidPendingAmount: 0,
+      appliedAmount: 0,
+      availableToPayAmount: 0,
+      unappliedAmount: 0,
+    }
+  );
+
+  return {
+    count: summaries.length,
+    requestedAmount: money(totals.requestedAmount),
+    accountedAmount: money(totals.accountedAmount),
+    reservedAmount: money(totals.reservedAmount),
+    bankPaidPendingAmount: money(totals.bankPaidPendingAmount),
+    appliedAmount: money(totals.appliedAmount),
+    availableToPayAmount: money(totals.availableToPayAmount),
+    unappliedAmount: money(totals.unappliedAmount),
   };
 }
 
@@ -207,6 +256,35 @@ async function getAdvanceFinancialMap(
   }
 
   return result;
+}
+
+export async function getPurchaseOrderAdvancesSummary(
+  executor: DbExecutor,
+  purchaseOrderId: number
+) {
+  const advances = await executor
+    .select({ id: purchaseOrderAdvances.id })
+    .from(purchaseOrderAdvances)
+    .where(
+      and(
+        eq(purchaseOrderAdvances.purchaseOrderId, purchaseOrderId),
+        isNull(purchaseOrderAdvances.cancelledAt)
+      )
+    );
+  const financials = await getAdvanceFinancialMap(
+    executor,
+    advances.map((advance: { id: number }) => advance.id)
+  );
+
+  return buildPurchaseOrderAdvancesSummary(
+    advances
+      .map((advance: { id: number }) => financials.get(advance.id))
+      .filter(
+        (
+          summary: PurchaseOrderAdvanceMoneySummary | undefined
+        ): summary is PurchaseOrderAdvanceMoneySummary => Boolean(summary)
+      )
+  );
 }
 
 export async function getInvoiceAppliedAdvanceMap(

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildPurchaseOrderAdvanceMoneySummary } from "./purchaseOrderAdvances";
+import {
+  buildPurchaseOrderAdvanceMoneySummary,
+  buildPurchaseOrderAdvancesSummary,
+} from "./purchaseOrderAdvances";
 
 describe("purchase order advance balances", () => {
   it("keeps requested, reserved, accounted and applied amounts separate", () => {
@@ -62,6 +65,31 @@ describe("purchase order advance balances", () => {
       availableToPayAmount: 0,
       unappliedAmount: 0,
       status: "aplicado",
+    });
+  });
+
+  it("summarizes every active advance related to the purchase order", () => {
+    expect(
+      buildPurchaseOrderAdvancesSummary([
+        buildPurchaseOrderAdvanceMoneySummary({
+          requestedAmount: 700,
+          accountedAmount: 400,
+          appliedAmount: 150,
+        }),
+        buildPurchaseOrderAdvanceMoneySummary({
+          requestedAmount: 300,
+          reservedAmount: 300,
+        }),
+      ])
+    ).toEqual({
+      count: 2,
+      requestedAmount: 1000,
+      accountedAmount: 400,
+      reservedAmount: 300,
+      bankPaidPendingAmount: 0,
+      appliedAmount: 150,
+      availableToPayAmount: 300,
+      unappliedAmount: 250,
     });
   });
 });

@@ -2087,6 +2087,12 @@ export default function Facturas() {
     0,
     Number(detail?.appliedAdvanceAmount ?? 0)
   );
+  const registeredSupplierAdvanceAmount = Math.max(
+    0,
+    Number(detail?.purchaseOrderAdvanceSummary?.requestedAmount ?? 0)
+  );
+  const hasRegisteredSupplierAdvance =
+    Number(detail?.purchaseOrderAdvanceSummary?.count ?? 0) > 0;
   const balanceAfterAdvance = Math.max(
     netPayable - appliedAdvanceAmount,
     0
@@ -2250,6 +2256,14 @@ export default function Facturas() {
         label: `Neto a pagar ${invoiceSummaryCurrency}`,
         value: netPayable,
       },
+      ...(hasRegisteredSupplierAdvance
+        ? [
+            {
+              label: `Anticipo a proveedor registrado (informativo) ${invoiceSummaryCurrency}`,
+              value: registeredSupplierAdvanceAmount,
+            },
+          ]
+        : []),
       {
         label: `Anticipo aplicado ${invoiceSummaryCurrency}`,
         value: appliedAdvanceAmount,
@@ -5346,6 +5360,24 @@ export default function Facturas() {
                         {formatSelectedInvoiceCurrency(netPayable)}
                       </span>
                     </div>
+                    {hasRegisteredSupplierAdvance ? (
+                      <div className="rounded-md border border-blue-200 bg-blue-50 p-2.5 text-blue-800">
+                        <div className="flex justify-between gap-3 text-sm">
+                          <span className="font-medium">
+                            Anticipo a proveedor registrado
+                          </span>
+                          <span className="font-semibold">
+                            {formatSelectedInvoiceCurrency(
+                              registeredSupplierAdvanceAmount
+                            )}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs">
+                          Dato informativo de la orden de compra. Solo el monto
+                          contabilizado y aplicado reduce el saldo pendiente.
+                        </p>
+                      </div>
+                    ) : null}
                     <div className="flex justify-between gap-3 text-sm">
                       <span className="font-medium text-blue-700">
                         (-) Anticipo aplicado
