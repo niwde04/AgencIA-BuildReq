@@ -107,6 +107,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
   linea_credito: "Línea de crédito",
   fondo_proyecto: "Efectivo",
   caja_chica: "Efectivo",
+  contado: "Contado",
 };
 
 const WORKFLOW_STAGE_LABELS: Record<string, string> = {

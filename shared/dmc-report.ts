@@ -241,6 +241,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   linea_credito: "Línea de crédito",
+  contado: "Contado",
   fondo_proyecto: "Efectivo",
   caja_chica: "Efectivo",
 };

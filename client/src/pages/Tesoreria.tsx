@@ -700,7 +700,7 @@ function BatchFormDialog({
           </div>
 
           <div className="overflow-hidden rounded-lg border bg-card [&_[data-slot=table-container]]:max-h-[38vh] [&_[data-slot=table-container]]:overflow-auto">
-            <Table className="min-w-[1640px]">
+            <Table className="min-w-[1760px]">
               <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-muted">
                 <TableRow>
                   <TableHead className="w-10">
@@ -732,6 +732,9 @@ function BatchFormDialog({
                   <TableHead className="min-w-40">Factura</TableHead>
                   <TableHead className="min-w-40">Factura fiscal</TableHead>
                   <TableHead className="min-w-32">Fecha documento</TableHead>
+                  <TableHead className="min-w-36">
+                    Fecha de vencimiento
+                  </TableHead>
                   <TableHead className="text-right">Subtotal</TableHead>
                   <TableHead className="text-right">ISV</TableHead>
                   <TableHead className="text-right">Total factura</TableHead>
@@ -758,7 +761,7 @@ function BatchFormDialog({
               <TableBody>
                 {eligibleQuery.isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={16} className="py-12 text-center">
+                    <TableCell colSpan={17} className="py-12 text-center">
                       <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-muted-foreground" />
                       <span className="text-sm text-muted-foreground">
                         Cargando facturas...
@@ -797,6 +800,9 @@ function BatchFormDialog({
                         </TableCell>
                         <TableCell className="whitespace-nowrap">
                           {formatDateOnly(row.invoice.documentDate)}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {formatDateOnly(row.invoice.documentDueDate)}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {formatMoney(row.invoice.subtotal, currency)}
@@ -860,7 +866,7 @@ function BatchFormDialog({
                 ) : (
                   <TableRow>
                     <TableCell
-                      colSpan={16}
+                      colSpan={17}
                       className="py-12 text-center text-muted-foreground"
                     >
                       {projectId

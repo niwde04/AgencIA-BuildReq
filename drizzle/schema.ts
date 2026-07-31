@@ -110,6 +110,7 @@ export const paymentMethodEnum = pgEnum("payment_method", [
   "linea_credito",
   "fondo_proyecto",
   "caja_chica",
+  "contado",
 ]);
 export const purchaseTypeEnum = pgEnum("purchase_type", [
   "local",

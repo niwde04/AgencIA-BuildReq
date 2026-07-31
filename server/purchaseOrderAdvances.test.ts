@@ -3,8 +3,25 @@ import {
   buildPurchaseOrderAdvanceMoneySummary,
   buildPurchaseOrderAdvancesSummary,
 } from "./purchaseOrderAdvances";
+import {
+  allowsPurchaseOrderAdvance,
+  formatPurchaseOrderPaymentMethodPrintLabel,
+} from "../shared/purchase-orders";
 
 describe("purchase order advance balances", () => {
+  it("allows advances only for purchase orders paid cash", () => {
+    expect(allowsPurchaseOrderAdvance("contado")).toBe(true);
+    expect(allowsPurchaseOrderAdvance("linea_credito")).toBe(false);
+    expect(allowsPurchaseOrderAdvance("fondo_proyecto")).toBe(false);
+    expect(allowsPurchaseOrderAdvance(null)).toBe(false);
+  });
+
+  it("prints the new cash payment method explicitly", () => {
+    expect(formatPurchaseOrderPaymentMethodPrintLabel("contado")).toBe(
+      "CONTADO"
+    );
+  });
+
   it("keeps requested, reserved, accounted and applied amounts separate", () => {
     expect(
       buildPurchaseOrderAdvanceMoneySummary({

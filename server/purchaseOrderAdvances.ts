@@ -24,6 +24,7 @@ import {
   users,
 } from "../drizzle/schema";
 import {
+  allowsPurchaseOrderAdvance,
   summarizePurchaseOrderLines,
   type PurchaseCurrency,
 } from "../shared/purchase-orders";
@@ -373,6 +374,7 @@ export async function listEligiblePurchaseOrdersForAdvance(filters?: {
   if (!db) return [];
   const conditions = [
     inArray(purchaseOrders.status, ["emitida", "enviada"]),
+    eq(purchaseOrders.paymentMethod, "contado"),
     sql`${purchaseOrders.supplierId} is not null`,
     notExists(
       db
@@ -502,6 +504,11 @@ export async function createPurchaseOrderAdvance(input: {
     if (!["emitida", "enviada"].includes(purchaseOrder.status)) {
       throw new PurchaseOrderAdvanceRuleError(
         "Solo se pueden solicitar anticipos para órdenes emitidas o enviadas."
+      );
+    }
+    if (!allowsPurchaseOrderAdvance(purchaseOrder.paymentMethod)) {
+      throw new PurchaseOrderAdvanceRuleError(
+        "Solo las órdenes de compra con método de pago Contado permiten solicitar anticipos."
       );
     }
     if (!purchaseOrder.supplierId) {

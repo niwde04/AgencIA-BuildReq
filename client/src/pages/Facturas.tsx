@@ -2139,24 +2139,21 @@ export default function Facturas() {
       promptPayment?.inputMode === "amount" ? "amount" : "percentage";
     setDocumentAdjustmentDraft({
       qualityRetentionPercent: formatDocumentAdjustmentPercent(
-        qualityRetention?.percentage,
-        qualityRetentionInputMode === "amount" ? 8 : 2
+        qualityRetention?.percentage
       ),
       qualityRetentionAmount: formatDocumentAdjustmentAmount(
         qualityRetention?.amount
       ),
       qualityRetentionInputMode,
       advanceAmortizationPercent: formatDocumentAdjustmentPercent(
-        advanceAmortization?.percentage,
-        advanceAmortizationInputMode === "amount" ? 8 : 2
+        advanceAmortization?.percentage
       ),
       advanceAmortizationAmount: formatDocumentAdjustmentAmount(
         advanceAmortization?.amount
       ),
       advanceAmortizationInputMode,
       promptPaymentPercent: formatDocumentAdjustmentPercent(
-        promptPayment?.percentage,
-        promptPaymentInputMode === "amount" ? 8 : 2
+        promptPayment?.percentage
       ),
       promptPaymentAmount: formatDocumentAdjustmentAmount(
         promptPayment?.amount
@@ -5377,8 +5374,7 @@ export default function Facturas() {
                             "amount"
                               ? documentAdjustmentDraft.qualityRetentionAmount.trim()
                                 ? formatDocumentAdjustmentPercent(
-                                    qualityRetentionAdjustment?.percentage,
-                                    8
+                                    qualityRetentionAdjustment?.percentage
                                   )
                                 : ""
                               : documentAdjustmentDraft.qualityRetentionPercent
@@ -5534,8 +5530,7 @@ export default function Facturas() {
                             "amount"
                               ? documentAdjustmentDraft.advanceAmortizationAmount.trim()
                                 ? formatDocumentAdjustmentPercent(
-                                    advanceAmortizationAdjustment?.percentage,
-                                    8
+                                    advanceAmortizationAdjustment?.percentage
                                   )
                                 : ""
                               : documentAdjustmentDraft.advanceAmortizationPercent
@@ -5588,8 +5583,7 @@ export default function Facturas() {
                             "amount"
                               ? documentAdjustmentDraft.promptPaymentAmount.trim()
                                 ? formatDocumentAdjustmentPercent(
-                                    promptPaymentAdjustment?.percentage,
-                                    8
+                                    promptPaymentAdjustment?.percentage
                                   )
                                 : ""
                               : documentAdjustmentDraft.promptPaymentPercent

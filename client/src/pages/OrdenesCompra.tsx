@@ -97,6 +97,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { useProcurementApprovalSettings } from "@/hooks/useProcurementApprovalSettings";
 import {
+  allowsPurchaseOrderAdvance,
   calculatePurchaseOrderLineAmounts,
   DEFAULT_SALES_TAXES,
   formatPurchaseOrderCurrency,
@@ -198,11 +199,13 @@ function formatContractAuditValue(field: string, value?: string | null) {
 }
 type DirectPurchasePaymentMethod =
   | "linea_credito"
-  | "fondo_proyecto";
+  | "fondo_proyecto"
+  | "contado";
 const DIRECT_PURCHASE_PAYMENT_METHOD_LABELS: Record<string, string> = {
   linea_credito: "Línea de crédito",
   fondo_proyecto: "Efectivo",
   caja_chica: "Efectivo",
+  contado: "Contado",
 };
 function formatDirectPurchasePaymentMethod(value?: string | null) {
   return (
@@ -215,6 +218,7 @@ function normalizeDirectPurchasePaymentMethod(
   value?: string | null
 ): DirectPurchasePaymentMethod | undefined {
   if (value === "linea_credito") return value;
+  if (value === "contado") return value;
   if (value === "fondo_proyecto" || value === "caja_chica") {
     return "fondo_proyecto";
   }
@@ -1373,6 +1377,10 @@ export default function OrdenesCompra() {
     canManageAdvances &&
     Boolean(detail) &&
     ["emitida", "enviada"].includes(detail!.purchaseOrder.status) &&
+    allowsPurchaseOrderAdvance(
+      detail!.purchaseOrder.paymentMethod ??
+        detail!.directPurchasePaymentMethod
+    ) &&
     !hasRegisteredReceipt;
   const advanceTotals = advances
     .filter((row: any) => !row.advance.cancelledAt)
@@ -5553,6 +5561,11 @@ export default function OrdenesCompra() {
                             <SelectItem value="fondo_proyecto">
                               {
                                 DIRECT_PURCHASE_PAYMENT_METHOD_LABELS.fondo_proyecto
+                              }
+                            </SelectItem>
+                            <SelectItem value="contado">
+                              {
+                                DIRECT_PURCHASE_PAYMENT_METHOD_LABELS.contado
                               }
                             </SelectItem>
                           </SelectContent>

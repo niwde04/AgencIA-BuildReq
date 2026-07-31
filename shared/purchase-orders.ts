@@ -31,6 +31,14 @@ export function getPurchaseCurrencySymbol(
 
 export type PurchaseOrderTaxCode = string;
 
+export const PURCHASE_ORDER_ADVANCE_PAYMENT_METHOD = "contado" as const;
+
+export function allowsPurchaseOrderAdvance(
+  paymentMethod: string | null | undefined
+) {
+  return paymentMethod === PURCHASE_ORDER_ADVANCE_PAYMENT_METHOD;
+}
+
 export type SalesTaxType = "base" | "additional";
 
 export type SalesTaxFiscalCategory = "exento" | "exonerado" | "gravado";
@@ -39,6 +47,7 @@ export function formatPurchaseOrderPaymentMethodPrintLabel(
   value?: string | null
 ) {
   if (value === "linea_credito") return "CREDITO";
+  if (value === "contado") return "CONTADO";
   if (value === "fondo_proyecto" || value === "caja_chica") {
     return "EFECTIVO";
   }

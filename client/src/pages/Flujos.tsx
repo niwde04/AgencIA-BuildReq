@@ -40,7 +40,8 @@ type PurchaseType = "local" | "extranjera" | "compra_directa";
 type DirectPurchasePaymentMethod =
   | "linea_credito"
   | "fondo_proyecto"
-  | "caja_chica";
+  | "caja_chica"
+  | "contado";
 
 const PURCHASE_TYPE_LABELS: Record<PurchaseType, string> = {
   local: "Compra Local",
@@ -55,6 +56,7 @@ const PAYMENT_METHOD_LABELS: Record<DirectPurchasePaymentMethod, string> = {
   linea_credito: "Línea de crédito",
   fondo_proyecto: "Efectivo",
   caja_chica: "Efectivo",
+  contado: "Contado",
 };
 
 const getPaymentMethodLabel = (value?: string | null) =>
