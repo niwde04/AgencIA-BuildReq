@@ -476,14 +476,22 @@ function InvoiceLineRetentionCell({
   availableRetentionOptions,
   canEditRetentions,
   canAddLineRetention,
+  hasPendingRetentions,
+  isSavingRetentions,
+  saveRetentionsDisabled,
   onAddLineRetention,
+  onSaveRetentions,
 }: {
   item: any;
   lineRetentions: RetentionDraft[];
   availableRetentionOptions: RetentionOption[];
   canEditRetentions: boolean;
   canAddLineRetention: boolean;
+  hasPendingRetentions: boolean;
+  isSavingRetentions: boolean;
+  saveRetentionsDisabled: boolean;
   onAddLineRetention: (item: any, retentionCatalogId: string) => void;
+  onSaveRetentions: () => void;
 }) {
   return (
     <td className="min-w-[300px] p-3">
@@ -545,6 +553,20 @@ function InvoiceLineRetentionCell({
                   : "Sin retenciones disponibles"}
               </p>
             )
+          ) : null}
+
+          {canEditRetentions &&
+          hasPendingRetentions &&
+          lineRetentions.length > 0 ? (
+            <Button
+              type="button"
+              size="sm"
+              onClick={onSaveRetentions}
+              disabled={isSavingRetentions || saveRetentionsDisabled}
+            >
+              <Save className="mr-2 h-4 w-4" />
+              {isSavingRetentions ? "Guardando..." : "Guardar retenciones"}
+            </Button>
           ) : null}
         </div>
       ) : (
@@ -1540,7 +1562,10 @@ export default function Facturas() {
   const retentionFiscalRangeAutofillRef =
     useRef<RetentionFiscalRangeAutofill | null>(null);
   const lastRetentionFiscalRangeLookupKeyRef = useRef("");
+  const retentionDraftInvoiceIdRef = useRef<number | null>(null);
+  const retentionDraftsDirtyRef = useRef(false);
   const [retentionDrafts, setRetentionDrafts] = useState<RetentionDraft[]>([]);
+  const [retentionsDirty, setRetentionsDirty] = useState(false);
   const [documentAdjustmentDraft, setDocumentAdjustmentDraft] =
     useState<DocumentAdjustmentDraft>({
       qualityRetentionPercent: "",
@@ -1589,6 +1614,8 @@ export default function Facturas() {
   const updateRetentionDrafts = useCallback(
     (updater: SetStateAction<RetentionDraft[]>) => {
       clearRetentionsSavedFeedback();
+      retentionDraftsDirtyRef.current = true;
+      setRetentionsDirty(true);
       setRetentionDrafts(updater);
     },
     [clearRetentionsSavedFeedback]
@@ -1822,6 +1849,8 @@ export default function Facturas() {
     {
       onSuccess: (_data, variables) => {
         toast.success("Retenciones actualizadas");
+        retentionDraftsDirtyRef.current = false;
+        setRetentionsDirty(false);
         setActionFeedback(current => ({
           ...current,
           retentionsSavedId: variables.id,
@@ -1908,6 +1937,9 @@ export default function Facturas() {
   });
   useEffect(() => {
     if (selectedId !== null) return;
+    retentionDraftInvoiceIdRef.current = null;
+    retentionDraftsDirtyRef.current = false;
+    setRetentionsDirty(false);
     setCorrectionDialogOpen(false);
     setCorrectionReason("");
     setActionFeedback({
@@ -1964,8 +1996,8 @@ export default function Facturas() {
         detail.invoice.dmcImportOutsideCentralAmerica === true,
       notes: detail.invoice.notes ?? "",
     });
-    setRetentionDrafts(
-      (detail.retentions ?? []).map((retention: any) => ({
+    const storedRetentionDrafts = (detail.retentions ?? []).map(
+      (retention: any) => ({
         invoiceItemId: retention.invoiceItemId ?? null,
         itemName:
           detail.items?.find((item: any) => item.id === retention.invoiceItemId)
@@ -1979,8 +2011,17 @@ export default function Facturas() {
         baseAmount: String(retention.baseAmount ?? "0.00"),
         percentage: String(retention.percentage ?? ""),
         amount: String(retention.amount ?? "0.00"),
-      }))
+      })
     );
+    const detailInvoiceId = Number(detail.invoice.id);
+    const isDifferentInvoice =
+      retentionDraftInvoiceIdRef.current !== detailInvoiceId;
+    retentionDraftInvoiceIdRef.current = detailInvoiceId;
+    if (isDifferentInvoice || !retentionDraftsDirtyRef.current) {
+      retentionDraftsDirtyRef.current = false;
+      setRetentionsDirty(false);
+      setRetentionDrafts(storedRetentionDrafts);
+    }
     const adjustments = detail.documentAdjustments ?? [];
     setDocumentAdjustmentDraft({
       qualityRetentionPercent: formatDocumentAdjustmentPercent(
@@ -5467,8 +5508,23 @@ export default function Facturas() {
                                             canAddLineRetention={
                                               canAddLineRetention
                                             }
+                                            hasPendingRetentions={
+                                              retentionsDirty
+                                            }
+                                            isSavingRetentions={
+                                              replaceRetentionsMutation.isPending
+                                            }
+                                            saveRetentionsDisabled={
+                                              incompatibleAccountPaymentRetentions.length >
+                                                0 ||
+                                              (retentionDrafts.length > 0 &&
+                                                !canRetainSelectedInvoice)
+                                            }
                                             onAddLineRetention={
                                               handleAddLineRetention
+                                            }
+                                            onSaveRetentions={
+                                              handleSaveRetentions
                                             }
                                           />
                                         ) : (
@@ -5571,7 +5627,18 @@ export default function Facturas() {
                                   }
                                   canEditRetentions={canEditRetentions}
                                   canAddLineRetention={canAddLineRetention}
+                                  hasPendingRetentions={retentionsDirty}
+                                  isSavingRetentions={
+                                    replaceRetentionsMutation.isPending
+                                  }
+                                  saveRetentionsDisabled={
+                                    incompatibleAccountPaymentRetentions.length >
+                                      0 ||
+                                    (retentionDrafts.length > 0 &&
+                                      !canRetainSelectedInvoice)
+                                  }
                                   onAddLineRetention={handleAddLineRetention}
+                                  onSaveRetentions={handleSaveRetentions}
                                 />
                               </tr>
                               {showAssetDetails ? (
@@ -5644,6 +5711,11 @@ export default function Facturas() {
                     </span>
                   </div>
                   <div className="space-y-3 p-4">
+                    {retentionsDirty ? (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-800">
+                        Hay cambios de retenciones pendientes de guardar.
+                      </div>
+                    ) : null}
                     {!canRetainSelectedInvoice ? (
                       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
                         {retentionDisabledReason}
