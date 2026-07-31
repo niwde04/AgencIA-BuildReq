@@ -183,9 +183,7 @@ function treasuryProjectSummary(source: any) {
       projects,
       code: projects[0]!.code,
       name: projects[0]!.name,
-      label: [projects[0]!.code, projects[0]!.name]
-        .filter(Boolean)
-        .join(" - "),
+      label: [projects[0]!.code, projects[0]!.name].filter(Boolean).join(" - "),
     };
   }
   const labels = projects.map(project =>
@@ -618,165 +616,177 @@ function BatchFormDialog({
           </div>
 
           <div className="overflow-hidden rounded-lg border bg-card [&_[data-slot=table-container]]:max-h-[38vh] [&_[data-slot=table-container]]:overflow-auto">
-              <Table className="min-w-[1440px]">
-                <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-muted">
+            <Table className="min-w-[1640px]">
+              <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-muted">
+                <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={
+                        allVisibleInvoicesSelected
+                          ? true
+                          : someVisibleInvoicesSelected
+                            ? "indeterminate"
+                            : false
+                      }
+                      disabled={
+                        eligibleQuery.isLoading || !visibleInvoices.length
+                      }
+                      onCheckedChange={toggleAllVisibleInvoices}
+                      aria-label={
+                        allVisibleInvoicesSelected
+                          ? "Deseleccionar todas las facturas visibles"
+                          : "Seleccionar todas las facturas visibles"
+                      }
+                      title={
+                        allVisibleInvoicesSelected
+                          ? "Deseleccionar todas"
+                          : "Seleccionar todas"
+                      }
+                    />
+                  </TableHead>
+                  <TableHead className="min-w-48">Proveedor</TableHead>
+                  <TableHead className="min-w-40">Factura</TableHead>
+                  <TableHead className="min-w-40">Factura fiscal</TableHead>
+                  <TableHead className="min-w-32">Fecha documento</TableHead>
+                  <TableHead className="text-right">Subtotal</TableHead>
+                  <TableHead className="text-right">ISV</TableHead>
+                  <TableHead className="text-right">Total factura</TableHead>
+                  <TableHead className="text-right">
+                    Retenciones fiscales
+                  </TableHead>
+                  <TableHead className="text-right">
+                    Otras retenciones
+                  </TableHead>
+                  <TableHead className="text-right">Descuentos</TableHead>
+                  <TableHead className="text-right">Neto a pagar</TableHead>
+                  <TableHead className="text-right">
+                    Anticipo aplicado
+                  </TableHead>
+                  <TableHead className="text-right">
+                    Abonos anteriores
+                  </TableHead>
+                  <TableHead className="text-right">Saldo</TableHead>
+                  <TableHead className="w-40 text-right">
+                    Abono solicitado
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {eligibleQuery.isLoading ? (
                   <TableRow>
-                    <TableHead className="w-10">
-                      <Checkbox
-                        checked={
-                          allVisibleInvoicesSelected
-                            ? true
-                            : someVisibleInvoicesSelected
-                              ? "indeterminate"
-                              : false
-                        }
-                        disabled={
-                          eligibleQuery.isLoading || !visibleInvoices.length
-                        }
-                        onCheckedChange={toggleAllVisibleInvoices}
-                        aria-label={
-                          allVisibleInvoicesSelected
-                            ? "Deseleccionar todas las facturas visibles"
-                            : "Seleccionar todas las facturas visibles"
-                        }
-                        title={
-                          allVisibleInvoicesSelected
-                            ? "Deseleccionar todas"
-                            : "Seleccionar todas"
-                        }
-                      />
-                    </TableHead>
-                    <TableHead className="min-w-48">Proveedor</TableHead>
-                    <TableHead className="min-w-40">Factura</TableHead>
-                    <TableHead className="min-w-40">Factura fiscal</TableHead>
-                    <TableHead className="min-w-32">
-                      Fecha documento
-                    </TableHead>
-                    <TableHead className="text-right">Subtotal</TableHead>
-                    <TableHead className="text-right">ISV</TableHead>
-                    <TableHead className="text-right">
-                      Total factura
-                    </TableHead>
-                    <TableHead className="text-right">Retenciones</TableHead>
-                    <TableHead className="text-right">Neto a pagar</TableHead>
-                    <TableHead className="text-right">
-                      Anticipo aplicado
-                    </TableHead>
-                    <TableHead className="text-right">
-                      Abonos anteriores
-                    </TableHead>
-                    <TableHead className="text-right">Saldo</TableHead>
-                    <TableHead className="w-40 text-right">
-                      Abono solicitado
-                    </TableHead>
+                    <TableCell colSpan={16} className="py-12 text-center">
+                      <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-muted-foreground" />
+                      <span className="text-sm text-muted-foreground">
+                        Cargando facturas...
+                      </span>
+                    </TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {eligibleQuery.isLoading ? (
-                    <TableRow>
-                      <TableCell colSpan={14} className="py-12 text-center">
-                        <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-muted-foreground" />
-                        <span className="text-sm text-muted-foreground">
-                          Cargando facturas...
-                        </span>
-                      </TableCell>
-                    </TableRow>
-                  ) : visibleInvoices.length ? (
-                    visibleInvoices.map((row: any) => {
-                      const checked = selectedIds.has(row.invoice.id);
-                      return (
-                        <TableRow
-                          key={row.invoice.id}
-                          data-state={checked ? "selected" : undefined}
-                        >
-                          <TableCell>
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={value =>
-                                toggleInvoice(row, value === true)
-                              }
-                            />
-                          </TableCell>
-                          <TableCell className="whitespace-normal">
-                            <div className="font-medium">
-                              {row.supplier.name}
-                            </div>
-                            <div className="mt-0.5 text-xs text-muted-foreground">
-                              {row.supplier.supplierCode || "Sin código"}
-                            </div>
-                          </TableCell>
-                          <TableCell className="whitespace-normal">
-                            <div className="font-medium">
-                              {row.invoice.invoiceDocumentNumber}
-                            </div>
-                          </TableCell>
-                          <TableCell className="whitespace-normal">
-                            {row.invoice.invoiceNumber || "Sin número fiscal"}
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap">
-                            {formatDateOnly(row.invoice.documentDate)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatMoney(row.invoice.subtotal, currency)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatMoney(row.invoice.taxAmount, currency)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatMoney(row.invoice.total, currency)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatMoney(row.invoice.retentionTotal, currency)}
-                          </TableCell>
-                          <TableCell className="text-right font-medium tabular-nums">
-                            {formatMoney(row.money.invoiceNetPayable, currency)}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatMoney(
-                              row.money.appliedAdvanceAmount,
-                              currency
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {formatMoney(row.money.paidAmount, currency)}
-                          </TableCell>
-                          <TableCell className="text-right font-medium tabular-nums">
-                            {formatMoney(row.money.availableAmount, currency)}
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              className="ml-auto w-32 text-right tabular-nums"
-                              type="number"
-                              min="0.01"
-                              step="0.01"
-                              max={row.money.availableAmount}
-                              disabled={!checked}
-                              value={amounts[row.invoice.id] ?? ""}
-                              onChange={event =>
-                                setAmounts(current => ({
-                                  ...current,
-                                  [row.invoice.id]: event.target.value,
-                                }))
-                              }
-                            />
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })
-                  ) : (
-                    <TableRow>
-                      <TableCell
-                        colSpan={14}
-                        className="py-12 text-center text-muted-foreground"
+                ) : visibleInvoices.length ? (
+                  visibleInvoices.map((row: any) => {
+                    const checked = selectedIds.has(row.invoice.id);
+                    return (
+                      <TableRow
+                        key={row.invoice.id}
+                        data-state={checked ? "selected" : undefined}
                       >
-                        {projectId
-                          ? "No hay facturas elegibles con saldo disponible."
-                          : "Seleccione un proyecto para consultar sus facturas."}
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+                        <TableCell>
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={value =>
+                              toggleInvoice(row, value === true)
+                            }
+                          />
+                        </TableCell>
+                        <TableCell className="whitespace-normal">
+                          <div className="font-medium">{row.supplier.name}</div>
+                          <div className="mt-0.5 text-xs text-muted-foreground">
+                            {row.supplier.supplierCode || "Sin código"}
+                          </div>
+                        </TableCell>
+                        <TableCell className="whitespace-normal">
+                          <div className="font-medium">
+                            {row.invoice.invoiceDocumentNumber}
+                          </div>
+                        </TableCell>
+                        <TableCell className="whitespace-normal">
+                          {row.invoice.invoiceNumber || "Sin número fiscal"}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {formatDateOnly(row.invoice.documentDate)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatMoney(row.invoice.subtotal, currency)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatMoney(row.invoice.taxAmount, currency)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatMoney(row.invoice.total, currency)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatMoney(row.invoice.retentionTotal, currency)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatMoney(
+                            row.invoice.otherRetentionTotal,
+                            currency
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatMoney(
+                            row.invoice.documentDiscountTotal,
+                            currency
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right font-medium tabular-nums">
+                          {formatMoney(row.money.invoiceNetPayable, currency)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatMoney(
+                            row.money.appliedAdvanceAmount,
+                            currency
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatMoney(row.money.paidAmount, currency)}
+                        </TableCell>
+                        <TableCell className="text-right font-medium tabular-nums">
+                          {formatMoney(row.money.availableAmount, currency)}
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            className="ml-auto w-32 text-right tabular-nums"
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            max={row.money.availableAmount}
+                            disabled={!checked}
+                            value={amounts[row.invoice.id] ?? ""}
+                            onChange={event =>
+                              setAmounts(current => ({
+                                ...current,
+                                [row.invoice.id]: event.target.value,
+                              }))
+                            }
+                          />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                ) : (
+                  <TableRow>
+                    <TableCell
+                      colSpan={16}
+                      className="py-12 text-center text-muted-foreground"
+                    >
+                      {projectId
+                        ? "No hay facturas elegibles con saldo disponible."
+                        : "Seleccione un proyecto para consultar sus facturas."}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
           </div>
         </div>
 
@@ -860,9 +870,7 @@ function AdvanceBatchFormDialog({
         (item: any) => item.status !== "excluida"
       );
       setSelectedIds(
-        new Set(
-          included.map((item: any) => item.purchaseOrderAdvanceId)
-        )
+        new Set(included.map((item: any) => item.purchaseOrderAdvanceId))
       );
       setAmounts(
         Object.fromEntries(
@@ -873,16 +881,12 @@ function AdvanceBatchFormDialog({
         )
       );
     } else {
-      setProjectId(
-        initialAdvance ? String(initialAdvance.projectId) : ""
-      );
+      setProjectId(initialAdvance ? String(initialAdvance.projectId) : "");
       setCurrency(initialAdvance?.currency ?? "HNL");
       setPaymentDate(currentLocalDateInput());
       setNotes("");
       setSearch("");
-      setSelectedIds(
-        initialAdvance ? new Set([initialAdvance.id]) : new Set()
-      );
+      setSelectedIds(initialAdvance ? new Set([initialAdvance.id]) : new Set());
       setAmounts(
         initialAdvance
           ? {
@@ -1025,9 +1029,7 @@ function AdvanceBatchFormDialog({
               <Label>Moneda</Label>
               <Select
                 value={currency}
-                onValueChange={value =>
-                  setCurrency(value as "HNL" | "USD")
-                }
+                onValueChange={value => setCurrency(value as "HNL" | "USD")}
                 disabled={Boolean(existing)}
               >
                 <SelectTrigger className="w-full">
@@ -1076,7 +1078,9 @@ function AdvanceBatchFormDialog({
                   <TableHead className="text-right">Solicitado</TableHead>
                   <TableHead className="text-right">Contabilizado</TableHead>
                   <TableHead className="text-right">Saldo</TableHead>
-                  <TableHead className="w-40 text-right">Pago objetivo</TableHead>
+                  <TableHead className="w-40 text-right">
+                    Pago objetivo
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1189,9 +1193,7 @@ function BatchDetailDialog({
   >({});
   const [accountItemIds, setAccountItemIds] = useState<Set<number>>(new Set());
   const [batchBankReference, setBatchBankReference] = useState("");
-  const [bankPaymentDate, setBankPaymentDate] = useState(
-    currentLocalDateInput
-  );
+  const [bankPaymentDate, setBankPaymentDate] = useState(currentLocalDateInput);
   const [bankAttachment, setBankAttachment] =
     useState<PreparedBankAttachment>();
   const [preparingBankAttachment, setPreparingBankAttachment] = useState(false);
@@ -1215,9 +1217,7 @@ function BatchDetailDialog({
       Object.fromEntries(
         items.map((item: any) => [
           item.id,
-          formatMoneyInputValue(
-            item.approvedAmount ?? item.requestedAmount
-          ),
+          formatMoneyInputValue(item.approvedAmount ?? item.requestedAmount),
         ])
       )
     );
@@ -1320,8 +1320,7 @@ function BatchDetailDialog({
 
   const detail = detailQuery.data;
   const batch = detail?.batch;
-  const isAdvanceBatch =
-    batch?.paymentKind === "purchase_order_advance";
+  const isAdvanceBatch = batch?.paymentKind === "purchase_order_advance";
   const status = batch?.status as TreasuryBatchStatus | undefined;
   const isCentral =
     user?.role === "admin" || user?.buildreqRole === "administracion_central";
@@ -1429,7 +1428,7 @@ function BatchDetailDialog({
 
     reportWindow.document.open();
     reportWindow.document.write(
-      "<!doctype html><html lang=\"es\"><head><title>Generando reporte...</title></head><body style=\"font-family:Arial,sans-serif;padding:32px\">Generando detalle de pago...</body></html>"
+      '<!doctype html><html lang="es"><head><title>Generando reporte...</title></head><body style="font-family:Arial,sans-serif;padding:32px">Generando detalle de pago...</body></html>'
     );
     reportWindow.document.close();
     setGeneratingPaymentReport(true);
@@ -1439,9 +1438,7 @@ function BatchDetailDialog({
       });
       reportWindow.document.open();
       reportWindow.document.write(
-        buildTreasuryPaymentReportHtml(
-          payload as TreasuryPaymentReportPayload
-        )
+        buildTreasuryPaymentReportHtml(payload as TreasuryPaymentReportPayload)
       );
       reportWindow.document.close();
       printWindowWhenReady(reportWindow);
@@ -1653,9 +1650,7 @@ function BatchDetailDialog({
                       detail.items.reduce(
                         (sum: number, item: any) =>
                           sum +
-                          roundTreasuryMoney(
-                            Number(item.approvedAmount ?? 0)
-                          ),
+                          roundTreasuryMoney(Number(item.approvedAmount ?? 0)),
                         0
                       ),
                       detail.batch.currency
@@ -1673,9 +1668,7 @@ function BatchDetailDialog({
                       detail.items.reduce(
                         (sum: number, item: any) =>
                           sum +
-                          roundTreasuryMoney(
-                            Number(item.bankPaidAmount ?? 0)
-                          ),
+                          roundTreasuryMoney(Number(item.bankPaidAmount ?? 0)),
                         0
                       ),
                       detail.batch.currency
@@ -1697,8 +1690,8 @@ function BatchDetailDialog({
               <Table
                 className={
                   status === "borrador" && canManageDrafts
-                    ? "min-w-[1900px]"
-                    : "min-w-[1800px]"
+                    ? "min-w-[2100px]"
+                    : "min-w-[2000px]"
                 }
               >
                 <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-muted">
@@ -1718,7 +1711,13 @@ function BatchDetailDialog({
                     <TableHead className="text-right">Subtotal</TableHead>
                     <TableHead className="text-right">ISV</TableHead>
                     <TableHead className="text-right">Total factura</TableHead>
-                    <TableHead className="text-right">Retenciones</TableHead>
+                    <TableHead className="text-right">
+                      Retenciones fiscales
+                    </TableHead>
+                    <TableHead className="text-right">
+                      Otras retenciones
+                    </TableHead>
+                    <TableHead className="text-right">Descuentos</TableHead>
                     <TableHead className="text-right">
                       {isAdvanceBatch ? "Importe objetivo" : "Neto a pagar"}
                     </TableHead>
@@ -1726,7 +1725,9 @@ function BatchDetailDialog({
                       Anticipo aplicado
                     </TableHead>
                     <TableHead className="text-right">
-                      {isAdvanceBatch ? "Pagos anteriores" : "Abonos anteriores"}
+                      {isAdvanceBatch
+                        ? "Pagos anteriores"
+                        : "Abonos anteriores"}
                     </TableHead>
                     <TableHead className="text-right">
                       {isAdvanceBatch ? "Pago" : "Abono"}
@@ -1806,14 +1807,23 @@ function BatchDetailDialog({
                         )}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
+                        {formatMoney(item.invoiceTotal, detail.batch.currency)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
                         {formatMoney(
-                          item.invoiceTotal,
+                          item.invoiceRetentionTotal,
                           detail.batch.currency
                         )}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {formatMoney(
-                          item.invoiceRetentionTotal,
+                          item.invoiceOtherRetentionTotal,
+                          detail.batch.currency
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMoney(
+                          item.invoiceDocumentDiscountTotal,
                           detail.batch.currency
                         )}
                       </TableCell>
@@ -2396,13 +2406,13 @@ function BatchDetailDialog({
                 ? "El lote volverá a Enviado al banco y las líneas rechazadas regresarán a Aprobada. Escriba el motivo para registrarlo en la auditoría."
                 : pendingReasonAction?.type === "cancel"
                   ? "El lote quedará anulado y sus facturas volverán a estar disponibles para incluirlas en otro lote. Esta acción solo se permite antes de registrar una respuesta o pago bancario."
-                : pendingReasonAction?.type === "reject"
-                  ? "El lote completo quedará rechazado. Escriba el motivo obligatorio para registrarlo en la auditoría."
-                  : pendingReasonAction?.type === "reopenRejected"
-                    ? approvalsEnabled
-                      ? "El lote volverá a quedar pendiente de aprobación. Escriba el motivo de la reapertura."
-                      : "El lote quedará listo para banco sin revisión ni aprobación. Escriba el motivo de la reapertura."
-                    : "Escriba un motivo de al menos 5 caracteres para registrar esta acción en la auditoría."}
+                  : pendingReasonAction?.type === "reject"
+                    ? "El lote completo quedará rechazado. Escriba el motivo obligatorio para registrarlo en la auditoría."
+                    : pendingReasonAction?.type === "reopenRejected"
+                      ? approvalsEnabled
+                        ? "El lote volverá a quedar pendiente de aprobación. Escriba el motivo de la reapertura."
+                        : "El lote quedará listo para banco sin revisión ni aprobación. Escriba el motivo de la reapertura."
+                      : "Escriba un motivo de al menos 5 caracteres para registrar esta acción en la auditoría."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2">
@@ -2458,8 +2468,7 @@ export default function Tesoreria() {
   const settingsQuery = trpc.treasury.settings.useQuery();
   const approvalsEnabled =
     settingsQuery.data?.treasuryBatchApprovalsEnabled === true;
-  const canConsolidate =
-    settingsQuery.data?.permissions.canDepurate === true;
+  const canConsolidate = settingsQuery.data?.permissions.canDepurate === true;
 
   useEffect(() => {
     if (
@@ -2597,9 +2606,7 @@ export default function Tesoreria() {
       return;
     }
     const paymentKinds = new Set(
-      selectedRows.map(
-        (row: any) => row.batch.paymentKind ?? "invoice"
-      )
+      selectedRows.map((row: any) => row.batch.paymentKind ?? "invoice")
     );
     if (paymentKinds.size > 1) {
       toast.error(
@@ -2663,16 +2670,16 @@ export default function Tesoreria() {
           {
             header: "Código de proyecto",
             value: (row: any) =>
-              treasuryProjectSummary(row).projects
-                .map(project => project.code)
+              treasuryProjectSummary(row)
+                .projects.map(project => project.code)
                 .join(", "),
             width: 20,
           },
           {
             header: "Proyecto",
             value: (row: any) =>
-              treasuryProjectSummary(row).projects
-                .map(project => project.name)
+              treasuryProjectSummary(row)
+                .projects.map(project => project.name)
                 .join(", "),
             width: 36,
           },
@@ -2842,9 +2849,7 @@ export default function Tesoreria() {
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-lg">
-            Reporte de Facturas
-          </CardTitle>
+          <CardTitle className="text-lg">Reporte de Facturas</CardTitle>
           <CardDescription>
             Genera una fila por factura con su total, retenciones y neto a
             pagar, sin detalle por artículo.
@@ -3096,12 +3101,13 @@ export default function Tesoreria() {
                             )}
                             disabled={
                               consolidateMutation.isPending ||
-                              !(approvalsEnabled
-                                ? [
-                                    "enviado_depuracion",
-                                    "pendiente_aprobacion",
-                                  ]
-                                : ["aprobado"]
+                              !(
+                                approvalsEnabled
+                                  ? [
+                                      "enviado_depuracion",
+                                      "pendiente_aprobacion",
+                                    ]
+                                  : ["aprobado"]
                               ).includes(row.batch.status)
                             }
                             onCheckedChange={checked =>
@@ -3126,8 +3132,7 @@ export default function Tesoreria() {
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline">
-                          {row.batch.paymentKind ===
-                          "purchase_order_advance"
+                          {row.batch.paymentKind === "purchase_order_advance"
                             ? "Anticipo a proveedor"
                             : "Factura"}
                         </Badge>

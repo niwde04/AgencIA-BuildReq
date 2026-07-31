@@ -93,6 +93,12 @@ import {
   requiresMissingCpcRetention,
 } from "@shared/supplier-documents";
 import { buildInvoiceAdvanceBalance } from "@shared/treasury";
+import {
+  calculateInvoiceDocumentAdjustments,
+  calculateInvoiceNetPayable,
+  getInvoiceBaseIsvAmount,
+  getInvoiceDocumentAdjustment,
+} from "@shared/invoice-document-adjustments";
 
 const PAGE_SIZE = 50;
 const STATUS_LABELS: Record<string, string> = {
@@ -169,7 +175,15 @@ type RetentionFiscalRangeAutofill = Pick<
 type InvoiceActionFeedback = {
   invoiceSavedId: number | null;
   retentionsSavedId: number | null;
+  documentAdjustmentsSavedId: number | null;
   reviewSentId: number | null;
+};
+
+type DocumentAdjustmentDraft = {
+  qualityRetentionPercent: string;
+  advanceAmortizationPercent: string;
+  promptPaymentPercent: string;
+  tcEnabled: boolean;
 };
 
 type RetentionDraft = {
@@ -536,6 +550,70 @@ function InvoiceLineRetentionCell({
   );
 }
 
+function DocumentAdjustmentPercentageRow({
+  label,
+  description,
+  baseAmount,
+  percentage,
+  amount,
+  disabled,
+  formatCurrency,
+  onPercentageChange,
+}: {
+  label: string;
+  description: string;
+  baseAmount: number;
+  percentage: string;
+  amount: number;
+  disabled: boolean;
+  formatCurrency: (value: string | number | null | undefined) => string;
+  onPercentageChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid gap-3 rounded-lg border border-border/70 p-3 md:grid-cols-[minmax(220px,1fr)_150px_130px_150px] md:items-end">
+      <div>
+        <p className="font-medium">{label}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+      </div>
+      <div className="space-y-1.5">
+        <Label>Base</Label>
+        <Input
+          value={formatCurrency(baseAmount)}
+          disabled
+          className="text-right disabled:cursor-default disabled:opacity-100"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label>Porcentaje</Label>
+        <div className="relative">
+          <Input
+            type="number"
+            min="0"
+            max="100"
+            step="0.01"
+            inputMode="decimal"
+            value={percentage}
+            disabled={disabled}
+            onChange={event => onPercentageChange(event.target.value)}
+            className="pr-8 text-right"
+          />
+          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+            %
+          </span>
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <Label>Monto</Label>
+        <Input
+          value={formatCurrency(amount)}
+          disabled
+          className="text-right font-semibold disabled:cursor-default disabled:opacity-100"
+        />
+      </div>
+    </div>
+  );
+}
+
 function formatSupplierRtnLabel(supplier?: any | null) {
   const rtn = String(supplier?.rtn ?? "").trim();
   return rtn || "RTN no configurado";
@@ -603,6 +681,28 @@ function roundMoney(value: number) {
 function formatMoneyInput(value: string | number | null | undefined) {
   const parsed = toMoneyNumber(value);
   return parsed > 0 ? parsed.toFixed(2) : "";
+}
+
+function formatDocumentAdjustmentPercent(
+  value: string | number | null | undefined
+) {
+  const parsed = toMoneyNumber(value);
+  return parsed > 0 ? parsed.toFixed(2) : "";
+}
+
+function parseDocumentAdjustmentPercent(value: string, label: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+  if (!/^\d{1,3}(?:\.\d{0,2})?$/.test(trimmed)) {
+    toast.error(`${label} acepta como máximo dos decimales`);
+    return null;
+  }
+  const percentage = Number(trimmed);
+  if (!Number.isFinite(percentage) || percentage < 0 || percentage > 100) {
+    toast.error(`${label} debe estar entre 0 y 100`);
+    return null;
+  }
+  return percentage;
 }
 
 function parseTaxBreakdown(value: unknown) {
@@ -1435,9 +1535,17 @@ export default function Facturas() {
     useRef<RetentionFiscalRangeAutofill | null>(null);
   const lastRetentionFiscalRangeLookupKeyRef = useRef("");
   const [retentionDrafts, setRetentionDrafts] = useState<RetentionDraft[]>([]);
+  const [documentAdjustmentDraft, setDocumentAdjustmentDraft] =
+    useState<DocumentAdjustmentDraft>({
+      qualityRetentionPercent: "",
+      advanceAmortizationPercent: "",
+      promptPaymentPercent: "",
+      tcEnabled: false,
+    });
   const [actionFeedback, setActionFeedback] = useState<InvoiceActionFeedback>({
     invoiceSavedId: null,
     retentionsSavedId: null,
+    documentAdjustmentsSavedId: null,
     reviewSentId: null,
   });
   const [attachmentState, setAttachmentState] = useState({
@@ -1458,6 +1566,13 @@ export default function Facturas() {
         : { ...current, retentionsSavedId: null }
     );
   }, []);
+  const clearDocumentAdjustmentsSavedFeedback = useCallback(() => {
+    setActionFeedback(current =>
+      current.documentAdjustmentsSavedId === null
+        ? current
+        : { ...current, documentAdjustmentsSavedId: null }
+    );
+  }, []);
   const updateInvoiceDraft = useCallback(
     (updater: SetStateAction<InvoiceDraft>) => {
       clearInvoiceSavedFeedback();
@@ -1472,10 +1587,16 @@ export default function Facturas() {
     },
     [clearRetentionsSavedFeedback]
   );
+  const updateDocumentAdjustmentDraft = useCallback(
+    (updater: SetStateAction<DocumentAdjustmentDraft>) => {
+      clearDocumentAdjustmentsSavedFeedback();
+      setDocumentAdjustmentDraft(updater);
+    },
+    [clearDocumentAdjustmentsSavedFeedback]
+  );
   const listFilters = useMemo(
     () => ({
-      projectId:
-        projectFilter === "all" ? undefined : Number(projectFilter),
+      projectId: projectFilter === "all" ? undefined : Number(projectFilter),
       status:
         statusFilter === "all"
           ? undefined
@@ -1491,14 +1612,7 @@ export default function Facturas() {
       page,
       pageSize: PAGE_SIZE,
     }),
-    [
-      dateFrom,
-      dateTo,
-      debouncedSearchTerm,
-      page,
-      projectFilter,
-      statusFilter,
-    ]
+    [dateFrom, dateTo, debouncedSearchTerm, page, projectFilter, statusFilter]
   );
 
   const {
@@ -1712,6 +1826,19 @@ export default function Facturas() {
       onError: error => toast.error(getFriendlyMutationError(error.message)),
     }
   );
+  const replaceDocumentAdjustmentsMutation =
+    trpc.invoices.replaceDocumentAdjustments.useMutation({
+      onSuccess: (_data, variables) => {
+        toast.success("Retenciones y descuentos actualizados");
+        setActionFeedback(current => ({
+          ...current,
+          documentAdjustmentsSavedId: variables.id,
+        }));
+        void utils.invoices.invalidate();
+        void utils.invoices.getById.invalidate({ id: variables.id });
+      },
+      onError: error => toast.error(getFriendlyMutationError(error.message)),
+    });
   const reviewMutation = trpc.invoices.review.useMutation({
     onSuccess: (_data, variables) => {
       toast.success("Factura enviada a revisión");
@@ -1780,6 +1907,7 @@ export default function Facturas() {
     setActionFeedback({
       invoiceSavedId: null,
       retentionsSavedId: null,
+      documentAdjustmentsSavedId: null,
       reviewSentId: null,
     });
   }, [selectedId]);
@@ -1847,6 +1975,24 @@ export default function Facturas() {
         amount: String(retention.amount ?? "0.00"),
       }))
     );
+    const adjustments = detail.documentAdjustments ?? [];
+    setDocumentAdjustmentDraft({
+      qualityRetentionPercent: formatDocumentAdjustmentPercent(
+        getInvoiceDocumentAdjustment(adjustments, "quality_retention")
+          ?.percentage
+      ),
+      advanceAmortizationPercent: formatDocumentAdjustmentPercent(
+        getInvoiceDocumentAdjustment(adjustments, "advance_amortization")
+          ?.percentage
+      ),
+      promptPaymentPercent: formatDocumentAdjustmentPercent(
+        getInvoiceDocumentAdjustment(adjustments, "prompt_payment_discount")
+          ?.percentage
+      ),
+      tcEnabled: Boolean(
+        getInvoiceDocumentAdjustment(adjustments, "tc_discount")
+      ),
+    });
   }, [detail]);
 
   useEffect(() => {
@@ -1859,6 +2005,7 @@ export default function Facturas() {
     setActionFeedback({
       invoiceSavedId: null,
       retentionsSavedId: null,
+      documentAdjustmentsSavedId: null,
       reviewSentId: null,
     });
   }, [detail?.invoice?.id]);
@@ -2019,6 +2166,64 @@ export default function Facturas() {
     0
   );
   const invoiceTotal = toNumber(detail?.invoice.total);
+  const documentBaseIsvAmount = getInvoiceBaseIsvAmount(detail?.items ?? []);
+  const documentAdjustmentPreview = calculateInvoiceDocumentAdjustments({
+    subtotal: detail?.invoice.subtotal,
+    baseIsvAmount: documentBaseIsvAmount,
+    input: {
+      qualityRetentionPercent: documentAdjustmentDraft.qualityRetentionPercent,
+      advanceAmortizationPercent:
+        documentAdjustmentDraft.advanceAmortizationPercent,
+      promptPaymentPercent: documentAdjustmentDraft.promptPaymentPercent,
+      tcEnabled: documentAdjustmentDraft.tcEnabled,
+    },
+  });
+  const qualityRetentionAdjustment = getInvoiceDocumentAdjustment(
+    documentAdjustmentPreview.calculations,
+    "quality_retention"
+  );
+  const advanceAmortizationAdjustment = getInvoiceDocumentAdjustment(
+    documentAdjustmentPreview.calculations,
+    "advance_amortization"
+  );
+  const promptPaymentAdjustment = getInvoiceDocumentAdjustment(
+    documentAdjustmentPreview.calculations,
+    "prompt_payment_discount"
+  );
+  const tcDiscountAdjustment = getInvoiceDocumentAdjustment(
+    documentAdjustmentPreview.calculations,
+    "tc_discount"
+  );
+  const otherRetentionTotal = documentAdjustmentPreview.otherRetentionTotal;
+  const documentDiscountTotal = documentAdjustmentPreview.documentDiscountTotal;
+  const storedDocumentAdjustments = detail?.documentAdjustments ?? [];
+  const documentAdjustmentsDirty =
+    Boolean(detail?.invoice) &&
+    (Number(documentAdjustmentDraft.qualityRetentionPercent || 0) !==
+      Number(
+        getInvoiceDocumentAdjustment(
+          storedDocumentAdjustments,
+          "quality_retention"
+        )?.percentage ?? 0
+      ) ||
+      Number(documentAdjustmentDraft.advanceAmortizationPercent || 0) !==
+        Number(
+          getInvoiceDocumentAdjustment(
+            storedDocumentAdjustments,
+            "advance_amortization"
+          )?.percentage ?? 0
+        ) ||
+      Number(documentAdjustmentDraft.promptPaymentPercent || 0) !==
+        Number(
+          getInvoiceDocumentAdjustment(
+            storedDocumentAdjustments,
+            "prompt_payment_discount"
+          )?.percentage ?? 0
+        ) ||
+      documentAdjustmentDraft.tcEnabled !==
+        Boolean(
+          getInvoiceDocumentAdjustment(storedDocumentAdjustments, "tc_discount")
+        ));
   const withholdingBase = (detail?.items ?? [])
     .filter((item: any) => item.allowsTaxWithholding !== false)
     .reduce((sum: number, item: any) => sum + toNumber(item.subtotal), 0);
@@ -2084,6 +2289,15 @@ export default function Facturas() {
           ? `Vencida al emitir · venció ${formatDateLabel(accountPaymentCertificate.expirationDate)}`
           : "Sin vencimiento válido";
   const netPayable = Math.max(invoiceTotal - retentionTotal, 0);
+  const adjustedNetPayable = Math.max(
+    0,
+    calculateInvoiceNetPayable({
+      total: invoiceTotal,
+      fiscalRetentionTotal: retentionTotal,
+      otherRetentionTotal,
+      documentDiscountTotal,
+    })
+  );
   const appliedAdvanceAmount = Math.max(
     0,
     Number(detail?.appliedAdvanceAmount ?? 0)
@@ -2096,7 +2310,7 @@ export default function Facturas() {
     Number(detail?.purchaseOrderAdvanceSummary?.count ?? 0) > 0;
   const invoiceAdvanceBalance = buildInvoiceAdvanceBalance({
     invoiceStatus: detail?.invoice.status ?? "borrador",
-    netPayable,
+    netPayable: adjustedNetPayable,
     appliedAdvanceAmount,
     availableAccountedAdvanceAmount:
       detail?.purchaseOrderAdvanceSummary?.unappliedAmount,
@@ -2106,6 +2320,13 @@ export default function Facturas() {
   const balanceAfterAdvance = invoiceAdvanceBalance.balanceAfterAdvance;
   const isPendingAdvanceApplication =
     invoiceAdvanceBalance.isPendingApplication;
+  const printInvoiceAdvanceBalance = buildInvoiceAdvanceBalance({
+    invoiceStatus: detail?.invoice.status ?? "borrador",
+    netPayable,
+    appliedAdvanceAmount,
+    availableAccountedAdvanceAmount:
+      detail?.purchaseOrderAdvanceSummary?.unappliedAmount,
+  });
   const handlePrintInvoiceDetail = () => {
     if (!detail?.invoice) return;
 
@@ -2275,15 +2496,15 @@ export default function Facturas() {
         : []),
       {
         label: `${
-          isPendingAdvanceApplication
+          printInvoiceAdvanceBalance.isPendingApplication
             ? "Anticipo aplicado al contabilizar"
             : "Anticipo aplicado"
         } ${invoiceSummaryCurrency}`,
-        value: displayedAppliedAdvanceAmount,
+        value: printInvoiceAdvanceBalance.displayedAppliedAmount,
       },
       {
         label: `Saldo pendiente ${invoiceSummaryCurrency}`,
-        value: balanceAfterAdvance,
+        value: printInvoiceAdvanceBalance.balanceAfterAdvance,
         emphasized: true,
       },
     ]
@@ -2617,6 +2838,8 @@ export default function Facturas() {
   const isVoided = detail?.invoice.status === "anulada";
   const canEditSelectedInvoice = canEditInvoices && isDraft;
   const canEditRetentions = canEditSelectedInvoice && canRetainSelectedInvoice;
+  const canEditDocumentAdjustments =
+    (canEditInvoices && isDraft) || (canAccountInvoices && isReviewed);
   const canManageInvoiceAttachments = canReviewInvoices && isDraft;
   const canReviewSelectedInvoice = canReviewInvoices && isDraft;
   const canAccountSelectedInvoice = canAccountInvoices && isReviewed;
@@ -2630,6 +2853,9 @@ export default function Facturas() {
     selectedId !== null && actionFeedback.invoiceSavedId === selectedId;
   const retentionsSaveConfirmed =
     selectedId !== null && actionFeedback.retentionsSavedId === selectedId;
+  const documentAdjustmentsSaveConfirmed =
+    selectedId !== null &&
+    actionFeedback.documentAdjustmentsSavedId === selectedId;
   const reviewSendConfirmed =
     selectedId !== null && actionFeedback.reviewSentId === selectedId;
   const handleInvoiceAttachmentsState = useCallback(
@@ -3168,6 +3394,60 @@ export default function Facturas() {
     });
   };
 
+  const handleSaveDocumentAdjustments = () => {
+    if (!selectedId) return;
+    const qualityRetentionPercent = parseDocumentAdjustmentPercent(
+      documentAdjustmentDraft.qualityRetentionPercent,
+      "Retención de calidad"
+    );
+    if (qualityRetentionPercent === null) return;
+    const advanceAmortizationPercent = parseDocumentAdjustmentPercent(
+      documentAdjustmentDraft.advanceAmortizationPercent,
+      "Amortización de anticipo"
+    );
+    if (advanceAmortizationPercent === null) return;
+    const promptPaymentPercent = parseDocumentAdjustmentPercent(
+      documentAdjustmentDraft.promptPaymentPercent,
+      "Pronto pago"
+    );
+    if (promptPaymentPercent === null) return;
+
+    const calculated = calculateInvoiceDocumentAdjustments({
+      subtotal: detail?.invoice.subtotal,
+      baseIsvAmount: documentBaseIsvAmount,
+      input: {
+        qualityRetentionPercent,
+        advanceAmortizationPercent,
+        promptPaymentPercent,
+        tcEnabled: documentAdjustmentDraft.tcEnabled,
+      },
+    });
+    const nextNetPayable = calculateInvoiceNetPayable({
+      total: invoiceTotal,
+      fiscalRetentionTotal: retentionTotal,
+      otherRetentionTotal: calculated.otherRetentionTotal,
+      documentDiscountTotal: calculated.documentDiscountTotal,
+    });
+    if (nextNetPayable < -0.000001) {
+      toast.error(
+        "Las retenciones y descuentos no pueden exceder el total de la factura"
+      );
+      return;
+    }
+
+    setActionFeedback(current => ({
+      ...current,
+      documentAdjustmentsSavedId: null,
+    }));
+    replaceDocumentAdjustmentsMutation.mutate({
+      id: selectedId,
+      qualityRetentionPercent,
+      advanceAmortizationPercent,
+      promptPaymentPercent,
+      tcEnabled: documentAdjustmentDraft.tcEnabled,
+    });
+  };
+
   const handlePrintRetentionCertificate = () => {
     if (!detail || retentionDrafts.length === 0 || retentionTotal <= 0) {
       toast.error("Esta factura no tiene retenciones para imprimir");
@@ -3430,6 +3710,12 @@ export default function Facturas() {
 
   const handleReviewInvoice = () => {
     if (!selectedId) return;
+    if (documentAdjustmentsDirty) {
+      toast.error(
+        "Guarde las retenciones y descuentos por documento antes de registrar la factura"
+      );
+      return;
+    }
     if (attachmentState.count === 0) {
       toast.error("Adjunte al menos un archivo antes de enviar a revisión");
       return;
@@ -3450,6 +3736,12 @@ export default function Facturas() {
 
   const handleAccountInvoice = () => {
     if (!selectedId) return;
+    if (documentAdjustmentsDirty) {
+      toast.error(
+        "Guarde las retenciones y descuentos por documento antes de contabilizar"
+      );
+      return;
+    }
     accountMutation.mutate({
       id: selectedId,
       accountingComment: accountingComment.trim() || undefined,
@@ -3485,8 +3777,7 @@ export default function Facturas() {
     setIsExportingInternalReport(true);
     try {
       const payload = await utils.reports.systemInvoices.fetch({
-        projectId:
-          projectFilter === "all" ? null : Number(projectFilter),
+        projectId: projectFilter === "all" ? null : Number(projectFilter),
         dateFrom: dateFrom || null,
         dateTo: dateTo || null,
         search: debouncedSearchTerm.trim() || null,
@@ -3534,16 +3825,12 @@ export default function Facturas() {
               type="button"
               onClick={() => void exportInternalInvoicesReport()}
               disabled={
-                isLoading ||
-                !invoicesPage?.total ||
-                isExportingInternalReport
+                isLoading || !invoicesPage?.total || isExportingInternalReport
               }
               className="gap-2"
             >
               <Download className="h-4 w-4" />
-              {isExportingInternalReport
-                ? "Generando..."
-                : "Exportar Excel"}
+              {isExportingInternalReport ? "Generando..." : "Exportar Excel"}
             </Button>
           ) : null}
         </div>
@@ -3635,7 +3922,7 @@ export default function Facturas() {
             </div>
           ) : (
             <div className="relative isolate max-w-full overflow-x-auto">
-              <table className="w-full min-w-[1990px] border-separate border-spacing-0 text-sm">
+              <table className="w-full min-w-[2240px] border-separate border-spacing-0 text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/30">
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -3669,7 +3956,13 @@ export default function Facturas() {
                       Total
                     </th>
                     <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Retenciones
+                      Retenciones fiscales
+                    </th>
+                    <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Otras retenciones
+                    </th>
+                    <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Descuentos
                     </th>
                     <th className="p-3 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Neto
@@ -3757,6 +4050,18 @@ export default function Facturas() {
                               row.invoice.currency ?? "HNL"
                             )}
                           </td>
+                          <td className="p-3 text-right font-medium">
+                            {formatPurchaseOrderCurrency(
+                              row.invoice.otherRetentionTotal,
+                              row.invoice.currency ?? "HNL"
+                            )}
+                          </td>
+                          <td className="p-3 text-right font-medium">
+                            {formatPurchaseOrderCurrency(
+                              row.invoice.documentDiscountTotal,
+                              row.invoice.currency ?? "HNL"
+                            )}
+                          </td>
                           <td className="p-3 text-right font-semibold">
                             {formatPurchaseOrderCurrency(
                               row.invoice.netPayable,
@@ -3793,7 +4098,7 @@ export default function Facturas() {
                         </tr>
                         {itemsExpanded ? (
                           <tr className="border-b border-border">
-                            <td colSpan={14} className="p-0">
+                            <td colSpan={16} className="p-0">
                               <DocumentItemsAccordionPanel
                                 items={expandedItemsDetail?.items}
                                 isLoading={isLoadingExpandedItems}
@@ -3875,6 +4180,7 @@ export default function Facturas() {
                         updateMutation.isPending ||
                         reviewMutation.isPending ||
                         reviewSendConfirmed ||
+                        documentAdjustmentsDirty ||
                         attachmentState.isLoading ||
                         attachmentState.count === 0
                       }
@@ -3897,7 +4203,9 @@ export default function Facturas() {
                     <>
                       <Button
                         onClick={handleAccountInvoice}
-                        disabled={accountMutation.isPending}
+                        disabled={
+                          accountMutation.isPending || documentAdjustmentsDirty
+                        }
                       >
                         <CheckCircle2 className="mr-2 h-4 w-4" />
                         {accountMutation.isPending
@@ -4608,7 +4916,9 @@ export default function Facturas() {
                                 updateInvoiceDraft(current => ({
                                   ...current,
                                   retentionReceiptNumber:
-                                    formatInvoiceNumberInput(event.target.value),
+                                    formatInvoiceNumberInput(
+                                      event.target.value
+                                    ),
                                 }))
                               }
                               placeholder={
@@ -4649,7 +4959,9 @@ export default function Facturas() {
                                 updateInvoiceDraft(current => ({
                                   ...current,
                                   retentionDocumentRangeStart:
-                                    formatInvoiceNumberInput(event.target.value),
+                                    formatInvoiceNumberInput(
+                                      event.target.value
+                                    ),
                                 }))
                               }
                               placeholder={
@@ -4671,7 +4983,9 @@ export default function Facturas() {
                                 updateInvoiceDraft(current => ({
                                   ...current,
                                   retentionDocumentRangeEnd:
-                                    formatInvoiceNumberInput(event.target.value),
+                                    formatInvoiceNumberInput(
+                                      event.target.value
+                                    ),
                                 }))
                               }
                               placeholder={
@@ -4753,6 +5067,194 @@ export default function Facturas() {
                           : invoiceSaveConfirmed
                             ? "Factura guardada"
                             : "Guardar factura"}
+                      </Button>
+                    ) : null}
+                  </div>
+                </section>
+
+                <section className="min-w-0 rounded-lg border border-border/70">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-4 py-3">
+                    <div>
+                      <h3 className="font-semibold">
+                        Retenciones y descuentos por documento
+                      </h3>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Cálculos independientes de las retenciones fiscales y
+                        del anticipo aplicado por Tesorería.
+                      </p>
+                    </div>
+                    <div className="text-right text-sm">
+                      <p className="font-semibold text-rose-700">
+                        Otras retenciones:{" "}
+                        {formatSelectedInvoiceCurrency(otherRetentionTotal)}
+                      </p>
+                      <p className="font-semibold text-amber-700">
+                        Descuentos:{" "}
+                        {formatSelectedInvoiceCurrency(documentDiscountTotal)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="space-y-5 p-4">
+                    <div className="space-y-3">
+                      <div>
+                        <h4 className="text-sm font-semibold">
+                          Otras retenciones por documento
+                        </h4>
+                        <p className="text-xs text-muted-foreground">
+                          La base corresponde al subtotal de la factura.
+                        </p>
+                      </div>
+                      <DocumentAdjustmentPercentageRow
+                        label="Retención de calidad"
+                        description="Porcentaje contractual retenido por calidad."
+                        baseAmount={toMoneyNumber(detail.invoice.subtotal)}
+                        percentage={
+                          documentAdjustmentDraft.qualityRetentionPercent
+                        }
+                        amount={toMoneyNumber(
+                          qualityRetentionAdjustment?.amount
+                        )}
+                        disabled={!canEditDocumentAdjustments}
+                        formatCurrency={formatSelectedInvoiceCurrency}
+                        onPercentageChange={value =>
+                          updateDocumentAdjustmentDraft(current => ({
+                            ...current,
+                            qualityRetentionPercent: value,
+                          }))
+                        }
+                      />
+                      <DocumentAdjustmentPercentageRow
+                        label="Amortización de anticipo"
+                        description="Deducción documental independiente del anticipo real de Tesorería."
+                        baseAmount={toMoneyNumber(detail.invoice.subtotal)}
+                        percentage={
+                          documentAdjustmentDraft.advanceAmortizationPercent
+                        }
+                        amount={toMoneyNumber(
+                          advanceAmortizationAdjustment?.amount
+                        )}
+                        disabled={!canEditDocumentAdjustments}
+                        formatCurrency={formatSelectedInvoiceCurrency}
+                        onPercentageChange={value =>
+                          updateDocumentAdjustmentDraft(current => ({
+                            ...current,
+                            advanceAmortizationPercent: value,
+                          }))
+                        }
+                      />
+                    </div>
+
+                    <div className="space-y-3 border-t border-border/70 pt-5">
+                      <div>
+                        <h4 className="text-sm font-semibold">
+                          Descuentos por documento
+                        </h4>
+                        <p className="text-xs text-muted-foreground">
+                          Pronto pago usa el subtotal; TC usa únicamente el ISV
+                          base gravado.
+                        </p>
+                      </div>
+                      <DocumentAdjustmentPercentageRow
+                        label="Pronto pago"
+                        description="Porcentaje variable calculado sobre el subtotal."
+                        baseAmount={toMoneyNumber(detail.invoice.subtotal)}
+                        percentage={
+                          documentAdjustmentDraft.promptPaymentPercent
+                        }
+                        amount={toMoneyNumber(promptPaymentAdjustment?.amount)}
+                        disabled={!canEditDocumentAdjustments}
+                        formatCurrency={formatSelectedInvoiceCurrency}
+                        onPercentageChange={value =>
+                          updateDocumentAdjustmentDraft(current => ({
+                            ...current,
+                            promptPaymentPercent: value,
+                          }))
+                        }
+                      />
+                      <div className="grid gap-3 rounded-lg border border-border/70 p-3 md:grid-cols-[minmax(220px,1fr)_150px_130px_150px] md:items-end">
+                        <div>
+                          <div className="flex items-center gap-3">
+                            <Switch
+                              checked={documentAdjustmentDraft.tcEnabled}
+                              disabled={!canEditDocumentAdjustments}
+                              onCheckedChange={checked =>
+                                updateDocumentAdjustmentDraft(current => ({
+                                  ...current,
+                                  tcEnabled: checked,
+                                }))
+                              }
+                            />
+                            <p className="font-medium">TC</p>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Activación manual; tasa fija del 8% sobre el ISV
+                            base gravado.
+                          </p>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Base ISV</Label>
+                          <Input
+                            value={formatSelectedInvoiceCurrency(
+                              documentBaseIsvAmount
+                            )}
+                            disabled
+                            className="text-right disabled:cursor-default disabled:opacity-100"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Porcentaje</Label>
+                          <Input
+                            value="8.00%"
+                            disabled
+                            className="text-right disabled:cursor-default disabled:opacity-100"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Monto</Label>
+                          <Input
+                            value={formatSelectedInvoiceCurrency(
+                              tcDiscountAdjustment?.amount ?? 0
+                            )}
+                            disabled
+                            className="text-right font-semibold disabled:cursor-default disabled:opacity-100"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {documentAdjustmentsDirty ? (
+                      <p className="text-sm font-medium text-amber-700">
+                        Hay cambios pendientes de guardar.
+                      </p>
+                    ) : null}
+                    {canEditDocumentAdjustments ? (
+                      <Button
+                        onClick={handleSaveDocumentAdjustments}
+                        variant={
+                          documentAdjustmentsSaveConfirmed
+                            ? "outline"
+                            : "default"
+                        }
+                        className={
+                          documentAdjustmentsSaveConfirmed
+                            ? SAVED_BUTTON_CLASS
+                            : undefined
+                        }
+                        disabled={
+                          replaceDocumentAdjustmentsMutation.isPending ||
+                          !documentAdjustmentsDirty
+                        }
+                      >
+                        {documentAdjustmentsSaveConfirmed ? (
+                          <CheckCircle2 className="mr-2 h-4 w-4" />
+                        ) : (
+                          <Save className="mr-2 h-4 w-4" />
+                        )}
+                        {replaceDocumentAdjustmentsMutation.isPending
+                          ? "Guardando..."
+                          : documentAdjustmentsSaveConfirmed
+                            ? "Retenciones y descuentos guardados"
+                            : "Guardar retenciones y descuentos"}
                       </Button>
                     ) : null}
                   </div>
@@ -5361,16 +5863,32 @@ export default function Facturas() {
                     </div>
                     <div className="flex justify-between gap-3 text-sm">
                       <span className="font-medium text-rose-700">
-                        (-) Total retenciones
+                        (-) Retenciones fiscales
                       </span>
                       <span className="font-semibold text-rose-700">
                         {formatSelectedInvoiceCurrency(retentionTotal)}
                       </span>
                     </div>
+                    <div className="flex justify-between gap-3 text-sm">
+                      <span className="font-medium text-rose-700">
+                        (-) Otras retenciones
+                      </span>
+                      <span className="font-semibold text-rose-700">
+                        {formatSelectedInvoiceCurrency(otherRetentionTotal)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3 text-sm">
+                      <span className="font-medium text-amber-700">
+                        (-) Descuentos por documento
+                      </span>
+                      <span className="font-semibold text-amber-700">
+                        {formatSelectedInvoiceCurrency(documentDiscountTotal)}
+                      </span>
+                    </div>
                     <div className="flex justify-between gap-3 border-t border-border pt-3 text-base font-semibold">
                       <span>Neto a pagar</span>
                       <span className="text-emerald-700">
-                        {formatSelectedInvoiceCurrency(netPayable)}
+                        {formatSelectedInvoiceCurrency(adjustedNetPayable)}
                       </span>
                     </div>
                     {hasRegisteredSupplierAdvance ? (
@@ -5395,9 +5913,7 @@ export default function Facturas() {
                     <div className="flex justify-between gap-3 text-sm">
                       <span className="font-medium text-blue-700">
                         (-) Anticipo aplicado
-                        {isPendingAdvanceApplication
-                          ? " al contabilizar"
-                          : ""}
+                        {isPendingAdvanceApplication ? " al contabilizar" : ""}
                       </span>
                       <span className="font-semibold text-blue-700">
                         {formatSelectedInvoiceCurrency(

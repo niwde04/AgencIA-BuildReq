@@ -46,6 +46,7 @@ import {
   purchaseOrderAdvances,
   invoiceItems,
   invoiceOtherCharges,
+  invoiceDocumentAdjustments,
   invoiceRetentions,
   salesTaxes,
   taxRetentions,
@@ -94,6 +95,7 @@ import type {
   InsertInvoice,
   InsertInvoiceItem,
   InsertInvoiceOtherCharge,
+  InsertInvoiceDocumentAdjustment,
   InsertInvoiceRetention,
   InsertSalesTax,
   InsertTaxRetention,
@@ -129,6 +131,12 @@ import type {
 } from "../drizzle/schema";
 import type { DmcReportSourceInvoice } from "../shared/dmc-report";
 import type { SystemPurchaseOrderLine } from "../shared/system-workbook-report";
+import {
+  calculateInvoiceDocumentAdjustments,
+  calculateInvoiceNetPayable,
+  getInvoiceBaseIsvAmount,
+  type InvoiceDocumentAdjustmentInput,
+} from "../shared/invoice-document-adjustments";
 import type { BuildReqRole } from "@shared/buildreq-roles";
 export type { BuildReqRole } from "@shared/buildreq-roles";
 import {
@@ -9278,8 +9286,9 @@ export async function cancelPurchaseOrder(id: number, actorId: number) {
         "No se puede cancelar una orden que ya tiene recepciones registradas"
       );
     }
-    const { assertPurchaseOrderCanBeCancelledWithAdvances } =
-      await import("./purchaseOrderAdvances");
+    const { assertPurchaseOrderCanBeCancelledWithAdvances } = await import(
+      "./purchaseOrderAdvances"
+    );
     await assertPurchaseOrderCanBeCancelledWithAdvances(tx, id, actorId);
 
     const approvalCondition =
@@ -11022,6 +11031,8 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
       taxAmount: toMoneyString4(totals.taxAmount),
       total: toMoneyString4(invoiceTotal),
       retentionTotal: "0.0000",
+      otherRetentionTotal: "0.0000",
+      documentDiscountTotal: "0.0000",
       netPayable: toMoneyString4(invoiceTotal),
     } as any)
     .returning({
@@ -12744,7 +12755,12 @@ export async function listDmcReportSourceInvoices(filters?: {
   const invoiceIds = rows.map(row => row.invoice.id);
   if (invoiceIds.length === 0) return [];
 
-  const [itemRows, retentionRows, advanceApplicationRows] = await Promise.all([
+  const [
+    itemRows,
+    retentionRows,
+    documentAdjustmentRows,
+    advanceApplicationRows,
+  ] = await Promise.all([
     db
       .select({
         item: invoiceItems,
@@ -12774,14 +12790,20 @@ export async function listDmcReportSourceInvoices(filters?: {
       .where(inArray(invoiceRetentions.invoiceId, invoiceIds))
       .orderBy(asc(invoiceRetentions.invoiceId), asc(invoiceRetentions.id)),
     db
+      .select()
+      .from(invoiceDocumentAdjustments)
+      .where(inArray(invoiceDocumentAdjustments.invoiceId, invoiceIds))
+      .orderBy(
+        asc(invoiceDocumentAdjustments.invoiceId),
+        asc(invoiceDocumentAdjustments.id)
+      ),
+    db
       .select({
         invoiceId: purchaseOrderAdvanceApplications.invoiceId,
         amount: purchaseOrderAdvanceApplications.amount,
       })
       .from(purchaseOrderAdvanceApplications)
-      .where(
-        inArray(purchaseOrderAdvanceApplications.invoiceId, invoiceIds)
-      ),
+      .where(inArray(purchaseOrderAdvanceApplications.invoiceId, invoiceIds)),
   ]);
 
   const itemsByInvoiceId = new Map<number, typeof itemRows>();
@@ -12796,6 +12818,16 @@ export async function listDmcReportSourceInvoices(filters?: {
     const current = retentionsByInvoiceId.get(retention.invoiceId) ?? [];
     current.push(retention);
     retentionsByInvoiceId.set(retention.invoiceId, current);
+  });
+  const documentAdjustmentsByInvoiceId = new Map<
+    number,
+    typeof documentAdjustmentRows
+  >();
+  documentAdjustmentRows.forEach(adjustment => {
+    const current =
+      documentAdjustmentsByInvoiceId.get(adjustment.invoiceId) ?? [];
+    current.push(adjustment);
+    documentAdjustmentsByInvoiceId.set(adjustment.invoiceId, current);
   });
   const appliedAdvanceByInvoiceId = new Map<number, number>();
   advanceApplicationRows.forEach(application => {
@@ -13009,9 +13041,10 @@ export async function listDmcReportSourceInvoices(filters?: {
       taxAmount: invoice.taxAmount,
       total: invoice.total,
       retentionTotal: invoice.retentionTotal,
+      otherRetentionTotal: invoice.otherRetentionTotal,
+      documentDiscountTotal: invoice.documentDiscountTotal,
       netPayable: invoice.netPayable,
-      appliedAdvanceAmount:
-        appliedAdvanceByInvoiceId.get(invoice.id) ?? 0,
+      appliedAdvanceAmount: appliedAdvanceByInvoiceId.get(invoice.id) ?? 0,
       receiptNumber: receipt?.receiptNumber ?? null,
       purchaseOrderNumber: purchaseOrder?.orderNumber ?? null,
       purchaseType: purchaseOrder?.purchaseType ?? null,
@@ -13049,6 +13082,7 @@ export async function listDmcReportSourceInvoices(filters?: {
           invoiceItemId: retention.invoiceItemId,
         })
       ),
+      documentAdjustments: documentAdjustmentsByInvoiceId.get(invoice.id) ?? [],
       materialRequests: sourceData.materialRequests,
       subProjectLabels: sourceData.subProjectLabels,
     } satisfies DmcReportSourceInvoice;
@@ -13297,6 +13331,7 @@ export async function getInvoiceById(id: number) {
     itemRows,
     retentions,
     otherCharges,
+    documentAdjustments,
     advanceApplications,
     purchaseOrderAdvanceSummary,
   ] = await Promise.all([
@@ -13325,6 +13360,11 @@ export async function getInvoiceById(id: number) {
       .from(invoiceOtherCharges)
       .where(eq(invoiceOtherCharges.invoiceId, id))
       .orderBy(asc(invoiceOtherCharges.id)),
+    db
+      .select()
+      .from(invoiceDocumentAdjustments)
+      .where(eq(invoiceDocumentAdjustments.invoiceId, id))
+      .orderBy(asc(invoiceDocumentAdjustments.id)),
     db
       .select()
       .from(purchaseOrderAdvanceApplications)
@@ -13396,6 +13436,7 @@ export async function getInvoiceById(id: number) {
     items: itemsWithFixedAssetArticles,
     retentions,
     otherCharges,
+    documentAdjustments,
     advanceApplications,
     purchaseOrderAdvanceSummary,
     appliedAdvanceAmount: toMoneyString4(
@@ -13513,10 +13554,7 @@ export async function lookupRetentionFiscalDocumentRange(params: {
           retentionFiscalDocumentRanges.documentRangeStartKey,
           receiptNumberKey
         ),
-        gte(
-          retentionFiscalDocumentRanges.documentRangeEndKey,
-          receiptNumberKey
-        )
+        gte(retentionFiscalDocumentRanges.documentRangeEndKey, receiptNumberKey)
       )
     )
     .orderBy(
@@ -13715,8 +13753,9 @@ export async function accountInvoice(params: {
       .where(eq(invoices.id, params.id))
       .returning();
     if (!updated) return updated;
-    const { applyAvailableAdvancesForPurchaseOrder } =
-      await import("./purchaseOrderAdvances");
+    const { applyAvailableAdvancesForPurchaseOrder } = await import(
+      "./purchaseOrderAdvances"
+    );
     await applyAvailableAdvancesForPurchaseOrder({
       executor: tx,
       purchaseOrderId: updated.purchaseOrderId,
@@ -14152,6 +14191,9 @@ export async function replaceInvoiceRetentions(
   if (!db) throw new Error("DB not available");
 
   const updatedInvoice = await db.transaction(async tx => {
+    await tx.execute(
+      sql`select ${invoices.id} from ${invoices} where ${invoices.id} = ${invoiceId} for update`
+    );
     const [invoiceRow] = await tx
       .select({
         invoice: invoices,
@@ -14388,6 +14430,17 @@ export async function replaceInvoiceRetentions(
         "El total de retenciones no puede exceder la base imponible de la factura"
       );
     }
+    const netPayable = calculateInvoiceNetPayable({
+      total,
+      fiscalRetentionTotal: retentionTotal,
+      otherRetentionTotal: invoice.otherRetentionTotal,
+      documentDiscountTotal: invoice.documentDiscountTotal,
+    });
+    if (netPayable < -0.000001) {
+      throw new Error(
+        "Las retenciones y descuentos no pueden exceder el total de la factura"
+      );
+    }
 
     await tx
       .delete(invoiceRetentions)
@@ -14400,7 +14453,7 @@ export async function replaceInvoiceRetentions(
       .update(invoices)
       .set({
         retentionTotal: toMoneyString4(retentionTotal),
-        netPayable: toMoneyString4(total - retentionTotal),
+        netPayable: toMoneyString4(Math.max(0, netPayable)),
         retentionReceiptNumber: hasRetentions
           ? normalizedRetentionReceiptNumber
           : retentionReceiptNumber?.trim() || invoice.retentionReceiptNumber,
@@ -14431,6 +14484,103 @@ export async function replaceInvoiceRetentions(
     await upsertRetentionFiscalDocumentRangeForInvoiceId(updatedInvoice.id);
   }
   return updatedInvoice;
+}
+
+export async function replaceInvoiceDocumentAdjustments(
+  invoiceId: number,
+  input: InvoiceDocumentAdjustmentInput
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    await tx.execute(
+      sql`select ${invoices.id} from ${invoices} where ${invoices.id} = ${invoiceId} for update`
+    );
+
+    const [invoice] = await tx
+      .select()
+      .from(invoices)
+      .where(eq(invoices.id, invoiceId))
+      .limit(1);
+    if (!invoice) throw new Error("Factura no encontrada");
+    if (!["borrador", "rechazada", "revisada"].includes(invoice.status)) {
+      throw new Error(
+        "Las retenciones y descuentos no se pueden editar en este estado"
+      );
+    }
+
+    const percentageInputs = [
+      input.qualityRetentionPercent,
+      input.advanceAmortizationPercent,
+      input.promptPaymentPercent,
+    ];
+    for (const rawValue of percentageInputs) {
+      const value = Number(rawValue ?? 0);
+      if (!Number.isFinite(value) || value < 0 || value > 100) {
+        throw new Error("Los porcentajes deben estar entre 0 y 100");
+      }
+      if (Math.abs(value * 100 - Math.round(value * 100)) > 0.000001) {
+        throw new Error("Los porcentajes aceptan como máximo dos decimales");
+      }
+    }
+
+    const items = await tx
+      .select({
+        taxCode: invoiceItems.taxCode,
+        taxAmount: invoiceItems.taxAmount,
+        taxBreakdown: invoiceItems.taxBreakdown,
+      })
+      .from(invoiceItems)
+      .where(eq(invoiceItems.invoiceId, invoiceId));
+    const baseIsvAmount = getInvoiceBaseIsvAmount(items);
+    const calculated = calculateInvoiceDocumentAdjustments({
+      subtotal: invoice.subtotal,
+      baseIsvAmount,
+      input,
+    });
+    const netPayable = calculateInvoiceNetPayable({
+      total: invoice.total,
+      fiscalRetentionTotal: invoice.retentionTotal,
+      otherRetentionTotal: calculated.otherRetentionTotal,
+      documentDiscountTotal: calculated.documentDiscountTotal,
+    });
+    if (netPayable < -0.000001) {
+      throw new Error(
+        "Las retenciones y descuentos no pueden exceder el total de la factura"
+      );
+    }
+
+    const values: InsertInvoiceDocumentAdjustment[] =
+      calculated.calculations.map(calculation => ({
+        invoiceId,
+        adjustmentType: calculation.adjustmentType,
+        percentage: calculation.percentage.toFixed(2),
+        baseAmount: toMoneyString4(calculation.baseAmount),
+        amount: toMoneyString4(calculation.amount),
+        updatedAt: new Date(),
+      }));
+
+    await tx
+      .delete(invoiceDocumentAdjustments)
+      .where(eq(invoiceDocumentAdjustments.invoiceId, invoiceId));
+    const documentAdjustments =
+      values.length > 0
+        ? await tx.insert(invoiceDocumentAdjustments).values(values).returning()
+        : [];
+    const [updatedInvoice] = await tx
+      .update(invoices)
+      .set({
+        otherRetentionTotal: toMoneyString4(calculated.otherRetentionTotal),
+        documentDiscountTotal: toMoneyString4(calculated.documentDiscountTotal),
+        netPayable: toMoneyString4(Math.max(0, netPayable)),
+        updatedAt: new Date(),
+      })
+      .where(eq(invoices.id, invoiceId))
+      .returning();
+
+    return { invoice: updatedInvoice, documentAdjustments };
+  });
 }
 
 // ============================================================

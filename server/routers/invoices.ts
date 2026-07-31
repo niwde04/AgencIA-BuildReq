@@ -72,6 +72,17 @@ function canAccountInvoices(user: {
   return user.role === "admin" || user.buildreqRole === "contable";
 }
 
+function canEditDocumentAdjustments(
+  user: { role: string; buildreqRole?: string | null },
+  status: string
+) {
+  if (status === "revisada") return canAccountInvoices(user);
+  if (status === "borrador" || status === "rechazada") {
+    return canEditInvoices(user);
+  }
+  return false;
+}
+
 function canAccessReviewedInvoices(user: {
   role: string;
   buildreqRole?: string | null;
@@ -449,6 +460,15 @@ const invoiceRetentionSchema = z
       });
     }
   });
+
+const documentAdjustmentPercentageSchema = z
+  .number()
+  .min(0)
+  .max(100)
+  .refine(
+    value => Math.abs(value * 100 - Math.round(value * 100)) < 0.000001,
+    "El porcentaje acepta como máximo dos decimales"
+  );
 
 const fixedAssetDetailSchema = z.object({
   serialNumber: z.string().trim().max(120),
@@ -1354,6 +1374,51 @@ export const invoicesRouter = router({
             error instanceof Error
               ? error.message
               : "No se pudieron guardar las retenciones",
+        });
+      }
+    }),
+
+  replaceDocumentAdjustments: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        qualityRetentionPercent: documentAdjustmentPercentageSchema,
+        advanceAmortizationPercent: documentAdjustmentPercentageSchema,
+        promptPaymentPercent: documentAdjustmentPercentageSchema,
+        tcEnabled: z.boolean(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const detail = await db.getInvoiceById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Factura no encontrada",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.invoice.projectId);
+      if (!canEditDocumentAdjustments(ctx.user, detail.invoice.status)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "No tiene permisos para editar retenciones y descuentos en este estado",
+        });
+      }
+
+      try {
+        return await db.replaceInvoiceDocumentAdjustments(input.id, {
+          qualityRetentionPercent: input.qualityRetentionPercent,
+          advanceAmortizationPercent: input.advanceAmortizationPercent,
+          promptPaymentPercent: input.promptPaymentPercent,
+          tcEnabled: input.tcEnabled,
+        });
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudieron guardar las retenciones y descuentos",
         });
       }
     }),

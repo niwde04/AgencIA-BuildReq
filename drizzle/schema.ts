@@ -20,6 +20,7 @@ import type {
   PurchaseOrderTaxBreakdownEntry,
 } from "../shared/purchase-orders";
 import type { FixedAssetDetail } from "../shared/fixed-assets";
+import type { InvoiceDocumentAdjustmentType } from "../shared/invoice-document-adjustments";
 import type {
   TreasuryBatchStatus,
   TreasuryItemStatus,
@@ -1458,6 +1459,18 @@ export const invoices = pgTable(
     retentionTotal: decimal("retentionTotal", { precision: 14, scale: 4 })
       .default("0.0000")
       .notNull(),
+    otherRetentionTotal: decimal("otherRetentionTotal", {
+      precision: 14,
+      scale: 4,
+    })
+      .default("0.0000")
+      .notNull(),
+    documentDiscountTotal: decimal("documentDiscountTotal", {
+      precision: 14,
+      scale: 4,
+    })
+      .default("0.0000")
+      .notNull(),
     netPayable: decimal("netPayable", { precision: 14, scale: 4 })
       .default("0.0000")
       .notNull(),
@@ -1934,6 +1947,48 @@ export const invoiceOtherCharges = pgTable(
 
 export type InvoiceOtherCharge = typeof invoiceOtherCharges.$inferSelect;
 export type InsertInvoiceOtherCharge = typeof invoiceOtherCharges.$inferInsert;
+
+export const invoiceDocumentAdjustments = pgTable(
+  "invoiceDocumentAdjustments",
+  {
+    id: serial("id").primaryKey(),
+    invoiceId: integer("invoiceId")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "cascade" }),
+    adjustmentType: varchar("adjustmentType", { length: 40 })
+      .$type<InvoiceDocumentAdjustmentType>()
+      .notNull(),
+    percentage: decimal("percentage", { precision: 5, scale: 2 }).notNull(),
+    baseAmount: decimal("baseAmount", { precision: 14, scale: 4 }).notNull(),
+    amount: decimal("amount", { precision: 14, scale: 4 }).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    invoiceIdx: index("invda_invoice_idx").on(table.invoiceId),
+    invoiceTypeUnique: uniqueIndex("invda_invoice_type_unique").on(
+      table.invoiceId,
+      table.adjustmentType
+    ),
+    adjustmentTypeCheck: check(
+      "invda_adjustment_type_check",
+      sql`${table.adjustmentType} in ('quality_retention', 'advance_amortization', 'prompt_payment_discount', 'tc_discount')`
+    ),
+    percentageCheck: check(
+      "invda_percentage_check",
+      sql`${table.percentage} > 0 and ${table.percentage} <= 100`
+    ),
+    amountCheck: check(
+      "invda_amount_check",
+      sql`${table.baseAmount} >= 0 and ${table.amount} >= 0`
+    ),
+  })
+);
+
+export type InvoiceDocumentAdjustment =
+  typeof invoiceDocumentAdjustments.$inferSelect;
+export type InsertInvoiceDocumentAdjustment =
+  typeof invoiceDocumentAdjustments.$inferInsert;
 
 export const salesTaxes = pgTable(
   "salesTaxes",

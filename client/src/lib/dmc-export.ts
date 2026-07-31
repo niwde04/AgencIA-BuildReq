@@ -539,7 +539,32 @@ function buildSystemInvoiceSheet(XLSX: Xlsx, payload: SystemWorkbookPayload) {
   ];
   appendTotals(
     invoiceRows,
-    [11, 12, 13, 14, 15, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+    [
+      "Base_Isv_15%",
+      "Base_Isv_18%",
+      "Isv_4%",
+      "Base_Isv_0%",
+      "Anticipo",
+      "Total_Base",
+      "Isv_15%",
+      "Ice_18%",
+      "Turismo 4%.",
+      "Total_Factura",
+      "Ret_Isr_1%",
+      "Ret_Isr_12.5%",
+      "Ret_Isr_25%",
+      "Ret_Isv 15%.",
+      "Total_Retencion.",
+      "Retención calidad",
+      "Amortización anticipo",
+      "Pronto pago",
+      "TC",
+      "Otras retenciones",
+      "Descuentos documento",
+      "Neto_Pagar",
+    ]
+      .map(header => SYSTEM_INVOICE_HEADERS.indexOf(header as any) + 1)
+      .filter(column => column > 0)
   );
   const invoiceSheet = makeSheet(
     XLSX,
@@ -564,10 +589,7 @@ function buildTreasuryInvoiceSummarySheet(
   const sheet = makeSheet(
     XLSX,
     rows,
-    [
-      2, 14, 20, 24, 20, 18, 16, 18, 22, 34, 18, 18, 36, 12, 16, 16, 18, 16, 16,
-      20,
-    ],
+    [2, ...Array(TREASURY_INVOICE_SUMMARY_HEADERS.length).fill(18)],
     {
       dateColumns: systemDateColumns(TREASURY_INVOICE_SUMMARY_HEADERS),
       dataStartRow: 1,

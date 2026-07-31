@@ -18,6 +18,7 @@ import {
   type RetentionSarPayload,
 } from "@shared/retention-sar-report";
 import {
+  SYSTEM_INVOICE_HEADERS,
   buildSystemWorkbookPayload,
   buildTreasuryInvoiceSummaryPayload,
 } from "@shared/system-workbook-report";
@@ -119,6 +120,8 @@ function sarInvoice(
     taxAmount: overrides.taxAmount ?? "15.0000",
     total: overrides.total ?? "115.0000",
     retentionTotal: overrides.retentionTotal ?? "0.0000",
+    otherRetentionTotal: overrides.otherRetentionTotal ?? "0.0000",
+    documentDiscountTotal: overrides.documentDiscountTotal ?? "0.0000",
     netPayable: overrides.netPayable ?? "115.0000",
     receiptNumber: overrides.receiptNumber ?? null,
     purchaseOrderNumber: overrides.purchaseOrderNumber ?? "OC-2026-0001",
@@ -156,6 +159,7 @@ function sarInvoice(
       },
     ],
     retentions: overrides.retentions ?? [],
+    documentAdjustments: overrides.documentAdjustments ?? [],
     materialRequests: overrides.materialRequests ?? [],
     subProjectLabels: overrides.subProjectLabels ?? [],
   };
@@ -823,9 +827,9 @@ describe("retention SAR workbooks", () => {
       const amountColumn = rows[0].indexOf(amountHeader);
 
       expect(rows[1][amountColumn]).toBe(531.53);
-      expect(
-        sheet[XLSX.utils.encode_cell({ r: 1, c: amountColumn })]?.z
-      ).toBe("#,##0.00");
+      expect(sheet[XLSX.utils.encode_cell({ r: 1, c: amountColumn })]?.z).toBe(
+        "#,##0.00"
+      );
     }
   );
 });
@@ -838,7 +842,23 @@ describe("internal BuildReq workbook", () => {
           subtotal: "100.0000",
           taxAmount: "0.0000",
           total: "100.0000",
-          netPayable: "100.0000",
+          otherRetentionTotal: "5.0000",
+          documentDiscountTotal: "2.0000",
+          netPayable: "93.0000",
+          documentAdjustments: [
+            {
+              adjustmentType: "quality_retention",
+              percentage: "5.00",
+              baseAmount: "100.0000",
+              amount: "5.0000",
+            },
+            {
+              adjustmentType: "prompt_payment_discount",
+              percentage: "2.00",
+              baseAmount: "100.0000",
+              amount: "2.0000",
+            },
+          ],
           items: [
             {
               id: 1,
@@ -916,7 +936,19 @@ describe("internal BuildReq workbook", () => {
       invoiceCount: 1,
       invoiceLineCount: 2,
       invoiceTotal: 100,
+      otherRetentionTotal: 5,
+      documentDiscountTotal: 2,
+      netPayable: 93,
     });
+    expect(
+      payload.invoices.map(row => ({
+        quality: row["Retención calidad"],
+        promptPayment: row["Pronto pago"],
+      }))
+    ).toEqual([
+      { quality: 5, promptPayment: 2 },
+      { quality: 0, promptPayment: 0 },
+    ]);
 
     const workbook = buildSystemWorkbook(XLSX, payload);
     expect(workbook.SheetNames).toEqual([
@@ -959,7 +991,7 @@ describe("internal BuildReq workbook", () => {
       workbook.Sheets["Registro Facturacion"],
       { header: 1 }
     ) as unknown[][];
-    expect(rows[1].slice(1)).toHaveLength(32);
+    expect(rows[1].slice(1)).toHaveLength(SYSTEM_INVOICE_HEADERS.length);
     const header = rows[1];
     const financialCodeColumn = header.indexOf("Cod_Finanzas");
     const invoiceDescriptionColumn = header.indexOf("Descripcion_Fac.");
@@ -1037,9 +1069,8 @@ describe("internal BuildReq workbook", () => {
     expect(purchaseOrderRows[2][unitPriceColumn]).toBe(531.53);
     expect(purchaseOrderRows[2][purchaseOrderTotalColumn]).toBe(611.26);
     expect(
-      purchaseOrderSheet[
-        XLSX.utils.encode_cell({ r: 2, c: unitPriceColumn })
-      ]?.z
+      purchaseOrderSheet[XLSX.utils.encode_cell({ r: 2, c: unitPriceColumn })]
+        ?.z
     ).toBe("#,##0.00");
 
     const invoiceWorkbook = roundTrip(
@@ -1069,7 +1100,29 @@ describe("internal BuildReq workbook", () => {
         taxAmount: "79.7294",
         total: "611.2589",
         retentionTotal: "10.1234",
-        netPayable: "601.1355",
+        otherRetentionTotal: "26.5765",
+        documentDiscountTotal: "12.3456",
+        netPayable: "562.2134",
+        documentAdjustments: [
+          {
+            adjustmentType: "quality_retention",
+            percentage: "5.00",
+            baseAmount: "531.5295",
+            amount: "26.5765",
+          },
+          {
+            adjustmentType: "prompt_payment_discount",
+            percentage: "2.00",
+            baseAmount: "531.5295",
+            amount: "10.6306",
+          },
+          {
+            adjustmentType: "tc_discount",
+            percentage: "8.00",
+            baseAmount: "21.4375",
+            amount: "1.7150",
+          },
+        ],
         documentDueDate: new Date("2026-07-31T12:00:00.000"),
         items: [
           {
@@ -1104,8 +1157,14 @@ describe("internal BuildReq workbook", () => {
       Subtotal: 531.5295,
       Impuesto: 79.7294,
       "Total factura": 611.2589,
-      Retenciones: 10.1234,
-      "Neto a pagar": 601.1355,
+      "Retenciones fiscales": 10.1234,
+      "Retención calidad %": 5,
+      "Retención calidad": 26.5765,
+      "Pronto pago": 10.6306,
+      TC: 1.715,
+      "Otras retenciones": 26.5765,
+      "Descuentos documento": 12.3456,
+      "Neto a pagar": 562.2134,
     });
     expect(payload.summary.invoiceCount).toBe(1);
 
@@ -1124,10 +1183,14 @@ describe("internal BuildReq workbook", () => {
     const header = rows[0];
     const totalColumn = header.indexOf("Total factura");
     const subtotalColumn = header.indexOf("Subtotal");
-    const retentionColumn = header.indexOf("Retenciones");
+    const retentionColumn = header.indexOf("Retenciones fiscales");
+    const otherRetentionColumn = header.indexOf("Otras retenciones");
+    const discountColumn = header.indexOf("Descuentos documento");
     expect(rows[1][subtotalColumn]).toBe(531.53);
     expect(rows[1][totalColumn]).toBe(611.26);
     expect(rows[1][retentionColumn]).toBe(10.12);
+    expect(rows[1][otherRetentionColumn]).toBe(26.58);
+    expect(rows[1][discountColumn]).toBe(12.35);
     expect(rows.flat()).not.toContain("Artículo A");
     expect(rows.flat()).not.toContain("Artículo B");
   });

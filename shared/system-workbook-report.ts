@@ -4,6 +4,7 @@ import {
   type DmcStatusMode,
 } from "./dmc-report";
 import { roundPurchaseOrderMoney } from "./purchase-orders";
+import { getInvoiceDocumentAdjustment } from "./invoice-document-adjustments";
 
 export const SYSTEM_ORDER_HEADERS = [
   "Orden Compra",
@@ -60,6 +61,16 @@ export const SYSTEM_INVOICE_HEADERS = [
   "Ret_Isr_25%",
   "Ret_Isv 15%.",
   "Total_Retencion.",
+  "Retención calidad %",
+  "Retención calidad",
+  "Amortización anticipo %",
+  "Amortización anticipo",
+  "Pronto pago %",
+  "Pronto pago",
+  "TC %",
+  "TC",
+  "Otras retenciones",
+  "Descuentos documento",
   "Neto_Pagar",
   "Fecha Vencimiento Crédito",
   "Tipo_de_compra",
@@ -82,7 +93,17 @@ export const TREASURY_INVOICE_SUMMARY_HEADERS = [
   "Subtotal",
   "Impuesto",
   "Total factura",
-  "Retenciones",
+  "Retenciones fiscales",
+  "Retención calidad %",
+  "Retención calidad",
+  "Amortización anticipo %",
+  "Amortización anticipo",
+  "Pronto pago %",
+  "Pronto pago",
+  "TC %",
+  "TC",
+  "Otras retenciones",
+  "Descuentos documento",
   "Neto a pagar",
   "Tipo de compra",
 ] as const;
@@ -133,6 +154,8 @@ export type SystemWorkbookPayload = {
     purchaseOrderTotal: number;
     invoiceTotal: number;
     retentionTotal: number;
+    otherRetentionTotal: number;
+    documentDiscountTotal: number;
     netPayable: number;
   };
 };
@@ -180,29 +203,55 @@ export function buildTreasuryInvoiceSummaryPayload(
   } = {}
 ): TreasuryInvoiceSummaryPayload {
   return {
-    invoices: invoices.map((invoice, index) => ({
-      "N° Registro": index + 1,
-      "Documento interno": invoice.invoiceDocumentNumber,
-      "Nro. Factura": invoice.invoiceNumber ?? "",
-      "Orden de compra": invoice.purchaseOrderNumber ?? "",
-      Recepción: invoice.receiptNumber ?? "",
-      "Fecha factura": dateValue(invoice.documentDate),
-      "Fecha vencimiento": dateValue(invoice.documentDueDate),
-      Estado: INVOICE_STATUS_LABELS[invoice.status] ?? invoice.status,
-      Proyecto: [invoice.projectCode, invoice.projectName]
-        .filter(Boolean)
-        .join(" - "),
-      "Código proveedor": invoice.supplierCode ?? "",
-      Rtn: invoice.supplierRtn ?? "",
-      Proveedor: invoice.supplierName ?? "",
-      Moneda: invoice.currency ?? "HNL",
-      Subtotal: money(invoice.subtotal),
-      Impuesto: money(invoice.taxAmount),
-      "Total factura": money(invoice.total),
-      Retenciones: money(invoice.retentionTotal),
-      "Neto a pagar": money(invoice.netPayable),
-      "Tipo de compra": invoice.purchaseType ?? "",
-    })),
+    invoices: invoices.map((invoice, index) => {
+      const adjustments = invoice.documentAdjustments ?? [];
+      const quality = getInvoiceDocumentAdjustment(
+        adjustments,
+        "quality_retention"
+      );
+      const amortization = getInvoiceDocumentAdjustment(
+        adjustments,
+        "advance_amortization"
+      );
+      const promptPayment = getInvoiceDocumentAdjustment(
+        adjustments,
+        "prompt_payment_discount"
+      );
+      const tc = getInvoiceDocumentAdjustment(adjustments, "tc_discount");
+      return {
+        "N° Registro": index + 1,
+        "Documento interno": invoice.invoiceDocumentNumber,
+        "Nro. Factura": invoice.invoiceNumber ?? "",
+        "Orden de compra": invoice.purchaseOrderNumber ?? "",
+        Recepción: invoice.receiptNumber ?? "",
+        "Fecha factura": dateValue(invoice.documentDate),
+        "Fecha vencimiento": dateValue(invoice.documentDueDate),
+        Estado: INVOICE_STATUS_LABELS[invoice.status] ?? invoice.status,
+        Proyecto: [invoice.projectCode, invoice.projectName]
+          .filter(Boolean)
+          .join(" - "),
+        "Código proveedor": invoice.supplierCode ?? "",
+        Rtn: invoice.supplierRtn ?? "",
+        Proveedor: invoice.supplierName ?? "",
+        Moneda: invoice.currency ?? "HNL",
+        Subtotal: money(invoice.subtotal),
+        Impuesto: money(invoice.taxAmount),
+        "Total factura": money(invoice.total),
+        "Retenciones fiscales": money(invoice.retentionTotal),
+        "Retención calidad %": money(quality?.percentage),
+        "Retención calidad": money(quality?.amount),
+        "Amortización anticipo %": money(amortization?.percentage),
+        "Amortización anticipo": money(amortization?.amount),
+        "Pronto pago %": money(promptPayment?.percentage),
+        "Pronto pago": money(promptPayment?.amount),
+        "TC %": money(tc?.percentage),
+        TC: money(tc?.amount),
+        "Otras retenciones": money(invoice.otherRetentionTotal),
+        "Descuentos documento": money(invoice.documentDiscountTotal),
+        "Neto a pagar": money(invoice.netPayable),
+        "Tipo de compra": invoice.purchaseType ?? "",
+      };
+    }),
     summary: {
       generatedAt: params.generatedAt ?? new Date(),
       dateFrom: dateValue(params.dateFrom),
@@ -225,6 +274,20 @@ export function buildSystemWorkbookPayload(
   let registration = 0;
   const invoiceRows = invoices.flatMap(invoice => {
     const rows = buildDmcReportPayload([invoice]).rows;
+    const adjustments = invoice.documentAdjustments ?? [];
+    const quality = getInvoiceDocumentAdjustment(
+      adjustments,
+      "quality_retention"
+    );
+    const amortization = getInvoiceDocumentAdjustment(
+      adjustments,
+      "advance_amortization"
+    );
+    const promptPayment = getInvoiceDocumentAdjustment(
+      adjustments,
+      "prompt_payment_discount"
+    );
+    const tc = getInvoiceDocumentAdjustment(adjustments, "tc_discount");
     return rows.map((row, itemIndex) => {
       const invoiceItem = invoice.items[itemIndex];
       registration += 1;
@@ -267,6 +330,19 @@ export function buildSystemWorkbookPayload(
         "Ret_Isr_25%": money(row.retIsr25),
         "Ret_Isv 15%.": money(row.retIsv),
         "Total_Retencion.": money(row.totalRetencion),
+        "Retención calidad %": money(quality?.percentage),
+        "Retención calidad": itemIndex === 0 ? money(quality?.amount) : 0,
+        "Amortización anticipo %": money(amortization?.percentage),
+        "Amortización anticipo":
+          itemIndex === 0 ? money(amortization?.amount) : 0,
+        "Pronto pago %": money(promptPayment?.percentage),
+        "Pronto pago": itemIndex === 0 ? money(promptPayment?.amount) : 0,
+        "TC %": money(tc?.percentage),
+        TC: itemIndex === 0 ? money(tc?.amount) : 0,
+        "Otras retenciones":
+          itemIndex === 0 ? money(invoice.otherRetentionTotal) : 0,
+        "Descuentos documento":
+          itemIndex === 0 ? money(invoice.documentDiscountTotal) : 0,
         Neto_Pagar: money(row.netoPagar),
         "Fecha Vencimiento Crédito": dateValue(
           row.fechaVencimiento as Date | string | null
@@ -296,6 +372,18 @@ export function buildSystemWorkbookPayload(
       retentionTotal: money(
         invoiceRows.reduce(
           (sum, row) => sum + money(row["Total_Retencion."]),
+          0
+        )
+      ),
+      otherRetentionTotal: money(
+        invoiceRows.reduce(
+          (sum, row) => sum + money(row["Otras retenciones"]),
+          0
+        )
+      ),
+      documentDiscountTotal: money(
+        invoiceRows.reduce(
+          (sum, row) => sum + money(row["Descuentos documento"]),
           0
         )
       ),

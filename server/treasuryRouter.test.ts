@@ -225,7 +225,9 @@ describe("treasury invoice summary report", () => {
           taxAmount: "15.0000",
           total: "115.0000",
           retentionTotal: "1.1500",
-          netPayable: "113.8500",
+          otherRetentionTotal: "5.0000",
+          documentDiscountTotal: "3.2000",
+          netPayable: "105.6500",
           currency: "HNL",
           items: [
             {
@@ -240,6 +242,26 @@ describe("treasury invoice summary report", () => {
             },
           ],
           retentions: [],
+          documentAdjustments: [
+            {
+              adjustmentType: "quality_retention",
+              percentage: "5.00",
+              baseAmount: "100.0000",
+              amount: "5.0000",
+            },
+            {
+              adjustmentType: "prompt_payment_discount",
+              percentage: "2.00",
+              baseAmount: "100.0000",
+              amount: "2.0000",
+            },
+            {
+              adjustmentType: "tc_discount",
+              percentage: "8.00",
+              baseAmount: "15.0000",
+              amount: "1.2000",
+            },
+          ],
           materialRequests: [],
           subProjectLabels: [],
         } as any,
@@ -265,7 +287,14 @@ describe("treasury invoice summary report", () => {
       "Documento interno": "FT-020-00000050",
       Estado: "Contabilizada",
       "Total factura": 115,
-      "Neto a pagar": 113.85,
+      "Retenciones fiscales": 1.15,
+      "Retención calidad %": 5,
+      "Retención calidad": 5,
+      "Pronto pago": 2,
+      TC: 1.2,
+      "Otras retenciones": 5,
+      "Descuentos documento": 3.2,
+      "Neto a pagar": 105.65,
     });
   });
 });

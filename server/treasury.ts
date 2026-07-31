@@ -263,7 +263,9 @@ export function resolveTreasuryPaymentSignatures(
 ) {
   const actorForActions = (actions: string[]) => {
     for (const action of actions) {
-      const actorName = events.find(event => event.action === action)?.actorName;
+      const actorName = events.find(
+        event => event.action === action
+      )?.actorName;
       if (actorName?.trim()) return actorName.trim();
     }
     return null;
@@ -289,10 +291,7 @@ export function resolveTreasuryPaymentReportAmount(item: {
   bankPaidAmount?: string | number | null;
 }) {
   const value =
-    item.bankPaidAmount ??
-    item.approvedAmount ??
-    item.requestedAmount ??
-    0;
+    item.bankPaidAmount ?? item.approvedAmount ?? item.requestedAmount ?? 0;
   const amount = Number(value);
   return roundTreasuryMoney(Number.isFinite(amount) ? amount : 0);
 }
@@ -522,9 +521,7 @@ async function getInvoiceFinancialMap(
     for (const payment of paymentRows) {
       if (payment.invoiceId !== invoice.id) continue;
       if (payment.status === "contabilizada") {
-        paidAmount += roundTreasuryMoney(
-          Number(payment.bankPaidAmount ?? 0)
-        );
+        paidAmount += roundTreasuryMoney(Number(payment.bankPaidAmount ?? 0));
       }
       if (payment.activeReservation && payment.batchId !== excludeBatchId) {
         reservedAmount += roundTreasuryMoney(
@@ -543,8 +540,7 @@ async function getInvoiceFinancialMap(
         invoiceNetPayable: invoice.netPayable,
         paidAmount,
         reservedAmount,
-        appliedAdvanceAmount:
-          appliedAdvanceByInvoice.get(invoice.id) ?? 0,
+        appliedAdvanceAmount: appliedAdvanceByInvoice.get(invoice.id) ?? 0,
       })
     );
   }
@@ -937,25 +933,16 @@ export async function listTreasuryBatches(filters?: {
     .from(treasuryPaymentItems)
     .innerJoin(
       purchaseOrderAdvances,
-      eq(
-        treasuryPaymentItems.purchaseOrderAdvanceId,
-        purchaseOrderAdvances.id
-      )
+      eq(treasuryPaymentItems.purchaseOrderAdvanceId, purchaseOrderAdvances.id)
     )
-    .innerJoin(
-      projects,
-      eq(purchaseOrderAdvances.projectId, projects.id)
-    )
+    .innerJoin(projects, eq(purchaseOrderAdvances.projectId, projects.id))
     .where(
       inArray(
         treasuryPaymentItems.batchId,
         batchRows.map(row => row.batch.id)
       )
     );
-  const allBatchProjectRows = [
-    ...batchProjectRows,
-    ...advanceBatchProjectRows,
-  ];
+  const allBatchProjectRows = [...batchProjectRows, ...advanceBatchProjectRows];
   const batchRowsWithProjects = batchRows.map(row => {
     const projectMap = new Map<
       number,
@@ -1028,8 +1015,7 @@ export async function listTreasuryBatches(filters?: {
       ).size,
       requestedTotal: roundTreasuryMoney(
         included.reduce(
-          (sum, item) =>
-            sum + roundTreasuryMoney(Number(item.requestedAmount)),
+          (sum, item) => sum + roundTreasuryMoney(Number(item.requestedAmount)),
           0
         )
       ),
@@ -1072,70 +1058,71 @@ export async function getTreasuryBatchById(batchId: number) {
     invoiceFinancialRows,
     advanceFinancialRows,
   ] = await Promise.all([
-      readBatchItems(db, batchId),
-      db
-        .select()
-        .from(treasuryPaymentEvents)
-        .where(eq(treasuryPaymentEvents.batchId, batchId))
-        .orderBy(
-          desc(treasuryPaymentEvents.createdAt),
-          desc(treasuryPaymentEvents.id)
-        ),
-      getAttachmentsByEntity("treasury_payment_batch", batchId),
-      db
-        .select({
-          id: treasuryPaymentBatches.id,
-          batchNumber: treasuryPaymentBatches.batchNumber,
-        })
-        .from(treasuryPaymentBatches)
-        .where(eq(treasuryPaymentBatches.consolidatedIntoBatchId, batchId))
-        .orderBy(asc(treasuryPaymentBatches.id)),
-      db
-        .select({
-          invoiceId: invoices.id,
-          invoiceProjectId: projects.id,
-          invoiceProjectCode: projects.code,
-          invoiceProjectName: projects.name,
-          invoiceSubtotal: invoices.subtotal,
-          invoiceTaxAmount: invoices.taxAmount,
-          invoiceTotal: invoices.total,
-          invoiceRetentionTotal: invoices.retentionTotal,
-        })
-        .from(treasuryPaymentItems)
-        .innerJoin(invoices, eq(treasuryPaymentItems.invoiceId, invoices.id))
-        .innerJoin(projects, eq(invoices.projectId, projects.id))
-        .where(eq(treasuryPaymentItems.batchId, batchId)),
-      db
-        .select({
-          purchaseOrderAdvanceId: purchaseOrderAdvances.id,
-          purchaseOrderId: purchaseOrders.id,
-          orderNumber: purchaseOrders.orderNumber,
-          invoiceProjectId: projects.id,
-          invoiceProjectCode: projects.code,
-          invoiceProjectName: projects.name,
-          invoiceSubtotal: purchaseOrderAdvances.requestedAmount,
-          invoiceTaxAmount: sql<string>`0`,
-          invoiceTotal: purchaseOrderAdvances.requestedAmount,
-          invoiceRetentionTotal: sql<string>`0`,
-        })
-        .from(treasuryPaymentItems)
-        .innerJoin(
-          purchaseOrderAdvances,
-          eq(
-            treasuryPaymentItems.purchaseOrderAdvanceId,
-            purchaseOrderAdvances.id
-          )
+    readBatchItems(db, batchId),
+    db
+      .select()
+      .from(treasuryPaymentEvents)
+      .where(eq(treasuryPaymentEvents.batchId, batchId))
+      .orderBy(
+        desc(treasuryPaymentEvents.createdAt),
+        desc(treasuryPaymentEvents.id)
+      ),
+    getAttachmentsByEntity("treasury_payment_batch", batchId),
+    db
+      .select({
+        id: treasuryPaymentBatches.id,
+        batchNumber: treasuryPaymentBatches.batchNumber,
+      })
+      .from(treasuryPaymentBatches)
+      .where(eq(treasuryPaymentBatches.consolidatedIntoBatchId, batchId))
+      .orderBy(asc(treasuryPaymentBatches.id)),
+    db
+      .select({
+        invoiceId: invoices.id,
+        invoiceProjectId: projects.id,
+        invoiceProjectCode: projects.code,
+        invoiceProjectName: projects.name,
+        invoiceSubtotal: invoices.subtotal,
+        invoiceTaxAmount: invoices.taxAmount,
+        invoiceTotal: invoices.total,
+        invoiceRetentionTotal: invoices.retentionTotal,
+        invoiceOtherRetentionTotal: invoices.otherRetentionTotal,
+        invoiceDocumentDiscountTotal: invoices.documentDiscountTotal,
+      })
+      .from(treasuryPaymentItems)
+      .innerJoin(invoices, eq(treasuryPaymentItems.invoiceId, invoices.id))
+      .innerJoin(projects, eq(invoices.projectId, projects.id))
+      .where(eq(treasuryPaymentItems.batchId, batchId)),
+    db
+      .select({
+        purchaseOrderAdvanceId: purchaseOrderAdvances.id,
+        purchaseOrderId: purchaseOrders.id,
+        orderNumber: purchaseOrders.orderNumber,
+        invoiceProjectId: projects.id,
+        invoiceProjectCode: projects.code,
+        invoiceProjectName: projects.name,
+        invoiceSubtotal: purchaseOrderAdvances.requestedAmount,
+        invoiceTaxAmount: sql<string>`0`,
+        invoiceTotal: purchaseOrderAdvances.requestedAmount,
+        invoiceRetentionTotal: sql<string>`0`,
+        invoiceOtherRetentionTotal: sql<string>`0`,
+        invoiceDocumentDiscountTotal: sql<string>`0`,
+      })
+      .from(treasuryPaymentItems)
+      .innerJoin(
+        purchaseOrderAdvances,
+        eq(
+          treasuryPaymentItems.purchaseOrderAdvanceId,
+          purchaseOrderAdvances.id
         )
-        .innerJoin(
-          purchaseOrders,
-          eq(purchaseOrderAdvances.purchaseOrderId, purchaseOrders.id)
-        )
-        .innerJoin(
-          projects,
-          eq(purchaseOrderAdvances.projectId, projects.id)
-        )
-        .where(eq(treasuryPaymentItems.batchId, batchId)),
-    ]);
+      )
+      .innerJoin(
+        purchaseOrders,
+        eq(purchaseOrderAdvances.purchaseOrderId, purchaseOrders.id)
+      )
+      .innerJoin(projects, eq(purchaseOrderAdvances.projectId, projects.id))
+      .where(eq(treasuryPaymentItems.batchId, batchId)),
+  ]);
   const invoiceFinancialsById = new Map(
     invoiceFinancialRows.map(invoice => [invoice.invoiceId, invoice])
   );
@@ -1151,10 +1138,7 @@ export async function getTreasuryBatchById(batchId: number) {
       ? advanceFinancialsById.get(item.purchaseOrderAdvanceId)
       : invoiceFinancialsById.get(item.invoiceId)),
   }));
-  const allFinancialRows = [
-    ...invoiceFinancialRows,
-    ...advanceFinancialRows,
-  ];
+  const allFinancialRows = [...invoiceFinancialRows, ...advanceFinancialRows];
   const batchProjects = Array.from(
     new Map(
       allFinancialRows.map(invoice => [
@@ -1332,10 +1316,12 @@ async function getTreasuryDraftSourceSnapshots(
 ) {
   const sourceIds = items.map(item =>
     paymentKind === "purchase_order_advance"
-      ? (item as Extract<
-          TreasuryDraftItemInput,
-          { sourceType: "purchase_order_advance" }
-        >).purchaseOrderAdvanceId
+      ? (
+          item as Extract<
+            TreasuryDraftItemInput,
+            { sourceType: "purchase_order_advance" }
+          >
+        ).purchaseOrderAdvanceId
       : (item as Extract<TreasuryDraftItemInput, { invoiceId: number }>)
           .invoiceId
   );
@@ -1382,18 +1368,13 @@ async function getTreasuryDraftSourceSnapshots(
         appliedAdvanceAmount: 0,
         availableAmount: row.money.availableToPayAmount,
         isEligible:
-          !row.advance.cancelledAt &&
-          row.money.bankPaidPendingAmount <= 0,
+          !row.advance.cancelledAt && row.money.bankPaidPendingAmount <= 0,
         purchaseOrderId: row.advance.purchaseOrderId,
       })),
     };
   }
 
-  const rows = await getInvoiceSnapshots(
-    executor,
-    sourceIds,
-    excludeBatchId
-  );
+  const rows = await getInvoiceSnapshots(executor, sourceIds, excludeBatchId);
   return {
     requestedAmountBySourceId,
     snapshots: rows.map((row: any) => ({
@@ -1446,9 +1427,7 @@ function validateTreasuryDraftSnapshots(input: {
     const amount = input.requestedAmountBySourceId.get(row.sourceId) ?? 0;
     if (amount <= 0 || amount > row.availableAmount + 0.0001) {
       const noun =
-        input.paymentKind === "purchase_order_advance"
-          ? "El pago"
-          : "El abono";
+        input.paymentKind === "purchase_order_advance" ? "El pago" : "El abono";
       throw new TreasuryRuleError(
         `${noun} de ${row.documentNumber} debe ser mayor que cero y no superar ${row.availableAmount.toFixed(2)} ${input.currency}.`
       );
@@ -1492,16 +1471,9 @@ export async function createTreasuryBatch(input: {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   return db.transaction(async tx => {
-    const paymentKind = resolveDraftPaymentKind(
-      input.items,
-      input.paymentKind
-    );
+    const paymentKind = resolveDraftPaymentKind(input.items, input.paymentKind);
     const { snapshots, requestedAmountBySourceId } =
-      await getTreasuryDraftSourceSnapshots(
-        tx,
-        input.items,
-        paymentKind
-      );
+      await getTreasuryDraftSourceSnapshots(tx, input.items, paymentKind);
     validateTreasuryDraftSnapshots({
       snapshots,
       requestedAmountBySourceId,
@@ -1514,9 +1486,7 @@ export async function createTreasuryBatch(input: {
         tx,
         snapshots.map((row: any) => row.purchaseOrderId)
       );
-      if (
-        snapshots.some((row: any) => blocked.has(row.purchaseOrderId))
-      ) {
+      if (snapshots.some((row: any) => blocked.has(row.purchaseOrderId))) {
         throw new TreasuryRuleError(
           "Complete o cancele los anticipos pendientes de la OC antes de pagar su factura."
         );
@@ -1541,15 +1511,17 @@ export async function createTreasuryBatch(input: {
       .update(treasuryPaymentBatches)
       .set({ batchNumber })
       .where(eq(treasuryPaymentBatches.id, batch.id));
-    await tx.insert(treasuryPaymentItems).values(
-      snapshots.map((row: any) =>
-        buildTreasuryItemValues(
-          batch.id,
-          row,
-          requestedAmountBySourceId.get(row.sourceId)!
+    await tx
+      .insert(treasuryPaymentItems)
+      .values(
+        snapshots.map((row: any) =>
+          buildTreasuryItemValues(
+            batch.id,
+            row,
+            requestedAmountBySourceId.get(row.sourceId)!
+          )
         )
-      )
-    );
+      );
     await insertEvent(tx, {
       batchId: batch.id,
       action: "crear_lote",
@@ -1577,17 +1549,14 @@ export async function updateTreasuryDraft(input: {
         "Solo un lote en borrador o devuelto puede editarse."
       );
     }
-    const paymentKind = resolveDraftPaymentKind(
-      input.items,
-      batch.paymentKind
-    );
+    const paymentKind = resolveDraftPaymentKind(input.items, batch.paymentKind);
     const { snapshots, requestedAmountBySourceId } =
       await getTreasuryDraftSourceSnapshots(
-      tx,
-      input.items,
-      paymentKind,
-      input.batchId
-    );
+        tx,
+        input.items,
+        paymentKind,
+        input.batchId
+      );
     validateTreasuryDraftSnapshots({
       snapshots,
       requestedAmountBySourceId,
@@ -1600,9 +1569,7 @@ export async function updateTreasuryDraft(input: {
         tx,
         snapshots.map((row: any) => row.purchaseOrderId)
       );
-      if (
-        snapshots.some((row: any) => blocked.has(row.purchaseOrderId))
-      ) {
+      if (snapshots.some((row: any) => blocked.has(row.purchaseOrderId))) {
         throw new TreasuryRuleError(
           "Complete o cancele los anticipos pendientes de la OC antes de pagar su factura."
         );
@@ -2113,10 +2080,7 @@ export async function consolidateTreasuryBatchesForApproval(input: {
       .where(
         and(
           inArray(treasuryPaymentBatches.id, batchIds),
-          inArray(
-            treasuryPaymentBatches.status,
-            routing.consolidatableStatuses
-          )
+          inArray(treasuryPaymentBatches.status, routing.consolidatableStatuses)
         )
       )
       .returning({ id: treasuryPaymentBatches.id });
@@ -2406,10 +2370,7 @@ function buildBankWorkbook(
         detail.batch.paymentKind === "purchase_order_advance"
           ? "ANTICIPO_PROVEEDOR"
           : "FACTURA",
-      [headers.project]: [
-        item.invoiceProjectCode,
-        item.invoiceProjectName,
-      ]
+      [headers.project]: [item.invoiceProjectCode, item.invoiceProjectName]
         .filter(Boolean)
         .join(" - "),
       [headers.supplierCode]: item.supplierCode,
@@ -2461,9 +2422,8 @@ function buildBankWorkbook(
   for (let rowIndex = 1; rowIndex <= rows.length; rowIndex += 1) {
     headerValues.forEach((header, columnIndex) => {
       if (!moneyHeaders.has(header)) return;
-      const cell = worksheet[
-        XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })
-      ];
+      const cell =
+        worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })];
       if (cell) cell.z = "#,##0.00";
     });
   }

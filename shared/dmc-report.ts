@@ -4,6 +4,7 @@ import {
 } from "./invoices";
 import type { PurchaseOrderTaxBreakdownEntry } from "./purchase-orders";
 import { roundPurchaseOrderMoney } from "./purchase-orders";
+import type { InvoiceDocumentAdjustmentType } from "./invoice-document-adjustments";
 
 export type DmcStatusMode = "non_void" | "registered_only" | "all";
 
@@ -12,14 +13,23 @@ export type DmcCellValue = string | number | Date | null;
 export const DMC_COLUMNS = [
   { key: "numeroRegistro", header: "N° REGISTRO", width: 14, numFmt: "#,##0" },
   { key: "codFinanzas", header: "Cod_Finanzas", width: 16 },
-  { key: "nombreGrupoFinanciero", header: "Nombre_Grupo_Financiero", width: 44 },
+  {
+    key: "nombreGrupoFinanciero",
+    header: "Nombre_Grupo_Financiero",
+    width: 44,
+  },
   { key: "codigoSap", header: "Código SAP", width: 18 },
   { key: "rtn", header: "RTN", width: 18 },
   { key: "razonSocial", header: "Razón Social", width: 36 },
   { key: "sistemaDePago", header: "Sistema_de_Pago", width: 18 },
   { key: "moneda", header: "Moneda", width: 12 },
   { key: "tipoDeComprobante", header: "Tipo_de_comprobante", width: 24 },
-  { key: "fechaFactura", header: "Fecha Factura", width: 14, numFmt: "yyyy-mm-dd" },
+  {
+    key: "fechaFactura",
+    header: "Fecha Factura",
+    width: 14,
+    numFmt: "yyyy-mm-dd",
+  },
   { key: "establecimiento", header: "ESTABLECIMIENTO", width: 16 },
   { key: "puntoEmision", header: "PUNTO DE EMISIÓN", width: 18 },
   { key: "tipoDocumento", header: "TIPO DE DOCUMENTO", width: 18 },
@@ -33,7 +43,12 @@ export const DMC_COLUMNS = [
   { key: "baseIsv0", header: "Base_ISV_0%", width: 16, numFmt: "#,##0.00" },
   { key: "anticipo", header: "Anticipo", width: 14, numFmt: "#,##0.00" },
   { key: "noComprobanteRetencion", header: "No_Cpte_Retención", width: 22 },
-  { key: "fechaComprobanteRetencion", header: "Fech_Cpte_Retención", width: 20, numFmt: "yyyy-mm-dd" },
+  {
+    key: "fechaComprobanteRetencion",
+    header: "Fech_Cpte_Retención",
+    width: 20,
+    numFmt: "yyyy-mm-dd",
+  },
   { key: "criterioRetIsr1", header: "Criterio_Ret_ISR_1%", width: 24 },
   { key: "criterioRetIsr12_5", header: "Criterio_Ret_ISR_12.5%", width: 26 },
   { key: "criterioRetIsr25", header: "Criterio_Ret_ISR_25%", width: 24 },
@@ -45,14 +60,29 @@ export const DMC_COLUMNS = [
   { key: "isv18", header: "ISV_18%", width: 14, numFmt: "#,##0.00" },
   { key: "isv4", header: "ISV_4%.", width: 14, numFmt: "#,##0.00" },
   { key: "totalIsv", header: "Total_ISV", width: 14, numFmt: "#,##0.00" },
-  { key: "totalFactura", header: "Total_Factura", width: 16, numFmt: "#,##0.00" },
+  {
+    key: "totalFactura",
+    header: "Total_Factura",
+    width: 16,
+    numFmt: "#,##0.00",
+  },
   { key: "retIsr1", header: "Ret_ISR_1%", width: 14, numFmt: "#,##0.00" },
   { key: "retIsr12_5", header: "Ret_ISR_12.5%", width: 16, numFmt: "#,##0.00" },
   { key: "retIsr25", header: "Ret_ISR_25%", width: 14, numFmt: "#,##0.00" },
   { key: "retIsv", header: "Ret_ISV.", width: 14, numFmt: "#,##0.00" },
-  { key: "totalRetencion", header: "Total_Retencion.", width: 18, numFmt: "#,##0.00" },
+  {
+    key: "totalRetencion",
+    header: "Total_Retencion.",
+    width: 18,
+    numFmt: "#,##0.00",
+  },
   { key: "netoPagar", header: "Neto_pagar", width: 16, numFmt: "#,##0.00" },
-  { key: "fechaVencimiento", header: "F_Vencimiento", width: 14, numFmt: "yyyy-mm-dd" },
+  {
+    key: "fechaVencimiento",
+    header: "F_Vencimiento",
+    width: 14,
+    numFmt: "yyyy-mm-dd",
+  },
   { key: "tipoPago", header: "Tipo_de_pago", width: 18 },
   { key: "statusPago", header: "Status_Pago", width: 18 },
   { key: "lotePago", header: "Lote de Pago", width: 16 },
@@ -70,7 +100,12 @@ export const DMC_COLUMNS = [
   { key: "level2", header: "Level2", width: 28 },
   { key: "level3", header: "Level3", width: 28 },
   { key: "level4", header: "Level4", width: 18 },
-  { key: "diasVencimiento", header: "D_Vencimiento", width: 16, numFmt: "#,##0" },
+  {
+    key: "diasVencimiento",
+    header: "D_Vencimiento",
+    width: 16,
+    numFmt: "#,##0",
+  },
   { key: "noProvision", header: "No Provision", width: 18 },
   { key: "guiaDocumentos", header: "Guia_R_Documentos", width: 22 },
 ] as const satisfies readonly {
@@ -109,6 +144,13 @@ export type DmcReportSourceRetention = {
   invoiceItemId?: number | null;
 };
 
+export type DmcReportSourceDocumentAdjustment = {
+  adjustmentType: InvoiceDocumentAdjustmentType;
+  percentage?: string | number | null;
+  baseAmount?: string | number | null;
+  amount?: string | number | null;
+};
+
 export type DmcReportSourceMaterialRequest = {
   id: number;
   requestNumber: string;
@@ -145,6 +187,8 @@ export type DmcReportSourceInvoice = {
   taxAmount?: string | number | null;
   total?: string | number | null;
   retentionTotal?: string | number | null;
+  otherRetentionTotal?: string | number | null;
+  documentDiscountTotal?: string | number | null;
   netPayable?: string | number | null;
   appliedAdvanceAmount?: string | number | null;
   receiptNumber?: string | null;
@@ -159,6 +203,7 @@ export type DmcReportSourceInvoice = {
   supplierRtn?: string | null;
   items: DmcReportSourceItem[];
   retentions: DmcReportSourceRetention[];
+  documentAdjustments?: DmcReportSourceDocumentAdjustment[];
   materialRequests: DmcReportSourceMaterialRequest[];
   subProjectLabels: string[];
 };
@@ -230,11 +275,16 @@ function dateOnlyUtc(value: Date) {
   return Date.UTC(value.getFullYear(), value.getMonth(), value.getDate());
 }
 
-function daysBetween(start: Date | string | null | undefined, end: Date | string | null | undefined) {
+function daysBetween(
+  start: Date | string | null | undefined,
+  end: Date | string | null | undefined
+) {
   const startDate = normalizeDate(start);
   const endDate = normalizeDate(end);
   if (!startDate || !endDate) return null;
-  return Math.round((dateOnlyUtc(endDate) - dateOnlyUtc(startDate)) / 86_400_000);
+  return Math.round(
+    (dateOnlyUtc(endDate) - dateOnlyUtc(startDate)) / 86_400_000
+  );
 }
 
 function uniqueText(values: Array<string | null | undefined>) {
@@ -308,11 +358,20 @@ function summarizeTaxes(items: DmcReportSourceItem[]) {
 
     for (const entry of baseEntries) {
       const baseAmount = money(entry.baseAmount ?? subtotal);
-      if (entry.fiscalCategory === "gravado" && taxMatches(entry, "isv_15", 15)) {
+      if (
+        entry.fiscalCategory === "gravado" &&
+        taxMatches(entry, "isv_15", 15)
+      ) {
         summary.baseIsv15 += baseAmount;
-      } else if (entry.fiscalCategory === "gravado" && taxMatches(entry, "isv_18", 18)) {
+      } else if (
+        entry.fiscalCategory === "gravado" &&
+        taxMatches(entry, "isv_18", 18)
+      ) {
         summary.baseIsv18 += baseAmount;
-      } else if (entry.fiscalCategory === "gravado" && taxMatches(entry, "isv_4", 4)) {
+      } else if (
+        entry.fiscalCategory === "gravado" &&
+        taxMatches(entry, "isv_4", 4)
+      ) {
         summary.baseIsv4 += baseAmount;
       } else if (toNumber(entry.ratePercent) === 0) {
         summary.baseIsv0 += baseAmount;
@@ -339,7 +398,10 @@ function summarizeTaxes(items: DmcReportSourceItem[]) {
     isv18: money(summary.isv18),
     isv4: money(summary.isv4),
     totalBase: money(
-      summary.baseIsv15 + summary.baseIsv18 + summary.baseIsv4 + summary.baseIsv0
+      summary.baseIsv15 +
+        summary.baseIsv18 +
+        summary.baseIsv4 +
+        summary.baseIsv0
     ),
     totalIsv: money(summary.isv15 + summary.isv18 + summary.isv4),
   };
@@ -383,7 +445,11 @@ function summarizeRetentions(retentions: DmcReportSourceRetention[]) {
     } else if (isRate(percentage, 1) || text.includes("1%")) {
       summary.retIsr1 += amount;
       summary.criterioRetIsr1.push(label);
-    } else if (isRate(percentage, 12.5) || text.includes("12.5%") || text.includes("12,5%")) {
+    } else if (
+      isRate(percentage, 12.5) ||
+      text.includes("12.5%") ||
+      text.includes("12,5%")
+    ) {
       summary.retIsr12_5 += amount;
       summary.criterioRetIsr12_5.push(label);
     } else if (isRate(percentage, 25) || text.includes("25%")) {
@@ -460,7 +526,9 @@ function buildInvoiceRow(
         formatDateForObservation(invoice.oceResolutionDate),
       ])
     : "";
-  const documentDate = normalizeDate(invoice.documentDate ?? invoice.receiptDate ?? invoice.postingDate);
+  const documentDate = normalizeDate(
+    invoice.documentDate ?? invoice.receiptDate ?? invoice.postingDate
+  );
   const dueDate = normalizeDate(invoice.documentDueDate);
   const invoiceNumberParts = splitInvoiceNumber(invoice.invoiceNumber);
   const materialRequestNumbers = uniqueText(
@@ -474,9 +542,16 @@ function buildInvoiceRow(
     invoice.invoiceDocumentNumber
   );
   const totalFactura = money(invoice.total);
-  const totalRetencion = money(invoice.retentionTotal) || retentions.totalRetencion;
+  const totalRetencion =
+    money(invoice.retentionTotal) || retentions.totalRetencion;
   const netoPagar =
-    money(invoice.netPayable) || money(totalFactura - totalRetencion);
+    money(invoice.netPayable) ||
+    money(
+      totalFactura -
+        totalRetencion -
+        money(invoice.otherRetentionTotal) -
+        money(invoice.documentDiscountTotal)
+    );
 
   return {
     numeroRegistro: index + 1,
@@ -486,7 +561,8 @@ function buildInvoiceRow(
     rtn: invoice.supplierRtn ?? "",
     razonSocial: invoice.supplierName ?? "",
     sistemaDePago: invoice.purchaseOrderPaymentMethod
-      ? PAYMENT_METHOD_LABELS[invoice.purchaseOrderPaymentMethod] ?? invoice.purchaseOrderPaymentMethod
+      ? (PAYMENT_METHOD_LABELS[invoice.purchaseOrderPaymentMethod] ??
+        invoice.purchaseOrderPaymentMethod)
       : "",
     moneda: invoice.currency === "USD" ? "USD" : "HNL",
     tipoDeComprobante:
@@ -530,7 +606,8 @@ function buildInvoiceRow(
     netoPagar,
     fechaVencimiento: dueDate,
     tipoPago: invoice.purchaseOrderPaymentMethod
-      ? PAYMENT_METHOD_LABELS[invoice.purchaseOrderPaymentMethod] ?? invoice.purchaseOrderPaymentMethod
+      ? (PAYMENT_METHOD_LABELS[invoice.purchaseOrderPaymentMethod] ??
+        invoice.purchaseOrderPaymentMethod)
       : "",
     statusPago: STATUS_LABELS[invoice.status] ?? invoice.status,
     lotePago: "",
@@ -597,7 +674,13 @@ function buildDetailRows(
   const totalRetention =
     money(invoice.retentionTotal) || invoiceRetentions.totalRetencion;
   const netPayable =
-    money(invoice.netPayable) || money(invoiceTotal - totalRetention);
+    money(invoice.netPayable) ||
+    money(
+      invoiceTotal -
+        totalRetention -
+        money(invoice.otherRetentionTotal) -
+        money(invoice.documentDiscountTotal)
+    );
   const totalFacturaByItem = allocateMoney(invoiceTotal, itemTotalWeights);
   const totalRetentionByItem = allocateMoney(totalRetention, itemTotalWeights);
   const netPayableByItem = allocateMoney(netPayable, itemTotalWeights);
@@ -638,7 +721,9 @@ function buildDetailRows(
       nombreGrupoFinanciero: item.financialGroupDescription ?? "",
       codigoSap: item.sapItemCode ?? "",
       descripcionFactura:
-        item.articleDescription || item.itemName || invoice.invoiceDocumentNumber,
+        item.articleDescription ||
+        item.itemName ||
+        invoice.invoiceDocumentNumber,
       baseIsv15: taxes.baseIsv15,
       baseIsv18: taxes.baseIsv18,
       baseIsv4: taxes.baseIsv4,
