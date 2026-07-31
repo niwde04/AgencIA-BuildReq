@@ -83,6 +83,18 @@ export function isProcurementApproverRole(value?: string | null) {
   return Boolean(value && PROCUREMENT_APPROVER_ROLES.has(value));
 }
 
+export function canReviewProcurementApprovals(
+  user?: {
+    role?: string | null;
+    buildreqRole?: string | null;
+  } | null
+) {
+  return Boolean(
+    user &&
+      (user.role === "admin" || isProcurementApproverRole(user.buildreqRole))
+  );
+}
+
 export function isProjectScopedRole(value?: string | null) {
   return Boolean(value && PROJECT_SCOPED_ROLES.has(value));
 }

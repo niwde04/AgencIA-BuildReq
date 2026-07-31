@@ -72,6 +72,7 @@ import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { getReadablePrintStyles } from "@/lib/readable-print-styles";
 import { useProcurementApprovalSettings } from "@/hooks/useProcurementApprovalSettings";
 import {
+  canReviewProcurementApprovals,
   getBuildReqRoleLabel,
   isProcurementApproverRole,
 } from "@shared/buildreq-roles";
@@ -443,6 +444,7 @@ export default function PurchaseRequests() {
   const { user } = useAuth();
   const buildreqRole = (user as any)?.buildreqRole;
   const isProcurementApprover = isProcurementApproverRole(buildreqRole);
+  const canReviewProcurementApproval = canReviewProcurementApprovals(user);
   const { purchaseRequestApprovalsEnabled: PROCUREMENT_APPROVALS_ENABLED } =
     useProcurementApprovalSettings();
   const utils = trpc.useUtils();
@@ -1282,7 +1284,7 @@ export default function PurchaseRequests() {
     isDraftPurchaseRequest;
   const canReviewSelectedPurchaseRequest =
     PROCUREMENT_APPROVALS_ENABLED &&
-    isProcurementApprover &&
+    canReviewProcurementApproval &&
     isPendingApprovalPurchaseRequest;
   const isCompactApprovalView = canReviewSelectedPurchaseRequest;
   const canReopenSelectedPurchaseRequest =

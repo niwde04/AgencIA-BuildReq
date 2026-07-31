@@ -18,6 +18,7 @@ import {
   getProjectScopeIds,
 } from "../projectAccess";
 import {
+  canReviewProcurementApprovals,
   isProcurementApproverRole,
   isProjectScopedRole,
 } from "@shared/buildreq-roles";
@@ -1418,10 +1419,11 @@ export const purchaseOrdersRouter = router({
     .input(approvalDecisionSchema)
     .mutation(async ({ ctx, input }) => {
       assertProcurementApprovalsEnabled();
-      if (!isProcurementApproverRole(ctx.user.buildreqRole)) {
+      if (!canReviewProcurementApprovals(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo los roles aprobadores pueden decidir órdenes",
+          message:
+            "Solo los administradores y roles aprobadores pueden decidir órdenes",
         });
       }
       const detail = await db.getPurchaseOrderById(input.id);

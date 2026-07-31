@@ -9931,7 +9931,8 @@ describe("BuildReq - Purchase Requests", () => {
       })
     ).rejects.toMatchObject({
       code: "FORBIDDEN",
-      message: "Solo los roles aprobadores pueden corregir cantidades",
+      message:
+        "Solo los administradores y roles aprobadores pueden corregir cantidades",
     });
     expect(getPurchaseRequestByIdSpy).not.toHaveBeenCalled();
     expect(updateQuantitiesSpy).not.toHaveBeenCalled();
@@ -10019,6 +10020,98 @@ describe("BuildReq - Purchase Requests", () => {
     } finally {
       getPurchaseRequestByIdSpy.mockRestore();
       reviewApprovalSpy.mockRestore();
+      createNotificationSpy.mockRestore();
+      setRuntimeProcurementApprovalSettings({
+        ...previousSettings,
+        updatedAt: new Date(enabledAt.getTime() + 1),
+      });
+    }
+  });
+
+  it("lets a system admin approve a pending purchase request", async () => {
+    const previousSettings = getRuntimeProcurementApprovalSettings();
+    const enabledAt = new Date(
+      Math.max(
+        Date.now(),
+        previousSettings.updatedAt
+          ? new Date(previousSettings.updatedAt).getTime()
+          : 0
+      ) + 1
+    );
+    setRuntimeProcurementApprovalSettings({
+      ...previousSettings,
+      purchaseRequestApprovalsEnabled: true,
+      updatedAt: enabledAt,
+    });
+
+    const { ctx } = createUserContext({
+      email: "ed_barah@hotmail.com",
+      role: "admin",
+      buildreqRole: "administracion_central",
+    });
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseRequestByIdSpy = vi
+      .spyOn(db, "getPurchaseRequestById")
+      .mockResolvedValue({
+        purchaseRequest: {
+          id: 33,
+          projectId: 1,
+          requestNumber: "SC-2026-0033",
+          createdById: 4,
+          status: "en_revision",
+          approvalStatus: "pendiente",
+        },
+        items: [{ id: 501 }],
+      } as any);
+    const reviewApprovalSpy = vi
+      .spyOn(db, "reviewPurchaseRequestApproval")
+      .mockResolvedValue({
+        success: true,
+        status: "aprobada",
+        approvalStatus: "aprobada",
+        totalApprovedItemCount: 1,
+        remainingRejectedItemCount: 0,
+      } as any);
+    const updateQuantitiesSpy = vi
+      .spyOn(db, "updatePendingPurchaseRequestQuantities")
+      .mockResolvedValue({ success: true, updatedItemCount: 1 });
+    const createNotificationSpy = vi
+      .spyOn(db, "createNotification")
+      .mockResolvedValue({ id: 1 } as any);
+
+    try {
+      await expect(
+        caller.purchaseRequests.updatePendingQuantities({
+          id: 33,
+          items: [{ id: 501, quantity: "25.00" }],
+        })
+      ).resolves.toEqual({ success: true, updatedItemCount: 1 });
+      expect(updateQuantitiesSpy).toHaveBeenCalledWith({
+        id: 33,
+        items: [{ id: 501, quantity: "25.00" }],
+        actor: ctx.user,
+      });
+
+      await expect(
+        caller.purchaseRequests.reviewApproval({
+          id: 33,
+          decision: "approve",
+          comment: "Compra revisada por administración",
+        })
+      ).resolves.toMatchObject({
+        status: "aprobada",
+        approvalStatus: "aprobada",
+      });
+      expect(reviewApprovalSpy).toHaveBeenCalledWith({
+        id: 33,
+        decision: "approve",
+        comment: "Compra revisada por administración",
+        actor: ctx.user,
+      });
+    } finally {
+      getPurchaseRequestByIdSpy.mockRestore();
+      reviewApprovalSpy.mockRestore();
+      updateQuantitiesSpy.mockRestore();
       createNotificationSpy.mockRestore();
       setRuntimeProcurementApprovalSettings({
         ...previousSettings,
@@ -10928,7 +11021,8 @@ describe("BuildReq - Purchase Requests", () => {
         })
       ).rejects.toMatchObject({
         code: "FORBIDDEN",
-        message: "Solo los roles aprobadores pueden decidir solicitudes",
+        message:
+          "Solo los administradores y roles aprobadores pueden decidir solicitudes",
       });
       expect(reviewPurchaseRequestApprovalSpy).not.toHaveBeenCalled();
 
@@ -11770,7 +11864,7 @@ describe("BuildReq - Purchase Orders", () => {
     });
   });
 
-  it("requires a rejection reason and denies decisions to a base admin", async () => {
+  it("requires a rejection reason and lets a system admin decide", async () => {
     await withPurchaseOrderApprovalsEnabledForTest(async () => {
       const approverCaller = appRouter.createCaller(
         createProcurementApproverContext().ctx
@@ -11792,8 +11886,27 @@ describe("BuildReq - Purchase Orders", () => {
       );
       expect(reviewPurchaseOrderApprovalSpy).not.toHaveBeenCalled();
 
+      const getPurchaseOrderByIdSpy = vi
+        .spyOn(db, "getPurchaseOrderById")
+        .mockResolvedValue(
+          createApprovalReadyPurchaseOrderDetail({
+            status: "pendiente_aprobacion",
+            approvalStatus: "pendiente",
+          })
+        );
+      reviewPurchaseOrderApprovalSpy.mockResolvedValue({
+        success: true,
+        outcome: "approved",
+        status: "aprobada",
+        approvalStatus: "aprobada",
+      } as any);
+      const createNotificationSpy = vi
+        .spyOn(db, "createNotification")
+        .mockResolvedValue({ id: 2 } as any);
+
       const baseAdminCaller = appRouter.createCaller(
         createUserContext({
+          email: "ed_barah@hotmail.com",
           role: "admin",
           buildreqRole: "administracion_central",
         }).ctx
@@ -11801,17 +11914,24 @@ describe("BuildReq - Purchase Orders", () => {
       await expect(
         baseAdminCaller.purchaseOrders.reviewApproval({
           id: 4,
-          decision: "reject",
-          comment: "Fuera de presupuesto",
-          rejectedItemIds: [15],
+          decision: "approve",
+          comment: "Orden revisada por administración",
         })
-      ).rejects.toMatchObject({
-        code: "FORBIDDEN",
-        message: "Solo los roles aprobadores pueden decidir órdenes",
+      ).resolves.toMatchObject({
+        status: "aprobada",
+        approvalStatus: "aprobada",
       });
-      expect(reviewPurchaseOrderApprovalSpy).not.toHaveBeenCalled();
+      expect(reviewPurchaseOrderApprovalSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 4,
+          decision: "approve",
+          comment: "Orden revisada por administración",
+        })
+      );
 
+      getPurchaseOrderByIdSpy.mockRestore();
       reviewPurchaseOrderApprovalSpy.mockRestore();
+      createNotificationSpy.mockRestore();
     });
   });
 

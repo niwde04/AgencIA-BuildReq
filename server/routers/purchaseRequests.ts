@@ -5,6 +5,7 @@ import { listPurchaseRequestsPage } from "../paginatedLists";
 import { procurementProcedure as protectedProcedure, router } from "../_core/trpc";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 import {
+  canReviewProcurementApprovals,
   isProcurementApproverRole,
   isProjectScopedRole,
 } from "@shared/buildreq-roles";
@@ -1048,10 +1049,11 @@ export const purchaseRequestsRouter = router({
     .input(approvalDecisionSchema)
     .mutation(async ({ ctx, input }) => {
       assertProcurementApprovalsEnabled();
-      if (!isProcurementApproverRole(ctx.user.buildreqRole)) {
+      if (!canReviewProcurementApprovals(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo los roles aprobadores pueden decidir solicitudes",
+          message:
+            "Solo los administradores y roles aprobadores pueden decidir solicitudes",
         });
       }
       const detail = await db.getPurchaseRequestById(input.id);
@@ -1124,10 +1126,11 @@ export const purchaseRequestsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      if (!isProcurementApproverRole(ctx.user.buildreqRole)) {
+      if (!canReviewProcurementApprovals(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo los roles aprobadores pueden corregir cantidades",
+          message:
+            "Solo los administradores y roles aprobadores pueden corregir cantidades",
         });
       }
       assertProcurementApprovalsEnabled();

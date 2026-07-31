@@ -118,6 +118,7 @@ import {
   type SalesTaxCatalogItem,
 } from "@shared/purchase-orders";
 import {
+  canReviewProcurementApprovals,
   getBuildReqRoleLabel,
   isProcurementApproverRole,
 } from "@shared/buildreq-roles";
@@ -940,6 +941,7 @@ export default function OrdenesCompra() {
   } = useProcurementApprovalSettings();
   const userRole = (user as any)?.buildreqRole;
   const isProcurementApprover = isProcurementApproverRole(userRole);
+  const canReviewProcurementApproval = canReviewProcurementApprovals(user);
   const purchaseOrderTableColumnCount = isProcurementApprover
     ? 9
     : 13 + (PROCUREMENT_APPROVALS_ENABLED ? 1 : 0);
@@ -1624,7 +1626,7 @@ export default function OrdenesCompra() {
     orderRequiresApproval;
   const canReviewApproval =
     PROCUREMENT_APPROVALS_ENABLED &&
-    isProcurementApprover &&
+    canReviewProcurementApproval &&
     orderStatus === "pendiente_aprobacion";
   const isCompactApprovalView = canReviewApproval;
   const canCorrectRejectedOrder =
