@@ -18903,6 +18903,11 @@ export type InventoryListFilters = {
   sortDir?: "asc" | "desc";
 };
 
+const effectiveInventoryCategory = sql<string | null>`coalesce(
+  nullif(btrim(${inventoryItems.category}), ''),
+  nullif(btrim(${sapCatalog.itemGroup}), '')
+)`;
+
 function buildInventorySearchTerms(search: string) {
   const trimmedSearch = search.trim();
   const terms = new Set<string>();
@@ -18918,7 +18923,7 @@ function buildInventorySearchTerms(search: string) {
 function buildInventoryWhere(filters?: InventoryListFilters) {
   const conditions = [];
   if (filters?.category)
-    conditions.push(eq(inventoryItems.category, filters.category));
+    conditions.push(eq(effectiveInventoryCategory, filters.category));
   if (filters?.isActive !== undefined)
     conditions.push(eq(inventoryItems.isActive, filters.isActive));
   if (filters?.warehouseId)
@@ -18947,7 +18952,7 @@ function buildInventoryWhere(filters?: InventoryListFilters) {
         ilike(inventoryItems.name, `%${search}%`),
         ilike(inventoryItems.sapItemCode, `%${search}%`),
         ilike(inventoryItems.description, `%${search}%`),
-        ilike(inventoryItems.category, `%${search}%`),
+        ilike(effectiveInventoryCategory, `%${search}%`),
         ilike(inventoryItems.unit, `%${search}%`),
         ilike(sapCatalog.description, `%${search}%`),
         ilike(inventoryItems.warehouseLocation, `%${search}%`),
@@ -19151,7 +19156,7 @@ export async function listInventoryItems(filters?: InventoryListFilters) {
       case "sapItemCode":
         return inventoryItems.sapItemCode;
       case "category":
-        return inventoryItems.category;
+        return effectiveInventoryCategory;
       case "brand":
         return sapCatalog.brand;
       case "partNumber":
@@ -19183,6 +19188,7 @@ export async function listInventoryItems(filters?: InventoryListFilters) {
     .select({
       item: inventoryItems,
       catalog: sapCatalog,
+      effectiveCategory: effectiveInventoryCategory,
       warehouse: warehouses,
       project: projects,
     })
@@ -19195,8 +19201,9 @@ export async function listInventoryItems(filters?: InventoryListFilters) {
     .limit(pageSize)
     .offset(offset);
 
-  const items = rows.map(({ item, catalog, warehouse, project }) => ({
+  const items = rows.map(({ item, catalog, effectiveCategory, warehouse, project }) => ({
     ...item,
+    category: effectiveCategory,
     brand: catalog?.brand ?? null,
     partNumber: catalog?.partNumber ?? null,
     catalogItem: catalog
@@ -19274,7 +19281,7 @@ export async function searchGlobalInventoryAvailability(params?: {
       ilike(inventoryItems.sapItemCode, `%${search}%`),
       ilike(inventoryItems.name, `%${search}%`),
       ilike(inventoryItems.description, `%${search}%`),
-      ilike(inventoryItems.category, `%${search}%`),
+      ilike(effectiveInventoryCategory, `%${search}%`),
       ilike(inventoryItems.storageLocation, `%${search}%`),
       ilike(sapCatalog.description, `%${search}%`),
       ilike(sapCatalog.brand, `%${search}%`),
@@ -19292,7 +19299,7 @@ export async function searchGlobalInventoryAvailability(params?: {
       sapItemCode: inventoryItems.sapItemCode,
       itemName: inventoryItems.name,
       unit: inventoryItems.unit,
-      category: inventoryItems.category,
+      category: effectiveInventoryCategory,
       brand: sapCatalog.brand,
       partNumber: sapCatalog.partNumber,
       warehouseId: warehouses.id,
@@ -19313,7 +19320,7 @@ export async function searchGlobalInventoryAvailability(params?: {
       inventoryItems.sapItemCode,
       inventoryItems.name,
       inventoryItems.unit,
-      inventoryItems.category,
+      effectiveInventoryCategory,
       sapCatalog.brand,
       sapCatalog.partNumber,
       warehouses.id,

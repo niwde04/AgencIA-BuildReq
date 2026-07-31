@@ -940,6 +940,14 @@ export default function Inventario() {
         nextPage += 1;
       }
 
+      const rowsWithStock = rows.filter(
+        row => parseQuantity(row.currentStock) > 0
+      );
+      if (rowsWithStock.length === 0) {
+        toast.info("No hay registros con stock mayor a cero para exportar");
+        return;
+      }
+
       await downloadExcel(
         buildDatedExcelFileName("inventario"),
         "Inventario",
@@ -998,11 +1006,11 @@ export default function Inventario() {
             value: row => (row.isActive === false ? "Inactivo" : "Activo"),
           },
         ],
-        rows
+        rowsWithStock
       );
 
       toast.success(
-        `Se exportaron ${rows.length.toLocaleString("es-HN")} registro(s)`
+        `Se exportaron ${rowsWithStock.length.toLocaleString("es-HN")} registro(s) con stock`
       );
     } catch {
       toast.error("No se pudo exportar el archivo Excel");
