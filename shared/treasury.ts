@@ -101,6 +101,14 @@ export type TreasuryMoneySummary = {
   paymentStatus: TreasuryPaymentStatus;
 };
 
+export type InvoiceAdvanceBalance = {
+  actualAppliedAmount: number;
+  pendingApplicationAmount: number;
+  displayedAppliedAmount: number;
+  balanceAfterAdvance: number;
+  isPendingApplication: boolean;
+};
+
 export const TREASURY_BANK_RESULT_VALUES = ["PAGADO", "RECHAZADO"] as const;
 export type TreasuryBankResult = (typeof TREASURY_BANK_RESULT_VALUES)[number];
 
@@ -113,6 +121,46 @@ export const TREASURY_ACTIVE_ITEM_STATUSES: ReadonlySet<string> = new Set([
 
 export function roundTreasuryMoney(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+export function buildInvoiceAdvanceBalance(input: {
+  invoiceStatus: string;
+  netPayable: string | number;
+  appliedAdvanceAmount?: string | number | null;
+  availableAccountedAdvanceAmount?: string | number | null;
+}): InvoiceAdvanceBalance {
+  const netPayable = roundTreasuryMoney(
+    Math.max(0, Number(input.netPayable))
+  );
+  const actualAppliedAmount = roundTreasuryMoney(
+    Math.max(0, Number(input.appliedAdvanceAmount ?? 0))
+  );
+  const canPreviewApplication = [
+    "borrador",
+    "revisada",
+    "rechazada",
+  ].includes(input.invoiceStatus);
+  const pendingApplicationAmount = canPreviewApplication
+    ? roundTreasuryMoney(
+        Math.min(
+          Math.max(0, netPayable - actualAppliedAmount),
+          Math.max(0, Number(input.availableAccountedAdvanceAmount ?? 0))
+        )
+      )
+    : 0;
+  const displayedAppliedAmount = roundTreasuryMoney(
+    Math.min(netPayable, actualAppliedAmount + pendingApplicationAmount)
+  );
+
+  return {
+    actualAppliedAmount,
+    pendingApplicationAmount,
+    displayedAppliedAmount,
+    balanceAfterAdvance: roundTreasuryMoney(
+      Math.max(0, netPayable - displayedAppliedAmount)
+    ),
+    isPendingApplication: pendingApplicationAmount > 0,
+  };
 }
 
 export function getTreasuryPaymentStatus(

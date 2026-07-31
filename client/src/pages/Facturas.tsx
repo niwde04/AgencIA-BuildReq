@@ -92,6 +92,7 @@ import {
   isMissingCpcRequiredRetention,
   requiresMissingCpcRetention,
 } from "@shared/supplier-documents";
+import { buildInvoiceAdvanceBalance } from "@shared/treasury";
 
 const PAGE_SIZE = 50;
 const STATUS_LABELS: Record<string, string> = {
@@ -2093,10 +2094,18 @@ export default function Facturas() {
   );
   const hasRegisteredSupplierAdvance =
     Number(detail?.purchaseOrderAdvanceSummary?.count ?? 0) > 0;
-  const balanceAfterAdvance = Math.max(
-    netPayable - appliedAdvanceAmount,
-    0
-  );
+  const invoiceAdvanceBalance = buildInvoiceAdvanceBalance({
+    invoiceStatus: detail?.invoice.status ?? "borrador",
+    netPayable,
+    appliedAdvanceAmount,
+    availableAccountedAdvanceAmount:
+      detail?.purchaseOrderAdvanceSummary?.unappliedAmount,
+  });
+  const displayedAppliedAdvanceAmount =
+    invoiceAdvanceBalance.displayedAppliedAmount;
+  const balanceAfterAdvance = invoiceAdvanceBalance.balanceAfterAdvance;
+  const isPendingAdvanceApplication =
+    invoiceAdvanceBalance.isPendingApplication;
   const handlePrintInvoiceDetail = () => {
     if (!detail?.invoice) return;
 
@@ -2265,8 +2274,12 @@ export default function Facturas() {
           ]
         : []),
       {
-        label: `Anticipo aplicado ${invoiceSummaryCurrency}`,
-        value: appliedAdvanceAmount,
+        label: `${
+          isPendingAdvanceApplication
+            ? "Anticipo aplicado al contabilizar"
+            : "Anticipo aplicado"
+        } ${invoiceSummaryCurrency}`,
+        value: displayedAppliedAdvanceAmount,
       },
       {
         label: `Saldo pendiente ${invoiceSummaryCurrency}`,
@@ -5373,18 +5386,22 @@ export default function Facturas() {
                           </span>
                         </div>
                         <p className="mt-1 text-xs">
-                          Dato informativo de la orden de compra. Solo el monto
-                          contabilizado y aplicado reduce el saldo pendiente.
+                          {isPendingAdvanceApplication
+                            ? "El monto contabilizado disponible ya está incluido en el saldo pendiente mostrado y se aplicará definitivamente al contabilizar la factura."
+                            : "Dato informativo de la orden de compra. Solo el monto contabilizado y aplicado reduce el saldo pendiente."}
                         </p>
                       </div>
                     ) : null}
                     <div className="flex justify-between gap-3 text-sm">
                       <span className="font-medium text-blue-700">
                         (-) Anticipo aplicado
+                        {isPendingAdvanceApplication
+                          ? " al contabilizar"
+                          : ""}
                       </span>
                       <span className="font-semibold text-blue-700">
                         {formatSelectedInvoiceCurrency(
-                          appliedAdvanceAmount
+                          displayedAppliedAdvanceAmount
                         )}
                       </span>
                     </div>

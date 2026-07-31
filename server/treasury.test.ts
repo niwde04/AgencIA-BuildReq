@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import {
+  buildInvoiceAdvanceBalance,
   buildTreasuryMoneySummary,
   getTreasuryBatchStatusLabel,
   getTreasuryPaymentStatus,
@@ -21,6 +22,39 @@ import {
   resolveTreasurySettingsUpdate,
   TreasuryRuleError,
 } from "./treasury";
+
+describe("invoice advance balance preview", () => {
+  it("shows an accounted supplier advance on a draft invoice balance", () => {
+    expect(
+      buildInvoiceAdvanceBalance({
+        invoiceStatus: "borrador",
+        netPayable: 52070.54,
+        appliedAdvanceAmount: 0,
+        availableAccountedAdvanceAmount: 2070.54,
+      })
+    ).toEqual({
+      actualAppliedAmount: 0,
+      pendingApplicationAmount: 2070.54,
+      displayedAppliedAmount: 2070.54,
+      balanceAfterAdvance: 50000,
+      isPendingApplication: true,
+    });
+  });
+
+  it("does not preview an unapplied amount on a voided invoice", () => {
+    expect(
+      buildInvoiceAdvanceBalance({
+        invoiceStatus: "anulada",
+        netPayable: 52070.54,
+        availableAccountedAdvanceAmount: 2070.54,
+      })
+    ).toMatchObject({
+      displayedAppliedAmount: 0,
+      balanceAfterAdvance: 52070.54,
+      isPendingApplication: false,
+    });
+  });
+});
 
 describe("treasury batch cancellation", () => {
   it("allows cancelling a batch sent to the bank before a response is registered", () => {
