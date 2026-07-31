@@ -15,6 +15,7 @@ import {
   attachments,
   invoiceDocumentAdjustments,
   invoices,
+  notifications,
   projects,
   purchaseOrderAdvances,
   purchaseOrders,
@@ -50,6 +51,12 @@ import {
   listEligiblePurchaseOrderAdvances,
   PurchaseOrderAdvanceRuleError,
 } from "./purchaseOrderAdvances";
+import {
+  getQualityRetentionReleaseSnapshots,
+  listQualityRetentionReleases,
+  QualityRetentionReleaseRuleError,
+  syncQualityRetentionReleasePaymentStatus,
+} from "./qualityRetentionReleases";
 import { storageDelete, storageGet, storagePut } from "./storage";
 
 export type TreasuryActor = {
@@ -70,6 +77,11 @@ export type TreasuryDraftItemInput =
   | {
       sourceType: "purchase_order_advance";
       purchaseOrderAdvanceId: number;
+      requestedAmount: number;
+    }
+  | {
+      sourceType: "quality_retention_release";
+      qualityRetentionReleaseId: number;
       requestedAmount: number;
     };
 
@@ -182,7 +194,7 @@ export function assertTreasuryBatchesCanBeConsolidated(
     new Set(batches.map(batch => batch.paymentKind ?? "invoice")).size !== 1
   ) {
     throw new TreasuryRuleError(
-      "No se pueden consolidar pagos de facturas con anticipos a proveedores."
+      "No se pueden consolidar lotes de tipos de pago diferentes."
     );
   }
   return routing;
@@ -886,6 +898,25 @@ export async function listEligibleTreasuryAdvances(filters?: {
   return listEligiblePurchaseOrderAdvances(filters);
 }
 
+export async function listEligibleTreasuryQualityRetentionReleases(filters?: {
+  projectId?: number;
+  projectIds?: number[];
+  currency?: PurchaseCurrency;
+  excludeBatchId?: number;
+}) {
+  const rows = await listQualityRetentionReleases({
+    projectIds: filters?.projectId ? [filters.projectId] : filters?.projectIds,
+    statuses: ["approved", "partially_paid"],
+    excludeBatchId: filters?.excludeBatchId,
+  });
+  return rows.filter(
+    row =>
+      (!filters?.currency || row.invoice.currency === filters.currency) &&
+      row.availableToPayAmount > 0 &&
+      row.reservedAmount <= 0
+  );
+}
+
 export async function listTreasuryBatches(filters?: {
   projectIds?: number[];
   status?: TreasuryBatchStatus;
@@ -1254,7 +1285,12 @@ export async function getTreasuryPaymentDetailReport(batchId: number) {
   }
 
   let lines;
-  if (detail.batch.paymentKind === "purchase_order_advance") {
+  if (
+    detail.batch.paymentKind === "purchase_order_advance" ||
+    detail.batch.paymentKind === "quality_retention_release"
+  ) {
+    const isQualityRelease =
+      detail.batch.paymentKind === "quality_retention_release";
     lines = reportItems.map((paymentItem: any) => ({
       paymentItem: {
         ...paymentItem,
@@ -1271,9 +1307,11 @@ export async function getTreasuryPaymentDetailReport(batchId: number) {
         supplierName: paymentItem.supplierName,
         items: [
           {
-            itemName: `Anticipo a proveedor ${
-              paymentItem.orderNumber ?? paymentItem.invoiceNumber ?? ""
-            }`.trim(),
+            itemName: isQualityRelease
+              ? `Liberación de retención de calidad de factura ${paymentItem.invoiceDocumentNumber}`
+              : `Anticipo a proveedor ${
+                  paymentItem.orderNumber ?? paymentItem.invoiceNumber ?? ""
+                }`.trim(),
           },
         ],
         retentions: [],
@@ -1346,12 +1384,14 @@ function resolveDraftPaymentKind(
     items.map(item =>
       item.sourceType === "purchase_order_advance"
         ? "purchase_order_advance"
-        : "invoice"
+        : item.sourceType === "quality_retention_release"
+          ? "quality_retention_release"
+          : "invoice"
     )
   );
   if (inferredKinds.size !== 1) {
     throw new TreasuryRuleError(
-      "Un lote no puede mezclar facturas y anticipos a proveedores."
+      "Un lote no puede mezclar fuentes de pago diferentes."
     );
   }
   const inferredKind = Array.from(inferredKinds)[0] as TreasuryPaymentKind;
@@ -1378,14 +1418,23 @@ async function getTreasuryDraftSourceSnapshots(
             { sourceType: "purchase_order_advance" }
           >
         ).purchaseOrderAdvanceId
-      : (item as Extract<TreasuryDraftItemInput, { invoiceId: number }>)
-          .invoiceId
+      : paymentKind === "quality_retention_release"
+        ? (
+            item as Extract<
+              TreasuryDraftItemInput,
+              { sourceType: "quality_retention_release" }
+            >
+          ).qualityRetentionReleaseId
+        : (item as Extract<TreasuryDraftItemInput, { invoiceId: number }>)
+            .invoiceId
   );
   if (new Set(sourceIds).size !== sourceIds.length) {
     throw new TreasuryRuleError(
       paymentKind === "purchase_order_advance"
         ? "No se puede repetir un anticipo en el lote."
-        : "No se puede repetir una factura en el lote."
+        : paymentKind === "quality_retention_release"
+          ? "No se puede repetir una liberación en el lote."
+          : "No se puede repetir una factura en el lote."
     );
   }
   const requestedAmountBySourceId = new Map(
@@ -1430,6 +1479,43 @@ async function getTreasuryDraftSourceSnapshots(
     };
   }
 
+  if (paymentKind === "quality_retention_release") {
+    let rows;
+    try {
+      rows = await getQualityRetentionReleaseSnapshots(
+        executor,
+        sourceIds,
+        excludeBatchId
+      );
+    } catch (error) {
+      if (error instanceof QualityRetentionReleaseRuleError) {
+        throw new TreasuryRuleError(error.message);
+      }
+      throw error;
+    }
+    return {
+      requestedAmountBySourceId,
+      snapshots: rows.map((row: any) => ({
+        sourceId: row.release.id,
+        sourceType: "quality_retention_release" as const,
+        invoiceId: row.invoice.id,
+        projectId: row.invoice.projectId,
+        currency: row.invoice.currency,
+        supplier: row.supplier,
+        documentNumber: row.invoice.invoiceDocumentNumber,
+        referenceNumber: row.invoice.invoiceNumber,
+        targetAmount: row.release.approvedAmount,
+        previousPaidAmount: row.money.paidAmount,
+        appliedAdvanceAmount: 0,
+        availableAmount: row.money.availableAmount,
+        isEligible:
+          ["approved", "partially_paid"].includes(row.release.status) &&
+          row.ordinaryPayment?.isPaid === true,
+        purchaseOrderId: row.invoice.purchaseOrderId,
+      })),
+    };
+  }
+
   const rows = await getInvoiceSnapshots(executor, sourceIds, excludeBatchId);
   return {
     requestedAmountBySourceId,
@@ -1462,7 +1548,9 @@ function validateTreasuryDraftSnapshots(input: {
     const sourceLabel =
       input.paymentKind === "purchase_order_advance"
         ? "Los anticipos"
-        : "Las facturas";
+        : input.paymentKind === "quality_retention_release"
+          ? "Las liberaciones"
+          : "Las facturas";
     if (row.projectId !== input.projectId) {
       throw new TreasuryRuleError(
         `${sourceLabel} deben pertenecer al proyecto del lote.`
@@ -1477,13 +1565,19 @@ function validateTreasuryDraftSnapshots(input: {
       throw new TreasuryRuleError(
         input.paymentKind === "purchase_order_advance"
           ? "Un anticipo ya no está disponible para Tesorería."
-          : "Una factura ya no cumple las condiciones para Tesorería."
+          : input.paymentKind === "quality_retention_release"
+            ? "Una liberación ya no está autorizada o tiene el neto ordinario pendiente."
+            : "Una factura ya no cumple las condiciones para Tesorería."
       );
     }
     const amount = input.requestedAmountBySourceId.get(row.sourceId) ?? 0;
     if (amount <= 0 || amount > row.availableAmount + 0.0001) {
       const noun =
-        input.paymentKind === "purchase_order_advance" ? "El pago" : "El abono";
+        input.paymentKind === "purchase_order_advance"
+          ? "El pago"
+          : input.paymentKind === "quality_retention_release"
+            ? "La liberación"
+            : "El abono";
       throw new TreasuryRuleError(
         `${noun} de ${row.documentNumber} debe ser mayor que cero y no superar ${row.availableAmount.toFixed(2)} ${input.currency}.`
       );
@@ -1499,9 +1593,16 @@ function buildTreasuryItemValues(
   return {
     batchId,
     sourceType: row.sourceType,
-    invoiceId: row.sourceType === "invoice" ? row.sourceId : null,
+    invoiceId:
+      row.sourceType === "invoice"
+        ? row.sourceId
+        : row.sourceType === "quality_retention_release"
+          ? row.invoiceId
+          : null,
     purchaseOrderAdvanceId:
       row.sourceType === "purchase_order_advance" ? row.sourceId : null,
+    qualityRetentionReleaseId:
+      row.sourceType === "quality_retention_release" ? row.sourceId : null,
     supplierId: row.supplier.id,
     supplierCode: row.supplier.supplierCode,
     supplierName: row.supplier.name,
@@ -1637,7 +1738,9 @@ export async function updateTreasuryDraft(input: {
       existingItems.map((item: any) => [
         item.sourceType === "purchase_order_advance"
           ? item.purchaseOrderAdvanceId
-          : item.invoiceId,
+          : item.sourceType === "quality_retention_release"
+            ? item.qualityRetentionReleaseId
+            : item.invoiceId,
         item,
       ])
     );
@@ -1649,7 +1752,9 @@ export async function updateTreasuryDraft(input: {
       const sourceId =
         item.sourceType === "purchase_order_advance"
           ? item.purchaseOrderAdvanceId
-          : item.invoiceId;
+          : item.sourceType === "quality_retention_release"
+            ? item.qualityRetentionReleaseId
+            : item.invoiceId;
       if (selectedSourceIds.has(sourceId)) continue;
       await tx
         .update(treasuryPaymentItems)
@@ -2100,6 +2205,7 @@ export async function consolidateTreasuryBatchesForApproval(input: {
           sourceType: item.sourceType,
           invoiceId: item.invoiceId,
           purchaseOrderAdvanceId: item.purchaseOrderAdvanceId,
+          qualityRetentionReleaseId: item.qualityRetentionReleaseId,
           supplierId: item.supplierId,
           supplierCode: item.supplierCode,
           supplierName: item.supplierName,
@@ -2425,7 +2531,9 @@ function buildBankWorkbook(
       [headers.paymentKind]:
         detail.batch.paymentKind === "purchase_order_advance"
           ? "ANTICIPO_PROVEEDOR"
-          : "FACTURA",
+          : detail.batch.paymentKind === "quality_retention_release"
+            ? "LIBERACION_RETENCION_CALIDAD"
+            : "FACTURA",
       [headers.project]: [item.invoiceProjectCode, item.invoiceProjectName]
         .filter(Boolean)
         .join(" - "),
@@ -3078,6 +3186,30 @@ export async function accountTreasuryItems(input: {
             `El pago de ${item.invoiceDocumentNumber} supera el saldo vigente del anticipo.`
           );
         }
+      } else if (
+        item.sourceType === "quality_retention_release" &&
+        item.qualityRetentionReleaseId
+      ) {
+        let snapshots;
+        try {
+          snapshots = await getQualityRetentionReleaseSnapshots(
+            tx,
+            [item.qualityRetentionReleaseId],
+            input.batchId
+          );
+        } catch (error) {
+          if (error instanceof QualityRetentionReleaseRuleError) {
+            throw new TreasuryRuleError(error.message);
+          }
+          throw error;
+        }
+        const snapshot = snapshots[0];
+        availableAmount = snapshot?.money.availableAmount ?? 0;
+        if (paid <= 0 || paid > availableAmount + 0.0001) {
+          throw new TreasuryRuleError(
+            `El pago de ${item.invoiceDocumentNumber} supera el saldo autorizado de la liberación.`
+          );
+        }
       } else {
         if (!item.invoiceId) {
           throw new TreasuryRuleError(
@@ -3127,6 +3259,25 @@ export async function accountTreasuryItems(input: {
           purchaseOrderId,
           actorId: input.actor.id,
         });
+      }
+      if (item.qualityRetentionReleaseId) {
+        const release = await syncQualityRetentionReleasePaymentStatus(
+          tx,
+          item.qualityRetentionReleaseId
+        );
+        if (release?.requestedById) {
+          await tx.insert(notifications).values({
+            userId: release.requestedById,
+            title:
+              release.status === "paid"
+                ? "Retención de calidad pagada"
+                : "Pago parcial de retención de calidad",
+            message: `Se contabilizó ${paid.toFixed(2)} de la liberación asociada a la factura ${item.invoiceDocumentNumber}.`,
+            type: "cambio_estatus",
+            relatedEntityType: "quality_retention_release",
+            relatedEntityId: release.id,
+          });
+        }
       }
     }
     const remainingItems = await readBatchItems(tx, input.batchId);

@@ -185,6 +185,43 @@ describe("treasury draft permissions", () => {
     );
   });
 
+  it("creates a quality-retention-release-only batch", async () => {
+    mockDisabledApprovalSettings();
+    const createSpy = vi
+      .spyOn(treasury, "createTreasuryBatch")
+      .mockResolvedValue({ id: 72 } as any);
+    const caller = appRouter.createCaller(
+      createTreasuryContext("administracion_central")
+    );
+
+    await caller.treasury.create({
+      projectId: 1,
+      currency: "HNL",
+      paymentKind: "quality_retention_release",
+      requestedPaymentDate: "2026-07-31",
+      items: [
+        {
+          sourceType: "quality_retention_release",
+          qualityRetentionReleaseId: 12,
+          requestedAmount: 125,
+        },
+      ],
+    });
+
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentKind: "quality_retention_release",
+        items: [
+          {
+            sourceType: "quality_retention_release",
+            qualityRetentionReleaseId: 12,
+            requestedAmount: 125,
+          },
+        ],
+      })
+    );
+  });
+
   it("lists eligible advances separately from invoices", async () => {
     mockDisabledApprovalSettings();
     const listSpy = vi

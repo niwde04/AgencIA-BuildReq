@@ -21,6 +21,7 @@ import type {
 } from "../shared/purchase-orders";
 import type { FixedAssetDetail } from "../shared/fixed-assets";
 import type { InvoiceDocumentAdjustmentType } from "../shared/invoice-document-adjustments";
+import type { QualityRetentionReleaseStatus } from "../shared/quality-retention-releases";
 import type {
   TreasuryBatchStatus,
   TreasuryItemStatus,
@@ -260,10 +261,11 @@ export const treasuryItemStatusEnum = pgEnum("treasury_item_status", [
 export const treasuryPaymentKindEnum = pgEnum("treasury_payment_kind", [
   "invoice",
   "purchase_order_advance",
+  "quality_retention_release",
 ]);
 export const treasuryPaymentSourceTypeEnum = pgEnum(
   "treasury_payment_source_type",
-  ["invoice", "purchase_order_advance"]
+  ["invoice", "purchase_order_advance", "quality_retention_release"]
 );
 export const supplierContactTypeEnum = pgEnum("supplier_contact_type", [
   "ventas",
@@ -294,6 +296,7 @@ export const attachmentEntityTypeEnum = pgEnum("attachment_entity_type", [
   "receipt",
   "invoice",
   "purchase_order_advance",
+  "quality_retention_release",
   "supplier",
   "treasury_payment_batch",
 ]);
@@ -1706,6 +1709,7 @@ export const treasuryPaymentItems = pgTable(
       () => purchaseOrderAdvances.id,
       { onDelete: "restrict" }
     ),
+    qualityRetentionReleaseId: integer("qualityRetentionReleaseId"),
     supplierId: integer("supplierId").references(() => suppliers.id, {
       onDelete: "set null",
     }),
@@ -1768,6 +1772,9 @@ export const treasuryPaymentItems = pgTable(
     advanceIdx: index("treasury_item_advance_idx").on(
       table.purchaseOrderAdvanceId
     ),
+    qualityReleaseIdx: index("treasury_item_quality_release_idx").on(
+      table.qualityRetentionReleaseId
+    ),
     statusIdx: index("treasury_item_status_idx").on(table.status),
     batchInvoiceUnique: uniqueIndex("treasury_item_batch_invoice_unique").on(
       table.batchId,
@@ -1777,6 +1784,9 @@ export const treasuryPaymentItems = pgTable(
       table.batchId,
       table.purchaseOrderAdvanceId
     ),
+    batchQualityReleaseUnique: uniqueIndex(
+      "treasury_item_batch_quality_release_unique"
+    ).on(table.batchId, table.qualityRetentionReleaseId),
     activeInvoiceUnique: uniqueIndex("treasury_item_active_invoice_unique")
       .on(table.invoiceId)
       .where(
@@ -1786,6 +1796,13 @@ export const treasuryPaymentItems = pgTable(
       .on(table.purchaseOrderAdvanceId)
       .where(
         sql`${table.activeReservation} = true and ${table.sourceType} = 'purchase_order_advance'`
+      ),
+    activeQualityReleaseUnique: uniqueIndex(
+      "treasury_item_active_quality_release_unique"
+    )
+      .on(table.qualityRetentionReleaseId)
+      .where(
+        sql`${table.activeReservation} = true and ${table.sourceType} = 'quality_retention_release'`
       ),
     currencyCheck: check(
       "treasury_item_currency_check",
@@ -1798,9 +1815,11 @@ export const treasuryPaymentItems = pgTable(
     sourceCheck: check(
       "treasury_item_source_check",
       sql`(
-        (${table.sourceType} = 'invoice' and ${table.invoiceId} is not null and ${table.purchaseOrderAdvanceId} is null)
+        (${table.sourceType} = 'invoice' and ${table.invoiceId} is not null and ${table.purchaseOrderAdvanceId} is null and ${table.qualityRetentionReleaseId} is null)
         or
-        (${table.sourceType} = 'purchase_order_advance' and ${table.invoiceId} is null and ${table.purchaseOrderAdvanceId} is not null)
+        (${table.sourceType} = 'purchase_order_advance' and ${table.invoiceId} is null and ${table.purchaseOrderAdvanceId} is not null and ${table.qualityRetentionReleaseId} is null)
+        or
+        (${table.sourceType} = 'quality_retention_release' and ${table.invoiceId} is not null and ${table.purchaseOrderAdvanceId} is null and ${table.qualityRetentionReleaseId} is not null)
       )`
     ),
   })
@@ -1989,6 +2008,79 @@ export type InvoiceDocumentAdjustment =
   typeof invoiceDocumentAdjustments.$inferSelect;
 export type InsertInvoiceDocumentAdjustment =
   typeof invoiceDocumentAdjustments.$inferInsert;
+
+export const qualityRetentionReleases = pgTable(
+  "qualityRetentionReleases",
+  {
+    id: serial("id").primaryKey(),
+    invoiceDocumentAdjustmentId: integer("invoiceDocumentAdjustmentId")
+      .notNull()
+      .references(() => invoiceDocumentAdjustments.id, {
+        onDelete: "restrict",
+      }),
+    requestedAmount: decimal("requestedAmount", {
+      precision: 14,
+      scale: 4,
+    }).notNull(),
+    approvedAmount: decimal("approvedAmount", {
+      precision: 14,
+      scale: 4,
+    }),
+    justification: text("justification").notNull(),
+    status: varchar("status", { length: 40 })
+      .$type<QualityRetentionReleaseStatus>()
+      .default("pending_approval")
+      .notNull(),
+    requestedById: integer("requestedById")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    requestedAt: timestamp("requestedAt").defaultNow().notNull(),
+    decidedById: integer("decidedById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    decidedAt: timestamp("decidedAt"),
+    decisionComment: text("decisionComment"),
+    cancelledById: integer("cancelledById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    cancelledAt: timestamp("cancelledAt"),
+    cancellationReason: text("cancellationReason"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    adjustmentIdx: index("qrr_adjustment_idx").on(
+      table.invoiceDocumentAdjustmentId
+    ),
+    requesterIdx: index("qrr_requester_idx").on(table.requestedById),
+    deciderIdx: index("qrr_decider_idx").on(table.decidedById),
+    cancellerIdx: index("qrr_canceller_idx").on(table.cancelledById),
+    statusCreatedIdx: index("qrr_status_created_idx").on(
+      table.status,
+      table.createdAt.desc()
+    ),
+    pendingUnique: uniqueIndex("qrr_pending_adjustment_unique")
+      .on(table.invoiceDocumentAdjustmentId)
+      .where(sql`${table.status} = 'pending_approval'`),
+    amountCheck: check(
+      "qrr_amount_check",
+      sql`${table.requestedAmount} > 0 and (${table.approvedAmount} is null or (${table.approvedAmount} > 0 and ${table.approvedAmount} <= ${table.requestedAmount}))`
+    ),
+    statusCheck: check(
+      "qrr_status_check",
+      sql`${table.status} in ('pending_approval', 'approved', 'partially_paid', 'paid', 'rejected', 'cancelled')`
+    ),
+    justificationCheck: check(
+      "qrr_justification_check",
+      sql`length(btrim(${table.justification})) >= 5`
+    ),
+  })
+);
+
+export type QualityRetentionRelease =
+  typeof qualityRetentionReleases.$inferSelect;
+export type InsertQualityRetentionRelease =
+  typeof qualityRetentionReleases.$inferInsert;
 
 export const salesTaxes = pgTable(
   "salesTaxes",

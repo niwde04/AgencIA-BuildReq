@@ -3,9 +3,9 @@ import type { PurchaseCurrency } from "./purchase-orders";
 export const TREASURY_PAYMENT_KIND_CODES = [
   "invoice",
   "purchase_order_advance",
+  "quality_retention_release",
 ] as const;
-export type TreasuryPaymentKind =
-  (typeof TREASURY_PAYMENT_KIND_CODES)[number];
+export type TreasuryPaymentKind = (typeof TREASURY_PAYMENT_KIND_CODES)[number];
 export type TreasuryPaymentSourceType = TreasuryPaymentKind;
 
 export const TREASURY_PAYMENT_KIND_LABELS: Readonly<
@@ -13,6 +13,7 @@ export const TREASURY_PAYMENT_KIND_LABELS: Readonly<
 > = {
   invoice: "Pago de facturas",
   purchase_order_advance: "Anticipo a proveedor",
+  quality_retention_release: "Liberación de retención de calidad",
 };
 
 export const TREASURY_BATCH_STATUS_CODES = [
@@ -129,17 +130,13 @@ export function buildInvoiceAdvanceBalance(input: {
   appliedAdvanceAmount?: string | number | null;
   availableAccountedAdvanceAmount?: string | number | null;
 }): InvoiceAdvanceBalance {
-  const netPayable = roundTreasuryMoney(
-    Math.max(0, Number(input.netPayable))
-  );
+  const netPayable = roundTreasuryMoney(Math.max(0, Number(input.netPayable)));
   const actualAppliedAmount = roundTreasuryMoney(
     Math.max(0, Number(input.appliedAdvanceAmount ?? 0))
   );
-  const canPreviewApplication = [
-    "borrador",
-    "revisada",
-    "rechazada",
-  ].includes(input.invoiceStatus);
+  const canPreviewApplication = ["borrador", "revisada", "rechazada"].includes(
+    input.invoiceStatus
+  );
   const pendingApplicationAmount = canPreviewApplication
     ? roundTreasuryMoney(
         Math.min(

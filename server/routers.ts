@@ -35,6 +35,7 @@ import { taxesRouter } from "./routers/taxes";
 import { reportsRouter } from "./routers/reports";
 import { systemSettingsRouter } from "./routers/systemSettings";
 import { treasuryRouter } from "./routers/treasury";
+import { qualityRetentionReleasesRouter } from "./routers/qualityRetentionReleases";
 
 export const appRouter = router({
   system: systemRouter,
@@ -99,6 +100,7 @@ export const appRouter = router({
   reports: reportsRouter,
   systemSettings: systemSettingsRouter,
   treasury: treasuryRouter,
+  qualityRetentionReleases: qualityRetentionReleasesRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -39,6 +39,11 @@ const draftItemSchema = z.union([
     purchaseOrderAdvanceId: z.number().int().positive(),
     requestedAmount: z.number().positive().max(999_999_999),
   }),
+  z.object({
+    sourceType: z.literal("quality_retention_release"),
+    qualityRetentionReleaseId: z.number().int().positive(),
+    requestedAmount: z.number().positive().max(999_999_999),
+  }),
 ]);
 const adjustmentSchema = z.object({
   itemId: z.number().int().positive(),
@@ -171,14 +176,19 @@ function rethrowTreasuryError(error: unknown): never {
   if (
     databaseError?.code === "23505" &&
     (databaseError?.constraint === "treasury_item_active_invoice_unique" ||
-      databaseError?.constraint === "treasury_item_active_advance_unique")
+      databaseError?.constraint === "treasury_item_active_advance_unique" ||
+      databaseError?.constraint ===
+        "treasury_item_active_quality_release_unique")
   ) {
     throw new TRPCError({
       code: "CONFLICT",
       message:
         databaseError.constraint === "treasury_item_active_advance_unique"
           ? "Un anticipo seleccionado ya está reservado en otro lote activo."
-          : "Una factura seleccionada ya está reservada en otro lote activo.",
+          : databaseError.constraint ===
+              "treasury_item_active_quality_release_unique"
+            ? "Una liberación seleccionada ya está reservada en otro lote activo."
+            : "Una factura seleccionada ya está reservada en otro lote activo.",
     });
   }
   throw error;
@@ -284,6 +294,40 @@ export const treasuryRouter = router({
         }
       }
       return treasury.listEligibleTreasuryAdvances({
+        projectId: input.projectId,
+        currency: input.currency,
+        excludeBatchId: input.batchId,
+        projectIds: input.projectId ? undefined : getProjectScopeIds(ctx.user),
+      });
+    }),
+
+  eligibleQualityRetentionReleases: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.number().int().positive().optional(),
+        currency: currencySchema.optional(),
+        batchId: z.number().int().positive().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      await assertTreasuryAccess(ctx.user);
+      if (input.projectId && !canAccessProject(ctx.user, input.projectId)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a liberaciones de ese proyecto.",
+        });
+      }
+      if (input.batchId) {
+        const detail = await assertBatchAccess(ctx.user, input.batchId);
+        if (detail.batch.paymentKind !== "quality_retention_release") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "El lote solicitado no es de liberaciones de calidad.",
+          });
+        }
+      }
+      return treasury.listEligibleTreasuryQualityRetentionReleases({
         projectId: input.projectId,
         currency: input.currency,
         excludeBatchId: input.batchId,

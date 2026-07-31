@@ -14,6 +14,7 @@ export const RESET_DEMO_ATTACHMENT_ENTITY_TYPES = [
   "transfer",
   "receipt",
   "invoice",
+  "quality_retention_release",
   "treasury_payment_batch",
   "supplier",
 ] as const;
@@ -171,6 +172,10 @@ const COUNT_QUERIES: Array<{ key: string; query: string }> = [
     query: `SELECT count(*)::int AS "count" FROM "treasuryPaymentEvents"`,
   },
   {
+    key: "qualityRetentionReleases",
+    query: `SELECT count(*)::int AS "count" FROM "qualityRetentionReleases"`,
+  },
+  {
     key: "operativeNotifications",
     query: `SELECT count(*)::int AS "count" FROM "notifications" WHERE "type" <> 'sistema'`,
   },
@@ -229,6 +234,7 @@ const CLEANUP_STATEMENTS = [
   `DELETE FROM "treasuryPaymentEvents"`,
   `DELETE FROM "treasuryPaymentItems"`,
   `DELETE FROM "treasuryPaymentBatches"`,
+  `DELETE FROM "qualityRetentionReleases"`,
   `DELETE FROM "receiptItems"`,
   `DELETE FROM "receipts"`,
   `DELETE FROM "reverseLogisticsItems"`,

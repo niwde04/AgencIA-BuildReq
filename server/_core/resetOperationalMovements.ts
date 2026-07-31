@@ -15,6 +15,7 @@ export const RESET_OPERATIONAL_ATTACHMENT_ENTITY_TYPES = [
   "transfer",
   "receipt",
   "invoice",
+  "quality_retention_release",
   "treasury_payment_batch",
 ] as const;
 
@@ -178,6 +179,10 @@ const COUNT_QUERIES: Array<{ key: string; query: string }> = [
     query: `SELECT count(*)::int AS "count" FROM "treasuryPaymentEvents"`,
   },
   {
+    key: "qualityRetentionReleases",
+    query: `SELECT count(*)::int AS "count" FROM "qualityRetentionReleases"`,
+  },
+  {
     key: "invoiceItems",
     query: `SELECT count(*)::int AS "count" FROM "invoiceItems"`,
   },
@@ -240,6 +245,7 @@ const CLEANUP_STATEMENTS = [
   `DELETE FROM "treasuryPaymentEvents"`,
   `DELETE FROM "treasuryPaymentItems"`,
   `DELETE FROM "treasuryPaymentBatches"`,
+  `DELETE FROM "qualityRetentionReleases"`,
   `DELETE FROM "invoiceRetentions"`,
   `DELETE FROM "invoiceOtherCharges"`,
   `UPDATE "supplierFiscalDocumentRanges" SET "sourceInvoiceId" = NULL WHERE "sourceInvoiceId" IS NOT NULL`,

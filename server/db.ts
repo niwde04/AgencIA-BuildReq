@@ -495,6 +495,7 @@ type AttachmentEntityType =
   | "purchase_request"
   | "purchase_order"
   | "purchase_order_advance"
+  | "quality_retention_release"
   | "transfer_request"
   | "transfer"
   | "receipt"

@@ -12,6 +12,7 @@ type DocumentAttachmentEntityType =
   | "invoice"
   | "purchase_order"
   | "purchase_order_advance"
+  | "quality_retention_release"
   | "receipt"
   | "purchase_request"
   | "transfer_request"
@@ -118,7 +119,13 @@ export function DocumentAttachmentsPanel({
       attachments,
       isLoading: isLoading || processing || uploadMutation.isPending,
     });
-  }, [attachments, isLoading, onStateChange, processing, uploadMutation.isPending]);
+  }, [
+    attachments,
+    isLoading,
+    onStateChange,
+    processing,
+    uploadMutation.isPending,
+  ]);
 
   const handleFileChange = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -141,7 +148,9 @@ export function DocumentAttachmentsPanel({
       });
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "No se pudo preparar el archivo"
+        error instanceof Error
+          ? error.message
+          : "No se pudo preparar el archivo"
       );
     } finally {
       setProcessing(false);

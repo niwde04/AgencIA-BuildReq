@@ -19,6 +19,7 @@ import {
   purchaseOrderRequiresApproval,
 } from "@shared/procurement-approvals";
 import { listPurchaseOrderAdvances } from "../purchaseOrderAdvances";
+import { getQualityRetentionReleaseById } from "../qualityRetentionReleases";
 
 const PDF_MAX_BYTES = 10 * 1000 * 1000;
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
@@ -30,6 +31,7 @@ const attachmentEntityTypeSchema = z.enum([
   "purchase_request",
   "purchase_order",
   "purchase_order_advance",
+  "quality_retention_release",
   "transfer_request",
   "transfer",
   "receipt",
@@ -42,6 +44,7 @@ const documentAttachmentEntityTypeSchema = z.enum([
   "purchase_request",
   "purchase_order",
   "purchase_order_advance",
+  "quality_retention_release",
   "transfer_request",
   "receipt",
   "invoice",
@@ -785,11 +788,37 @@ async function assertDocumentAttachmentAccess(
     case "purchase_order":
       return assertPurchaseOrderAttachmentAccess(entityId, user, action);
     case "purchase_order_advance":
-      return assertPurchaseOrderAdvanceAttachmentAccess(
-        entityId,
-        user,
-        action
-      );
+      return assertPurchaseOrderAdvanceAttachmentAccess(entityId, user, action);
+    case "quality_retention_release": {
+      const detail = await getQualityRetentionReleaseById(entityId);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Liberación de retención no encontrada",
+        });
+      }
+      if (!canAccessProject(user, detail.invoice.projectId)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso al proyecto de esta liberación",
+        });
+      }
+      if (
+        action === "manage" &&
+        user.role !== "admin" &&
+        user.buildreqRole !== "administracion_central" &&
+        !(
+          user.buildreqRole === "administrador_proyecto" &&
+          detail.release.status === "pending_approval"
+        )
+      ) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No puede administrar adjuntos de esta liberación",
+        });
+      }
+      return;
+    }
     case "receipt":
       return assertReceiptAttachmentAccess(entityId, user, action);
     case "purchase_request":
@@ -960,7 +989,9 @@ export const attachmentsRouter = router({
           });
           result = replacement;
           replacedInvoiceAttachments = replacement.replacedAttachments;
-        } else if (isProcurementDocumentAttachmentEntityType(input.entityType)) {
+        } else if (
+          isProcurementDocumentAttachmentEntityType(input.entityType)
+        ) {
           result = await db.createProcurementDocumentAttachmentIfMutable({
             ...attachmentData,
             entityType: input.entityType,

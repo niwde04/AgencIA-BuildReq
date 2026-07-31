@@ -93,6 +93,7 @@ import {
   parseFixedAssetDetails,
   type FixedAssetDetail,
 } from "@shared/fixed-assets";
+import { QUALITY_RETENTION_RELEASE_STATUS_LABELS } from "@shared/quality-retention-releases";
 import {
   isAccountPaymentAllowedRetention,
   isMissingCpcRequiredRetention,
@@ -1518,6 +1519,11 @@ export default function Facturas() {
   const [rejectionComment, setRejectionComment] = useState("");
   const [correctionDialogOpen, setCorrectionDialogOpen] = useState(false);
   const [correctionReason, setCorrectionReason] = useState("");
+  const [qualityReleaseDialogOpen, setQualityReleaseDialogOpen] =
+    useState(false);
+  const [qualityReleaseAmount, setQualityReleaseAmount] = useState("");
+  const [qualityReleaseJustification, setQualityReleaseJustification] =
+    useState("");
   const [invoiceDraft, setInvoiceDraft] = useState<InvoiceDraft>({
     isFiscalDocument: true,
     cai: "",
@@ -1660,6 +1666,13 @@ export default function Facturas() {
     trpc.invoices.getById.useQuery(
       { id: selectedId ?? 0 },
       { enabled: selectedId !== null }
+    );
+  const { data: qualityReleaseOverview } =
+    trpc.qualityRetentionReleases.byInvoice.useQuery(
+      { invoiceId: selectedId ?? 0 },
+      {
+        enabled: selectedId !== null && detail?.invoice.status === "registrada",
+      }
     );
   const retentionPolicy =
     detail?.retentionPolicy ??
@@ -1871,6 +1884,22 @@ export default function Facturas() {
         }));
         void utils.invoices.invalidate();
         void utils.invoices.getById.invalidate({ id: variables.id });
+      },
+      onError: error => toast.error(getFriendlyMutationError(error.message)),
+    });
+  const requestQualityReleaseMutation =
+    trpc.qualityRetentionReleases.request.useMutation({
+      onSuccess: () => {
+        toast.success("Solicitud de liberación enviada");
+        setQualityReleaseDialogOpen(false);
+        setQualityReleaseAmount("");
+        setQualityReleaseJustification("");
+        if (selectedId) {
+          void utils.qualityRetentionReleases.byInvoice.invalidate({
+            invoiceId: selectedId,
+          });
+        }
+        void utils.qualityRetentionReleases.list.invalidate();
       },
       onError: error => toast.error(getFriendlyMutationError(error.message)),
     });
@@ -2895,6 +2924,14 @@ export default function Facturas() {
     Boolean(detail?.receipt) &&
     !isAccounted &&
     (isDraft || isReviewed);
+  const canRequestQualityRelease =
+    isAccounted &&
+    Boolean(qualityReleaseOverview?.adjustment) &&
+    (user?.role === "admin" || userRole === "administrador_proyecto") &&
+    Number(qualityReleaseOverview?.summary.availableAmount ?? 0) > 0 &&
+    !(qualityReleaseOverview?.releases ?? []).some(
+      release => release.status === "pending_approval"
+    );
   const replacementReceiptId = detail?.receipt?.replacementReceiptId ?? null;
   const invoiceSaveConfirmed =
     selectedId !== null && actionFeedback.invoiceSavedId === selectedId;
@@ -5182,6 +5219,121 @@ export default function Facturas() {
                             }))
                           }
                         />
+                        {isAccounted && qualityReleaseOverview?.adjustment ? (
+                          <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-3">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-semibold text-blue-950">
+                                  Liberación y pago posterior
+                                </p>
+                                <p className="mt-1 text-xs text-blue-800">
+                                  La liberación se paga por Tesorería sin
+                                  modificar el neto de esta factura.
+                                </p>
+                              </div>
+                              {canRequestQualityRelease ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => {
+                                    setQualityReleaseAmount(
+                                      Number(
+                                        qualityReleaseOverview.summary
+                                          .availableAmount
+                                      ).toFixed(2)
+                                    );
+                                    setQualityReleaseDialogOpen(true);
+                                  }}
+                                >
+                                  Solicitar liberación
+                                </Button>
+                              ) : null}
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-2 text-sm md:grid-cols-5">
+                              {[
+                                [
+                                  "Original",
+                                  qualityReleaseOverview.summary.originalAmount,
+                                ],
+                                [
+                                  "Solicitado",
+                                  qualityReleaseOverview.summary
+                                    .requestedAmount,
+                                ],
+                                [
+                                  "Aprobado",
+                                  qualityReleaseOverview.summary.approvedAmount,
+                                ],
+                                [
+                                  "Pagado",
+                                  qualityReleaseOverview.summary.paidAmount,
+                                ],
+                                [
+                                  "Saldo disponible",
+                                  qualityReleaseOverview.summary
+                                    .availableAmount,
+                                ],
+                              ].map(([label, value]) => (
+                                <div
+                                  key={String(label)}
+                                  className="rounded-md bg-white/80 p-2"
+                                >
+                                  <p className="text-xs text-muted-foreground">
+                                    {label}
+                                  </p>
+                                  <p className="font-semibold">
+                                    {formatSelectedInvoiceCurrency(
+                                      value as number
+                                    )}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                            {(qualityReleaseOverview.releases ?? []).length >
+                            0 ? (
+                              <div className="mt-3 space-y-2 border-t border-blue-200 pt-3">
+                                {qualityReleaseOverview.releases.map(
+                                  release => (
+                                    <div
+                                      key={release.id}
+                                      className="rounded-md bg-white/70 p-2"
+                                    >
+                                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                        <span>
+                                          Solicitud #{release.id} ·{" "}
+                                          {
+                                            QUALITY_RETENTION_RELEASE_STATUS_LABELS[
+                                              release.status
+                                            ]
+                                          }
+                                        </span>
+                                        <span className="font-semibold">
+                                          {formatSelectedInvoiceCurrency(
+                                            release.approvedAmount ??
+                                              release.requestedAmount
+                                          )}
+                                        </span>
+                                      </div>
+                                      <DocumentAttachmentsPanel
+                                        entityType="quality_retention_release"
+                                        entityId={release.id}
+                                        title="Respaldo opcional"
+                                        canManage={
+                                          release.status ===
+                                            "pending_approval" &&
+                                          (user?.role === "admin" ||
+                                            userRole ===
+                                              "administrador_proyecto")
+                                        }
+                                        className="mt-2"
+                                      />
+                                    </div>
+                                  )
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
                         <DocumentAdjustmentPercentageRow
                           label="Amortización de anticipo"
                           description="Deducción documental independiente del anticipo real de Tesorería."
@@ -6243,6 +6395,88 @@ export default function Facturas() {
               </aside>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={qualityReleaseDialogOpen}
+        onOpenChange={open => {
+          if (!open && !requestQualityReleaseMutation.isPending) {
+            setQualityReleaseDialogOpen(false);
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg rounded-2xl border-border/70">
+          <DialogHeader className="space-y-2">
+            <DialogTitle>Solicitar liberación de retención</DialogTitle>
+            <DialogDescription>
+              Administración Central autorizará el monto. Después quedará
+              disponible para un lote de Tesorería.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="quality-release-amount">Monto solicitado *</Label>
+            <Input
+              id="quality-release-amount"
+              type="number"
+              min="0.01"
+              step="0.01"
+              max={Number(qualityReleaseOverview?.summary.availableAmount ?? 0)}
+              value={qualityReleaseAmount}
+              disabled={requestQualityReleaseMutation.isPending}
+              onChange={event => setQualityReleaseAmount(event.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Disponible:{" "}
+              {formatSelectedInvoiceCurrency(
+                qualityReleaseOverview?.summary.availableAmount ?? 0
+              )}
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="quality-release-justification">
+              Justificación *
+            </Label>
+            <Textarea
+              id="quality-release-justification"
+              value={qualityReleaseJustification}
+              onChange={event =>
+                setQualityReleaseJustification(event.target.value)
+              }
+              rows={4}
+              maxLength={4000}
+              disabled={requestQualityReleaseMutation.isPending}
+              placeholder="Explique el cumplimiento y motivo de la liberación."
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setQualityReleaseDialogOpen(false)}
+              disabled={requestQualityReleaseMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                if (!selectedId) return;
+                requestQualityReleaseMutation.mutate({
+                  invoiceId: selectedId,
+                  requestedAmount: Number(qualityReleaseAmount),
+                  justification: qualityReleaseJustification,
+                });
+              }}
+              disabled={
+                requestQualityReleaseMutation.isPending ||
+                Number(qualityReleaseAmount) <= 0 ||
+                qualityReleaseJustification.trim().length < 5
+              }
+            >
+              {requestQualityReleaseMutation.isPending
+                ? "Enviando..."
+                : "Enviar solicitud"}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 

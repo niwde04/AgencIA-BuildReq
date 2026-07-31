@@ -66,6 +66,7 @@ import {
   TREASURY_BATCH_STATUS_CODES,
   TREASURY_BATCH_STATUS_LABELS,
   TREASURY_ITEM_STATUS_LABELS,
+  TREASURY_PAYMENT_KIND_LABELS,
   getTreasuryBatchStatusLabel,
   roundTreasuryMoney,
   type TreasuryBatchStatus,
@@ -897,6 +898,343 @@ function BatchFormDialog({
   );
 }
 
+function QualityReleaseBatchFormDialog({
+  open,
+  onOpenChange,
+  existing,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  existing?: any;
+  onSaved: (batchId: number) => void;
+}) {
+  const utils = trpc.useUtils();
+  const [projectId, setProjectId] = useState("");
+  const [currency, setCurrency] = useState<"HNL" | "USD">("HNL");
+  const [paymentDate, setPaymentDate] = useState(currentLocalDateInput());
+  const [notes, setNotes] = useState("");
+  const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [amounts, setAmounts] = useState<Record<number, string>>({});
+  const projectsQuery = trpc.projects.list.useQuery(
+    { status: "activo" },
+    { enabled: open }
+  );
+  const eligibleQuery = trpc.treasury.eligibleQualityRetentionReleases.useQuery(
+    {
+      projectId: projectId ? Number(projectId) : undefined,
+      currency,
+      batchId: existing?.batch?.id,
+    },
+    { enabled: open && Boolean(projectId) }
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    if (existing?.batch) {
+      setProjectId(String(existing.batch.projectId));
+      setCurrency(existing.batch.currency);
+      setPaymentDate(toDateInput(existing.batch.requestedPaymentDate));
+      setNotes(existing.batch.notes ?? "");
+      const included = (existing.items ?? []).filter(
+        (item: any) => item.status !== "excluida"
+      );
+      setSelectedIds(
+        new Set(included.map((item: any) => item.qualityRetentionReleaseId))
+      );
+      setAmounts(
+        Object.fromEntries(
+          included.map((item: any) => [
+            item.qualityRetentionReleaseId,
+            formatMoneyInputValue(item.requestedAmount),
+          ])
+        )
+      );
+    } else {
+      setProjectId("");
+      setCurrency("HNL");
+      setPaymentDate(currentLocalDateInput());
+      setNotes("");
+      setSearch("");
+      setSelectedIds(new Set());
+      setAmounts({});
+    }
+  }, [existing, open]);
+
+  const saveSuccess = async (data: any) => {
+    toast.success(
+      existing ? "Borrador actualizado" : "Lote de liberaciones creado"
+    );
+    await Promise.all([
+      utils.treasury.list.invalidate(),
+      utils.treasury.eligibleQualityRetentionReleases.invalidate(),
+      utils.qualityRetentionReleases.invalidate(),
+    ]);
+    onOpenChange(false);
+    onSaved(Number(data.id));
+  };
+  const createMutation = trpc.treasury.create.useMutation({
+    onSuccess: saveSuccess,
+    onError: error => toast.error(error.message),
+  });
+  const updateMutation = trpc.treasury.updateDraft.useMutation({
+    onSuccess: saveSuccess,
+    onError: error => toast.error(error.message),
+  });
+  const visibleRows = useMemo(() => {
+    const term = search.trim().toLocaleLowerCase("es-HN");
+    if (!term) return eligibleQuery.data ?? [];
+    return (eligibleQuery.data ?? []).filter((row: any) =>
+      [
+        row.supplier?.name,
+        row.supplier?.supplierCode,
+        row.invoice?.invoiceDocumentNumber,
+        row.invoice?.invoiceNumber,
+        row.project?.code,
+      ]
+        .join(" ")
+        .toLocaleLowerCase("es-HN")
+        .includes(term)
+    );
+  }, [eligibleQuery.data, search]);
+
+  function toggle(row: any, checked: boolean) {
+    const id = row.release.id;
+    setSelectedIds(current => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+    if (checked && !amounts[id]) {
+      setAmounts(current => ({
+        ...current,
+        [id]: formatMoneyInputValue(row.availableToPayAmount),
+      }));
+    }
+  }
+
+  function save() {
+    const items = Array.from(selectedIds).map(qualityRetentionReleaseId => ({
+      sourceType: "quality_retention_release" as const,
+      qualityRetentionReleaseId,
+      requestedAmount: Number(amounts[qualityRetentionReleaseId]),
+    }));
+    if (!projectId || !paymentDate || !items.length) {
+      toast.error("Seleccione proyecto, fecha y al menos una liberación.");
+      return;
+    }
+    if (
+      items.some(
+        item =>
+          !Number.isFinite(item.requestedAmount) || item.requestedAmount <= 0
+      )
+    ) {
+      toast.error("Todos los pagos deben ser mayores que cero.");
+      return;
+    }
+    const payload = { requestedPaymentDate: paymentDate, notes, items };
+    if (existing?.batch?.id) {
+      updateMutation.mutate({ id: existing.batch.id, ...payload });
+    } else {
+      createMutation.mutate({
+        projectId: Number(projectId),
+        currency,
+        paymentKind: "quality_retention_release",
+        ...payload,
+      });
+    }
+  }
+
+  const pending = createMutation.isPending || updateMutation.isPending;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="grid max-h-[96vh] w-[calc(100vw-1rem)] max-w-6xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0">
+        <DialogHeader className="border-b px-6 py-5 pr-14">
+          <DialogTitle>
+            {existing
+              ? "Editar lote"
+              : "Nueva liberación de retención de calidad"}
+          </DialogTitle>
+          <DialogDescription>
+            Seleccione solicitudes autorizadas. Un pago parcial conservará el
+            remanente para otro lote.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="min-h-0 space-y-4 overflow-y-auto px-6 py-5">
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="space-y-2">
+              <Label>Proyecto</Label>
+              <Select
+                value={projectId}
+                onValueChange={setProjectId}
+                disabled={Boolean(existing)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccione proyecto" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(projectsQuery.data ?? []).map((project: any) => (
+                    <SelectItem key={project.id} value={String(project.id)}>
+                      {project.code} - {project.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Moneda</Label>
+              <Select
+                value={currency}
+                onValueChange={value => setCurrency(value as "HNL" | "USD")}
+                disabled={Boolean(existing)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="HNL">HNL</SelectItem>
+                  <SelectItem value="USD">USD</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Fecha prevista</Label>
+              <Input
+                type="date"
+                value={paymentDate}
+                onChange={event => setPaymentDate(event.target.value)}
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Notas</Label>
+            <Textarea
+              value={notes}
+              onChange={event => setNotes(event.target.value)}
+              maxLength={2000}
+            />
+          </div>
+          <Input
+            placeholder="Buscar factura o proveedor"
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+          />
+          <div className="overflow-auto rounded-lg border">
+            <Table className="min-w-[1050px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10" />
+                  <TableHead>Factura</TableHead>
+                  <TableHead>Proveedor</TableHead>
+                  <TableHead className="text-right">
+                    Retenido original
+                  </TableHead>
+                  <TableHead className="text-right">Autorizado</TableHead>
+                  <TableHead className="text-right">Pagado</TableHead>
+                  <TableHead className="text-right">Saldo</TableHead>
+                  <TableHead className="w-40 text-right">
+                    Pago solicitado
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {eligibleQuery.isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="py-10 text-center">
+                      <Loader2 className="mx-auto h-5 w-5 animate-spin" />
+                    </TableCell>
+                  </TableRow>
+                ) : visibleRows.length ? (
+                  visibleRows.map((row: any) => {
+                    const checked = selectedIds.has(row.release.id);
+                    return (
+                      <TableRow
+                        key={row.release.id}
+                        data-state={checked ? "selected" : undefined}
+                      >
+                        <TableCell>
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={value =>
+                              toggle(row, value === true)
+                            }
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <div className="font-medium">
+                            {row.invoice.invoiceDocumentNumber}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {row.invoice.invoiceNumber || "Sin número fiscal"}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {row.supplier?.name || "Proveedor"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatMoney(row.adjustment.amount, currency)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatMoney(row.release.approvedAmount, currency)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatMoney(row.paidAmount, currency)}
+                        </TableCell>
+                        <TableCell className="text-right font-semibold">
+                          {formatMoney(row.availableToPayAmount, currency)}
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            className="text-right"
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            max={row.availableToPayAmount}
+                            disabled={!checked}
+                            value={amounts[row.release.id] ?? ""}
+                            onChange={event =>
+                              setAmounts(current => ({
+                                ...current,
+                                [row.release.id]: event.target.value,
+                              }))
+                            }
+                          />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                ) : (
+                  <TableRow>
+                    <TableCell
+                      colSpan={8}
+                      className="py-10 text-center text-muted-foreground"
+                    >
+                      {projectId
+                        ? "No hay liberaciones autorizadas disponibles."
+                        : "Seleccione un proyecto."}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+        <DialogFooter className="border-t px-6 py-4">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancelar
+          </Button>
+          <Button onClick={save} disabled={pending || !selectedIds.size}>
+            {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {existing ? "Guardar cambios" : "Crear borrador"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function AdvanceBatchFormDialog({
   open,
   onOpenChange,
@@ -1404,6 +1742,8 @@ function BatchDetailDialog({
   const detail = detailQuery.data;
   const batch = detail?.batch;
   const isAdvanceBatch = batch?.paymentKind === "purchase_order_advance";
+  const isQualityReleaseBatch =
+    batch?.paymentKind === "quality_retention_release";
   const status = batch?.status as TreasuryBatchStatus | undefined;
   const isCentral =
     user?.role === "admin" || user?.buildreqRole === "administracion_central";
@@ -1559,11 +1899,17 @@ function BatchDetailDialog({
               purchaseOrderAdvanceId: item.purchaseOrderAdvanceId,
               requestedAmount: Number(item.requestedAmount),
             }
-          : {
-              sourceType: "invoice" as const,
-              invoiceId: item.invoiceId,
-              requestedAmount: Number(item.requestedAmount),
-            }
+          : item.sourceType === "quality_retention_release"
+            ? {
+                sourceType: "quality_retention_release" as const,
+                qualityRetentionReleaseId: item.qualityRetentionReleaseId,
+                requestedAmount: Number(item.requestedAmount),
+              }
+            : {
+                sourceType: "invoice" as const,
+                invoiceId: item.invoiceId,
+                requestedAmount: Number(item.requestedAmount),
+              }
       ),
     });
   }
@@ -1650,7 +1996,12 @@ function BatchDetailDialog({
             {batch?.batchNumber || "Lote de Tesorería"}
             {batch && (
               <Badge variant="outline">
-                {isAdvanceBatch ? "Anticipo a proveedor" : "Pagos de facturas"}
+                {
+                  TREASURY_PAYMENT_KIND_LABELS[
+                    (batch.paymentKind ??
+                      "invoice") as keyof typeof TREASURY_PAYMENT_KIND_LABELS
+                  ]
+                }
               </Badge>
             )}
             {status && (
@@ -1784,7 +2135,11 @@ function BatchDetailDialog({
                     )}
                     <TableHead className="min-w-48">Proveedor</TableHead>
                     <TableHead className="min-w-40">
-                      {isAdvanceBatch ? "Anticipo" : "Factura"}
+                      {isAdvanceBatch
+                        ? "Anticipo"
+                        : isQualityReleaseBatch
+                          ? "Factura original"
+                          : "Factura"}
                     </TableHead>
                     <TableHead className="min-w-40">
                       {isAdvanceBatch ? "Orden de compra" : "Factura fiscal"}
@@ -1802,18 +2157,24 @@ function BatchDetailDialog({
                     </TableHead>
                     <TableHead className="text-right">Descuentos</TableHead>
                     <TableHead className="text-right">
-                      {isAdvanceBatch ? "Importe objetivo" : "Neto a pagar"}
+                      {isAdvanceBatch
+                        ? "Importe objetivo"
+                        : isQualityReleaseBatch
+                          ? "Monto liberado"
+                          : "Neto a pagar"}
                     </TableHead>
                     <TableHead className="text-right">
                       Anticipo aplicado
                     </TableHead>
                     <TableHead className="text-right">
-                      {isAdvanceBatch
+                      {isAdvanceBatch || isQualityReleaseBatch
                         ? "Pagos anteriores"
                         : "Abonos anteriores"}
                     </TableHead>
                     <TableHead className="text-right">
-                      {isAdvanceBatch ? "Pago" : "Abono"}
+                      {isAdvanceBatch || isQualityReleaseBatch
+                        ? "Pago"
+                        : "Abono"}
                     </TableHead>
                     <TableHead className="text-right">
                       Saldo pendiente
@@ -2548,8 +2909,12 @@ export default function Tesoreria() {
   const [advanceRequestOpen, setAdvanceRequestOpen] = useState(false);
   const [initialAdvance, setInitialAdvance] = useState<any>();
   const [formKind, setFormKind] = useState<
-    "invoice" | "purchase_order_advance"
+    "invoice" | "purchase_order_advance" | "quality_retention_release"
   >("invoice");
+  const [releaseDecision, setReleaseDecision] = useState<any>();
+  const [releaseDecisionApproved, setReleaseDecisionApproved] = useState(true);
+  const [releaseDecisionAmount, setReleaseDecisionAmount] = useState("");
+  const [releaseDecisionComment, setReleaseDecisionComment] = useState("");
   const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
   const [editingDetail, setEditingDetail] = useState<any>();
   const [selectedConsolidationBatchIds, setSelectedConsolidationBatchIds] =
@@ -2578,6 +2943,32 @@ export default function Tesoreria() {
         settingsQuery.data?.canAccess === true,
     }
   );
+  const qualityReleaseQueueQuery = trpc.qualityRetentionReleases.list.useQuery(
+    { statuses: ["pending_approval", "approved", "partially_paid"] },
+    {
+      enabled:
+        settingsQuery.data?.treasuryEnabled === true &&
+        settingsQuery.data?.canAccess === true,
+    }
+  );
+  const decideQualityReleaseMutation =
+    trpc.qualityRetentionReleases.decide.useMutation({
+      onSuccess: async () => {
+        toast.success(
+          releaseDecisionApproved
+            ? "Liberación aprobada"
+            : "Liberación rechazada"
+        );
+        setReleaseDecision(undefined);
+        setReleaseDecisionComment("");
+        await Promise.all([
+          utils.qualityRetentionReleases.invalidate(),
+          utils.treasury.eligibleQualityRetentionReleases.invalidate(),
+          utils.notifications.unreadCount.invalidate(),
+        ]);
+      },
+      onError: error => toast.error(error.message),
+    });
   const consolidateMutation = trpc.treasury.consolidateForApproval.useMutation({
     onSuccess: async data => {
       setSelectedConsolidationBatchIds(new Set());
@@ -2908,6 +3299,18 @@ export default function Tesoreria() {
               onClick={() => {
                 setEditingDetail(undefined);
                 setInitialAdvance(undefined);
+                setFormKind("quality_retention_release");
+                setFormOpen(true);
+              }}
+            >
+              <CheckCircle2 className="mr-2 h-4 w-4" /> Liberar retención de
+              calidad
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditingDetail(undefined);
+                setInitialAdvance(undefined);
                 setFormKind("purchase_order_advance");
                 setFormOpen(true);
               }}
@@ -2935,6 +3338,141 @@ export default function Tesoreria() {
           </AlertDescription>
         </Alert>
       )}
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg">Retenciones de calidad</CardTitle>
+          <CardDescription>
+            Solicitudes pendientes de autorización y liberaciones disponibles
+            para pago.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-auto rounded-lg border">
+            <Table className="min-w-[1050px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Factura</TableHead>
+                  <TableHead>Proveedor</TableHead>
+                  <TableHead>Proyecto</TableHead>
+                  <TableHead>Estado</TableHead>
+                  <TableHead className="text-right">Retenido</TableHead>
+                  <TableHead className="text-right">Solicitado</TableHead>
+                  <TableHead className="text-right">Aprobado</TableHead>
+                  <TableHead className="text-right">Pagado</TableHead>
+                  <TableHead className="text-right">Saldo</TableHead>
+                  <TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {qualityReleaseQueueQuery.isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={10} className="py-10 text-center">
+                      <Loader2 className="mx-auto h-5 w-5 animate-spin" />
+                    </TableCell>
+                  </TableRow>
+                ) : (qualityReleaseQueueQuery.data ?? []).length ? (
+                  (qualityReleaseQueueQuery.data ?? []).map((row: any) => (
+                    <TableRow key={row.release.id}>
+                      <TableCell>
+                        <div className="font-medium">
+                          {row.invoice.invoiceDocumentNumber}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {row.invoice.invoiceNumber || "Sin número fiscal"}
+                        </div>
+                      </TableCell>
+                      <TableCell>{row.supplier?.name || "Proveedor"}</TableCell>
+                      <TableCell>
+                        {row.project.code} - {row.project.name}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">
+                          {row.release.status === "pending_approval"
+                            ? "Pendiente de aprobación"
+                            : row.release.status === "partially_paid"
+                              ? "Parcialmente pagada"
+                              : "Aprobada"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatMoney(
+                          row.adjustment.amount,
+                          row.invoice.currency
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatMoney(
+                          row.release.requestedAmount,
+                          row.invoice.currency
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatMoney(
+                          row.release.approvedAmount,
+                          row.invoice.currency
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatMoney(row.paidAmount, row.invoice.currency)}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold">
+                        {formatMoney(
+                          row.availableToPayAmount,
+                          row.invoice.currency
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {row.release.status === "pending_approval" &&
+                        settingsQuery.data?.permissions.canDepurate ? (
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                setReleaseDecision(row);
+                                setReleaseDecisionApproved(true);
+                                setReleaseDecisionAmount(
+                                  formatMoneyInputValue(
+                                    row.release.requestedAmount
+                                  )
+                                );
+                                setReleaseDecisionComment("");
+                              }}
+                            >
+                              Aprobar
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => {
+                                setReleaseDecision(row);
+                                setReleaseDecisionApproved(false);
+                                setReleaseDecisionAmount("");
+                                setReleaseDecisionComment("");
+                              }}
+                            >
+                              Rechazar
+                            </Button>
+                          </div>
+                        ) : null}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell
+                      colSpan={10}
+                      className="py-10 text-center text-muted-foreground"
+                    >
+                      No hay solicitudes o liberaciones activas.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="pb-3">
@@ -3221,9 +3759,12 @@ export default function Tesoreria() {
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline">
-                          {row.batch.paymentKind === "purchase_order_advance"
-                            ? "Anticipo a proveedor"
-                            : "Factura"}
+                          {
+                            TREASURY_PAYMENT_KIND_LABELS[
+                              (row.batch.paymentKind ??
+                                "invoice") as keyof typeof TREASURY_PAYMENT_KIND_LABELS
+                            ]
+                          }
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -3321,6 +3862,13 @@ export default function Tesoreria() {
           initialAdvance={initialAdvance}
           onSaved={id => setSelectedBatchId(id)}
         />
+      ) : formKind === "quality_retention_release" ? (
+        <QualityReleaseBatchFormDialog
+          open={formOpen}
+          onOpenChange={setFormOpen}
+          existing={editingDetail}
+          onSaved={id => setSelectedBatchId(id)}
+        />
       ) : (
         <BatchFormDialog
           open={formOpen}
@@ -3350,6 +3898,79 @@ export default function Tesoreria() {
           setFormOpen(true);
         }}
       />
+      <Dialog
+        open={Boolean(releaseDecision)}
+        onOpenChange={open => !open && setReleaseDecision(undefined)}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {releaseDecisionApproved
+                ? "Aprobar liberación"
+                : "Rechazar liberación"}
+            </DialogTitle>
+            <DialogDescription>
+              {releaseDecisionApproved
+                ? "Puede autorizar un monto igual o menor al solicitado; la diferencia volverá al saldo disponible."
+                : "Indique el motivo del rechazo."}
+            </DialogDescription>
+          </DialogHeader>
+          {releaseDecisionApproved ? (
+            <div className="space-y-2">
+              <Label>Monto aprobado</Label>
+              <Input
+                type="number"
+                min="0.01"
+                step="0.01"
+                max={Number(releaseDecision?.release?.requestedAmount ?? 0)}
+                value={releaseDecisionAmount}
+                onChange={event => setReleaseDecisionAmount(event.target.value)}
+              />
+            </div>
+          ) : null}
+          <div className="space-y-2">
+            <Label>Comentario *</Label>
+            <Textarea
+              rows={4}
+              maxLength={4000}
+              value={releaseDecisionComment}
+              onChange={event => setReleaseDecisionComment(event.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setReleaseDecision(undefined)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant={releaseDecisionApproved ? "default" : "destructive"}
+              disabled={
+                decideQualityReleaseMutation.isPending ||
+                releaseDecisionComment.trim().length < 5 ||
+                (releaseDecisionApproved && Number(releaseDecisionAmount) <= 0)
+              }
+              onClick={() =>
+                decideQualityReleaseMutation.mutate({
+                  releaseId: releaseDecision.release.id,
+                  approved: releaseDecisionApproved,
+                  approvedAmount: releaseDecisionApproved
+                    ? Number(releaseDecisionAmount)
+                    : undefined,
+                  comment: releaseDecisionComment,
+                })
+              }
+            >
+              {decideQualityReleaseMutation.isPending
+                ? "Guardando..."
+                : releaseDecisionApproved
+                  ? "Aprobar"
+                  : "Rechazar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -103,6 +103,7 @@ describe("reset-operational-movements", () => {
     expect(mutations).toEqual(
       expect.arrayContaining([
         `DELETE FROM "invoiceRetentions"`,
+        `DELETE FROM "qualityRetentionReleases"`,
         `DELETE FROM "invoiceOtherCharges"`,
         `UPDATE "supplierFiscalDocumentRanges" SET "sourceInvoiceId" = NULL WHERE "sourceInvoiceId" IS NOT NULL`,
         `DELETE FROM "invoiceItems"`,
@@ -120,9 +121,9 @@ describe("reset-operational-movements", () => {
     expect(mutations.some(query => query.includes('"projects"'))).toBe(false);
     expect(mutations.some(query => query.includes('"warehouses"'))).toBe(false);
     expect(mutations.some(query => query.includes('"users"'))).toBe(false);
-    expect(mutations.some(query => query.includes('"projectWarehouseAssignments"'))).toBe(
-      false
-    );
+    expect(
+      mutations.some(query => query.includes('"projectWarehouseAssignments"'))
+    ).toBe(false);
   });
 
   it("does not delete supplier attachments", () => {
@@ -134,6 +135,7 @@ describe("reset-operational-movements", () => {
     expect(attachmentDelete).toBeTruthy();
     expect(attachmentDelete).toContain("'invoice'");
     expect(attachmentDelete).toContain("'purchase_order'");
+    expect(attachmentDelete).toContain("'quality_retention_release'");
     expect(attachmentDelete).not.toContain("'supplier'");
   });
 
