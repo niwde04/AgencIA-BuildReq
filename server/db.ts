@@ -14526,6 +14526,32 @@ export async function replaceInvoiceDocumentAdjustments(
       }
     }
 
+    const subtotal = parseDecimal(invoice.subtotal);
+    const amountInputs = [
+      input.qualityRetentionAmount,
+      input.advanceAmortizationAmount,
+      input.promptPaymentAmount,
+    ];
+    for (const rawValue of amountInputs) {
+      if (
+        rawValue === undefined ||
+        rawValue === null ||
+        String(rawValue).trim() === ""
+      ) {
+        continue;
+      }
+      const value = Number(rawValue);
+      if (!Number.isFinite(value) || value < 0) {
+        throw new Error("Los montos deben ser mayores o iguales a cero");
+      }
+      if (Math.abs(value * 10000 - Math.round(value * 10000)) > 0.000001) {
+        throw new Error("Los montos aceptan como máximo cuatro decimales");
+      }
+      if (value - subtotal > 0.000001) {
+        throw new Error("El monto no puede exceder el subtotal de la factura");
+      }
+    }
+
     const items = await tx
       .select({
         taxCode: invoiceItems.taxCode,
@@ -14556,7 +14582,8 @@ export async function replaceInvoiceDocumentAdjustments(
       calculated.calculations.map(calculation => ({
         invoiceId,
         adjustmentType: calculation.adjustmentType,
-        percentage: calculation.percentage.toFixed(2),
+        inputMode: calculation.inputMode,
+        percentage: calculation.percentage.toFixed(8),
         baseAmount: toMoneyString4(calculation.baseAmount),
         amount: toMoneyString4(calculation.amount),
         updatedAt: new Date(),

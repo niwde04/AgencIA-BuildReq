@@ -9,6 +9,13 @@ describe("invoice document adjustments migration", () => {
     ),
     "utf8"
   );
+  const amountInputMigration = readFileSync(
+    new URL(
+      "../drizzle/0130_invoice_document_adjustment_amount_input.sql",
+      import.meta.url
+    ),
+    "utf8"
+  );
 
   it("adds aggregate invoice totals and the private adjustment table", () => {
     expect(migration).toContain('"otherRetentionTotal" numeric(14,4)');
@@ -33,5 +40,14 @@ describe("invoice document adjustments migration", () => {
     expect(migration).toContain(
       'REVOKE ALL ON TABLE "invoiceDocumentAdjustments" FROM anon, authenticated'
     );
+  });
+
+  it("supports amount-origin adjustments without rounding away the amount", () => {
+    expect(amountInputMigration).toContain('"inputMode" varchar(20)');
+    expect(amountInputMigration).toContain(
+      'ALTER COLUMN "percentage" TYPE numeric(11,8)'
+    );
+    expect(amountInputMigration).toContain('"invda_input_mode_check"');
+    expect(amountInputMigration).toContain('"invda_amount_within_base_check"');
   });
 });

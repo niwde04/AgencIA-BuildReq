@@ -21,24 +21,28 @@ describe("invoice document adjustments", () => {
     expect(result.calculations).toEqual([
       {
         adjustmentType: "quality_retention",
+        inputMode: "percentage",
         percentage: 5,
         baseAmount: 1000,
         amount: 50,
       },
       {
         adjustmentType: "advance_amortization",
+        inputMode: "percentage",
         percentage: 10,
         baseAmount: 1000,
         amount: 100,
       },
       {
         adjustmentType: "prompt_payment_discount",
+        inputMode: "percentage",
         percentage: 2,
         baseAmount: 1000,
         amount: 20,
       },
       {
         adjustmentType: "tc_discount",
+        inputMode: "percentage",
         percentage: 8,
         baseAmount: 150,
         amount: 12,
@@ -130,8 +134,42 @@ describe("invoice document adjustments", () => {
     });
 
     expect(result.calculations[0]).toMatchObject({
+      inputMode: "percentage",
       percentage: 1.24,
       amount: 1.5309,
     });
+  });
+
+  it("keeps an entered amount exact and derives its percentage", () => {
+    const result = calculateInvoiceDocumentAdjustments({
+      subtotal: 137676,
+      baseIsvAmount: 0,
+      input: {
+        qualityRetentionPercent: 99,
+        qualityRetentionAmount: 10000,
+      },
+    });
+
+    expect(result.calculations[0]).toEqual({
+      adjustmentType: "quality_retention",
+      inputMode: "amount",
+      percentage: 7.26343008,
+      baseAmount: 137676,
+      amount: 10000,
+    });
+    expect(result.otherRetentionTotal).toBe(10000);
+  });
+
+  it("treats an entered zero amount as disabled even when a percentage exists", () => {
+    const result = calculateInvoiceDocumentAdjustments({
+      subtotal: 1000,
+      baseIsvAmount: 0,
+      input: {
+        advanceAmortizationPercent: 10,
+        advanceAmortizationAmount: 0,
+      },
+    });
+
+    expect(result.calculations).toEqual([]);
   });
 });

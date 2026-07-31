@@ -84,6 +84,38 @@ describe("invoice document adjustment endpoint", () => {
     expect(replaceSpy).toHaveBeenCalledOnce();
   });
 
+  it("accepts amounts as the authoritative input for editable rows", async () => {
+    vi.spyOn(db, "getInvoiceById").mockResolvedValue(detail("borrador"));
+    const replaceSpy = vi
+      .spyOn(db, "replaceInvoiceDocumentAdjustments")
+      .mockResolvedValue({
+        invoice: { id: 10 },
+        documentAdjustments: [],
+      } as any);
+
+    await appRouter
+      .createCaller(createContext("administracion_central"))
+      .invoices.replaceDocumentAdjustments({
+        ...input,
+        qualityRetentionPercent: 0,
+        qualityRetentionAmount: 1234.5678,
+        advanceAmortizationPercent: 0,
+        advanceAmortizationAmount: 500,
+        promptPaymentPercent: 0,
+        promptPaymentAmount: 25.5,
+      });
+
+    expect(replaceSpy).toHaveBeenCalledWith(10, {
+      qualityRetentionPercent: 0,
+      qualityRetentionAmount: 1234.5678,
+      advanceAmortizationPercent: 0,
+      advanceAmortizationAmount: 500,
+      promptPaymentPercent: 0,
+      promptPaymentAmount: 25.5,
+      tcEnabled: true,
+    });
+  });
+
   it("blocks draft editors after review and blocks accounting before review", async () => {
     const getInvoiceSpy = vi.spyOn(db, "getInvoiceById");
     const replaceSpy = vi.spyOn(db, "replaceInvoiceDocumentAdjustments");
@@ -131,6 +163,14 @@ describe("invoice document adjustment endpoint", () => {
           qualityRetentionPercent: 101,
         })
     ).rejects.toThrow();
+    await expect(
+      appRouter
+        .createCaller(createContext("administracion_central"))
+        .invoices.replaceDocumentAdjustments({
+          ...input,
+          qualityRetentionAmount: 1.23456,
+        })
+    ).rejects.toThrow("cuatro decimales");
     expect(replaceSpy).not.toHaveBeenCalled();
   });
 });

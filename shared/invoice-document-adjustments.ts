@@ -12,13 +12,19 @@ export type InvoiceDocumentAdjustmentType =
 
 export type InvoiceDocumentAdjustmentInput = {
   qualityRetentionPercent?: string | number | null;
+  qualityRetentionAmount?: string | number | null;
   advanceAmortizationPercent?: string | number | null;
+  advanceAmortizationAmount?: string | number | null;
   promptPaymentPercent?: string | number | null;
+  promptPaymentAmount?: string | number | null;
   tcEnabled?: boolean | null;
 };
 
+export type InvoiceDocumentAdjustmentInputMode = "percentage" | "amount";
+
 export type InvoiceDocumentAdjustmentCalculation = {
   adjustmentType: InvoiceDocumentAdjustmentType;
+  inputMode: InvoiceDocumentAdjustmentInputMode;
   percentage: number;
   baseAmount: number;
   amount: number;
@@ -37,6 +43,14 @@ export function roundInvoiceAdjustmentMoney(value: number) {
 
 export function roundInvoiceAdjustmentPercent(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+export function roundInvoiceAdjustmentDerivedPercent(value: number) {
+  return Math.round((value + Number.EPSILON) * 100000000) / 100000000;
+}
+
+function hasInputValue(value: string | number | null | undefined) {
+  return value !== null && value !== undefined && String(value).trim() !== "";
 }
 
 export function getInvoiceBaseIsvAmount(
@@ -86,38 +100,59 @@ export function calculateInvoiceDocumentAdjustments(params: {
   );
   const calculations: InvoiceDocumentAdjustmentCalculation[] = [];
 
-  const addPercentageAdjustment = (
+  const addEditableAdjustment = (
     adjustmentType: InvoiceDocumentAdjustmentType,
-    percentageValue: string | number | null | undefined
+    percentageValue: string | number | null | undefined,
+    amountValue: string | number | null | undefined
   ) => {
+    if (hasInputValue(amountValue)) {
+      const amount = roundInvoiceAdjustmentMoney(numberValue(amountValue));
+      if (amount <= 0 || subtotal <= 0) return;
+      calculations.push({
+        adjustmentType,
+        inputMode: "amount",
+        percentage: roundInvoiceAdjustmentDerivedPercent(
+          (amount * 100) / subtotal
+        ),
+        baseAmount: subtotal,
+        amount,
+      });
+      return;
+    }
+
     const percentage = roundInvoiceAdjustmentPercent(
       numberValue(percentageValue)
     );
     if (percentage <= 0) return;
     calculations.push({
       adjustmentType,
+      inputMode: "percentage",
       percentage,
       baseAmount: subtotal,
       amount: roundInvoiceAdjustmentMoney((subtotal * percentage) / 100),
     });
   };
 
-  addPercentageAdjustment(
+  addEditableAdjustment(
     "quality_retention",
-    params.input.qualityRetentionPercent
+    params.input.qualityRetentionPercent,
+    params.input.qualityRetentionAmount
   );
-  addPercentageAdjustment(
+  addEditableAdjustment(
     "advance_amortization",
-    params.input.advanceAmortizationPercent
+    params.input.advanceAmortizationPercent,
+    params.input.advanceAmortizationAmount
   );
-  addPercentageAdjustment(
+  addEditableAdjustment(
     "prompt_payment_discount",
-    params.input.promptPaymentPercent
+    params.input.promptPaymentPercent,
+    params.input.promptPaymentAmount
   );
 
   if (params.input.tcEnabled) {
     calculations.push({
       adjustmentType: "tc_discount",
+      inputMode: "percentage",
       percentage: TC_DISCOUNT_PERCENT,
       baseAmount: baseIsvAmount,
       amount: roundInvoiceAdjustmentMoney(
@@ -169,6 +204,7 @@ export function calculateInvoiceNetPayable(params: {
 export function getInvoiceDocumentAdjustment(
   adjustments: Array<{
     adjustmentType: string;
+    inputMode?: InvoiceDocumentAdjustmentInputMode | string | null;
     percentage?: string | number | null;
     baseAmount?: string | number | null;
     amount?: string | number | null;

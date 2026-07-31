@@ -188,8 +188,14 @@ type InvoiceActionFeedback = {
 
 type DocumentAdjustmentDraft = {
   qualityRetentionPercent: string;
+  qualityRetentionAmount: string;
+  qualityRetentionInputMode: "percentage" | "amount";
   advanceAmortizationPercent: string;
+  advanceAmortizationAmount: string;
+  advanceAmortizationInputMode: "percentage" | "amount";
   promptPaymentPercent: string;
+  promptPaymentAmount: string;
+  promptPaymentInputMode: "percentage" | "amount";
   tcEnabled: boolean;
 };
 
@@ -585,18 +591,20 @@ function DocumentAdjustmentPercentageRow({
   baseAmount,
   percentage,
   amount,
+  currencySymbol,
   disabled,
-  formatCurrency,
   onPercentageChange,
+  onAmountChange,
 }: {
   label: string;
   description: string;
   baseAmount: number;
   percentage: string;
-  amount: number;
+  amount: string;
+  currencySymbol: string;
   disabled: boolean;
-  formatCurrency: (value: string | number | null | undefined) => string;
   onPercentageChange: (value: string) => void;
+  onAmountChange: (value: string) => void;
 }) {
   return (
     <div className="grid gap-3 rounded-lg border border-border/70 p-3 md:grid-cols-[minmax(220px,1fr)_150px_130px_150px] md:items-end">
@@ -607,7 +615,10 @@ function DocumentAdjustmentPercentageRow({
       <div className="space-y-1.5">
         <Label>Base</Label>
         <Input
-          value={formatCurrency(baseAmount)}
+          value={`${currencySymbol} ${baseAmount.toLocaleString("es-HN", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 4,
+          })}`}
           disabled
           className="text-right disabled:cursor-default disabled:opacity-100"
         />
@@ -633,11 +644,22 @@ function DocumentAdjustmentPercentageRow({
       </div>
       <div className="space-y-1.5">
         <Label>Monto</Label>
-        <Input
-          value={formatCurrency(amount)}
-          disabled
-          className="text-right font-semibold disabled:cursor-default disabled:opacity-100"
-        />
+        <div className="relative">
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+            {currencySymbol}
+          </span>
+          <Input
+            type="number"
+            min="0"
+            max={baseAmount}
+            step="0.0001"
+            inputMode="decimal"
+            value={amount}
+            disabled={disabled}
+            onChange={event => onAmountChange(event.target.value)}
+            className="pl-8 text-right font-semibold"
+          />
+        </div>
       </div>
     </div>
   );
@@ -713,10 +735,26 @@ function formatMoneyInput(value: string | number | null | undefined) {
 }
 
 function formatDocumentAdjustmentPercent(
+  value: string | number | null | undefined,
+  maximumFractionDigits = 2
+) {
+  const parsed = toMoneyNumber(value);
+  if (parsed <= 0) return "";
+  const [whole, fraction = ""] = parsed
+    .toFixed(maximumFractionDigits)
+    .split(".");
+  const normalizedFraction = fraction.replace(/0+$/, "").padEnd(2, "0");
+  return normalizedFraction ? `${whole}.${normalizedFraction}` : whole;
+}
+
+function formatDocumentAdjustmentAmount(
   value: string | number | null | undefined
 ) {
   const parsed = toMoneyNumber(value);
-  return parsed > 0 ? parsed.toFixed(2) : "";
+  if (parsed <= 0) return "";
+  const [whole, fraction = ""] = parsed.toFixed(4).split(".");
+  const normalizedFraction = fraction.replace(/0+$/, "").padEnd(2, "0");
+  return normalizedFraction ? `${whole}.${normalizedFraction}` : whole;
 }
 
 function parseDocumentAdjustmentPercent(value: string, label: string) {
@@ -732,6 +770,29 @@ function parseDocumentAdjustmentPercent(value: string, label: string) {
     return null;
   }
   return percentage;
+}
+
+function parseDocumentAdjustmentAmount(
+  value: string,
+  label: string,
+  baseAmount: number
+) {
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+  if (!/^\d+(?:\.\d{0,4})?$/.test(trimmed)) {
+    toast.error(`${label} acepta como máximo cuatro decimales`);
+    return null;
+  }
+  const amount = Number(trimmed);
+  if (!Number.isFinite(amount) || amount < 0) {
+    toast.error(`${label} debe ser mayor o igual a cero`);
+    return null;
+  }
+  if (amount - baseAmount > 0.000001) {
+    toast.error(`${label} no puede exceder el subtotal de la factura`);
+    return null;
+  }
+  return roundMoney(amount);
 }
 
 function parseTaxBreakdown(value: unknown) {
@@ -1575,8 +1636,14 @@ export default function Facturas() {
   const [documentAdjustmentDraft, setDocumentAdjustmentDraft] =
     useState<DocumentAdjustmentDraft>({
       qualityRetentionPercent: "",
+      qualityRetentionAmount: "",
+      qualityRetentionInputMode: "percentage",
       advanceAmortizationPercent: "",
+      advanceAmortizationAmount: "",
+      advanceAmortizationInputMode: "percentage",
       promptPaymentPercent: "",
+      promptPaymentAmount: "",
+      promptPaymentInputMode: "percentage",
       tcEnabled: false,
     });
   const [actionFeedback, setActionFeedback] = useState<InvoiceActionFeedback>({
@@ -2052,19 +2119,49 @@ export default function Facturas() {
       setRetentionDrafts(storedRetentionDrafts);
     }
     const adjustments = detail.documentAdjustments ?? [];
+    const qualityRetention = getInvoiceDocumentAdjustment(
+      adjustments,
+      "quality_retention"
+    );
+    const advanceAmortization = getInvoiceDocumentAdjustment(
+      adjustments,
+      "advance_amortization"
+    );
+    const promptPayment = getInvoiceDocumentAdjustment(
+      adjustments,
+      "prompt_payment_discount"
+    );
+    const qualityRetentionInputMode =
+      qualityRetention?.inputMode === "amount" ? "amount" : "percentage";
+    const advanceAmortizationInputMode =
+      advanceAmortization?.inputMode === "amount" ? "amount" : "percentage";
+    const promptPaymentInputMode =
+      promptPayment?.inputMode === "amount" ? "amount" : "percentage";
     setDocumentAdjustmentDraft({
       qualityRetentionPercent: formatDocumentAdjustmentPercent(
-        getInvoiceDocumentAdjustment(adjustments, "quality_retention")
-          ?.percentage
+        qualityRetention?.percentage,
+        qualityRetentionInputMode === "amount" ? 8 : 2
       ),
+      qualityRetentionAmount: formatDocumentAdjustmentAmount(
+        qualityRetention?.amount
+      ),
+      qualityRetentionInputMode,
       advanceAmortizationPercent: formatDocumentAdjustmentPercent(
-        getInvoiceDocumentAdjustment(adjustments, "advance_amortization")
-          ?.percentage
+        advanceAmortization?.percentage,
+        advanceAmortizationInputMode === "amount" ? 8 : 2
       ),
+      advanceAmortizationAmount: formatDocumentAdjustmentAmount(
+        advanceAmortization?.amount
+      ),
+      advanceAmortizationInputMode,
       promptPaymentPercent: formatDocumentAdjustmentPercent(
-        getInvoiceDocumentAdjustment(adjustments, "prompt_payment_discount")
-          ?.percentage
+        promptPayment?.percentage,
+        promptPaymentInputMode === "amount" ? 8 : 2
       ),
+      promptPaymentAmount: formatDocumentAdjustmentAmount(
+        promptPayment?.amount
+      ),
+      promptPaymentInputMode,
       tcEnabled: Boolean(
         getInvoiceDocumentAdjustment(adjustments, "tc_discount")
       ),
@@ -2247,10 +2344,30 @@ export default function Facturas() {
     subtotal: detail?.invoice.subtotal,
     baseIsvAmount: documentBaseIsvAmount,
     input: {
-      qualityRetentionPercent: documentAdjustmentDraft.qualityRetentionPercent,
+      qualityRetentionPercent:
+        documentAdjustmentDraft.qualityRetentionInputMode === "percentage"
+          ? documentAdjustmentDraft.qualityRetentionPercent
+          : undefined,
+      qualityRetentionAmount:
+        documentAdjustmentDraft.qualityRetentionInputMode === "amount"
+          ? documentAdjustmentDraft.qualityRetentionAmount
+          : undefined,
       advanceAmortizationPercent:
-        documentAdjustmentDraft.advanceAmortizationPercent,
-      promptPaymentPercent: documentAdjustmentDraft.promptPaymentPercent,
+        documentAdjustmentDraft.advanceAmortizationInputMode === "percentage"
+          ? documentAdjustmentDraft.advanceAmortizationPercent
+          : undefined,
+      advanceAmortizationAmount:
+        documentAdjustmentDraft.advanceAmortizationInputMode === "amount"
+          ? documentAdjustmentDraft.advanceAmortizationAmount
+          : undefined,
+      promptPaymentPercent:
+        documentAdjustmentDraft.promptPaymentInputMode === "percentage"
+          ? documentAdjustmentDraft.promptPaymentPercent
+          : undefined,
+      promptPaymentAmount:
+        documentAdjustmentDraft.promptPaymentInputMode === "amount"
+          ? documentAdjustmentDraft.promptPaymentAmount
+          : undefined,
       tcEnabled: documentAdjustmentDraft.tcEnabled,
     },
   });
@@ -2273,33 +2390,39 @@ export default function Facturas() {
   const otherRetentionTotal = documentAdjustmentPreview.otherRetentionTotal;
   const documentDiscountTotal = documentAdjustmentPreview.documentDiscountTotal;
   const storedDocumentAdjustments = detail?.documentAdjustments ?? [];
+  const hasDocumentAdjustmentChanged = (
+    adjustmentType: Parameters<typeof getInvoiceDocumentAdjustment>[1]
+  ) => {
+    const previewAdjustment = getInvoiceDocumentAdjustment(
+      documentAdjustmentPreview.calculations,
+      adjustmentType
+    );
+    const storedAdjustment = getInvoiceDocumentAdjustment(
+      storedDocumentAdjustments,
+      adjustmentType
+    );
+    if (!previewAdjustment || !storedAdjustment) {
+      return Boolean(previewAdjustment) !== Boolean(storedAdjustment);
+    }
+    const storedInputMode =
+      storedAdjustment.inputMode === "amount" ? "amount" : "percentage";
+    return (
+      previewAdjustment.inputMode !== storedInputMode ||
+      Math.abs(
+        Number(previewAdjustment.percentage) -
+          Number(storedAdjustment.percentage ?? 0)
+      ) > 0.00000001 ||
+      Math.abs(
+        Number(previewAdjustment.amount) - Number(storedAdjustment.amount ?? 0)
+      ) > 0.00001
+    );
+  };
   const documentAdjustmentsDirty =
     Boolean(detail?.invoice) &&
-    (Number(documentAdjustmentDraft.qualityRetentionPercent || 0) !==
-      Number(
-        getInvoiceDocumentAdjustment(
-          storedDocumentAdjustments,
-          "quality_retention"
-        )?.percentage ?? 0
-      ) ||
-      Number(documentAdjustmentDraft.advanceAmortizationPercent || 0) !==
-        Number(
-          getInvoiceDocumentAdjustment(
-            storedDocumentAdjustments,
-            "advance_amortization"
-          )?.percentage ?? 0
-        ) ||
-      Number(documentAdjustmentDraft.promptPaymentPercent || 0) !==
-        Number(
-          getInvoiceDocumentAdjustment(
-            storedDocumentAdjustments,
-            "prompt_payment_discount"
-          )?.percentage ?? 0
-        ) ||
-      documentAdjustmentDraft.tcEnabled !==
-        Boolean(
-          getInvoiceDocumentAdjustment(storedDocumentAdjustments, "tc_discount")
-        ));
+    (hasDocumentAdjustmentChanged("quality_retention") ||
+      hasDocumentAdjustmentChanged("advance_amortization") ||
+      hasDocumentAdjustmentChanged("prompt_payment_discount") ||
+      hasDocumentAdjustmentChanged("tc_discount"));
   const withholdingBase = (detail?.items ?? [])
     .filter((item: any) => item.allowsTaxWithholding !== false)
     .reduce((sum: number, item: any) => sum + toNumber(item.subtotal), 0);
@@ -3480,29 +3603,71 @@ export default function Facturas() {
 
   const handleSaveDocumentAdjustments = () => {
     if (!selectedId) return;
-    const qualityRetentionPercent = parseDocumentAdjustmentPercent(
-      documentAdjustmentDraft.qualityRetentionPercent,
-      "Retención de calidad"
-    );
-    if (qualityRetentionPercent === null) return;
-    const advanceAmortizationPercent = parseDocumentAdjustmentPercent(
-      documentAdjustmentDraft.advanceAmortizationPercent,
-      "Amortización de anticipo"
-    );
-    if (advanceAmortizationPercent === null) return;
-    const promptPaymentPercent = parseDocumentAdjustmentPercent(
-      documentAdjustmentDraft.promptPaymentPercent,
-      "Pronto pago"
-    );
-    if (promptPaymentPercent === null) return;
+    const subtotal = toMoneyNumber(detail?.invoice.subtotal);
+    const qualityRetentionPercent =
+      documentAdjustmentDraft.qualityRetentionInputMode === "percentage"
+        ? parseDocumentAdjustmentPercent(
+            documentAdjustmentDraft.qualityRetentionPercent,
+            "Retención de calidad"
+          )
+        : 0;
+    const qualityRetentionAmount =
+      documentAdjustmentDraft.qualityRetentionInputMode === "amount"
+        ? parseDocumentAdjustmentAmount(
+            documentAdjustmentDraft.qualityRetentionAmount,
+            "El monto de retención de calidad",
+            subtotal
+          )
+        : undefined;
+    if (qualityRetentionPercent === null || qualityRetentionAmount === null)
+      return;
+    const advanceAmortizationPercent =
+      documentAdjustmentDraft.advanceAmortizationInputMode === "percentage"
+        ? parseDocumentAdjustmentPercent(
+            documentAdjustmentDraft.advanceAmortizationPercent,
+            "Amortización de anticipo"
+          )
+        : 0;
+    const advanceAmortizationAmount =
+      documentAdjustmentDraft.advanceAmortizationInputMode === "amount"
+        ? parseDocumentAdjustmentAmount(
+            documentAdjustmentDraft.advanceAmortizationAmount,
+            "El monto de amortización de anticipo",
+            subtotal
+          )
+        : undefined;
+    if (
+      advanceAmortizationPercent === null ||
+      advanceAmortizationAmount === null
+    )
+      return;
+    const promptPaymentPercent =
+      documentAdjustmentDraft.promptPaymentInputMode === "percentage"
+        ? parseDocumentAdjustmentPercent(
+            documentAdjustmentDraft.promptPaymentPercent,
+            "Pronto pago"
+          )
+        : 0;
+    const promptPaymentAmount =
+      documentAdjustmentDraft.promptPaymentInputMode === "amount"
+        ? parseDocumentAdjustmentAmount(
+            documentAdjustmentDraft.promptPaymentAmount,
+            "El monto de pronto pago",
+            subtotal
+          )
+        : undefined;
+    if (promptPaymentPercent === null || promptPaymentAmount === null) return;
 
     const calculated = calculateInvoiceDocumentAdjustments({
-      subtotal: detail?.invoice.subtotal,
+      subtotal,
       baseIsvAmount: documentBaseIsvAmount,
       input: {
         qualityRetentionPercent,
+        qualityRetentionAmount,
         advanceAmortizationPercent,
+        advanceAmortizationAmount,
         promptPaymentPercent,
+        promptPaymentAmount,
         tcEnabled: documentAdjustmentDraft.tcEnabled,
       },
     });
@@ -3526,8 +3691,11 @@ export default function Facturas() {
     replaceDocumentAdjustmentsMutation.mutate({
       id: selectedId,
       qualityRetentionPercent,
+      qualityRetentionAmount,
       advanceAmortizationPercent,
+      advanceAmortizationAmount,
       promptPaymentPercent,
+      promptPaymentAmount,
       tcEnabled: documentAdjustmentDraft.tcEnabled,
     });
   };
@@ -5205,17 +5373,40 @@ export default function Facturas() {
                           description="Porcentaje contractual retenido por calidad."
                           baseAmount={toMoneyNumber(detail.invoice.subtotal)}
                           percentage={
-                            documentAdjustmentDraft.qualityRetentionPercent
+                            documentAdjustmentDraft.qualityRetentionInputMode ===
+                            "amount"
+                              ? documentAdjustmentDraft.qualityRetentionAmount.trim()
+                                ? formatDocumentAdjustmentPercent(
+                                    qualityRetentionAdjustment?.percentage,
+                                    8
+                                  )
+                                : ""
+                              : documentAdjustmentDraft.qualityRetentionPercent
                           }
-                          amount={toMoneyNumber(
-                            qualityRetentionAdjustment?.amount
+                          amount={
+                            documentAdjustmentDraft.qualityRetentionInputMode ===
+                            "amount"
+                              ? documentAdjustmentDraft.qualityRetentionAmount
+                              : formatDocumentAdjustmentAmount(
+                                  qualityRetentionAdjustment?.amount
+                                )
+                          }
+                          currencySymbol={getPurchaseCurrencySymbol(
+                            selectedInvoiceCurrency
                           )}
                           disabled={!canEditDocumentAdjustments}
-                          formatCurrency={formatSelectedInvoiceCurrency}
                           onPercentageChange={value =>
                             updateDocumentAdjustmentDraft(current => ({
                               ...current,
                               qualityRetentionPercent: value,
+                              qualityRetentionInputMode: "percentage",
+                            }))
+                          }
+                          onAmountChange={value =>
+                            updateDocumentAdjustmentDraft(current => ({
+                              ...current,
+                              qualityRetentionAmount: value,
+                              qualityRetentionInputMode: "amount",
                             }))
                           }
                         />
@@ -5339,17 +5530,40 @@ export default function Facturas() {
                           description="Deducción documental independiente del anticipo real de Tesorería."
                           baseAmount={toMoneyNumber(detail.invoice.subtotal)}
                           percentage={
-                            documentAdjustmentDraft.advanceAmortizationPercent
+                            documentAdjustmentDraft.advanceAmortizationInputMode ===
+                            "amount"
+                              ? documentAdjustmentDraft.advanceAmortizationAmount.trim()
+                                ? formatDocumentAdjustmentPercent(
+                                    advanceAmortizationAdjustment?.percentage,
+                                    8
+                                  )
+                                : ""
+                              : documentAdjustmentDraft.advanceAmortizationPercent
                           }
-                          amount={toMoneyNumber(
-                            advanceAmortizationAdjustment?.amount
+                          amount={
+                            documentAdjustmentDraft.advanceAmortizationInputMode ===
+                            "amount"
+                              ? documentAdjustmentDraft.advanceAmortizationAmount
+                              : formatDocumentAdjustmentAmount(
+                                  advanceAmortizationAdjustment?.amount
+                                )
+                          }
+                          currencySymbol={getPurchaseCurrencySymbol(
+                            selectedInvoiceCurrency
                           )}
                           disabled={!canEditDocumentAdjustments}
-                          formatCurrency={formatSelectedInvoiceCurrency}
                           onPercentageChange={value =>
                             updateDocumentAdjustmentDraft(current => ({
                               ...current,
                               advanceAmortizationPercent: value,
+                              advanceAmortizationInputMode: "percentage",
+                            }))
+                          }
+                          onAmountChange={value =>
+                            updateDocumentAdjustmentDraft(current => ({
+                              ...current,
+                              advanceAmortizationAmount: value,
+                              advanceAmortizationInputMode: "amount",
                             }))
                           }
                         />
@@ -5370,17 +5584,40 @@ export default function Facturas() {
                           description="Porcentaje variable calculado sobre el subtotal."
                           baseAmount={toMoneyNumber(detail.invoice.subtotal)}
                           percentage={
-                            documentAdjustmentDraft.promptPaymentPercent
+                            documentAdjustmentDraft.promptPaymentInputMode ===
+                            "amount"
+                              ? documentAdjustmentDraft.promptPaymentAmount.trim()
+                                ? formatDocumentAdjustmentPercent(
+                                    promptPaymentAdjustment?.percentage,
+                                    8
+                                  )
+                                : ""
+                              : documentAdjustmentDraft.promptPaymentPercent
                           }
-                          amount={toMoneyNumber(
-                            promptPaymentAdjustment?.amount
+                          amount={
+                            documentAdjustmentDraft.promptPaymentInputMode ===
+                            "amount"
+                              ? documentAdjustmentDraft.promptPaymentAmount
+                              : formatDocumentAdjustmentAmount(
+                                  promptPaymentAdjustment?.amount
+                                )
+                          }
+                          currencySymbol={getPurchaseCurrencySymbol(
+                            selectedInvoiceCurrency
                           )}
                           disabled={!canEditDocumentAdjustments}
-                          formatCurrency={formatSelectedInvoiceCurrency}
                           onPercentageChange={value =>
                             updateDocumentAdjustmentDraft(current => ({
                               ...current,
                               promptPaymentPercent: value,
+                              promptPaymentInputMode: "percentage",
+                            }))
+                          }
+                          onAmountChange={value =>
+                            updateDocumentAdjustmentDraft(current => ({
+                              ...current,
+                              promptPaymentAmount: value,
+                              promptPaymentInputMode: "amount",
                             }))
                           }
                         />

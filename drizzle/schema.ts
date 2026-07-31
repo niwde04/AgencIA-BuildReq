@@ -1977,7 +1977,11 @@ export const invoiceDocumentAdjustments = pgTable(
     adjustmentType: varchar("adjustmentType", { length: 40 })
       .$type<InvoiceDocumentAdjustmentType>()
       .notNull(),
-    percentage: decimal("percentage", { precision: 5, scale: 2 }).notNull(),
+    inputMode: varchar("inputMode", { length: 20 })
+      .$type<"percentage" | "amount">()
+      .default("percentage")
+      .notNull(),
+    percentage: decimal("percentage", { precision: 11, scale: 8 }).notNull(),
     baseAmount: decimal("baseAmount", { precision: 14, scale: 4 }).notNull(),
     amount: decimal("amount", { precision: 14, scale: 4 }).notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -1997,9 +2001,17 @@ export const invoiceDocumentAdjustments = pgTable(
       "invda_percentage_check",
       sql`${table.percentage} > 0 and ${table.percentage} <= 100`
     ),
+    inputModeCheck: check(
+      "invda_input_mode_check",
+      sql`${table.inputMode} in ('percentage', 'amount') and (${table.adjustmentType} <> 'tc_discount' or ${table.inputMode} = 'percentage')`
+    ),
     amountCheck: check(
       "invda_amount_check",
       sql`${table.baseAmount} >= 0 and ${table.amount} >= 0`
+    ),
+    amountWithinBaseCheck: check(
+      "invda_amount_within_base_check",
+      sql`${table.amount} <= ${table.baseAmount}`
     ),
   })
 );

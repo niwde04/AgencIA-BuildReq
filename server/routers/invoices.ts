@@ -470,6 +470,15 @@ const documentAdjustmentPercentageSchema = z
     "El porcentaje acepta como máximo dos decimales"
   );
 
+const documentAdjustmentAmountSchema = z
+  .number()
+  .min(0)
+  .refine(
+    value => Math.abs(value * 10000 - Math.round(value * 10000)) < 0.000001,
+    "El monto acepta como máximo cuatro decimales"
+  )
+  .optional();
+
 const fixedAssetDetailSchema = z.object({
   serialNumber: z.string().trim().max(120),
   condition: z.enum(ASSET_CONDITION_VALUES),
@@ -1383,8 +1392,11 @@ export const invoicesRouter = router({
       z.object({
         id: z.number().int().positive(),
         qualityRetentionPercent: documentAdjustmentPercentageSchema,
+        qualityRetentionAmount: documentAdjustmentAmountSchema,
         advanceAmortizationPercent: documentAdjustmentPercentageSchema,
+        advanceAmortizationAmount: documentAdjustmentAmountSchema,
         promptPaymentPercent: documentAdjustmentPercentageSchema,
+        promptPaymentAmount: documentAdjustmentAmountSchema,
         tcEnabled: z.boolean(),
       })
     )
@@ -1408,8 +1420,17 @@ export const invoicesRouter = router({
       try {
         return await db.replaceInvoiceDocumentAdjustments(input.id, {
           qualityRetentionPercent: input.qualityRetentionPercent,
+          ...(input.qualityRetentionAmount !== undefined
+            ? { qualityRetentionAmount: input.qualityRetentionAmount }
+            : {}),
           advanceAmortizationPercent: input.advanceAmortizationPercent,
+          ...(input.advanceAmortizationAmount !== undefined
+            ? { advanceAmortizationAmount: input.advanceAmortizationAmount }
+            : {}),
           promptPaymentPercent: input.promptPaymentPercent,
+          ...(input.promptPaymentAmount !== undefined
+            ? { promptPaymentAmount: input.promptPaymentAmount }
+            : {}),
           tcEnabled: input.tcEnabled,
         });
       } catch (error) {
