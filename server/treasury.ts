@@ -181,7 +181,7 @@ export function assertTreasuryBatchesCanBeConsolidated(
     new Set(batches.map(batch => batch.paymentKind ?? "invoice")).size !== 1
   ) {
     throw new TreasuryRuleError(
-      "No se pueden consolidar pagos de facturas con anticipos de OC."
+      "No se pueden consolidar pagos de facturas con anticipos a proveedores."
     );
   }
   return routing;
@@ -1231,7 +1231,7 @@ export async function getTreasuryPaymentDetailReport(batchId: number) {
         supplierName: paymentItem.supplierName,
         items: [
           {
-            itemName: `Anticipo de orden de compra ${
+            itemName: `Anticipo a proveedor ${
               paymentItem.orderNumber ?? paymentItem.invoiceNumber ?? ""
             }`.trim(),
           },
@@ -1311,7 +1311,7 @@ function resolveDraftPaymentKind(
   );
   if (inferredKinds.size !== 1) {
     throw new TreasuryRuleError(
-      "Un lote no puede mezclar facturas y anticipos de OC."
+      "Un lote no puede mezclar facturas y anticipos a proveedores."
     );
   }
   const inferredKind = Array.from(inferredKinds)[0] as TreasuryPaymentKind;
@@ -2404,7 +2404,7 @@ function buildBankWorkbook(
       [headers.itemId]: item.id,
       [headers.paymentKind]:
         detail.batch.paymentKind === "purchase_order_advance"
-          ? "ANTICIPO_OC"
+          ? "ANTICIPO_PROVEEDOR"
           : "FACTURA",
       [headers.project]: [
         item.invoiceProjectCode,

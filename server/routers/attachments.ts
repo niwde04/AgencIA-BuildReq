@@ -457,7 +457,7 @@ async function assertPurchaseOrderAdvanceAttachmentAccess(
   if (!detail) {
     throw new TRPCError({
       code: "NOT_FOUND",
-      message: "Anticipo de OC no encontrado",
+      message: "Anticipo a proveedor no encontrado",
     });
   }
   assertProjectScopedAccess(

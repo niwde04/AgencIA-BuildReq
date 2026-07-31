@@ -149,10 +149,10 @@ export function PurchaseOrderAdvanceDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Solicitar anticipo de OC</DialogTitle>
+          <DialogTitle>Solicitar anticipo a proveedor</DialogTitle>
           <DialogDescription>
             La solicitud quedará disponible para un lote exclusivo de
-            anticipos en Tesorería.
+            anticipos a proveedores en Tesorería.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">

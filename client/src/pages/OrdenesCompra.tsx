@@ -4176,7 +4176,7 @@ export default function OrdenesCompra() {
                     disabled={availableAdvanceRequestAmount <= 0}
                   >
                     <Plus className="mr-2 h-4 w-4" />
-                    Solicitar anticipo
+                    Solicitar anticipo a proveedor
                   </Button>
                 ) : null}
               </div>
@@ -6608,7 +6608,9 @@ export default function OrdenesCompra() {
                 <section className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-4 sm:p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h3 className="font-semibold">Anticipos de la OC</h3>
+                      <h3 className="font-semibold">
+                        Anticipos a proveedores
+                      </h3>
                       <p className="text-sm text-muted-foreground">
                         Solicitudes, pagos, contabilización y aplicación en
                         facturas.
@@ -6623,7 +6625,7 @@ export default function OrdenesCompra() {
                         disabled={availableAdvanceRequestAmount <= 0}
                       >
                         <Plus className="mr-2 h-4 w-4" />
-                        Nuevo anticipo
+                        Nuevo anticipo a proveedor
                       </Button>
                     ) : null}
                   </div>
@@ -6787,7 +6789,8 @@ export default function OrdenesCompra() {
                     </div>
                   ) : (
                     <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
-                      Esta OC todavía no tiene anticipos solicitados.
+                      Esta orden de compra todavía no tiene anticipos a
+                      proveedores solicitados.
                     </p>
                   )}
                 </section>

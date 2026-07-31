@@ -897,7 +897,7 @@ function AdvanceBatchFormDialog({
 
   const createMutation = trpc.treasury.create.useMutation({
     onSuccess: async data => {
-      toast.success("Lote de anticipos creado");
+      toast.success("Lote de anticipos a proveedores creado");
       await Promise.all([
         utils.treasury.list.invalidate(),
         utils.treasury.eligibleAdvances.invalidate(),
@@ -910,7 +910,7 @@ function AdvanceBatchFormDialog({
   });
   const updateMutation = trpc.treasury.updateDraft.useMutation({
     onSuccess: async data => {
-      toast.success("Borrador de anticipos actualizado");
+      toast.success("Borrador de anticipos a proveedores actualizado");
       await Promise.all([
         utils.treasury.list.invalidate(),
         utils.treasury.eligibleAdvances.invalidate(),
@@ -988,28 +988,30 @@ function AdvanceBatchFormDialog({
   const pending = createMutation.isPending || updateMutation.isPending;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="grid max-h-[94vh] max-w-6xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0">
+      <DialogContent className="grid max-h-[94vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:max-w-[calc(100vw-2rem)] xl:max-w-[1200px]">
         <DialogHeader className="border-b px-6 py-5">
           <DialogTitle>
             {existing
-              ? "Editar lote de anticipos"
-              : "Nuevo lote de anticipos de OC"}
+              ? "Editar lote de anticipos a proveedores"
+              : "Nuevo lote de anticipos a proveedores"}
           </DialogTitle>
           <DialogDescription>
             Seleccione solicitudes ANT disponibles. Cada lote contiene
-            únicamente anticipos y admite pagos parciales.
+            únicamente anticipos a proveedores y admite pagos parciales.
           </DialogDescription>
         </DialogHeader>
         <div className="min-h-0 space-y-5 overflow-y-auto px-6 py-5">
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="space-y-2">
+          <div className="grid gap-4 md:grid-cols-[minmax(20rem,2fr)_minmax(8rem,0.65fr)_minmax(12rem,0.9fr)]">
+            <div className="min-w-0 space-y-2">
               <Label>Proyecto</Label>
               <Select
                 value={projectId}
                 onValueChange={setProjectId}
                 disabled={Boolean(existing)}
               >
-                <SelectTrigger><SelectValue placeholder="Seleccione" /></SelectTrigger>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Seleccione" />
+                </SelectTrigger>
                 <SelectContent>
                   {projects.map((project: any) => (
                     <SelectItem key={project.id} value={String(project.id)}>
@@ -1028,7 +1030,9 @@ function AdvanceBatchFormDialog({
                 }
                 disabled={Boolean(existing)}
               >
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="HNL">HNL</SelectItem>
                   <SelectItem value="USD">USD</SelectItem>
@@ -1062,7 +1066,7 @@ function AdvanceBatchFormDialog({
             />
           </div>
           <div className="overflow-hidden rounded-lg border [&_[data-slot=table-container]]:max-h-[42vh] [&_[data-slot=table-container]]:overflow-auto">
-            <Table>
+            <Table className="min-w-[1080px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10" />
@@ -1566,7 +1570,7 @@ function BatchDetailDialog({
             {batch?.batchNumber || "Lote de Tesorería"}
             {batch && (
               <Badge variant="outline">
-                {isAdvanceBatch ? "Anticipos de OC" : "Pagos de facturas"}
+                {isAdvanceBatch ? "Anticipo a proveedor" : "Pagos de facturas"}
               </Badge>
             )}
             {status && (
@@ -2812,7 +2816,7 @@ export default function Tesoreria() {
                 setFormOpen(true);
               }}
             >
-              <Banknote className="mr-2 h-4 w-4" /> Anticipos de OC
+              <Banknote className="mr-2 h-4 w-4" /> Anticipo a proveedor
             </Button>
             <Button
               variant="outline"
@@ -3124,7 +3128,7 @@ export default function Tesoreria() {
                         <Badge variant="outline">
                           {row.batch.paymentKind ===
                           "purchase_order_advance"
-                            ? "Anticipo OC"
+                            ? "Anticipo a proveedor"
                             : "Factura"}
                         </Badge>
                       </TableCell>

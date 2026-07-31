@@ -12,7 +12,7 @@ export const TREASURY_PAYMENT_KIND_LABELS: Readonly<
   Record<TreasuryPaymentKind, string>
 > = {
   invoice: "Pago de facturas",
-  purchase_order_advance: "Anticipos de OC",
+  purchase_order_advance: "Anticipo a proveedor",
 };
 
 export const TREASURY_BATCH_STATUS_CODES = [
