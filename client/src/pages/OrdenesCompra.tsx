@@ -4,6 +4,7 @@ import { CompactProcurementApprovalPanel } from "@/components/CompactProcurement
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { downloadSystemPurchaseOrdersWorkbook } from "@/lib/dmc-export";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
+import { PurchaseOrderAdvanceDialog } from "@/components/PurchaseOrderAdvanceDialog";
 import {
   DocumentItemsAccordionPanel,
   DocumentItemsAccordionTrigger,
@@ -955,6 +956,7 @@ export default function OrdenesCompra() {
     userRole === "contable";
   const isProjectAdmin = userRole === "administrador_proyecto";
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [advanceDialogOpen, setAdvanceDialogOpen] = useState(false);
   const [expandedItemsId, setExpandedItemsId] = useState<number | null>(null);
   const [newOrderDialogOpen, setNewOrderDialogOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -1059,6 +1061,13 @@ export default function OrdenesCompra() {
     refetch: refetchDetail,
   } = trpc.purchaseOrders.getById.useQuery(
     { id: selectedId ?? 0 },
+    { enabled: Boolean(selectedId) }
+  );
+  const advancesQuery = trpc.purchaseOrderAdvances.list.useQuery(
+    {
+      purchaseOrderId: selectedId ?? undefined,
+      includeCancelled: true,
+    },
     { enabled: Boolean(selectedId) }
   );
   const {
@@ -1196,6 +1205,18 @@ export default function OrdenesCompra() {
     },
     onError: error => toast.error(error.message),
   });
+  const cancelAdvanceMutation =
+    trpc.purchaseOrderAdvances.cancel.useMutation({
+      onSuccess: async () => {
+        toast.success("Anticipo anulado");
+        await Promise.all([
+          advancesQuery.refetch(),
+          utils.purchaseOrderAdvances.eligiblePurchaseOrders.invalidate(),
+          utils.treasury.eligibleAdvances.invalidate(),
+        ]);
+      },
+      onError: error => toast.error(error.message),
+    });
 
   const submitForApprovalMutation =
     trpc.purchaseOrders.submitForApproval.useMutation({
@@ -1339,6 +1360,49 @@ export default function OrdenesCompra() {
     });
 
   const items = useMemo(() => detail?.items ?? [], [detail]);
+  const advances = advancesQuery.data ?? [];
+  const canManageAdvances =
+    !isProcurementApprover &&
+    (user?.role === "admin" ||
+      userRole === "administracion_central" ||
+      userRole === "administrador_proyecto");
+  const hasRegisteredReceipt = items.some(
+    (item: any) => Number(item.receivedQuantity ?? 0) > 0
+  );
+  const canRequestAdvance =
+    canManageAdvances &&
+    Boolean(detail) &&
+    ["emitida", "enviada"].includes(detail!.purchaseOrder.status) &&
+    !hasRegisteredReceipt;
+  const advanceTotals = advances
+    .filter((row: any) => !row.advance.cancelledAt)
+    .reduce(
+      (totals: any, row: any) => ({
+        requested: totals.requested + Number(row.money.requestedAmount ?? 0),
+        reserved: totals.reserved + Number(row.money.reservedAmount ?? 0),
+        paid:
+          totals.paid +
+          Number(row.money.accountedAmount ?? 0) +
+          Number(row.money.bankPaidPendingAmount ?? 0),
+        accounted:
+          totals.accounted + Number(row.money.accountedAmount ?? 0),
+        applied: totals.applied + Number(row.money.appliedAmount ?? 0),
+        pendingApply:
+          totals.pendingApply + Number(row.money.unappliedAmount ?? 0),
+      }),
+      {
+        requested: 0,
+        reserved: 0,
+        paid: 0,
+        accounted: 0,
+        applied: 0,
+        pendingApply: 0,
+      }
+    );
+  const availableAdvanceRequestAmount = Math.max(
+    0,
+    Number(detail?.summary.total ?? 0) - advanceTotals.requested
+  );
   const purchaseOrderSapCodes = useMemo(
     () =>
       Array.from(
@@ -3984,6 +4048,7 @@ export default function OrdenesCompra() {
             setOriginSearch("");
             setSelectedOriginId("");
             setSelectedId(null);
+            setAdvanceDialogOpen(false);
             setReplaceItemId(null);
             setReplacementSearch("");
             setSelectedSupplierId("");
@@ -4102,6 +4167,17 @@ export default function OrdenesCompra() {
                       </Badge>
                     ) : null}
                   </>
+                ) : null}
+                {canRequestAdvance && !isCompactApprovalView ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => setAdvanceDialogOpen(true)}
+                    disabled={availableAdvanceRequestAmount <= 0}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Solicitar anticipo
+                  </Button>
                 ) : null}
               </div>
             </div>
@@ -6529,6 +6605,193 @@ export default function OrdenesCompra() {
                   </details>
                 ) : null}
 
+                <section className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-4 sm:p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold">Anticipos de la OC</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Solicitudes, pagos, contabilización y aplicación en
+                        facturas.
+                      </p>
+                    </div>
+                    {canRequestAdvance ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setAdvanceDialogOpen(true)}
+                        disabled={availableAdvanceRequestAmount <= 0}
+                      >
+                        <Plus className="mr-2 h-4 w-4" />
+                        Nuevo anticipo
+                      </Button>
+                    ) : null}
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+                    {[
+                      ["Solicitado", advanceTotals.requested],
+                      ["Reservado", advanceTotals.reserved],
+                      ["Pagado", advanceTotals.paid],
+                      ["Contabilizado", advanceTotals.accounted],
+                      ["Aplicado", advanceTotals.applied],
+                      ["Pendiente de aplicar", advanceTotals.pendingApply],
+                    ].map(([label, value]) => (
+                      <div
+                        key={String(label)}
+                        className="rounded-xl border bg-background p-3"
+                      >
+                        <div className="text-xs text-muted-foreground">
+                          {String(label)}
+                        </div>
+                        <div className="mt-1 font-semibold tabular-nums">
+                          {formatPurchaseOrderCurrency(
+                            Number(value),
+                            detail.purchaseOrder.currency
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {advancesQuery.isLoading ? (
+                    <div className="py-6 text-center">
+                      <Loader2 className="mx-auto h-5 w-5 animate-spin" />
+                    </div>
+                  ) : advances.length ? (
+                    <div className="space-y-3">
+                      {advances.map((row: any) => {
+                        const canCancel =
+                          !row.advance.cancelledAt &&
+                          Number(row.money.reservedAmount ?? 0) <= 0 &&
+                          Number(row.money.bankPaidPendingAmount ?? 0) <= 0 &&
+                          Number(row.money.accountedAmount ?? 0) <= 0;
+                        return (
+                          <div
+                            key={row.advance.id}
+                            className="rounded-xl border bg-background p-4"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-semibold">
+                                    {row.advance.advanceNumber}
+                                  </span>
+                                  <Badge
+                                    variant={
+                                      row.advance.cancelledAt
+                                        ? "destructive"
+                                        : "secondary"
+                                    }
+                                  >
+                                    {row.advance.cancelledAt
+                                      ? "Anulado"
+                                      : String(row.money.status)
+                                          .replaceAll("_", " ")}
+                                  </Badge>
+                                </div>
+                                <div className="mt-1 text-sm text-muted-foreground">
+                                  {formatPurchaseOrderCurrency(
+                                    Number(row.advance.requestedAmount),
+                                    row.advance.currency
+                                  )}{" "}
+                                  · Pago previsto{" "}
+                                  {new Date(
+                                    row.advance.requestedPaymentDate
+                                  ).toLocaleDateString("es-HN")}
+                                </div>
+                                {row.advance.notes ? (
+                                  <p className="mt-2 text-sm">
+                                    {row.advance.notes}
+                                  </p>
+                                ) : null}
+                              </div>
+                              {canCancel && canManageAdvances ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={cancelAdvanceMutation.isPending}
+                                  onClick={() => {
+                                    const reason = window.prompt(
+                                      `Motivo para anular ${row.advance.advanceNumber}:`
+                                    );
+                                    if (!reason) return;
+                                    if (reason.trim().length < 5) {
+                                      toast.error(
+                                        "El motivo debe tener al menos 5 caracteres."
+                                      );
+                                      return;
+                                    }
+                                    cancelAdvanceMutation.mutate({
+                                      id: row.advance.id,
+                                      reason,
+                                    });
+                                  }}
+                                >
+                                  <XCircle className="mr-2 h-4 w-4" />
+                                  Anular
+                                </Button>
+                              ) : null}
+                            </div>
+                            <div className="mt-3 grid gap-2 text-sm sm:grid-cols-4">
+                              <span>
+                                Contabilizado:{" "}
+                                <strong>
+                                  {formatPurchaseOrderCurrency(
+                                    Number(row.money.accountedAmount),
+                                    row.advance.currency
+                                  )}
+                                </strong>
+                              </span>
+                              <span>
+                                Aplicado:{" "}
+                                <strong>
+                                  {formatPurchaseOrderCurrency(
+                                    Number(row.money.appliedAmount),
+                                    row.advance.currency
+                                  )}
+                                </strong>
+                              </span>
+                              <span>
+                                Pendiente aplicar:{" "}
+                                <strong>
+                                  {formatPurchaseOrderCurrency(
+                                    Number(row.money.unappliedAmount),
+                                    row.advance.currency
+                                  )}
+                                </strong>
+                              </span>
+                              <span>
+                                Saldo por pagar:{" "}
+                                <strong>
+                                  {formatPurchaseOrderCurrency(
+                                    Number(row.money.availableToPayAmount),
+                                    row.advance.currency
+                                  )}
+                                </strong>
+                              </span>
+                            </div>
+                            <DocumentAttachmentsPanel
+                              entityType="purchase_order_advance"
+                              entityId={row.advance.id}
+                              category="otro"
+                              title="Soportes del anticipo"
+                              canManage={
+                                canManageAdvances &&
+                                !row.advance.cancelledAt
+                              }
+                              className="mt-4"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+                      Esta OC todavía no tiene anticipos solicitados.
+                    </p>
+                  )}
+                </section>
+
                 <DocumentAttachmentsPanel
                   entityType="purchase_order"
                   entityId={detail.purchaseOrder.id}
@@ -6740,6 +7003,26 @@ export default function OrdenesCompra() {
           ) : null}
         </DialogContent>
       </Dialog>
+
+      {detail ? (
+        <PurchaseOrderAdvanceDialog
+          open={advanceDialogOpen}
+          onOpenChange={setAdvanceDialogOpen}
+          purchaseOrder={{
+            id: detail.purchaseOrder.id,
+            orderNumber: detail.purchaseOrder.orderNumber,
+            currency: detail.purchaseOrder.currency,
+            total: availableAdvanceRequestAmount,
+            supplierName: detail.supplier?.name,
+          }}
+          onSaved={() => {
+            void advancesQuery.refetch();
+            void utils.purchaseOrders.getById.invalidate({
+              id: detail.purchaseOrder.id,
+            });
+          }}
+        />
+      ) : null}
 
       <AlertDialog
         open={confirmState.kind !== null}

@@ -42,6 +42,8 @@ import {
   receiptItems,
   receiptOtherCharges,
   invoices,
+  purchaseOrderAdvanceApplications,
+  purchaseOrderAdvances,
   invoiceItems,
   invoiceOtherCharges,
   invoiceRetentions,
@@ -484,6 +486,7 @@ type AttachmentEntityType =
   | "reverse_logistic"
   | "purchase_request"
   | "purchase_order"
+  | "purchase_order_advance"
   | "transfer_request"
   | "transfer"
   | "receipt"
@@ -9245,7 +9248,7 @@ export async function updatePurchaseOrder(
   return { success: true };
 }
 
-export async function cancelPurchaseOrder(id: number) {
+export async function cancelPurchaseOrder(id: number, actorId: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
@@ -9275,6 +9278,9 @@ export async function cancelPurchaseOrder(id: number) {
         "No se puede cancelar una orden que ya tiene recepciones registradas"
       );
     }
+    const { assertPurchaseOrderCanBeCancelledWithAdvances } =
+      await import("./purchaseOrderAdvances");
+    await assertPurchaseOrderCanBeCancelledWithAdvances(tx, id, actorId);
 
     const approvalCondition =
       purchaseOrder.approvalStatus === null
@@ -12738,7 +12744,7 @@ export async function listDmcReportSourceInvoices(filters?: {
   const invoiceIds = rows.map(row => row.invoice.id);
   if (invoiceIds.length === 0) return [];
 
-  const [itemRows, retentionRows] = await Promise.all([
+  const [itemRows, retentionRows, advanceApplicationRows] = await Promise.all([
     db
       .select({
         item: invoiceItems,
@@ -12767,6 +12773,15 @@ export async function listDmcReportSourceInvoices(filters?: {
       .from(invoiceRetentions)
       .where(inArray(invoiceRetentions.invoiceId, invoiceIds))
       .orderBy(asc(invoiceRetentions.invoiceId), asc(invoiceRetentions.id)),
+    db
+      .select({
+        invoiceId: purchaseOrderAdvanceApplications.invoiceId,
+        amount: purchaseOrderAdvanceApplications.amount,
+      })
+      .from(purchaseOrderAdvanceApplications)
+      .where(
+        inArray(purchaseOrderAdvanceApplications.invoiceId, invoiceIds)
+      ),
   ]);
 
   const itemsByInvoiceId = new Map<number, typeof itemRows>();
@@ -12781,6 +12796,16 @@ export async function listDmcReportSourceInvoices(filters?: {
     const current = retentionsByInvoiceId.get(retention.invoiceId) ?? [];
     current.push(retention);
     retentionsByInvoiceId.set(retention.invoiceId, current);
+  });
+  const appliedAdvanceByInvoiceId = new Map<number, number>();
+  advanceApplicationRows.forEach(application => {
+    appliedAdvanceByInvoiceId.set(
+      application.invoiceId,
+      parseDecimal(
+        (appliedAdvanceByInvoiceId.get(application.invoiceId) ?? 0) +
+          parseDecimal(application.amount)
+      )
+    );
   });
 
   const directSourceItems = alias(requestItems, "dmc_direct_request_items");
@@ -12985,6 +13010,8 @@ export async function listDmcReportSourceInvoices(filters?: {
       total: invoice.total,
       retentionTotal: invoice.retentionTotal,
       netPayable: invoice.netPayable,
+      appliedAdvanceAmount:
+        appliedAdvanceByInvoiceId.get(invoice.id) ?? 0,
       receiptNumber: receipt?.receiptNumber ?? null,
       purchaseOrderNumber: purchaseOrder?.orderNumber ?? null,
       purchaseType: purchaseOrder?.purchaseType ?? null,
@@ -13266,7 +13293,8 @@ export async function getInvoiceById(id: number) {
     allowsTaxWithholding: rows[0].supplier?.allowsTaxWithholding,
   });
 
-  const [itemRows, retentions, otherCharges] = await Promise.all([
+  const [itemRows, retentions, otherCharges, advanceApplications] =
+    await Promise.all([
     db
       .select({
         item: invoiceItems,
@@ -13292,6 +13320,11 @@ export async function getInvoiceById(id: number) {
       .from(invoiceOtherCharges)
       .where(eq(invoiceOtherCharges.invoiceId, id))
       .orderBy(asc(invoiceOtherCharges.id)),
+    db
+      .select()
+      .from(purchaseOrderAdvanceApplications)
+      .where(eq(purchaseOrderAdvanceApplications.invoiceId, id))
+      .orderBy(asc(purchaseOrderAdvanceApplications.appliedAt)),
   ]);
   const items = itemRows.map(({ item, catalogAllowsTaxWithholding }) => ({
     ...item,
@@ -13352,6 +13385,13 @@ export async function getInvoiceById(id: number) {
     items: itemsWithFixedAssetArticles,
     retentions,
     otherCharges,
+    advanceApplications,
+    appliedAdvanceAmount: toMoneyString4(
+      advanceApplications.reduce(
+        (sum, application) => sum + parseDecimal(application.amount),
+        0
+      )
+    ),
     accountPaymentCertificate,
     retentionPolicy,
   };
@@ -13631,20 +13671,47 @@ export async function accountInvoice(params: {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  const now = new Date();
-  const [updated] = await db
-    .update(invoices)
-    .set({
-      status: "registrada",
-      accountedById: params.accountedById,
-      accountedAt: now,
-      accountingComment: params.accountingComment?.trim() || null,
-      updatedAt: now,
-    })
-    .where(eq(invoices.id, params.id))
-    .returning();
-
-  return updated;
+  return db.transaction(async tx => {
+    const now = new Date();
+    const [currentInvoice] = await tx
+      .select({ purchaseOrderId: invoices.purchaseOrderId })
+      .from(invoices)
+      .where(eq(invoices.id, params.id))
+      .limit(1);
+    if (currentInvoice) {
+      await tx
+        .select({ id: purchaseOrderAdvances.id })
+        .from(purchaseOrderAdvances)
+        .where(
+          eq(
+            purchaseOrderAdvances.purchaseOrderId,
+            currentInvoice.purchaseOrderId
+          )
+        )
+        .orderBy(asc(purchaseOrderAdvances.id))
+        .for("update");
+    }
+    const [updated] = await tx
+      .update(invoices)
+      .set({
+        status: "registrada",
+        accountedById: params.accountedById,
+        accountedAt: now,
+        accountingComment: params.accountingComment?.trim() || null,
+        updatedAt: now,
+      })
+      .where(eq(invoices.id, params.id))
+      .returning();
+    if (!updated) return updated;
+    const { applyAvailableAdvancesForPurchaseOrder } =
+      await import("./purchaseOrderAdvances");
+    await applyAvailableAdvancesForPurchaseOrder({
+      executor: tx,
+      purchaseOrderId: updated.purchaseOrderId,
+      actorId: params.accountedById,
+    });
+    return updated;
+  });
 }
 
 export async function rejectInvoiceFromAccounting(params: {

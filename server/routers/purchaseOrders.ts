@@ -2417,7 +2417,7 @@ export const purchaseOrdersRouter = router({
         });
       }
 
-      await db.cancelPurchaseOrder(input.id);
+      await db.cancelPurchaseOrder(input.id, ctx.user.id);
 
       if (detail.purchaseOrder.classification === "cd") {
         await releaseDirectPurchaseOrderItems({

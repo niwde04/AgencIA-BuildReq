@@ -11,6 +11,7 @@ import {
 type DocumentAttachmentEntityType =
   | "invoice"
   | "purchase_order"
+  | "purchase_order_advance"
   | "receipt"
   | "purchase_request"
   | "transfer_request"

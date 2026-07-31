@@ -186,6 +186,7 @@ describe("DMC report mapper", () => {
           total: "1400.0000",
           retentionTotal: "30.0000",
           netPayable: "1370.0000",
+          appliedAdvanceAmount: "225.0000",
           receiptNumber: "REC-2026-0001",
           purchaseOrderNumber: "OC-2026-0001",
           purchaseOrderPaymentMethod: "linea_credito",
@@ -310,6 +311,8 @@ describe("DMC report mapper", () => {
     expect(cementRow.baseIsv0).toBe(0);
     expect(serviceRow.baseIsv15).toBe(0);
     expect(serviceRow.baseIsv0).toBe(250);
+    expect(cementRow.anticipo).toBe(225);
+    expect(serviceRow.anticipo).toBe(225);
     expect(cementRow.isv15).toBe(150);
     expect(serviceRow.isv15).toBe(0);
     expect(

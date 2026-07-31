@@ -23,6 +23,8 @@ import type { FixedAssetDetail } from "../shared/fixed-assets";
 import type {
   TreasuryBatchStatus,
   TreasuryItemStatus,
+  TreasuryPaymentKind,
+  TreasuryPaymentSourceType,
 } from "../shared/treasury";
 
 // ============================================================
@@ -254,6 +256,14 @@ export const treasuryItemStatusEnum = pgEnum("treasury_item_status", [
   "con_diferencia",
   "contabilizada",
 ]);
+export const treasuryPaymentKindEnum = pgEnum("treasury_payment_kind", [
+  "invoice",
+  "purchase_order_advance",
+]);
+export const treasuryPaymentSourceTypeEnum = pgEnum(
+  "treasury_payment_source_type",
+  ["invoice", "purchase_order_advance"]
+);
 export const supplierContactTypeEnum = pgEnum("supplier_contact_type", [
   "ventas",
   "compras",
@@ -282,6 +292,7 @@ export const attachmentEntityTypeEnum = pgEnum("attachment_entity_type", [
   "transfer",
   "receipt",
   "invoice",
+  "purchase_order_advance",
   "supplier",
   "treasury_payment_batch",
 ]);
@@ -985,6 +996,82 @@ export type PurchaseOrderItem = typeof purchaseOrderItems.$inferSelect;
 export type InsertPurchaseOrderItem = typeof purchaseOrderItems.$inferInsert;
 
 // ============================================================
+// PURCHASE ORDER ADVANCES
+// ============================================================
+export const purchaseOrderAdvances = pgTable(
+  "purchaseOrderAdvances",
+  {
+    id: serial("id").primaryKey(),
+    advanceNumber: varchar("advanceNumber", { length: 64 }).notNull().unique(),
+    purchaseOrderId: integer("purchaseOrderId")
+      .notNull()
+      .references(() => purchaseOrders.id, { onDelete: "restrict" }),
+    projectId: integer("projectId")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    supplierId: integer("supplierId")
+      .notNull()
+      .references(() => suppliers.id, { onDelete: "restrict" }),
+    currency: varchar("currency", { length: 3 })
+      .$type<PurchaseCurrency>()
+      .notNull(),
+    requestedAmount: decimal("requestedAmount", {
+      precision: 14,
+      scale: 4,
+    }).notNull(),
+    requestedPaymentDate: date("requestedPaymentDate", {
+      mode: "date",
+    }).notNull(),
+    notes: text("notes"),
+    createdById: integer("createdById")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    cancelledById: integer("cancelledById").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    cancelledAt: timestamp("cancelledAt"),
+    cancellationReason: text("cancellationReason"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  table => ({
+    purchaseOrderIdx: index("po_advance_purchase_order_idx").on(
+      table.purchaseOrderId
+    ),
+    purchaseOrderStateIdx: index("po_advance_purchase_order_state_idx").on(
+      table.purchaseOrderId,
+      table.cancelledAt
+    ),
+    projectIdx: index("po_advance_project_idx").on(table.projectId),
+    supplierIdx: index("po_advance_supplier_idx").on(table.supplierId),
+    createdIdx: index("po_advance_created_idx").on(
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
+    currencyCheck: check(
+      "po_advance_currency_check",
+      sql`${table.currency} in ('HNL', 'USD')`
+    ),
+    amountCheck: check(
+      "po_advance_amount_check",
+      sql`${table.requestedAmount} > 0`
+    ),
+    cancellationCheck: check(
+      "po_advance_cancellation_check",
+      sql`(
+        (${table.cancelledAt} is null and ${table.cancelledById} is null and ${table.cancellationReason} is null)
+        or
+        (${table.cancelledAt} is not null and ${table.cancelledById} is not null and length(btrim(${table.cancellationReason})) >= 5)
+      )`
+    ),
+  })
+);
+
+export type PurchaseOrderAdvance = typeof purchaseOrderAdvances.$inferSelect;
+export type InsertPurchaseOrderAdvance =
+  typeof purchaseOrderAdvances.$inferInsert;
+
+// ============================================================
 // TRANSFER REQUESTS / TRANSFERS
 // ============================================================
 export const transferRequests = pgTable(
@@ -1428,6 +1515,43 @@ export const invoices = pgTable(
 export type Invoice = typeof invoices.$inferSelect;
 export type InsertInvoice = typeof invoices.$inferInsert;
 
+export const purchaseOrderAdvanceApplications = pgTable(
+  "purchaseOrderAdvanceApplications",
+  {
+    id: serial("id").primaryKey(),
+    purchaseOrderAdvanceId: integer("purchaseOrderAdvanceId")
+      .notNull()
+      .references(() => purchaseOrderAdvances.id, { onDelete: "restrict" }),
+    invoiceId: integer("invoiceId")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "restrict" }),
+    amount: decimal("amount", { precision: 14, scale: 4 }).notNull(),
+    appliedById: integer("appliedById")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    appliedAt: timestamp("appliedAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => ({
+    advanceIdx: index("po_advance_application_advance_idx").on(
+      table.purchaseOrderAdvanceId
+    ),
+    invoiceIdx: index("po_advance_application_invoice_idx").on(table.invoiceId),
+    advanceInvoiceUnique: uniqueIndex(
+      "po_advance_application_advance_invoice_unique"
+    ).on(table.purchaseOrderAdvanceId, table.invoiceId),
+    amountCheck: check(
+      "po_advance_application_amount_check",
+      sql`${table.amount} > 0`
+    ),
+  })
+);
+
+export type PurchaseOrderAdvanceApplication =
+  typeof purchaseOrderAdvanceApplications.$inferSelect;
+export type InsertPurchaseOrderAdvanceApplication =
+  typeof purchaseOrderAdvanceApplications.$inferInsert;
+
 // ============================================================
 // TREASURY - Supplier payment batches and partial payments
 // ============================================================
@@ -1470,6 +1594,10 @@ export const treasuryPaymentBatches = pgTable(
     requestedPaymentDate: date("requestedPaymentDate", {
       mode: "date",
     }).notNull(),
+    paymentKind: treasuryPaymentKindEnum("paymentKind")
+      .$type<TreasuryPaymentKind>()
+      .default("invoice")
+      .notNull(),
     status: treasuryBatchStatusEnum("status")
       .$type<TreasuryBatchStatus>()
       .default("borrador")
@@ -1554,9 +1682,17 @@ export const treasuryPaymentItems = pgTable(
     batchId: integer("batchId")
       .notNull()
       .references(() => treasuryPaymentBatches.id, { onDelete: "cascade" }),
-    invoiceId: integer("invoiceId")
-      .notNull()
-      .references(() => invoices.id, { onDelete: "restrict" }),
+    sourceType: treasuryPaymentSourceTypeEnum("sourceType")
+      .$type<TreasuryPaymentSourceType>()
+      .default("invoice")
+      .notNull(),
+    invoiceId: integer("invoiceId").references(() => invoices.id, {
+      onDelete: "restrict",
+    }),
+    purchaseOrderAdvanceId: integer("purchaseOrderAdvanceId").references(
+      () => purchaseOrderAdvances.id,
+      { onDelete: "restrict" }
+    ),
     supplierId: integer("supplierId").references(() => suppliers.id, {
       onDelete: "set null",
     }),
@@ -1574,6 +1710,12 @@ export const treasuryPaymentItems = pgTable(
       scale: 4,
     }).notNull(),
     previousPaidAmount: decimal("previousPaidAmount", {
+      precision: 14,
+      scale: 4,
+    })
+      .default("0.0000")
+      .notNull(),
+    appliedAdvanceAmount: decimal("appliedAdvanceAmount", {
       precision: 14,
       scale: 4,
     })
@@ -1610,21 +1752,43 @@ export const treasuryPaymentItems = pgTable(
   table => ({
     batchIdx: index("treasury_item_batch_idx").on(table.batchId),
     invoiceIdx: index("treasury_item_invoice_idx").on(table.invoiceId),
+    advanceIdx: index("treasury_item_advance_idx").on(
+      table.purchaseOrderAdvanceId
+    ),
     statusIdx: index("treasury_item_status_idx").on(table.status),
     batchInvoiceUnique: uniqueIndex("treasury_item_batch_invoice_unique").on(
       table.batchId,
       table.invoiceId
     ),
+    batchAdvanceUnique: uniqueIndex("treasury_item_batch_advance_unique").on(
+      table.batchId,
+      table.purchaseOrderAdvanceId
+    ),
     activeInvoiceUnique: uniqueIndex("treasury_item_active_invoice_unique")
       .on(table.invoiceId)
-      .where(sql`${table.activeReservation} = true`),
+      .where(
+        sql`${table.activeReservation} = true and ${table.sourceType} = 'invoice'`
+      ),
+    activeAdvanceUnique: uniqueIndex("treasury_item_active_advance_unique")
+      .on(table.purchaseOrderAdvanceId)
+      .where(
+        sql`${table.activeReservation} = true and ${table.sourceType} = 'purchase_order_advance'`
+      ),
     currencyCheck: check(
       "treasury_item_currency_check",
       sql`${table.currency} in ('HNL', 'USD')`
     ),
     amountCheck: check(
       "treasury_item_amount_check",
-      sql`${table.requestedAmount} > 0 and ${table.invoiceNetPayable} > 0`
+      sql`${table.requestedAmount} > 0 and ${table.invoiceNetPayable} > 0 and ${table.previousPaidAmount} >= 0 and ${table.appliedAdvanceAmount} >= 0`
+    ),
+    sourceCheck: check(
+      "treasury_item_source_check",
+      sql`(
+        (${table.sourceType} = 'invoice' and ${table.invoiceId} is not null and ${table.purchaseOrderAdvanceId} is null)
+        or
+        (${table.sourceType} = 'purchase_order_advance' and ${table.invoiceId} is null and ${table.purchaseOrderAdvanceId} is not null)
+      )`
     ),
   })
 );

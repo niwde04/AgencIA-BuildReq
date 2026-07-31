@@ -146,6 +146,7 @@ export type DmcReportSourceInvoice = {
   total?: string | number | null;
   retentionTotal?: string | number | null;
   netPayable?: string | number | null;
+  appliedAdvanceAmount?: string | number | null;
   receiptNumber?: string | null;
   purchaseOrderNumber?: string | null;
   purchaseType?: string | null;
@@ -506,7 +507,7 @@ function buildInvoiceRow(
     baseIsv18: taxes.baseIsv18,
     baseIsv4: taxes.baseIsv4,
     baseIsv0,
-    anticipo: null,
+    anticipo: money(invoice.appliedAdvanceAmount),
     noComprobanteRetencion: invoice.retentionReceiptNumber ?? "",
     fechaComprobanteRetencion: null,
     criterioRetIsr1: retentions.criterioRetIsr1,

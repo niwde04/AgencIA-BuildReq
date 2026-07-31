@@ -12638,7 +12638,7 @@ describe("BuildReq - Purchase Orders", () => {
       "en_espera",
       4
     );
-    expect(cancelPurchaseOrderSpy).toHaveBeenCalledWith(4);
+    expect(cancelPurchaseOrderSpy).toHaveBeenCalledWith(4, 4);
 
     getPurchaseOrderByIdSpy.mockRestore();
     getRequestItemByIdSpy.mockRestore();
@@ -12694,7 +12694,7 @@ describe("BuildReq - Purchase Orders", () => {
       -100
     );
     expect(syncPurchaseRequestConversionStatusSpy).toHaveBeenCalledWith(35);
-    expect(cancelPurchaseOrderSpy).toHaveBeenCalledWith(8);
+    expect(cancelPurchaseOrderSpy).toHaveBeenCalledWith(8, 4);
 
     getPurchaseOrderByIdSpy.mockRestore();
     cancelPurchaseOrderSpy.mockRestore();

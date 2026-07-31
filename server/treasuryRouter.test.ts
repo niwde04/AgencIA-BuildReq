@@ -147,6 +147,65 @@ describe("treasury draft permissions", () => {
       })
     );
   });
+
+  it("creates an advance-only batch with the discriminated source", async () => {
+    mockDisabledApprovalSettings();
+    const createSpy = vi
+      .spyOn(treasury, "createTreasuryBatch")
+      .mockResolvedValue({ id: 71 } as any);
+    const caller = appRouter.createCaller(
+      createTreasuryContext("administracion_central")
+    );
+
+    await caller.treasury.create({
+      projectId: 1,
+      currency: "HNL",
+      paymentKind: "purchase_order_advance",
+      requestedPaymentDate: "2026-07-31",
+      items: [
+        {
+          sourceType: "purchase_order_advance",
+          purchaseOrderAdvanceId: 90,
+          requestedAmount: 250,
+        },
+      ],
+    });
+
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentKind: "purchase_order_advance",
+        items: [
+          {
+            sourceType: "purchase_order_advance",
+            purchaseOrderAdvanceId: 90,
+            requestedAmount: 250,
+          },
+        ],
+      })
+    );
+  });
+
+  it("lists eligible advances separately from invoices", async () => {
+    mockDisabledApprovalSettings();
+    const listSpy = vi
+      .spyOn(treasury, "listEligibleTreasuryAdvances")
+      .mockResolvedValue([] as any);
+    const caller = appRouter.createCaller(
+      createTreasuryContext("administracion_central")
+    );
+
+    await caller.treasury.eligibleAdvances({
+      projectId: 1,
+      currency: "HNL",
+    });
+
+    expect(listSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 1,
+        currency: "HNL",
+      })
+    );
+  });
 });
 
 describe("treasury invoice summary report", () => {

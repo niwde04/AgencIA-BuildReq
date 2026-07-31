@@ -18,6 +18,7 @@ import {
   isPurchaseRequestDraftLike,
   purchaseOrderRequiresApproval,
 } from "@shared/procurement-approvals";
+import { listPurchaseOrderAdvances } from "../purchaseOrderAdvances";
 
 const PDF_MAX_BYTES = 10 * 1000 * 1000;
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
@@ -28,6 +29,7 @@ const attachmentEntityTypeSchema = z.enum([
   "reverse_logistic",
   "purchase_request",
   "purchase_order",
+  "purchase_order_advance",
   "transfer_request",
   "transfer",
   "receipt",
@@ -39,6 +41,7 @@ const documentAttachmentEntityTypeSchema = z.enum([
   "material_request",
   "purchase_request",
   "purchase_order",
+  "purchase_order_advance",
   "transfer_request",
   "receipt",
   "invoice",
@@ -442,6 +445,56 @@ async function assertPurchaseOrderAttachmentAccess(
   }
 }
 
+async function assertPurchaseOrderAdvanceAttachmentAccess(
+  id: number,
+  user: BuildReqUser,
+  action: "view" | "manage"
+) {
+  const [detail] = await listPurchaseOrderAdvances({
+    advanceId: id,
+    includeCancelled: true,
+  });
+  if (!detail) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Anticipo de OC no encontrado",
+    });
+  }
+  assertProjectScopedAccess(
+    user,
+    detail.advance.projectId,
+    "No tiene acceso a adjuntos de anticipos de otro proyecto"
+  );
+  const canUseTreasury =
+    user.role === "admin" ||
+    [
+      "administracion_central",
+      "administrador_proyecto",
+      "financiero",
+      "contable",
+    ].includes(user.buildreqRole ?? "");
+  if (!canUseTreasury) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene acceso a anticipos de órdenes de compra",
+    });
+  }
+  if (
+    action === "manage" &&
+    !(
+      user.role === "admin" ||
+      ["administracion_central", "administrador_proyecto"].includes(
+        user.buildreqRole ?? ""
+      )
+    )
+  ) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "No tiene permisos para administrar este soporte",
+    });
+  }
+}
+
 function canAccessReceipts(user: BuildReqUser) {
   if (isProcurementApproverRole(user.buildreqRole)) return false;
 
@@ -731,6 +784,12 @@ async function assertDocumentAttachmentAccess(
       return assertInvoiceAttachmentAccess(entityId, user, action);
     case "purchase_order":
       return assertPurchaseOrderAttachmentAccess(entityId, user, action);
+    case "purchase_order_advance":
+      return assertPurchaseOrderAdvanceAttachmentAccess(
+        entityId,
+        user,
+        action
+      );
     case "receipt":
       return assertReceiptAttachmentAccess(entityId, user, action);
     case "purchase_request":

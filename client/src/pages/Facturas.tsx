@@ -2083,6 +2083,14 @@ export default function Facturas() {
           ? `Vencida al emitir · venció ${formatDateLabel(accountPaymentCertificate.expirationDate)}`
           : "Sin vencimiento válido";
   const netPayable = Math.max(invoiceTotal - retentionTotal, 0);
+  const appliedAdvanceAmount = Math.max(
+    0,
+    Number(detail?.appliedAdvanceAmount ?? 0)
+  );
+  const balanceAfterAdvance = Math.max(
+    netPayable - appliedAdvanceAmount,
+    0
+  );
   const handlePrintInvoiceDetail = () => {
     if (!detail?.invoice) return;
 
@@ -2239,8 +2247,16 @@ export default function Facturas() {
         value: retentionTotal,
       },
       {
-        label: `Total a pagar ${invoiceSummaryCurrency}`,
+        label: `Neto a pagar ${invoiceSummaryCurrency}`,
         value: netPayable,
+      },
+      {
+        label: `Anticipo aplicado ${invoiceSummaryCurrency}`,
+        value: appliedAdvanceAmount,
+      },
+      {
+        label: `Saldo pendiente ${invoiceSummaryCurrency}`,
+        value: balanceAfterAdvance,
         emphasized: true,
       },
     ]
@@ -5328,6 +5344,22 @@ export default function Facturas() {
                       <span>Neto a pagar</span>
                       <span className="text-emerald-700">
                         {formatSelectedInvoiceCurrency(netPayable)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3 text-sm">
+                      <span className="font-medium text-blue-700">
+                        (-) Anticipo aplicado
+                      </span>
+                      <span className="font-semibold text-blue-700">
+                        {formatSelectedInvoiceCurrency(
+                          appliedAdvanceAmount
+                        )}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3 border-t border-border pt-3 text-base font-semibold">
+                      <span>Saldo pendiente</span>
+                      <span>
+                        {formatSelectedInvoiceCurrency(balanceAfterAdvance)}
                       </span>
                     </div>
                   </div>

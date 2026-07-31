@@ -138,6 +138,8 @@ describe("treasury partial-payment math", () => {
     ).toEqual({
       currency: "HNL",
       invoiceNetPayable: 1250.5,
+      appliedAdvanceAmount: 0,
+      payableAfterAdvance: 1250.5,
       paidAmount: 0,
       reservedAmount: 0,
       availableAmount: 1250.5,
@@ -157,6 +159,26 @@ describe("treasury partial-payment math", () => {
       paidAmount: 325.25,
       reservedAmount: 125.5,
       availableAmount: 549.25,
+      paymentStatus: "parcialmente_pagada",
+    });
+  });
+
+  it("subtracts applied advances separately from prior invoice payments", () => {
+    expect(
+      buildTreasuryMoneySummary({
+        currency: "HNL",
+        invoiceNetPayable: 1000,
+        appliedAdvanceAmount: 300,
+        paidAmount: 125,
+        reservedAmount: 75,
+      })
+    ).toMatchObject({
+      invoiceNetPayable: 1000,
+      appliedAdvanceAmount: 300,
+      payableAfterAdvance: 700,
+      paidAmount: 125,
+      reservedAmount: 75,
+      availableAmount: 500,
       paymentStatus: "parcialmente_pagada",
     });
   });

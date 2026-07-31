@@ -1,6 +1,9 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { TREASURY_BATCH_STATUS_CODES } from "@shared/treasury";
+import {
+  TREASURY_BATCH_STATUS_CODES,
+  TREASURY_PAYMENT_KIND_CODES,
+} from "@shared/treasury";
 import { buildTreasuryInvoiceSummaryPayload } from "@shared/system-workbook-report";
 import {
   applyProjectScope,
@@ -25,10 +28,18 @@ const reportDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
   .nullish();
-const draftItemSchema = z.object({
-  invoiceId: z.number().int().positive(),
-  requestedAmount: z.number().positive().max(999_999_999),
-});
+const draftItemSchema = z.union([
+  z.object({
+    sourceType: z.literal("invoice").optional(),
+    invoiceId: z.number().int().positive(),
+    requestedAmount: z.number().positive().max(999_999_999),
+  }),
+  z.object({
+    sourceType: z.literal("purchase_order_advance"),
+    purchaseOrderAdvanceId: z.number().int().positive(),
+    requestedAmount: z.number().positive().max(999_999_999),
+  }),
+]);
 const adjustmentSchema = z.object({
   itemId: z.number().int().positive(),
   amount: z.number().positive().max(999_999_999).optional(),
@@ -159,12 +170,15 @@ function rethrowTreasuryError(error: unknown): never {
   const databaseError = error as { code?: string; constraint?: string };
   if (
     databaseError?.code === "23505" &&
-    databaseError?.constraint === "treasury_item_active_invoice_unique"
+    (databaseError?.constraint === "treasury_item_active_invoice_unique" ||
+      databaseError?.constraint === "treasury_item_active_advance_unique")
   ) {
     throw new TRPCError({
       code: "CONFLICT",
       message:
-        "Una factura seleccionada ya está reservada en otro lote activo.",
+        databaseError.constraint === "treasury_item_active_advance_unique"
+          ? "Un anticipo seleccionado ya está reservado en otro lote activo."
+          : "Una factura seleccionada ya está reservada en otro lote activo.",
     });
   }
   throw error;
@@ -236,6 +250,40 @@ export const treasuryRouter = router({
         }
       }
       return treasury.listEligibleTreasuryInvoices({
+        projectId: input.projectId,
+        currency: input.currency,
+        excludeBatchId: input.batchId,
+        projectIds: input.projectId ? undefined : getProjectScopeIds(ctx.user),
+      });
+    }),
+
+  eligibleAdvances: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.number().int().positive().optional(),
+        currency: currencySchema.optional(),
+        batchId: z.number().int().positive().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      await assertTreasuryAccess(ctx.user);
+      if (input.projectId && !canAccessProject(ctx.user, input.projectId)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a anticipos de ese proyecto.",
+        });
+      }
+      if (input.batchId) {
+        const detail = await assertBatchAccess(ctx.user, input.batchId);
+        if (detail.batch.paymentKind !== "purchase_order_advance") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "El lote solicitado no es un lote de anticipos.",
+          });
+        }
+      }
+      return treasury.listEligibleTreasuryAdvances({
         projectId: input.projectId,
         currency: input.currency,
         excludeBatchId: input.batchId,
@@ -320,6 +368,7 @@ export const treasuryRouter = router({
       z.object({
         projectId: z.number().int().positive(),
         currency: currencySchema,
+        paymentKind: z.enum(TREASURY_PAYMENT_KIND_CODES).default("invoice"),
         requestedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         notes: z.string().trim().max(2000).optional(),
         items: z.array(draftItemSchema).min(1).max(500),

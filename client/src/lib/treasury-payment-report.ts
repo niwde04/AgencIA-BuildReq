@@ -31,6 +31,7 @@ type TreasuryPaymentReportItem = {
   invoiceDocumentNumber: string;
   invoiceNumber?: string | null;
   previousPaidAmount?: string | number | null;
+  appliedAdvanceAmount?: string | number | null;
   bankPaidAmount?: string | number | null;
   reportAmount?: string | number | null;
   bankPaidDate?: string | Date | null;
@@ -43,6 +44,7 @@ export type TreasuryPaymentReportPayload = {
     batchNumber: string;
     currency: TreasuryPaymentReportCurrency;
     requestedPaymentDate: string | Date;
+    paymentKind?: "invoice" | "purchase_order_advance";
     paymentStatusLabel?: string | null;
     notes?: string | null;
   };
@@ -292,6 +294,7 @@ function amountInWords(
 type ReportAmounts = {
   totalInvoice: number;
   advances: number;
+  previousPayments: number;
   retIsv: number;
   retIsr1: number;
   otherRetentions: number;
@@ -302,6 +305,7 @@ function emptyAmounts(): ReportAmounts {
   return {
     totalInvoice: 0,
     advances: 0,
+    previousPayments: 0,
     retIsv: 0,
     retIsr1: 0,
     otherRetentions: 0,
@@ -312,6 +316,7 @@ function emptyAmounts(): ReportAmounts {
 function addAmounts(target: ReportAmounts, source: ReportAmounts) {
   target.totalInvoice += source.totalInvoice;
   target.advances += source.advances;
+  target.previousPayments += source.previousPayments;
   target.retIsv += source.retIsv;
   target.retIsr1 += source.retIsr1;
   target.otherRetentions += source.otherRetentions;
@@ -325,6 +330,7 @@ function amountCells(
   return `
     <td class="money">${escapeHtml(formatMoney(amounts.totalInvoice, currency))}</td>
     <td class="money">${escapeHtml(formatMoney(amounts.advances, currency))}</td>
+    <td class="money">${escapeHtml(formatMoney(amounts.previousPayments, currency))}</td>
     <td class="money">${escapeHtml(formatMoney(amounts.retIsv, currency))}</td>
     <td class="money">${escapeHtml(formatMoney(amounts.retIsr1, currency))}</td>
     <td class="money">${escapeHtml(formatMoney(amounts.otherRetentions, currency))}</td>
@@ -369,7 +375,12 @@ export function buildTreasuryPaymentReportHtml(
     const retention = retentionBreakdown(line.invoice.retentions);
     const amounts: ReportAmounts = {
       totalInvoice: roundMoney(toNumber(line.invoice.total)),
-      advances: roundMoney(toNumber(line.paymentItem.previousPaidAmount)),
+      advances: roundMoney(
+        toNumber(line.paymentItem.appliedAdvanceAmount)
+      ),
+      previousPayments: roundMoney(
+        toNumber(line.paymentItem.previousPaidAmount)
+      ),
       retIsv: retention.retIsv,
       retIsr1: retention.retIsr1,
       otherRetentions: retention.otherRetentions,
@@ -506,6 +517,7 @@ export function buildTreasuryPaymentReportHtml(
           <col class="amount" />
           <col class="amount" />
           <col class="amount" />
+          <col class="amount" />
         </colgroup>
         <thead>
           <tr>
@@ -516,6 +528,7 @@ export function buildTreasuryPaymentReportHtml(
             <th>Descripción Compra</th>
             <th>Total Factura</th>
             <th>Anticipos</th>
+            <th>Abonos anteriores</th>
             <th>Ret. ISV</th>
             <th>Ret. ISR 1%</th>
             <th>Otras ret.</th>

@@ -20,6 +20,7 @@ import { demoDataRouter } from "./routers/demoData";
 import { warehousesRouter } from "./routers/warehouses";
 import { purchaseRequestsRouter } from "./routers/purchaseRequests";
 import { purchaseOrdersRouter } from "./routers/purchaseOrders";
+import { purchaseOrderAdvancesRouter } from "./routers/purchaseOrderAdvances";
 import { transferRequestsRouter } from "./routers/transferRequests";
 import { transfersRouter } from "./routers/transfers";
 import { receiptsRouter } from "./routers/receipts";
@@ -83,6 +84,7 @@ export const appRouter = router({
   warehouses: warehousesRouter,
   purchaseRequests: purchaseRequestsRouter,
   purchaseOrders: purchaseOrdersRouter,
+  purchaseOrderAdvances: purchaseOrderAdvancesRouter,
   transferRequests: transferRequestsRouter,
   transfers: transfersRouter,
   receipts: receiptsRouter,

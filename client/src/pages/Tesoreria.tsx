@@ -84,6 +84,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { PurchaseOrderAdvanceDialog } from "@/components/PurchaseOrderAdvanceDialog";
 
 type PreparedBankAttachment = {
   fileName: string;
@@ -404,6 +405,8 @@ function BatchFormDialog({
     await Promise.all([
       utils.treasury.list.invalidate(),
       utils.treasury.eligibleInvoices.invalidate(),
+      utils.treasury.eligibleAdvances.invalidate(),
+      utils.purchaseOrderAdvances.list.invalidate(),
     ]);
     onOpenChange(false);
     onSaved(Number(data.id));
@@ -656,7 +659,12 @@ function BatchFormDialog({
                     </TableHead>
                     <TableHead className="text-right">Retenciones</TableHead>
                     <TableHead className="text-right">Neto a pagar</TableHead>
-                    <TableHead className="text-right">Pagado</TableHead>
+                    <TableHead className="text-right">
+                      Anticipo aplicado
+                    </TableHead>
+                    <TableHead className="text-right">
+                      Abonos anteriores
+                    </TableHead>
                     <TableHead className="text-right">Saldo</TableHead>
                     <TableHead className="w-40 text-right">
                       Abono solicitado
@@ -666,7 +674,7 @@ function BatchFormDialog({
                 <TableBody>
                   {eligibleQuery.isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={13} className="py-12 text-center">
+                      <TableCell colSpan={14} className="py-12 text-center">
                         <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-muted-foreground" />
                         <span className="text-sm text-muted-foreground">
                           Cargando facturas...
@@ -724,6 +732,12 @@ function BatchFormDialog({
                             {formatMoney(row.money.invoiceNetPayable, currency)}
                           </TableCell>
                           <TableCell className="text-right tabular-nums">
+                            {formatMoney(
+                              row.money.appliedAdvanceAmount,
+                              currency
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
                             {formatMoney(row.money.paidAmount, currency)}
                           </TableCell>
                           <TableCell className="text-right font-medium tabular-nums">
@@ -752,7 +766,7 @@ function BatchFormDialog({
                   ) : (
                     <TableRow>
                       <TableCell
-                        colSpan={13}
+                        colSpan={14}
                         className="py-12 text-center text-muted-foreground"
                       >
                         {projectId
@@ -784,6 +798,364 @@ function BatchFormDialog({
               {existing ? "Guardar cambios" : "Crear borrador"}
             </Button>
           </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AdvanceBatchFormDialog({
+  open,
+  onOpenChange,
+  existing,
+  initialAdvance,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  existing?: any;
+  initialAdvance?: any;
+  onSaved: (batchId: number) => void;
+}) {
+  const utils = trpc.useUtils();
+  const [projectId, setProjectId] = useState("");
+  const [currency, setCurrency] = useState<"HNL" | "USD">("HNL");
+  const [paymentDate, setPaymentDate] = useState(currentLocalDateInput());
+  const [notes, setNotes] = useState("");
+  const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [amounts, setAmounts] = useState<Record<number, string>>({});
+  const projectsQuery = trpc.projects.list.useQuery(
+    { status: "activo" },
+    { enabled: open }
+  );
+  const eligibleQuery = trpc.treasury.eligibleAdvances.useQuery(
+    {
+      projectId: projectId ? Number(projectId) : undefined,
+      currency,
+      batchId: existing?.batch?.id,
+    },
+    { enabled: open && Boolean(projectId) }
+  );
+  const projects = useMemo(
+    () =>
+      [...(projectsQuery.data ?? [])].sort((left: any, right: any) =>
+        String(left.code ?? "").localeCompare(
+          String(right.code ?? ""),
+          "es-HN",
+          { numeric: true, sensitivity: "base" }
+        )
+      ),
+    [projectsQuery.data]
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    if (existing?.batch) {
+      setProjectId(String(existing.batch.projectId));
+      setCurrency(existing.batch.currency);
+      setPaymentDate(toDateInput(existing.batch.requestedPaymentDate));
+      setNotes(existing.batch.notes ?? "");
+      const included = (existing.items ?? []).filter(
+        (item: any) => item.status !== "excluida"
+      );
+      setSelectedIds(
+        new Set(
+          included.map((item: any) => item.purchaseOrderAdvanceId)
+        )
+      );
+      setAmounts(
+        Object.fromEntries(
+          included.map((item: any) => [
+            item.purchaseOrderAdvanceId,
+            formatMoneyInputValue(item.requestedAmount),
+          ])
+        )
+      );
+    } else {
+      setProjectId(
+        initialAdvance ? String(initialAdvance.projectId) : ""
+      );
+      setCurrency(initialAdvance?.currency ?? "HNL");
+      setPaymentDate(currentLocalDateInput());
+      setNotes("");
+      setSearch("");
+      setSelectedIds(
+        initialAdvance ? new Set([initialAdvance.id]) : new Set()
+      );
+      setAmounts(
+        initialAdvance
+          ? {
+              [initialAdvance.id]: formatMoneyInputValue(
+                initialAdvance.requestedAmount
+              ),
+            }
+          : {}
+      );
+    }
+  }, [existing, initialAdvance, open]);
+
+  const createMutation = trpc.treasury.create.useMutation({
+    onSuccess: async data => {
+      toast.success("Lote de anticipos creado");
+      await Promise.all([
+        utils.treasury.list.invalidate(),
+        utils.treasury.eligibleAdvances.invalidate(),
+        utils.purchaseOrderAdvances.list.invalidate(),
+      ]);
+      onOpenChange(false);
+      onSaved(Number(data.id));
+    },
+    onError: error => toast.error(error.message),
+  });
+  const updateMutation = trpc.treasury.updateDraft.useMutation({
+    onSuccess: async data => {
+      toast.success("Borrador de anticipos actualizado");
+      await Promise.all([
+        utils.treasury.list.invalidate(),
+        utils.treasury.eligibleAdvances.invalidate(),
+        utils.purchaseOrderAdvances.list.invalidate(),
+      ]);
+      onOpenChange(false);
+      onSaved(Number(data.id));
+    },
+    onError: error => toast.error(error.message),
+  });
+  const visibleRows = useMemo(() => {
+    const term = search.trim().toLocaleLowerCase("es-HN");
+    if (!term) return eligibleQuery.data ?? [];
+    return (eligibleQuery.data ?? []).filter((row: any) =>
+      [
+        row.advance.advanceNumber,
+        row.purchaseOrder.orderNumber,
+        row.supplier.name,
+        row.supplier.supplierCode,
+      ]
+        .join(" ")
+        .toLocaleLowerCase("es-HN")
+        .includes(term)
+    );
+  }, [eligibleQuery.data, search]);
+
+  function toggle(row: any, checked: boolean) {
+    const id = row.advance.id;
+    setSelectedIds(current => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+    if (checked && !amounts[id]) {
+      setAmounts(current => ({
+        ...current,
+        [id]: formatMoneyInputValue(row.money.availableToPayAmount),
+      }));
+    }
+  }
+
+  function save() {
+    const items = Array.from(selectedIds).map(purchaseOrderAdvanceId => ({
+      sourceType: "purchase_order_advance" as const,
+      purchaseOrderAdvanceId,
+      requestedAmount: Number(amounts[purchaseOrderAdvanceId]),
+    }));
+    if (!projectId || !paymentDate || !items.length) {
+      toast.error("Seleccione proyecto, fecha y al menos un anticipo.");
+      return;
+    }
+    if (
+      items.some(
+        item =>
+          !Number.isFinite(item.requestedAmount) || item.requestedAmount <= 0
+      )
+    ) {
+      toast.error("Todos los pagos deben ser mayores que cero.");
+      return;
+    }
+    const payload = { requestedPaymentDate: paymentDate, notes, items };
+    if (existing?.batch?.id) {
+      updateMutation.mutate({ id: existing.batch.id, ...payload });
+    } else {
+      createMutation.mutate({
+        projectId: Number(projectId),
+        currency,
+        paymentKind: "purchase_order_advance",
+        ...payload,
+      });
+    }
+  }
+
+  const pending = createMutation.isPending || updateMutation.isPending;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="grid max-h-[94vh] max-w-6xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0">
+        <DialogHeader className="border-b px-6 py-5">
+          <DialogTitle>
+            {existing
+              ? "Editar lote de anticipos"
+              : "Nuevo lote de anticipos de OC"}
+          </DialogTitle>
+          <DialogDescription>
+            Seleccione solicitudes ANT disponibles. Cada lote contiene
+            únicamente anticipos y admite pagos parciales.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="min-h-0 space-y-5 overflow-y-auto px-6 py-5">
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="space-y-2">
+              <Label>Proyecto</Label>
+              <Select
+                value={projectId}
+                onValueChange={setProjectId}
+                disabled={Boolean(existing)}
+              >
+                <SelectTrigger><SelectValue placeholder="Seleccione" /></SelectTrigger>
+                <SelectContent>
+                  {projects.map((project: any) => (
+                    <SelectItem key={project.id} value={String(project.id)}>
+                      {project.code} - {project.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Moneda</Label>
+              <Select
+                value={currency}
+                onValueChange={value =>
+                  setCurrency(value as "HNL" | "USD")
+                }
+                disabled={Boolean(existing)}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="HNL">HNL</SelectItem>
+                  <SelectItem value="USD">USD</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Fecha prevista de pago</Label>
+              <Input
+                type="date"
+                value={paymentDate}
+                onChange={event => setPaymentDate(event.target.value)}
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Notas</Label>
+            <Textarea
+              value={notes}
+              onChange={event => setNotes(event.target.value)}
+              maxLength={2000}
+            />
+          </div>
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-9"
+              placeholder="Buscar ANT, OC o proveedor"
+              value={search}
+              onChange={event => setSearch(event.target.value)}
+            />
+          </div>
+          <div className="overflow-hidden rounded-lg border [&_[data-slot=table-container]]:max-h-[42vh] [&_[data-slot=table-container]]:overflow-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10" />
+                  <TableHead>Anticipo</TableHead>
+                  <TableHead>OC</TableHead>
+                  <TableHead>Proveedor</TableHead>
+                  <TableHead className="text-right">Solicitado</TableHead>
+                  <TableHead className="text-right">Contabilizado</TableHead>
+                  <TableHead className="text-right">Saldo</TableHead>
+                  <TableHead className="w-40 text-right">Pago objetivo</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {eligibleQuery.isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="py-10 text-center">
+                      <Loader2 className="mx-auto h-5 w-5 animate-spin" />
+                    </TableCell>
+                  </TableRow>
+                ) : visibleRows.length ? (
+                  visibleRows.map((row: any) => {
+                    const checked = selectedIds.has(row.advance.id);
+                    return (
+                      <TableRow key={row.advance.id}>
+                        <TableCell>
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={value =>
+                              toggle(row, value === true)
+                            }
+                          />
+                        </TableCell>
+                        <TableCell className="font-medium">
+                          {row.advance.advanceNumber}
+                        </TableCell>
+                        <TableCell>{row.purchaseOrder.orderNumber}</TableCell>
+                        <TableCell>{row.supplier.name}</TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatMoney(row.money.requestedAmount, currency)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatMoney(row.money.accountedAmount, currency)}
+                        </TableCell>
+                        <TableCell className="text-right font-medium tabular-nums">
+                          {formatMoney(
+                            row.money.availableToPayAmount,
+                            currency
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            className="ml-auto w-32 text-right"
+                            type="number"
+                            min="0.01"
+                            max={row.money.availableToPayAmount}
+                            step="0.01"
+                            disabled={!checked}
+                            value={amounts[row.advance.id] ?? ""}
+                            onChange={event =>
+                              setAmounts(current => ({
+                                ...current,
+                                [row.advance.id]: event.target.value,
+                              }))
+                            }
+                          />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                ) : (
+                  <TableRow>
+                    <TableCell
+                      colSpan={8}
+                      className="py-10 text-center text-muted-foreground"
+                    >
+                      {projectId
+                        ? "No hay anticipos disponibles para este proyecto."
+                        : "Seleccione un proyecto para consultar anticipos."}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+        <DialogFooter className="border-t px-6 py-4">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancelar
+          </Button>
+          <Button onClick={save} disabled={pending || !selectedIds.size}>
+            {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {existing ? "Guardar cambios" : "Crear borrador"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -898,7 +1270,7 @@ function BatchDetailDialog({
   );
   const cancelMutation = trpc.treasury.cancel.useMutation(
     mutationOptions(
-      "Lote anulado; sus facturas ya están disponibles para otro lote"
+      "Lote anulado; sus documentos ya están disponibles para otro lote"
     )
   );
   const exportMutation = trpc.treasury.exportBankWorkbook.useMutation({
@@ -944,6 +1316,8 @@ function BatchDetailDialog({
 
   const detail = detailQuery.data;
   const batch = detail?.batch;
+  const isAdvanceBatch =
+    batch?.paymentKind === "purchase_order_advance";
   const status = batch?.status as TreasuryBatchStatus | undefined;
   const isCentral =
     user?.role === "admin" || user?.buildreqRole === "administracion_central";
@@ -982,12 +1356,16 @@ function BatchDetailDialog({
     const invoiceTotal = roundTreasuryMoney(
       Number(item.invoiceNetPayable ?? 0)
     );
-    const advancePaid = roundTreasuryMoney(
+    const previousPaid = roundTreasuryMoney(
       Number(item.previousPaidAmount ?? 0)
+    );
+    const appliedAdvance = roundTreasuryMoney(
+      Number(item.appliedAdvanceAmount ?? 0)
     );
     const balance =
       (Number.isFinite(invoiceTotal) ? invoiceTotal : 0) -
-      (Number.isFinite(advancePaid) ? advancePaid : 0) -
+      (Number.isFinite(appliedAdvance) ? appliedAdvance : 0) -
+      (Number.isFinite(previousPaid) ? previousPaid : 0) -
       currentPaymentAmount(item);
     return roundTreasuryMoney(Math.max(0, balance));
   }
@@ -1082,7 +1460,7 @@ function BatchDetailDialog({
     );
     if (!remainingItems.length) {
       toast.error(
-        "El lote debe conservar al menos una factura. Para eliminarlo por completo, anule el lote."
+        "El lote debe conservar al menos un documento. Para eliminarlo por completo, anule el lote."
       );
       return;
     }
@@ -1090,10 +1468,19 @@ function BatchDetailDialog({
       id: batch.id,
       requestedPaymentDate: toDateInput(batch.requestedPaymentDate),
       notes: batch.notes ?? undefined,
-      items: remainingItems.map((item: any) => ({
-        invoiceId: item.invoiceId,
-        requestedAmount: Number(item.requestedAmount),
-      })),
+      items: remainingItems.map((item: any) =>
+        item.sourceType === "purchase_order_advance"
+          ? {
+              sourceType: "purchase_order_advance" as const,
+              purchaseOrderAdvanceId: item.purchaseOrderAdvanceId,
+              requestedAmount: Number(item.requestedAmount),
+            }
+          : {
+              sourceType: "invoice" as const,
+              invoiceId: item.invoiceId,
+              requestedAmount: Number(item.requestedAmount),
+            }
+      ),
     });
   }
 
@@ -1177,6 +1564,11 @@ function BatchDetailDialog({
         <DialogHeader className="border-b px-6 py-5 pr-14">
           <DialogTitle className="flex flex-wrap items-center gap-2">
             {batch?.batchNumber || "Lote de Tesorería"}
+            {batch && (
+              <Badge variant="outline">
+                {isAdvanceBatch ? "Anticipos de OC" : "Pagos de facturas"}
+              </Badge>
+            )}
             {status && (
               <Badge variant={statusVariant(status)}>
                 {getTreasuryBatchStatusLabel(
@@ -1311,17 +1703,30 @@ function BatchDetailDialog({
                       <TableHead className="w-10" />
                     )}
                     <TableHead className="min-w-48">Proveedor</TableHead>
-                    <TableHead className="min-w-40">Factura</TableHead>
-                    <TableHead className="min-w-40">Factura fiscal</TableHead>
+                    <TableHead className="min-w-40">
+                      {isAdvanceBatch ? "Anticipo" : "Factura"}
+                    </TableHead>
+                    <TableHead className="min-w-40">
+                      {isAdvanceBatch ? "Orden de compra" : "Factura fiscal"}
+                    </TableHead>
                     <TableHead className="min-w-48">Proyecto</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead className="text-right">Subtotal</TableHead>
                     <TableHead className="text-right">ISV</TableHead>
                     <TableHead className="text-right">Total factura</TableHead>
                     <TableHead className="text-right">Retenciones</TableHead>
-                    <TableHead className="text-right">Neto a pagar</TableHead>
-                    <TableHead className="text-right">Pagado</TableHead>
-                    <TableHead className="text-right">Abono</TableHead>
+                    <TableHead className="text-right">
+                      {isAdvanceBatch ? "Importe objetivo" : "Neto a pagar"}
+                    </TableHead>
+                    <TableHead className="text-right">
+                      Anticipo aplicado
+                    </TableHead>
+                    <TableHead className="text-right">
+                      {isAdvanceBatch ? "Pagos anteriores" : "Abonos anteriores"}
+                    </TableHead>
+                    <TableHead className="text-right">
+                      {isAdvanceBatch ? "Pago" : "Abono"}
+                    </TableHead>
                     <TableHead className="text-right">
                       Saldo pendiente
                     </TableHead>
@@ -1365,7 +1770,8 @@ function BatchDetailDialog({
                         {item.invoiceDocumentNumber}
                       </TableCell>
                       <TableCell className="whitespace-normal">
-                        {item.invoiceNumber || "Sin número fiscal"}
+                        {item.invoiceNumber ||
+                          (isAdvanceBatch ? "Sin OC" : "Sin número fiscal")}
                       </TableCell>
                       <TableCell className="whitespace-normal">
                         <div>{item.invoiceProjectCode}</div>
@@ -1410,6 +1816,12 @@ function BatchDetailDialog({
                       <TableCell className="text-right font-medium tabular-nums">
                         {formatMoney(
                           item.invoiceNetPayable,
+                          detail.batch.currency
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMoney(
+                          item.appliedAdvanceAmount,
                           detail.batch.currency
                         )}
                       </TableCell>
@@ -2030,6 +2442,11 @@ export default function Tesoreria() {
   const [dateTo, setDateTo] = useState("");
   const [exporting, setExporting] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
+  const [advanceRequestOpen, setAdvanceRequestOpen] = useState(false);
+  const [initialAdvance, setInitialAdvance] = useState<any>();
+  const [formKind, setFormKind] = useState<
+    "invoice" | "purchase_order_advance"
+  >("invoice");
   const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
   const [editingDetail, setEditingDetail] = useState<any>();
   const [selectedConsolidationBatchIds, setSelectedConsolidationBatchIds] =
@@ -2172,6 +2589,17 @@ export default function Tesoreria() {
     if (currencies.size > 1) {
       toast.error(
         "Seleccione lotes de una sola moneda para crear el consolidado."
+      );
+      return;
+    }
+    const paymentKinds = new Set(
+      selectedRows.map(
+        (row: any) => row.batch.paymentKind ?? "invoice"
+      )
+    );
+    if (paymentKinds.size > 1) {
+      toast.error(
+        "Seleccione únicamente lotes de facturas o únicamente lotes de anticipos."
       );
       return;
     }
@@ -2365,14 +2793,34 @@ export default function Tesoreria() {
           </p>
         </div>
         {settingsQuery.data.permissions.canCreate && (
-          <Button
-            onClick={() => {
-              setEditingDetail(undefined);
-              setFormOpen(true);
-            }}
-          >
-            <Plus className="mr-2 h-4 w-4" /> Nuevo lote
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={() => {
+                setEditingDetail(undefined);
+                setFormKind("invoice");
+                setFormOpen(true);
+              }}
+            >
+              <Plus className="mr-2 h-4 w-4" /> Pago de facturas
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditingDetail(undefined);
+                setInitialAdvance(undefined);
+                setFormKind("purchase_order_advance");
+                setFormOpen(true);
+              }}
+            >
+              <Banknote className="mr-2 h-4 w-4" /> Anticipos de OC
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setAdvanceRequestOpen(true)}
+            >
+              <Plus className="mr-2 h-4 w-4" /> Cargar OC
+            </Button>
+          </div>
         )}
       </div>
 
@@ -2613,6 +3061,7 @@ export default function Tesoreria() {
                     </TableHead>
                   )}
                   <TableHead>Lote</TableHead>
+                  <TableHead>Tipo</TableHead>
                   <TableHead>Proyecto</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead>Fecha prevista</TableHead>
@@ -2626,7 +3075,7 @@ export default function Tesoreria() {
                 {batchesQuery.isLoading ? (
                   <TableRow>
                     <TableCell
-                      colSpan={8 + (canConsolidate ? 1 : 0)}
+                      colSpan={9 + (canConsolidate ? 1 : 0)}
                       className="py-12 text-center"
                     >
                       <Loader2 className="mx-auto h-6 w-6 animate-spin" />
@@ -2672,6 +3121,14 @@ export default function Tesoreria() {
                         )}
                       </TableCell>
                       <TableCell>
+                        <Badge variant="outline">
+                          {row.batch.paymentKind ===
+                          "purchase_order_advance"
+                            ? "Anticipo OC"
+                            : "Factura"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
                         <div>{treasuryProjectSummary(row).code}</div>
                         <div className="max-w-64 truncate text-xs text-muted-foreground">
                           {treasuryProjectSummary(row).name}
@@ -2709,7 +3166,7 @@ export default function Tesoreria() {
                 ) : (
                   <TableRow>
                     <TableCell
-                      colSpan={8 + (canConsolidate ? 1 : 0)}
+                      colSpan={9 + (canConsolidate ? 1 : 0)}
                       className="py-12 text-center text-muted-foreground"
                     >
                       No hay lotes con estos filtros.
@@ -2758,18 +3215,40 @@ export default function Tesoreria() {
         </CardContent>
       </Card>
 
-      <BatchFormDialog
-        open={formOpen}
-        onOpenChange={setFormOpen}
-        existing={editingDetail}
-        onSaved={id => setSelectedBatchId(id)}
-      />
+      {formKind === "purchase_order_advance" ? (
+        <AdvanceBatchFormDialog
+          open={formOpen}
+          onOpenChange={setFormOpen}
+          existing={editingDetail}
+          initialAdvance={initialAdvance}
+          onSaved={id => setSelectedBatchId(id)}
+        />
+      ) : (
+        <BatchFormDialog
+          open={formOpen}
+          onOpenChange={setFormOpen}
+          existing={editingDetail}
+          onSaved={id => setSelectedBatchId(id)}
+        />
+      )}
       <BatchDetailDialog
         batchId={selectedBatchId}
         onClose={() => setSelectedBatchId(null)}
         onEdit={detail => {
           setEditingDetail(detail);
+          setInitialAdvance(undefined);
+          setFormKind(detail.batch.paymentKind ?? "invoice");
           setSelectedBatchId(null);
+          setFormOpen(true);
+        }}
+      />
+      <PurchaseOrderAdvanceDialog
+        open={advanceRequestOpen}
+        onOpenChange={setAdvanceRequestOpen}
+        onSaved={advance => {
+          setInitialAdvance(advance);
+          setEditingDetail(undefined);
+          setFormKind("purchase_order_advance");
           setFormOpen(true);
         }}
       />

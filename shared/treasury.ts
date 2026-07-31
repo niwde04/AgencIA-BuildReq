@@ -1,5 +1,20 @@
 import type { PurchaseCurrency } from "./purchase-orders";
 
+export const TREASURY_PAYMENT_KIND_CODES = [
+  "invoice",
+  "purchase_order_advance",
+] as const;
+export type TreasuryPaymentKind =
+  (typeof TREASURY_PAYMENT_KIND_CODES)[number];
+export type TreasuryPaymentSourceType = TreasuryPaymentKind;
+
+export const TREASURY_PAYMENT_KIND_LABELS: Readonly<
+  Record<TreasuryPaymentKind, string>
+> = {
+  invoice: "Pago de facturas",
+  purchase_order_advance: "Anticipos de OC",
+};
+
 export const TREASURY_BATCH_STATUS_CODES = [
   "borrador",
   "enviado_depuracion",
@@ -78,6 +93,8 @@ export type TreasuryPaymentStatus =
 export type TreasuryMoneySummary = {
   currency: PurchaseCurrency;
   invoiceNetPayable: number;
+  appliedAdvanceAmount: number;
+  payableAfterAdvance: number;
   paidAmount: number;
   reservedAmount: number;
   availableAmount: number;
@@ -112,20 +129,32 @@ export function getTreasuryPaymentStatus(
 export function buildTreasuryMoneySummary(input: {
   currency: PurchaseCurrency;
   invoiceNetPayable: string | number;
+  appliedAdvanceAmount?: string | number | null;
   paidAmount?: string | number | null;
   reservedAmount?: string | number | null;
 }): TreasuryMoneySummary {
   const invoiceNetPayable = roundTreasuryMoney(Number(input.invoiceNetPayable));
+  const appliedAdvanceAmount = roundTreasuryMoney(
+    Number(input.appliedAdvanceAmount ?? 0)
+  );
+  const payableAfterAdvance = roundTreasuryMoney(
+    Math.max(0, invoiceNetPayable - appliedAdvanceAmount)
+  );
   const paidAmount = roundTreasuryMoney(Number(input.paidAmount ?? 0));
   const reservedAmount = roundTreasuryMoney(Number(input.reservedAmount ?? 0));
   return {
     currency: input.currency,
     invoiceNetPayable,
+    appliedAdvanceAmount,
+    payableAfterAdvance,
     paidAmount,
     reservedAmount,
     availableAmount: roundTreasuryMoney(
-      Math.max(0, invoiceNetPayable - paidAmount - reservedAmount)
+      Math.max(0, payableAfterAdvance - paidAmount - reservedAmount)
     ),
-    paymentStatus: getTreasuryPaymentStatus(invoiceNetPayable, paidAmount),
+    paymentStatus: getTreasuryPaymentStatus(
+      invoiceNetPayable,
+      paidAmount + appliedAdvanceAmount
+    ),
   };
 }
