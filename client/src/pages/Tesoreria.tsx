@@ -3773,7 +3773,7 @@ export default function Tesoreria() {
                       <TableCell className="font-medium">
                         <button
                           type="button"
-                          className="rounded-sm text-left text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                          className="rounded-sm text-left text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                           onClick={() => setSelectedBatchId(row.batch.id)}
                           aria-label={`Abrir lote ${row.batch.batchNumber}`}
                         >
