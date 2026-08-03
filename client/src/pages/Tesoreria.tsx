@@ -3771,7 +3771,14 @@ export default function Tesoreria() {
                         </TableCell>
                       )}
                       <TableCell className="font-medium">
-                        <div>{row.batch.batchNumber}</div>
+                        <button
+                          type="button"
+                          className="rounded-sm text-left text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                          onClick={() => setSelectedBatchId(row.batch.id)}
+                          aria-label={`Abrir lote ${row.batch.batchNumber}`}
+                        >
+                          {row.batch.batchNumber}
+                        </button>
                         {row.sourceBatchNumbers?.length > 0 && (
                           <div className="text-xs font-normal text-muted-foreground">
                             Consolidado de {row.sourceBatchNumbers.length} lotes
