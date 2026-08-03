@@ -444,6 +444,7 @@ export default function Flujos() {
       utils.transferRequests.invalidate(),
       utils.transfers.invalidate(),
       utils.warehouseExits.list.invalidate(),
+      utils.warehouseExits.listPage.invalidate(),
       utils.inventory.list.invalidate(),
       utils.inventory.projectStockForItems.invalidate(),
       utils.inventory.visibleWarehouseStockForItems.invalidate(),

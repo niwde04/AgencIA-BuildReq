@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
+import { listWarehouseExitsPage } from "../paginatedLists";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 function canManageWarehouseExits(user: {
@@ -75,6 +76,27 @@ export const warehouseExitsRouter = router({
       }
 
       return db.listWarehouseExits(applyProjectScope(input ?? {}, ctx.user));
+    }),
+
+  listPage: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.number().int().positive().optional(),
+        status: z.string().optional(),
+        search: z.string().trim().optional(),
+        page: z.number().int().min(1).optional(),
+        pageSize: z.number().int().min(10).max(200).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      if (!canManageWarehouseExits(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a salidas de bodega",
+        });
+      }
+
+      return listWarehouseExitsPage(applyProjectScope(input, ctx.user));
     }),
 
   getById: protectedProcedure

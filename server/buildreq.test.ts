@@ -4077,6 +4077,9 @@ describe("BuildReq - Role-based Access Control", () => {
     await expect(caller.warehouseExits.list()).rejects.toThrow(
       "No tiene acceso a salidas de bodega"
     );
+    await expect(
+      caller.warehouseExits.listPage({ page: 1, pageSize: 50 })
+    ).rejects.toThrow("No tiene acceso a salidas de bodega");
   });
 
   it("Bodega users can query inventory with pagination and sorting", async () => {

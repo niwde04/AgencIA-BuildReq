@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { DataPagination } from "@/components/DataPagination";
 import { Input } from "@/components/ui/input";
 import {
   Command,
@@ -49,6 +50,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { getReadablePrintStyles } from "@/lib/readable-print-styles";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+
+const PAGE_SIZE = 50;
 
 const STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
@@ -520,6 +524,7 @@ export default function SalidasBodega() {
   >({});
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [page, setPage] = useState(1);
   const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false);
   const [deliveryRequestId, setDeliveryRequestId] = useState("");
   const [deliveryNotes, setDeliveryNotes] = useState("");
@@ -560,7 +565,22 @@ export default function SalidasBodega() {
   >({});
   const emittingAfterDraftSaveRef = useRef(false);
 
-  const { data: exits, isLoading } = trpc.warehouseExits.list.useQuery();
+  const debouncedSearchTerm = useDebouncedValue(searchTerm);
+  const {
+    data: exitsPage,
+    isLoading,
+    error: exitsError,
+    isPlaceholderData,
+  } = trpc.warehouseExits.listPage.useQuery(
+    {
+      status: statusFilter !== "all" ? statusFilter : undefined,
+      search: debouncedSearchTerm.trim() || undefined,
+      page,
+      pageSize: PAGE_SIZE,
+    },
+    { placeholderData: previousData => previousData }
+  );
+  const exits = exitsPage?.items ?? [];
   const canCreateReturns =
     user?.role === "admin" || (user as any)?.buildreqRole === "jefe_bodega_central";
   const { data: materialRequests } = trpc.materialRequests.list.useQuery({
@@ -598,6 +618,7 @@ export default function SalidasBodega() {
       const affectedRequestIds = result.materialRequestIds ?? [];
       void Promise.all([
         utils.warehouseExits.list.invalidate(),
+        utils.warehouseExits.listPage.invalidate(),
         selectedId
           ? utils.warehouseExits.getById.invalidate({ id: selectedId })
           : Promise.resolve(),
@@ -636,6 +657,7 @@ export default function SalidasBodega() {
       setSelectedId(result.id);
       void Promise.all([
         utils.warehouseExits.list.invalidate(),
+        utils.warehouseExits.listPage.invalidate(),
         utils.materialRequests.list.invalidate(),
         requestIdToInvalidate
           ? utils.materialRequests.getById.invalidate({ id: requestIdToInvalidate })
@@ -651,6 +673,7 @@ export default function SalidasBodega() {
       toast.success("Borrador de salida anulado");
       void Promise.all([
         utils.warehouseExits.list.invalidate(),
+        utils.warehouseExits.listPage.invalidate(),
         selectedId
           ? utils.warehouseExits.getById.invalidate({ id: selectedId })
           : Promise.resolve(),
@@ -667,6 +690,7 @@ export default function SalidasBodega() {
       }
       void Promise.all([
         utils.warehouseExits.list.invalidate(),
+        utils.warehouseExits.listPage.invalidate(),
         selectedId
           ? utils.warehouseExits.getById.invalidate({ id: selectedId })
           : Promise.resolve(),
@@ -685,6 +709,7 @@ export default function SalidasBodega() {
       void Promise.all([
         utils.reverseLogistics.list.invalidate(),
         utils.warehouseExits.list.invalidate(),
+        utils.warehouseExits.listPage.invalidate(),
         selectedId
           ? utils.warehouseExits.getById.invalidate({ id: selectedId })
           : Promise.resolve(),
@@ -1640,32 +1665,15 @@ export default function SalidasBodega() {
     isDeliveryScopeBlocked,
   ]);
 
-  const filteredExits = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
+  useEffect(() => setPage(1), [debouncedSearchTerm, statusFilter]);
+  useEffect(() => {
+    if (!isPlaceholderData && exitsPage?.page && exitsPage.page !== page) {
+      setPage(exitsPage.page);
+    }
+  }, [exitsPage?.page, isPlaceholderData, page]);
 
-    return (exits ?? []).filter((row: any) => {
-      const warehouseExit = row.warehouseExit;
-      const projectLabel = row.project
-        ? `${row.project.code} ${row.project.name}`
-        : "";
-      const matchesSearch =
-        !normalizedSearch ||
-        [
-          warehouseExit.exitNumber,
-          row.warehouse?.displayName,
-          projectLabel,
-          STATUS_LABELS[warehouseExit.status],
-        ]
-          .filter(Boolean)
-          .some(value =>
-            String(value).toLowerCase().includes(normalizedSearch)
-          );
-      const matchesStatus =
-        statusFilter === "all" || warehouseExit.status === statusFilter;
-
-      return matchesSearch && matchesStatus;
-    });
-  }, [exits, searchTerm, statusFilter]);
+  const hasExitFilters =
+    Boolean(debouncedSearchTerm.trim()) || statusFilter !== "all";
 
   const detailIsDraft = detail?.warehouseExit.status === "borrador";
 
@@ -2456,12 +2464,16 @@ export default function SalidasBodega() {
             <div className="p-8 text-center text-muted-foreground">
               Cargando salidas de inventario...
             </div>
-          ) : !(exits ?? []).length ? (
+          ) : exitsError ? (
+            <div className="p-8 text-center text-destructive">
+              No se pudieron cargar las salidas: {exitsError.message}
+            </div>
+          ) : !exits.length && !hasExitFilters ? (
             <div className="flex flex-col items-center gap-3 p-10 text-center text-muted-foreground">
               <PackageMinus className="h-9 w-9" />
               <p>No hay salidas de inventario generadas desde Flujos.</p>
             </div>
-          ) : !filteredExits.length ? (
+          ) : !exits.length ? (
             <div className="p-8 text-center text-muted-foreground">
               No hay salidas de inventario que coincidan con los filtros
             </div>
@@ -2497,7 +2509,7 @@ export default function SalidasBodega() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredExits.map((row: any) => (
+                  {exits.map((row: any) => (
                     <tr
                       key={row.warehouseExit.id}
                       className="border-b border-border last:border-0"
@@ -2547,6 +2559,15 @@ export default function SalidasBodega() {
               </table>
             </div>
           )}
+          {exitsPage && !exitsError ? (
+            <DataPagination
+              page={exitsPage.page}
+              pageSize={exitsPage.pageSize}
+              total={exitsPage.total}
+              totalPages={exitsPage.totalPages}
+              onPageChange={setPage}
+            />
+          ) : null}
         </CardContent>
       </Card>
 

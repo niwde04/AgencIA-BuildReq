@@ -30,6 +30,8 @@ import {
   transferRequests,
   transfers,
   users,
+  warehouses,
+  warehouseExits,
 } from "../drizzle/schema";
 import * as data from "./db";
 
@@ -1017,5 +1019,72 @@ export async function listInvoicesPage(filters: InvoicePageFilters) {
     excludeStatus: filters.excludeStatus,
     supplierId: filters.supplierId,
   });
+  return pageResult(items, total, filters);
+}
+
+export type WarehouseExitPageFilters = PageInput & {
+  projectId?: number;
+  projectIds?: number[];
+  status?: string;
+};
+
+export async function listWarehouseExitsPage(
+  filters: WarehouseExitPageFilters
+) {
+  const database = await data.getDb();
+  if (!database) return pageResult([], 0, filters);
+
+  const conditions: any[] = [];
+  if (filters.projectId)
+    conditions.push(eq(warehouseExits.projectId, filters.projectId));
+  addProjectScope(conditions, warehouseExits.projectId, filters.projectIds);
+  if (filters.status)
+    conditions.push(sql`${warehouseExits.status}::text = ${filters.status}`);
+
+  const search = filters.search?.trim();
+  if (search) {
+    const pattern = `%${search}%`;
+    conditions.push(
+      or(
+        ilike(warehouseExits.exitNumber, pattern),
+        sql`${warehouseExits.status}::text ilike ${pattern}`,
+        ilike(projects.code, pattern),
+        ilike(projects.name, pattern),
+        sql`concat_ws(' ', ${projects.code}, ${projects.name}) ilike ${pattern}`,
+        ilike(warehouses.code, pattern),
+        ilike(warehouses.name, pattern),
+        ilike(warehouses.displayName, pattern)
+      )!
+    );
+  }
+
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const baseQuery = () =>
+    database
+      .select({ id: warehouseExits.id })
+      .from(warehouseExits)
+      .leftJoin(projects, eq(warehouseExits.projectId, projects.id))
+      .leftJoin(warehouses, eq(warehouseExits.warehouseId, warehouses.id));
+
+  const [totalRow] = await database
+    .select({ count: count() })
+    .from(warehouseExits)
+    .leftJoin(projects, eq(warehouseExits.projectId, projects.id))
+    .leftJoin(warehouses, eq(warehouseExits.warehouseId, warehouses.id))
+    .where(where);
+  const total = totalRow?.count ?? 0;
+  const meta = getPageMeta(total, filters);
+  const idRows = await baseQuery()
+    .where(where)
+    .orderBy(desc(warehouseExits.createdAt), desc(warehouseExits.id))
+    .limit(meta.pageSize)
+    .offset(meta.offset);
+  const items = await data.listWarehouseExits({
+    ids: uniqueIds(idRows),
+    projectId: filters.projectId,
+    projectIds: filters.projectIds,
+    status: filters.status,
+  });
+
   return pageResult(items, total, filters);
 }

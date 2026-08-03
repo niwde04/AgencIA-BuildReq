@@ -14738,6 +14738,7 @@ function buildWarehouseExitWarehouseLabel(params: {
 }
 
 export async function listWarehouseExits(filters?: {
+  ids?: number[];
   projectId?: number;
   projectIds?: number[];
   status?: string;
@@ -14746,6 +14747,13 @@ export async function listWarehouseExits(filters?: {
   if (!db) return [];
 
   const conditions = [];
+  if (filters?.ids) {
+    conditions.push(
+      filters.ids.length > 0
+        ? inArray(warehouseExits.id, filters.ids)
+        : sql`false`
+    );
+  }
   if (filters?.projectId) {
     conditions.push(eq(warehouseExits.projectId, filters.projectId));
   }
@@ -14833,7 +14841,7 @@ export async function listWarehouseExits(filters?: {
       users.updatedAt,
       users.lastSignedIn
     )
-    .orderBy(desc(warehouseExits.createdAt));
+    .orderBy(desc(warehouseExits.createdAt), desc(warehouseExits.id));
 
   return rows.map(
     ({

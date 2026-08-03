@@ -82,6 +82,53 @@ describe("pagination index migration", () => {
     expect(sql).toContain(
       'CREATE INDEX IF NOT EXISTS "sfr_status_idx" ON "supplyFlowRecords" ("status")'
     );
+
+    const warehouseExitSql = readFileSync(
+      new URL(
+        "../drizzle/0132_warehouse_exit_pagination_index.sql",
+        import.meta.url
+      ),
+      "utf8"
+    );
+    expect(warehouseExitSql).toContain(
+      'CREATE INDEX IF NOT EXISTS "we_created_page_idx"'
+    );
+    expect(warehouseExitSql).toContain(
+      'ON "warehouseExits" ("createdAt" DESC, "id" DESC)'
+    );
+  });
+});
+
+describe("warehouse exit pagination", () => {
+  const source = readFileSync(
+    new URL("./paginatedLists.ts", import.meta.url),
+    "utf8"
+  );
+  const start = source.indexOf("export async function listWarehouseExitsPage");
+  const body = source.slice(start);
+
+  it("searches the document, project, warehouse and status", () => {
+    expect(start).toBeGreaterThanOrEqual(0);
+    for (const field of [
+      "warehouseExits.exitNumber",
+      "warehouseExits.status",
+      "projects.code",
+      "projects.name",
+      "warehouses.code",
+      "warehouses.name",
+      "warehouses.displayName",
+    ]) {
+      expect(body).toContain(field);
+    }
+  });
+
+  it("uses stable server-side paging before loading row details", () => {
+    expect(body).toContain(
+      ".orderBy(desc(warehouseExits.createdAt), desc(warehouseExits.id))"
+    );
+    expect(body).toContain(".limit(meta.pageSize)");
+    expect(body).toContain(".offset(meta.offset)");
+    expect(body).toContain("data.listWarehouseExits");
   });
 });
 
