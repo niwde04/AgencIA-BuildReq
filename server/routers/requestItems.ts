@@ -7,6 +7,7 @@ import {
   isProcurementApproverRole,
   isSuperintendentFamilyRole,
 } from "@shared/buildreq-roles";
+import { isSupplyFlowBlockingReassignment } from "@shared/supply-flow-status";
 
 function canAssignFlows(user: { role: string; buildreqRole?: string | null }) {
   if (isProcurementApproverRole(user.buildreqRole)) return false;
@@ -613,7 +614,11 @@ export const requestItemsRouter = router({
         }
       }
 
-      const activeSameFlow = existingFlows.some((flow) => flow.flowType === input.flowType);
+      const activeSameFlow = existingFlows.some(
+        flow =>
+          flow.flowType === input.flowType &&
+          isSupplyFlowBlockingReassignment(flow.status)
+      );
       if (activeSameFlow) {
         throw new TRPCError({
           code: "BAD_REQUEST",

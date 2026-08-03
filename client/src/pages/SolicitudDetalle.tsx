@@ -61,6 +61,7 @@ import {
   PURCHASE_URGENCY_LABELS,
   STANDARD_PURCHASE_LEAD_DAYS,
 } from "@shared/material-requests";
+import { isSupplyFlowBlockingReassignment } from "@shared/supply-flow-status";
 
 const STATUS_LABELS: Record<string, string> = {
   borrador: "Borrador",
@@ -874,6 +875,24 @@ export default function SolicitudDetalle() {
     return entries;
   }, [flowData]);
 
+  const blockingFlowTypesByItem = useMemo(() => {
+    const entries = new Map<number, Set<string>>();
+
+    for (const flow of flowData || []) {
+      if (
+        !flow.requestItemId ||
+        !isSupplyFlowBlockingReassignment(flow.status)
+      ) {
+        continue;
+      }
+      const currentSet = entries.get(flow.requestItemId) ?? new Set<string>();
+      currentSet.add(flow.flowType);
+      entries.set(flow.requestItemId, currentSet);
+    }
+
+    return entries;
+  }, [flowData]);
+
   const activeFlowsByItem = useMemo(() => {
     const entries = new Map<number, any[]>();
 
@@ -920,7 +939,11 @@ export default function SolicitudDetalle() {
 
       if (
         entry.assignedFlow &&
-        !activeFlows.some((flow) => flow.flowType === entry.assignedFlow)
+        !activeFlows.some(
+          flow =>
+            flow.flowType === entry.assignedFlow &&
+            isSupplyFlowBlockingReassignment(flow.status)
+        )
       ) {
         events.push({
           key: `assigned-${entry.id}-${entry.assignedFlow}`,
@@ -1161,7 +1184,7 @@ export default function SolicitudDetalle() {
     }
     if (
       flowType !== "despacho_bodega" &&
-      activeFlowTypesByItem.get(item.id)?.has(flowType)
+      blockingFlowTypesByItem.get(item.id)?.has(flowType)
     ) {
       return `Este ítem ya tiene un flujo activo de ${QUEUE_FLOW_LABELS[flowType].toLowerCase()}`;
     }
@@ -1840,7 +1863,7 @@ export default function SolicitudDetalle() {
                     !editableItem ||
                     row.remainingQuantity <= 0 ||
                     (editableItem
-                      ? (activeFlowTypesByItem.get(editableItem.id)?.size ?? 0) > 0
+                      ? (blockingFlowTypesByItem.get(editableItem.id)?.size ?? 0) > 0
                       : false) ||
                     assigningFlowItemId === editableItem?.id;
                   const canRejectPendingBalance =
