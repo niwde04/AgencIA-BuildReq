@@ -4171,7 +4171,7 @@ export default function Facturas() {
             </div>
           ) : (
             <div className="relative isolate max-w-full overflow-x-auto">
-              <table className="w-full min-w-[2240px] border-separate border-spacing-0 text-sm">
+              <table className="w-full min-w-[2360px] border-separate border-spacing-0 text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/30">
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -4182,6 +4182,9 @@ export default function Facturas() {
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       No. factura fiscal
+                    </th>
+                    <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Fecha documento
                     </th>
                     <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Proveedor
@@ -4257,6 +4260,9 @@ export default function Facturas() {
                           </td>
                           <td className="p-3 font-medium">
                             {row.invoice.invoiceNumber || "—"}
+                          </td>
+                          <td className="p-3">
+                            {formatDateLabel(row.invoice.documentDate)}
                           </td>
                           <td className="p-3">
                             <span className="font-medium">
@@ -4347,7 +4353,7 @@ export default function Facturas() {
                         </tr>
                         {itemsExpanded ? (
                           <tr className="border-b border-border">
-                            <td colSpan={16} className="p-0">
+                            <td colSpan={17} className="p-0">
                               <DocumentItemsAccordionPanel
                                 items={expandedItemsDetail?.items}
                                 isLoading={isLoadingExpandedItems}
