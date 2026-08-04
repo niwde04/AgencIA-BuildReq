@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { sha256File } from "@/lib/file-sha256";
 import { trpc } from "@/lib/trpc";
 import { formatPurchaseOrderCurrency } from "@shared/purchase-orders";
 import {
@@ -20,19 +21,6 @@ type FileCheckResult = {
   hash: string;
   error?: string;
 };
-
-async function sha256File(file: File) {
-  if (!globalThis.crypto?.subtle) {
-    throw new Error("El navegador no permite calcular SHA-256 en este sitio");
-  }
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    await file.arrayBuffer()
-  );
-  return Array.from(new Uint8Array(digest))
-    .map(value => value.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 function formatDateTime(value: Date | string) {
   return new Date(value).toLocaleString("es-HN", {
