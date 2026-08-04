@@ -12,9 +12,24 @@ import {
   isProcurementApproverRole,
   isProjectScopedRole,
 } from "@shared/buildreq-roles";
+import {
+  exportProjectAssignmentLedger,
+  getProjectAssignmentLedger,
+  listProjectAssignmentTargets,
+} from "../projectAssignmentLedger";
 
 const optionalDateInput = z.string().optional().nullable();
 const subprojectStatusInput = z.boolean().default(true);
+const assignmentTargetTypeInput = z.enum([
+  "subproyecto",
+  "activo_fijo",
+  "sin_destino",
+]);
+const assignmentLedgerSelectionInput = z.object({
+  projectId: z.number().int().positive(),
+  targetType: assignmentTargetTypeInput,
+  targetKey: z.string().trim().min(1).max(100),
+});
 
 function isProjectScopedUser(user: {
   buildreqRole?: string | null;
@@ -307,6 +322,67 @@ export const projectsRouter = router({
       assertProjectScopedAccess(ctx.user, input.projectId);
       await assertProjectExists(input.projectId);
       return db.listProjectSubprojects(input.projectId);
+    }),
+
+  listAssignmentTargets: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.number().int().positive(),
+        targetType: z.enum(["subproyecto", "activo_fijo"]),
+        search: z.string().trim().max(200).optional(),
+        page: z.number().int().positive().default(1),
+        pageSize: z.number().int().min(1).max(50).default(10),
+        sortBy: z
+          .enum([
+            "destino",
+            "estado",
+            "articulos",
+            "movimientos",
+            "ultima_asignacion",
+          ])
+          .default("destino"),
+        sortDirection: z.enum(["asc", "desc"]).default("asc"),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      assertProjectScopedAccess(ctx.user, input.projectId);
+      await assertProjectExists(input.projectId);
+      return listProjectAssignmentTargets(input);
+    }),
+
+  getAssignmentLedger: protectedProcedure
+    .input(
+      assignmentLedgerSelectionInput.extend({
+        historyPage: z.number().int().positive().default(1),
+        historyPageSize: z.number().int().min(1).max(100).default(10),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      assertProjectScopedAccess(ctx.user, input.projectId);
+      await assertProjectExists(input.projectId);
+      const ledger = await getProjectAssignmentLedger(input);
+      if (!ledger) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "El destino de asignación no existe en este proyecto",
+        });
+      }
+      return ledger;
+    }),
+
+  exportAssignmentLedger: protectedProcedure
+    .input(assignmentLedgerSelectionInput)
+    .query(async ({ ctx, input }) => {
+      assertProjectScopedAccess(ctx.user, input.projectId);
+      await assertProjectExists(input.projectId);
+      const ledger = await exportProjectAssignmentLedger(input);
+      if (!ledger) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "El destino de asignación no existe en este proyecto",
+        });
+      }
+      return ledger;
     }),
 
   createSubproject: protectedProcedure

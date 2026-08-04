@@ -205,7 +205,12 @@ export default function Devoluciones() {
   const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [selectedReturnId, setSelectedReturnId] = useState<number | null>(null);
+  const [selectedReturnId, setSelectedReturnId] = useState<number | null>(() => {
+    const returnId = Number(
+      new URLSearchParams(window.location.search).get("returnId")
+    );
+    return Number.isInteger(returnId) && returnId > 0 ? returnId : null;
+  });
   const [creditNoteReturnId, setCreditNoteReturnId] = useState<number | null>(
     null
   );

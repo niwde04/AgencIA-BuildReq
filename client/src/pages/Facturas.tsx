@@ -1546,7 +1546,14 @@ export default function Facturas() {
     userRole === "administracion_central" ||
     userRole === "administrador_proyecto" ||
     userRole === "contable";
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(() => {
+    const requestedId = Number(
+      new URLSearchParams(window.location.search).get("editar")
+    );
+    return Number.isInteger(requestedId) && requestedId > 0
+      ? requestedId
+      : null;
+  });
   const [expandedItemsId, setExpandedItemsId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [projectFilter, setProjectFilter] = useState("all");
@@ -4970,7 +4977,8 @@ export default function Facturas() {
                         <Label>Número documento</Label>
                         <Input
                           value={invoiceDraft.invoiceNumber}
-                          disabled={!canEditSelectedInvoice}
+                          readOnly={!canEditSelectedInvoice}
+                          aria-readonly={!canEditSelectedInvoice}
                           onChange={event =>
                             updateInvoiceDraft(current => ({
                               ...current,

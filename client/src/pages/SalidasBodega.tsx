@@ -511,7 +511,12 @@ function getSuggestedDeliveryQuantity(item: any) {
 export default function SalidasBodega() {
   const utils = trpc.useUtils();
   const { user } = useAuth();
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(() => {
+    const exitId = Number(
+      new URLSearchParams(window.location.search).get("exitId")
+    );
+    return Number.isInteger(exitId) && exitId > 0 ? exitId : null;
+  });
   const [returnPanelOpen, setReturnPanelOpen] = useState(false);
   const [returnReasonCategory, setReturnReasonCategory] = useState("error_pedido");
   const [returnJustification, setReturnJustification] = useState("");

@@ -9,6 +9,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -34,6 +40,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { canCreateProjectSubprojects } from "@shared/buildreq-roles";
+import { ProjectAssignmentLedger } from "@/components/ProjectAssignmentLedger";
 
 type ProjectRecord = {
   id: number;
@@ -1019,16 +1026,21 @@ export default function Proyectos() {
                 )}
               </div>
 
-              <div className="border-t pt-4 space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-base font-semibold">Subproyectos</h2>
-                    <p className="text-xs text-muted-foreground">
-                      Estructura informativa del proyecto para uso futuro en requisiciones.
-                    </p>
-                  </div>
-                  <Badge variant="outline">{subprojects?.length ?? 0}</Badge>
-                </div>
+              <div className="border-t pt-4">
+                <Accordion type="single" collapsible>
+                  <AccordionItem value="subprojects" className="border-b-0">
+                    <AccordionTrigger className="py-0 hover:no-underline">
+                      <div className="flex flex-1 items-center justify-between gap-3 pr-2">
+                        <div>
+                          <h2 className="text-base font-semibold">Subproyectos</h2>
+                          <p className="text-xs font-normal text-muted-foreground">
+                            Estructura informativa del proyecto para uso futuro en requisiciones.
+                          </p>
+                        </div>
+                        <Badge variant="outline">{subprojects?.length ?? 0}</Badge>
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-4 pt-4 pb-0">
 
                 {isLoadingSubprojects ? (
                   <div className="h-20 animate-pulse bg-muted rounded-md" />
@@ -1210,7 +1222,16 @@ export default function Proyectos() {
                     </Button>
                   </div>
                 )}
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
               </div>
+
+              <ProjectAssignmentLedger
+                key={selectedProject.id}
+                projectId={selectedProject.id}
+                projectCode={selectedProject.code}
+              />
             </div>
           )}
         </DialogContent>
