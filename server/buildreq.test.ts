@@ -13523,6 +13523,32 @@ describe("BuildReq - Purchase Orders", () => {
     expect(pdfText).toContain("/Subtype /Image");
   });
 
+  it("wraps a long purchase order supplier name over two lines", () => {
+    const pdf = buildPurchaseOrderPrintPdfBase64({
+      orderNumber: "OC-010-00000082",
+      orderId: "479",
+      projectLabel: "010 Sistema de Agua Potable San Jose",
+      supplierLabel:
+        "SUMINISTROS ASESORIA Y MANTENIMIENTO DE EQUIPO CONTRA INCENDIO S DE RL DE CV",
+      createdDateLabel: "22/07/2026",
+      deliveryDateLabel: "15/07/2026",
+      requestedByLabel: "WILSON OSWALDO MOLINA VARGAS",
+      items: [],
+      summaryRows: [],
+    });
+
+    const pdfText = Buffer.from(pdf, "base64").toString("latin1");
+    const encodeText = (value: string) =>
+      Buffer.from(value, "latin1").toString("hex").toUpperCase();
+    const firstLine = encodeText(
+      "SUMINISTROS ASESORIA Y MANTENIMIENTO DE EQUIPO CONTRA"
+    );
+    const secondLine = encodeText("INCENDIO S DE RL DE CV");
+
+    expect(pdfText).toContain(`<${firstLine}> Tj`);
+    expect(pdfText).toContain(`<${secondLine}> Tj`);
+  });
+
   it("prints a verifiable electronic seal and detects a modified PDF hash", () => {
     const signerName = "MARIA JOSE APROBADORA";
     const verificationCode = "OC-0123456789ABCDEF";
@@ -13577,6 +13603,9 @@ describe("BuildReq - Purchase Orders", () => {
     expect(pdfText).toContain(encodePdfText(verificationCode));
     expect(pdfText).toContain(
       `<${encodePdfText("SELLO ELECTRÓNICO VERIFICABLE")}> Tj`
+    );
+    expect(pdfText.indexOf(encodePdfText("Tomar Nota:"))).toBeLessThan(
+      pdfText.indexOf(encodePdfText("SELLO ELECTRÓNICO VERIFICABLE"))
     );
     expect((pdfText.match(/ re\s+f/g) ?? []).length).toBeGreaterThan(100);
     expect(modifiedHash).not.toBe(officialHash);

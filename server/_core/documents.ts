@@ -1442,7 +1442,9 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
         x: marginX,
         top: leftTop,
         labelWidth: 58,
-        valueWidth: 286,
+        // Keep a clear gutter before the right-hand metadata column. Long
+        // supplier names are intentionally wrapped over at most two lines.
+        valueWidth: 240,
         label: "Proveedor:",
         value: params.supplierLabel,
         maxLines: 2,
@@ -1748,6 +1750,91 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     return { summaryX, summaryWidth, height };
   }
 
+  const digitalSealHeight = 80;
+  const digitalSealTop = pageHeight - digitalSealHeight - 48;
+
+  function drawDigitalSeal(sealTop: number) {
+    if (!params.digitalSeal) return;
+
+    const sealX = marginX + 214;
+    const sealWidth = contentWidth - 224;
+    const qrSize = 62;
+    const qrX = sealX + sealWidth - qrSize - 8;
+    const textX = sealX + 10;
+    const textWidth = qrX - textX - 7;
+
+    drawRoundedRect(
+      page,
+      sealX,
+      sealTop,
+      sealWidth,
+      digitalSealHeight,
+      5,
+      {
+        fill: [0.97, 0.98, 0.97],
+        stroke: [0.18, 0.38, 0.25],
+        lineWidth: 0.9,
+      }
+    );
+    drawText(page, {
+      x: textX,
+      top: sealTop + 7,
+      width: textWidth,
+      text: "SELLO ELECTRÓNICO VERIFICABLE",
+      fontSize: 7.4,
+      font: "F2",
+      color: [0.08, 0.3, 0.16],
+    });
+    drawText(page, {
+      x: textX,
+      top: sealTop + 19,
+      width: textWidth,
+      text: params.digitalSeal.signerName,
+      fontSize: 7.5,
+      font: "F2",
+      color: ink,
+    });
+    drawText(page, {
+      x: textX,
+      top: sealTop + 30,
+      width: textWidth,
+      text: params.digitalSeal.signerRole,
+      fontSize: 6.8,
+      color: ink,
+    });
+    drawText(page, {
+      x: textX,
+      top: sealTop + 41,
+      width: textWidth,
+      text: params.digitalSeal.sealTypeLabel,
+      fontSize: 6.8,
+      font: "F2",
+      color: ink,
+    });
+    drawText(page, {
+      x: textX,
+      top: sealTop + 52,
+      width: textWidth,
+      text: params.digitalSeal.signedDateLabel,
+      fontSize: 6.6,
+      color: ink,
+    });
+    drawText(page, {
+      x: textX,
+      top: sealTop + 63,
+      width: textWidth,
+      text: `Código ${params.digitalSeal.verificationCode} | Integridad ${params.digitalSeal.payloadHash.slice(0, 16).toUpperCase()}`,
+      fontSize: 6.1,
+      font: "F2",
+      color: ink,
+    });
+    drawQrCode(page, params.digitalSeal.verificationUrl, {
+      x: qrX,
+      top: sealTop + 9,
+      size: qrSize,
+    });
+  }
+
   function drawLowerSection(top: number) {
     const summary = drawSummary(top);
     let detailsTop = top;
@@ -1809,79 +1896,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       "F2"
     );
 
-    if (params.digitalSeal) {
-      const sealX = marginX + 214;
-      const sealTop = signaturesTop - 29;
-      const sealWidth = contentWidth - 224;
-      const sealHeight = 80;
-      const qrSize = 62;
-      const qrX = sealX + sealWidth - qrSize - 8;
-      const textX = sealX + 10;
-      const textWidth = qrX - textX - 7;
-
-      drawRoundedRect(page, sealX, sealTop, sealWidth, sealHeight, 5, {
-        fill: [0.97, 0.98, 0.97],
-        stroke: [0.18, 0.38, 0.25],
-        lineWidth: 0.9,
-      });
-      drawText(page, {
-        x: textX,
-        top: sealTop + 7,
-        width: textWidth,
-        text: "SELLO ELECTRÓNICO VERIFICABLE",
-        fontSize: 7.4,
-        font: "F2",
-        color: [0.08, 0.3, 0.16],
-      });
-      drawText(page, {
-        x: textX,
-        top: sealTop + 19,
-        width: textWidth,
-        text: params.digitalSeal.signerName,
-        fontSize: 7.5,
-        font: "F2",
-        color: ink,
-      });
-      drawText(page, {
-        x: textX,
-        top: sealTop + 30,
-        width: textWidth,
-        text: params.digitalSeal.signerRole,
-        fontSize: 6.8,
-        color: ink,
-      });
-      drawText(page, {
-        x: textX,
-        top: sealTop + 41,
-        width: textWidth,
-        text: params.digitalSeal.sealTypeLabel,
-        fontSize: 6.8,
-        font: "F2",
-        color: ink,
-      });
-      drawText(page, {
-        x: textX,
-        top: sealTop + 52,
-        width: textWidth,
-        text: params.digitalSeal.signedDateLabel,
-        fontSize: 6.6,
-        color: ink,
-      });
-      drawText(page, {
-        x: textX,
-        top: sealTop + 63,
-        width: textWidth,
-        text: `Código ${params.digitalSeal.verificationCode} | Integridad ${params.digitalSeal.payloadHash.slice(0, 16).toUpperCase()}`,
-        fontSize: 6.1,
-        font: "F2",
-        color: ink,
-      });
-      drawQrCode(page, params.digitalSeal.verificationUrl, {
-        x: qrX,
-        top: sealTop + 9,
-        size: qrSize,
-      });
-    } else {
+    if (!params.digitalSeal) {
       drawLine(
         page,
         secondSignatureX,
@@ -1901,7 +1916,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       );
     }
 
-    const noteTop = signaturesTop + (params.digitalSeal ? 67 : 38);
+    const noteTop = signaturesTop + 38;
     const noteX = marginX + 18;
     const noteWidth = contentWidth - 36;
     const noteHeight = 62;
@@ -1939,6 +1954,8 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       font: "F1",
       color: ink,
     });
+
+    drawDigitalSeal(digitalSealTop);
   }
 
   const tableTop = drawFirstPageHeader();
@@ -1982,10 +1999,15 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     currentTop += drawItemRow(item, currentTop);
   });
 
-  const lowerSectionHeight =
-    Math.max(58, params.summaryRows.length * 10.5) +
-    (params.digitalSeal ? 184 : 154);
-  if (currentTop + 8 + lowerSectionHeight > printableBottom) {
+  const lowerInfoHeightEstimate = Math.max(
+    68,
+    params.summaryRows.length * 10.5
+  );
+  const lowerSectionHeight = lowerInfoHeightEstimate + 154;
+  const lowerSectionWouldOverflow = params.digitalSeal
+    ? currentTop + 8 + lowerInfoHeightEstimate + 165 > digitalSealTop
+    : currentTop + 8 + lowerSectionHeight > printableBottom;
+  if (lowerSectionWouldOverflow) {
     currentTop = startNewPage(false);
   } else {
     currentTop += 8;
