@@ -10,6 +10,10 @@ export const ENV = {
   supabaseUrl: process.env.SUPABASE_URL ?? "",
   supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
   supabaseJwtSecret: process.env.SUPABASE_JWT_SECRET ?? "",
+  siteUrl: (process.env.VITE_SITE_URL ?? "http://localhost:3000").replace(
+    /\/+$/,
+    ""
+  ),
   supabaseStorageBucket:
     process.env.SUPABASE_STORAGE_BUCKET ?? "buildreq-attachments",
   supabaseStorageSignedUrlSeconds: Number(

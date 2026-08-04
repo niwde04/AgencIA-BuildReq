@@ -3,6 +3,7 @@ import { DataPagination } from "@/components/DataPagination";
 import { CompactProcurementApprovalPanel } from "@/components/CompactProcurementApprovalPanel";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { downloadSystemPurchaseOrdersWorkbook } from "@/lib/dmc-export";
+import { openBase64Pdf } from "@/lib/document-download";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
 import { PurchaseOrderAdvanceDialog } from "@/components/PurchaseOrderAdvanceDialog";
 import {
@@ -80,6 +81,7 @@ import {
   Send,
   ShoppingCart,
   ShieldX,
+  ShieldCheck,
   Trash2,
   Upload,
   XCircle,
@@ -94,16 +96,13 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { useProcurementApprovalSettings } from "@/hooks/useProcurementApprovalSettings";
 import {
   allowsPurchaseOrderAdvance,
   calculatePurchaseOrderLineAmounts,
   DEFAULT_SALES_TAXES,
   formatPurchaseOrderCurrency,
-  formatPurchaseOrderPaymentMethodPrintLabel,
   getPurchaseCurrencyLabel,
-  getPurchaseOrderFiscalSummaryRows,
   getPurchaseOrderContractSummary,
   normalizePurchaseOrderAdditionalTaxCodes,
   normalizePurchaseOrderTaxCode,
@@ -328,17 +327,6 @@ function formatSupplierRtnLabel(supplier?: any | null) {
   return rtn || "RTN no configurado";
 }
 
-function formatSupplierContactPrintLabel(contact?: any | null) {
-  if (!contact) return "-";
-
-  return (
-    [contact.name, contact.phone, contact.email]
-      .map(value => String(value ?? "").trim())
-      .filter(Boolean)
-      .join(" / ") || "-"
-  );
-}
-
 function formatSupplierContactMeta(contact?: any | null) {
   if (!contact) return "";
 
@@ -385,33 +373,6 @@ function formatPurchaseOrderCreatedBy(row: any) {
       ? `Usuario #${row.purchaseOrder.createdById}`
       : "—"
   );
-}
-
-function formatPurchaseOrderItemTargetLabel(item: any) {
-  const target = item?.target ?? item?.sourceTarget;
-  if (target?.label) return String(target.label);
-
-  if (target?.type === "subproyecto" && target.subProjectId) {
-    return `Subproyecto #${target.subProjectId}`;
-  }
-
-  if (target?.type === "activo_fijo" && target.fixedAssetSapItemCode) {
-    return target.fixedAssetName
-      ? `Activo fijo: ${target.fixedAssetSapItemCode} - ${target.fixedAssetName}`
-      : `Activo fijo: ${target.fixedAssetSapItemCode}`;
-  }
-
-  if (item?.targetType === "subproyecto" && item.subProjectId) {
-    return `Subproyecto #${item.subProjectId}`;
-  }
-
-  if (item?.targetType === "activo_fijo" && item.fixedAssetSapItemCode) {
-    return item.fixedAssetName
-      ? `Activo fijo: ${item.fixedAssetSapItemCode} - ${item.fixedAssetName}`
-      : `Activo fijo: ${item.fixedAssetSapItemCode}`;
-  }
-
-  return "-";
 }
 
 function SupplierCommandList({
@@ -579,24 +540,6 @@ function formatQuantity(value: number | string | null | undefined) {
   });
 }
 
-function formatPrintNumber(value: number | string | null | undefined) {
-  const parsed = Number(value ?? 0);
-  if (!Number.isFinite(parsed)) return "0";
-  return parsed.toLocaleString("es-HN", {
-    minimumFractionDigits: Number.isInteger(parsed) ? 0 : 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-function formatPrintMoney(value: number | string | null | undefined) {
-  const parsed = Number(value ?? 0);
-  if (!Number.isFinite(parsed)) return "0.00";
-  return parsed.toLocaleString("es-HN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
 function formatPrintDate(value: string | Date | null | undefined) {
   if (!value) return "-";
   const date = value instanceof Date ? value : new Date(value);
@@ -613,15 +556,6 @@ function dateInputValue(value: string | Date | null | undefined) {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toISOString().slice(0, 10);
-}
-
-function escapeHtml(value: unknown) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
 }
 
 const TEMPORARY_FIXED_ASSET_ITEM_NAME = "ACTIVO FIJO TEMPORAL";
@@ -927,6 +861,25 @@ type PurchaseOrderConfirmState =
       kind: "price-tax-mode";
       orderId: number;
       pricesIncludeTax: boolean;
+    }
+  | {
+      kind: "approval-decision";
+      orderId: number;
+      orderNumber: string;
+      decision: "approve" | "reject";
+      rejectedItemIds: number[];
+      comment: string;
+      total: number;
+      currency: PurchaseCurrency;
+      createsSeal: boolean;
+    }
+  | {
+      kind: "emit-order";
+      orderId: number;
+      orderNumber: string;
+      total: number;
+      currency: PurchaseCurrency;
+      usesApprovedSignature: boolean;
     };
 
 type ApprovalReviewDecision = "approve" | "reject";
@@ -1211,18 +1164,17 @@ export default function OrdenesCompra() {
     },
     onError: error => toast.error(error.message),
   });
-  const cancelAdvanceMutation =
-    trpc.purchaseOrderAdvances.cancel.useMutation({
-      onSuccess: async () => {
-        toast.success("Anticipo anulado");
-        await Promise.all([
-          advancesQuery.refetch(),
-          utils.purchaseOrderAdvances.eligiblePurchaseOrders.invalidate(),
-          utils.treasury.eligibleAdvances.invalidate(),
-        ]);
-      },
-      onError: error => toast.error(error.message),
-    });
+  const cancelAdvanceMutation = trpc.purchaseOrderAdvances.cancel.useMutation({
+    onSuccess: async () => {
+      toast.success("Anticipo anulado");
+      await Promise.all([
+        advancesQuery.refetch(),
+        utils.purchaseOrderAdvances.eligiblePurchaseOrders.invalidate(),
+        utils.treasury.eligibleAdvances.invalidate(),
+      ]);
+    },
+    onError: error => toast.error(error.message),
+  });
 
   const submitForApprovalMutation =
     trpc.purchaseOrders.submitForApproval.useMutation({
@@ -1248,6 +1200,7 @@ export default function OrdenesCompra() {
         );
         setApprovalItemDecisions({});
         setApprovalReviewComment("");
+        setConfirmState({ kind: null });
         if (isProcurementApprover) {
           setSelectedId(null);
         }
@@ -1281,6 +1234,7 @@ export default function OrdenesCompra() {
   const sendMutation = trpc.purchaseOrders.sendToSupplier.useMutation({
     onSuccess: () => {
       toast.success("OC emitida");
+      setConfirmState({ kind: null });
       void utils.purchaseOrders.invalidate();
       if (selectedId) {
         void utils.purchaseOrders.getById.invalidate({ id: selectedId });
@@ -1380,8 +1334,7 @@ export default function OrdenesCompra() {
     Boolean(detail) &&
     ["emitida", "enviada"].includes(detail!.purchaseOrder.status) &&
     allowsPurchaseOrderAdvance(
-      detail!.purchaseOrder.paymentMethod ??
-        detail!.directPurchasePaymentMethod
+      detail!.purchaseOrder.paymentMethod ?? detail!.directPurchasePaymentMethod
     ) &&
     !hasRegisteredReceipt;
   const advanceTotals = advances
@@ -1394,8 +1347,7 @@ export default function OrdenesCompra() {
           totals.paid +
           Number(row.money.accountedAmount ?? 0) +
           Number(row.money.bankPaidPendingAmount ?? 0),
-        accounted:
-          totals.accounted + Number(row.money.accountedAmount ?? 0),
+        accounted: totals.accounted + Number(row.money.accountedAmount ?? 0),
         applied: totals.applied + Number(row.money.appliedAmount ?? 0),
         pendingApply:
           totals.pendingApply + Number(row.money.unappliedAmount ?? 0),
@@ -1548,18 +1500,30 @@ export default function OrdenesCompra() {
         toast.error("Ingrese un motivo de rechazo de al menos 5 caracteres");
         return;
       }
-      reviewApprovalMutation.mutate({
-        id: selectedId,
+      setConfirmState({
+        kind: "approval-decision",
+        orderId: selectedId,
+        orderNumber: detail?.purchaseOrder.orderNumber ?? `OC ${selectedId}`,
         decision: "reject",
         comment,
         rejectedItemIds: approvalRejectedItemIds,
+        total: isTotalApprovalRejection ? 0 : approvalRemainingTotal,
+        currency: orderCurrency,
+        createsSeal: !isTotalApprovalRejection,
       });
       return;
     }
 
-    reviewApprovalMutation.mutate({
-      id: selectedId,
+    setConfirmState({
+      kind: "approval-decision",
+      orderId: selectedId,
+      orderNumber: detail?.purchaseOrder.orderNumber ?? `OC ${selectedId}`,
       decision: "approve",
+      comment: "",
+      rejectedItemIds: [],
+      total: orderTotal,
+      currency: orderCurrency,
+      createsSeal: true,
     });
   };
   const orderApprovalMinimum =
@@ -2369,7 +2333,9 @@ export default function OrdenesCompra() {
     closeReceiptLineMutation.isPending ||
     movePendingToPurchaseRequestMutation.isPending ||
     updatePricesIncludeTaxMutation.isPending ||
-    updateContractTermsMutation.isPending;
+    updateContractTermsMutation.isPending ||
+    reviewApprovalMutation.isPending ||
+    sendMutation.isPending;
   const contractDraftSummary = getPurchaseOrderContractSummary({
     appliesContract: contractDraft.appliesContract,
     contractPaymentFrequency: contractDraft.contractPaymentFrequency,
@@ -2706,6 +2672,33 @@ export default function OrdenesCompra() {
   };
 
   const handleConfirmAction = () => {
+    if (confirmState.kind === "approval-decision") {
+      if (confirmState.decision === "reject") {
+        reviewApprovalMutation.mutate({
+          id: confirmState.orderId,
+          decision: "reject",
+          comment: confirmState.comment,
+          rejectedItemIds: confirmState.rejectedItemIds,
+          confirmedElectronicDecision: true,
+        });
+      } else {
+        reviewApprovalMutation.mutate({
+          id: confirmState.orderId,
+          decision: "approve",
+          confirmedElectronicDecision: true,
+        });
+      }
+      return;
+    }
+
+    if (confirmState.kind === "emit-order") {
+      sendMutation.mutate({
+        id: confirmState.orderId,
+        confirmedElectronicSeal: true,
+      });
+      return;
+    }
+
     if (confirmState.kind === "delete-item") {
       setDeletingItemId(confirmState.itemId);
       deleteItemMutation.mutate(
@@ -2764,494 +2757,20 @@ export default function OrdenesCompra() {
   const handlePrintPurchaseOrder = () => {
     if (!detail) return;
 
-    const purchaseOrder = detail.purchaseOrder;
-    const normalizedPrintStatus = String(purchaseOrder.status ?? "")
-      .trim()
-      .toLowerCase();
-    const isCancelledPrint = [
-      "anulada",
-      "anulado",
-      "cancelada",
-      "cancelado",
-    ].includes(normalizedPrintStatus);
-    const printWatermarkText = isCancelledPrint
-      ? "ANULADA"
-      : !["emitida", "enviada", "parcialmente_recibida", "recibida"].includes(
-            normalizedPrintStatus
-          )
-        ? "NO OFICIAL"
-        : null;
-    const supplierName = detail.supplier?.name ?? "Proveedor pendiente";
-    const projectLabel = detail.project
-      ? `${detail.project.code} ${detail.project.name}`
-      : `Proyecto ${purchaseOrder.projectId}`;
-    const originalRequester = (detail as any).originalRequester;
-    const requestedByLabel =
-      originalRequester?.name ||
-      originalRequester?.email ||
-      detail.createdBy?.name ||
-      user?.name ||
-      "-";
-    const createdByLabel = formatPurchaseOrderCreatedBy(detail);
-    const preparedByLabel =
-      createdByLabel !== "—"
-        ? createdByLabel
-        : user?.name || user?.email || "-";
-    const salesAdvisorLabel = formatSupplierContactPrintLabel(
-      detail.preferredSupplierContact
-    );
-    const deliveryDate = purchaseOrder.neededBy
-      ? formatPrintDate(purchaseOrder.neededBy)
-      : "INMEDIATA";
-    const paymentMethodLabel = formatPurchaseOrderPaymentMethodPrintLabel(
-      purchaseOrder.paymentMethod ?? detail.directPurchasePaymentMethod
-    );
-    const observations = purchaseOrder.notes?.trim() || "-";
-    const quoteLabel = detail.purchaseRequest?.quoteAttachmentId
-      ? String(detail.purchaseRequest.quoteAttachmentId)
-      : "-";
-    const destinationLabels = Array.from(
-      new Set(
-        items
-          .map((item: any) => formatPurchaseOrderItemTargetLabel(item).trim())
-          .filter((value: string) => value && value !== "-")
-      )
-    );
-    const destinationLabel =
-      destinationLabels.length > 0 ? destinationLabels.join(" / ") : "-";
-    const itemRows = items
-      .map((item: any, index: number) => {
-        const draft = getItemDraft(item);
-        const partNumberLabel =
-          item.partNumber ||
-          item.catalogItem?.partNumber ||
-          item.currentSapItemCode ||
-          item.originalSapItemCode ||
-          "-";
-        const brandLine =
-          item.brand || item.catalogItem?.brand
-            ? `<div class="item-meta">Marca: ${escapeHtml(
-                item.brand || item.catalogItem?.brand
-              )}</div>`
-            : "";
-        const printItemName = isTemporaryFixedAssetItem(item)
-          ? draft.itemName?.trim() ||
-            getTemporaryFixedAssetRequestedName(item) ||
-            item.itemName
-          : item.itemName;
-        const amounts = calculatePurchaseOrderLineAmounts({
-          quantity: draft.quantity,
-          unitPrice: draft.unitPrice,
-          subtotal: draft.subtotal,
-          pricesIncludeTax: purchaseOrder.pricesIncludeTax,
-          taxCode: draft.taxCode,
-          additionalTaxCodes: draft.additionalTaxCodes,
-          taxes: activeSalesTaxes,
-        });
-        return `
-          <tr>
-            <td class="center">${index + 1}</td>
-            <td>${escapeHtml(printItemName)}${brandLine}</td>
-            <td class="center">${escapeHtml(partNumberLabel)}</td>
-            <td class="numeric">${escapeHtml(formatPrintNumber(draft.quantity))}</td>
-            <td class="numeric">${escapeHtml(formatPrintMoney(draft.unitPrice))}</td>
-            <td class="numeric">${escapeHtml(formatPrintMoney(amounts.subtotal))}</td>
-          </tr>
-        `;
-      })
-      .join("");
-    const fiscalSummaryRows = getPurchaseOrderFiscalSummaryRows(
-      pricingSummary,
-      purchaseOrder.currency ?? "HNL"
-    )
-      .map(
-        row => `
-        <tr>
-          <td>${escapeHtml(
-            row.label
-              .replace(/\blempiras\b/gi, "")
-              .replace(/\s+/g, " ")
-              .trim()
-          )}</td>
-          <td class="numeric">${escapeHtml(formatPrintMoney(row.value))}</td>
-        </tr>
-      `
-      )
-      .join("");
-
-    const printWindow = window.open("", "_blank", "width=840,height=1000");
-    if (!printWindow) {
-      toast.error("No se pudo abrir la ventana de impresión");
+    const printDocument = detail.printDocument;
+    if (!printDocument?.base64) {
+      toast.error("El PDF de la orden no está disponible");
       return;
     }
 
-    printWindow.document.write(`
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>${escapeHtml(purchaseOrder.orderNumber)}</title>
-          <style>
-            @page { size: A4 portrait; margin: 9mm 10mm; }
-            * { box-sizing: border-box; }
-            body {
-              background: #fff;
-              color: #000;
-              font-family: Arial, Helvetica, sans-serif;
-              font-size: 7.4px;
-              line-height: 1.15;
-              margin: 0;
-            }
-            .print-watermark {
-              align-items: center;
-              color: rgba(120, 120, 120, 0.18);
-              display: flex;
-              font-size: 72px;
-              font-weight: 900;
-              inset: 0;
-              justify-content: center;
-              letter-spacing: 12px;
-              line-height: 1;
-              pointer-events: none;
-              position: fixed;
-              text-transform: uppercase;
-              transform: rotate(-32deg);
-              z-index: 0;
-            }
-            .print-watermark.cancelled {
-              color: rgba(198, 0, 0, 0.16);
-              font-size: 84px;
-            }
-            .sheet {
-              margin: 0 auto;
-              max-width: 190mm;
-              position: relative;
-              z-index: 1;
-            }
-            .header {
-              align-items: start;
-              display: grid;
-              gap: 7px;
-              grid-template-columns: 78px 1fr 78px;
-            }
-            .logo {
-              display: block;
-              height: 43px;
-              object-fit: contain;
-              width: 74px;
-            }
-            .title {
-              font-size: 9.2px;
-              font-weight: 800;
-              line-height: 1.18;
-              text-align: center;
-              text-transform: uppercase;
-            }
-            .title .company {
-              font-size: 10.2px;
-            }
-            .rule {
-              border-top: 3px double #111;
-              margin: 3px 0 9px;
-            }
-            .meta {
-              display: grid;
-              gap: 18px;
-              grid-template-columns: minmax(0, 1fr) 164px;
-            }
-            .meta-left,
-            .meta-right {
-              display: grid;
-              align-content: start;
-              gap: 3px;
-            }
-            .field {
-              align-items: start;
-              display: grid;
-              gap: 5px;
-              grid-template-columns: 58px minmax(0, 1fr);
-              min-height: 9px;
-            }
-            .meta-right .field {
-              grid-template-columns: 44px minmax(0, 1fr);
-            }
-            .label {
-              font-weight: 800;
-            }
-            .value {
-              font-weight: 700;
-              overflow-wrap: anywhere;
-            }
-            .document-number {
-              color: #d60000;
-              font-size: 9.2px;
-              font-weight: 800;
-              line-height: 1;
-            }
-            table {
-              border-collapse: collapse;
-              margin-top: 9px;
-              table-layout: fixed;
-              width: 100%;
-            }
-            th {
-              border-bottom: 1px solid #111;
-              font-weight: 800;
-              padding: 2px 3px;
-              text-align: center;
-            }
-            td {
-              border-bottom: 1px solid #bcbcbc;
-              overflow-wrap: anywhere;
-              padding: 2px 3px;
-              vertical-align: top;
-            }
-            .center { text-align: center; }
-            .numeric {
-              font-variant-numeric: tabular-nums;
-              text-align: right;
-            }
-            .item-meta {
-              color: #000;
-              font-size: 6.8px;
-              margin-top: 1px;
-            }
-            .after-table {
-              align-items: start;
-              break-inside: avoid;
-              display: grid;
-              gap: 18px;
-              grid-template-columns: minmax(0, 1fr) 164px;
-              margin-top: 8px;
-              page-break-inside: avoid;
-            }
-            .delivery-meta {
-              display: grid;
-              gap: 3px;
-            }
-            .delivery-meta .field {
-              grid-template-columns: 66px minmax(0, 1fr);
-            }
-            .summary {
-              border-collapse: collapse;
-              margin-top: 0;
-              table-layout: fixed;
-              width: 100%;
-            }
-            .summary td {
-              border-bottom: 1px solid #111;
-              font-weight: 700;
-              padding: 1px 2px;
-              white-space: nowrap;
-            }
-            .summary td:first-child {
-              padding-right: 6px;
-              text-align: left;
-            }
-            .summary td.numeric {
-              font-weight: 800;
-              width: 56px;
-            }
-            .signatures {
-              display: grid;
-              gap: 104px;
-              grid-template-columns: repeat(2, 92px);
-              justify-content: center;
-              margin: 28px 0 8px;
-              page-break-inside: avoid;
-            }
-            .signature {
-              font-size: 7.1px;
-              font-weight: 700;
-              text-align: center;
-            }
-            .signature-name {
-              font-size: 7.2px;
-              min-height: 17px;
-              overflow-wrap: anywhere;
-            }
-            .signature-line {
-              border-top: 1px solid #111;
-              padding-top: 3px;
-            }
-            .note {
-              border: 1px solid #111;
-              border-radius: 9px;
-              font-size: 7.2px;
-              line-height: 1.22;
-              margin: 22px auto 0;
-              max-width: calc(100% - 18mm);
-              padding: 6px 9px;
-              page-break-inside: avoid;
-              text-align: center;
-            }
-            .note-title {
-              color: #d60000;
-              display: block;
-              font-weight: 800;
-              margin-bottom: 2px;
-            }
-            .print-footer {
-              display: flex;
-              font-size: 6.9px;
-              justify-content: space-between;
-              margin-top: 15px;
-            }
-            @media print {
-              html,
-              body {
-                height: auto;
-                overflow: visible;
-              }
-              .sheet { max-width: none; }
-              thead { display: table-header-group; }
-              tr {
-                break-inside: avoid;
-                page-break-inside: avoid;
-              }
-            }
-          </style>
-        </head>
-        <body>
-          ${
-            printWatermarkText
-              ? `<div class="print-watermark${
-                  isCancelledPrint ? " cancelled" : ""
-                }">${printWatermarkText}</div>`
-              : ""
-          }
-          <main class="sheet">
-            <section class="header">
-              ${getPrintLogoMarkup()}
-              <div class="title">
-                <div class="company">HIDALGO E HIDALGO HONDURAS SA DE CV</div>
-                <div>RTN: 08019013549808</div>
-                <div>ORDEN DE COMPRA</div>
-                <div>${escapeHtml(projectLabel)}</div>
-              </div>
-              <div></div>
-            </section>
-            <div class="rule"></div>
-
-            <section class="meta">
-              <div class="meta-left">
-                <div class="field">
-                  <div class="label">Fecha:</div>
-                  <div class="value">${escapeHtml(formatPrintDate(purchaseOrder.createdAt))}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Proveedor:</div>
-                  <div class="value">${escapeHtml(supplierName)}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Asesor Vta:</div>
-                  <div class="value">${escapeHtml(salesAdvisorLabel)}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Destino:</div>
-                  <div class="value">${escapeHtml(destinationLabel)}</div>
-                </div>
-              </div>
-              <div class="meta-right">
-                <div class="field">
-                  <div class="label">Pedido:</div>
-                  <div class="value">${escapeHtml(purchaseOrder.id)}</div>
-                </div>
-                <div class="field">
-                  <div class="label">F Pago:</div>
-                  <div class="value">${escapeHtml(paymentMethodLabel)}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Moneda:</div>
-                  <div class="value">${escapeHtml(
-                    getPurchaseCurrencyLabel(purchaseOrder.currency)
-                  )}</div>
-                </div>
-                <div class="field">
-                  <div class="label">O Compra:</div>
-                  <div class="value document-number">${escapeHtml(
-                    purchaseOrder.orderNumber
-                  )}</div>
-                </div>
-              </div>
-            </section>
-
-            <table>
-              <thead>
-                <tr>
-                  <th style="width: 9.6%;">Ítem</th>
-                  <th style="width: 39.9%;">Descripcion</th>
-                  <th style="width: 14%;">No. Parte</th>
-                  <th style="width: 9.6%;">Cantidad</th>
-                  <th style="width: 13.4%;">${
-                    purchaseOrder.pricesIncludeTax ? "Valor U c/ISV" : "Valor U"
-                  }</th>
-                  <th style="width: 13.5%;">${
-                    purchaseOrder.pricesIncludeTax ? "Base" : "Valor T"
-                  }</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${itemRows || `<tr><td colspan="6">Sin ítems</td></tr>`}
-              </tbody>
-            </table>
-
-            <section class="after-table">
-              <div class="delivery-meta">
-                <div class="field">
-                  <div class="label">Fecha Entrega:</div>
-                  <div class="value">${escapeHtml(deliveryDate)}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Solicitado:</div>
-                  <div class="value">${escapeHtml(requestedByLabel)}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Observaciones:</div>
-                  <div class="value">${escapeHtml(observations)}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Cotización:</div>
-                  <div class="value">${escapeHtml(quoteLabel)}</div>
-                </div>
-              </div>
-              <table class="summary">
-                <tbody>
-                  ${fiscalSummaryRows}
-                </tbody>
-              </table>
-            </section>
-
-            <section class="signatures">
-              <div class="signature">
-                <div class="signature-name">${escapeHtml(preparedByLabel)}</div>
-                <div class="signature-line">Elaborado por:</div>
-              </div>
-              <div class="signature">
-                <div class="signature-name">&nbsp;</div>
-                <div class="signature-line">Autorizado por:</div>
-              </div>
-            </section>
-
-            <section class="note">
-              <span class="note-title">Tomar Nota:</span>
-              Emitir factura a nombre de: HIDALGO e HIDALGO HONDURAS SA DE CV; RTN: 08019013549808;
-              Dirección: Blvd. Suyapa, Edificio Metropolis, Torre 2, Piso 20, Ofi. 22004.
-              <br />
-              Presentar con la factura su constancia de estar sujetos al RÉGIMEN DE PAGOS A CUENTA vigente,
-              caso contrario se procederá con las retenciones correspondientes.
-            </section>
-
-            <footer class="print-footer">
-              <span>${escapeHtml(preparedByLabel)}</span>
-              <span>1</span>
-            </footer>
-          </main>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindowWhenReady(printWindow);
+    if (
+      !openBase64Pdf({
+        base64: printDocument.base64,
+        fileName: printDocument.fileName,
+      })
+    ) {
+      toast.error("No se pudo abrir el PDF. Permite ventanas emergentes.");
+    }
   };
 
   const exportInternalPurchaseOrdersReport = async () => {
@@ -3297,9 +2816,7 @@ export default function OrdenesCompra() {
               disabled={!ordersPage?.total || isExportingInternalReport}
             >
               <Download className="mr-2 h-4 w-4" />
-              {isExportingInternalReport
-                ? "Generando..."
-                : "Exportar Excel"}
+              {isExportingInternalReport ? "Generando..." : "Exportar Excel"}
             </Button>
           ) : null}
           {canCreatePurchaseOrder ? (
@@ -5542,12 +5059,10 @@ export default function OrdenesCompra() {
                       </Label>
                       {canEditOrderStructure ? (
                         <Select
-                          value={
-                            normalizeDirectPurchasePaymentMethod(
-                              detail.purchaseOrder.paymentMethod ??
-                                detail.directPurchasePaymentMethod
-                            )
-                          }
+                          value={normalizeDirectPurchasePaymentMethod(
+                            detail.purchaseOrder.paymentMethod ??
+                              detail.directPurchasePaymentMethod
+                          )}
                           onValueChange={handlePaymentMethodChange}
                           disabled={updateMutation.isPending}
                         >
@@ -5566,9 +5081,7 @@ export default function OrdenesCompra() {
                               }
                             </SelectItem>
                             <SelectItem value="contado">
-                              {
-                                DIRECT_PURCHASE_PAYMENT_METHOD_LABELS.contado
-                              }
+                              {DIRECT_PURCHASE_PAYMENT_METHOD_LABELS.contado}
                             </SelectItem>
                           </SelectContent>
                         </Select>
@@ -6623,9 +6136,7 @@ export default function OrdenesCompra() {
                 <section className="space-y-4 rounded-2xl border border-border/70 bg-muted/10 p-4 sm:p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h3 className="font-semibold">
-                        Anticipos a proveedores
-                      </h3>
+                      <h3 className="font-semibold">Anticipos a proveedores</h3>
                       <p className="text-sm text-muted-foreground">
                         Solicitudes, pagos, contabilización y aplicación en
                         facturas.
@@ -6701,8 +6212,10 @@ export default function OrdenesCompra() {
                                   >
                                     {row.advance.cancelledAt
                                       ? "Anulado"
-                                      : String(row.money.status)
-                                          .replaceAll("_", " ")}
+                                      : String(row.money.status).replaceAll(
+                                          "_",
+                                          " "
+                                        )}
                                   </Badge>
                                 </div>
                                 <div className="mt-1 text-sm text-muted-foreground">
@@ -6793,8 +6306,7 @@ export default function OrdenesCompra() {
                               category="otro"
                               title="Soportes del anticipo"
                               canManage={
-                                canManageAdvances &&
-                                !row.advance.cancelledAt
+                                canManageAdvances && !row.advance.cancelledAt
                               }
                               className="mt-4"
                             />
@@ -6927,7 +6439,9 @@ export default function OrdenesCompra() {
                     }
                   >
                     <Printer className="mr-2 h-4 w-4" />
-                    Imprimir
+                    {detail.printDocument.isOfficial
+                      ? "Abrir PDF oficial"
+                      : "Vista previa PDF"}
                   </Button>
 
                   {canSubmitForApproval ? (
@@ -6997,7 +6511,15 @@ export default function OrdenesCompra() {
                           toast.error(emissionBlockReason);
                           return;
                         }
-                        sendMutation.mutate({ id: detail.purchaseOrder.id });
+                        setConfirmState({
+                          kind: "emit-order",
+                          orderId: detail.purchaseOrder.id,
+                          orderNumber: detail.purchaseOrder.orderNumber,
+                          total: orderTotal,
+                          currency: orderCurrency,
+                          usesApprovedSignature:
+                            detail.purchaseOrder.approvalStatus === "aprobada",
+                        });
                       }}
                       disabled={
                         items.length === 0 ||
@@ -7059,7 +6581,10 @@ export default function OrdenesCompra() {
                     ? "bg-amber-100 text-amber-700"
                     : confirmState.kind === "price-tax-mode"
                       ? "bg-blue-100 text-blue-700"
-                      : "bg-destructive/10 text-destructive"
+                      : confirmState.kind === "approval-decision" ||
+                          confirmState.kind === "emit-order"
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-destructive/10 text-destructive"
                 }`}
               >
                 {confirmState.kind === "delete-item" ? (
@@ -7068,6 +6593,9 @@ export default function OrdenesCompra() {
                   <ShieldX className="h-5 w-5" />
                 ) : confirmState.kind === "price-tax-mode" ? (
                   <ArrowRightLeft className="h-5 w-5" />
+                ) : confirmState.kind === "approval-decision" ||
+                  confirmState.kind === "emit-order" ? (
+                  <ShieldCheck className="h-5 w-5" />
                 ) : (
                   <XCircle className="h-5 w-5" />
                 )}
@@ -7082,7 +6610,15 @@ export default function OrdenesCompra() {
                       ? "Cerrar línea para recepción"
                       : confirmState.kind === "price-tax-mode"
                         ? "Cambiar tipo de precio"
-                        : "Cancelar orden de compra"}
+                        : confirmState.kind === "approval-decision"
+                          ? confirmState.createsSeal
+                            ? "Confirmar y firmar decisión"
+                            : "Confirmar rechazo total"
+                          : confirmState.kind === "emit-order"
+                            ? confirmState.usesApprovedSignature
+                              ? "Emitir orden aprobada"
+                              : "Emitir y firmar orden"
+                            : "Cancelar orden de compra"}
                 </AlertDialogTitle>
                 <AlertDialogDescription className="text-sm leading-6 text-muted-foreground">
                   {confirmState.kind === "delete-item"
@@ -7105,7 +6641,19 @@ export default function OrdenesCompra() {
                                 ? "totales con impuesto incluido"
                                 : "bases sin impuesto"
                             } y se recalcularán subtotal, ISV y total de todas las líneas.`
-                          : ""}
+                          : confirmState.kind === "approval-decision"
+                            ? confirmState.createsSeal
+                              ? `${confirmState.orderNumber} quedará aprobada por ${formatPurchaseOrderCurrency(
+                                  confirmState.total,
+                                  confirmState.currency
+                                )}. Tu identidad, rol y fecha quedarán registrados como autorización electrónica.`
+                              : `${confirmState.orderNumber} será rechazada totalmente y no se generará ningún sello.`
+                            : confirmState.kind === "emit-order"
+                              ? `${confirmState.orderNumber} por ${formatPurchaseOrderCurrency(
+                                  confirmState.total,
+                                  confirmState.currency
+                                )} generará su versión oficial e inmutable en PDF.`
+                              : ""}
                 </AlertDialogDescription>
               </AlertDialogHeader>
             </div>
@@ -7119,7 +6667,15 @@ export default function OrdenesCompra() {
                   ? "Puedes solo cerrar la línea o enviar el saldo pendiente a una solicitud de compra reutilizable para esta misma orden."
                   : confirmState.kind === "price-tax-mode"
                     ? "La OC debe permanecer en borrador. El PDF guardado se invalidará para que la próxima impresión use los nuevos valores."
-                    : "La orden quedará visible como historial, pero ya no se podrá editar ni enviar al proveedor."}
+                    : confirmState.kind === "approval-decision"
+                      ? confirmState.createsSeal
+                        ? "Esta confirmación se asociará a tu sesión activa. El sello verificable se incorporará al PDF oficial cuando la OC sea emitida."
+                        : "Los artículos regresarán a sus solicitudes de origen según la decisión registrada."
+                      : confirmState.kind === "emit-order"
+                        ? confirmState.usesApprovedSignature
+                          ? "Se conservará como firmante al aprobador registrado. El PDF oficial incluirá código de integridad y QR de verificación."
+                          : "Tu sesión activa se usará para registrar el sello “Aprobación no requerida”. El PDF oficial no podrá regenerarse ni reemplazarse."
+                        : "La orden quedará visible como historial, pero ya no se podrá editar ni enviar al proveedor."}
             </div>
 
             <AlertDialogFooter className="gap-3 sm:justify-end">
@@ -7156,7 +6712,10 @@ export default function OrdenesCompra() {
                 className={`h-11 rounded-xl px-5 text-sm font-semibold ${
                   confirmState.kind === "price-tax-mode"
                     ? "bg-blue-700 text-white hover:bg-blue-800"
-                    : "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    : confirmState.kind === "approval-decision" ||
+                        confirmState.kind === "emit-order"
+                      ? "bg-emerald-700 text-white hover:bg-emerald-800"
+                      : "bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 }`}
               >
                 {confirmActionPending
@@ -7166,14 +6725,26 @@ export default function OrdenesCompra() {
                       ? "Cerrando..."
                       : confirmState.kind === "price-tax-mode"
                         ? "Recalculando..."
-                        : "Cancelando..."
+                        : confirmState.kind === "approval-decision"
+                          ? "Registrando..."
+                          : confirmState.kind === "emit-order"
+                            ? "Emitiendo..."
+                            : "Cancelando..."
                   : confirmState.kind === "delete-item"
                     ? "Confirmar eliminación"
                     : confirmState.kind === "close-receipt-line"
                       ? "Confirmar cierre"
                       : confirmState.kind === "price-tax-mode"
                         ? "Recalcular OC"
-                        : "Confirmar cancelación"}
+                        : confirmState.kind === "approval-decision"
+                          ? confirmState.createsSeal
+                            ? "Confirmar y firmar"
+                            : "Confirmar rechazo"
+                          : confirmState.kind === "emit-order"
+                            ? confirmState.usesApprovedSignature
+                              ? "Emitir documento"
+                              : "Emitir y firmar"
+                            : "Confirmar cancelación"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </div>

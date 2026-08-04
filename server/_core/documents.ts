@@ -1,4 +1,5 @@
 import { deflateSync, inflateSync } from "node:zlib";
+import QRCode from "qrcode";
 
 const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
@@ -82,7 +83,12 @@ function readPackedSample(row: Buffer, index: number, bitDepth: number) {
   return (byte >> shift) & ((1 << bitDepth) - 1);
 }
 
-function flattenOverWhite(red: number, green: number, blue: number, alpha = 255) {
+function flattenOverWhite(
+  red: number,
+  green: number,
+  blue: number,
+  alpha = 255
+) {
   const opacity = alpha / 255;
   return [
     Math.round(red * opacity + 255 * (1 - opacity)),
@@ -115,11 +121,7 @@ function createPdfImageFromPngBase64(name: string, base64: string): PdfImage {
   );
   const inflated = inflateSync(idat);
   const bitsPerPixel =
-    colorType === 6
-      ? bitDepth * 4
-      : colorType === 2
-        ? bitDepth * 3
-        : bitDepth;
+    colorType === 6 ? bitDepth * 4 : colorType === 2 ? bitDepth * 3 : bitDepth;
   const filterBytesPerPixel = Math.max(1, Math.ceil(bitsPerPixel / 8));
   const scanlineBytes = Math.ceil((width * bitsPerPixel) / 8);
   const rows: Buffer[] = [];
@@ -127,20 +129,27 @@ function createPdfImageFromPngBase64(name: string, base64: string): PdfImage {
 
   for (let rowIndex = 0; rowIndex < height; rowIndex += 1) {
     const filterType = inflated[sourceOffset];
-    const source = inflated.subarray(sourceOffset + 1, sourceOffset + 1 + scanlineBytes);
+    const source = inflated.subarray(
+      sourceOffset + 1,
+      sourceOffset + 1 + scanlineBytes
+    );
     const previous = rows[rowIndex - 1];
     const row = Buffer.alloc(scanlineBytes);
 
     for (let index = 0; index < scanlineBytes; index += 1) {
-      const left = index >= filterBytesPerPixel ? row[index - filterBytesPerPixel] : 0;
+      const left =
+        index >= filterBytesPerPixel ? row[index - filterBytesPerPixel] : 0;
       const up = previous?.[index] ?? 0;
       const upLeft =
-        index >= filterBytesPerPixel ? (previous?.[index - filterBytesPerPixel] ?? 0) : 0;
+        index >= filterBytesPerPixel
+          ? (previous?.[index - filterBytesPerPixel] ?? 0)
+          : 0;
 
       if (filterType === 0) row[index] = source[index];
       else if (filterType === 1) row[index] = (source[index] + left) & 0xff;
       else if (filterType === 2) row[index] = (source[index] + up) & 0xff;
-      else if (filterType === 3) row[index] = (source[index] + Math.floor((left + up) / 2)) & 0xff;
+      else if (filterType === 3)
+        row[index] = (source[index] + Math.floor((left + up) / 2)) & 0xff;
       else if (filterType === 4) {
         row[index] = (source[index] + paethPredictor(left, up, upLeft)) & 0xff;
       } else {
@@ -188,7 +197,9 @@ function createPdfImageFromPngBase64(name: string, base64: string): PdfImage {
       } else if (colorType === 0 && bitDepth === 8) {
         red = green = blue = row[column];
       } else {
-        throw new Error(`Unsupported PNG color type ${colorType} with bit depth ${bitDepth}`);
+        throw new Error(
+          `Unsupported PNG color type ${colorType} with bit depth ${bitDepth}`
+        );
       }
 
       const outputIndex = (rowIndex * width + column) * 3;
@@ -202,7 +213,10 @@ function createPdfImageFromPngBase64(name: string, base64: string): PdfImage {
   return { name, width, height, rgbData };
 }
 
-const HEH_LOGO_IMAGE = createPdfImageFromPngBase64("HehLogo", HEH_LOGO_PNG_BASE64);
+const HEH_LOGO_IMAGE = createPdfImageFromPngBase64(
+  "HehLogo",
+  HEH_LOGO_PNG_BASE64
+);
 
 function sanitizePdfText(value: string) {
   return value
@@ -215,7 +229,7 @@ function sanitizePdfText(value: string) {
     .replace(/\s+/g, " ")
     .trim()
     .split("")
-    .map((char) => {
+    .map(char => {
       const code = char.charCodeAt(0);
       if (code <= 255) return char;
 
@@ -233,16 +247,16 @@ function encodePdfHex(value: string) {
 }
 
 function formatNumber(value: number) {
-  return Number(value.toFixed(2))
-    .toString()
-    .replace(/\.0+$/, "");
+  return Number(value.toFixed(2)).toString().replace(/\.0+$/, "");
 }
 
 function rgb(color: PdfRgb) {
   return `${formatNumber(color[0])} ${formatNumber(color[1])} ${formatNumber(color[2])}`;
 }
 
-function createPage(options: { width?: number; height?: number } = {}): PdfPage {
+function createPage(
+  options: { width?: number; height?: number } = {}
+): PdfPage {
   return {
     commands: [],
     width: options.width ?? PAGE_WIDTH,
@@ -259,7 +273,11 @@ function toPdfTextY(page: PdfPage, top: number, fontSize: number) {
   return page.height - top - fontSize;
 }
 
-function measureTextWidth(text: string, fontSize: number, font: PdfFont = "F1") {
+function measureTextWidth(
+  text: string,
+  fontSize: number,
+  font: PdfFont = "F1"
+) {
   let units = 0;
 
   for (const char of sanitizePdfText(text)) {
@@ -283,7 +301,12 @@ function measureTextWidth(text: string, fontSize: number, font: PdfFont = "F1") 
   return units * fontSize;
 }
 
-function breakLongWord(word: string, maxWidth: number, fontSize: number, font: PdfFont) {
+function breakLongWord(
+  word: string,
+  maxWidth: number,
+  fontSize: number,
+  font: PdfFont
+) {
   const fragments: string[] = [];
   let remaining = word;
 
@@ -291,7 +314,8 @@ function breakLongWord(word: string, maxWidth: number, fontSize: number, font: P
     let sliceLength = 1;
     while (
       sliceLength < remaining.length &&
-      measureTextWidth(remaining.slice(0, sliceLength + 1), fontSize, font) <= maxWidth
+      measureTextWidth(remaining.slice(0, sliceLength + 1), fontSize, font) <=
+        maxWidth
     ) {
       sliceLength += 1;
     }
@@ -367,7 +391,8 @@ function drawRect(
   page.commands.push("q");
   if (options.fill) page.commands.push(`${rgb(options.fill)} rg`);
   if (options.stroke) page.commands.push(`${rgb(options.stroke)} RG`);
-  if (options.lineWidth) page.commands.push(`${formatNumber(options.lineWidth)} w`);
+  if (options.lineWidth)
+    page.commands.push(`${formatNumber(options.lineWidth)} w`);
   page.commands.push(
     `${formatNumber(x)} ${formatNumber(y)} ${formatNumber(width)} ${formatNumber(height)} re`
   );
@@ -397,7 +422,8 @@ function drawRoundedRect(
   page.commands.push("q");
   if (options.fill) page.commands.push(`${rgb(options.fill)} rg`);
   if (options.stroke) page.commands.push(`${rgb(options.stroke)} RG`);
-  if (options.lineWidth) page.commands.push(`${formatNumber(options.lineWidth)} w`);
+  if (options.lineWidth)
+    page.commands.push(`${formatNumber(options.lineWidth)} w`);
   page.commands.push(`${formatNumber(x + r)} ${formatNumber(y)} m`);
   page.commands.push(`${formatNumber(x + width - r)} ${formatNumber(y)} l`);
   page.commands.push(
@@ -487,7 +513,10 @@ function drawImageContained(
     });
   }
 
-  const scale = Math.min(params.width / image.width, params.height / image.height);
+  const scale = Math.min(
+    params.width / image.width,
+    params.height / image.height
+  );
   const imageWidth = image.width * scale;
   const imageHeight = image.height * scale;
 
@@ -499,6 +528,41 @@ function drawImageContained(
     imageWidth,
     imageHeight
   );
+}
+
+function drawQrCode(
+  page: PdfPage,
+  value: string,
+  params: { x: number; top: number; size: number }
+) {
+  const qr = QRCode.create(value, { errorCorrectionLevel: "M" });
+  const quietZone = 4;
+  const moduleCount = qr.modules.size + quietZone * 2;
+  const moduleSize = params.size / moduleCount;
+
+  drawRect(page, params.x, params.top, params.size, params.size, {
+    fill: [1, 1, 1],
+  });
+
+  for (let row = 0; row < qr.modules.size; row += 1) {
+    let runStart = -1;
+    for (let column = 0; column <= qr.modules.size; column += 1) {
+      const isDark =
+        column < qr.modules.size && qr.modules.get(row, column) === 1;
+      if (isDark && runStart < 0) runStart = column;
+      if ((!isDark || column === qr.modules.size) && runStart >= 0) {
+        drawRect(
+          page,
+          params.x + (quietZone + runStart) * moduleSize,
+          params.top + (quietZone + row) * moduleSize,
+          (column - runStart) * moduleSize,
+          moduleSize,
+          { fill: [0, 0, 0] }
+        );
+        runStart = -1;
+      }
+    }
+  }
 }
 
 function drawText(
@@ -784,7 +848,7 @@ export function buildProcurementPdfBase64(params: {
   const pages: PdfPage[] = [];
   let page = createPage();
   pages.push(page);
-  const hasAmountColumn = params.items.some((item) => Boolean(item.amountLabel));
+  const hasAmountColumn = params.items.some(item => Boolean(item.amountLabel));
   const descriptionWidth = hasAmountColumn ? 274 : 340;
   const quantityColumnX = hasAmountColumn ? 388 : 454;
   const quantityColumnWidth = hasAmountColumn ? 68 : 98;
@@ -864,7 +928,15 @@ export function buildProcurementPdfBase64(params: {
       font: "F2",
       color: palette.ink,
     });
-    drawLine(page, PAGE_MARGIN_X, 88, PAGE_WIDTH - PAGE_MARGIN_X, 88, palette.border, 1);
+    drawLine(
+      page,
+      PAGE_MARGIN_X,
+      88,
+      PAGE_WIDTH - PAGE_MARGIN_X,
+      88,
+      palette.border,
+      1
+    );
   };
 
   drawFirstPageHeader();
@@ -1130,7 +1202,8 @@ export function buildProcurementPdfBase64(params: {
     drawText(pdfPage, {
       x: PAGE_MARGIN_X,
       top: PAGE_HEIGHT - 42,
-      text: params.footerNote ?? "Documento generado automáticamente por BuildReq.",
+      text:
+        params.footerNote ?? "Documento generado automáticamente por BuildReq.",
       fontSize: 10,
       color: palette.muted,
     });
@@ -1180,6 +1253,15 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     value: string;
     emphasized?: boolean;
   }>;
+  digitalSeal?: {
+    verificationUrl: string;
+    verificationCode: string;
+    signerName: string;
+    signerRole: string;
+    signedDateLabel: string;
+    sealTypeLabel: string;
+    payloadHash: string;
+  } | null;
 }) {
   const pageWidth = 595;
   const pageHeight = 842;
@@ -1195,9 +1277,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     new Set(
       params.items
         .map(item => item.destinationLabel?.trim())
-        .filter(
-          (value): value is string => Boolean(value) && value !== "-"
-        )
+        .filter((value): value is string => Boolean(value) && value !== "-")
     )
   );
   const destinationLabel =
@@ -1475,7 +1555,14 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
 
   function drawTableHeader(top: number) {
     tableColumns.forEach(column => {
-      drawCenteredText(column.x, top + 3, column.width, column.label, 7.4, "F2");
+      drawCenteredText(
+        column.x,
+        top + 3,
+        column.width,
+        column.label,
+        7.4,
+        "F2"
+      );
     });
     drawLine(
       page,
@@ -1713,15 +1800,6 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       ink,
       0.8
     );
-    drawLine(
-      page,
-      secondSignatureX,
-      signaturesTop,
-      secondSignatureX + signatureWidth,
-      signaturesTop,
-      ink,
-      0.8
-    );
     drawCenteredText(
       firstSignatureX,
       signaturesTop + 7,
@@ -1730,16 +1808,100 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       7.1,
       "F2"
     );
-    drawCenteredText(
-      secondSignatureX,
-      signaturesTop + 7,
-      signatureWidth,
-      "Autorizado por:",
-      7.1,
-      "F2"
-    );
 
-    const noteTop = signaturesTop + 38;
+    if (params.digitalSeal) {
+      const sealX = marginX + 214;
+      const sealTop = signaturesTop - 29;
+      const sealWidth = contentWidth - 224;
+      const sealHeight = 80;
+      const qrSize = 62;
+      const qrX = sealX + sealWidth - qrSize - 8;
+      const textX = sealX + 10;
+      const textWidth = qrX - textX - 7;
+
+      drawRoundedRect(page, sealX, sealTop, sealWidth, sealHeight, 5, {
+        fill: [0.97, 0.98, 0.97],
+        stroke: [0.18, 0.38, 0.25],
+        lineWidth: 0.9,
+      });
+      drawText(page, {
+        x: textX,
+        top: sealTop + 7,
+        width: textWidth,
+        text: "SELLO ELECTRÓNICO VERIFICABLE",
+        fontSize: 7.4,
+        font: "F2",
+        color: [0.08, 0.3, 0.16],
+      });
+      drawText(page, {
+        x: textX,
+        top: sealTop + 19,
+        width: textWidth,
+        text: params.digitalSeal.signerName,
+        fontSize: 7.5,
+        font: "F2",
+        color: ink,
+      });
+      drawText(page, {
+        x: textX,
+        top: sealTop + 30,
+        width: textWidth,
+        text: params.digitalSeal.signerRole,
+        fontSize: 6.8,
+        color: ink,
+      });
+      drawText(page, {
+        x: textX,
+        top: sealTop + 41,
+        width: textWidth,
+        text: params.digitalSeal.sealTypeLabel,
+        fontSize: 6.8,
+        font: "F2",
+        color: ink,
+      });
+      drawText(page, {
+        x: textX,
+        top: sealTop + 52,
+        width: textWidth,
+        text: params.digitalSeal.signedDateLabel,
+        fontSize: 6.6,
+        color: ink,
+      });
+      drawText(page, {
+        x: textX,
+        top: sealTop + 63,
+        width: textWidth,
+        text: `Código ${params.digitalSeal.verificationCode} | Integridad ${params.digitalSeal.payloadHash.slice(0, 16).toUpperCase()}`,
+        fontSize: 6.1,
+        font: "F2",
+        color: ink,
+      });
+      drawQrCode(page, params.digitalSeal.verificationUrl, {
+        x: qrX,
+        top: sealTop + 9,
+        size: qrSize,
+      });
+    } else {
+      drawLine(
+        page,
+        secondSignatureX,
+        signaturesTop,
+        secondSignatureX + signatureWidth,
+        signaturesTop,
+        ink,
+        0.8
+      );
+      drawCenteredText(
+        secondSignatureX,
+        signaturesTop + 7,
+        signatureWidth,
+        "Autorizado por:",
+        7.1,
+        "F2"
+      );
+    }
+
+    const noteTop = signaturesTop + (params.digitalSeal ? 67 : 38);
     const noteX = marginX + 18;
     const noteWidth = contentWidth - 36;
     const noteHeight = 62;
@@ -1821,7 +1983,8 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
   });
 
   const lowerSectionHeight =
-    Math.max(58, params.summaryRows.length * 10.5) + 154;
+    Math.max(58, params.summaryRows.length * 10.5) +
+    (params.digitalSeal ? 184 : 154);
   if (currentTop + 8 + lowerSectionHeight > printableBottom) {
     currentTop = startNewPage(false);
   } else {
@@ -1837,9 +2000,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
         text: watermarkText,
         fontSize: watermarkText === "ANULADA" ? 84 : 72,
         color:
-          watermarkText === "ANULADA"
-            ? [0.95, 0.76, 0.76]
-            : [0.9, 0.91, 0.94],
+          watermarkText === "ANULADA" ? [0.95, 0.76, 0.76] : [0.9, 0.91, 0.94],
       });
       pdfPage.commands.push(...contentCommands);
     }

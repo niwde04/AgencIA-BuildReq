@@ -39,6 +39,7 @@ import SalidasBodega from "./pages/SalidasBodega";
 import ActualizarContrasena from "./pages/ActualizarContrasena";
 import Configuracion from "./pages/Configuracion";
 import Tesoreria from "./pages/Tesoreria";
+import VerificarOrdenCompra from "./pages/VerificarOrdenCompra";
 
 const UPPERCASE_TEXT_INPUT_TYPES = new Set([
   "",
@@ -220,6 +221,7 @@ function DashboardShell() {
 function Router() {
   return (
     <Switch>
+      <Route path="/verificar/oc/:token" component={VerificarOrdenCompra} />
       <Route path="/actualizar-contrasena" component={ActualizarContrasena} />
       <Route component={DashboardShell} />
     </Switch>

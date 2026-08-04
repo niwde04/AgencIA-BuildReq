@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { appRouter } from "./routers";
 import * as db from "./db";
 import * as storage from "./storage";
@@ -11534,6 +11535,7 @@ describe("BuildReq - Purchase Orders", () => {
       await expect(
         approverCaller.purchaseOrders.reviewApproval({
           id: 4,
+          confirmedElectronicDecision: true,
           decision: "approve",
           comment: "Monto revisado",
         })
@@ -11586,6 +11588,7 @@ describe("BuildReq - Purchase Orders", () => {
       await expect(
         caller.purchaseOrders.reviewApproval({
           id: 4,
+          confirmedElectronicDecision: true,
           decision: "approve",
           comment: "Monto revisado",
         })
@@ -11666,6 +11669,7 @@ describe("BuildReq - Purchase Orders", () => {
       await expect(
         caller.purchaseOrders.reviewApproval({
           id: 4,
+          confirmedElectronicDecision: true,
           decision: "reject",
           comment: "Arena fuera del alcance aprobado",
           rejectedItemIds: [16],
@@ -11728,6 +11732,7 @@ describe("BuildReq - Purchase Orders", () => {
       await expect(
         caller.purchaseOrders.reviewApproval({
           id: 4,
+          confirmedElectronicDecision: true,
           decision: "reject",
           comment: "La compra completa debe volver a cotizarse",
           rejectedItemIds: [15],
@@ -11767,6 +11772,7 @@ describe("BuildReq - Purchase Orders", () => {
     await expect(
       caller.purchaseOrders.reviewApproval({
         id: 4,
+        confirmedElectronicDecision: true,
         decision: "reject",
         comment: "Debe corregirse la selección",
         rejectedItemIds: [],
@@ -11775,6 +11781,7 @@ describe("BuildReq - Purchase Orders", () => {
     await expect(
       caller.purchaseOrders.reviewApproval({
         id: 4,
+        confirmedElectronicDecision: true,
         decision: "reject",
         comment: "Debe corregirse la selección",
         rejectedItemIds: [15, 15],
@@ -11823,6 +11830,7 @@ describe("BuildReq - Purchase Orders", () => {
       await expect(
         caller.purchaseOrders.reviewApproval({
           id: 4,
+          confirmedElectronicDecision: true,
           decision: "approve",
           comment: "Monto revisado",
         })
@@ -11834,6 +11842,29 @@ describe("BuildReq - Purchase Orders", () => {
       createNotificationSpy.mockRestore();
       consoleErrorSpy.mockRestore();
     });
+  });
+
+  it("requires an explicit electronic decision before approving a purchase order", async () => {
+    const caller = appRouter.createCaller(
+      createProcurementApproverContext().ctx
+    );
+    const getPurchaseOrderByIdSpy = vi.spyOn(db, "getPurchaseOrderById");
+    const reviewPurchaseOrderApprovalSpy = vi.spyOn(
+      db,
+      "reviewPurchaseOrderApproval"
+    );
+
+    await expect(
+      caller.purchaseOrders.reviewApproval({
+        id: 4,
+        decision: "approve",
+      } as any)
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(getPurchaseOrderByIdSpy).not.toHaveBeenCalled();
+    expect(reviewPurchaseOrderApprovalSpy).not.toHaveBeenCalled();
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    reviewPurchaseOrderApprovalSpy.mockRestore();
   });
 
   it("does not let an approver decide a PO from another project", async () => {
@@ -11857,6 +11888,7 @@ describe("BuildReq - Purchase Orders", () => {
       await expect(
         caller.purchaseOrders.reviewApproval({
           id: 4,
+          confirmedElectronicDecision: true,
           decision: "approve",
         })
       ).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -11880,6 +11912,7 @@ describe("BuildReq - Purchase Orders", () => {
       await expect(
         approverCaller.purchaseOrders.reviewApproval({
           id: 4,
+          confirmedElectronicDecision: true,
           decision: "reject",
           comment: "no",
           rejectedItemIds: [15],
@@ -11917,6 +11950,7 @@ describe("BuildReq - Purchase Orders", () => {
       await expect(
         baseAdminCaller.purchaseOrders.reviewApproval({
           id: 4,
+          confirmedElectronicDecision: true,
           decision: "approve",
           comment: "Orden revisada por administración",
         })
@@ -12866,6 +12900,7 @@ describe("BuildReq - Purchase Orders", () => {
     await expect(
       caller.purchaseOrders.sendToSupplier({
         id: 4,
+        confirmedElectronicSeal: true,
       })
     ).resolves.toEqual({
       success: true,
@@ -12884,6 +12919,94 @@ describe("BuildReq - Purchase Orders", () => {
     getPurchaseOrderByIdSpy.mockRestore();
     issuePurchaseOrderSpy.mockRestore();
     sendPurchaseOrderEmailSpy.mockRestore();
+  });
+
+  it("requires explicit confirmation before issuing and sealing a purchase order", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi.spyOn(db, "getPurchaseOrderById");
+    const issuePurchaseOrderSpy = vi.spyOn(db, "issuePurchaseOrder");
+
+    await expect(
+      caller.purchaseOrders.sendToSupplier({ id: 4 } as any)
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(getPurchaseOrderByIdSpy).not.toHaveBeenCalled();
+    expect(issuePurchaseOrderSpy).not.toHaveBeenCalled();
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    issuePurchaseOrderSpy.mockRestore();
+  });
+
+  it("verifies a purchase order seal without an authenticated session", async () => {
+    const publicContext = {
+      ...createUserContext().ctx,
+      user: null,
+    } as TrpcContext;
+    const caller = appRouter.createCaller(publicContext);
+    const signedAt = new Date("2026-08-04T16:30:00.000Z");
+    const sealedAt = new Date("2026-08-04T16:35:00.000Z");
+    const verification = {
+      status: "valid" as const,
+      orderNumber: "OC-006-00000009",
+      totalAmount: 200,
+      currency: "HNL" as const,
+      signerName: "Maria Jose Aprobadora",
+      signerRole: "Gerente",
+      signedAt,
+      sealedAt,
+      sealType: "approval" as const,
+      verificationCode: "OC-0123456789ABCDEF",
+      officialPdfHash: "a".repeat(64),
+      supplierName: "NO DEBE SER PUBLICO",
+      projectName: "NO DEBE SER PUBLICO",
+    };
+    const verifyPurchaseOrderDigitalSealSpy = vi
+      .spyOn(db, "verifyPurchaseOrderDigitalSeal")
+      .mockResolvedValue(verification);
+
+    await expect(
+      caller.purchaseOrders.verifySeal({ token: "x".repeat(43) })
+    ).resolves.toEqual({
+      status: verification.status,
+      orderNumber: verification.orderNumber,
+      totalAmount: verification.totalAmount,
+      currency: verification.currency,
+      signerName: verification.signerName,
+      signerRole: verification.signerRole,
+      signedAt,
+      sealedAt,
+      sealType: verification.sealType,
+      verificationCode: verification.verificationCode,
+      officialPdfHash: verification.officialPdfHash,
+    });
+    expect(verifyPurchaseOrderDigitalSealSpy).toHaveBeenCalledWith(
+      "x".repeat(43)
+    );
+
+    verifyPurchaseOrderDigitalSealSpy.mockRestore();
+  });
+
+  it("returns no purchase order information for an unknown seal token", async () => {
+    const publicContext = {
+      ...createUserContext().ctx,
+      user: null,
+    } as TrpcContext;
+    const caller = appRouter.createCaller(publicContext);
+    const verifyPurchaseOrderDigitalSealSpy = vi
+      .spyOn(db, "verifyPurchaseOrderDigitalSeal")
+      .mockResolvedValue(undefined);
+
+    await expect(
+      caller.purchaseOrders.verifySeal({ token: "z".repeat(43) })
+    ).resolves.toBeNull();
+
+    verifyPurchaseOrderDigitalSealSpy.mockRestore();
+  });
+
+  it("rejects malformed seal tokens before attempting a database lookup", async () => {
+    await expect(
+      db.verifyPurchaseOrderDigitalSeal("token-invalido")
+    ).resolves.toBeUndefined();
   });
 
   it.skipIf(PROCUREMENT_APPROVALS_ENABLED)(
@@ -12925,7 +13048,10 @@ describe("BuildReq - Purchase Orders", () => {
         } as any);
 
       await expect(
-        caller.purchaseOrders.sendToSupplier({ id: 4 })
+        caller.purchaseOrders.sendToSupplier({
+          id: 4,
+          confirmedElectronicSeal: true,
+        })
       ).resolves.toEqual({
         success: true,
         status: "emitida",
@@ -12980,7 +13106,10 @@ describe("BuildReq - Purchase Orders", () => {
       } as any);
 
     await expect(
-      caller.purchaseOrders.sendToSupplier({ id: 4 })
+      caller.purchaseOrders.sendToSupplier({
+        id: 4,
+        confirmedElectronicSeal: true,
+      })
     ).resolves.toEqual({
       success: true,
       status: "emitida",
@@ -13032,7 +13161,10 @@ describe("BuildReq - Purchase Orders", () => {
       );
 
     await expect(
-      caller.purchaseOrders.sendToSupplier({ id: 4 })
+      caller.purchaseOrders.sendToSupplier({
+        id: 4,
+        confirmedElectronicSeal: true,
+      })
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
       message: "El monto o la moneda no coincide con el snapshot aprobado",
@@ -13071,6 +13203,7 @@ describe("BuildReq - Purchase Orders", () => {
     await expect(
       caller.purchaseOrders.sendToSupplier({
         id: 4,
+        confirmedElectronicSeal: true,
       })
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
@@ -13114,6 +13247,7 @@ describe("BuildReq - Purchase Orders", () => {
     await expect(
       caller.purchaseOrders.sendToSupplier({
         id: 4,
+        confirmedElectronicSeal: true,
       })
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
@@ -13154,6 +13288,7 @@ describe("BuildReq - Purchase Orders", () => {
     await expect(
       caller.purchaseOrders.sendToSupplier({
         id: 4,
+        confirmedElectronicSeal: true,
       })
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
@@ -13166,7 +13301,55 @@ describe("BuildReq - Purchase Orders", () => {
     issuePurchaseOrderSpy.mockRestore();
   });
 
-  it("does not allow emitting an already emitted PO", async () => {
+  it("returns the same sealed issuance on an idempotent retry", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          orderNumber: "OC-2026-0005",
+          projectId: 1,
+          status: "emitida",
+          approvalStatus: "no_requiere",
+          currency: "HNL",
+        },
+        digitalSeal: {
+          verificationCode: "OC-0123456789ABCDEF",
+        },
+        items: [{ id: 15, receivedQuantity: "0.00" }],
+      } as any);
+    const result = {
+      success: true,
+      alreadyIssued: true,
+      status: "emitida",
+      approvalStatus: "no_requiere",
+      totalAmount: 125.5,
+      currency: "HNL",
+      verificationCode: "OC-0123456789ABCDEF",
+      officialPdfHash: "a".repeat(64),
+    };
+    const issuePurchaseOrderSpy = vi
+      .spyOn(db, "issuePurchaseOrder")
+      .mockResolvedValue(result as any);
+
+    await expect(
+      caller.purchaseOrders.sendToSupplier({
+        id: 4,
+        confirmedElectronicSeal: true,
+      })
+    ).resolves.toEqual(result);
+    expect(issuePurchaseOrderSpy).toHaveBeenCalledWith({
+      id: 4,
+      actor: ctx.user,
+    });
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    issuePurchaseOrderSpy.mockRestore();
+  });
+
+  it("does not allow emitting an already emitted legacy PO", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
     const getPurchaseOrderByIdSpy = vi
@@ -13187,6 +13370,7 @@ describe("BuildReq - Purchase Orders", () => {
     await expect(
       caller.purchaseOrders.sendToSupplier({
         id: 4,
+        confirmedElectronicSeal: true,
       })
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
@@ -13218,6 +13402,7 @@ describe("BuildReq - Purchase Orders", () => {
     await expect(
       caller.purchaseOrders.sendToSupplier({
         id: 4,
+        confirmedElectronicSeal: true,
       })
     ).rejects.toMatchObject({
       code: "BAD_REQUEST",
@@ -13336,6 +13521,65 @@ describe("BuildReq - Purchase Orders", () => {
 
     expect(pdfText).toContain(`<${encodedSalesAdvisor}> Tj`);
     expect(pdfText).toContain("/Subtype /Image");
+  });
+
+  it("prints a verifiable electronic seal and detects a modified PDF hash", () => {
+    const signerName = "MARIA JOSE APROBADORA";
+    const verificationCode = "OC-0123456789ABCDEF";
+    const payloadHash = "a".repeat(64);
+    const pdf = buildPurchaseOrderPrintPdfBase64({
+      orderNumber: "OC-006-00000009",
+      orderId: "99",
+      projectLabel: "006 CA5 - MANTENIMIENTO PERIODICO",
+      supplierLabel: "PROVEEDOR DE PRUEBA",
+      createdDateLabel: "04/08/2026",
+      deliveryDateLabel: "08/08/2026",
+      requestedByLabel: "SOLICITANTE DE PRUEBA",
+      preparedByLabel: "EMISOR DE PRUEBA",
+      salesAdvisorLabel: "-",
+      observations: "Documento oficial de prueba",
+      quoteLabel: "-",
+      items: [
+        {
+          itemNumber: "1",
+          description: "MATERIAL DE PRUEBA",
+          partNumber: "TEST-001",
+          quantityLabel: "2",
+          unitPriceLabel: "100.00",
+          subtotalLabel: "200.00",
+        },
+      ],
+      summaryRows: [
+        { label: "Sub-total L.", value: "200.00" },
+        { label: "Total a pagar L.", value: "200.00", emphasized: true },
+      ],
+      digitalSeal: {
+        verificationUrl:
+          "https://buildreq.example/verificar/oc/abcdefghijklmnopqrstuvwxyzABCDEFG1234567890",
+        verificationCode,
+        signerName,
+        signerRole: "Gerente",
+        signedDateLabel: "Firmado: 04/08/2026 10:30",
+        sealTypeLabel: "APROBACIÓN REGISTRADA",
+        payloadHash,
+      },
+    });
+    const pdfBytes = Buffer.from(pdf, "base64");
+    const pdfText = pdfBytes.toString("latin1");
+    const encodePdfText = (value: string) =>
+      Buffer.from(value, "latin1").toString("hex").toUpperCase();
+    const officialHash = createHash("sha256").update(pdfBytes).digest("hex");
+    const modifiedHash = createHash("sha256")
+      .update(Buffer.concat([pdfBytes, Buffer.from("modified")]))
+      .digest("hex");
+
+    expect(pdfText).toContain(`<${encodePdfText(signerName)}> Tj`);
+    expect(pdfText).toContain(encodePdfText(verificationCode));
+    expect(pdfText).toContain(
+      `<${encodePdfText("SELLO ELECTRÓNICO VERIFICABLE")}> Tj`
+    );
+    expect((pdfText.match(/ re\s+f/g) ?? []).length).toBeGreaterThan(100);
+    expect(modifiedHash).not.toBe(officialHash);
   });
 
   it("prints the ANULADA watermark on cancelled purchase orders", () => {

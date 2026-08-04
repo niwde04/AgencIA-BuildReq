@@ -19,6 +19,7 @@ import type {
   PurchaseCurrency,
   PurchaseOrderTaxBreakdownEntry,
 } from "../shared/purchase-orders";
+import type { PurchaseOrderSealType } from "../shared/purchase-order-seals";
 import type { FixedAssetDetail } from "../shared/fixed-assets";
 import type { InvoiceDocumentAdjustmentType } from "../shared/invoice-document-adjustments";
 import type { QualityRetentionReleaseStatus } from "../shared/quality-retention-releases";
@@ -906,6 +907,95 @@ export type ProcurementApprovalHistory =
   typeof procurementApprovalHistory.$inferSelect;
 export type InsertProcurementApprovalHistory =
   typeof procurementApprovalHistory.$inferInsert;
+
+// ============================================================
+// PURCHASE ORDER DIGITAL SEALS - Immutable official PDF identity
+// ============================================================
+export const purchaseOrderDigitalSeals = pgTable(
+  "purchaseOrderDigitalSeals",
+  {
+    id: serial("id").primaryKey(),
+    purchaseOrderId: integer("purchaseOrderId")
+      .notNull()
+      .references(() => purchaseOrders.id, { onDelete: "restrict" }),
+    approvalHistoryId: integer("approvalHistoryId").references(
+      () => procurementApprovalHistory.id,
+      { onDelete: "restrict" }
+    ),
+    sealType: varchar("sealType", { length: 40 })
+      .$type<PurchaseOrderSealType>()
+      .notNull(),
+    signerUserId: integer("signerUserId").references(() => users.id, {
+      onDelete: "restrict",
+    }),
+    signerName: varchar("signerName", { length: 255 }).notNull(),
+    signerRole: varchar("signerRole", { length: 80 }).notNull(),
+    totalAmount: decimal("totalAmount", { precision: 18, scale: 2 }).notNull(),
+    currency: varchar("currency", { length: 3 })
+      .$type<PurchaseCurrency>()
+      .notNull(),
+    signedAt: timestamp("signedAt").notNull(),
+    sealedAt: timestamp("sealedAt").defaultNow().notNull(),
+    verificationTokenHash: varchar("verificationTokenHash", {
+      length: 64,
+    }).notNull(),
+    verificationCode: varchar("verificationCode", { length: 20 }).notNull(),
+    payloadHash: varchar("payloadHash", { length: 64 }).notNull(),
+    officialPdfHash: varchar("officialPdfHash", { length: 64 }).notNull(),
+    invalidatedAt: timestamp("invalidatedAt"),
+    invalidatedByUserId: integer("invalidatedByUserId").references(
+      () => users.id,
+      { onDelete: "restrict" }
+    ),
+    invalidationReason: text("invalidationReason"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => ({
+    purchaseOrderUnique: uniqueIndex("po_digital_seal_order_uidx").on(
+      table.purchaseOrderId
+    ),
+    tokenHashUnique: uniqueIndex("po_digital_seal_token_hash_uidx").on(
+      table.verificationTokenHash
+    ),
+    verificationCodeUnique: uniqueIndex(
+      "po_digital_seal_verification_code_uidx"
+    ).on(table.verificationCode),
+    approvalHistoryIdx: index("po_digital_seal_approval_history_idx").on(
+      table.approvalHistoryId
+    ),
+    signerUserIdx: index("po_digital_seal_signer_user_idx").on(
+      table.signerUserId
+    ),
+    invalidatedByUserIdx: index("po_digital_seal_invalidated_by_idx").on(
+      table.invalidatedByUserId
+    ),
+    sealTypeCheck: check(
+      "po_digital_seal_type_check",
+      sql`${table.sealType} in ('approval', 'issued_without_approval')`
+    ),
+    currencyCheck: check(
+      "po_digital_seal_currency_check",
+      sql`${table.currency} in ('HNL', 'USD')`
+    ),
+    tokenHashCheck: check(
+      "po_digital_seal_token_hash_check",
+      sql`${table.verificationTokenHash} ~ '^[0-9a-f]{64}$'`
+    ),
+    payloadHashCheck: check(
+      "po_digital_seal_payload_hash_check",
+      sql`${table.payloadHash} ~ '^[0-9a-f]{64}$'`
+    ),
+    pdfHashCheck: check(
+      "po_digital_seal_pdf_hash_check",
+      sql`${table.officialPdfHash} ~ '^[0-9a-f]{64}$'`
+    ),
+  })
+);
+
+export type PurchaseOrderDigitalSeal =
+  typeof purchaseOrderDigitalSeals.$inferSelect;
+export type InsertPurchaseOrderDigitalSeal =
+  typeof purchaseOrderDigitalSeals.$inferInsert;
 
 export const purchaseOrderAuditLogs = pgTable(
   "purchaseOrderAuditLogs",

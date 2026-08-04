@@ -4,6 +4,7 @@ import * as db from "../db";
 import { listPurchaseOrdersPage } from "../paginatedLists";
 import {
   procurementProcedure as protectedProcedure,
+  publicProcedure,
   router,
 } from "../_core/trpc";
 import {
@@ -485,6 +486,7 @@ const approvalDecisionSchema = z.discriminatedUnion("decision", [
     id: z.number(),
     decision: z.literal("approve"),
     comment: z.string().trim().max(1000).optional(),
+    confirmedElectronicDecision: z.literal(true),
   }),
   z.object({
     id: z.number(),
@@ -505,6 +507,7 @@ const approvalDecisionSchema = z.discriminatedUnion("decision", [
           });
         }
       }),
+    confirmedElectronicDecision: z.literal(true),
   }),
 ]);
 
@@ -611,6 +614,27 @@ async function releaseDirectPurchaseOrderItems(params: {
 }
 
 export const purchaseOrdersRouter = router({
+  verifySeal: publicProcedure
+    .input(z.object({ token: z.string().trim().min(1).max(200) }))
+    .query(async ({ input }) => {
+      const verification = await db.verifyPurchaseOrderDigitalSeal(input.token);
+      if (!verification) return null;
+
+      return {
+        status: verification.status,
+        orderNumber: verification.orderNumber,
+        totalAmount: verification.totalAmount,
+        currency: verification.currency,
+        signerName: verification.signerName,
+        signerRole: verification.signerRole,
+        signedAt: verification.signedAt,
+        sealedAt: verification.sealedAt,
+        sealType: verification.sealType,
+        verificationCode: verification.verificationCode,
+        officialPdfHash: verification.officialPdfHash,
+      };
+    }),
+
   listPage: protectedProcedure
     .input(
       z.object({
@@ -2464,7 +2488,12 @@ export const purchaseOrdersRouter = router({
     }),
 
   sendToSupplier: protectedProcedure
-    .input(z.object({ id: z.number() }))
+    .input(
+      z.object({
+        id: z.number(),
+        confirmedElectronicSeal: z.literal(true),
+      })
+    )
     .mutation(async ({ ctx, input }) => {
       if (!canAccessPurchaseOrders(ctx.user)) {
         throw new TRPCError({
@@ -2482,6 +2511,27 @@ export const purchaseOrdersRouter = router({
         });
       }
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+      if (
+        detail.digitalSeal &&
+        ["emitida", "enviada", "parcialmente_recibida", "recibida"].includes(
+          detail.purchaseOrder.status
+        )
+      ) {
+        try {
+          return await db.issuePurchaseOrder({
+            id: input.id,
+            actor: ctx.user,
+          });
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              error instanceof Error
+                ? error.message
+                : "No se pudo recuperar la emisión oficial",
+          });
+        }
+      }
       if (["emitida", "enviada"].includes(detail.purchaseOrder.status)) {
         throw new TRPCError({
           code: "BAD_REQUEST",

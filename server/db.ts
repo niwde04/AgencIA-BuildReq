@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto";
 import {
   eq,
   and,
@@ -32,6 +33,7 @@ import {
   purchaseRequestItems,
   purchaseOrders,
   procurementApprovalHistory,
+  purchaseOrderDigitalSeals,
   purchaseOrderAuditLogs,
   purchaseOrderItems,
   transferRequests,
@@ -137,8 +139,12 @@ import {
   getInvoiceBaseIsvAmount,
   type InvoiceDocumentAdjustmentInput,
 } from "../shared/invoice-document-adjustments";
-import type { BuildReqRole } from "@shared/buildreq-roles";
+import {
+  getBuildReqRoleLabel,
+  type BuildReqRole,
+} from "@shared/buildreq-roles";
 export type { BuildReqRole } from "@shared/buildreq-roles";
+import type { PurchaseOrderSealType } from "@shared/purchase-order-seals";
 import {
   formatApprovalSnapshotAmount,
   getRuntimeProcurementApprovalSettings,
@@ -941,6 +947,24 @@ function formatPrintDateLabel(date: Date | string | null | undefined) {
     month: "2-digit",
     year: "numeric",
   });
+}
+
+function formatPrintDateTimeLabel(date: Date | string | null | undefined) {
+  if (!date) return "-";
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return "-";
+  return parsed.toLocaleString("es-HN", {
+    timeZone: "America/Tegucigalpa",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function sha256Hex(value: string | Buffer) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function formatPrintNumberLabel(value: string | number | null | undefined) {
@@ -5486,6 +5510,15 @@ function buildPurchaseOrderDocument(params: {
   currency?: PurchaseCurrency | null;
   pricesIncludeTax?: boolean | null;
   quoteLabel?: string | null;
+  digitalSeal?: {
+    verificationUrl: string;
+    verificationCode: string;
+    signerName: string;
+    signerRole: string;
+    signedAt: Date | string;
+    sealType: PurchaseOrderSealType;
+    payloadHash: string;
+  } | null;
   items: Array<{
     itemName: string;
     currentSapItemCode?: string | null;
@@ -5593,7 +5626,292 @@ function buildPurchaseOrderDocument(params: {
       value: formatPrintMoneyLabel(row.value),
       emphasized: row.emphasized,
     })),
+    digitalSeal: params.digitalSeal
+      ? {
+          verificationUrl: params.digitalSeal.verificationUrl,
+          verificationCode: params.digitalSeal.verificationCode,
+          signerName: params.digitalSeal.signerName,
+          signerRole: getBuildReqRoleLabel(params.digitalSeal.signerRole),
+          signedDateLabel: `Firmado: ${formatPrintDateTimeLabel(
+            params.digitalSeal.signedAt
+          )}`,
+          sealTypeLabel:
+            params.digitalSeal.sealType === "approval"
+              ? "APROBACIÓN REGISTRADA"
+              : "APROBACIÓN NO REQUERIDA",
+          payloadHash: params.digitalSeal.payloadHash,
+        }
+      : null,
   });
+}
+
+type OfficialPurchaseOrderSigner = {
+  approvalHistoryId: number | null;
+  sealType: PurchaseOrderSealType;
+  userId: number;
+  name: string;
+  role: string;
+  signedAt: Date;
+};
+
+async function buildOfficialPurchaseOrderDocument(
+  database: any,
+  purchaseOrder: typeof purchaseOrders.$inferSelect,
+  signer: OfficialPurchaseOrderSigner,
+  sealedAt: Date
+) {
+  const [header] = await database
+    .select({
+      purchaseRequest: purchaseRequests,
+      project: projects,
+      supplier: suppliers,
+      createdBy: users,
+    })
+    .from(purchaseOrders)
+    .leftJoin(
+      purchaseRequests,
+      eq(purchaseOrders.purchaseRequestId, purchaseRequests.id)
+    )
+    .leftJoin(projects, eq(purchaseOrders.projectId, projects.id))
+    .leftJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
+    .leftJoin(users, eq(purchaseOrders.createdById, users.id))
+    .where(eq(purchaseOrders.id, purchaseOrder.id))
+    .limit(1);
+  if (!header) throw new Error("Orden de compra no encontrada");
+
+  const purchaseRequestItemSubprojects = alias(
+    projectSubprojects,
+    "po_seal_purchase_request_item_subprojects"
+  );
+  const sourceItemSubprojects = alias(
+    projectSubprojects,
+    "po_seal_source_item_subprojects"
+  );
+  const itemRows = await database
+    .select({
+      item: purchaseOrderItems,
+      purchaseRequestItem: purchaseRequestItems,
+      sourceItem: requestItems,
+      purchaseRequestItemSubproject: purchaseRequestItemSubprojects,
+      sourceItemSubproject: sourceItemSubprojects,
+    })
+    .from(purchaseOrderItems)
+    .leftJoin(
+      purchaseRequestItems,
+      eq(purchaseOrderItems.purchaseRequestItemId, purchaseRequestItems.id)
+    )
+    .leftJoin(
+      requestItems,
+      or(
+        eq(purchaseOrderItems.materialRequestItemId, requestItems.id),
+        eq(purchaseRequestItems.materialRequestItemId, requestItems.id)
+      )
+    )
+    .leftJoin(
+      purchaseRequestItemSubprojects,
+      eq(purchaseRequestItems.subProjectId, purchaseRequestItemSubprojects.id)
+    )
+    .leftJoin(
+      sourceItemSubprojects,
+      eq(requestItems.subProjectId, sourceItemSubprojects.id)
+    )
+    .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrder.id))
+    .orderBy(asc(purchaseOrderItems.id));
+
+  const catalogCodes: string[] = Array.from(
+    new Set<string>(
+      itemRows
+        .flatMap((row: any) => [
+          row.item.currentSapItemCode,
+          row.item.originalSapItemCode,
+        ])
+        .map((value: string | null | undefined) => value?.trim())
+        .filter((value: string | undefined): value is string => Boolean(value))
+    )
+  );
+  const catalogRows =
+    catalogCodes.length > 0
+      ? await database
+          .select({
+            itemCode: sapCatalog.itemCode,
+            brand: sapCatalog.brand,
+            partNumber: sapCatalog.partNumber,
+          })
+          .from(sapCatalog)
+          .where(inArray(sapCatalog.itemCode, catalogCodes))
+      : [];
+  const catalogByCode = new Map<
+    string,
+    { itemCode: string; brand: string | null; partNumber: string | null }
+  >(
+    catalogRows.map((row: any) => [row.itemCode, row] as const)
+  );
+  const printableItems = itemRows.map((row: any) => {
+    const catalog =
+      catalogByCode.get(row.item.currentSapItemCode?.trim() ?? "") ??
+      catalogByCode.get(row.item.originalSapItemCode?.trim() ?? "") ??
+      null;
+    const target =
+      (row.purchaseRequestItem
+        ? mapMaterialRequestTarget(
+            row.purchaseRequestItem,
+            row.purchaseRequestItemSubproject
+          )
+        : null) ??
+      (row.sourceItem
+        ? mapMaterialRequestTarget(row.sourceItem, row.sourceItemSubproject)
+        : null);
+
+    return {
+      itemName: row.item.itemName,
+      currentSapItemCode: row.item.currentSapItemCode,
+      originalSapItemCode: row.item.originalSapItemCode,
+      brand: catalog?.brand ?? null,
+      partNumber: catalog?.partNumber ?? null,
+      quantity: row.item.quantity,
+      unit: row.item.unit,
+      unitPrice: row.item.unitPrice,
+      subtotal: row.item.subtotal,
+      taxCode: row.item.taxCode,
+      additionalTaxCodes: row.item.additionalTaxCodes,
+      taxBreakdown: row.item.taxBreakdown,
+      target,
+    };
+  });
+
+  const sourceMaterialRequestIds = Array.from(
+    new Set(
+      [
+        header.purchaseRequest?.materialRequestId,
+        ...itemRows.map((row: any) => row.sourceItem?.requestId),
+      ].filter(
+        (value): value is number =>
+          typeof value === "number" && Number.isInteger(value)
+      )
+    )
+  );
+  const sourceRequestRows =
+    sourceMaterialRequestIds.length > 0
+      ? await database
+          .select({ request: materialRequests, requester: users })
+          .from(materialRequests)
+          .leftJoin(users, eq(materialRequests.requestedById, users.id))
+          .where(inArray(materialRequests.id, sourceMaterialRequestIds))
+      : [];
+  const [purchaseRequestCreatedBy] =
+    sourceRequestRows.length === 0 && header.purchaseRequest?.createdById
+      ? await database
+          .select()
+          .from(users)
+          .where(eq(users.id, header.purchaseRequest.createdById))
+          .limit(1)
+      : [];
+  const originalRequester =
+    sourceRequestRows.find(
+      (row: any) => row.requester?.name || row.requester?.email
+    )?.requester ??
+    purchaseRequestCreatedBy ??
+    header.createdBy ??
+    null;
+  const originalRequestNumbers = Array.from(
+    new Set(
+      sourceRequestRows
+        .map((row: any) => row.request.requestNumber)
+        .filter((value: string | null): value is string => Boolean(value))
+    )
+  );
+  const [directPurchasePayment] = await database
+    .select({ paymentMethod: supplyFlowRecords.paymentMethod })
+    .from(supplyFlowRecords)
+    .where(
+      and(
+        eq(supplyFlowRecords.flowType, "compra_directa"),
+        eq(supplyFlowRecords.purchaseOrderNumber, purchaseOrder.orderNumber),
+        isNotNull(supplyFlowRecords.paymentMethod),
+        sql`${supplyFlowRecords.status} <> 'cancelado'`
+      )
+    )
+    .limit(1);
+  const projectLabel = header.project
+    ? `${header.project.code ?? ""} ${header.project.name ?? ""}`.trim()
+    : `Proyecto ${purchaseOrder.projectId}`;
+  const salesAdvisor = buildPurchaseOrderSalesAdvisorContact(
+    purchaseOrder,
+    null
+  );
+  const verificationToken = randomBytes(32).toString("base64url");
+  const verificationTokenHash = sha256Hex(verificationToken);
+  const baseDocument = {
+    orderNumber: purchaseOrder.orderNumber,
+    orderId: purchaseOrder.id,
+    classification: purchaseOrder.classification,
+    status: "emitida",
+    projectLabel,
+    supplierLabel: header.supplier?.name ?? "Proveedor pendiente",
+    createdAt: purchaseOrder.createdAt,
+    neededBy: purchaseOrder.neededBy,
+    printedAt: sealedAt,
+    requestedByLabel:
+      originalRequester?.name ??
+      originalRequester?.email ??
+      header.createdBy?.name ??
+      "-",
+    preparedByLabel:
+      header.createdBy?.name ?? header.createdBy?.email ?? "-",
+    originalRequestLabel:
+      originalRequestNumbers.length > 0
+        ? originalRequestNumbers.join(", ")
+        : "-",
+    salesAdvisorLabel: formatSupplierContactReference(salesAdvisor),
+    paymentMethodLabel: formatPurchaseOrderPaymentMethodPrintLabel(
+      purchaseOrder.paymentMethod ?? directPurchasePayment?.paymentMethod
+    ),
+    currency: purchaseOrder.currency,
+    pricesIncludeTax: purchaseOrder.pricesIncludeTax,
+    observations: purchaseOrder.notes,
+    quoteLabel: header.purchaseRequest?.quoteAttachmentId
+      ? String(header.purchaseRequest.quoteAttachmentId)
+      : "-",
+    items: printableItems,
+  };
+  const payloadHash = sha256Hex(
+    JSON.stringify({
+      schemaVersion: 1,
+      document: baseDocument,
+      signer: {
+        userId: signer.userId,
+        name: signer.name,
+        role: signer.role,
+        signedAt: signer.signedAt,
+        sealType: signer.sealType,
+      },
+      sealedAt,
+    })
+  );
+  const verificationCode = `OC-${payloadHash
+    .slice(0, 16)
+    .toUpperCase()}`;
+  const verificationUrl = `${ENV.siteUrl}/verificar/oc/${verificationToken}`;
+  const base64 = buildPurchaseOrderDocument({
+    ...baseDocument,
+    digitalSeal: {
+      verificationUrl,
+      verificationCode,
+      signerName: signer.name,
+      signerRole: signer.role,
+      signedAt: signer.signedAt,
+      sealType: signer.sealType,
+      payloadHash,
+    },
+  });
+
+  return {
+    base64,
+    payloadHash,
+    officialPdfHash: sha256Hex(Buffer.from(base64, "base64")),
+    verificationCode,
+    verificationTokenHash,
+  };
 }
 
 function getPurchaseTypeLabel(purchaseType?: string | null) {
@@ -7721,7 +8039,6 @@ export async function createPurchaseOrder(
         null,
     })),
   });
-
   const [created] = await db
     .insert(purchaseOrders)
     .values({
@@ -8078,6 +8395,11 @@ export async function getPurchaseOrderById(id: number) {
     .limit(1);
 
   if (!rows[0]) return undefined;
+  const [digitalSeal] = await db
+    .select()
+    .from(purchaseOrderDigitalSeals)
+    .where(eq(purchaseOrderDigitalSeals.purchaseOrderId, id))
+    .limit(1);
   const purchaseRequestItemSubprojects = alias(
     projectSubprojects,
     "po_purchase_request_item_subprojects"
@@ -8324,12 +8646,19 @@ export async function getPurchaseOrderById(id: number) {
     rows[0].purchaseOrder.paymentMethod ??
     directPurchasePaymentRows[0]?.paymentMethod ??
     null;
+  const isLegacyIssuedDocument =
+    !digitalSeal &&
+    ["emitida", "enviada", "parcialmente_recibida", "recibida"].includes(
+      rows[0].purchaseOrder.status
+    );
 
-  const printedDocumentContent = buildPurchaseOrderDocument({
+  const previewDocumentContent = buildPurchaseOrderDocument({
     orderNumber: rows[0].purchaseOrder.orderNumber,
     orderId: rows[0].purchaseOrder.id,
     classification: rows[0].purchaseOrder.classification,
-    status: rows[0].purchaseOrder.status,
+    status: isLegacyIssuedDocument
+      ? "legacy_unsealed_preview"
+      : rows[0].purchaseOrder.status,
     projectLabel,
     supplierLabel: rows[0].supplier?.name ?? "Proveedor pendiente",
     createdAt: rows[0].purchaseOrder.createdAt,
@@ -8374,6 +8703,21 @@ export async function getPurchaseOrderById(id: number) {
       fixedAssetName: item.fixedAssetName,
     })),
   });
+  const hasFrozenOfficialDocument = Boolean(
+    digitalSeal && rows[0].purchaseOrder.printedDocumentContent
+  );
+  const hasLegacyStoredDocument = Boolean(
+    isLegacyIssuedDocument && rows[0].purchaseOrder.printedDocumentContent
+  );
+  const printedDocumentContent =
+    hasFrozenOfficialDocument || hasLegacyStoredDocument
+      ? rows[0].purchaseOrder.printedDocumentContent!
+      : previewDocumentContent;
+  const sealStatus = digitalSeal
+    ? digitalSeal.invalidatedAt || rows[0].purchaseOrder.status === "anulada"
+      ? ("annulled" as const)
+      : ("valid" as const)
+    : null;
 
   const summary = summarizePurchaseOrderLines(
     items.map(item => ({
@@ -8405,6 +8749,30 @@ export async function getPurchaseOrderById(id: number) {
     items,
     summary,
     approvalHistory,
+    digitalSeal: digitalSeal
+      ? {
+          sealType: digitalSeal.sealType,
+          signerName: digitalSeal.signerName,
+          signerRole: getBuildReqRoleLabel(digitalSeal.signerRole),
+          signedAt: digitalSeal.signedAt,
+          sealedAt: digitalSeal.sealedAt,
+          verificationCode: digitalSeal.verificationCode,
+          payloadHash: digitalSeal.payloadHash,
+          officialPdfHash: digitalSeal.officialPdfHash,
+          invalidatedAt: digitalSeal.invalidatedAt,
+          invalidationReason: digitalSeal.invalidationReason,
+        }
+      : null,
+    printDocument: {
+      base64: printedDocumentContent,
+      fileName:
+        rows[0].purchaseOrder.printedDocumentName ??
+        `${rows[0].purchaseOrder.orderNumber}.pdf`,
+      mimeType: "application/pdf" as const,
+      isOfficial: hasFrozenOfficialDocument,
+      verificationCode: digitalSeal?.verificationCode ?? null,
+      sealStatus,
+    },
     contractSummary: buildPurchaseOrderContractSummary(
       rows[0].purchaseOrder,
       invoiceCountMap.get(id) ?? 0
@@ -9041,6 +9409,32 @@ export async function issuePurchaseOrder(params: {
 
   return db.transaction(async tx => {
     const purchaseOrder = await lockPurchaseOrderForUpdate(tx, params.id);
+    const [existingSeal] = await tx
+      .select()
+      .from(purchaseOrderDigitalSeals)
+      .where(eq(purchaseOrderDigitalSeals.purchaseOrderId, params.id))
+      .limit(1);
+    if (
+      existingSeal &&
+      ["emitida", "enviada", "parcialmente_recibida", "recibida"].includes(
+        purchaseOrder.status
+      )
+    ) {
+      return {
+        success: true,
+        alreadyIssued: true,
+        status: purchaseOrder.status,
+        approvalStatus: purchaseOrder.approvalStatus,
+        totalAmount: Number(existingSeal.totalAmount),
+        currency: existingSeal.currency,
+        verificationCode: existingSeal.verificationCode,
+        officialPdfHash: existingSeal.officialPdfHash,
+      };
+    }
+    if (existingSeal) {
+      throw new Error("La orden ya tiene un sello electrónico registrado");
+    }
+
     const items = await tx
       .select()
       .from(purchaseOrderItems)
@@ -9051,6 +9445,10 @@ export async function issuePurchaseOrder(params: {
       items
     );
     const snapshot = summarizePersistedPurchaseOrder(purchaseOrder, items);
+    const sealedAt = new Date();
+    let signer: OfficialPurchaseOrderSigner;
+    let expectedStatus: "borrador" | "aprobada";
+    let nextApprovalStatus: "no_requiere" | "aprobada";
 
     if (
       purchaseOrder.status === "borrador" &&
@@ -9061,51 +9459,32 @@ export async function issuePurchaseOrder(params: {
           "La orden alcanza el monto mínimo y debe aprobarse antes de emitirse"
         );
       }
-
-      const [updated] = await tx
-        .update(purchaseOrders)
-        .set({
-          status: "emitida",
-          approvalStatus: "no_requiere",
-          emailStatus: "pendiente",
-          emailedAt: null,
-          emailError: null,
-          updatedAt: new Date(),
+      const [issuedHistory] = await tx
+        .insert(procurementApprovalHistory)
+        .values({
+          documentType: "purchase_order",
+          documentId: params.id,
+          action: "issued_without_approval",
+          previousStatus: null,
+          newStatus: "no_requiere",
+          ...getApprovalActorSnapshot(params.actor),
+          comment: null,
+          amount: snapshot.amount,
+          currency: snapshot.currency,
+          createdAt: sealedAt,
         })
-        .where(
-          and(
-            eq(purchaseOrders.id, params.id),
-            eq(purchaseOrders.status, "borrador"),
-            isNull(purchaseOrders.approvalStatus)
-          )
-        )
         .returning();
-      if (!updated) {
-        throw new Error("La orden cambió mientras se intentaba emitir");
-      }
-
-      await tx.insert(procurementApprovalHistory).values({
-        documentType: "purchase_order",
-        documentId: params.id,
-        action: "issued_without_approval",
-        previousStatus: null,
-        newStatus: "no_requiere",
-        ...getApprovalActorSnapshot(params.actor),
-        comment: null,
-        amount: snapshot.amount,
-        currency: snapshot.currency,
-      });
-
-      return {
-        success: true,
-        status: updated.status,
-        approvalStatus: updated.approvalStatus,
-        totalAmount: Number(snapshot.amount),
-        currency: snapshot.currency,
+      signer = {
+        approvalHistoryId: issuedHistory.id,
+        sealType: "issued_without_approval",
+        userId: issuedHistory.actorUserId,
+        name: issuedHistory.actorName,
+        role: issuedHistory.actorRole,
+        signedAt: issuedHistory.createdAt,
       };
-    }
-
-    if (
+      expectedStatus = "borrador";
+      nextApprovalStatus = "no_requiere";
+    } else if (
       purchaseOrder.status === "aprobada" &&
       purchaseOrder.approvalStatus === "aprobada"
     ) {
@@ -9137,28 +9516,76 @@ export async function issuePurchaseOrder(params: {
           "El monto o la moneda no coincide con el snapshot aprobado"
         );
       }
+      signer = {
+        approvalHistoryId: approvedSnapshot.id,
+        sealType: "approval",
+        userId: approvedSnapshot.actorUserId,
+        name: approvedSnapshot.actorName,
+        role: approvedSnapshot.actorRole,
+        signedAt: approvedSnapshot.createdAt,
+      };
+      expectedStatus = "aprobada";
+      nextApprovalStatus = "aprobada";
+    } else {
+      throw new Error(
+        "La orden debe estar en borrador sin aprobación o aprobada para emitirse"
+      );
+    }
 
-      const [updated] = await tx
-        .update(purchaseOrders)
-        .set({
-          status: "emitida",
-          emailStatus: "pendiente",
-          emailedAt: null,
-          emailError: null,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(purchaseOrders.id, params.id),
-            eq(purchaseOrders.status, "aprobada"),
-            eq(purchaseOrders.approvalStatus, "aprobada")
-          )
+    const officialDocument = await buildOfficialPurchaseOrderDocument(
+      tx,
+      purchaseOrder,
+      signer,
+      sealedAt
+    );
+    const approvalCondition =
+      expectedStatus === "borrador"
+        ? isNull(purchaseOrders.approvalStatus)
+        : eq(purchaseOrders.approvalStatus, "aprobada");
+    const [updated] = await tx
+      .update(purchaseOrders)
+      .set({
+        status: "emitida",
+        approvalStatus: nextApprovalStatus,
+        printedDocumentName: `${purchaseOrder.orderNumber}.pdf`,
+        printedDocumentMimeType: "application/pdf",
+        printedDocumentContent: officialDocument.base64,
+        printedAt: sealedAt,
+        emailStatus: "pendiente",
+        emailedAt: null,
+        emailError: null,
+        updatedAt: sealedAt,
+      })
+      .where(
+        and(
+          eq(purchaseOrders.id, params.id),
+          eq(purchaseOrders.status, expectedStatus),
+          approvalCondition
         )
-        .returning();
-      if (!updated) {
-        throw new Error("La orden cambió mientras se intentaba emitir");
-      }
+      )
+      .returning();
+    if (!updated) {
+      throw new Error("La orden cambió mientras se intentaba emitir");
+    }
 
+    await tx.insert(purchaseOrderDigitalSeals).values({
+      purchaseOrderId: params.id,
+      approvalHistoryId: signer.approvalHistoryId,
+      sealType: signer.sealType,
+      signerUserId: signer.userId,
+      signerName: signer.name,
+      signerRole: signer.role,
+      totalAmount: snapshot.amount,
+      currency: snapshot.currency,
+      signedAt: signer.signedAt,
+      sealedAt,
+      verificationTokenHash: officialDocument.verificationTokenHash,
+      verificationCode: officialDocument.verificationCode,
+      payloadHash: officialDocument.payloadHash,
+      officialPdfHash: officialDocument.officialPdfHash,
+    });
+
+    if (signer.sealType === "approval") {
       await tx.insert(procurementApprovalHistory).values({
         documentType: "purchase_order",
         documentId: params.id,
@@ -9169,20 +9596,20 @@ export async function issuePurchaseOrder(params: {
         comment: null,
         amount: snapshot.amount,
         currency: snapshot.currency,
+        createdAt: sealedAt,
       });
-
-      return {
-        success: true,
-        status: updated.status,
-        approvalStatus: updated.approvalStatus,
-        totalAmount: Number(snapshot.amount),
-        currency: snapshot.currency,
-      };
     }
 
-    throw new Error(
-      "La orden debe estar en borrador sin aprobación o aprobada para emitirse"
-    );
+    return {
+      success: true,
+      alreadyIssued: false,
+      status: updated.status,
+      approvalStatus: updated.approvalStatus,
+      totalAmount: Number(snapshot.amount),
+      currency: snapshot.currency,
+      verificationCode: officialDocument.verificationCode,
+      officialPdfHash: officialDocument.officialPdfHash,
+    };
   });
 }
 
@@ -9316,8 +9743,65 @@ export async function cancelPurchaseOrder(id: number, actorId: number) {
     if (!updated)
       throw new Error("La orden cambió mientras se intentaba anular");
 
+    await tx
+      .update(purchaseOrderDigitalSeals)
+      .set({
+        invalidatedAt: new Date(),
+        invalidatedByUserId: actorId,
+        invalidationReason: "Orden de compra anulada manualmente",
+      })
+      .where(
+        and(
+          eq(purchaseOrderDigitalSeals.purchaseOrderId, id),
+          isNull(purchaseOrderDigitalSeals.invalidatedAt)
+        )
+      );
+
     return { success: true };
   });
+}
+
+export async function verifyPurchaseOrderDigitalSeal(token: string) {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return undefined;
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const [row] = await db
+    .select({
+      orderNumber: purchaseOrders.orderNumber,
+      orderStatus: purchaseOrders.status,
+      seal: purchaseOrderDigitalSeals,
+    })
+    .from(purchaseOrderDigitalSeals)
+    .innerJoin(
+      purchaseOrders,
+      eq(purchaseOrderDigitalSeals.purchaseOrderId, purchaseOrders.id)
+    )
+    .where(
+      eq(
+        purchaseOrderDigitalSeals.verificationTokenHash,
+        sha256Hex(token)
+      )
+    )
+    .limit(1);
+  if (!row) return undefined;
+
+  return {
+    status:
+      row.seal.invalidatedAt || row.orderStatus === "anulada"
+        ? ("annulled" as const)
+        : ("valid" as const),
+    orderNumber: row.orderNumber,
+    totalAmount: Number(row.seal.totalAmount),
+    currency: row.seal.currency,
+    signerName: row.seal.signerName,
+    signerRole: getBuildReqRoleLabel(row.seal.signerRole),
+    signedAt: row.seal.signedAt,
+    sealedAt: row.seal.sealedAt,
+    sealType: row.seal.sealType,
+    verificationCode: row.seal.verificationCode,
+    officialPdfHash: row.seal.officialPdfHash,
+  };
 }
 
 export async function updatePurchaseOrderItem(
