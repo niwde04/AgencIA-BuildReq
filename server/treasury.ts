@@ -214,6 +214,24 @@ export function getTreasuryBusinessDate(now = new Date()) {
   return new Date(Date.UTC(year, month - 1, day));
 }
 
+export function getTreasuryBatchPaymentRegistrationDate(
+  items: Array<{ bankPaidDate?: Date | string | null }>
+) {
+  let latestDate: Date | null = null;
+  for (const item of items) {
+    if (!item.bankPaidDate) continue;
+    const candidate =
+      item.bankPaidDate instanceof Date
+        ? item.bankPaidDate
+        : new Date(item.bankPaidDate);
+    if (Number.isNaN(candidate.getTime())) continue;
+    if (!latestDate || candidate.getTime() > latestDate.getTime()) {
+      latestDate = candidate;
+    }
+  }
+  return latestDate;
+}
+
 const FINAL_ITEM_STATUSES = new Set<TreasuryItemStatus>([
   "excluida",
   "rechazada_banco",
@@ -1042,6 +1060,8 @@ export async function listTreasuryBatches(filters?: {
     return {
       ...row,
       itemCount: included.length,
+      paymentRegistrationDate:
+        getTreasuryBatchPaymentRegistrationDate(included),
       supplierCount: new Set(
         included.map(item => item.supplierId ?? item.supplierCode)
       ).size,

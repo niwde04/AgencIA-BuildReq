@@ -3017,7 +3017,7 @@ export default function Tesoreria() {
   const visibleBatches = useMemo(() => {
     const term = search.trim().toLocaleLowerCase("es-HN");
     return (batchesQuery.data ?? []).filter((row: any) => {
-      const requestedPaymentDate = toDateKey(row.batch.requestedPaymentDate);
+      const paymentRegistrationDate = toDateKey(row.paymentRegistrationDate);
       const projectSummary = treasuryProjectSummary(row);
       const matchesSearch =
         !term ||
@@ -3034,9 +3034,12 @@ export default function Tesoreria() {
           .join(" ")
           .toLocaleLowerCase("es-HN")
           .includes(term);
-      const matchesDateFrom = !dateFrom || requestedPaymentDate >= dateFrom;
-      const matchesDateTo = !dateTo || requestedPaymentDate <= dateTo;
-      return matchesSearch && matchesDateFrom && matchesDateTo;
+      const matchesDateRange =
+        (!dateFrom && !dateTo) ||
+        (Boolean(paymentRegistrationDate) &&
+          (!dateFrom || paymentRegistrationDate >= dateFrom) &&
+          (!dateTo || paymentRegistrationDate <= dateTo));
+      return matchesSearch && matchesDateRange;
     });
   }, [batchesQuery.data, dateFrom, dateTo, search]);
   const batchTotalPages = Math.max(
@@ -3224,9 +3227,9 @@ export default function Tesoreria() {
             width: 28,
           },
           {
-            header: "Fecha prevista",
-            value: (row: any) => toExcelDate(row.batch.requestedPaymentDate),
-            width: 17,
+            header: "Fecha de registro de pago",
+            value: (row: any) => toExcelDate(row.paymentRegistrationDate),
+            width: 24,
             numFmt: "dd/mm/yyyy",
           },
           {
@@ -3767,7 +3770,7 @@ export default function Tesoreria() {
                   <TableHead>Tipo</TableHead>
                   <TableHead>Proyecto</TableHead>
                   <TableHead>Estado</TableHead>
-                  <TableHead>Fecha prevista</TableHead>
+                  <TableHead>Fecha de registro de pago</TableHead>
                   <TableHead>Proveedores</TableHead>
                   <TableHead>Solicitado</TableHead>
                   <TableHead>Pagado</TableHead>
@@ -3856,7 +3859,7 @@ export default function Tesoreria() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        {formatDate(row.batch.requestedPaymentDate)}
+                        {formatDate(row.paymentRegistrationDate)}
                       </TableCell>
                       <TableCell>{row.supplierCount}</TableCell>
                       <TableCell>
