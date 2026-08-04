@@ -99,7 +99,11 @@ import {
   isMissingCpcRequiredRetention,
   requiresMissingCpcRetention,
 } from "@shared/supplier-documents";
-import { buildInvoiceAdvanceBalance } from "@shared/treasury";
+import {
+  buildInvoiceAdvanceBalance,
+  getTreasuryPaymentStatus,
+  roundTreasuryMoney,
+} from "@shared/treasury";
 import {
   calculateInvoiceDocumentAdjustments,
   calculateInvoiceNetPayable,
@@ -1542,6 +1546,12 @@ export default function Facturas() {
     userRole === "administracion_central" ||
     userRole === "administrador_proyecto";
   const canReviewInvoices = canEditInvoices;
+  const canOpenTreasuryBatches =
+    user?.role === "admin" ||
+    userRole === "administracion_central" ||
+    userRole === "administrador_proyecto" ||
+    userRole === "contable" ||
+    userRole === "financiero";
   const canExportInternalReport =
     userRole === "administracion_central" ||
     userRole === "administrador_proyecto" ||
@@ -2523,6 +2533,34 @@ export default function Facturas() {
   const balanceAfterAdvance = invoiceAdvanceBalance.balanceAfterAdvance;
   const isPendingAdvanceApplication =
     invoiceAdvanceBalance.isPendingApplication;
+  const treasuryPayments = detail?.treasuryPayments ?? [];
+  const treasuryPaidAmount = roundTreasuryMoney(
+    treasuryPayments.reduce(
+      (sum, payment) => sum + Number(payment.amount ?? 0),
+      0
+    )
+  );
+  const treasuryPaymentStatus = getTreasuryPaymentStatus(
+    adjustedNetPayable,
+    treasuryPaidAmount + appliedAdvanceAmount
+  );
+  const treasuryPaymentStatusLabel =
+    treasuryPaymentStatus === "pagada"
+      ? "Pagada"
+      : treasuryPaymentStatus === "parcialmente_pagada"
+        ? "Parcialmente pagada"
+        : "Pendiente de pagar";
+  const treasuryPaymentStatusClass =
+    treasuryPaymentStatus === "pagada"
+      ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+      : treasuryPaymentStatus === "parcialmente_pagada"
+        ? "border-amber-300 bg-amber-50 text-amber-700"
+        : "border-slate-300 bg-slate-50 text-slate-700";
+  const balanceAfterTreasuryPayments = roundTreasuryMoney(
+    Math.max(0, balanceAfterAdvance - treasuryPaidAmount)
+  );
+  const showTreasuryPaymentStatus =
+    detail?.invoice.status === "registrada" || treasuryPayments.length > 0;
   const printInvoiceAdvanceBalance = buildInvoiceAdvanceBalance({
     invoiceStatus: detail?.invoice.status ?? "borrador",
     netPayable,
@@ -6411,10 +6449,65 @@ export default function Facturas() {
                         )}
                       </span>
                     </div>
+                    {showTreasuryPaymentStatus ? (
+                      <>
+                        <div className="flex items-center justify-between gap-3 border-t border-border pt-3 text-sm">
+                          <span className="font-medium">Estado de pago</span>
+                          <Badge
+                            variant="outline"
+                            className={treasuryPaymentStatusClass}
+                          >
+                            {treasuryPaymentStatusLabel}
+                          </Badge>
+                        </div>
+                        <div className="flex justify-between gap-3 text-sm">
+                          <span className="font-medium text-blue-700">
+                            (-) Pagado en Tesorería
+                          </span>
+                          <span className="font-semibold text-blue-700">
+                            {formatSelectedInvoiceCurrency(treasuryPaidAmount)}
+                          </span>
+                        </div>
+                        {treasuryPayments.length > 0 ? (
+                          <div className="flex items-start justify-between gap-3 text-sm">
+                            <span className="font-medium text-muted-foreground">
+                              Lote de Tesorería
+                            </span>
+                            <div className="flex flex-col items-end gap-1">
+                              {treasuryPayments.map(payment =>
+                                canOpenTreasuryBatches ? (
+                                  <button
+                                    key={payment.batchId}
+                                    type="button"
+                                    className="font-semibold text-primary underline-offset-4 hover:underline"
+                                    onClick={() =>
+                                      setLocation(
+                                        `/tesoreria?lote=${payment.batchId}`
+                                      )
+                                    }
+                                  >
+                                    {payment.batchNumber}
+                                  </button>
+                                ) : (
+                                  <span
+                                    key={payment.batchId}
+                                    className="font-semibold"
+                                  >
+                                    {payment.batchNumber}
+                                  </span>
+                                )
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : null}
                     <div className="flex justify-between gap-3 border-t border-border pt-3 text-base font-semibold">
                       <span>Saldo pendiente</span>
                       <span>
-                        {formatSelectedInvoiceCurrency(balanceAfterAdvance)}
+                        {formatSelectedInvoiceCurrency(
+                          balanceAfterTreasuryPayments
+                        )}
                       </span>
                     </div>
                   </div>

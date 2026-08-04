@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { useLocation, useSearch } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { DataPagination } from "@/components/DataPagination";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Accordion,
@@ -109,22 +111,24 @@ type PendingReasonAction =
   | { type: "reopenRejected" }
   | { type: "resolve"; itemId: number; resolution: "accept" | "reject" };
 
-type InvoiceReportStatus =
-  | "borrador"
-  | "revisada"
-  | "rechazada"
-  | "registrada"
-  | "anulada";
+type InvoicePaymentReportStatus = "all" | "pending" | "paid";
 
-const INVOICE_REPORT_STATUS_LABELS: Record<InvoiceReportStatus, string> = {
-  borrador: "Borrador",
-  revisada: "Enviada a revisión",
-  rechazada: "Rechazada",
-  registrada: "Contabilizada",
-  anulada: "Anulada",
+const INVOICE_PAYMENT_REPORT_STATUS_LABELS: Record<
+  InvoicePaymentReportStatus,
+  string
+> = {
+  all: "Todas",
+  pending: "Pendientes de pagar",
+  paid: "Pagadas",
 };
 
 const TREASURY_BATCH_PAGE_SIZE = 25;
+const INVOICE_REPORT_PAGE_SIZE = 10;
+
+function getRequestedTreasuryBatchId(search: string) {
+  const batchId = Number(new URLSearchParams(search).get("lote"));
+  return Number.isInteger(batchId) && batchId > 0 ? batchId : null;
+}
 
 function formatMoney(value: unknown, currency: "HNL" | "USD" = "HNL") {
   const amount = Number(value ?? 0);
@@ -245,6 +249,11 @@ function formatDateOnly(value: unknown) {
   if (!dateKey) return "—";
   const [year, month, day] = dateKey.split("-");
   return `${day}/${month}/${year}`;
+}
+
+function formatReportText(value: unknown) {
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value);
 }
 
 function treasuryProjectSummary(source: any) {
@@ -1614,7 +1623,7 @@ function BatchDetailDialog({
   const settingsQuery = trpc.treasury.settings.useQuery();
   const detailQuery = trpc.treasury.getById.useQuery(
     { id: batchId ?? 0 },
-    { enabled: Boolean(batchId) }
+    { enabled: Boolean(batchId), retry: false }
   );
   const [amounts, setAmounts] = useState<Record<number, string>>({});
   const [excludedIds, setExcludedIds] = useState<Set<number>>(new Set());
@@ -2026,11 +2035,41 @@ function BatchDetailDialog({
           <DialogDescription className="max-w-5xl leading-relaxed">
             {detail
               ? `${treasuryProjectSummary(detail).label} · ${detail.batch.currency} · Pago previsto ${formatDate(detail.batch.requestedPaymentDate)}`
-              : "Cargando..."}
+              : detailQuery.isError
+                ? "No se pudo cargar el detalle."
+                : "Cargando..."}
           </DialogDescription>
         </DialogHeader>
 
-        {detailQuery.isLoading || !detail ? (
+        {detailQuery.isError ? (
+          <div className="flex min-h-48 items-center justify-center px-6 py-5">
+            <Alert variant="destructive" className="max-w-2xl">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>No se pudo abrir el lote</AlertTitle>
+              <AlertDescription className="space-y-4">
+                <p>{detailQuery.error.message}</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void detailQuery.refetch()}
+                  >
+                    <RefreshCcw className="mr-2 h-4 w-4" /> Reintentar
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={onClose}
+                  >
+                    Cerrar
+                  </Button>
+                </div>
+              </AlertDescription>
+            </Alert>
+          </div>
+        ) : detailQuery.isLoading || !detail ? (
           <div className="flex min-h-48 items-center justify-center px-6 py-5">
             <Loader2 className="h-6 w-6 animate-spin" />
           </div>
@@ -2918,11 +2957,17 @@ function BatchDetailDialog({
 
 export default function Tesoreria() {
   const utils = trpc.useUtils();
-  const [invoiceReportStatus, setInvoiceReportStatus] = useState<
-    InvoiceReportStatus | "all"
-  >("all");
+  const [, setLocation] = useLocation();
+  const urlSearch = useSearch();
+  const [invoicePaymentReportStatus, setInvoicePaymentReportStatus] =
+    useState<InvoicePaymentReportStatus>("all");
   const [invoiceReportDateFrom, setInvoiceReportDateFrom] = useState("");
   const [invoiceReportDateTo, setInvoiceReportDateTo] = useState("");
+  const [invoiceReportSearch, setInvoiceReportSearch] = useState("");
+  const debouncedInvoiceReportSearch = useDebouncedValue(invoiceReportSearch);
+  const [invoiceReportPreviewOpen, setInvoiceReportPreviewOpen] =
+    useState(false);
+  const [invoiceReportPage, setInvoiceReportPage] = useState(1);
   const [exportingInvoiceSummary, setExportingInvoiceSummary] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("todos");
   const [search, setSearch] = useState("");
@@ -2940,7 +2985,9 @@ export default function Tesoreria() {
   const [releaseDecisionApproved, setReleaseDecisionApproved] = useState(true);
   const [releaseDecisionAmount, setReleaseDecisionAmount] = useState("");
   const [releaseDecisionComment, setReleaseDecisionComment] = useState("");
-  const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
+  const [selectedBatchId, setSelectedBatchId] = useState<number | null>(() =>
+    getRequestedTreasuryBatchId(urlSearch)
+  );
   const [editingDetail, setEditingDetail] = useState<any>();
   const [selectedConsolidationBatchIds, setSelectedConsolidationBatchIds] =
     useState<Set<number>>(new Set());
@@ -2948,6 +2995,51 @@ export default function Tesoreria() {
   const approvalsEnabled =
     settingsQuery.data?.treasuryBatchApprovalsEnabled === true;
   const canConsolidate = settingsQuery.data?.permissions.canDepurate === true;
+
+  useEffect(() => {
+    const requestedBatchId = getRequestedTreasuryBatchId(urlSearch);
+    if (requestedBatchId) setSelectedBatchId(requestedBatchId);
+  }, [urlSearch]);
+
+  const invoiceSummaryQuery = trpc.treasury.invoiceSummaryReport.useQuery(
+    {
+      paymentStatus: invoicePaymentReportStatus,
+      dateFrom: invoiceReportDateFrom || null,
+      dateTo: invoiceReportDateTo || null,
+      search: debouncedInvoiceReportSearch.trim() || null,
+      page: invoiceReportPage,
+      pageSize: INVOICE_REPORT_PAGE_SIZE,
+    },
+    {
+      enabled:
+        invoiceReportPreviewOpen &&
+        settingsQuery.data?.treasuryEnabled === true &&
+        settingsQuery.data?.canAccess === true,
+    }
+  );
+  const invoiceReportRows = invoiceSummaryQuery.data?.invoices ?? [];
+  const invoiceReportTotal = invoiceSummaryQuery.data?.pagination.total ?? 0;
+  const resolvedInvoiceReportTotalPages =
+    invoiceSummaryQuery.data?.pagination.totalPages;
+  const invoiceReportTotalPages = resolvedInvoiceReportTotalPages ?? 1;
+  const currentInvoiceReportPage =
+    invoiceSummaryQuery.data?.pagination.page ?? invoiceReportPage;
+
+  useEffect(() => {
+    setInvoiceReportPage(1);
+  }, [
+    invoicePaymentReportStatus,
+    invoiceReportDateFrom,
+    invoiceReportDateTo,
+    invoiceReportSearch,
+  ]);
+
+  useEffect(() => {
+    if (resolvedInvoiceReportTotalPages === undefined) return;
+    setInvoiceReportPage(current =>
+      Math.min(current, resolvedInvoiceReportTotalPages)
+    );
+  }, [resolvedInvoiceReportTotalPages]);
 
   useEffect(() => {
     if (
@@ -3158,9 +3250,10 @@ export default function Tesoreria() {
     setExportingInvoiceSummary(true);
     try {
       const payload = await utils.treasury.invoiceSummaryReport.fetch({
-        status: invoiceReportStatus === "all" ? null : invoiceReportStatus,
+        paymentStatus: invoicePaymentReportStatus,
         dateFrom: invoiceReportDateFrom || null,
         dateTo: invoiceReportDateTo || null,
+        search: invoiceReportSearch.trim() || null,
       });
       if (payload.summary.invoiceCount === 0) {
         toast.error("No hay facturas para exportar con los filtros actuales.");
@@ -3537,21 +3630,35 @@ export default function Tesoreria() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-[15rem_11rem_11rem_auto]">
+          <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-[minmax(16rem,1fr)_14rem_11rem_11rem_auto]">
             <div className="space-y-2">
-              <Label>Estado de factura</Label>
+              <Label htmlFor="treasury-invoice-report-search">Buscar</Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="treasury-invoice-report-search"
+                  className="pl-9"
+                  placeholder="Documento, factura, proveedor, proyecto o lote"
+                  value={invoiceReportSearch}
+                  onChange={event => setInvoiceReportSearch(event.target.value)}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Estado de pago</Label>
               <Select
-                value={invoiceReportStatus}
+                value={invoicePaymentReportStatus}
                 onValueChange={value =>
-                  setInvoiceReportStatus(value as InvoiceReportStatus | "all")
+                  setInvoicePaymentReportStatus(
+                    value as InvoicePaymentReportStatus
+                  )
                 }
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Todos los estados</SelectItem>
-                  {Object.entries(INVOICE_REPORT_STATUS_LABELS).map(
+                  {Object.entries(INVOICE_PAYMENT_REPORT_STATUS_LABELS).map(
                     ([status, label]) => (
                       <SelectItem key={status} value={status}>
                         {label}
@@ -3613,331 +3720,563 @@ export default function Tesoreria() {
               Exportar Excel
             </Button>
           </div>
+
+          <Accordion
+            type="single"
+            collapsible
+            value={invoiceReportPreviewOpen ? "invoice-preview" : ""}
+            onValueChange={value =>
+              setInvoiceReportPreviewOpen(value === "invoice-preview")
+            }
+            className="mt-4 rounded-lg border"
+          >
+            <AccordionItem value="invoice-preview" className="border-b-0">
+              <AccordionTrigger className="px-4 py-3 hover:no-underline">
+                <span className="flex min-w-0 items-center gap-2 text-left">
+                  <Eye className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span>Vista previa de facturas</span>
+                  {invoiceSummaryQuery.isFetching ? (
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                  ) : invoiceSummaryQuery.data ? (
+                    <Badge variant="secondary" className="shrink-0">
+                      {invoiceReportTotal.toLocaleString("es-HN")}
+                    </Badge>
+                  ) : null}
+                </span>
+              </AccordionTrigger>
+              <AccordionContent className="pb-0">
+                {invoiceSummaryQuery.isLoading ? (
+                  <div className="flex min-h-32 items-center justify-center gap-2 border-t px-4 py-8 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Cargando facturas con los filtros seleccionados...
+                  </div>
+                ) : invoiceSummaryQuery.isError ? (
+                  <div className="border-t p-4">
+                    <Alert variant="destructive">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertTitle>No se pudo cargar la vista previa</AlertTitle>
+                      <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+                        <span>{invoiceSummaryQuery.error.message}</span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void invoiceSummaryQuery.refetch()}
+                        >
+                          Reintentar
+                        </Button>
+                      </AlertDescription>
+                    </Alert>
+                  </div>
+                ) : (
+                  <div className="border-t">
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="whitespace-nowrap">
+                              Documento
+                            </TableHead>
+                            <TableHead className="whitespace-nowrap">
+                              Nro. factura
+                            </TableHead>
+                            <TableHead className="whitespace-nowrap">
+                              Fecha factura
+                            </TableHead>
+                            <TableHead>Estado</TableHead>
+                            <TableHead className="whitespace-nowrap">
+                              Lote de pago
+                            </TableHead>
+                            <TableHead className="whitespace-nowrap">
+                              Fecha de pago
+                            </TableHead>
+                            <TableHead className="whitespace-nowrap">
+                              Referencia de pago
+                            </TableHead>
+                            <TableHead className="whitespace-nowrap text-right">
+                              Monto pagado
+                            </TableHead>
+                            <TableHead>Proyecto</TableHead>
+                            <TableHead>Proveedor</TableHead>
+                            <TableHead>Moneda</TableHead>
+                            <TableHead className="whitespace-nowrap text-right">
+                              Total factura
+                            </TableHead>
+                            <TableHead className="whitespace-nowrap text-right">
+                              Retenciones
+                            </TableHead>
+                            <TableHead className="whitespace-nowrap text-right">
+                              Descuentos
+                            </TableHead>
+                            <TableHead className="whitespace-nowrap text-right">
+                              Neto a pagar
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {invoiceReportRows.length ? (
+                            invoiceReportRows.map(row => {
+                              const currency =
+                                row.Moneda === "USD" ? "USD" : "HNL";
+                              return (
+                                <TableRow
+                                  key={`${row["Documento interno"]}-${row["N° Registro"]}`}
+                                >
+                                  <TableCell className="whitespace-nowrap font-medium">
+                                    <button
+                                      type="button"
+                                      className="text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                      onClick={() =>
+                                        setLocation(
+                                          `/facturas?editar=${row.navigation.invoiceId}`
+                                        )
+                                      }
+                                    >
+                                      {formatReportText(
+                                        row["Documento interno"]
+                                      )}
+                                    </button>
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap">
+                                    {formatReportText(row["Nro. Factura"])}
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap">
+                                    {formatDateOnly(row["Fecha factura"])}
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap">
+                                    {formatReportText(row.Estado)}
+                                  </TableCell>
+                                  <TableCell className="min-w-40">
+                                    {row.navigation.paymentBatches.length ? (
+                                      <div className="flex flex-wrap gap-x-2 gap-y-1">
+                                        {row.navigation.paymentBatches.map(
+                                          batch => (
+                                            <button
+                                              key={batch.id}
+                                              type="button"
+                                              className="whitespace-nowrap text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                              onClick={() =>
+                                                setSelectedBatchId(batch.id)
+                                              }
+                                            >
+                                              {batch.batchNumber}
+                                            </button>
+                                          )
+                                        )}
+                                      </div>
+                                    ) : (
+                                      "—"
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap">
+                                    {formatDateOnly(row["Fecha de pago"])}
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap">
+                                    {formatReportText(
+                                      row["Referencia de pago"]
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap text-right">
+                                    {formatMoney(row["Monto pagado"], currency)}
+                                  </TableCell>
+                                  <TableCell className="min-w-48">
+                                    {formatReportText(row.Proyecto)}
+                                  </TableCell>
+                                  <TableCell className="min-w-52">
+                                    {formatReportText(row.Proveedor)}
+                                  </TableCell>
+                                  <TableCell>{currency}</TableCell>
+                                  <TableCell className="whitespace-nowrap text-right">
+                                    {formatMoney(
+                                      row["Total factura"],
+                                      currency
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap text-right">
+                                    {formatMoney(
+                                      Number(row["Retenciones fiscales"] ?? 0) +
+                                        Number(row["Otras retenciones"] ?? 0),
+                                      currency
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap text-right">
+                                    {formatMoney(
+                                      row["Descuentos documento"],
+                                      currency
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap text-right font-semibold">
+                                    {formatMoney(row["Neto a pagar"], currency)}
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })
+                          ) : (
+                            <TableRow>
+                              <TableCell
+                                colSpan={15}
+                                className="py-10 text-center text-muted-foreground"
+                              >
+                                No hay facturas con los filtros seleccionados.
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <DataPagination
+                      page={currentInvoiceReportPage}
+                      pageSize={INVOICE_REPORT_PAGE_SIZE}
+                      total={invoiceReportTotal}
+                      totalPages={invoiceReportTotalPages}
+                      onPageChange={setInvoiceReportPage}
+                    />
+                  </div>
+                )}
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg">Lotes de pago</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-[minmax(18rem,1fr)_15rem_11rem_11rem_auto_auto]">
-            <div className="space-y-2">
-              <Label htmlFor="treasury-search">Buscar</Label>
-              <div className="relative">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="treasury-search"
-                  className="pl-9"
-                  placeholder="Buscar lote o proyecto"
-                  value={search}
-                  onChange={event => {
-                    setSearch(event.target.value);
-                    setBatchPage(1);
-                  }}
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Estado</Label>
-              <Select
-                value={statusFilter}
-                onValueChange={value => {
-                  setStatusFilter(value);
-                  setBatchPage(1);
-                }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="todos">Todos los estados</SelectItem>
-                  {TREASURY_BATCH_STATUS_CODES.filter(
-                    status =>
-                      approvalsEnabled ||
-                      !["enviado_depuracion", "pendiente_aprobacion"].includes(
-                        status
-                      )
-                  ).map(status => (
-                    <SelectItem key={status} value={status}>
-                      {status === "aprobado" && !approvalsEnabled
-                        ? "Listo para banco"
-                        : TREASURY_BATCH_STATUS_LABELS[status]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="treasury-date-from">Desde</Label>
-              <Input
-                id="treasury-date-from"
-                type="date"
-                value={dateFrom}
-                max={dateTo || undefined}
-                onChange={event => {
-                  setDateFrom(event.target.value);
-                  setBatchPage(1);
-                }}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="treasury-date-to">Hasta</Label>
-              <Input
-                id="treasury-date-to"
-                type="date"
-                value={dateTo}
-                min={dateFrom || undefined}
-                onChange={event => {
-                  setDateTo(event.target.value);
-                  setBatchPage(1);
-                }}
-              />
-            </div>
-            <Button
-              variant="outline"
-              onClick={() => void exportFilteredBatches()}
-              disabled={
-                exporting ||
-                batchesQuery.isFetching ||
-                visibleBatches.length === 0
-              }
-            >
-              {exporting ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <FileSpreadsheet className="mr-2 h-4 w-4" />
-              )}
-              Exportar Excel
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => void batchesQuery.refetch()}
-              title="Actualizar"
-            >
-              <RefreshCcw className="h-4 w-4" />
-            </Button>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
-            <span>
-              {visibleBatches.length}{" "}
-              {visibleBatches.length === 1
-                ? "lote encontrado"
-                : "lotes encontrados"}
-            </span>
-            {(dateFrom || dateTo) && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setDateFrom("");
-                  setDateTo("");
-                  setBatchPage(1);
-                }}
-              >
-                Limpiar rango de fechas
-              </Button>
-            )}
-          </div>
-
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {canConsolidate && (
-                    <TableHead className="w-10">
-                      <Checkbox
-                        checked={
-                          allVisibleConsolidatableBatchesSelected
-                            ? true
-                            : someVisibleConsolidatableBatchesSelected
-                              ? "indeterminate"
-                              : false
-                        }
-                        disabled={
-                          consolidateMutation.isPending ||
-                          paginatedConsolidatableBatches.length === 0
-                        }
-                        onCheckedChange={toggleVisibleConsolidatableBatches}
-                        aria-label="Seleccionar todos los lotes disponibles para consolidar"
-                        title="Seleccionar lotes disponibles para consolidar"
+        <Accordion type="single" collapsible defaultValue="payment-batches">
+          <AccordionItem value="payment-batches" className="border-b-0">
+            <AccordionTrigger className="px-6 py-5 hover:no-underline">
+              <span className="text-lg font-semibold">Lotes de pago</span>
+            </AccordionTrigger>
+            <AccordionContent className="pb-0">
+              <CardContent className="space-y-4 border-t pt-6">
+                <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-[minmax(18rem,1fr)_15rem_11rem_11rem_auto_auto]">
+                  <div className="space-y-2">
+                    <Label htmlFor="treasury-search">Buscar</Label>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="treasury-search"
+                        className="pl-9"
+                        placeholder="Buscar lote o proyecto"
+                        value={search}
+                        onChange={event => {
+                          setSearch(event.target.value);
+                          setBatchPage(1);
+                        }}
                       />
-                    </TableHead>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Estado</Label>
+                    <Select
+                      value={statusFilter}
+                      onValueChange={value => {
+                        setStatusFilter(value);
+                        setBatchPage(1);
+                      }}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="todos">Todos los estados</SelectItem>
+                        {TREASURY_BATCH_STATUS_CODES.filter(
+                          status =>
+                            approvalsEnabled ||
+                            ![
+                              "enviado_depuracion",
+                              "pendiente_aprobacion",
+                            ].includes(status)
+                        ).map(status => (
+                          <SelectItem key={status} value={status}>
+                            {status === "aprobado" && !approvalsEnabled
+                              ? "Listo para banco"
+                              : TREASURY_BATCH_STATUS_LABELS[status]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="treasury-date-from">Desde</Label>
+                    <Input
+                      id="treasury-date-from"
+                      type="date"
+                      value={dateFrom}
+                      max={dateTo || undefined}
+                      onChange={event => {
+                        setDateFrom(event.target.value);
+                        setBatchPage(1);
+                      }}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="treasury-date-to">Hasta</Label>
+                    <Input
+                      id="treasury-date-to"
+                      type="date"
+                      value={dateTo}
+                      min={dateFrom || undefined}
+                      onChange={event => {
+                        setDateTo(event.target.value);
+                        setBatchPage(1);
+                      }}
+                    />
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => void exportFilteredBatches()}
+                    disabled={
+                      exporting ||
+                      batchesQuery.isFetching ||
+                      visibleBatches.length === 0
+                    }
+                  >
+                    {exporting ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <FileSpreadsheet className="mr-2 h-4 w-4" />
+                    )}
+                    Exportar Excel
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => void batchesQuery.refetch()}
+                    title="Actualizar"
+                  >
+                    <RefreshCcw className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+                  <span>
+                    {visibleBatches.length}{" "}
+                    {visibleBatches.length === 1
+                      ? "lote encontrado"
+                      : "lotes encontrados"}
+                  </span>
+                  {(dateFrom || dateTo) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setDateFrom("");
+                        setDateTo("");
+                        setBatchPage(1);
+                      }}
+                    >
+                      Limpiar rango de fechas
+                    </Button>
                   )}
-                  <TableHead>Lote</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Proyecto</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead>Fecha de registro de pago</TableHead>
-                  <TableHead>Proveedores</TableHead>
-                  <TableHead>Solicitado</TableHead>
-                  <TableHead>Pagado</TableHead>
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {batchesQuery.isLoading ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={9 + (canConsolidate ? 1 : 0)}
-                      className="py-12 text-center"
-                    >
-                      <Loader2 className="mx-auto h-6 w-6 animate-spin" />
-                    </TableCell>
-                  </TableRow>
-                ) : visibleBatches.length ? (
-                  paginatedBatches.map((row: any) => (
-                    <TableRow key={row.batch.id}>
-                      {canConsolidate && (
-                        <TableCell>
-                          <Checkbox
-                            checked={selectedConsolidationBatchIds.has(
-                              row.batch.id
-                            )}
-                            disabled={
-                              consolidateMutation.isPending ||
-                              !(
-                                approvalsEnabled
-                                  ? [
-                                      "enviado_depuracion",
-                                      "pendiente_aprobacion",
-                                    ]
-                                  : ["aprobado"]
-                              ).includes(row.batch.status)
-                            }
-                            onCheckedChange={checked =>
-                              setSelectedConsolidationBatchIds(current => {
-                                const next = new Set(current);
-                                if (checked === true) next.add(row.batch.id);
-                                else next.delete(row.batch.id);
-                                return next;
-                              })
-                            }
-                            aria-label={`Seleccionar lote ${row.batch.batchNumber}`}
-                          />
-                        </TableCell>
-                      )}
-                      <TableCell className="font-medium">
-                        <button
-                          type="button"
-                          className="rounded-sm text-left text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                          onClick={() => setSelectedBatchId(row.batch.id)}
-                          aria-label={`Abrir lote ${row.batch.batchNumber}`}
-                        >
-                          {row.batch.batchNumber}
-                        </button>
-                        {row.sourceBatchNumbers?.length > 0 && (
-                          <div className="text-xs font-normal text-muted-foreground">
-                            Consolidado de {row.sourceBatchNumbers.length} lotes
-                          </div>
+                </div>
+
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {canConsolidate && (
+                          <TableHead className="w-10">
+                            <Checkbox
+                              checked={
+                                allVisibleConsolidatableBatchesSelected
+                                  ? true
+                                  : someVisibleConsolidatableBatchesSelected
+                                    ? "indeterminate"
+                                    : false
+                              }
+                              disabled={
+                                consolidateMutation.isPending ||
+                                paginatedConsolidatableBatches.length === 0
+                              }
+                              onCheckedChange={
+                                toggleVisibleConsolidatableBatches
+                              }
+                              aria-label="Seleccionar todos los lotes disponibles para consolidar"
+                              title="Seleccionar lotes disponibles para consolidar"
+                            />
+                          </TableHead>
                         )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">
-                          {
-                            TREASURY_PAYMENT_KIND_LABELS[
-                              (row.batch.paymentKind ??
-                                "invoice") as keyof typeof TREASURY_PAYMENT_KIND_LABELS
-                            ]
-                          }
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div>{treasuryProjectSummary(row).code}</div>
-                        <div className="max-w-64 truncate text-xs text-muted-foreground">
-                          {treasuryProjectSummary(row).name}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={statusVariant(row.batch.status)}>
-                          {getTreasuryBatchStatusLabel(
-                            row.batch.status as TreasuryBatchStatus,
-                            row.batch.approvalBypassed === true
-                          )}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {formatDate(row.paymentRegistrationDate)}
-                      </TableCell>
-                      <TableCell>{row.supplierCount}</TableCell>
-                      <TableCell>
-                        {formatMoney(row.requestedTotal, row.batch.currency)}
-                      </TableCell>
-                      <TableCell>
-                        {formatMoney(row.paidTotal, row.batch.currency)}
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setSelectedBatchId(row.batch.id)}
-                        >
-                          <Eye className="mr-2 h-4 w-4" /> Abrir
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell
-                      colSpan={9 + (canConsolidate ? 1 : 0)}
-                      className="py-12 text-center text-muted-foreground"
+                        <TableHead>Lote</TableHead>
+                        <TableHead>Tipo</TableHead>
+                        <TableHead>Proyecto</TableHead>
+                        <TableHead>Estado</TableHead>
+                        <TableHead>Fecha de registro de pago</TableHead>
+                        <TableHead>Proveedores</TableHead>
+                        <TableHead>Solicitado</TableHead>
+                        <TableHead>Pagado</TableHead>
+                        <TableHead />
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {batchesQuery.isLoading ? (
+                        <TableRow>
+                          <TableCell
+                            colSpan={9 + (canConsolidate ? 1 : 0)}
+                            className="py-12 text-center"
+                          >
+                            <Loader2 className="mx-auto h-6 w-6 animate-spin" />
+                          </TableCell>
+                        </TableRow>
+                      ) : visibleBatches.length ? (
+                        paginatedBatches.map((row: any) => (
+                          <TableRow key={row.batch.id}>
+                            {canConsolidate && (
+                              <TableCell>
+                                <Checkbox
+                                  checked={selectedConsolidationBatchIds.has(
+                                    row.batch.id
+                                  )}
+                                  disabled={
+                                    consolidateMutation.isPending ||
+                                    !(
+                                      approvalsEnabled
+                                        ? [
+                                            "enviado_depuracion",
+                                            "pendiente_aprobacion",
+                                          ]
+                                        : ["aprobado"]
+                                    ).includes(row.batch.status)
+                                  }
+                                  onCheckedChange={checked =>
+                                    setSelectedConsolidationBatchIds(
+                                      current => {
+                                        const next = new Set(current);
+                                        if (checked === true)
+                                          next.add(row.batch.id);
+                                        else next.delete(row.batch.id);
+                                        return next;
+                                      }
+                                    )
+                                  }
+                                  aria-label={`Seleccionar lote ${row.batch.batchNumber}`}
+                                />
+                              </TableCell>
+                            )}
+                            <TableCell className="font-medium">
+                              <button
+                                type="button"
+                                className="rounded-sm text-left text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                                onClick={() => setSelectedBatchId(row.batch.id)}
+                                aria-label={`Abrir lote ${row.batch.batchNumber}`}
+                              >
+                                {row.batch.batchNumber}
+                              </button>
+                              {row.sourceBatchNumbers?.length > 0 && (
+                                <div className="text-xs font-normal text-muted-foreground">
+                                  Consolidado de {row.sourceBatchNumbers.length}{" "}
+                                  lotes
+                                </div>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline">
+                                {
+                                  TREASURY_PAYMENT_KIND_LABELS[
+                                    (row.batch.paymentKind ??
+                                      "invoice") as keyof typeof TREASURY_PAYMENT_KIND_LABELS
+                                  ]
+                                }
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <div>{treasuryProjectSummary(row).code}</div>
+                              <div className="max-w-64 truncate text-xs text-muted-foreground">
+                                {treasuryProjectSummary(row).name}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={statusVariant(row.batch.status)}>
+                                {getTreasuryBatchStatusLabel(
+                                  row.batch.status as TreasuryBatchStatus,
+                                  row.batch.approvalBypassed === true
+                                )}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {formatDate(row.paymentRegistrationDate)}
+                            </TableCell>
+                            <TableCell>{row.supplierCount}</TableCell>
+                            <TableCell>
+                              {formatMoney(
+                                row.requestedTotal,
+                                row.batch.currency
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {formatMoney(row.paidTotal, row.batch.currency)}
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setSelectedBatchId(row.batch.id)}
+                              >
+                                <Eye className="mr-2 h-4 w-4" /> Abrir
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      ) : (
+                        <TableRow>
+                          <TableCell
+                            colSpan={9 + (canConsolidate ? 1 : 0)}
+                            className="py-12 text-center text-muted-foreground"
+                          >
+                            No hay lotes con estos filtros.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                  {!batchesQuery.isLoading && (
+                    <DataPagination
+                      page={currentBatchPage}
+                      pageSize={TREASURY_BATCH_PAGE_SIZE}
+                      total={visibleBatches.length}
+                      totalPages={batchTotalPages}
+                      onPageChange={setBatchPage}
+                    />
+                  )}
+                </div>
+                {canConsolidate && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/20 p-4">
+                    <div className="text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        {selectedConsolidationBatchIds.size}
+                      </span>{" "}
+                      {selectedConsolidationBatchIds.size === 1
+                        ? "lote seleccionado"
+                        : "lotes seleccionados"}
+                    </div>
+                    <Button
+                      onClick={consolidateSelectedBatches}
+                      disabled={
+                        consolidateMutation.isPending ||
+                        selectedConsolidationBatchIds.size === 0 ||
+                        singleSelectedBatchAlreadyPendingApproval ||
+                        needsMoreBatchesWithoutApproval
+                      }
                     >
-                      No hay lotes con estos filtros.
-                    </TableCell>
-                  </TableRow>
+                      {consolidateMutation.isPending ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="mr-2 h-4 w-4" />
+                      )}
+                      {singleSelectedBatchAlreadyPendingApproval
+                        ? "Ya enviado a aprobación"
+                        : needsMoreBatchesWithoutApproval
+                          ? "Seleccione al menos 2 lotes"
+                          : approvalsEnabled
+                            ? selectedConsolidationBatchIds.size === 1
+                              ? "Enviar a aprobación"
+                              : "Consolidar y enviar a aprobación"
+                            : "Consolidar y dejar listo para banco"}
+                    </Button>
+                  </div>
                 )}
-              </TableBody>
-            </Table>
-            {!batchesQuery.isLoading && (
-              <DataPagination
-                page={currentBatchPage}
-                pageSize={TREASURY_BATCH_PAGE_SIZE}
-                total={visibleBatches.length}
-                totalPages={batchTotalPages}
-                onPageChange={setBatchPage}
-              />
-            )}
-          </div>
-          {canConsolidate && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/20 p-4">
-              <div className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">
-                  {selectedConsolidationBatchIds.size}
-                </span>{" "}
-                {selectedConsolidationBatchIds.size === 1
-                  ? "lote seleccionado"
-                  : "lotes seleccionados"}
-              </div>
-              <Button
-                onClick={consolidateSelectedBatches}
-                disabled={
-                  consolidateMutation.isPending ||
-                  selectedConsolidationBatchIds.size === 0 ||
-                  singleSelectedBatchAlreadyPendingApproval ||
-                  needsMoreBatchesWithoutApproval
-                }
-              >
-                {consolidateMutation.isPending ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                )}
-                {singleSelectedBatchAlreadyPendingApproval
-                  ? "Ya enviado a aprobación"
-                  : needsMoreBatchesWithoutApproval
-                    ? "Seleccione al menos 2 lotes"
-                    : approvalsEnabled
-                      ? selectedConsolidationBatchIds.size === 1
-                        ? "Enviar a aprobación"
-                        : "Consolidar y enviar a aprobación"
-                      : "Consolidar y dejar listo para banco"}
-              </Button>
-            </div>
-          )}
-        </CardContent>
+              </CardContent>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       </Card>
 
       {formKind === "purchase_order_advance" ? (
@@ -3965,12 +4304,20 @@ export default function Tesoreria() {
       )}
       <BatchDetailDialog
         batchId={selectedBatchId}
-        onClose={() => setSelectedBatchId(null)}
+        onClose={() => {
+          setSelectedBatchId(null);
+          if (getRequestedTreasuryBatchId(urlSearch)) {
+            setLocation("/tesoreria");
+          }
+        }}
         onEdit={detail => {
           setEditingDetail(detail);
           setInitialAdvance(undefined);
           setFormKind(detail.batch.paymentKind ?? "invoice");
           setSelectedBatchId(null);
+          if (getRequestedTreasuryBatchId(urlSearch)) {
+            setLocation("/tesoreria");
+          }
           setFormOpen(true);
         }}
       />

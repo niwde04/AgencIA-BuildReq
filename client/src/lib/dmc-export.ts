@@ -457,6 +457,7 @@ function systemDateColumns(headers: readonly string[]) {
     "F Entrega",
     "Fecha Factura",
     "Fecha factura",
+    "Fecha de pago",
     "Fech_Cpte_Retención",
     "Fecha Vencimiento Crédito",
     "Fecha vencimiento",

@@ -3,6 +3,8 @@ import { z } from "zod";
 import {
   TREASURY_BATCH_STATUS_CODES,
   TREASURY_PAYMENT_KIND_CODES,
+  getTreasuryPaymentStatus,
+  roundTreasuryMoney,
 } from "@shared/treasury";
 import { buildTreasuryInvoiceSummaryPayload } from "@shared/system-workbook-report";
 import {
@@ -17,17 +19,12 @@ import * as treasury from "../treasury";
 type User = treasury.TreasuryActor;
 
 const currencySchema = z.enum(["HNL", "USD"]);
-const invoiceStatusSchema = z.enum([
-  "borrador",
-  "revisada",
-  "rechazada",
-  "registrada",
-  "anulada",
-]);
+const invoicePaymentReportStatusSchema = z.enum(["all", "pending", "paid"]);
 const reportDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
   .nullish();
+const invoiceReportSearchSchema = z.string().trim().max(200).nullish();
 const draftItemSchema = z.union([
   z.object({
     sourceType: z.literal("invoice").optional(),
@@ -159,6 +156,25 @@ function parseReportDateBoundary(
     });
   }
   return date;
+}
+
+function invoiceReportRowMatchesSearch(
+  row: object,
+  searchValue?: string | null
+) {
+  const term = String(searchValue ?? "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es-HN");
+  if (!term) return true;
+  return Object.values(row).some(value =>
+    String(value ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase("es-HN")
+      .includes(term)
+  );
 }
 
 function rethrowTreasuryError(error: unknown): never {
@@ -338,9 +354,12 @@ export const treasuryRouter = router({
   invoiceSummaryReport: protectedProcedure
     .input(
       z.object({
-        status: invoiceStatusSchema.nullish(),
+        paymentStatus: invoicePaymentReportStatusSchema,
         dateFrom: reportDateSchema,
         dateTo: reportDateSchema,
+        search: invoiceReportSearchSchema,
+        page: z.number().int().positive().optional(),
+        pageSize: z.number().int().min(1).max(100).optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -354,23 +373,112 @@ export const treasuryRouter = router({
           message: "La fecha inicial no puede ser mayor que la fecha final.",
         });
       }
+      const previewPage = input.page
+        ? await treasury.listTreasuryInvoiceReportPage({
+            paymentStatus: input.paymentStatus,
+            search: input.search,
+            dateFrom,
+            dateTo,
+            projectIds: getProjectScopeIds(ctx.user),
+            page: input.page,
+            pageSize: input.pageSize ?? 10,
+          })
+        : null;
       const invoiceFilters: Parameters<
         typeof db.listDmcReportSourceInvoices
       >[0] = {
         dateFrom,
         dateTo,
-        ...(input.status
-          ? { statuses: [input.status] }
-          : { excludeStatus: "anulada" }),
+        statuses: ["registrada"],
+        ...(previewPage ? { invoiceIds: previewPage.invoiceIds } : {}),
       };
       const sourceInvoices = await db.listDmcReportSourceInvoices(
         applyProjectScope(invoiceFilters, ctx.user)
       );
-      return buildTreasuryInvoiceSummaryPayload(sourceInvoices, {
-        generatedAt: new Date(),
-        dateFrom,
-        dateTo,
+      const paymentsByInvoice = await treasury.getTreasuryInvoiceReportPayments(
+        sourceInvoices.map(invoice => invoice.invoiceId)
+      );
+      const filteredInvoices = sourceInvoices.flatMap(invoice => {
+        const payments = paymentsByInvoice.get(invoice.invoiceId) ?? [];
+        const paidAmount = roundTreasuryMoney(
+          payments.reduce((sum, payment) => sum + payment.amount, 0)
+        );
+        const paymentStatus =
+          getTreasuryPaymentStatus(
+            Number(invoice.netPayable ?? 0),
+            paidAmount + Number(invoice.appliedAdvanceAmount ?? 0)
+          ) === "pagada"
+            ? "paid"
+            : "pending";
+        if (
+          input.paymentStatus !== "all" &&
+          input.paymentStatus !== paymentStatus
+        ) {
+          return [];
+        }
+        return [
+          {
+            invoice,
+            payments,
+            paidAmount,
+            paymentStatusLabel:
+              paymentStatus === "paid" ? "Pagada" : "Pendiente de pagar",
+          },
+        ];
       });
+      const payload = buildTreasuryInvoiceSummaryPayload(
+        filteredInvoices.map(row => row.invoice),
+        {
+          generatedAt: new Date(),
+          dateFrom,
+          dateTo,
+        }
+      );
+      payload.invoices.forEach((invoice, index) => {
+        const reportInvoice = filteredInvoices[index];
+        const paidDates = reportInvoice.payments
+          .map(payment => payment.paidDate)
+          .filter((date): date is Date => Boolean(date));
+        invoice.Estado = reportInvoice.paymentStatusLabel;
+        invoice["Lote de pago"] = Array.from(
+          new Set(reportInvoice.payments.map(payment => payment.batchNumber))
+        ).join(", ");
+        invoice["Fecha de pago"] = paidDates.at(-1) ?? null;
+        invoice["Referencia de pago"] = Array.from(
+          new Set(
+            reportInvoice.payments
+              .map(payment => payment.bankReference?.trim())
+              .filter((reference): reference is string => Boolean(reference))
+          )
+        ).join(", ");
+        invoice["Monto pagado"] = reportInvoice.paidAmount;
+        invoice.navigation.paymentBatches = Array.from(
+          new Map(
+            reportInvoice.payments.map(payment => [
+              payment.batchId,
+              {
+                id: payment.batchId,
+                batchNumber: payment.batchNumber,
+              },
+            ])
+          ).values()
+        );
+      });
+      const matchingInvoices = previewPage
+        ? payload.invoices
+        : payload.invoices.filter(invoice =>
+            invoiceReportRowMatchesSearch(invoice, input.search)
+          );
+      const total = previewPage?.total ?? matchingInvoices.length;
+      const page = previewPage?.page ?? 1;
+      const pageSize = previewPage?.pageSize ?? Math.max(1, total);
+      const totalPages = previewPage?.totalPages ?? 1;
+      return {
+        ...payload,
+        invoices: matchingInvoices,
+        summary: { ...payload.summary, invoiceCount: total },
+        pagination: { page, pageSize, total, totalPages },
+      };
     }),
 
   list: protectedProcedure

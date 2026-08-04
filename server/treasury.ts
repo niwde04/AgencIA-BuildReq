@@ -30,6 +30,7 @@ import type { PurchaseCurrency } from "../shared/purchase-orders";
 import {
   buildTreasuryMoneySummary,
   getTreasuryBatchStatusLabel,
+  getTreasuryPaymentStatus,
   roundTreasuryMoney,
   type TreasuryBatchStatus,
   type TreasuryItemStatus,
@@ -576,6 +577,187 @@ async function getInvoiceFinancialMap(
     );
   }
   return result;
+}
+
+export type TreasuryInvoiceReportPayment = {
+  batchId: number;
+  batchNumber: string;
+  paidDate: Date | null;
+  bankReference: string | null;
+  amount: number;
+};
+
+export async function getTreasuryInvoiceReportPayments(invoiceIds: number[]) {
+  const db = await getDb();
+  const uniqueIds = Array.from(new Set(invoiceIds));
+  const result = new Map<number, TreasuryInvoiceReportPayment[]>();
+  if (!db || uniqueIds.length === 0) return result;
+
+  const rows = await db
+    .select({
+      invoiceId: treasuryPaymentItems.invoiceId,
+      batchId: treasuryPaymentBatches.id,
+      batchNumber: treasuryPaymentBatches.batchNumber,
+      paidDate: treasuryPaymentItems.bankPaidDate,
+      bankReference: treasuryPaymentItems.bankReference,
+      amount: treasuryPaymentItems.bankPaidAmount,
+    })
+    .from(treasuryPaymentItems)
+    .innerJoin(
+      treasuryPaymentBatches,
+      eq(treasuryPaymentItems.batchId, treasuryPaymentBatches.id)
+    )
+    .where(
+      and(
+        eq(treasuryPaymentItems.sourceType, "invoice"),
+        inArray(treasuryPaymentItems.invoiceId, uniqueIds),
+        inArray(treasuryPaymentItems.status, [
+          "pagada",
+          "con_diferencia",
+          "contabilizada",
+        ])
+      )
+    )
+    .orderBy(
+      asc(treasuryPaymentItems.bankPaidDate),
+      asc(treasuryPaymentBatches.id),
+      asc(treasuryPaymentItems.id)
+    );
+
+  rows.forEach(row => {
+    if (!row.invoiceId) return;
+    const payments = result.get(row.invoiceId) ?? [];
+    payments.push({
+      batchId: row.batchId,
+      batchNumber: row.batchNumber,
+      paidDate: row.paidDate,
+      bankReference: row.bankReference,
+      amount: roundTreasuryMoney(Number(row.amount ?? 0)),
+    });
+    result.set(row.invoiceId, payments);
+  });
+  return result;
+}
+
+export async function listTreasuryInvoiceReportPage(input: {
+  paymentStatus: "all" | "pending" | "paid";
+  search?: string | null;
+  dateFrom?: Date | null;
+  dateTo?: Date | null;
+  projectIds?: number[];
+  page: number;
+  pageSize: number;
+}) {
+  const db = await getDb();
+  if (!db) {
+    return {
+      invoiceIds: [] as number[],
+      page: 1,
+      pageSize: input.pageSize,
+      total: 0,
+      totalPages: 1,
+    };
+  }
+
+  const conditions = [eq(invoices.status, "registrada")];
+  if (input.projectIds) {
+    conditions.push(
+      input.projectIds.length
+        ? inArray(invoices.projectId, input.projectIds)
+        : eq(invoices.id, -1)
+    );
+  }
+  if (input.dateFrom) {
+    conditions.push(
+      sql`coalesce(${invoices.documentDate}, ${invoices.postingDate}, ${invoices.receiptDate}, ${invoices.createdAt}) >= ${input.dateFrom}`
+    );
+  }
+  if (input.dateTo) {
+    conditions.push(
+      sql`coalesce(${invoices.documentDate}, ${invoices.postingDate}, ${invoices.receiptDate}, ${invoices.createdAt}) <= ${input.dateTo}`
+    );
+  }
+
+  const candidates = await db
+    .select({
+      invoiceId: invoices.id,
+      invoiceDocumentNumber: invoices.invoiceDocumentNumber,
+      invoiceNumber: invoices.invoiceNumber,
+      netPayable: invoices.netPayable,
+      projectCode: projects.code,
+      projectName: projects.name,
+      supplierCode: suppliers.supplierCode,
+      supplierName: suppliers.name,
+      supplierRtn: suppliers.rtn,
+    })
+    .from(invoices)
+    .leftJoin(projects, eq(invoices.projectId, projects.id))
+    .leftJoin(suppliers, eq(invoices.supplierId, suppliers.id))
+    .where(and(...conditions))
+    .orderBy(
+      asc(invoices.documentDate),
+      asc(invoices.postingDate),
+      asc(invoices.id)
+    );
+  const invoiceIds = candidates.map(invoice => invoice.invoiceId);
+  const [paymentsByInvoice, appliedAdvanceByInvoice] = await Promise.all([
+    getTreasuryInvoiceReportPayments(invoiceIds),
+    getInvoiceAppliedAdvanceMap(db, invoiceIds),
+  ]);
+  const searchTerm = String(input.search ?? "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es-HN");
+  const matchingIds = candidates.flatMap(invoice => {
+    const payments = paymentsByInvoice.get(invoice.invoiceId) ?? [];
+    const paidAmount = roundTreasuryMoney(
+      payments.reduce((sum, payment) => sum + payment.amount, 0)
+    );
+    const paymentStatus =
+      getTreasuryPaymentStatus(
+        Number(invoice.netPayable ?? 0),
+        paidAmount + (appliedAdvanceByInvoice.get(invoice.invoiceId) ?? 0)
+      ) === "pagada"
+        ? "paid"
+        : "pending";
+    if (
+      input.paymentStatus !== "all" &&
+      input.paymentStatus !== paymentStatus
+    ) {
+      return [];
+    }
+    if (searchTerm) {
+      const searchableText = [
+        invoice.invoiceDocumentNumber,
+        invoice.invoiceNumber,
+        invoice.projectCode,
+        invoice.projectName,
+        invoice.supplierCode,
+        invoice.supplierName,
+        invoice.supplierRtn,
+        ...payments.map(payment => payment.batchNumber),
+        ...payments.map(payment => payment.bankReference),
+      ]
+        .join(" ")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLocaleLowerCase("es-HN");
+      if (!searchableText.includes(searchTerm)) return [];
+    }
+    return [invoice.invoiceId];
+  });
+  const total = matchingIds.length;
+  const totalPages = Math.max(1, Math.ceil(total / input.pageSize));
+  const page = Math.min(input.page, totalPages);
+  const start = (page - 1) * input.pageSize;
+  return {
+    invoiceIds: matchingIds.slice(start, start + input.pageSize),
+    page,
+    pageSize: input.pageSize,
+    total,
+    totalPages,
+  };
 }
 
 async function getInvoiceSnapshots(

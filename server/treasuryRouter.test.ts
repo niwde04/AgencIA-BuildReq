@@ -303,10 +303,33 @@ describe("treasury invoice summary report", () => {
           subProjectLabels: [],
         } as any,
       ]);
+    vi.spyOn(treasury, "getTreasuryInvoiceReportPayments").mockResolvedValue(
+      new Map([
+        [
+          50,
+          [
+            {
+              batchId: 49,
+              batchNumber: "TES-2026-000049",
+              paidDate: new Date("2026-07-19T12:00:00.000Z"),
+              bankReference: "REF-2026-049",
+              amount: 40,
+            },
+            {
+              batchId: 50,
+              batchNumber: "TES-2026-000050",
+              paidDate: new Date("2026-07-20T12:00:00.000Z"),
+              bankReference: "REF-2026-050",
+              amount: 65.65,
+            },
+          ],
+        ],
+      ])
+    );
     const caller = appRouter.createCaller(createTreasuryContext("financiero"));
 
     const payload = await caller.treasury.invoiceSummaryReport({
-      status: "registrada",
+      paymentStatus: "paid",
       dateFrom: "2026-07-01",
       dateTo: "2026-07-31",
     });
@@ -322,7 +345,18 @@ describe("treasury invoice summary report", () => {
     expect(payload.invoices).toHaveLength(1);
     expect(payload.invoices[0]).toMatchObject({
       "Documento interno": "FT-020-00000050",
-      Estado: "Contabilizada",
+      Estado: "Pagada",
+      "Lote de pago": "TES-2026-000049, TES-2026-000050",
+      "Fecha de pago": new Date("2026-07-20T12:00:00.000Z"),
+      "Referencia de pago": "REF-2026-049, REF-2026-050",
+      "Monto pagado": 105.65,
+      navigation: {
+        invoiceId: 50,
+        paymentBatches: [
+          { id: 49, batchNumber: "TES-2026-000049" },
+          { id: 50, batchNumber: "TES-2026-000050" },
+        ],
+      },
       "Total factura": 115,
       "Retenciones fiscales": 1.15,
       "Retención calidad %": 5,
@@ -333,6 +367,161 @@ describe("treasury invoice summary report", () => {
       "Descuentos documento": 3.2,
       "Neto a pagar": 105.65,
     });
+  });
+
+  it("filters all, pending and paid registered invoices", async () => {
+    mockDisabledApprovalSettings();
+    const sourceInvoices = [
+      { invoiceId: 61, invoiceDocumentNumber: "FT-00000061" },
+      { invoiceId: 62, invoiceDocumentNumber: "FT-00000062" },
+      { invoiceId: 63, invoiceDocumentNumber: "FT-00000063" },
+    ].map(invoice => ({
+      ...invoice,
+      status: "registrada",
+      subtotal: "100.0000",
+      taxAmount: "0.0000",
+      total: "100.0000",
+      retentionTotal: "0.0000",
+      otherRetentionTotal: "0.0000",
+      documentDiscountTotal: "0.0000",
+      netPayable: "100.0000",
+      currency: "HNL" as const,
+      items: [],
+      retentions: [],
+      documentAdjustments: [],
+      materialRequests: [],
+      subProjectLabels: [],
+    }));
+    const invoiceSpy = vi
+      .spyOn(db, "listDmcReportSourceInvoices")
+      .mockImplementation(async filters => {
+        const invoiceIds = filters?.invoiceIds;
+        return (
+          invoiceIds
+            ? sourceInvoices.filter(invoice =>
+                invoiceIds.includes(invoice.invoiceId)
+              )
+            : sourceInvoices
+        ) as any;
+      });
+    const pageSpy = vi
+      .spyOn(treasury, "listTreasuryInvoiceReportPage")
+      .mockImplementation(async input => {
+        const invoiceIds = input.page === 1 ? [61, 62] : [63];
+        return {
+          invoiceIds,
+          page: input.page,
+          pageSize: input.pageSize,
+          total: 3,
+          totalPages: 2,
+        };
+      });
+    vi.spyOn(treasury, "getTreasuryInvoiceReportPayments").mockResolvedValue(
+      new Map([
+        [61, []],
+        [
+          62,
+          [
+            {
+              batchId: 62,
+              batchNumber: "TES-2026-000062",
+              paidDate: new Date("2026-07-21T12:00:00.000Z"),
+              bankReference: "REF-2026-062",
+              amount: 40,
+            },
+          ],
+        ],
+        [
+          63,
+          [
+            {
+              batchId: 63,
+              batchNumber: "TES-2026-000063",
+              paidDate: new Date("2026-07-22T12:00:00.000Z"),
+              bankReference: "REF-2026-063",
+              amount: 100,
+            },
+          ],
+        ],
+      ])
+    );
+    const caller = appRouter.createCaller(createTreasuryContext("financiero"));
+    const filters = { dateFrom: null, dateTo: null };
+
+    const [all, pending, paid, firstPage, secondPage, searchedByBatch] =
+      await Promise.all([
+        caller.treasury.invoiceSummaryReport({
+          ...filters,
+          paymentStatus: "all",
+        }),
+        caller.treasury.invoiceSummaryReport({
+          ...filters,
+          paymentStatus: "pending",
+        }),
+        caller.treasury.invoiceSummaryReport({
+          ...filters,
+          paymentStatus: "paid",
+        }),
+        caller.treasury.invoiceSummaryReport({
+          ...filters,
+          paymentStatus: "all",
+          page: 1,
+          pageSize: 2,
+        }),
+        caller.treasury.invoiceSummaryReport({
+          ...filters,
+          paymentStatus: "all",
+          page: 2,
+          pageSize: 2,
+        }),
+        caller.treasury.invoiceSummaryReport({
+          ...filters,
+          paymentStatus: "all",
+          search: "TES-2026-000062",
+        }),
+      ]);
+
+    expect(all.invoices.map(row => row["Documento interno"])).toEqual([
+      "FT-00000061",
+      "FT-00000062",
+      "FT-00000063",
+    ]);
+    expect(pending.invoices.map(row => row["Documento interno"])).toEqual([
+      "FT-00000061",
+      "FT-00000062",
+    ]);
+    expect(pending.invoices.map(row => row.Estado)).toEqual([
+      "Pendiente de pagar",
+      "Pendiente de pagar",
+    ]);
+    expect(paid.invoices.map(row => row["Documento interno"])).toEqual([
+      "FT-00000063",
+    ]);
+    expect(paid.invoices[0]?.Estado).toBe("Pagada");
+    expect(paid.invoices[0]).toMatchObject({
+      "Lote de pago": "TES-2026-000063",
+      "Monto pagado": 100,
+    });
+    expect(firstPage.invoices).toHaveLength(2);
+    expect(firstPage.pagination).toEqual({
+      page: 1,
+      pageSize: 2,
+      total: 3,
+      totalPages: 2,
+    });
+    expect(secondPage.invoices.map(row => row["Documento interno"])).toEqual([
+      "FT-00000063",
+    ]);
+    expect(
+      searchedByBatch.invoices.map(row => row["Documento interno"])
+    ).toEqual(["FT-00000062"]);
+    expect(pageSpy).toHaveBeenCalledTimes(2);
+    expect(invoiceSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceIds: [61, 62] })
+    );
+    expect(invoiceSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceIds: [63] })
+    );
   });
 });
 

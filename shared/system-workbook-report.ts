@@ -85,6 +85,10 @@ export const TREASURY_INVOICE_SUMMARY_HEADERS = [
   "Fecha factura",
   "Fecha vencimiento",
   "Estado",
+  "Lote de pago",
+  "Fecha de pago",
+  "Referencia de pago",
+  "Monto pagado",
   "Proyecto",
   "Código proveedor",
   "Rtn",
@@ -160,13 +164,18 @@ export type SystemWorkbookPayload = {
   };
 };
 
+export type TreasuryInvoiceSummaryRow = Record<
+  (typeof TREASURY_INVOICE_SUMMARY_HEADERS)[number],
+  string | number | Date | null
+> & {
+  navigation: {
+    invoiceId: number;
+    paymentBatches: Array<{ id: number; batchNumber: string }>;
+  };
+};
+
 export type TreasuryInvoiceSummaryPayload = {
-  invoices: Array<
-    Record<
-      (typeof TREASURY_INVOICE_SUMMARY_HEADERS)[number],
-      string | number | Date | null
-    >
-  >;
+  invoices: TreasuryInvoiceSummaryRow[];
   summary: {
     generatedAt: Date;
     dateFrom: Date | null;
@@ -219,6 +228,10 @@ export function buildTreasuryInvoiceSummaryPayload(
       );
       const tc = getInvoiceDocumentAdjustment(adjustments, "tc_discount");
       return {
+        navigation: {
+          invoiceId: invoice.invoiceId,
+          paymentBatches: [],
+        },
         "N° Registro": index + 1,
         "Documento interno": invoice.invoiceDocumentNumber,
         "Nro. Factura": invoice.invoiceNumber ?? "",
@@ -227,6 +240,10 @@ export function buildTreasuryInvoiceSummaryPayload(
         "Fecha factura": dateValue(invoice.documentDate),
         "Fecha vencimiento": dateValue(invoice.documentDueDate),
         Estado: INVOICE_STATUS_LABELS[invoice.status] ?? invoice.status,
+        "Lote de pago": "",
+        "Fecha de pago": null,
+        "Referencia de pago": "",
+        "Monto pagado": 0,
         Proyecto: [invoice.projectCode, invoice.projectName]
           .filter(Boolean)
           .join(" - "),

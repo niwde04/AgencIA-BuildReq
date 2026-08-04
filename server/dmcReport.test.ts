@@ -1168,6 +1168,11 @@ describe("internal BuildReq workbook", () => {
     });
     expect(payload.summary.invoiceCount).toBe(1);
 
+    payload.invoices[0]["Lote de pago"] = "TES-2026-000086";
+    payload.invoices[0]["Fecha de pago"] = new Date("2026-07-23T12:00:00.000");
+    payload.invoices[0]["Referencia de pago"] = "REF-2026-086";
+    payload.invoices[0]["Monto pagado"] = 5004.6;
+
     const workbook = XLSX.read(
       XLSX.write(buildTreasuryInvoiceSummaryWorkbook(XLSX, payload), {
         type: "buffer",
@@ -1186,6 +1191,18 @@ describe("internal BuildReq workbook", () => {
     const retentionColumn = header.indexOf("Retenciones fiscales");
     const otherRetentionColumn = header.indexOf("Otras retenciones");
     const discountColumn = header.indexOf("Descuentos documento");
+    const paymentBatchColumn = header.indexOf("Lote de pago");
+    const paymentDateColumn = header.indexOf("Fecha de pago");
+    const paymentReferenceColumn = header.indexOf("Referencia de pago");
+    const paidAmountColumn = header.indexOf("Monto pagado");
+    expect(paymentBatchColumn).toBeGreaterThan(-1);
+    expect(paymentDateColumn).toBeGreaterThan(-1);
+    expect(paymentReferenceColumn).toBeGreaterThan(-1);
+    expect(paidAmountColumn).toBeGreaterThan(-1);
+    expect(rows[1][paymentBatchColumn]).toBe("TES-2026-000086");
+    expect(rows[1][paymentDateColumn]).toBeInstanceOf(Date);
+    expect(rows[1][paymentReferenceColumn]).toBe("REF-2026-086");
+    expect(rows[1][paidAmountColumn]).toBe(5004.6);
     expect(rows[1][subtotalColumn]).toBe(531.53);
     expect(rows[1][totalColumn]).toBe(611.26);
     expect(rows[1][retentionColumn]).toBe(10.12);

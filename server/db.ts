@@ -16,6 +16,7 @@ import {
 } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { alias } from "drizzle-orm/pg-core";
+import { Pool } from "pg";
 import {
   InsertUser,
   User,
@@ -46,6 +47,8 @@ import {
   invoices,
   purchaseOrderAdvanceApplications,
   purchaseOrderAdvances,
+  treasuryPaymentBatches,
+  treasuryPaymentItems,
   invoiceItems,
   invoiceOtherCharges,
   invoiceDocumentAdjustments,
@@ -226,14 +229,33 @@ import {
   normalizeFiscalRtn,
 } from "@shared/invoices";
 
+const DEFAULT_DATABASE_POOL_MAX = 4;
+let _pool: Pool | null = null;
 let _db: ReturnType<typeof drizzle> | null = null;
+
+function getDatabasePoolMax() {
+  const configured = Number.parseInt(process.env.DATABASE_POOL_MAX ?? "", 10);
+  return Number.isInteger(configured) && configured > 0
+    ? configured
+    : DEFAULT_DATABASE_POOL_MAX;
+}
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      _pool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        max: getDatabasePoolMax(),
+        idleTimeoutMillis: 10_000,
+        connectionTimeoutMillis: 10_000,
+      });
+      _pool.on("error", error => {
+        console.error("[Database] Idle connection error:", error);
+      });
+      _db = drizzle(_pool);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
+      _pool = null;
       _db = null;
     }
   }
@@ -13820,6 +13842,7 @@ export async function getInvoiceById(id: number) {
     documentAdjustments,
     advanceApplications,
     purchaseOrderAdvanceSummary,
+    treasuryPayments,
   ] = await Promise.all([
     db
       .select({
@@ -13862,6 +13885,33 @@ export async function getInvoiceById(id: number) {
             getPurchaseOrderAdvancesSummary(db, rows[0].purchaseOrder!.id)
         )
       : Promise.resolve(null),
+    db
+      .select({
+        batchId: treasuryPaymentBatches.id,
+        batchNumber: treasuryPaymentBatches.batchNumber,
+        paidDate: treasuryPaymentItems.bankPaidDate,
+        amount: treasuryPaymentItems.bankPaidAmount,
+      })
+      .from(treasuryPaymentItems)
+      .innerJoin(
+        treasuryPaymentBatches,
+        eq(treasuryPaymentItems.batchId, treasuryPaymentBatches.id)
+      )
+      .where(
+        and(
+          eq(treasuryPaymentItems.sourceType, "invoice"),
+          eq(treasuryPaymentItems.invoiceId, id),
+          inArray(treasuryPaymentItems.status, [
+            "pagada",
+            "con_diferencia",
+            "contabilizada",
+          ])
+        )
+      )
+      .orderBy(
+        asc(treasuryPaymentItems.bankPaidDate),
+        asc(treasuryPaymentBatches.id)
+      ),
   ]);
   const items = itemRows.map(({ item, catalogAllowsTaxWithholding }) => ({
     ...item,
@@ -13925,6 +13975,7 @@ export async function getInvoiceById(id: number) {
     documentAdjustments,
     advanceApplications,
     purchaseOrderAdvanceSummary,
+    treasuryPayments,
     appliedAdvanceAmount: toMoneyString4(
       advanceApplications.reduce(
         (sum, application) => sum + parseDecimal(application.amount),
