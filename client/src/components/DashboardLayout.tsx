@@ -2,6 +2,11 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -12,6 +17,9 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
@@ -49,6 +57,7 @@ import {
   UserRound,
   Settings,
   WalletCards,
+  ChevronDown,
 } from "lucide-react";
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -326,6 +335,102 @@ const allMenuItems: MenuItem[] = [
   },
 ];
 
+type MenuSectionTone =
+  | "red"
+  | "amber"
+  | "orange"
+  | "blue"
+  | "teal"
+  | "violet"
+  | "green";
+
+const MENU_SECTION_TONE_CLASSES: Record<
+  MenuSectionTone,
+  { icon: string; item: string }
+> = {
+  red: {
+    icon: "bg-red-50 text-red-600 dark:bg-red-500/15 dark:text-red-400",
+    item: "hover:bg-red-50/70 data-[active=true]:bg-red-50/90 data-[active=true]:text-foreground dark:hover:bg-red-500/10 dark:data-[active=true]:bg-red-500/15",
+  },
+  amber: {
+    icon: "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400",
+    item: "hover:bg-amber-50/70 data-[active=true]:bg-amber-50/90 data-[active=true]:text-foreground dark:hover:bg-amber-500/10 dark:data-[active=true]:bg-amber-500/15",
+  },
+  orange: {
+    icon: "bg-orange-50 text-orange-700 dark:bg-orange-500/15 dark:text-orange-400",
+    item: "hover:bg-orange-50/70 data-[active=true]:bg-orange-50/90 data-[active=true]:text-foreground dark:hover:bg-orange-500/10 dark:data-[active=true]:bg-orange-500/15",
+  },
+  blue: {
+    icon: "bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400",
+    item: "hover:bg-blue-50/70 data-[active=true]:bg-blue-50/90 data-[active=true]:text-foreground dark:hover:bg-blue-500/10 dark:data-[active=true]:bg-blue-500/15",
+  },
+  teal: {
+    icon: "bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400",
+    item: "hover:bg-teal-50/70 data-[active=true]:bg-teal-50/90 data-[active=true]:text-foreground dark:hover:bg-teal-500/10 dark:data-[active=true]:bg-teal-500/15",
+  },
+  violet: {
+    icon: "bg-violet-50 text-violet-700 dark:bg-violet-500/15 dark:text-violet-400",
+    item: "hover:bg-violet-50/70 data-[active=true]:bg-violet-50/90 data-[active=true]:text-foreground dark:hover:bg-violet-500/10 dark:data-[active=true]:bg-violet-500/15",
+  },
+  green: {
+    icon: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400",
+    item: "hover:bg-emerald-50/70 data-[active=true]:bg-emerald-50/90 data-[active=true]:text-foreground dark:hover:bg-emerald-500/10 dark:data-[active=true]:bg-emerald-500/15",
+  },
+};
+
+const MAIN_MENU_SECTIONS = [
+  { label: null, tone: "red", paths: ["/"] },
+  {
+    label: "COMPRAS",
+    tone: "red",
+    paths: [
+      "/solicitudes",
+      "/solicitudes-compra",
+      "/ordenes-compra",
+      "/solicitudes-traslado",
+    ],
+  },
+  {
+    label: "INVENTARIO",
+    tone: "amber",
+    paths: [
+      "/inventario",
+      "/saldos-iniciales",
+      "/almacenes",
+      "/salidas-inventario",
+      "/articulos",
+    ],
+  },
+  {
+    label: "LOGÍSTICA",
+    tone: "orange",
+    paths: ["/flujos", "/devoluciones", "/recepciones", "/traslados"],
+  },
+  {
+    label: "FINANZAS",
+    tone: "blue",
+    paths: [
+      "/tesoreria",
+      "/facturas",
+      "/impuestos",
+      "/retenciones",
+      "/grupos-financieros",
+      "/activos-fijos-pendientes",
+    ],
+  },
+  {
+    label: "OPERACIONES",
+    tone: "teal",
+    paths: ["/proveedores", "/proyectos"],
+  },
+  { label: "ANÁLISIS", tone: "violet", paths: ["/reportes"] },
+  {
+    label: "SISTEMA",
+    tone: "green",
+    paths: ["/usuarios", "/datos-demo"],
+  },
+] as const;
+
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const DEFAULT_WIDTH = 260;
 const MIN_WIDTH = 200;
@@ -481,6 +586,17 @@ function DashboardLayoutContent({
       return item.roles.includes(userRole);
     });
   }, [userRole, isAdmin]);
+  const menuSections = useMemo(() => {
+    const menuItemsByPath = new Map(
+      menuItems.map(item => [item.path, item] as const)
+    );
+    return MAIN_MENU_SECTIONS.map(section => ({
+      ...section,
+      items: section.paths
+        .map(path => menuItemsByPath.get(path))
+        .filter((item): item is MenuItem => Boolean(item)),
+    })).filter(section => section.items.length > 0);
+  }, [menuItems]);
 
   const activeMenuItem = menuItems.find(item => {
     if (item.path === "/") return location === "/";
@@ -637,91 +753,131 @@ function DashboardLayoutContent({
 
           <SidebarContent className="gap-0 overflow-hidden">
             <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
-              <SidebarMenu className="px-2 py-2">
-                {menuItems.map(item => {
-                  const isActive =
-                    item.path === "/"
-                      ? location === "/"
-                      : location.startsWith(item.path);
-                  const countKey =
-                    isProcurementApproverRole(userRole) &&
-                    ((item.path === "/solicitudes-compra" &&
-                      !purchaseRequestApprovalsEnabled) ||
-                      (item.path === "/ordenes-compra" &&
-                        !purchaseOrderApprovalsEnabled))
-                      ? undefined
-                      : MENU_COUNT_KEYS[item.path];
-                  const badgeCount = countKey
-                    ? (sidebarCounts?.[countKey] ?? 0)
-                    : 0;
-                  const invoicePendingCount =
-                    item.path === "/facturas"
-                      ? (sidebarCounts?.invoicesPendingAttention ?? 0)
-                      : 0;
-                  const invoiceReviewedCount =
-                    item.path === "/facturas"
-                      ? (sidebarCounts?.invoicesReviewed ?? 0)
-                      : 0;
-                  const showBadge =
-                    badgeCount > 0 ||
-                    MENU_ALWAYS_SHOW_COUNT_PATHS.has(item.path);
-                  const showInvoiceBadges =
-                    item.path === "/facturas" &&
-                    (invoicePendingCount > 0 || invoiceReviewedCount > 0);
-                  return (
-                    <SidebarMenuItem key={item.path}>
-                      <SidebarMenuButton
-                        isActive={isActive}
-                        onClick={() => setLocation(item.path)}
-                        tooltip={item.label}
-                        className="h-9 transition-all font-normal text-sm"
-                      >
-                        <item.icon
-                          className={`h-4 w-4 ${isActive ? "text-primary" : "text-muted-foreground"}`}
-                        />
-                        <span
-                          className={`flex min-w-0 flex-1 items-center justify-between gap-2 ${
-                            isActive ? "font-medium" : "font-normal"
-                          }`}
-                        >
-                          <span className="truncate">{item.label}</span>
-                          {showInvoiceBadges ? (
-                            <span className="flex shrink-0 items-center gap-1">
-                              {invoicePendingCount > 0 ? (
-                                <Badge
-                                  variant="destructive"
-                                  title="Borrador, borrador con alerta y rechazadas"
-                                  className="h-5 min-w-5 shrink-0 rounded-sm px-1 text-xs"
+              {menuSections.map(section => (
+                <Collapsible
+                  key={section.label ?? "dashboard"}
+                  defaultOpen={section.label === null}
+                  className="group/menu-section"
+                >
+                  <SidebarGroup
+                    className={
+                      section.label
+                        ? "border-b border-sidebar-border/60 px-2 py-2 last:border-b-0"
+                        : "px-2 pb-1 pt-2"
+                    }
+                  >
+                    {section.label ? (
+                      <SidebarGroupLabel asChild>
+                        <CollapsibleTrigger className="h-8 w-full cursor-pointer justify-between px-2 text-[11px] font-semibold tracking-wider text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
+                          <span>{section.label}</span>
+                          <ChevronDown className="h-4 w-4 transition-transform duration-200 group-data-[state=open]/menu-section:rotate-180" />
+                        </CollapsibleTrigger>
+                      </SidebarGroupLabel>
+                    ) : null}
+                    <CollapsibleContent>
+                      <SidebarGroupContent>
+                        <SidebarMenu>
+                          {section.items.map(item => {
+                            const isActive =
+                              item.path === "/"
+                                ? location === "/"
+                                : location.startsWith(item.path);
+                            const countKey =
+                              isProcurementApproverRole(userRole) &&
+                              ((item.path === "/solicitudes-compra" &&
+                                !purchaseRequestApprovalsEnabled) ||
+                                (item.path === "/ordenes-compra" &&
+                                  !purchaseOrderApprovalsEnabled))
+                                ? undefined
+                                : MENU_COUNT_KEYS[item.path];
+                            const badgeCount = countKey
+                              ? (sidebarCounts?.[countKey] ?? 0)
+                              : 0;
+                            const invoicePendingCount =
+                              item.path === "/facturas"
+                                ? (sidebarCounts?.invoicesPendingAttention ?? 0)
+                                : 0;
+                            const invoiceReviewedCount =
+                              item.path === "/facturas"
+                                ? (sidebarCounts?.invoicesReviewed ?? 0)
+                                : 0;
+                            const showBadge =
+                              badgeCount > 0 ||
+                              MENU_ALWAYS_SHOW_COUNT_PATHS.has(item.path);
+                            const showInvoiceBadges =
+                              item.path === "/facturas" &&
+                              (invoicePendingCount > 0 ||
+                                invoiceReviewedCount > 0);
+                            return (
+                              <SidebarMenuItem key={item.path}>
+                                <SidebarMenuButton
+                                  isActive={isActive}
+                                  onClick={() => setLocation(item.path)}
+                                  tooltip={item.label}
+                                  className={`h-11 rounded-xl px-2 text-sm font-normal transition-all ${
+                                    MENU_SECTION_TONE_CLASSES[section.tone].item
+                                  }`}
                                 >
-                                  {invoicePendingCount}
-                                </Badge>
-                              ) : null}
-                              {invoiceReviewedCount > 0 ? (
-                                <Badge
-                                  variant="outline"
-                                  title="Revisadas para contabilidad"
-                                  className="h-5 min-w-5 shrink-0 rounded-sm border-blue-300 bg-blue-50 px-1 text-xs text-blue-700"
-                                >
-                                  {invoiceReviewedCount}
-                                </Badge>
-                              ) : null}
-                            </span>
-                          ) : showBadge ? (
-                            <Badge
-                              variant={
-                                badgeCount > 0 ? "destructive" : "outline"
-                              }
-                              className="h-5 min-w-5 shrink-0 rounded-sm px-1 text-xs"
-                            >
-                              {badgeCount}
-                            </Badge>
-                          ) : null}
-                        </span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
+                                  <span
+                                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors group-data-[collapsible=icon]:h-4 group-data-[collapsible=icon]:w-4 group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:bg-transparent ${
+                                      MENU_SECTION_TONE_CLASSES[section.tone]
+                                        .icon
+                                    }`}
+                                  >
+                                    <item.icon className="h-4 w-4" />
+                                  </span>
+                                  <span
+                                    className={`flex min-w-0 flex-1 items-center justify-between gap-2 ${
+                                      isActive ? "font-medium" : "font-normal"
+                                    }`}
+                                  >
+                                    <span className="truncate">
+                                      {item.label}
+                                    </span>
+                                    {showInvoiceBadges ? (
+                                      <span className="flex shrink-0 items-center gap-1">
+                                        {invoicePendingCount > 0 ? (
+                                          <Badge
+                                            variant="destructive"
+                                            title="Borrador, borrador con alerta y rechazadas"
+                                            className="h-5 min-w-5 shrink-0 rounded-sm px-1 text-xs"
+                                          >
+                                            {invoicePendingCount}
+                                          </Badge>
+                                        ) : null}
+                                        {invoiceReviewedCount > 0 ? (
+                                          <Badge
+                                            variant="outline"
+                                            title="Revisadas para contabilidad"
+                                            className="h-5 min-w-5 shrink-0 rounded-sm border-blue-300 bg-blue-50 px-1 text-xs text-blue-700"
+                                          >
+                                            {invoiceReviewedCount}
+                                          </Badge>
+                                        ) : null}
+                                      </span>
+                                    ) : showBadge ? (
+                                      <Badge
+                                        variant={
+                                          badgeCount > 0
+                                            ? "destructive"
+                                            : "outline"
+                                        }
+                                        className="h-5 min-w-5 shrink-0 rounded-sm px-1 text-xs"
+                                      >
+                                        {badgeCount}
+                                      </Badge>
+                                    ) : null}
+                                  </span>
+                                </SidebarMenuButton>
+                              </SidebarMenuItem>
+                            );
+                          })}
+                        </SidebarMenu>
+                      </SidebarGroupContent>
+                    </CollapsibleContent>
+                  </SidebarGroup>
+                </Collapsible>
+              ))}
             </div>
 
             <div className="shrink-0 bg-sidebar">
@@ -734,15 +890,13 @@ function DashboardLayoutContent({
                       isActive={location === "/configuracion"}
                       onClick={() => setLocation("/configuracion")}
                       tooltip="Configuración"
-                      className="h-9 transition-all font-normal text-sm"
+                      className={`h-11 rounded-xl px-2 text-sm font-normal transition-all ${MENU_SECTION_TONE_CLASSES.green.item}`}
                     >
-                      <Settings
-                        className={`h-4 w-4 ${
-                          location === "/configuracion"
-                            ? "text-primary"
-                            : "text-muted-foreground"
-                        }`}
-                      />
+                      <span
+                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors group-data-[collapsible=icon]:h-4 group-data-[collapsible=icon]:w-4 group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:bg-transparent ${MENU_SECTION_TONE_CLASSES.green.icon}`}
+                      >
+                        <Settings className="h-4 w-4" />
+                      </span>
                       <span
                         className={`flex min-w-0 flex-1 items-center justify-between gap-2 ${
                           location === "/configuracion"
@@ -763,11 +917,13 @@ function DashboardLayoutContent({
                     isActive={location === "/notificaciones"}
                     onClick={() => setLocation("/notificaciones")}
                     tooltip="Notificaciones"
-                    className="h-9 transition-all font-normal text-sm"
+                    className={`h-11 rounded-xl px-2 text-sm font-normal transition-all ${MENU_SECTION_TONE_CLASSES.green.item}`}
                   >
-                    <Bell
-                      className={`h-4 w-4 ${location === "/notificaciones" ? "text-primary" : "text-muted-foreground"}`}
-                    />
+                    <span
+                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors group-data-[collapsible=icon]:h-4 group-data-[collapsible=icon]:w-4 group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:bg-transparent ${MENU_SECTION_TONE_CLASSES.green.icon}`}
+                    >
+                      <Bell className="h-4 w-4" />
+                    </span>
                     <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
                       <span className="truncate">Notificaciones</span>
                       {(unreadCount ?? 0) > 0 && (
