@@ -12,6 +12,7 @@ import {
   assertTreasuryBatchesCanBeConsolidated,
   buildTreasuryFullPaymentRows,
   getTreasuryApprovalRouting,
+  getTreasuryBatchPaymentRegistrationDate,
   getTreasuryBusinessDate,
   getTreasuryConsolidationRouting,
   getTreasuryReopenTargetStatus,
@@ -22,6 +23,28 @@ import {
   resolveTreasurySettingsUpdate,
   TreasuryRuleError,
 } from "./treasury";
+
+describe("treasury batch payment registration date", () => {
+  it("returns the latest registered payment date in the batch", () => {
+    const result = getTreasuryBatchPaymentRegistrationDate([
+      { bankPaidDate: "2026-08-02" },
+      { bankPaidDate: null },
+      { bankPaidDate: new Date("2026-08-04T00:00:00.000Z") },
+      { bankPaidDate: "invalid" },
+    ]);
+
+    expect(result?.toISOString().slice(0, 10)).toBe("2026-08-04");
+  });
+
+  it("returns null while the batch has no registered payment", () => {
+    expect(
+      getTreasuryBatchPaymentRegistrationDate([
+        { bankPaidDate: null },
+        { bankPaidDate: undefined },
+      ])
+    ).toBeNull();
+  });
+});
 
 describe("invoice advance balance preview", () => {
   it("shows an accounted supplier advance on a draft invoice balance", () => {
