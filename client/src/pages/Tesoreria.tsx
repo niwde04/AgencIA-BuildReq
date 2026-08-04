@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { DataPagination } from "@/components/DataPagination";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Accordion,
@@ -122,6 +123,8 @@ const INVOICE_REPORT_STATUS_LABELS: Record<InvoiceReportStatus, string> = {
   registrada: "Contabilizada",
   anulada: "Anulada",
 };
+
+const TREASURY_BATCH_PAGE_SIZE = 25;
 
 function formatMoney(value: unknown, currency: "HNL" | "USD" = "HNL") {
   const amount = Number(value ?? 0);
@@ -2925,6 +2928,7 @@ export default function Tesoreria() {
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [batchPage, setBatchPage] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [advanceRequestOpen, setAdvanceRequestOpen] = useState(false);
@@ -3035,6 +3039,15 @@ export default function Tesoreria() {
       return matchesSearch && matchesDateFrom && matchesDateTo;
     });
   }, [batchesQuery.data, dateFrom, dateTo, search]);
+  const batchTotalPages = Math.max(
+    1,
+    Math.ceil(visibleBatches.length / TREASURY_BATCH_PAGE_SIZE)
+  );
+  const currentBatchPage = Math.min(batchPage, batchTotalPages);
+  const paginatedBatches = useMemo(() => {
+    const start = (currentBatchPage - 1) * TREASURY_BATCH_PAGE_SIZE;
+    return visibleBatches.slice(start, start + TREASURY_BATCH_PAGE_SIZE);
+  }, [currentBatchPage, visibleBatches]);
   const visibleConsolidatableBatches = useMemo(
     () =>
       visibleBatches.filter((row: any) =>
@@ -3045,13 +3058,23 @@ export default function Tesoreria() {
       ),
     [approvalsEnabled, visibleBatches]
   );
+  const paginatedConsolidatableBatches = useMemo(
+    () =>
+      paginatedBatches.filter((row: any) =>
+        (approvalsEnabled
+          ? ["enviado_depuracion", "pendiente_aprobacion"]
+          : ["aprobado"]
+        ).includes(row.batch.status)
+      ),
+    [approvalsEnabled, paginatedBatches]
+  );
   const allVisibleConsolidatableBatchesSelected =
-    visibleConsolidatableBatches.length > 0 &&
-    visibleConsolidatableBatches.every((row: any) =>
+    paginatedConsolidatableBatches.length > 0 &&
+    paginatedConsolidatableBatches.every((row: any) =>
       selectedConsolidationBatchIds.has(row.batch.id)
     );
   const someVisibleConsolidatableBatchesSelected =
-    visibleConsolidatableBatches.some((row: any) =>
+    paginatedConsolidatableBatches.some((row: any) =>
       selectedConsolidationBatchIds.has(row.batch.id)
     );
   const selectedConsolidationBatches = (batchesQuery.data ?? []).filter(
@@ -3076,13 +3099,20 @@ export default function Tesoreria() {
     });
   }, [visibleConsolidatableBatches]);
 
+  useEffect(() => {
+    setBatchPage(current => Math.min(current, batchTotalPages));
+  }, [batchTotalPages]);
+
   function toggleVisibleConsolidatableBatches() {
     const shouldSelect = !allVisibleConsolidatableBatchesSelected;
-    setSelectedConsolidationBatchIds(
-      shouldSelect
-        ? new Set(visibleConsolidatableBatches.map((row: any) => row.batch.id))
-        : new Set()
-    );
+    setSelectedConsolidationBatchIds(current => {
+      const next = new Set(current);
+      paginatedConsolidatableBatches.forEach((row: any) => {
+        if (shouldSelect) next.add(row.batch.id);
+        else next.delete(row.batch.id);
+      });
+      return next;
+    });
   }
 
   function consolidateSelectedBatches() {
@@ -3598,13 +3628,22 @@ export default function Tesoreria() {
                   className="pl-9"
                   placeholder="Buscar lote o proyecto"
                   value={search}
-                  onChange={event => setSearch(event.target.value)}
+                  onChange={event => {
+                    setSearch(event.target.value);
+                    setBatchPage(1);
+                  }}
                 />
               </div>
             </div>
             <div className="space-y-2">
               <Label>Estado</Label>
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <Select
+                value={statusFilter}
+                onValueChange={value => {
+                  setStatusFilter(value);
+                  setBatchPage(1);
+                }}
+              >
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
@@ -3633,7 +3672,10 @@ export default function Tesoreria() {
                 type="date"
                 value={dateFrom}
                 max={dateTo || undefined}
-                onChange={event => setDateFrom(event.target.value)}
+                onChange={event => {
+                  setDateFrom(event.target.value);
+                  setBatchPage(1);
+                }}
               />
             </div>
             <div className="space-y-2">
@@ -3643,7 +3685,10 @@ export default function Tesoreria() {
                 type="date"
                 value={dateTo}
                 min={dateFrom || undefined}
-                onChange={event => setDateTo(event.target.value)}
+                onChange={event => {
+                  setDateTo(event.target.value);
+                  setBatchPage(1);
+                }}
               />
             </div>
             <Button
@@ -3686,6 +3731,7 @@ export default function Tesoreria() {
                 onClick={() => {
                   setDateFrom("");
                   setDateTo("");
+                  setBatchPage(1);
                 }}
               >
                 Limpiar rango de fechas
@@ -3709,7 +3755,7 @@ export default function Tesoreria() {
                         }
                         disabled={
                           consolidateMutation.isPending ||
-                          visibleConsolidatableBatches.length === 0
+                          paginatedConsolidatableBatches.length === 0
                         }
                         onCheckedChange={toggleVisibleConsolidatableBatches}
                         aria-label="Seleccionar todos los lotes disponibles para consolidar"
@@ -3739,7 +3785,7 @@ export default function Tesoreria() {
                     </TableCell>
                   </TableRow>
                 ) : visibleBatches.length ? (
-                  visibleBatches.map((row: any) => (
+                  paginatedBatches.map((row: any) => (
                     <TableRow key={row.batch.id}>
                       {canConsolidate && (
                         <TableCell>
@@ -3842,6 +3888,15 @@ export default function Tesoreria() {
                 )}
               </TableBody>
             </Table>
+            {!batchesQuery.isLoading && (
+              <DataPagination
+                page={currentBatchPage}
+                pageSize={TREASURY_BATCH_PAGE_SIZE}
+                total={visibleBatches.length}
+                totalPages={batchTotalPages}
+                onPageChange={setBatchPage}
+              />
+            )}
           </div>
           {canConsolidate && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/20 p-4">
