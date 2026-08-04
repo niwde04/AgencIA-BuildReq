@@ -141,6 +141,34 @@ function parseDateInput(value?: string | null) {
   return value ? new Date(`${value}T12:00:00`) : null;
 }
 
+function parseDateBoundary(
+  value: string | undefined,
+  boundary: "start" | "end"
+) {
+  if (!value) return undefined;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(
+    year,
+    month - 1,
+    day,
+    boundary === "start" ? 0 : 23,
+    boundary === "start" ? 0 : 59,
+    boundary === "start" ? 0 : 59,
+    boundary === "start" ? 0 : 999
+  );
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "La fecha de emisión no es válida",
+    });
+  }
+  return date;
+}
+
 const purchaseCurrencyInputFields = {
   currency: z.enum(PURCHASE_CURRENCIES).optional(),
   exchangeRate: z.string().trim().max(30).optional().nullable(),
@@ -642,6 +670,14 @@ export const purchaseOrdersRouter = router({
         classification: z.enum(["oc", "cd"]).optional(),
         purchaseType: z.string().optional(),
         status: z.string().optional(),
+        emissionDateFrom: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional(),
+        emissionDateTo: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional(),
         search: z.string().trim().optional(),
         page: z.number().int().min(1).optional(),
         pageSize: z.number().int().min(10).max(200).optional(),
@@ -657,8 +693,26 @@ export const purchaseOrdersRouter = router({
       const pendingApprovalOnly = isProcurementApproverRole(
         ctx.user.buildreqRole
       );
+      const emissionDateFrom = parseDateBoundary(
+        input.emissionDateFrom,
+        "start"
+      );
+      const emissionDateTo = parseDateBoundary(input.emissionDateTo, "end");
+      if (
+        emissionDateFrom &&
+        emissionDateTo &&
+        emissionDateFrom > emissionDateTo
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "La fecha inicial de emisión no puede ser mayor que la fecha final",
+        });
+      }
       return listPurchaseOrdersPage({
         ...applyProjectScope(input, ctx.user),
+        emissionDateFrom,
+        emissionDateTo,
         approvalsEnabled: isPurchaseOrderApprovalEnabled(),
         pendingApprovalOnly,
         status: pendingApprovalOnly ? undefined : input.status,

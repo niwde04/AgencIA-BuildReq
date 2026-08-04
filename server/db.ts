@@ -9551,6 +9551,7 @@ export async function issuePurchaseOrder(params: {
         printedDocumentMimeType: "application/pdf",
         printedDocumentContent: officialDocument.base64,
         printedAt: sealedAt,
+        issuedAt: sealedAt,
         emailStatus: "pendiente",
         emailedAt: null,
         emailError: null,
@@ -13603,10 +13604,10 @@ export async function listSystemReportPurchaseOrderLines(filters?: {
     );
   }
   if (filters?.dateFrom) {
-    conditions.push(gte(purchaseOrders.createdAt, filters.dateFrom));
+    conditions.push(gte(purchaseOrders.issuedAt, filters.dateFrom));
   }
   if (filters?.dateTo) {
-    conditions.push(lte(purchaseOrders.createdAt, filters.dateTo));
+    conditions.push(lte(purchaseOrders.issuedAt, filters.dateTo));
   }
 
   const systemDirectRequestItems = alias(
@@ -13733,7 +13734,7 @@ export async function listSystemReportPurchaseOrderLines(filters?: {
         .filter(Boolean)
         .join(" — "),
       financialCode: row.financialGroupCode ?? "",
-      date: row.order.createdAt,
+      date: row.order.issuedAt,
       supplierRtn: row.supplier?.rtn ?? "",
       supplierName: row.supplier?.name ?? "",
       salesAdvisor: row.order.salesAdvisorName ?? "",

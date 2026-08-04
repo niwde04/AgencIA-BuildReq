@@ -3,8 +3,10 @@ import {
   count,
   desc,
   eq,
+  gte,
   ilike,
   inArray,
+  lte,
   notInArray,
   or,
   sql,
@@ -455,6 +457,8 @@ export type PurchaseOrderPageFilters = PageInput & {
   classification?: string;
   purchaseType?: string;
   status?: string;
+  emissionDateFrom?: Date;
+  emissionDateTo?: Date;
   approvalsEnabled?: boolean;
   pendingApprovalOnly?: boolean;
 };
@@ -478,6 +482,12 @@ export async function listPurchaseOrdersPage(
     conditions.push(
       sql`${purchaseOrders.purchaseType}::text = ${filters.purchaseType}`
     );
+  if (filters.emissionDateFrom) {
+    conditions.push(gte(purchaseOrders.issuedAt, filters.emissionDateFrom));
+  }
+  if (filters.emissionDateTo) {
+    conditions.push(lte(purchaseOrders.issuedAt, filters.emissionDateTo));
+  }
   if (filters.pendingApprovalOnly) {
     conditions.push(
       and(

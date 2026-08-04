@@ -816,6 +816,7 @@ export const purchaseOrders = pgTable(
     }),
     printedDocumentContent: text("printedDocumentContent"),
     printedAt: timestamp("printedAt"),
+    issuedAt: timestamp("issuedAt"),
     emailStatus: documentDeliveryStatusEnum("emailStatus")
       .default("pendiente")
       .notNull(),
@@ -845,6 +846,9 @@ export const purchaseOrders = pgTable(
       table.createdAt.desc(),
       table.id.desc()
     ),
+    issuedAtIdx: index("po_issued_at_idx")
+      .on(table.issuedAt)
+      .where(sql`${table.issuedAt} is not null`),
     currencyCheck: check(
       "po_currency_check",
       sql`${table.currency} in ('HNL', 'USD')`

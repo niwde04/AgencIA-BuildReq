@@ -896,8 +896,8 @@ export default function OrdenesCompra() {
   const isProcurementApprover = isProcurementApproverRole(userRole);
   const canReviewProcurementApproval = canReviewProcurementApprovals(user);
   const purchaseOrderTableColumnCount = isProcurementApprover
-    ? 9
-    : 13 + (PROCUREMENT_APPROVALS_ENABLED ? 1 : 0);
+    ? 10
+    : 14 + (PROCUREMENT_APPROVALS_ENABLED ? 1 : 0);
   const canManagePurchaseOrders =
     !isProcurementApprover &&
     (user?.role === "admin" ||
@@ -925,6 +925,8 @@ export default function OrdenesCompra() {
     useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [purchaseTypeFilter, setPurchaseTypeFilter] = useState("all");
+  const [emissionDateFromFilter, setEmissionDateFromFilter] = useState("");
+  const [emissionDateToFilter, setEmissionDateToFilter] = useState("");
   const [originPopoverOpen, setOriginPopoverOpen] = useState(false);
   const [originSearch, setOriginSearch] = useState("");
   const [selectedOriginId, setSelectedOriginId] = useState("");
@@ -977,6 +979,8 @@ export default function OrdenesCompra() {
         isProcurementApprover || statusFilter === "all"
           ? undefined
           : statusFilter,
+      emissionDateFrom: emissionDateFromFilter || undefined,
+      emissionDateTo: emissionDateToFilter || undefined,
       page,
       pageSize: PAGE_SIZE,
     },
@@ -1606,7 +1610,13 @@ export default function OrdenesCompra() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearchTerm, purchaseTypeFilter, statusFilter]);
+  }, [
+    debouncedSearchTerm,
+    emissionDateFromFilter,
+    emissionDateToFilter,
+    purchaseTypeFilter,
+    statusFilter,
+  ]);
 
   useEffect(() => {
     if (!isPlaceholderData && ordersPage?.page && ordersPage.page !== page) {
@@ -2778,8 +2788,8 @@ export default function OrdenesCompra() {
     setIsExportingInternalReport(true);
     try {
       const payload = await utils.reports.systemPurchaseOrders.fetch({
-        dateFrom: null,
-        dateTo: null,
+        dateFrom: emissionDateFromFilter || null,
+        dateTo: emissionDateToFilter || null,
         search: debouncedSearchTerm.trim() || null,
         purchaseType: purchaseTypeFilter === "all" ? null : purchaseTypeFilter,
         status:
@@ -2828,58 +2838,116 @@ export default function OrdenesCompra() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-        <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(360px,1fr)_repeat(4,minmax(150px,190px))] xl:items-end">
+        <div className="min-w-0 space-y-1.5 sm:col-span-2 xl:col-span-1">
+          <Label htmlFor="purchase-order-search" className="text-xs">
+            Buscar
+          </Label>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="purchase-order-search"
+              value={searchTerm}
+              onChange={event => setSearchTerm(event.target.value)}
+              placeholder="OC, REQ, artículo, proyecto, proveedor..."
+              className="h-10 pl-9"
+            />
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Tipo de compra</Label>
+          <Select
+            value={purchaseTypeFilter}
+            onValueChange={setPurchaseTypeFilter}
+          >
+            <SelectTrigger className="h-10 w-full">
+              <SelectValue placeholder="Tipo de compra" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos los tipos</SelectItem>
+              <SelectItem value="compra_directa">Compra Directa</SelectItem>
+              <SelectItem value="local">Compra Local</SelectItem>
+              <SelectItem value="extranjera">Compra Extranjera</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Estado</Label>
+          {isProcurementApprover ? (
+            <Select value="pendiente_aprobacion" disabled>
+              <SelectTrigger className="h-10 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="pendiente_aprobacion">
+                  Pendientes de aprobación
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          ) : (
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="h-10 w-full">
+                <SelectValue placeholder="Estado" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los estados</SelectItem>
+                {getStatusFilterOptions(PROCUREMENT_APPROVALS_ENABLED).map(
+                  ([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  )
+                )}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="purchase-order-emission-from" className="text-xs">
+            Emisión desde
+          </Label>
           <Input
-            value={searchTerm}
-            onChange={event => setSearchTerm(event.target.value)}
-            placeholder="Buscar por OC, REQ, artículo, proyecto, proveedor, requiriente o creador..."
-            className="h-10 pl-9"
+            id="purchase-order-emission-from"
+            type="date"
+            value={emissionDateFromFilter}
+            max={emissionDateToFilter || undefined}
+            onChange={event => {
+              const value = event.target.value;
+              setEmissionDateFromFilter(value);
+              if (
+                value &&
+                emissionDateToFilter &&
+                value > emissionDateToFilter
+              ) {
+                setEmissionDateToFilter(value);
+              }
+            }}
+            className="h-10 w-full"
           />
         </div>
-        <Select
-          value={purchaseTypeFilter}
-          onValueChange={setPurchaseTypeFilter}
-        >
-          <SelectTrigger className="h-10 w-full lg:w-56">
-            <SelectValue placeholder="Tipo de compra" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos los tipos</SelectItem>
-            <SelectItem value="compra_directa">Compra Directa</SelectItem>
-            <SelectItem value="local">Compra Local</SelectItem>
-            <SelectItem value="extranjera">Compra Extranjera</SelectItem>
-          </SelectContent>
-        </Select>
-        {isProcurementApprover ? (
-          <Select value="pendiente_aprobacion" disabled>
-            <SelectTrigger className="h-10 w-full lg:w-56">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="pendiente_aprobacion">
-                Pendientes de aprobación
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        ) : (
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-10 w-full lg:w-56">
-              <SelectValue placeholder="Estado" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos los estados</SelectItem>
-              {getStatusFilterOptions(PROCUREMENT_APPROVALS_ENABLED).map(
-                ([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                )
-              )}
-            </SelectContent>
-          </Select>
-        )}
+        <div className="space-y-1.5">
+          <Label htmlFor="purchase-order-emission-to" className="text-xs">
+            Emisión hasta
+          </Label>
+          <Input
+            id="purchase-order-emission-to"
+            type="date"
+            value={emissionDateToFilter}
+            min={emissionDateFromFilter || undefined}
+            onChange={event => {
+              const value = event.target.value;
+              setEmissionDateToFilter(value);
+              if (
+                value &&
+                emissionDateFromFilter &&
+                value < emissionDateFromFilter
+              ) {
+                setEmissionDateFromFilter(value);
+              }
+            }}
+            className="h-10 w-full"
+          />
+        </div>
       </div>
 
       <Card>
@@ -2950,6 +3018,14 @@ export default function OrdenesCompra() {
                             {row.project
                               ? `${row.project.code} — ${row.project.name}`
                               : "—"}
+                          </dd>
+                        </div>
+                        <div className="min-w-0">
+                          <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Fecha de emisión
+                          </dt>
+                          <dd className="mt-1 text-xs">
+                            {formatPrintDate(row.purchaseOrder.issuedAt)}
                           </dd>
                         </div>
                         {!isProcurementApprover ? (
@@ -3063,13 +3139,16 @@ export default function OrdenesCompra() {
               <div className="relative isolate hidden max-w-full overflow-x-auto md:block">
                 <table
                   className={`w-full border-separate border-spacing-0 text-sm ${
-                    isProcurementApprover ? "min-w-[1180px]" : "min-w-[1840px]"
+                    isProcurementApprover ? "min-w-[1280px]" : "min-w-[1940px]"
                   }`}
                 >
                   <thead>
                     <tr className="border-b border-border">
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         No. OC
+                      </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Fecha emisión
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Artículos
@@ -3140,6 +3219,9 @@ export default function OrdenesCompra() {
                               >
                                 {row.purchaseOrder.orderNumber}
                               </DocumentNumberButton>
+                            </td>
+                            <td className="whitespace-nowrap p-3 text-xs">
+                              {formatPrintDate(row.purchaseOrder.issuedAt)}
                             </td>
                             <td className="p-3">
                               <DocumentItemsAccordionTrigger
@@ -5216,10 +5298,7 @@ export default function OrdenesCompra() {
                       Fecha de emisión
                     </Label>
                     <p className="text-base font-semibold leading-tight sm:text-lg">
-                      {formatPrintDate(
-                        detail.purchaseOrder.printedAt ??
-                          detail.purchaseOrder.createdAt
-                      )}
+                      {formatPrintDate(detail.purchaseOrder.issuedAt)}
                     </p>
                   </div>
                   <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3 lg:col-span-2">
