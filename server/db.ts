@@ -8787,9 +8787,7 @@ export async function getPurchaseOrderById(id: number) {
       : null,
     printDocument: {
       base64: printedDocumentContent,
-      fileName:
-        rows[0].purchaseOrder.printedDocumentName ??
-        `${rows[0].purchaseOrder.orderNumber}.pdf`,
+      fileName: `${rows[0].purchaseOrder.orderNumber}.pdf`,
       mimeType: "application/pdf" as const,
       isOfficial: hasFrozenOfficialDocument,
       verificationCode: digitalSeal?.verificationCode ?? null,

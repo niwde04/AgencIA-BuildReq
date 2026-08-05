@@ -13703,7 +13703,7 @@ describe("BuildReq - Purchase Orders", () => {
     expect(pdfText).not.toContain(`<${encodedCredit}> Tj`);
   });
 
-  it("prints the purchase order preparer above the prepared-by signature", () => {
+  it("prints Elaborado por before the preparer without duplicating the name", () => {
     const requestedByLabel = "WILSON MOLINA";
     const preparedByLabel = "EDWIN BARAHONA";
     const pdf = buildPurchaseOrderPrintPdfBase64({
@@ -13751,9 +13751,12 @@ describe("BuildReq - Purchase Orders", () => {
 
     const requestedByOccurrences =
       pdfText.match(new RegExp(`<${encodedRequestedBy}> Tj`, "g"))?.length ?? 0;
+    const preparedByOccurrences =
+      pdfText.match(new RegExp(`<${encodedPreparedBy}> Tj`, "g"))?.length ?? 0;
     expect(requestedByOccurrences).toBe(1);
-    expect(pdfText.indexOf(`<${encodedPreparedBy}> Tj`)).toBeLessThan(
-      pdfText.indexOf(`<${encodedPreparedByCaption}> Tj`)
+    expect(preparedByOccurrences).toBe(1);
+    expect(pdfText.indexOf(`<${encodedPreparedByCaption}> Tj`)).toBeLessThan(
+      pdfText.indexOf(`<${encodedPreparedBy}> Tj`)
     );
   });
 });

@@ -71,9 +71,7 @@ describe("pagination index migration", () => {
       ["inv_created_page_idx", "invoices"],
     ]) {
       expect(sql).toContain(`CREATE INDEX IF NOT EXISTS "${indexName}"`);
-      expect(sql).toContain(
-        `ON "${tableName}" ("createdAt" DESC, "id" DESC)`
-      );
+      expect(sql).toContain(`ON "${tableName}" ("createdAt" DESC, "id" DESC)`);
     }
 
     expect(sql).toContain(

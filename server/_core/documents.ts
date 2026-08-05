@@ -1867,33 +1867,23 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     const preparedByLabel =
       params.preparedByLabel?.trim() || params.requestedByLabel || "-";
 
+    drawCenteredText(
+      firstSignatureX,
+      signaturesTop - 22,
+      signatureWidth,
+      "Elaborado por:",
+      7.1,
+      "F2"
+    );
     drawCenteredWrappedText(
       firstSignatureX,
-      signaturesTop - 19,
+      signaturesTop - 10,
       signatureWidth,
       preparedByLabel,
       7.2,
       "F2",
       8.5,
       2
-    );
-
-    drawLine(
-      page,
-      firstSignatureX,
-      signaturesTop,
-      firstSignatureX + signatureWidth,
-      signaturesTop,
-      ink,
-      0.8
-    );
-    drawCenteredText(
-      firstSignatureX,
-      signaturesTop + 7,
-      signatureWidth,
-      "Elaborado por:",
-      7.1,
-      "F2"
     );
 
     if (!params.digitalSeal) {
@@ -1944,16 +1934,6 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       8.9,
       4
     );
-
-    drawText(page, {
-      x: marginX,
-      top: noteTop + noteHeight + 16,
-      width: 230,
-      text: preparedByLabel,
-      fontSize: 7,
-      font: "F1",
-      color: ink,
-    });
 
     drawDigitalSeal(digitalSealTop);
   }

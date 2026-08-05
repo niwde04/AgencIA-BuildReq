@@ -710,10 +710,7 @@ export async function listTransfersPage(filters: TransferPageFilters) {
             .select({ id: transferRequestItems.transferRequestId })
             .from(transferRequestItems)
             .where(
-              eq(
-                transferRequestItems.sourceProjectId,
-                filters.sourceProjectId
-              )
+              eq(transferRequestItems.sourceProjectId, filters.sourceProjectId)
             )
         )
       )!

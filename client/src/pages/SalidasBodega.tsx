@@ -203,12 +203,45 @@ function formatWarehouseExitTargetLabel(item: any, projectId?: number | null) {
   return mapWarehouseExitLineTargetToSelection(item, projectId)?.label ?? null;
 }
 
+function formatWarehouseExitPrintTargetLabel(
+  item: any,
+  projectId?: number | null
+) {
+  const selection = mapWarehouseExitLineTargetToSelection(item, projectId);
+  if (!selection) return null;
+
+  if (selection.targetType === "subproyecto") {
+    return selection.label.replace(/^Subproyecto:\s*/i, "").trim() || null;
+  }
+
+  const assetName = selection.fixedAssetName.trim();
+  if (assetName) return assetName;
+
+  const labelWithoutPrefix = selection.label
+    .replace(/^Activo fijo:\s*/i, "")
+    .trim();
+  const assetCode = selection.fixedAssetSapItemCode.trim();
+  if (!assetCode || !labelWithoutPrefix.startsWith(assetCode)) {
+    return labelWithoutPrefix || null;
+  }
+
+  return (
+    labelWithoutPrefix
+      .slice(assetCode.length)
+      .replace(/^\s*-\s*/, "")
+      .trim() ||
+    labelWithoutPrefix ||
+    null
+  );
+}
+
 function formatWarehouseExitWarehouseLabel(detail: any) {
   const itemWarehouseLabels = Array.from(
     new Set(
       (detail?.items || [])
         .map(
-          (item: any) => item.warehouse?.displayName || item.warehouse?.name || null
+          (item: any) =>
+            item.warehouse?.displayName || item.warehouse?.name || null
         )
         .filter(Boolean)
     )
@@ -321,7 +354,9 @@ function formatWarehouseExitItemDestinationLabel(item: any) {
   const warehouseLabel =
     item.destinationWarehouse?.displayName ||
     item.destinationWarehouse?.name ||
-    (item.destinationWarehouseId ? `Almacén ${item.destinationWarehouseId}` : "");
+    (item.destinationWarehouseId
+      ? `Almacén ${item.destinationWarehouseId}`
+      : "");
 
   if (!projectLabel && !warehouseLabel) return "-";
   return [projectLabel || "Bodega/proyecto", warehouseLabel || "Almacén"]
@@ -336,7 +371,8 @@ function formatWarehouseExitRequestLabel(detail: any) {
       ? `REQ-${detail.warehouseExit.materialRequestId}`
       : null);
   const requesterName = detail?.requestedBy?.name || null;
-  if (requestNumber && requesterName) return `${requestNumber} - ${requesterName}`;
+  if (requestNumber && requesterName)
+    return `${requestNumber} - ${requesterName}`;
   return requestNumber || requesterName || "-";
 }
 
@@ -395,7 +431,10 @@ function QuantityPill({
   );
 }
 
-function getDeliveryScopeKey(projectId?: number | null, warehouseId?: number | null) {
+function getDeliveryScopeKey(
+  projectId?: number | null,
+  warehouseId?: number | null
+) {
   return `${Number(projectId ?? 0)}:${Number(warehouseId ?? 0)}`;
 }
 
@@ -496,7 +535,9 @@ function getDeliveryPendingQuantity(item: any) {
     requestedQuantity
   );
   const dispatchableQuantity =
-    item.assignedFlow === "despacho_bodega" ? requestedQuantity : receivedQuantity;
+    item.assignedFlow === "despacho_bodega"
+      ? requestedQuantity
+      : receivedQuantity;
 
   return Math.max(dispatchableQuantity - alreadyDispatched, 0);
 }
@@ -518,7 +559,8 @@ export default function SalidasBodega() {
     return Number.isInteger(exitId) && exitId > 0 ? exitId : null;
   });
   const [returnPanelOpen, setReturnPanelOpen] = useState(false);
-  const [returnReasonCategory, setReturnReasonCategory] = useState("error_pedido");
+  const [returnReasonCategory, setReturnReasonCategory] =
+    useState("error_pedido");
   const [returnJustification, setReturnJustification] = useState("");
   const [returnReceivedByName, setReturnReceivedByName] = useState("");
   const [returnQuantityByItemId, setReturnQuantityByItemId] = useState<
@@ -587,7 +629,8 @@ export default function SalidasBodega() {
   );
   const exits = exitsPage?.items ?? [];
   const canCreateReturns =
-    user?.role === "admin" || (user as any)?.buildreqRole === "jefe_bodega_central";
+    user?.role === "admin" ||
+    (user as any)?.buildreqRole === "jefe_bodega_central";
   const { data: materialRequests } = trpc.materialRequests.list.useQuery({
     requestType: "bienes",
   });
@@ -600,24 +643,25 @@ export default function SalidasBodega() {
       { id: Number(deliveryRequestId || 0) },
       { enabled: deliveryDialogOpen && Boolean(deliveryRequestId) }
     );
-  const { data: deliveryTargetOptions, isLoading: deliveryTargetOptionsLoading } =
-    trpc.materialRequests.targetOptions.useQuery(
-      {
-        projectId: deliveryRequestDetail?.request.projectId ?? 0,
-        search: deliveryTargetSearch.trim() || undefined,
-      },
-      {
-        enabled:
-          deliveryDialogOpen &&
-          Boolean(deliveryRequestDetail?.request.projectId),
-      }
-    );
+  const {
+    data: deliveryTargetOptions,
+    isLoading: deliveryTargetOptionsLoading,
+  } = trpc.materialRequests.targetOptions.useQuery(
+    {
+      projectId: deliveryRequestDetail?.request.projectId ?? 0,
+      search: deliveryTargetSearch.trim() || undefined,
+    },
+    {
+      enabled:
+        deliveryDialogOpen && Boolean(deliveryRequestDetail?.request.projectId),
+    }
+  );
   const { data: detail } = trpc.warehouseExits.getById.useQuery(
     { id: selectedId ?? 0 },
     { enabled: Boolean(selectedId) }
   );
   const emitMutation = trpc.warehouseExits.emit.useMutation({
-    onSuccess: (result) => {
+    onSuccess: result => {
       emittingAfterDraftSaveRef.current = false;
       toast.success(`Salida ${result.exitNumber} emitida`);
       const affectedRequestIds = result.materialRequestIds ?? [];
@@ -638,41 +682,44 @@ export default function SalidasBodega() {
         utils.inventory.visibleWarehouseStockForItems.invalidate(),
       ]);
     },
-    onError: (error) => {
+    onError: error => {
       emittingAfterDraftSaveRef.current = false;
       toast.error(error.message);
     },
   });
-  const createDeliveryMutation = trpc.requestItems.recordWarehouseExitBatch.useMutation({
-    onSuccess: (result) => {
-      const requestIdToInvalidate = Number(deliveryRequestId || 0);
-      toast.success(`Salida ${result.exitNumber} creada en borrador`);
-      setDeliveryDialogOpen(false);
-      setDeliveryRequestId("");
-      setDeliveryNotes("");
-      setDeliveryQuantityByItemId({});
-      setDeliveryWarehouseByItemId({});
-      setDeliveryProjectByItemId({});
-      setDeliveryDestinationWarehouseByItemId({});
-      setDeliveryDestinationProjectByItemId({});
-      setDeliveryDestinationWarehouseTouchedByItemId({});
-      setDeliveryTargetByItemId({});
-      setDeliveryTargetPopoverOpen(null);
-      setDeliveryTargetSearch("");
-      setSelectedId(result.id);
-      void Promise.all([
-        utils.warehouseExits.list.invalidate(),
-        utils.warehouseExits.listPage.invalidate(),
-        utils.materialRequests.list.invalidate(),
-        requestIdToInvalidate
-          ? utils.materialRequests.getById.invalidate({ id: requestIdToInvalidate })
-          : Promise.resolve(),
-        utils.supplyFlows.pendingQueue.invalidate(),
-        utils.supplyFlows.list.invalidate(),
-      ]);
-    },
-    onError: (error) => toast.error(error.message),
-  });
+  const createDeliveryMutation =
+    trpc.requestItems.recordWarehouseExitBatch.useMutation({
+      onSuccess: result => {
+        const requestIdToInvalidate = Number(deliveryRequestId || 0);
+        toast.success(`Salida ${result.exitNumber} creada en borrador`);
+        setDeliveryDialogOpen(false);
+        setDeliveryRequestId("");
+        setDeliveryNotes("");
+        setDeliveryQuantityByItemId({});
+        setDeliveryWarehouseByItemId({});
+        setDeliveryProjectByItemId({});
+        setDeliveryDestinationWarehouseByItemId({});
+        setDeliveryDestinationProjectByItemId({});
+        setDeliveryDestinationWarehouseTouchedByItemId({});
+        setDeliveryTargetByItemId({});
+        setDeliveryTargetPopoverOpen(null);
+        setDeliveryTargetSearch("");
+        setSelectedId(result.id);
+        void Promise.all([
+          utils.warehouseExits.list.invalidate(),
+          utils.warehouseExits.listPage.invalidate(),
+          utils.materialRequests.list.invalidate(),
+          requestIdToInvalidate
+            ? utils.materialRequests.getById.invalidate({
+                id: requestIdToInvalidate,
+              })
+            : Promise.resolve(),
+          utils.supplyFlows.pendingQueue.invalidate(),
+          utils.supplyFlows.list.invalidate(),
+        ]);
+      },
+      onError: error => toast.error(error.message),
+    });
   const cancelMutation = trpc.warehouseExits.cancelDraft.useMutation({
     onSuccess: () => {
       toast.success("Borrador de salida anulado");
@@ -686,7 +733,7 @@ export default function SalidasBodega() {
         utils.supplyFlows.list.invalidate(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
   const updateDraftMutation = trpc.warehouseExits.updateDraft.useMutation({
     onSuccess: () => {
@@ -701,7 +748,7 @@ export default function SalidasBodega() {
           : Promise.resolve(),
       ]);
     },
-    onError: (error) => toast.error(error.message),
+    onError: error => toast.error(error.message),
   });
   const createReturnMutation = trpc.reverseLogistics.create.useMutation({
     onSuccess: (result: any) => {
@@ -724,7 +771,7 @@ export default function SalidasBodega() {
         utils.materialRequests.list.invalidate(),
       ]);
     },
-    onError: (error) => {
+    onError: error => {
       emittingAfterDraftSaveRef.current = false;
       toast.error(error.message);
     },
@@ -755,19 +802,24 @@ export default function SalidasBodega() {
   const deliveryDestinationWarehouseOptions = useMemo(
     () =>
       Array.from(
-        (deliveryDestinationProjects ?? []).reduce((byId: Map<number, any>, project: any) => {
-          for (const warehouse of getDeliveryDestinationWarehouseOptions(
-            Number(project.id)
-          )) {
-            if (!warehouse?.id || byId.has(Number(warehouse.id))) continue;
-            byId.set(Number(warehouse.id), warehouse);
-          }
-          return byId;
-        }, new Map<number, any>())
+        (deliveryDestinationProjects ?? []).reduce(
+          (byId: Map<number, any>, project: any) => {
+            for (const warehouse of getDeliveryDestinationWarehouseOptions(
+              Number(project.id)
+            )) {
+              if (!warehouse?.id || byId.has(Number(warehouse.id))) continue;
+              byId.set(Number(warehouse.id), warehouse);
+            }
+            return byId;
+          },
+          new Map<number, any>()
+        )
       )
         .map(([, warehouse]) => warehouse)
         .sort((left: any, right: any) =>
-          getStockWarehouseLabel(left).localeCompare(getStockWarehouseLabel(right))
+          getStockWarehouseLabel(left).localeCompare(
+            getStockWarehouseLabel(right)
+          )
         ),
     [deliveryDestinationProjects, getDeliveryDestinationWarehouseOptions]
   );
@@ -781,7 +833,9 @@ export default function SalidasBodega() {
           )
         )
         .sort((left: any, right: any) =>
-          getProjectOptionLabel(left).localeCompare(getProjectOptionLabel(right))
+          getProjectOptionLabel(left).localeCompare(
+            getProjectOptionLabel(right)
+          )
         );
     },
     [deliveryDestinationProjects, getDeliveryDestinationWarehouseOptions]
@@ -821,7 +875,9 @@ export default function SalidasBodega() {
     const nextDestinationProjects = {
       ...deliveryDestinationProjectByItemId,
     };
-    const requestProjectId = Number(deliveryRequestDetail.request.projectId ?? 0);
+    const requestProjectId = Number(
+      deliveryRequestDetail.request.projectId ?? 0
+    );
     const pendingDeliveryItems = (deliveryRequestDetail.items ?? []).filter(
       (item: any) => getDeliveryPendingQuantity(item) > 0
     );
@@ -860,7 +916,9 @@ export default function SalidasBodega() {
           !originWarehouseOption ||
           currentWarehouseId === originWarehouseId)
       ) {
-        if ((nextDestinationProjects[item.id] ?? "") !== String(currentProjectId)) {
+        if (
+          (nextDestinationProjects[item.id] ?? "") !== String(currentProjectId)
+        ) {
           nextDestinationProjects[item.id] = String(currentProjectId);
           changed = true;
         }
@@ -1009,7 +1067,9 @@ export default function SalidasBodega() {
       (materialRequests ?? []).filter((row: any) => {
         return (
           row.request.requestType === "bienes" &&
-          ["flujo_completado", "parcialmente_atendida"].includes(row.request.status)
+          ["flujo_completado", "parcialmente_atendida"].includes(
+            row.request.status
+          )
         );
       }),
     [materialRequests]
@@ -1033,16 +1093,14 @@ export default function SalidasBodega() {
   );
   const { data: deliveryStockRows } =
     trpc.inventory.visibleWarehouseStockForItems.useQuery(
-    {
-      includeQuantities: true,
-      items: deliveryStockItems,
-    },
-    {
-      enabled:
-        deliveryDialogOpen &&
-        deliveryStockItems.length > 0,
-    }
-  );
+      {
+        includeQuantities: true,
+        items: deliveryStockItems,
+      },
+      {
+        enabled: deliveryDialogOpen && deliveryStockItems.length > 0,
+      }
+    );
   const deliveryScopeStockByItemId = useMemo<Map<number, Map<string, any>>>(
     () =>
       new Map<number, Map<string, any>>(
@@ -1074,7 +1132,9 @@ export default function SalidasBodega() {
             getStockWarehouseLabel(left).localeCompare(
               getStockWarehouseLabel(right)
             ) ||
-            getStockProjectLabel(left).localeCompare(getStockProjectLabel(right))
+            getStockProjectLabel(left).localeCompare(
+              getStockProjectLabel(right)
+            )
         ),
     [deliveryScopeStockByItemId]
   );
@@ -1182,7 +1242,9 @@ export default function SalidasBodega() {
       }
 
       return Array.from(byWarehouse.values()).sort((left, right) =>
-        getStockWarehouseLabel(left).localeCompare(getStockWarehouseLabel(right))
+        getStockWarehouseLabel(left).localeCompare(
+          getStockWarehouseLabel(right)
+        )
       );
     },
     [getDeliveryStockOptions, isDeliveryScopeBlocked]
@@ -1214,7 +1276,9 @@ export default function SalidasBodega() {
       );
       const selectedStorageLocationOption =
         currentStorageLocationOption ??
-        (storageLocationOptions.length === 1 ? storageLocationOptions[0] : null);
+        (storageLocationOptions.length === 1
+          ? storageLocationOptions[0]
+          : null);
       const availableQuantity = selectedStorageLocationOption
         ? Number(selectedStorageLocationOption.quantity ?? 0)
         : 0;
@@ -1223,15 +1287,15 @@ export default function SalidasBodega() {
         Math.max(availableQuantity, 0)
       );
 
-      setDeliveryWarehouseByItemId((current) => ({
+      setDeliveryWarehouseByItemId(current => ({
         ...current,
         [item.id]: String(warehouseId),
       }));
-      setDeliveryProjectByItemId((current) => ({
+      setDeliveryProjectByItemId(current => ({
         ...current,
         [item.id]: String(projectId),
       }));
-      setDeliveryStorageLocationByItemId((current) => {
+      setDeliveryStorageLocationByItemId(current => {
         const next = { ...current };
         if (selectedStorageLocationOption) {
           next[item.id] = encodeStorageLocationValue(
@@ -1242,33 +1306,36 @@ export default function SalidasBodega() {
         }
         return next;
       });
-      setDeliveryQuantityByItemId((current) => ({
+      setDeliveryQuantityByItemId(current => ({
         ...current,
         [item.id]: nextQuantity > 0 ? nextQuantity.toFixed(2) : "0.00",
       }));
     },
     [deliveryStorageLocationByItemId, getDeliveryStorageLocationOptions]
   );
-  const clearDeliveryProjectForItem = useCallback((item: any, warehouseId: number) => {
-    setDeliveryWarehouseByItemId((current) => ({
-      ...current,
-      [item.id]: String(warehouseId),
-    }));
-    setDeliveryProjectByItemId((current) => {
-      const next = { ...current };
-      delete next[item.id];
-      return next;
-    });
-    setDeliveryStorageLocationByItemId((current) => {
-      const next = { ...current };
-      delete next[item.id];
-      return next;
-    });
-    setDeliveryQuantityByItemId((current) => ({
-      ...current,
-      [item.id]: "0.00",
-    }));
-  }, []);
+  const clearDeliveryProjectForItem = useCallback(
+    (item: any, warehouseId: number) => {
+      setDeliveryWarehouseByItemId(current => ({
+        ...current,
+        [item.id]: String(warehouseId),
+      }));
+      setDeliveryProjectByItemId(current => {
+        const next = { ...current };
+        delete next[item.id];
+        return next;
+      });
+      setDeliveryStorageLocationByItemId(current => {
+        const next = { ...current };
+        delete next[item.id];
+        return next;
+      });
+      setDeliveryQuantityByItemId(current => ({
+        ...current,
+        [item.id]: "0.00",
+      }));
+    },
+    []
+  );
   const handleDeliveryWarehouseChange = useCallback(
     (item: any, value: string) => {
       const warehouseId = Number(value);
@@ -1344,11 +1411,11 @@ export default function SalidasBodega() {
         getDeliveryPendingQuantity(item),
         Math.max(availableQuantity, 0)
       );
-      setDeliveryStorageLocationByItemId((current) => ({
+      setDeliveryStorageLocationByItemId(current => ({
         ...current,
         [item.id]: value,
       }));
-      setDeliveryQuantityByItemId((current) => ({
+      setDeliveryQuantityByItemId(current => ({
         ...current,
         [item.id]: nextQuantity > 0 ? nextQuantity.toFixed(2) : "0.00",
       }));
@@ -1405,7 +1472,7 @@ export default function SalidasBodega() {
     if (!changed) return;
     setDeliveryStorageLocationByItemId(nextStorageLocations);
     if (Object.keys(nextQuantities).length > 0) {
-      setDeliveryQuantityByItemId((current) => ({
+      setDeliveryQuantityByItemId(current => ({
         ...current,
         ...nextQuantities,
       }));
@@ -1423,8 +1490,7 @@ export default function SalidasBodega() {
       const warehouseId = Number(value);
       if (!warehouseId) return;
 
-      const projectOptions =
-        getDeliveryDestinationProjectOptions(warehouseId);
+      const projectOptions = getDeliveryDestinationProjectOptions(warehouseId);
       const selectedProjectId = Number(
         deliveryDestinationProjectByItemId[item.id] ?? 0
       );
@@ -1446,15 +1512,15 @@ export default function SalidasBodega() {
         ? selectedProjectId
         : Number(preferredProject?.id ?? 0);
 
-      setDeliveryDestinationWarehouseByItemId((current) => ({
+      setDeliveryDestinationWarehouseByItemId(current => ({
         ...current,
         [item.id]: String(warehouseId),
       }));
-      setDeliveryDestinationWarehouseTouchedByItemId((current) => ({
+      setDeliveryDestinationWarehouseTouchedByItemId(current => ({
         ...current,
         [item.id]: true,
       }));
-      setDeliveryDestinationProjectByItemId((current) => {
+      setDeliveryDestinationProjectByItemId(current => {
         if (!nextProjectId) {
           const next = { ...current };
           delete next[item.id];
@@ -1477,7 +1543,8 @@ export default function SalidasBodega() {
       const projectId = Number(value);
       if (!projectId) return;
 
-      const warehouseOptions = getDeliveryDestinationWarehouseOptions(projectId);
+      const warehouseOptions =
+        getDeliveryDestinationWarehouseOptions(projectId);
       const currentWarehouseId = Number(
         deliveryDestinationWarehouseByItemId[item.id] ?? 0
       );
@@ -1500,17 +1567,17 @@ export default function SalidasBodega() {
       const preferredWarehouse =
         destinationWarehouseWasTouched && currentWarehouseIsValid
           ? currentWarehouseOption
-          : originWarehouseOption ??
+          : (originWarehouseOption ??
             (currentWarehouseIsValid ? currentWarehouseOption : null) ??
             warehouseOptions.find((warehouse: any) => warehouse.isPrimary) ??
             warehouseOptions[0] ??
-            null;
+            null);
 
-      setDeliveryDestinationProjectByItemId((current) => ({
+      setDeliveryDestinationProjectByItemId(current => ({
         ...current,
         [item.id]: String(projectId),
       }));
-      setDeliveryDestinationWarehouseByItemId((current) => {
+      setDeliveryDestinationWarehouseByItemId(current => {
         if (!preferredWarehouse?.id) {
           const next = { ...current };
           delete next[item.id];
@@ -1691,7 +1758,7 @@ export default function SalidasBodega() {
         <div className="flex min-w-0 gap-2">
           <Popover
             open={open}
-            onOpenChange={(nextOpen) => {
+            onOpenChange={nextOpen => {
               setDeliveryTargetPopoverOpen(nextOpen ? item.id : null);
               if (!nextOpen) setDeliveryTargetSearch("");
             }}
@@ -1708,7 +1775,9 @@ export default function SalidasBodega() {
               >
                 <span
                   className={
-                    selectedTarget ? "truncate" : "truncate text-muted-foreground"
+                    selectedTarget
+                      ? "truncate"
+                      : "truncate text-muted-foreground"
                   }
                 >
                   {selectedTarget?.label ?? "Subproyecto o activo fijo"}
@@ -1747,7 +1816,7 @@ export default function SalidasBodega() {
                                   key={`subproject-${subproject.id}`}
                                   value={`subproject-${subproject.id}-${subproject.code}-${subproject.name}`}
                                   onSelect={() => {
-                                    setDeliveryTargetByItemId((current) => ({
+                                    setDeliveryTargetByItemId(current => ({
                                       ...current,
                                       [item.id]:
                                         buildSubprojectDeliveryTargetSelection(
@@ -1794,7 +1863,7 @@ export default function SalidasBodega() {
                                   key={`asset-${asset.itemCode}`}
                                   value={`asset-${asset.itemCode}-${asset.description}`}
                                   onSelect={() => {
-                                    setDeliveryTargetByItemId((current) => ({
+                                    setDeliveryTargetByItemId(current => ({
                                       ...current,
                                       [item.id]:
                                         buildFixedAssetDeliveryTargetSelection(
@@ -1833,7 +1902,7 @@ export default function SalidasBodega() {
               variant="ghost"
               size="icon"
               onClick={() =>
-                setDeliveryTargetByItemId((current) => ({
+                setDeliveryTargetByItemId(current => ({
                   ...current,
                   [item.id]: null,
                 }))
@@ -1970,7 +2039,7 @@ export default function SalidasBodega() {
     field: "quantity" | "storageLocation" | "notes",
     value: string
   ) => {
-    setDraftItemEdits((current) => ({
+    setDraftItemEdits(current => ({
       ...current,
       [itemId]: {
         quantity: current[itemId]?.quantity ?? "",
@@ -2112,7 +2181,9 @@ export default function SalidasBodega() {
 
     const invalidItem = selectedItems.find(
       ({ quantity, maxQuantity }) =>
-        !Number.isFinite(quantity) || quantity <= 0 || quantity - maxQuantity > 0.000001
+        !Number.isFinite(quantity) ||
+        quantity <= 0 ||
+        quantity - maxQuantity > 0.000001
     );
     if (invalidItem) {
       toast.error(
@@ -2136,7 +2207,8 @@ export default function SalidasBodega() {
         sapItemCode: item.sapItemCode,
         quantity: quantity.toFixed(2),
         unit: item.unit || undefined,
-        condition: (returnConditionByItemId[item.id] || "usado_buen_estado") as any,
+        condition: (returnConditionByItemId[item.id] ||
+          "usado_buen_estado") as any,
       })),
     });
   };
@@ -2146,10 +2218,11 @@ export default function SalidasBodega() {
 
     const warehouseExit = detail.warehouseExit;
     const warehouseLabel = formatWarehouseExitWarehouseLabel(detail);
-    const projectLabel = formatWarehouseExitProjectLabel(detail, warehouseLabel);
+    const projectLabel = formatWarehouseExitProjectLabel(
+      detail,
+      warehouseLabel
+    );
     const requestProjectLabel = formatWarehouseExitRequestProjectLabel(detail);
-    const destinationProjectLabel =
-      formatWarehouseExitDestinationProjectLabel(detail);
     const destinationWarehouseLabel =
       formatWarehouseExitDestinationWarehouseLabel(detail);
     const requestedByLabel = formatWarehouseExitRequestLabel(detail);
@@ -2162,19 +2235,19 @@ export default function SalidasBodega() {
         ? `Requisición ${warehouseExit.materialRequestId}`
         : warehouseExit.exitNumber);
     const itemRows = (detail.items || [])
-      .map(
-        (item: any) => {
-          const targetLabel =
-            formatWarehouseExitTargetLabel(item, warehouseExit.projectId) || "-";
-          const logisticDestinationLabel =
-            formatWarehouseExitItemDestinationLabel(item);
-          const destinationLabel =
-            logisticDestinationLabel === "-"
-              ? targetLabel
-              : targetLabel === "-"
-                ? logisticDestinationLabel
-                : `${logisticDestinationLabel} | ${targetLabel}`;
-          return `
+      .map((item: any) => {
+        const targetLabel =
+          formatWarehouseExitPrintTargetLabel(item, warehouseExit.projectId) ||
+          "-";
+        const logisticDestinationLabel =
+          formatWarehouseExitItemDestinationLabel(item);
+        const destinationLabel =
+          logisticDestinationLabel === "-"
+            ? targetLabel
+            : targetLabel === "-"
+              ? logisticDestinationLabel
+              : `${logisticDestinationLabel} | ${targetLabel}`;
+        return `
           <tr>
             <td>${escapeHtml(item.sapItemCode || "-")}</td>
             <td>${escapeHtml(item.itemName || "-")}</td>
@@ -2189,8 +2262,7 @@ export default function SalidasBodega() {
             <td class="numeric">1</td>
           </tr>
         `;
-        }
-      )
+      })
       .join("");
     const totalLines = (detail.items || []).length;
 
@@ -2236,7 +2308,7 @@ export default function SalidasBodega() {
             .title {
               color: #000;
               font-size: 11.5px;
-              font-weight: 800;
+              font-weight: 700;
               line-height: 1.25;
               text-align: center;
               text-transform: uppercase;
@@ -2244,13 +2316,14 @@ export default function SalidasBodega() {
             .company {
               color: #000;
               font-size: 13px;
+              font-weight: 700;
               margin-bottom: 2px;
             }
             .document-number {
-              border: 4px double #222;
+              border: 3px double #666;
               color: #000;
               font-size: 12px;
-              font-weight: 900;
+              font-weight: 700;
               margin-top: 0;
               padding: 3px 6px;
               text-align: center;
@@ -2272,10 +2345,10 @@ export default function SalidasBodega() {
               min-height: 12px;
             }
             .label {
-              font-weight: 800;
+              font-weight: 600;
             }
             .value {
-              font-weight: 700;
+              font-weight: 500;
               overflow-wrap: anywhere;
             }
             table {
@@ -2285,15 +2358,15 @@ export default function SalidasBodega() {
               width: 100%;
             }
             th {
-              border-bottom: 2px solid #111;
-              border-top: 2px solid #111;
+              border-bottom: 1px solid #777;
+              border-top: 1px solid #777;
               font-size: 8.5px;
-              font-weight: 800;
+              font-weight: 600;
               padding: 3px 4px;
               text-align: left;
             }
             td {
-              border-bottom: 1px solid #111;
+              border-bottom: 1px solid #aaa;
               padding: 3px 4px;
               overflow-wrap: anywhere;
               vertical-align: top;
@@ -2304,8 +2377,8 @@ export default function SalidasBodega() {
               text-align: right;
             }
             .total-row td {
-              border-bottom: 2px solid #111;
-              font-weight: 800;
+              border-bottom: 1px solid #777;
+              font-weight: 600;
             }
             .signatures {
               display: grid;
@@ -2315,11 +2388,14 @@ export default function SalidasBodega() {
               margin-top: 10mm;
             }
             .signature-line {
-              border-top: 2px solid #111;
+              border-top: 1px solid #777;
               font-size: 10.5px;
-              font-weight: 700;
+              font-weight: 500;
               padding-top: 4px;
               text-align: center;
+            }
+            strong {
+              font-weight: 600;
             }
             @media print {
               .sheet { max-width: none; padding: 0; }
@@ -2370,10 +2446,6 @@ export default function SalidasBodega() {
                 <div class="field">
                   <div class="label">Dueño stock:</div>
                   <div class="value">${escapeHtml(projectLabel)}</div>
-                </div>
-                <div class="field">
-                  <div class="label">Cargo destino:</div>
-                  <div class="value">${escapeHtml(destinationProjectLabel)}</div>
                 </div>
                 <div class="field">
                   <div class="label">Referencia:</div>
@@ -2578,7 +2650,7 @@ export default function SalidasBodega() {
 
       <Dialog
         open={Boolean(selectedId)}
-        onOpenChange={(open) => {
+        onOpenChange={open => {
           if (!open) {
             setSelectedId(null);
             resetReturnPanel();
@@ -2663,7 +2735,7 @@ export default function SalidasBodega() {
                         !draftReceivedByName.trim() ? "border-destructive" : ""
                       }`}
                       value={draftReceivedByName}
-                      onChange={(event) =>
+                      onChange={event =>
                         setDraftReceivedByName(event.target.value)
                       }
                       placeholder="Nombre de quien recibe"
@@ -2704,7 +2776,7 @@ export default function SalidasBodega() {
                   </Label>
                   <Textarea
                     value={draftNotes}
-                    onChange={(event) => setDraftNotes(event.target.value)}
+                    onChange={event => setDraftNotes(event.target.value)}
                     placeholder="Notas de la salida"
                   />
                 </div>
@@ -2765,8 +2837,9 @@ export default function SalidasBodega() {
                         item.storageLocationOptions ?? []
                       ).find(
                         (location: any) =>
-                          encodeStorageLocationValue(location.storageLocation) ===
-                          draftStorageLocationValue
+                          encodeStorageLocationValue(
+                            location.storageLocation
+                          ) === draftStorageLocationValue
                       );
                       const draftAvailableQuantity = detailIsDraft
                         ? parseQuantity(
@@ -2781,7 +2854,9 @@ export default function SalidasBodega() {
 
                       return (
                         <tr key={item.id} className="border-b last:border-0">
-                          <td className="p-3 font-mono text-xs">{item.sapItemCode}</td>
+                          <td className="p-3 font-mono text-xs">
+                            {item.sapItemCode}
+                          </td>
                           <td className="p-3 font-medium">{item.itemName}</td>
                           <td className="p-3 text-xs text-muted-foreground">
                             {formatWarehouseExitTargetLabel(
@@ -2796,7 +2871,7 @@ export default function SalidasBodega() {
                             {detailIsDraft ? (
                               <Select
                                 value={draftStorageLocationValue}
-                                onValueChange={(value) =>
+                                onValueChange={value =>
                                   updateDraftItemEdit(
                                     item.id,
                                     "storageLocation",
@@ -2847,8 +2922,10 @@ export default function SalidasBodega() {
                                   inputMode="decimal"
                                   min="0.01"
                                   step="0.01"
-                                  value={draftItemEdits[item.id]?.quantity ?? ""}
-                                  onChange={(event) =>
+                                  value={
+                                    draftItemEdits[item.id]?.quantity ?? ""
+                                  }
+                                  onChange={event =>
                                     updateDraftItemEdit(
                                       item.id,
                                       "quantity",
@@ -2902,7 +2979,7 @@ export default function SalidasBodega() {
                               <Textarea
                                 className="min-h-20 min-w-[220px] bg-background text-xs"
                                 value={draftItemEdits[item.id]?.notes ?? ""}
-                                onChange={(event) =>
+                                onChange={event =>
                                   updateDraftItemEdit(
                                     item.id,
                                     "notes",
@@ -2926,10 +3003,12 @@ export default function SalidasBodega() {
                 <div className="space-y-4 rounded-xl border border-primary/20 bg-primary/5 p-4">
                   <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                     <div>
-                      <p className="font-semibold">Registrar devolución a bodega de proyecto</p>
+                      <p className="font-semibold">
+                        Registrar devolución a bodega de proyecto
+                      </p>
                       <p className="text-xs text-muted-foreground">
-                        Excedente solo devuelve stock. Los demás motivos reabren el
-                        pendiente en Flujos por la cantidad devuelta.
+                        Excedente solo devuelve stock. Los demás motivos reabren
+                        el pendiente en Flujos por la cantidad devuelta.
                       </p>
                     </div>
                     <Badge variant="outline" className="w-fit text-xs">
@@ -2948,11 +3027,13 @@ export default function SalidasBodega() {
                           <SelectValue placeholder="Seleccione motivo" />
                         </SelectTrigger>
                         <SelectContent>
-                          {Object.entries(RETURN_REASON_LABELS).map(([value, label]) => (
-                            <SelectItem key={value} value={value}>
-                              {label}
-                            </SelectItem>
-                          ))}
+                          {Object.entries(RETURN_REASON_LABELS).map(
+                            ([value, label]) => (
+                              <SelectItem key={value} value={value}>
+                                {label}
+                              </SelectItem>
+                            )
+                          )}
                         </SelectContent>
                       </Select>
                     </div>
@@ -2961,7 +3042,7 @@ export default function SalidasBodega() {
                       <Label>Recibido por *</Label>
                       <Input
                         value={returnReceivedByName}
-                        onChange={(event) =>
+                        onChange={event =>
                           setReturnReceivedByName(event.target.value)
                         }
                         placeholder="Nombre de quien recibe"
@@ -2974,7 +3055,9 @@ export default function SalidasBodega() {
                       <Label>Justificación *</Label>
                       <Textarea
                         value={returnJustification}
-                        onChange={(event) => setReturnJustification(event.target.value)}
+                        onChange={event =>
+                          setReturnJustification(event.target.value)
+                        }
                         placeholder="Explique por qué se devuelve el material"
                         rows={2}
                       />
@@ -3001,9 +3084,14 @@ export default function SalidasBodega() {
                       </thead>
                       <tbody>
                         {detail.items.map((item: any) => {
-                          const maxQuantity = Number(item.returnableQuantity ?? 0);
+                          const maxQuantity = Number(
+                            item.returnableQuantity ?? 0
+                          );
                           return (
-                            <tr key={item.id} className="border-b last:border-0">
+                            <tr
+                              key={item.id}
+                              className="border-b last:border-0"
+                            >
                               <td className="p-3">
                                 <p className="font-medium">{item.itemName}</p>
                                 <p className="font-mono text-[11px] text-muted-foreground">
@@ -3011,7 +3099,8 @@ export default function SalidasBodega() {
                                 </p>
                               </td>
                               <td className="p-3 text-right font-mono text-xs">
-                                {formatQuantity(item.returnableQuantity)} {item.unit || ""}
+                                {formatQuantity(item.returnableQuantity)}{" "}
+                                {item.unit || ""}
                               </td>
                               <td className="p-3 align-top">
                                 <Input
@@ -3022,13 +3111,16 @@ export default function SalidasBodega() {
                                   step="any"
                                   placeholder="0.00"
                                   value={returnQuantityByItemId[item.id] ?? ""}
-                                  onChange={(event) =>
-                                    setReturnQuantityByItemId((current) => ({
+                                  onChange={event =>
+                                    setReturnQuantityByItemId(current => ({
                                       ...current,
                                       [item.id]: event.target.value,
                                     }))
                                   }
-                                  disabled={maxQuantity <= 0 || createReturnMutation.isPending}
+                                  disabled={
+                                    maxQuantity <= 0 ||
+                                    createReturnMutation.isPending
+                                  }
                                 />
                               </td>
                               <td className="p-3">
@@ -3037,25 +3129,28 @@ export default function SalidasBodega() {
                                     returnConditionByItemId[item.id] ||
                                     "usado_buen_estado"
                                   }
-                                  onValueChange={(value) =>
-                                    setReturnConditionByItemId((current) => ({
+                                  onValueChange={value =>
+                                    setReturnConditionByItemId(current => ({
                                       ...current,
                                       [item.id]: value,
                                     }))
                                   }
-                                  disabled={maxQuantity <= 0 || createReturnMutation.isPending}
+                                  disabled={
+                                    maxQuantity <= 0 ||
+                                    createReturnMutation.isPending
+                                  }
                                 >
                                   <SelectTrigger className="w-full min-w-40">
                                     <SelectValue placeholder="Condición" />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    {Object.entries(RETURN_CONDITION_LABELS).map(
-                                      ([value, label]) => (
-                                        <SelectItem key={value} value={value}>
-                                          {label}
-                                        </SelectItem>
-                                      )
-                                    )}
+                                    {Object.entries(
+                                      RETURN_CONDITION_LABELS
+                                    ).map(([value, label]) => (
+                                      <SelectItem key={value} value={value}>
+                                        {label}
+                                      </SelectItem>
+                                    ))}
                                   </SelectContent>
                                 </Select>
                               </td>
@@ -3098,7 +3193,8 @@ export default function SalidasBodega() {
                   Cerrar
                 </Button>
 
-                {canCreateReturns && detail.warehouseExit.status === "emitida" ? (
+                {canCreateReturns &&
+                detail.warehouseExit.status === "emitida" ? (
                   <Button
                     variant="outline"
                     onClick={openReturnPanel}
@@ -3138,7 +3234,9 @@ export default function SalidasBodega() {
                       }
                     >
                       <XCircle className="mr-2 h-4 w-4" />
-                      {cancelMutation.isPending ? "Anulando..." : "Anular borrador"}
+                      {cancelMutation.isPending
+                        ? "Anulando..."
+                        : "Anular borrador"}
                     </Button>
                     <Button
                       onClick={() => void submitEmitWarehouseExit()}
@@ -3149,7 +3247,9 @@ export default function SalidasBodega() {
                       }
                     >
                       <Send className="mr-2 h-4 w-4" />
-                      {emitMutation.isPending ? "Emitiendo..." : "Emitir salida"}
+                      {emitMutation.isPending
+                        ? "Emitiendo..."
+                        : "Emitir salida"}
                     </Button>
                   </>
                 ) : null}
@@ -3176,7 +3276,7 @@ export default function SalidasBodega() {
 
       <Dialog
         open={deliveryDialogOpen}
-        onOpenChange={(open) => {
+        onOpenChange={open => {
           setDeliveryDialogOpen(open);
           if (!open) {
             setDeliveryRequestId("");
@@ -3205,14 +3305,21 @@ export default function SalidasBodega() {
             <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(260px,360px)]">
               <div className="space-y-2">
                 <Label>Requisición *</Label>
-                <Select value={deliveryRequestId} onValueChange={setDeliveryRequestId}>
+                <Select
+                  value={deliveryRequestId}
+                  onValueChange={setDeliveryRequestId}
+                >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Seleccione requisición" />
                   </SelectTrigger>
                   <SelectContent>
                     {eligibleMaterialRequests.map((row: any) => (
-                      <SelectItem key={row.request.id} value={String(row.request.id)}>
-                        {row.request.requestNumber} - {row.project?.code} {row.project?.name}
+                      <SelectItem
+                        key={row.request.id}
+                        value={String(row.request.id)}
+                      >
+                        {row.request.requestNumber} - {row.project?.code}{" "}
+                        {row.project?.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -3225,7 +3332,9 @@ export default function SalidasBodega() {
                     : "Proyecto pendiente"}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Se muestran requisiciones con flujo completado o parcialmente atendidas. La salida solo incluye renglones ya recibidos o disponibles en bodega.
+                  Se muestran requisiciones con flujo completado o parcialmente
+                  atendidas. La salida solo incluye renglones ya recibidos o
+                  disponibles en bodega.
                 </p>
               </div>
             </div>
@@ -3271,8 +3380,11 @@ export default function SalidasBodega() {
                       </thead>
                       <tbody>
                         {deliveryItems.map((item: any) => {
-                          const requestedQuantity = parseQuantity(item.quantity);
-                          const alreadyDispatched = getPhysicalDispatchedQuantity(item);
+                          const requestedQuantity = parseQuantity(
+                            item.quantity
+                          );
+                          const alreadyDispatched =
+                            getPhysicalDispatchedQuantity(item);
                           const selectedWarehouseId = Number(
                             deliveryWarehouseByItemId[item.id] ?? 0
                           );
@@ -3291,9 +3403,15 @@ export default function SalidasBodega() {
                               selectedProjectId,
                               selectedWarehouseId
                             );
-                          const pendingQuantity = getDeliveryPendingQuantity(item);
-                          const quantity = Number(deliveryQuantityByItemId[item.id] ?? 0);
-                          const balanceQuantity = Math.max(pendingQuantity - quantity, 0);
+                          const pendingQuantity =
+                            getDeliveryPendingQuantity(item);
+                          const quantity = Number(
+                            deliveryQuantityByItemId[item.id] ?? 0
+                          );
+                          const balanceQuantity = Math.max(
+                            pendingQuantity - quantity,
+                            0
+                          );
                           const warehouseOptions =
                             getDeliveryWarehouseOptions(item);
                           const projectOptions = getDeliveryProjectOptions(
@@ -3326,10 +3444,9 @@ export default function SalidasBodega() {
                                   selectedStorageLocationValue
                                 )
                               : 0;
-                          const availableQuantity =
-                            selectedStorageLocationValue
-                              ? selectedLocationAvailableQuantity
-                              : scopeAvailableQuantity;
+                          const availableQuantity = selectedStorageLocationValue
+                            ? selectedLocationAvailableQuantity
+                            : scopeAvailableQuantity;
                           const selectedDestinationWarehouseId = Number(
                             deliveryDestinationWarehouseByItemId[item.id] ?? 0
                           );
@@ -3371,7 +3488,10 @@ export default function SalidasBodega() {
                             Boolean(item.sapItemCode);
 
                           return (
-                            <tr key={item.id} className="border-b last:border-0">
+                            <tr
+                              key={item.id}
+                              className="border-b last:border-0"
+                            >
                               <td className="px-2 py-3 align-top font-mono text-xs">
                                 {item.sapItemCode || "-"}
                               </td>
@@ -3389,13 +3509,16 @@ export default function SalidasBodega() {
                                 {renderDeliveryTargetSelector(item)}
                               </td>
                               <td className="px-2 py-3 text-right align-top">
-                                {formatQuantity(requestedQuantity)} {item.unit || ""}
+                                {formatQuantity(requestedQuantity)}{" "}
+                                {item.unit || ""}
                               </td>
                               <td className="px-2 py-3 text-right align-top">
-                                {formatQuantity(alreadyDispatched)} {item.unit || ""}
+                                {formatQuantity(alreadyDispatched)}{" "}
+                                {item.unit || ""}
                               </td>
                               <td className="px-2 py-3 text-right align-top font-medium">
-                                {formatQuantity(availableQuantity)} {item.unit || ""}
+                                {formatQuantity(availableQuantity)}{" "}
+                                {item.unit || ""}
                               </td>
                               <td className="px-2 py-3 align-top">
                                 <div className="w-full max-w-[334px] space-y-2">
@@ -3409,7 +3532,7 @@ export default function SalidasBodega() {
                                           ? String(selectedWarehouseId)
                                           : undefined
                                       }
-                                      onValueChange={(value) =>
+                                      onValueChange={value =>
                                         handleDeliveryWarehouseChange(
                                           item,
                                           value
@@ -3422,7 +3545,10 @@ export default function SalidasBodega() {
                                       </SelectTrigger>
                                       <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
                                         {warehouseOptions.length === 0 ? (
-                                          <SelectItem value="sin-almacenes" disabled>
+                                          <SelectItem
+                                            value="sin-almacenes"
+                                            disabled
+                                          >
                                             Sin almacenes disponibles
                                           </SelectItem>
                                         ) : (
@@ -3473,7 +3599,7 @@ export default function SalidasBodega() {
                                           ? String(selectedProjectId)
                                           : undefined
                                       }
-                                      onValueChange={(value) =>
+                                      onValueChange={value =>
                                         handleDeliveryProjectChange(item, value)
                                       }
                                       disabled={
@@ -3492,7 +3618,10 @@ export default function SalidasBodega() {
                                       </SelectTrigger>
                                       <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
                                         {projectOptions.length === 0 ? (
-                                          <SelectItem value="sin-bodegas" disabled>
+                                          <SelectItem
+                                            value="sin-bodegas"
+                                            disabled
+                                          >
                                             Sin bodegas para este almacén
                                           </SelectItem>
                                         ) : (
@@ -3516,7 +3645,9 @@ export default function SalidasBodega() {
                                                   project.projectId,
                                                   project.warehouseId
                                                 )}
-                                                value={String(project.projectId)}
+                                                value={String(
+                                                  project.projectId
+                                                )}
                                                 textValue={getStockProjectLabel(
                                                   project
                                                 )}
@@ -3563,7 +3694,7 @@ export default function SalidasBodega() {
                                     </p>
                                     <Select
                                       value={selectedStorageLocationValue}
-                                      onValueChange={(value) =>
+                                      onValueChange={value =>
                                         handleDeliveryStorageLocationChange(
                                           item,
                                           value
@@ -3586,7 +3717,10 @@ export default function SalidasBodega() {
                                       </SelectTrigger>
                                       <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
                                         {storageLocationOptions.length === 0 ? (
-                                          <SelectItem value="sin-ubicaciones" disabled>
+                                          <SelectItem
+                                            value="sin-ubicaciones"
+                                            disabled
+                                          >
                                             Sin ubicaciones con stock
                                           </SelectItem>
                                         ) : (
@@ -3660,17 +3794,20 @@ export default function SalidasBodega() {
                                     <Select
                                       value={
                                         selectedDestinationWarehouseId
-                                          ? String(selectedDestinationWarehouseId)
+                                          ? String(
+                                              selectedDestinationWarehouseId
+                                            )
                                           : undefined
                                       }
-                                      onValueChange={(value) =>
+                                      onValueChange={value =>
                                         handleDeliveryDestinationWarehouseChange(
                                           item,
                                           value
                                         )
                                       }
                                       disabled={
-                                        deliveryDestinationWarehouseOptions.length === 0
+                                        deliveryDestinationWarehouseOptions.length ===
+                                        0
                                       }
                                     >
                                       <SelectTrigger className="h-9 w-full min-w-0 overflow-hidden text-left text-xs [&>span]:truncate">
@@ -3679,7 +3816,10 @@ export default function SalidasBodega() {
                                       <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
                                         {deliveryDestinationWarehouseOptions.length ===
                                         0 ? (
-                                          <SelectItem value="sin-almacenes" disabled>
+                                          <SelectItem
+                                            value="sin-almacenes"
+                                            disabled
+                                          >
                                             Sin almacenes disponibles
                                           </SelectItem>
                                         ) : (
@@ -3746,7 +3886,7 @@ export default function SalidasBodega() {
                                           ? String(selectedDestinationProjectId)
                                           : undefined
                                       }
-                                      onValueChange={(value) =>
+                                      onValueChange={value =>
                                         handleDeliveryDestinationProjectChange(
                                           item,
                                           value
@@ -3767,14 +3907,20 @@ export default function SalidasBodega() {
                                         />
                                       </SelectTrigger>
                                       <SelectContent className="min-w-[var(--radix-select-trigger-width)]">
-                                        {destinationProjectOptions.length === 0 ? (
-                                          <SelectItem value="sin-bodegas" disabled>
+                                        {destinationProjectOptions.length ===
+                                        0 ? (
+                                          <SelectItem
+                                            value="sin-bodegas"
+                                            disabled
+                                          >
                                             Sin bodegas para este almacén
                                           </SelectItem>
                                         ) : (
                                           destinationProjectOptions.map(
                                             (project: any) => {
-                                              const projectId = Number(project.id);
+                                              const projectId = Number(
+                                                project.id
+                                              );
                                               const stockQuantity =
                                                 getDeliveryScopeStockQuantity(
                                                   item,
@@ -3793,7 +3939,9 @@ export default function SalidasBodega() {
                                                 >
                                                   <span className="flex w-full min-w-0 items-center justify-between gap-3 pr-4">
                                                     <span className="truncate">
-                                                      {getProjectOptionLabel(project)}
+                                                      {getProjectOptionLabel(
+                                                        project
+                                                      )}
                                                     </span>
                                                     <QuantityPill
                                                       value={stockQuantity}
@@ -3840,22 +3988,31 @@ export default function SalidasBodega() {
                                   className="ml-auto w-24 text-right"
                                   type="number"
                                   min="0"
-                                  max={Math.min(pendingQuantity, availableQuantity)}
+                                  max={Math.min(
+                                    pendingQuantity,
+                                    availableQuantity
+                                  )}
                                   step="any"
-                                  value={deliveryQuantityByItemId[item.id] ?? ""}
-                                  onChange={(event) =>
-                                    setDeliveryQuantityByItemId((current) => ({
+                                  value={
+                                    deliveryQuantityByItemId[item.id] ?? ""
+                                  }
+                                  onChange={event =>
+                                    setDeliveryQuantityByItemId(current => ({
                                       ...current,
                                       [item.id]: event.target.value,
                                     }))
                                   }
-                                  disabled={!canDeliver || createDeliveryMutation.isPending}
+                                  disabled={
+                                    !canDeliver ||
+                                    createDeliveryMutation.isPending
+                                  }
                                   placeholder="0.00"
                                 />
                               </td>
                               <td className="px-2 py-3 text-right align-top">
                                 <p className="font-mono">
-                                  {formatQuantity(balanceQuantity)} {item.unit || ""}
+                                  {formatQuantity(balanceQuantity)}{" "}
+                                  {item.unit || ""}
                                 </p>
                                 {balanceQuantity > 0 ? (
                                   <p className="text-[10px] text-muted-foreground">
@@ -3871,7 +4028,8 @@ export default function SalidasBodega() {
                   </div>
                 ) : (
                   <div className="rounded-xl border bg-muted/20 p-8 text-center text-sm text-muted-foreground">
-                    Esta requisición no tiene renglones recibidos disponibles para salida.
+                    Esta requisición no tiene renglones recibidos disponibles
+                    para salida.
                   </div>
                 )}
 
@@ -3879,7 +4037,7 @@ export default function SalidasBodega() {
                   <Label>Notas</Label>
                   <Textarea
                     value={deliveryNotes}
-                    onChange={(event) => setDeliveryNotes(event.target.value)}
+                    onChange={event => setDeliveryNotes(event.target.value)}
                     placeholder="Observaciones para la salida"
                     rows={3}
                   />

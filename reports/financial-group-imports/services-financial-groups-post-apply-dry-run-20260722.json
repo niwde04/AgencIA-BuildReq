@@ -1,0 +1,2421 @@
+{
+  "generatedAt": "2026-07-22T15:34:58.303Z",
+  "mode": "dry-run",
+  "file": "C:\\Users\\ed_ba\\Downloads\\OITM - Grupo financiero Servicios.xlsx",
+  "profile": "services",
+  "sheetName": "Articulos de servicios 06jul",
+  "sourceSha256": "6DA73F965540AED12B2E3090A96E3DCC1AA0B74D848A70BA2DAC4F7576F33347",
+  "backupPath": null,
+  "backupSha256": null,
+  "backupSizeBytes": null,
+  "snapshotPath": null,
+  "summary": {
+    "rawRows": 98,
+    "parsedRows": 98,
+    "uniqueCodes": 98,
+    "skippedRows": 0,
+    "duplicateCodes": 0,
+    "conflictingDuplicateCodes": 0,
+    "requestedFinancialGroups": 46,
+    "financialGroupsToCreate": 0,
+    "reusedFinancialGroups": 46,
+    "missingCatalogCodes": 0,
+    "missingFinancialGroups": 0,
+    "inactiveFinancialGroups": 0,
+    "updates": 0,
+    "unchanged": 98
+  },
+  "skippedRows": [],
+  "duplicateGroups": [],
+  "conflictingDuplicateGroups": [],
+  "missingCatalogCodes": [],
+  "missingFinancialGroups": [],
+  "inactiveFinancialGroups": [],
+  "groupsToCreate": [],
+  "reusedFinancialGroups": [
+    {
+      "financialGroupCode": "02019901",
+      "financialGroupDescription": "02019901-Mano de obra-Alimentación",
+      "codN2": "0201",
+      "nivel2": "Mano de obra",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "02019905",
+      "financialGroupDescription": "02019905-Mano de obra-Capacitación y entranamiento",
+      "codN2": "0201",
+      "nivel2": "Mano de obra",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "02020101",
+      "financialGroupDescription": "02020101-Maquinaria-Repuestos vehículos",
+      "codN2": "0202",
+      "nivel2": "Maquinaria",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "02020102",
+      "financialGroupDescription": "02020102-Maquinaria-Servicios externos de mantenimiento y reparaciones",
+      "codN2": "0202",
+      "nivel2": "Maquinaria",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "02020201",
+      "financialGroupDescription": "02020201-Maquinaria-Repuestos maquinaria",
+      "codN2": "0202",
+      "nivel2": "Maquinaria",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "02020202",
+      "financialGroupDescription": "02020202-Maquinaria-Servicios externos de mantenimiento y reparaciones",
+      "codN2": "0202",
+      "nivel2": "Maquinaria",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "02020701",
+      "financialGroupDescription": "02020701-Maquinaria-Alquiler de maquinaria y equipos",
+      "codN2": "0202",
+      "nivel2": "Maquinaria",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "02020801",
+      "financialGroupDescription": "02020801-Maquinaria-Alquiler de baterias sanitarias portátiles",
+      "codN2": "0202",
+      "nivel2": "Maquinaria",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "02040201",
+      "financialGroupDescription": "02040201-Transporte-Fletes",
+      "codN2": "0204",
+      "nivel2": "Transporte",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "02050301",
+      "financialGroupDescription": "02050301-Subcontratistas-Obras de Arte (Bordillos, Cunetas, etc.)",
+      "codN2": "0205",
+      "nivel2": "Subcontratistas",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "02050401",
+      "financialGroupDescription": "02050401-Subcontratistas-Consultorías técnicas",
+      "codN2": "0205",
+      "nivel2": "Subcontratistas",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "02050501",
+      "financialGroupDescription": "02050501-Subcontratistas-PGA - Plan de gestión ambiental",
+      "codN2": "0205",
+      "nivel2": "Subcontratistas",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "02059901",
+      "financialGroupDescription": "02059901-Subcontratistas-Servicios técnicos generales",
+      "codN2": "0205",
+      "nivel2": "Subcontratistas",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03020201",
+      "financialGroupDescription": "03020201-Seguros-Seguro todo riesgo contratista",
+      "codN2": "0302",
+      "nivel2": "Seguros",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03020401",
+      "financialGroupDescription": "03020401-Seguros-Seguros generales",
+      "codN2": "0302",
+      "nivel2": "Seguros",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03030101",
+      "financialGroupDescription": "03030101-Servicios de seguridad-Seguridad privada proyectos",
+      "codN2": "0303",
+      "nivel2": "Servicios de seguridad",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03040101",
+      "financialGroupDescription": "03040101-Servicios básicos-Internet",
+      "codN2": "0304",
+      "nivel2": "Servicios básicos",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03040201",
+      "financialGroupDescription": "03040201-Servicios básicos-Telefonía móvil",
+      "codN2": "0304",
+      "nivel2": "Servicios básicos",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03040301",
+      "financialGroupDescription": "03040301-Servicios básicos-Energía eléctrica",
+      "codN2": "0304",
+      "nivel2": "Servicios básicos",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03040401",
+      "financialGroupDescription": "03040401-Servicios básicos-Agua potable cisternas",
+      "codN2": "0304",
+      "nivel2": "Servicios básicos",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03040501",
+      "financialGroupDescription": "03040501-Servicios básicos-Cable",
+      "codN2": "0304",
+      "nivel2": "Servicios básicos",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03050201",
+      "financialGroupDescription": "03050201-Servicios generales-Suscripciones y licencias informáticas",
+      "codN2": "0305",
+      "nivel2": "Servicios generales",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03050301",
+      "financialGroupDescription": "03050301-Servicios generales-Honorarios y gastos de aduana",
+      "codN2": "0305",
+      "nivel2": "Servicios generales",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03050401",
+      "financialGroupDescription": "03050401-Servicios generales-Mantenimientos equipo computación y oficina",
+      "codN2": "0305",
+      "nivel2": "Servicios generales",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03050801",
+      "financialGroupDescription": "03050801-Servicios generales-Gastos legales, certificaciones y notariales",
+      "codN2": "0305",
+      "nivel2": "Servicios generales",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03051001",
+      "financialGroupDescription": "03051001-Servicios generales-Inscripciones y certificaciones organismos colegiados",
+      "codN2": "0305",
+      "nivel2": "Servicios generales",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03051301",
+      "financialGroupDescription": "03051301-Servicios generales-Mantinimiento campamentos",
+      "codN2": "0305",
+      "nivel2": "Servicios generales",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03059901",
+      "financialGroupDescription": "03059901-Servicios generales-Otros servicios generales no específicos",
+      "codN2": "0305",
+      "nivel2": "Servicios generales",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03060101",
+      "financialGroupDescription": "03060101-Honorarios profesionales-Asesoría legal",
+      "codN2": "0306",
+      "nivel2": "Honorarios profesionales",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03060201",
+      "financialGroupDescription": "03060201-Honorarios profesionales-Auditorias",
+      "codN2": "0306",
+      "nivel2": "Honorarios profesionales",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03060202",
+      "financialGroupDescription": "03060202-Honorarios profesionales-Honorarios Profesionales",
+      "codN2": "0306",
+      "nivel2": "Honorarios profesionales",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03070101",
+      "financialGroupDescription": "03070101-Movilización personal-Pasajes aéreos y terrestres",
+      "codN2": "0307",
+      "nivel2": "Movilización personal",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03070401",
+      "financialGroupDescription": "03070401-Movilización personal-Hospedajes",
+      "codN2": "0307",
+      "nivel2": "Movilización personal",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "03080101",
+      "financialGroupDescription": "03080101-Arriendos-Arriendo casas o departamentos",
+      "codN2": "0308",
+      "nivel2": "Arriendos",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "07020501",
+      "financialGroupDescription": "07020501-Impuestos no recuperables-Aranceles aduaneros",
+      "codN2": "0702",
+      "nivel2": "Impuestos no recuperables",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "11019903",
+      "financialGroupDescription": "11019903-Personal administrativo central-Seguros y servicios médicos y medicamentos",
+      "codN2": "0101",
+      "nivel2": "Personal administrativo central",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "11040101",
+      "financialGroupDescription": "11040101-Servicios básicos-Internet",
+      "codN2": "0104",
+      "nivel2": "Servicios básicos",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "11040201",
+      "financialGroupDescription": "11040201-Servicios básicos-Telefonía móvil",
+      "codN2": "0104",
+      "nivel2": "Servicios básicos",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "11040301",
+      "financialGroupDescription": "11040301-Servicios básicos-Energía eléctrica",
+      "codN2": "0104",
+      "nivel2": "Servicios básicos",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "11040401",
+      "financialGroupDescription": "11040401-Servicios básicos-Agua potable cisternas",
+      "codN2": "0104",
+      "nivel2": "Servicios básicos",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "11050201",
+      "financialGroupDescription": "11050201-Servicios generales-Suscripciones y licencias informáticas",
+      "codN2": "0105",
+      "nivel2": "Servicios generales",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "11052001",
+      "financialGroupDescription": "11052001-Servicios generales-Mantenimientos vehículos oficina central",
+      "codN2": "0105",
+      "nivel2": "Servicios generales",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "11060101",
+      "financialGroupDescription": "11060101-Honorarios profesionales-Gastos de asesoría legal",
+      "codN2": "0106",
+      "nivel2": "Honorarios profesionales",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "11070101",
+      "financialGroupDescription": "11070101-Movilización personal-Pasajes aéreos",
+      "codN2": "0107",
+      "nivel2": "Movilización personal",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "11070401",
+      "financialGroupDescription": "11070401-Movilización personal-Hospedajes",
+      "codN2": "0107",
+      "nivel2": "Movilización personal",
+      "isActive": true
+    },
+    {
+      "financialGroupCode": "11080101",
+      "financialGroupDescription": "11080101-Arriendos-Casas o departamentos",
+      "codN2": "0108",
+      "nivel2": "Arriendos",
+      "isActive": true
+    }
+  ],
+  "updatedRows": [],
+  "unchangedRows": [
+    {
+      "id": 21109,
+      "itemCode": "1001000001",
+      "financialGroupCode": "11019903",
+      "sourceRows": [
+        4
+      ],
+      "previous": {
+        "id": 21109,
+        "itemCode": "1001000001",
+        "description": "Seguro vida y medicina prepagada",
+        "itemGroup": "0101 Seguros",
+        "financialGroupCode": "11019903",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21110,
+      "itemCode": "1001000002",
+      "financialGroupCode": "11040101",
+      "sourceRows": [
+        5
+      ],
+      "previous": {
+        "id": 21110,
+        "itemCode": "1001000002",
+        "description": "Servicios de internet",
+        "itemGroup": "0104 Servicios básicos",
+        "financialGroupCode": "11040101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21111,
+      "itemCode": "1001000003",
+      "financialGroupCode": "11040201",
+      "sourceRows": [
+        6
+      ],
+      "previous": {
+        "id": 21111,
+        "itemCode": "1001000003",
+        "description": "Telefonía móvil",
+        "itemGroup": "0104 Servicios básicos",
+        "financialGroupCode": "11040201",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21112,
+      "itemCode": "1001000004",
+      "financialGroupCode": "11040401",
+      "sourceRows": [
+        7
+      ],
+      "previous": {
+        "id": 21112,
+        "itemCode": "1001000004",
+        "description": "Agua Potable",
+        "itemGroup": "0104 Servicios básicos",
+        "financialGroupCode": "11040401",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21113,
+      "itemCode": "1001000005",
+      "financialGroupCode": "11040401",
+      "sourceRows": [
+        8
+      ],
+      "previous": {
+        "id": 21113,
+        "itemCode": "1001000005",
+        "description": "Cable",
+        "itemGroup": "0104 Servicios básicos",
+        "financialGroupCode": "11040401",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21114,
+      "itemCode": "1001000006",
+      "financialGroupCode": "11040301",
+      "sourceRows": [
+        9
+      ],
+      "previous": {
+        "id": 21114,
+        "itemCode": "1001000006",
+        "description": "Energía eléctrica",
+        "itemGroup": "0104 Servicios básicos",
+        "financialGroupCode": "11040301",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21115,
+      "itemCode": "1001000007",
+      "financialGroupCode": "11070101",
+      "sourceRows": [
+        10
+      ],
+      "previous": {
+        "id": 21115,
+        "itemCode": "1001000007",
+        "description": "Pasajes aéreos",
+        "itemGroup": "0104 Servicios básicos",
+        "financialGroupCode": "11070101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21116,
+      "itemCode": "1001000008",
+      "financialGroupCode": "11052001",
+      "sourceRows": [
+        11
+      ],
+      "previous": {
+        "id": 21116,
+        "itemCode": "1001000008",
+        "description": "Mantenimientos Vehículos Oficina Central",
+        "itemGroup": "0104 Servicios básicos",
+        "financialGroupCode": "11052001",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21117,
+      "itemCode": "1001000009",
+      "financialGroupCode": "11070401",
+      "sourceRows": [
+        12
+      ],
+      "previous": {
+        "id": 21117,
+        "itemCode": "1001000009",
+        "description": "Hospedaje",
+        "itemGroup": "0104 Servicios básicos",
+        "financialGroupCode": "11070401",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21118,
+      "itemCode": "1001000010",
+      "financialGroupCode": "11050201",
+      "sourceRows": [
+        13
+      ],
+      "previous": {
+        "id": 21118,
+        "itemCode": "1001000010",
+        "description": "Licencias informáticas",
+        "itemGroup": "0105 Suscripciones y licencias informáticas",
+        "financialGroupCode": "11050201",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21119,
+      "itemCode": "1001000011",
+      "financialGroupCode": "11060101",
+      "sourceRows": [
+        14
+      ],
+      "previous": {
+        "id": 21119,
+        "itemCode": "1001000011",
+        "description": "Asesoría legal",
+        "itemGroup": "0106 Honorarios profesionales",
+        "financialGroupCode": "11060101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21120,
+      "itemCode": "1001000012",
+      "financialGroupCode": "11060101",
+      "sourceRows": [
+        15
+      ],
+      "previous": {
+        "id": 21120,
+        "itemCode": "1001000012",
+        "description": "Asersoria Tecnica",
+        "itemGroup": "0106 Honorarios profesionales",
+        "financialGroupCode": "11060101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21121,
+      "itemCode": "1001000013",
+      "financialGroupCode": "11060101",
+      "sourceRows": [
+        16
+      ],
+      "previous": {
+        "id": 21121,
+        "itemCode": "1001000013",
+        "description": "Asersoria Tecnica",
+        "itemGroup": "0106 Honorarios profesionales",
+        "financialGroupCode": "11060101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21122,
+      "itemCode": "1001000014",
+      "financialGroupCode": "11080101",
+      "sourceRows": [
+        17
+      ],
+      "previous": {
+        "id": 21122,
+        "itemCode": "1001000014",
+        "description": "ARRIENDO CASA, DEPARTAMENTO U OFICINA",
+        "itemGroup": "0108 Arriendos",
+        "financialGroupCode": "11080101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": 186,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21123,
+      "itemCode": "1002000001",
+      "financialGroupCode": "02019905",
+      "sourceRows": [
+        18
+      ],
+      "previous": {
+        "id": 21123,
+        "itemCode": "1002000001",
+        "description": "Capacitación y entrenamiento",
+        "itemGroup": "0201 Honorarios profesionales",
+        "financialGroupCode": "02019905",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21124,
+      "itemCode": "1002000002",
+      "financialGroupCode": "02019901",
+      "sourceRows": [
+        19
+      ],
+      "previous": {
+        "id": 21124,
+        "itemCode": "1002000002",
+        "description": "Lavandería industrial personal de campamento",
+        "itemGroup": "0201 Servicios externos",
+        "financialGroupCode": "02019901",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21125,
+      "itemCode": "1002000003",
+      "financialGroupCode": "02050501",
+      "sourceRows": [
+        20
+      ],
+      "previous": {
+        "id": 21125,
+        "itemCode": "1002000003",
+        "description": "Limpieza, extracción y disposición de residuos de fosas sépticas",
+        "itemGroup": "0201 Servicios externos",
+        "financialGroupCode": "02050501",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21126,
+      "itemCode": "1002000004",
+      "financialGroupCode": "02050501",
+      "sourceRows": [
+        21
+      ],
+      "previous": {
+        "id": 21126,
+        "itemCode": "1002000004",
+        "description": "Recolección, clasificación y disposición final de residuos sólidos",
+        "itemGroup": "0201 Servicios externos",
+        "financialGroupCode": "02050501",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21127,
+      "itemCode": "1002000005",
+      "financialGroupCode": "02050501",
+      "sourceRows": [
+        22
+      ],
+      "previous": {
+        "id": 21127,
+        "itemCode": "1002000005",
+        "description": "Control de plagas",
+        "itemGroup": "0201 Servicios externos",
+        "financialGroupCode": "02050501",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21128,
+      "itemCode": "1002000006",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        23
+      ],
+      "previous": {
+        "id": 21128,
+        "itemCode": "1002000006",
+        "description": "Alquiler bomba de concreto",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21129,
+      "itemCode": "1002000007",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        24
+      ],
+      "previous": {
+        "id": 21129,
+        "itemCode": "1002000007",
+        "description": "Alquiler cargadora frontal",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21130,
+      "itemCode": "1002000008",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        25
+      ],
+      "previous": {
+        "id": 21130,
+        "itemCode": "1002000008",
+        "description": "Alquiler cisterna de agua",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21131,
+      "itemCode": "1002000009",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        26
+      ],
+      "previous": {
+        "id": 21131,
+        "itemCode": "1002000009",
+        "description": "Alquiler compresor industrial",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21132,
+      "itemCode": "1002000010",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        27
+      ],
+      "previous": {
+        "id": 21132,
+        "itemCode": "1002000010",
+        "description": "Alquiler excavadora",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21133,
+      "itemCode": "1002000011",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        28
+      ],
+      "previous": {
+        "id": 21133,
+        "itemCode": "1002000011",
+        "description": "Alquiler generador eléctrico",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21134,
+      "itemCode": "1002000012",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        29
+      ],
+      "previous": {
+        "id": 21134,
+        "itemCode": "1002000012",
+        "description": "Alquiler grúa",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21135,
+      "itemCode": "1002000013",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        30
+      ],
+      "previous": {
+        "id": 21135,
+        "itemCode": "1002000013",
+        "description": "Alquiler minicargador",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21136,
+      "itemCode": "1002000014",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        31
+      ],
+      "previous": {
+        "id": 21136,
+        "itemCode": "1002000014",
+        "description": "Alquiler mixer concreto",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21137,
+      "itemCode": "1002000015",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        32
+      ],
+      "previous": {
+        "id": 21137,
+        "itemCode": "1002000015",
+        "description": "Alquiler motoniveladora",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21138,
+      "itemCode": "1002000016",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        33
+      ],
+      "previous": {
+        "id": 21138,
+        "itemCode": "1002000016",
+        "description": "Alquiler plataforma elevadora",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21139,
+      "itemCode": "1002000017",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        34
+      ],
+      "previous": {
+        "id": 21139,
+        "itemCode": "1002000017",
+        "description": "Alquiler retroexcavadora",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21140,
+      "itemCode": "1002000018",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        35
+      ],
+      "previous": {
+        "id": 21140,
+        "itemCode": "1002000018",
+        "description": "Alquiler rodillo compactador",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21141,
+      "itemCode": "1002000019",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        36
+      ],
+      "previous": {
+        "id": 21141,
+        "itemCode": "1002000019",
+        "description": "Alquiler soldadora industrial",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21142,
+      "itemCode": "1002000020",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        37
+      ],
+      "previous": {
+        "id": 21142,
+        "itemCode": "1002000020",
+        "description": "Alquiler torre de iluminación",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21143,
+      "itemCode": "1002000021",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        38
+      ],
+      "previous": {
+        "id": 21143,
+        "itemCode": "1002000021",
+        "description": "Alquiler tractor oruga",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21144,
+      "itemCode": "1002000022",
+      "financialGroupCode": "02020701",
+      "sourceRows": [
+        39
+      ],
+      "previous": {
+        "id": 21144,
+        "itemCode": "1002000022",
+        "description": "Alquiler vibro compactador",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020701",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21145,
+      "itemCode": "1002000023",
+      "financialGroupCode": "02020801",
+      "sourceRows": [
+        40
+      ],
+      "previous": {
+        "id": 21145,
+        "itemCode": "1002000023",
+        "description": "Alquiler de baterías sanitarias portátiles",
+        "itemGroup": "0202 Alquiler de maquinaria y equipos",
+        "financialGroupCode": "02020801",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21146,
+      "itemCode": "1002000024",
+      "financialGroupCode": "02020201",
+      "sourceRows": [
+        41
+      ],
+      "previous": {
+        "id": 21146,
+        "itemCode": "1002000024",
+        "description": "Fabricación de Mangueras",
+        "itemGroup": "0202 Servicio Fabricación de Repuestos",
+        "financialGroupCode": "02020201",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21147,
+      "itemCode": "1002000025",
+      "financialGroupCode": "02020102",
+      "sourceRows": [
+        42
+      ],
+      "previous": {
+        "id": 21147,
+        "itemCode": "1002000025",
+        "description": "Servicios externos de rectificación de repuesto de vehículos",
+        "itemGroup": "0202 Servicio Fabricación de Repuestos",
+        "financialGroupCode": "02020102",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21148,
+      "itemCode": "1002000026",
+      "financialGroupCode": "02020202",
+      "sourceRows": [
+        43
+      ],
+      "previous": {
+        "id": 21148,
+        "itemCode": "1002000026",
+        "description": "Mantenimiento correctivo de maquinaria pesada",
+        "itemGroup": "0202 Servicio Mantenimiento correctivo de Maquinaria",
+        "financialGroupCode": "02020202",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21149,
+      "itemCode": "1002000027",
+      "financialGroupCode": "02020202",
+      "sourceRows": [
+        44
+      ],
+      "previous": {
+        "id": 21149,
+        "itemCode": "1002000027",
+        "description": "Mantenimiento preventivo de maquinaria pesada",
+        "itemGroup": "0202 Servicio Mantenimiento correctivo de Maquinaria",
+        "financialGroupCode": "02020202",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21150,
+      "itemCode": "1002000028",
+      "financialGroupCode": "02020201",
+      "sourceRows": [
+        45
+      ],
+      "previous": {
+        "id": 21150,
+        "itemCode": "1002000028",
+        "description": "Servicios externos de fabricación de Repuestos para Maquinaria",
+        "itemGroup": "0202 Servicio Mantenimiento correctivo de Maquinaria",
+        "financialGroupCode": "02020201",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21151,
+      "itemCode": "1002000029",
+      "financialGroupCode": "02020202",
+      "sourceRows": [
+        46
+      ],
+      "previous": {
+        "id": 21151,
+        "itemCode": "1002000029",
+        "description": "Servicios externos de rectificación de repuesto de maquinaria",
+        "itemGroup": "0202 Servicio Mantenimiento correctivo de Maquinaria",
+        "financialGroupCode": "02020202",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21152,
+      "itemCode": "1002000030",
+      "financialGroupCode": "02020202",
+      "sourceRows": [
+        47
+      ],
+      "previous": {
+        "id": 21152,
+        "itemCode": "1002000030",
+        "description": "Mantenimiento de aire acondicionado",
+        "itemGroup": "0202 Servicio Mantenimiento correctivo de Maquinaria",
+        "financialGroupCode": "02020202",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21153,
+      "itemCode": "1002000031",
+      "financialGroupCode": "02020102",
+      "sourceRows": [
+        48
+      ],
+      "previous": {
+        "id": 21153,
+        "itemCode": "1002000031",
+        "description": "Mantenimiento correctivo de vehículos",
+        "itemGroup": "0202 Servicio Mantenimiento correctivo de vehículos",
+        "financialGroupCode": "02020102",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21154,
+      "itemCode": "1002000032",
+      "financialGroupCode": "02020102",
+      "sourceRows": [
+        49
+      ],
+      "previous": {
+        "id": 21154,
+        "itemCode": "1002000032",
+        "description": "Mantenimiento preventivo de vehículos",
+        "itemGroup": "0202 Servicio Mantenimiento correctivo de vehículos",
+        "financialGroupCode": "02020102",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21155,
+      "itemCode": "1002000033",
+      "financialGroupCode": "02020101",
+      "sourceRows": [
+        50
+      ],
+      "previous": {
+        "id": 21155,
+        "itemCode": "1002000033",
+        "description": "Servicios externos de fabricación de Repuestos para Vehículos",
+        "itemGroup": "0202 Servicio Mantenimiento correctivo de vehículos",
+        "financialGroupCode": "02020101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21156,
+      "itemCode": "1002000034",
+      "financialGroupCode": "02040201",
+      "sourceRows": [
+        51
+      ],
+      "previous": {
+        "id": 21156,
+        "itemCode": "1002000034",
+        "description": "Acarreo de material selecto, arena, grava y agregados",
+        "itemGroup": "0204 Transporte",
+        "financialGroupCode": "02040201",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21157,
+      "itemCode": "1002000035",
+      "financialGroupCode": "02040201",
+      "sourceRows": [
+        52
+      ],
+      "previous": {
+        "id": 21157,
+        "itemCode": "1002000035",
+        "description": "Movilización de maquinaria pesada y equipo especial",
+        "itemGroup": "0204 Transporte",
+        "financialGroupCode": "02040201",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21158,
+      "itemCode": "1002000036",
+      "financialGroupCode": "02040201",
+      "sourceRows": [
+        53
+      ],
+      "previous": {
+        "id": 21158,
+        "itemCode": "1002000036",
+        "description": "Transporte de materiales y suministros",
+        "itemGroup": "0204 Transporte",
+        "financialGroupCode": "02040201",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21159,
+      "itemCode": "1002000037",
+      "financialGroupCode": "02040201",
+      "sourceRows": [
+        54
+      ],
+      "previous": {
+        "id": 21159,
+        "itemCode": "1002000037",
+        "description": "Carga, descarga y maniobra de materiales",
+        "itemGroup": "0204 Transporte",
+        "financialGroupCode": "02040201",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21160,
+      "itemCode": "1002000038",
+      "financialGroupCode": "02040201",
+      "sourceRows": [
+        55
+      ],
+      "previous": {
+        "id": 21160,
+        "itemCode": "1002000038",
+        "description": "Mensajería y paquetería",
+        "itemGroup": "0204 Transporte",
+        "financialGroupCode": "02040201",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21161,
+      "itemCode": "1002000039",
+      "financialGroupCode": "02050501",
+      "sourceRows": [
+        56
+      ],
+      "previous": {
+        "id": 21161,
+        "itemCode": "1002000039",
+        "description": "Consultoría ambiental y gestión de permisos ambientales",
+        "itemGroup": "0205 Consultorias Externas",
+        "financialGroupCode": "02050501",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21162,
+      "itemCode": "1002000040",
+      "financialGroupCode": "02050401",
+      "sourceRows": [
+        57
+      ],
+      "previous": {
+        "id": 21162,
+        "itemCode": "1002000040",
+        "description": "Diseño y consultoría hidráulica para drenajes y sistemas de agua",
+        "itemGroup": "0205 Consultorias Externas",
+        "financialGroupCode": "02050401",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21163,
+      "itemCode": "1002000041",
+      "financialGroupCode": "02059901",
+      "sourceRows": [
+        58
+      ],
+      "previous": {
+        "id": 21163,
+        "itemCode": "1002000041",
+        "description": "Estudios geotécnicos y análisis de mecánica de suelos",
+        "itemGroup": "0205 Consultorias Externas",
+        "financialGroupCode": "02059901",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21164,
+      "itemCode": "1002000042",
+      "financialGroupCode": "02059901",
+      "sourceRows": [
+        59
+      ],
+      "previous": {
+        "id": 21164,
+        "itemCode": "1002000042",
+        "description": "Modelado y coordinación BIM para proyectos de construcción",
+        "itemGroup": "0205 Consultorias Externas",
+        "financialGroupCode": "02059901",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21165,
+      "itemCode": "1002000043",
+      "financialGroupCode": "02059901",
+      "sourceRows": [
+        60
+      ],
+      "previous": {
+        "id": 21165,
+        "itemCode": "1002000043",
+        "description": "Análisis y consultoría estructural",
+        "itemGroup": "0205 Consultorias Externas",
+        "financialGroupCode": "02059901",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21166,
+      "itemCode": "1002000044",
+      "financialGroupCode": "02050501",
+      "sourceRows": [
+        61
+      ],
+      "previous": {
+        "id": 21166,
+        "itemCode": "1002000044",
+        "description": "Implementación y seguimiento del plan de gestión ambiental del proyecto",
+        "itemGroup": "0205 Consultorias Externas",
+        "financialGroupCode": "02050501",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21167,
+      "itemCode": "1002000045",
+      "financialGroupCode": "02050401",
+      "sourceRows": [
+        62
+      ],
+      "previous": {
+        "id": 21167,
+        "itemCode": "1002000045",
+        "description": "Peritajes técnicos",
+        "itemGroup": "0205 Consultorias Externas",
+        "financialGroupCode": "02050401",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21168,
+      "itemCode": "1002000046",
+      "financialGroupCode": "02059901",
+      "sourceRows": [
+        63
+      ],
+      "previous": {
+        "id": 21168,
+        "itemCode": "1002000046",
+        "description": "Fabricación e instalación de estructuras metálicas",
+        "itemGroup": "0205 Servicios de Obras de construcción.",
+        "financialGroupCode": "02059901",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21169,
+      "itemCode": "1002000047",
+      "financialGroupCode": "02059901",
+      "sourceRows": [
+        64
+      ],
+      "previous": {
+        "id": 21169,
+        "itemCode": "1002000047",
+        "description": "Nivelación y conformación de plataformas y áreas de trabajo",
+        "itemGroup": "0205 Servicios de Obras de construcción.",
+        "financialGroupCode": "02059901",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21170,
+      "itemCode": "1002000048",
+      "financialGroupCode": "02059901",
+      "sourceRows": [
+        65
+      ],
+      "previous": {
+        "id": 21170,
+        "itemCode": "1002000048",
+        "description": "Obras de Construcción (Corte, conformación y relleno de terreno con compactación)",
+        "itemGroup": "0205 Servicios de Obras de construcción.",
+        "financialGroupCode": "02059901",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21171,
+      "itemCode": "1002000049",
+      "financialGroupCode": "02050301",
+      "sourceRows": [
+        66
+      ],
+      "previous": {
+        "id": 21171,
+        "itemCode": "1002000049",
+        "description": "Servicios generales de terracería.",
+        "itemGroup": "0205 Servicios de Obras de construcción.",
+        "financialGroupCode": "02050301",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21172,
+      "itemCode": "1002000050",
+      "financialGroupCode": "02050301",
+      "sourceRows": [
+        67
+      ],
+      "previous": {
+        "id": 21172,
+        "itemCode": "1002000050",
+        "description": "Construcción de caja puente y drenajes mayores",
+        "itemGroup": "0205 Servicios de Obras de construcción.",
+        "financialGroupCode": "02050301",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21173,
+      "itemCode": "1002000051",
+      "financialGroupCode": "02050301",
+      "sourceRows": [
+        68
+      ],
+      "previous": {
+        "id": 21173,
+        "itemCode": "1002000051",
+        "description": "Construcción y acabados de aceras peatonales",
+        "itemGroup": "0205 Servicios de Obras de construcción.",
+        "financialGroupCode": "02050301",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21174,
+      "itemCode": "1002000052",
+      "financialGroupCode": "02050301",
+      "sourceRows": [
+        69
+      ],
+      "previous": {
+        "id": 21174,
+        "itemCode": "1002000052",
+        "description": "Instalación y construcción de alcantarillas de concreto o metálicas",
+        "itemGroup": "0205 Servicios de Obras de construcción.",
+        "financialGroupCode": "02050301",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21175,
+      "itemCode": "1002000053",
+      "financialGroupCode": "02050301",
+      "sourceRows": [
+        70
+      ],
+      "previous": {
+        "id": 21175,
+        "itemCode": "1002000053",
+        "description": "Construcción de Bordillos.",
+        "itemGroup": "0205 Servicios de Obras de construcción.",
+        "financialGroupCode": "02050301",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21176,
+      "itemCode": "1002000054",
+      "financialGroupCode": "02050301",
+      "sourceRows": [
+        71
+      ],
+      "previous": {
+        "id": 21176,
+        "itemCode": "1002000054",
+        "description": "Construcción de Cunetas.",
+        "itemGroup": "0205 Servicios de Obras de construcción.",
+        "financialGroupCode": "02050301",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21177,
+      "itemCode": "1002000055",
+      "financialGroupCode": "02059901",
+      "sourceRows": [
+        72
+      ],
+      "previous": {
+        "id": 21177,
+        "itemCode": "1002000055",
+        "description": "Suministro e instalación de luminarias y postes eléctricos",
+        "itemGroup": "0205 Servicios de Obras de construcción.",
+        "financialGroupCode": "02059901",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21178,
+      "itemCode": "1002000056",
+      "financialGroupCode": "03020401",
+      "sourceRows": [
+        73
+      ],
+      "previous": {
+        "id": 21178,
+        "itemCode": "1002000056",
+        "description": "Seguro contra accidentes.",
+        "itemGroup": "0302 Seguros",
+        "financialGroupCode": "03020401",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21179,
+      "itemCode": "1002000057",
+      "financialGroupCode": "03020201",
+      "sourceRows": [
+        74
+      ],
+      "previous": {
+        "id": 21179,
+        "itemCode": "1002000057",
+        "description": "Seguro Riesgos Técnicos",
+        "itemGroup": "0302 Seguros",
+        "financialGroupCode": "03020201",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21180,
+      "itemCode": "1002000058",
+      "financialGroupCode": "03020401",
+      "sourceRows": [
+        75
+      ],
+      "previous": {
+        "id": 21180,
+        "itemCode": "1002000058",
+        "description": "Seguros generales",
+        "itemGroup": "0302 Seguros",
+        "financialGroupCode": "03020401",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21181,
+      "itemCode": "1002000059",
+      "financialGroupCode": "03030101",
+      "sourceRows": [
+        76
+      ],
+      "previous": {
+        "id": 21181,
+        "itemCode": "1002000059",
+        "description": "Escolta y resguardo de maquinaria y equipo pesado",
+        "itemGroup": "0303 Servicios de seguridad",
+        "financialGroupCode": "03030101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21182,
+      "itemCode": "1002000060",
+      "financialGroupCode": "03030101",
+      "sourceRows": [
+        77
+      ],
+      "previous": {
+        "id": 21182,
+        "itemCode": "1002000060",
+        "description": "Monitoreo de cámaras y sistemas de seguridad electrónica",
+        "itemGroup": "0303 Servicios de seguridad",
+        "financialGroupCode": "03030101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21183,
+      "itemCode": "1002000061",
+      "financialGroupCode": "03030101",
+      "sourceRows": [
+        78
+      ],
+      "previous": {
+        "id": 21183,
+        "itemCode": "1002000061",
+        "description": "Vigilancia y seguridad privada.",
+        "itemGroup": "0303 Servicios de seguridad",
+        "financialGroupCode": "03030101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21184,
+      "itemCode": "1002000062",
+      "financialGroupCode": "03040101",
+      "sourceRows": [
+        79
+      ],
+      "previous": {
+        "id": 21184,
+        "itemCode": "1002000062",
+        "description": "Servicios de internet",
+        "itemGroup": "0304 Servicios básicos",
+        "financialGroupCode": "03040101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21185,
+      "itemCode": "1002000063",
+      "financialGroupCode": "03040201",
+      "sourceRows": [
+        80
+      ],
+      "previous": {
+        "id": 21185,
+        "itemCode": "1002000063",
+        "description": "Telefonía móvil",
+        "itemGroup": "0304 Servicios básicos",
+        "financialGroupCode": "03040201",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21186,
+      "itemCode": "1002000064",
+      "financialGroupCode": "03040401",
+      "sourceRows": [
+        81
+      ],
+      "previous": {
+        "id": 21186,
+        "itemCode": "1002000064",
+        "description": "Agua Potable",
+        "itemGroup": "0304 Servicios básicos",
+        "financialGroupCode": "03040401",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21187,
+      "itemCode": "1002000065",
+      "financialGroupCode": "03040501",
+      "sourceRows": [
+        82
+      ],
+      "previous": {
+        "id": 21187,
+        "itemCode": "1002000065",
+        "description": "Cable",
+        "itemGroup": "0304 Servicios básicos",
+        "financialGroupCode": "03040501",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21188,
+      "itemCode": "1002000066",
+      "financialGroupCode": "03040301",
+      "sourceRows": [
+        83
+      ],
+      "previous": {
+        "id": 21188,
+        "itemCode": "1002000066",
+        "description": "Energía eléctrica",
+        "itemGroup": "0304 Servicios básicos",
+        "financialGroupCode": "03040301",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21189,
+      "itemCode": "1002000067",
+      "financialGroupCode": "03051001",
+      "sourceRows": [
+        84
+      ],
+      "previous": {
+        "id": 21189,
+        "itemCode": "1002000067",
+        "description": "Inscripciones organismos colegiados",
+        "itemGroup": "0304 Servicios básicos",
+        "financialGroupCode": "03051001",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21190,
+      "itemCode": "1002000068",
+      "financialGroupCode": "03070101",
+      "sourceRows": [
+        85
+      ],
+      "previous": {
+        "id": 21190,
+        "itemCode": "1002000068",
+        "description": "Pasajes aéreos",
+        "itemGroup": "0304 Servicios básicos",
+        "financialGroupCode": "03070101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21191,
+      "itemCode": "1002000069",
+      "financialGroupCode": "03070401",
+      "sourceRows": [
+        86
+      ],
+      "previous": {
+        "id": 21191,
+        "itemCode": "1002000069",
+        "description": "Hospedaje",
+        "itemGroup": "0304 Servicios básicos",
+        "financialGroupCode": "03070401",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21192,
+      "itemCode": "1002000070",
+      "financialGroupCode": "03050401",
+      "sourceRows": [
+        87
+      ],
+      "previous": {
+        "id": 21192,
+        "itemCode": "1002000070",
+        "description": "Mantenimientos equipo computación y oficina",
+        "itemGroup": "0304 Servicios básicos",
+        "financialGroupCode": "03050401",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21193,
+      "itemCode": "1002000071",
+      "financialGroupCode": "03050801",
+      "sourceRows": [
+        88
+      ],
+      "previous": {
+        "id": 21193,
+        "itemCode": "1002000071",
+        "description": "Servicios notariales",
+        "itemGroup": "0305 Gastos legales, certificaciones y notariales.",
+        "financialGroupCode": "03050801",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21194,
+      "itemCode": "1002000072",
+      "financialGroupCode": "03051301",
+      "sourceRows": [
+        89
+      ],
+      "previous": {
+        "id": 21194,
+        "itemCode": "1002000072",
+        "description": "Limpieza general y mantenimiento de campamentos",
+        "itemGroup": "0305 Mantenimiento de campamentos.",
+        "financialGroupCode": "03051301",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21195,
+      "itemCode": "1002000073",
+      "financialGroupCode": "03059901",
+      "sourceRows": [
+        90
+      ],
+      "previous": {
+        "id": 21195,
+        "itemCode": "1002000073",
+        "description": "Limpieza de oficinas",
+        "itemGroup": "0305 Mantenimiento de campamentos.",
+        "financialGroupCode": "03059901",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21196,
+      "itemCode": "1002000074",
+      "financialGroupCode": "03050301",
+      "sourceRows": [
+        91
+      ],
+      "previous": {
+        "id": 21196,
+        "itemCode": "1002000074",
+        "description": "Gastos varios de aduana",
+        "itemGroup": "0305 Servicios externos",
+        "financialGroupCode": "03050301",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21197,
+      "itemCode": "1002000075",
+      "financialGroupCode": "07020501",
+      "sourceRows": [
+        92
+      ],
+      "previous": {
+        "id": 21197,
+        "itemCode": "1002000075",
+        "description": "Aranceles aduaneros",
+        "itemGroup": "0305 Servicios externos",
+        "financialGroupCode": "07020501",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21198,
+      "itemCode": "1002000076",
+      "financialGroupCode": "03050201",
+      "sourceRows": [
+        93
+      ],
+      "previous": {
+        "id": 21198,
+        "itemCode": "1002000076",
+        "description": "Licencias informáticas",
+        "itemGroup": "0305 Suscripciones y licencias informáticas",
+        "financialGroupCode": "03050201",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21199,
+      "itemCode": "1002000077",
+      "financialGroupCode": "03050401",
+      "sourceRows": [
+        94
+      ],
+      "previous": {
+        "id": 21199,
+        "itemCode": "1002000077",
+        "description": "Mantenimiento equipo computación",
+        "itemGroup": "0305 Suscripciones y licencias informáticas.",
+        "financialGroupCode": "03050401",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21200,
+      "itemCode": "1002000078",
+      "financialGroupCode": "03060101",
+      "sourceRows": [
+        95
+      ],
+      "previous": {
+        "id": 21200,
+        "itemCode": "1002000078",
+        "description": "Asesoría legal",
+        "itemGroup": "0306 Asesorías",
+        "financialGroupCode": "03060101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21201,
+      "itemCode": "1002000079",
+      "financialGroupCode": "03060101",
+      "sourceRows": [
+        96
+      ],
+      "previous": {
+        "id": 21201,
+        "itemCode": "1002000079",
+        "description": "Asesoría Legal en materia RRHH",
+        "itemGroup": "0306 Asesorías",
+        "financialGroupCode": "03060101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21202,
+      "itemCode": "1002000080",
+      "financialGroupCode": "03060201",
+      "sourceRows": [
+        97
+      ],
+      "previous": {
+        "id": 21202,
+        "itemCode": "1002000080",
+        "description": "Auditoría externa",
+        "itemGroup": "0306 Asesorías",
+        "financialGroupCode": "03060201",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21203,
+      "itemCode": "1002000081",
+      "financialGroupCode": "03060201",
+      "sourceRows": [
+        98
+      ],
+      "previous": {
+        "id": 21203,
+        "itemCode": "1002000081",
+        "description": "Consultoría administrativa",
+        "itemGroup": "0306 Asesorías",
+        "financialGroupCode": "03060201",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21204,
+      "itemCode": "1002000082",
+      "financialGroupCode": "03060202",
+      "sourceRows": [
+        99
+      ],
+      "previous": {
+        "id": 21204,
+        "itemCode": "1002000082",
+        "description": "Asesorara contable",
+        "itemGroup": "0306 Asesorías",
+        "financialGroupCode": "03060202",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21205,
+      "itemCode": "1002000083",
+      "financialGroupCode": "03080101",
+      "sourceRows": [
+        100
+      ],
+      "previous": {
+        "id": 21205,
+        "itemCode": "1002000083",
+        "description": "Arriendo Casa o Departamento",
+        "itemGroup": "0308 Arriendos",
+        "financialGroupCode": "03080101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    },
+    {
+      "id": 21206,
+      "itemCode": "1002000084",
+      "financialGroupCode": "03080101",
+      "sourceRows": [
+        101
+      ],
+      "previous": {
+        "id": 21206,
+        "itemCode": "1002000084",
+        "description": "Arriendo Terreno propiedades",
+        "itemGroup": "0308 Arriendos",
+        "financialGroupCode": "03080101",
+        "tipoArticulo": 2,
+        "isActive": true,
+        "createdById": null,
+        "updatedById": null,
+        "createdAt": "2026-07-08T04:53:17.459Z",
+        "updatedAt": "2026-07-22T21:34:39.458Z"
+      }
+    }
+  ],
+  "validationErrors": []
+}
