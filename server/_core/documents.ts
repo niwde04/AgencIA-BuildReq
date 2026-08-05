@@ -1221,6 +1221,357 @@ export function buildProcurementPdfBase64(params: {
   return buildPdfBase64FromPages(pages);
 }
 
+export function buildTreasuryInvoiceReportPdfBase64(params: {
+  generatedLabel: string;
+  statusLabel: string;
+  periodLabel: string;
+  searchLabel: string;
+  rows: Array<{
+    supplier: string;
+    invoiceNumber: string;
+    date: string;
+    total: string;
+    retentions: string;
+    net: string;
+    status: string;
+    document: string;
+  }>;
+  totals: Array<{
+    currency: string;
+    total: string;
+    retentions: string;
+    net: string;
+  }>;
+}) {
+  const pageWidth = 842;
+  const pageHeight = 595;
+  const marginX = 26;
+  const ink = [0, 0, 0] as PdfRgb;
+  const accent = [0.82, 0.16, 0.22] as PdfRgb;
+  const muted = [0.32, 0.32, 0.32] as PdfRgb;
+  const border = [0.15, 0.15, 0.15] as PdfRgb;
+  const pages: PdfPage[] = [];
+  let page = createPage({ width: pageWidth, height: pageHeight });
+  pages.push(page);
+
+  const columns = [
+    { key: "supplier", label: "Proveedor", width: 185, align: "left" },
+    { key: "invoiceNumber", label: "Nro. factura", width: 115, align: "left" },
+    { key: "date", label: "Fecha", width: 65, align: "left" },
+    { key: "total", label: "Total", width: 85, align: "right" },
+    {
+      key: "retentions",
+      label: "Retenciones",
+      width: 80,
+      align: "right",
+    },
+    { key: "net", label: "Neto", width: 85, align: "right" },
+    { key: "status", label: "Estado", width: 65, align: "left" },
+    { key: "document", label: "Documento", width: 110, align: "left" },
+  ] as const;
+
+  const fitText = (
+    value: string,
+    maxWidth: number,
+    fontSize: number,
+    font: PdfFont = "F1"
+  ) => {
+    const normalized = sanitizePdfText(value || "-");
+    if (measureTextWidth(normalized, fontSize, font) <= maxWidth) {
+      return normalized;
+    }
+    let shortened = normalized;
+    while (
+      shortened.length > 1 &&
+      measureTextWidth(`${shortened}...`, fontSize, font) > maxWidth
+    ) {
+      shortened = shortened.slice(0, -1);
+    }
+    return `${shortened.trimEnd()}...`;
+  };
+
+  const drawHeader = (continuation: boolean) => {
+    drawImageContained(page, HEH_LOGO_IMAGE, {
+      x: 45,
+      top: 9,
+      width: 82,
+      height: 59,
+    });
+    drawText(page, {
+      x: 145,
+      top: 8,
+      width: 650,
+      text: "HIDALGO E HIDALGO HONDURAS SA DE CV",
+      fontSize: 14,
+      font: "F2",
+      align: "center",
+    });
+    drawText(page, {
+      x: 145,
+      top: 26,
+      width: 650,
+      text: "RTN: 08019013549808",
+      fontSize: 10.5,
+      font: "F2",
+      align: "center",
+    });
+    drawText(page, {
+      x: 145,
+      top: 41,
+      width: 650,
+      text: `REPORTE DE FACTURAS - ${params.statusLabel.toUpperCase()}`,
+      fontSize: 13,
+      font: "F2",
+      align: "center",
+    });
+    drawText(page, {
+      x: 145,
+      top: 58,
+      width: 650,
+      text: continuation
+        ? params.periodLabel
+        : `Periodo: ${params.periodLabel}`,
+      fontSize: 9.5,
+      font: "F2",
+      align: "center",
+    });
+    drawLine(page, 36, 79, pageWidth - 36, 79, ink, 1.1);
+    drawLine(page, 36, 84, pageWidth - 36, 84, ink, 0.7);
+  };
+
+  const drawMetadata = () => {
+    const drawField = (
+      x: number,
+      top: number,
+      label: string,
+      value: string,
+      labelWidth: number,
+      valueWidth: number
+    ) => {
+      drawText(page, {
+        x,
+        top,
+        text: `${label}:`,
+        fontSize: 8.7,
+        font: "F2",
+      });
+      drawText(page, {
+        x: x + labelWidth,
+        top,
+        text: fitText(value, valueWidth, 8.7, "F2"),
+        fontSize: 8.7,
+        font: "F2",
+      });
+    };
+
+    drawField(36, 101, "Fecha", params.generatedLabel, 68, 285);
+    drawField(36, 119, "Estado", params.statusLabel, 68, 285);
+    drawField(36, 137, "Periodo", params.periodLabel, 68, 285);
+    drawField(
+      535,
+      101,
+      "Registros",
+      params.rows.length.toLocaleString("es-HN"),
+      64,
+      190
+    );
+    drawField(535, 119, "Buscar", params.searchLabel, 64, 190);
+  };
+
+  const drawTableHeader = (top: number) => {
+    let x = marginX;
+    columns.forEach(column => {
+      drawText(page, {
+        x: x + 6,
+        top: top + 7,
+        width: column.width - 12,
+        text: column.label,
+        fontSize: 8,
+        font: "F2",
+        align: column.align,
+      });
+      x += column.width;
+    });
+    drawLine(page, marginX, top + 23, pageWidth - marginX, top + 23, ink, 0.9);
+    return top + 24;
+  };
+
+  drawHeader(false);
+  drawMetadata();
+  let rowTop = drawTableHeader(163);
+
+  params.rows.forEach(row => {
+    const supplierLines = wrapText(row.supplier, 175, 7.4, "F1", 2);
+    const rowHeight = supplierLines.length > 1 ? 28 : 23;
+    if (rowTop + rowHeight > pageHeight - 43) {
+      page = createPage({ width: pageWidth, height: pageHeight });
+      pages.push(page);
+      drawHeader(true);
+      rowTop = drawTableHeader(96);
+    }
+
+    let x = marginX;
+    columns.forEach(column => {
+      const value = row[column.key];
+      if (column.key === "supplier") {
+        supplierLines.forEach((line, lineIndex) => {
+          drawText(page, {
+            x: x + 6,
+            top: rowTop + 7 + lineIndex * 9,
+            text: line,
+            fontSize: 7.4,
+            color: ink,
+          });
+        });
+      } else {
+        const emphasized = column.key === "net" || column.key === "document";
+        drawText(page, {
+          x: x + 6,
+          top: rowTop + (rowHeight - 7.4) / 2,
+          width: column.width - 12,
+          text: fitText(
+            value,
+            column.width - 12,
+            7.4,
+            emphasized ? "F2" : "F1"
+          ),
+          fontSize: 7.4,
+          font: emphasized ? "F2" : "F1",
+          color: column.key === "document" ? accent : ink,
+          align: column.align,
+        });
+      }
+      x += column.width;
+    });
+    drawLine(
+      page,
+      marginX,
+      rowTop + rowHeight,
+      pageWidth - marginX,
+      rowTop + rowHeight,
+      border,
+      0.45
+    );
+    rowTop += rowHeight;
+  });
+
+  const totalsHeight = 47 + params.totals.length * 22;
+  let totalsTop = rowTop + 12;
+  if (totalsTop + totalsHeight > pageHeight - 43) {
+    page = createPage({ width: pageWidth, height: pageHeight });
+    pages.push(page);
+    drawHeader(true);
+    totalsTop = 104;
+  }
+
+  const totalsX = 391;
+  const totalColumns = [
+    { label: "Moneda", width: 60, align: "left" },
+    { label: "Total", width: 120, align: "right" },
+    { label: "Retenciones", width: 115, align: "right" },
+    { label: "Neto", width: 130, align: "right" },
+  ] as const;
+  drawLine(page, totalsX, totalsTop, pageWidth - marginX, totalsTop, ink, 1);
+  drawText(page, {
+    x: totalsX,
+    top: totalsTop + 8,
+    width: pageWidth - marginX - totalsX,
+    text: "TOTALES DEL REPORTE",
+    fontSize: 9.2,
+    font: "F2",
+    align: "center",
+  });
+  let totalX = totalsX;
+  totalColumns.forEach(column => {
+    drawText(page, {
+      x: totalX + 6,
+      top: totalsTop + 27,
+      width: column.width - 12,
+      text: column.label,
+      fontSize: 7.6,
+      font: "F2",
+      align: column.align,
+    });
+    totalX += column.width;
+  });
+  drawLine(
+    page,
+    totalsX,
+    totalsTop + 42,
+    pageWidth - marginX,
+    totalsTop + 42,
+    ink,
+    0.7
+  );
+  params.totals.forEach((totals, index) => {
+    const top = totalsTop + 48 + index * 22;
+    const values = [
+      totals.currency,
+      totals.total,
+      totals.retentions,
+      totals.net,
+    ];
+    let x = totalsX;
+    totalColumns.forEach((column, columnIndex) => {
+      const emphasized = columnIndex === 3;
+      drawText(page, {
+        x: x + 6,
+        top: top + 4,
+        width: column.width - 12,
+        text: fitText(
+          values[columnIndex]!,
+          column.width - 12,
+          8,
+          emphasized ? "F2" : "F1"
+        ),
+        fontSize: 8,
+        font: emphasized ? "F2" : "F1",
+        align: column.align,
+      });
+      x += column.width;
+    });
+    drawLine(
+      page,
+      totalsX,
+      top + 19,
+      pageWidth - marginX,
+      top + 19,
+      border,
+      index === params.totals.length - 1 ? 0.8 : 0.4
+    );
+  });
+
+  pages.forEach((pdfPage, index) => {
+    drawLine(
+      pdfPage,
+      marginX,
+      pageHeight - 31,
+      pageWidth - marginX,
+      pageHeight - 31,
+      ink,
+      0.7
+    );
+    drawText(pdfPage, {
+      x: marginX,
+      top: pageHeight - 23,
+      text: "Documento informativo generado automaticamente por BuildReq.",
+      fontSize: 7.5,
+      color: muted,
+    });
+    drawText(pdfPage, {
+      x: pageWidth - marginX - 90,
+      top: pageHeight - 23,
+      width: 90,
+      text: `Pagina ${index + 1} / ${pages.length}`,
+      fontSize: 7.5,
+      color: muted,
+      align: "right",
+    });
+  });
+
+  return buildPdfBase64FromPages(pages);
+}
+
 export function buildPurchaseOrderPrintPdfBase64(params: {
   orderNumber: string;
   orderId: string;
@@ -1763,19 +2114,11 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     const textX = sealX + 10;
     const textWidth = qrX - textX - 7;
 
-    drawRoundedRect(
-      page,
-      sealX,
-      sealTop,
-      sealWidth,
-      digitalSealHeight,
-      5,
-      {
-        fill: [0.97, 0.98, 0.97],
-        stroke: [0.18, 0.38, 0.25],
-        lineWidth: 0.9,
-      }
-    );
+    drawRoundedRect(page, sealX, sealTop, sealWidth, digitalSealHeight, 5, {
+      fill: [0.97, 0.98, 0.97],
+      stroke: [0.18, 0.38, 0.25],
+      lineWidth: 0.9,
+    });
     drawText(page, {
       x: textX,
       top: sealTop + 7,

@@ -6,6 +6,7 @@ import {
   getTreasuryPaymentStatus,
   roundTreasuryMoney,
 } from "@shared/treasury";
+import { formatPurchaseOrderCurrency } from "@shared/purchase-orders";
 import { buildTreasuryInvoiceSummaryPayload } from "@shared/system-workbook-report";
 import {
   applyProjectScope,
@@ -13,6 +14,7 @@ import {
   getProjectScopeIds,
 } from "../projectAccess";
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
+import { buildTreasuryInvoiceReportPdfBase64 } from "../_core/documents";
 import * as db from "../db";
 import * as treasury from "../treasury";
 
@@ -30,6 +32,20 @@ const reportDateSchema = z
   .regex(/^\d{4}-\d{2}-\d{2}$/)
   .nullish();
 const invoiceReportSearchSchema = z.string().trim().max(200).nullish();
+const invoiceSummaryReportInputSchema = z.object({
+  paymentStatus: invoicePaymentReportStatusSchema,
+  dateFrom: reportDateSchema,
+  dateTo: reportDateSchema,
+  search: invoiceReportSearchSchema,
+  page: z.number().int().positive().optional(),
+  pageSize: z.number().int().min(1).max(100).optional(),
+});
+const invoiceSummaryReportPdfInputSchema = invoiceSummaryReportInputSchema.omit(
+  {
+    page: true,
+    pageSize: true,
+  }
+);
 const draftItemSchema = z.union([
   z.object({
     sourceType: z.literal("invoice").optional(),
@@ -180,6 +196,150 @@ function invoiceReportRowMatchesSearch(
       .toLocaleLowerCase("es-HN")
       .includes(term)
   );
+}
+
+function formatTreasuryReportDate(value: unknown) {
+  if (!value) return "-";
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return "-";
+  const [year, month, day] = date.toISOString().slice(0, 10).split("-");
+  return `${day}/${month}/${year}`;
+}
+
+function formatTreasuryReportDateTime(value: Date) {
+  return value.toLocaleString("es-HN", {
+    timeZone: "America/Tegucigalpa",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+async function buildTreasuryInvoiceSummaryReport(
+  user: User,
+  input: z.infer<typeof invoiceSummaryReportInputSchema>
+) {
+  const dateFrom = parseReportDateBoundary(input.dateFrom, "start");
+  const dateTo = parseReportDateBoundary(input.dateTo, "end");
+  if (dateFrom && dateTo && dateFrom > dateTo) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "La fecha inicial no puede ser mayor que la fecha final.",
+    });
+  }
+  const previewPage = input.page
+    ? await treasury.listTreasuryInvoiceReportPage({
+        paymentStatus: input.paymentStatus,
+        search: input.search,
+        dateFrom,
+        dateTo,
+        projectIds: getProjectScopeIds(user),
+        page: input.page,
+        pageSize: input.pageSize ?? 10,
+      })
+    : null;
+  const invoiceFilters: Parameters<typeof db.listDmcReportSourceInvoices>[0] = {
+    dateFrom,
+    dateTo,
+    statuses: ["registrada"],
+    ...(previewPage ? { invoiceIds: previewPage.invoiceIds } : {}),
+  };
+  const sourceInvoices = await db.listDmcReportSourceInvoices(
+    applyProjectScope(invoiceFilters, user)
+  );
+  const paymentsByInvoice = await treasury.getTreasuryInvoiceReportPayments(
+    sourceInvoices.map(invoice => invoice.invoiceId)
+  );
+  const filteredInvoices = sourceInvoices.flatMap(invoice => {
+    const payments = paymentsByInvoice.get(invoice.invoiceId) ?? [];
+    const paidAmount = roundTreasuryMoney(
+      payments.reduce((sum, payment) => sum + payment.amount, 0)
+    );
+    const treasuryPaymentStatus = getTreasuryPaymentStatus(
+      Number(invoice.netPayable ?? 0),
+      paidAmount + Number(invoice.appliedAdvanceAmount ?? 0)
+    );
+    const paymentStatus =
+      treasuryPaymentStatus === "pagada"
+        ? "paid"
+        : treasuryPaymentStatus === "parcialmente_pagada"
+          ? "partial"
+          : "pending";
+    if (
+      input.paymentStatus !== "all" &&
+      input.paymentStatus !== paymentStatus
+    ) {
+      return [];
+    }
+    return [
+      {
+        invoice,
+        payments,
+        paidAmount,
+        paymentStatusLabel:
+          paymentStatus === "paid"
+            ? "Pagado"
+            : paymentStatus === "partial"
+              ? "Parcial"
+              : "Pendiente",
+      },
+    ];
+  });
+  const payload = buildTreasuryInvoiceSummaryPayload(
+    filteredInvoices.map(row => row.invoice),
+    {
+      generatedAt: new Date(),
+      dateFrom,
+      dateTo,
+    }
+  );
+  payload.invoices.forEach((invoice, index) => {
+    const reportInvoice = filteredInvoices[index]!;
+    const paidDates = reportInvoice.payments
+      .map(payment => payment.paidDate)
+      .filter((date): date is Date => Boolean(date));
+    invoice.Estado = reportInvoice.paymentStatusLabel;
+    invoice["Lote de pago"] = Array.from(
+      new Set(reportInvoice.payments.map(payment => payment.batchNumber))
+    ).join(", ");
+    invoice["Fecha de pago"] = paidDates.at(-1) ?? null;
+    invoice["Referencia de pago"] = Array.from(
+      new Set(
+        reportInvoice.payments
+          .map(payment => payment.bankReference?.trim())
+          .filter((reference): reference is string => Boolean(reference))
+      )
+    ).join(", ");
+    invoice["Monto pagado"] = reportInvoice.paidAmount;
+    invoice.navigation.paymentBatches = Array.from(
+      new Map(
+        reportInvoice.payments.map(payment => [
+          payment.batchId,
+          {
+            id: payment.batchId,
+            batchNumber: payment.batchNumber,
+          },
+        ])
+      ).values()
+    );
+  });
+  const matchingInvoices = previewPage
+    ? payload.invoices
+    : payload.invoices.filter(invoice =>
+        invoiceReportRowMatchesSearch(invoice, input.search)
+      );
+  const total = previewPage?.total ?? matchingInvoices.length;
+  const page = previewPage?.page ?? 1;
+  const pageSize = previewPage?.pageSize ?? Math.max(1, total);
+  const totalPages = previewPage?.totalPages ?? 1;
+  return {
+    ...payload,
+    invoices: matchingInvoices,
+    summary: { ...payload.summary, invoiceCount: total },
+    pagination: { page, pageSize, total, totalPages },
+  };
 }
 
 function rethrowTreasuryError(error: unknown): never {
@@ -357,139 +517,96 @@ export const treasuryRouter = router({
     }),
 
   invoiceSummaryReport: protectedProcedure
-    .input(
-      z.object({
-        paymentStatus: invoicePaymentReportStatusSchema,
-        dateFrom: reportDateSchema,
-        dateTo: reportDateSchema,
-        search: invoiceReportSearchSchema,
-        page: z.number().int().positive().optional(),
-        pageSize: z.number().int().min(1).max(100).optional(),
-      })
-    )
+    .input(invoiceSummaryReportInputSchema)
     .query(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
       await assertTreasuryAccess(ctx.user);
-      const dateFrom = parseReportDateBoundary(input.dateFrom, "start");
-      const dateTo = parseReportDateBoundary(input.dateTo, "end");
-      if (dateFrom && dateTo && dateFrom > dateTo) {
+      return buildTreasuryInvoiceSummaryReport(ctx.user, input);
+    }),
+
+  invoiceSummaryReportPdf: protectedProcedure
+    .input(invoiceSummaryReportPdfInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      await assertTreasuryAccess(ctx.user);
+      const payload = await buildTreasuryInvoiceSummaryReport(ctx.user, input);
+      if (!payload.summary.invoiceCount) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "La fecha inicial no puede ser mayor que la fecha final.",
+          message: "No hay facturas para exportar con los filtros actuales.",
         });
       }
-      const previewPage = input.page
-        ? await treasury.listTreasuryInvoiceReportPage({
-            paymentStatus: input.paymentStatus,
-            search: input.search,
-            dateFrom,
-            dateTo,
-            projectIds: getProjectScopeIds(ctx.user),
-            page: input.page,
-            pageSize: input.pageSize ?? 10,
-          })
-        : null;
-      const invoiceFilters: Parameters<
-        typeof db.listDmcReportSourceInvoices
-      >[0] = {
-        dateFrom,
-        dateTo,
-        statuses: ["registrada"],
-        ...(previewPage ? { invoiceIds: previewPage.invoiceIds } : {}),
-      };
-      const sourceInvoices = await db.listDmcReportSourceInvoices(
-        applyProjectScope(invoiceFilters, ctx.user)
-      );
-      const paymentsByInvoice = await treasury.getTreasuryInvoiceReportPayments(
-        sourceInvoices.map(invoice => invoice.invoiceId)
-      );
-      const filteredInvoices = sourceInvoices.flatMap(invoice => {
-        const payments = paymentsByInvoice.get(invoice.invoiceId) ?? [];
-        const paidAmount = roundTreasuryMoney(
-          payments.reduce((sum, payment) => sum + payment.amount, 0)
-        );
-        const treasuryPaymentStatus = getTreasuryPaymentStatus(
-          Number(invoice.netPayable ?? 0),
-          paidAmount + Number(invoice.appliedAdvanceAmount ?? 0)
-        );
-        const paymentStatus =
-          treasuryPaymentStatus === "pagada"
-            ? "paid"
-            : treasuryPaymentStatus === "parcialmente_pagada"
-              ? "partial"
-              : "pending";
-        if (
-          input.paymentStatus !== "all" &&
-          input.paymentStatus !== paymentStatus
-        ) {
-          return [];
-        }
-        return [
-          {
-            invoice,
-            payments,
-            paidAmount,
-            paymentStatusLabel:
-              paymentStatus === "paid"
-                ? "Pagado"
-                : paymentStatus === "partial"
-                  ? "Parcial"
-                  : "Pendiente",
-          },
-        ];
+
+      const statusLabel =
+        input.paymentStatus === "paid"
+          ? "Pagadas"
+          : input.paymentStatus === "partial"
+            ? "Parciales"
+            : input.paymentStatus === "pending"
+              ? "Pendientes"
+              : "Todos los estados";
+      const periodLabel =
+        input.dateFrom || input.dateTo
+          ? `${input.dateFrom ? formatTreasuryReportDate(input.dateFrom) : "Inicio"} - ${input.dateTo ? formatTreasuryReportDate(input.dateTo) : "Actualidad"}`
+          : "Todas las fechas";
+      const totalsByCurrency = new Map<
+        "HNL" | "USD",
+        { total: number; retentions: number; net: number }
+      >();
+      const rows = payload.invoices.map(invoice => {
+        const currency = invoice.Moneda === "USD" ? "USD" : "HNL";
+        const total = Number(invoice["Total factura"] ?? 0);
+        const retentions =
+          Number(invoice["Retenciones fiscales"] ?? 0) +
+          Number(invoice["Otras retenciones"] ?? 0);
+        const net = Number(invoice["Neto a pagar"] ?? 0);
+        const accumulated = totalsByCurrency.get(currency) ?? {
+          total: 0,
+          retentions: 0,
+          net: 0,
+        };
+        totalsByCurrency.set(currency, {
+          total: roundTreasuryMoney(accumulated.total + total),
+          retentions: roundTreasuryMoney(accumulated.retentions + retentions),
+          net: roundTreasuryMoney(accumulated.net + net),
+        });
+        return {
+          supplier: String(invoice.Proveedor || "-"),
+          invoiceNumber: String(invoice["Nro. Factura"] || "-"),
+          date: formatTreasuryReportDate(invoice["Fecha factura"]),
+          total: formatPurchaseOrderCurrency(total, currency),
+          retentions: formatPurchaseOrderCurrency(retentions, currency),
+          net: formatPurchaseOrderCurrency(net, currency),
+          status: String(invoice.Estado || "-"),
+          document: String(invoice["Documento interno"] || "-"),
+        };
       });
-      const payload = buildTreasuryInvoiceSummaryPayload(
-        filteredInvoices.map(row => row.invoice),
-        {
-          generatedAt: new Date(),
-          dateFrom,
-          dateTo,
-        }
-      );
-      payload.invoices.forEach((invoice, index) => {
-        const reportInvoice = filteredInvoices[index];
-        const paidDates = reportInvoice.payments
-          .map(payment => payment.paidDate)
-          .filter((date): date is Date => Boolean(date));
-        invoice.Estado = reportInvoice.paymentStatusLabel;
-        invoice["Lote de pago"] = Array.from(
-          new Set(reportInvoice.payments.map(payment => payment.batchNumber))
-        ).join(", ");
-        invoice["Fecha de pago"] = paidDates.at(-1) ?? null;
-        invoice["Referencia de pago"] = Array.from(
-          new Set(
-            reportInvoice.payments
-              .map(payment => payment.bankReference?.trim())
-              .filter((reference): reference is string => Boolean(reference))
-          )
-        ).join(", ");
-        invoice["Monto pagado"] = reportInvoice.paidAmount;
-        invoice.navigation.paymentBatches = Array.from(
-          new Map(
-            reportInvoice.payments.map(payment => [
-              payment.batchId,
-              {
-                id: payment.batchId,
-                batchNumber: payment.batchNumber,
-              },
-            ])
-          ).values()
-        );
+      const base64 = buildTreasuryInvoiceReportPdfBase64({
+        generatedLabel: formatTreasuryReportDateTime(
+          payload.summary.generatedAt
+        ),
+        statusLabel,
+        periodLabel,
+        searchLabel: input.search?.trim() || "Sin filtro",
+        rows,
+        totals: Array.from(totalsByCurrency.entries())
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([currency, totals]) => ({
+            currency,
+            total: formatPurchaseOrderCurrency(totals.total, currency),
+            retentions: formatPurchaseOrderCurrency(
+              totals.retentions,
+              currency
+            ),
+            net: formatPurchaseOrderCurrency(totals.net, currency),
+          })),
       });
-      const matchingInvoices = previewPage
-        ? payload.invoices
-        : payload.invoices.filter(invoice =>
-            invoiceReportRowMatchesSearch(invoice, input.search)
-          );
-      const total = previewPage?.total ?? matchingInvoices.length;
-      const page = previewPage?.page ?? 1;
-      const pageSize = previewPage?.pageSize ?? Math.max(1, total);
-      const totalPages = previewPage?.totalPages ?? 1;
+
       return {
-        ...payload,
-        invoices: matchingInvoices,
-        summary: { ...payload.summary, invoiceCount: total },
-        pagination: { page, pageSize, total, totalPages },
+        fileName: `Tesoreria-Reporte-Facturas-${input.dateFrom || "inicio"}-${input.dateTo || "actualidad"}.pdf`,
+        mimeType: "application/pdf" as const,
+        base64,
+        invoiceCount: payload.summary.invoiceCount,
       };
     }),
 

@@ -22,13 +22,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -81,6 +75,7 @@ import {
   Download,
   Eye,
   FileSpreadsheet,
+  FileText,
   Loader2,
   Plus,
   Printer,
@@ -2967,7 +2962,7 @@ export default function Tesoreria() {
   const [invoiceReportSearch, setInvoiceReportSearch] = useState("");
   const debouncedInvoiceReportSearch = useDebouncedValue(invoiceReportSearch);
   const [invoiceReportPreviewOpen, setInvoiceReportPreviewOpen] =
-    useState(true);
+    useState(false);
   const [invoiceReportPage, setInvoiceReportPage] = useState(1);
   const [exportingInvoiceSummary, setExportingInvoiceSummary] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("todos");
@@ -3013,11 +3008,12 @@ export default function Tesoreria() {
     },
     {
       enabled:
-        invoiceReportPreviewOpen &&
         settingsQuery.data?.treasuryEnabled === true &&
         settingsQuery.data?.canAccess === true,
     }
   );
+  const exportInvoiceSummaryPdfMutation =
+    trpc.treasury.invoiceSummaryReportPdf.useMutation();
   const invoiceReportRows = invoiceSummaryQuery.data?.invoices ?? [];
   const invoiceReportTotal = invoiceSummaryQuery.data?.pagination.total ?? 0;
   const resolvedInvoiceReportTotalPages =
@@ -3275,6 +3271,28 @@ export default function Tesoreria() {
     }
   }
 
+  async function exportInvoiceSummaryPdf() {
+    if (exportInvoiceSummaryPdfMutation.isPending) return;
+    try {
+      const file = await exportInvoiceSummaryPdfMutation.mutateAsync({
+        paymentStatus: invoicePaymentReportStatus,
+        dateFrom: invoiceReportDateFrom || null,
+        dateTo: invoiceReportDateTo || null,
+        search: invoiceReportSearch.trim() || null,
+      });
+      downloadBase64File(file.fileName, file.mimeType, file.base64);
+      toast.success(
+        `Reporte PDF generado con ${file.invoiceCount.toLocaleString("es-HN")} factura(s).`
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar el reporte PDF de facturas."
+      );
+    }
+  }
+
   async function exportFilteredBatches() {
     if (!visibleBatches.length) {
       toast.error("No hay lotes para exportar con los filtros actuales.");
@@ -3487,265 +3505,307 @@ export default function Tesoreria() {
         </Alert>
       )}
 
-      <Card className="order-last">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg">Retenciones de calidad</CardTitle>
-          <CardDescription>
-            Solicitudes pendientes de autorización y liberaciones disponibles
-            para pago.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-auto rounded-lg border">
-            <Table className="min-w-[1050px]">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Factura</TableHead>
-                  <TableHead>Proveedor</TableHead>
-                  <TableHead>Proyecto</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead className="text-right">Retenido</TableHead>
-                  <TableHead className="text-right">Solicitado</TableHead>
-                  <TableHead className="text-right">Aprobado</TableHead>
-                  <TableHead className="text-right">Pagado</TableHead>
-                  <TableHead className="text-right">Saldo</TableHead>
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {qualityReleaseQueueQuery.isLoading ? (
-                  <TableRow>
-                    <TableCell colSpan={10} className="py-10 text-center">
-                      <Loader2 className="mx-auto h-5 w-5 animate-spin" />
-                    </TableCell>
-                  </TableRow>
-                ) : (qualityReleaseQueueQuery.data ?? []).length ? (
-                  (qualityReleaseQueueQuery.data ?? []).map((row: any) => (
-                    <TableRow key={row.release.id}>
-                      <TableCell>
-                        <div className="font-medium">
-                          {row.invoice.invoiceDocumentNumber}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {row.invoice.invoiceNumber || "Sin número fiscal"}
-                        </div>
-                      </TableCell>
-                      <TableCell>{row.supplier?.name || "Proveedor"}</TableCell>
-                      <TableCell>
-                        {row.project.code} - {row.project.name}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">
-                          {row.release.status === "pending_approval"
-                            ? "Pendiente de aprobación"
-                            : row.release.status === "partially_paid"
-                              ? "Parcialmente pagada"
-                              : "Aprobada"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {formatMoney(
-                          row.adjustment.amount,
-                          row.invoice.currency
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {formatMoney(
-                          row.release.requestedAmount,
-                          row.invoice.currency
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {formatMoney(
-                          row.release.approvedAmount,
-                          row.invoice.currency
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {formatMoney(row.paidAmount, row.invoice.currency)}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold">
-                        {formatMoney(
-                          row.availableToPayAmount,
-                          row.invoice.currency
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {row.release.status === "pending_approval" &&
-                        settingsQuery.data?.permissions.canDepurate ? (
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              size="sm"
-                              onClick={() => {
-                                setReleaseDecision(row);
-                                setReleaseDecisionApproved(true);
-                                setReleaseDecisionAmount(
-                                  formatMoneyInputValue(
-                                    row.release.requestedAmount
-                                  )
-                                );
-                                setReleaseDecisionComment("");
-                              }}
-                            >
-                              Aprobar
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={() => {
-                                setReleaseDecision(row);
-                                setReleaseDecisionApproved(false);
-                                setReleaseDecisionAmount("");
-                                setReleaseDecisionComment("");
-                              }}
-                            >
-                              Rechazar
-                            </Button>
-                          </div>
-                        ) : null}
-                      </TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell
-                      colSpan={10}
-                      className="py-10 text-center text-muted-foreground"
-                    >
-                      No hay solicitudes o liberaciones activas.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
+      <Card className="order-[1]">
+        <Accordion type="single" collapsible>
+          <AccordionItem value="quality-retentions" className="border-b-0">
+            <AccordionTrigger className="px-6 py-5 hover:no-underline">
+              <span className="flex min-w-0 flex-1 flex-col items-start gap-1 text-left">
+                <span className="flex items-center gap-3 text-lg font-semibold">
+                  <span className="h-5 w-1 rounded-full bg-primary" />
+                  Retenciones de calidad
+                  {qualityReleaseQueueQuery.isFetching ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : (
+                    <Badge variant="secondary">
+                      {(
+                        qualityReleaseQueueQuery.data ?? []
+                      ).length.toLocaleString("es-HN")}
+                    </Badge>
+                  )}
+                </span>
+                <span className="pl-4 text-sm font-normal text-muted-foreground">
+                  Solicitudes pendientes de autorización y liberaciones
+                  disponibles para pago.
+                </span>
+              </span>
+            </AccordionTrigger>
+            <AccordionContent className="pb-0">
+              <CardContent className="border-t pt-6">
+                <div className="overflow-auto rounded-lg border">
+                  <Table className="min-w-[1050px]">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Factura</TableHead>
+                        <TableHead>Proveedor</TableHead>
+                        <TableHead>Proyecto</TableHead>
+                        <TableHead>Estado</TableHead>
+                        <TableHead className="text-right">Retenido</TableHead>
+                        <TableHead className="text-right">Solicitado</TableHead>
+                        <TableHead className="text-right">Aprobado</TableHead>
+                        <TableHead className="text-right">Pagado</TableHead>
+                        <TableHead className="text-right">Saldo</TableHead>
+                        <TableHead />
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {qualityReleaseQueueQuery.isLoading ? (
+                        <TableRow>
+                          <TableCell colSpan={10} className="py-10 text-center">
+                            <Loader2 className="mx-auto h-5 w-5 animate-spin" />
+                          </TableCell>
+                        </TableRow>
+                      ) : (qualityReleaseQueueQuery.data ?? []).length ? (
+                        (qualityReleaseQueueQuery.data ?? []).map(
+                          (row: any) => (
+                            <TableRow key={row.release.id}>
+                              <TableCell>
+                                <div className="font-medium">
+                                  {row.invoice.invoiceDocumentNumber}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {row.invoice.invoiceNumber ||
+                                    "Sin número fiscal"}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                {row.supplier?.name || "Proveedor"}
+                              </TableCell>
+                              <TableCell>
+                                {row.project.code} - {row.project.name}
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant="outline">
+                                  {row.release.status === "pending_approval"
+                                    ? "Pendiente de aprobación"
+                                    : row.release.status === "partially_paid"
+                                      ? "Parcialmente pagada"
+                                      : "Aprobada"}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {formatMoney(
+                                  row.adjustment.amount,
+                                  row.invoice.currency
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {formatMoney(
+                                  row.release.requestedAmount,
+                                  row.invoice.currency
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {formatMoney(
+                                  row.release.approvedAmount,
+                                  row.invoice.currency
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {formatMoney(
+                                  row.paidAmount,
+                                  row.invoice.currency
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right font-semibold">
+                                {formatMoney(
+                                  row.availableToPayAmount,
+                                  row.invoice.currency
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {row.release.status === "pending_approval" &&
+                                settingsQuery.data?.permissions.canDepurate ? (
+                                  <div className="flex justify-end gap-2">
+                                    <Button
+                                      size="sm"
+                                      onClick={() => {
+                                        setReleaseDecision(row);
+                                        setReleaseDecisionApproved(true);
+                                        setReleaseDecisionAmount(
+                                          formatMoneyInputValue(
+                                            row.release.requestedAmount
+                                          )
+                                        );
+                                        setReleaseDecisionComment("");
+                                      }}
+                                    >
+                                      Aprobar
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="destructive"
+                                      onClick={() => {
+                                        setReleaseDecision(row);
+                                        setReleaseDecisionApproved(false);
+                                        setReleaseDecisionAmount("");
+                                        setReleaseDecisionComment("");
+                                      }}
+                                    >
+                                      Rechazar
+                                    </Button>
+                                  </div>
+                                ) : null}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        )
+                      ) : (
+                        <TableRow>
+                          <TableCell
+                            colSpan={10}
+                            className="py-10 text-center text-muted-foreground"
+                          >
+                            No hay solicitudes o liberaciones activas.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       </Card>
 
       <Card className="order-[-1]">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg">Reporte de Facturas</CardTitle>
-          <CardDescription>
-            Genera una fila por factura con su total, retenciones y neto a
-            pagar, sin detalle por artículo.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-[14rem_11rem_11rem_minmax(16rem,1fr)_auto]">
-            <div className="space-y-2">
-              <Label>Estado de factura</Label>
-              <Select
-                value={invoicePaymentReportStatus}
-                onValueChange={value =>
-                  setInvoicePaymentReportStatus(
-                    value as InvoicePaymentReportStatus
-                  )
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(INVOICE_PAYMENT_REPORT_STATUS_LABELS).map(
-                    ([status, label]) => (
-                      <SelectItem key={status} value={status}>
-                        {label}
-                      </SelectItem>
-                    )
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="treasury-invoice-date-from">Desde</Label>
-              <Input
-                id="treasury-invoice-date-from"
-                type="date"
-                value={invoiceReportDateFrom}
-                max={invoiceReportDateTo || undefined}
-                onChange={event => {
-                  const value = event.target.value;
-                  setInvoiceReportDateFrom(value);
-                  if (
-                    value &&
-                    invoiceReportDateTo &&
-                    value > invoiceReportDateTo
-                  ) {
-                    setInvoiceReportDateTo(value);
-                  }
-                }}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="treasury-invoice-date-to">Hasta</Label>
-              <Input
-                id="treasury-invoice-date-to"
-                type="date"
-                value={invoiceReportDateTo}
-                min={invoiceReportDateFrom || undefined}
-                onChange={event => {
-                  const value = event.target.value;
-                  setInvoiceReportDateTo(value);
-                  if (
-                    value &&
-                    invoiceReportDateFrom &&
-                    value < invoiceReportDateFrom
-                  ) {
-                    setInvoiceReportDateFrom(value);
-                  }
-                }}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="treasury-invoice-report-search">Buscar</Label>
-              <div className="relative">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="treasury-invoice-report-search"
-                  className="pl-9"
-                  placeholder="Documento, factura, proveedor, proyecto o lote"
-                  value={invoiceReportSearch}
-                  onChange={event => setInvoiceReportSearch(event.target.value)}
-                />
-              </div>
-            </div>
-            <Button
-              onClick={() => void exportInvoiceSummary()}
-              disabled={exportingInvoiceSummary}
-            >
-              {exportingInvoiceSummary ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="mr-2 h-4 w-4" />
-              )}
-              Exportar Excel
-            </Button>
-          </div>
-
-          <Accordion
-            type="single"
-            collapsible
-            value={invoiceReportPreviewOpen ? "invoice-preview" : ""}
-            onValueChange={value =>
-              setInvoiceReportPreviewOpen(value === "invoice-preview")
-            }
-            className="mt-4 rounded-lg border"
-          >
-            <AccordionItem value="invoice-preview" className="border-b-0">
-              <AccordionTrigger className="px-4 py-3 hover:no-underline">
-                <span className="flex min-w-0 items-center gap-2 text-left">
-                  <Eye className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span>Vista previa de facturas</span>
+        <Accordion
+          type="single"
+          collapsible
+          value={invoiceReportPreviewOpen ? "invoice-report" : ""}
+          onValueChange={value =>
+            setInvoiceReportPreviewOpen(value === "invoice-report")
+          }
+        >
+          <AccordionItem value="invoice-report" className="border-b-0">
+            <AccordionTrigger className="px-6 py-5 hover:no-underline">
+              <span className="flex min-w-0 flex-1 flex-col items-start gap-1 text-left">
+                <span className="flex items-center gap-3 text-lg font-semibold">
+                  <span className="h-5 w-1 rounded-full bg-primary" />
+                  Reporte de Facturas
                   {invoiceSummaryQuery.isFetching ? (
-                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
-                  ) : invoiceSummaryQuery.data ? (
-                    <Badge variant="secondary" className="shrink-0">
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : (
+                    <Badge variant="secondary">
                       {invoiceReportTotal.toLocaleString("es-HN")}
                     </Badge>
-                  ) : null}
+                  )}
                 </span>
-              </AccordionTrigger>
-              <AccordionContent className="pb-0">
+                <span className="pl-4 text-sm font-normal text-muted-foreground">
+                  Genera una fila por factura con su total, retenciones y neto a
+                  pagar, sin detalle por artículo.
+                </span>
+              </span>
+            </AccordionTrigger>
+            <AccordionContent className="pb-0">
+              <CardContent className="space-y-4 border-t pt-6">
+                <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-[14rem_11rem_11rem_minmax(16rem,1fr)_auto_auto]">
+                  <div className="space-y-2">
+                    <Label>Estado de factura</Label>
+                    <Select
+                      value={invoicePaymentReportStatus}
+                      onValueChange={value =>
+                        setInvoicePaymentReportStatus(
+                          value as InvoicePaymentReportStatus
+                        )
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(
+                          INVOICE_PAYMENT_REPORT_STATUS_LABELS
+                        ).map(([status, label]) => (
+                          <SelectItem key={status} value={status}>
+                            {label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="treasury-invoice-date-from">Desde</Label>
+                    <Input
+                      id="treasury-invoice-date-from"
+                      type="date"
+                      value={invoiceReportDateFrom}
+                      max={invoiceReportDateTo || undefined}
+                      onChange={event => {
+                        const value = event.target.value;
+                        setInvoiceReportDateFrom(value);
+                        if (
+                          value &&
+                          invoiceReportDateTo &&
+                          value > invoiceReportDateTo
+                        ) {
+                          setInvoiceReportDateTo(value);
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="treasury-invoice-date-to">Hasta</Label>
+                    <Input
+                      id="treasury-invoice-date-to"
+                      type="date"
+                      value={invoiceReportDateTo}
+                      min={invoiceReportDateFrom || undefined}
+                      onChange={event => {
+                        const value = event.target.value;
+                        setInvoiceReportDateTo(value);
+                        if (
+                          value &&
+                          invoiceReportDateFrom &&
+                          value < invoiceReportDateFrom
+                        ) {
+                          setInvoiceReportDateFrom(value);
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="treasury-invoice-report-search">
+                      Buscar
+                    </Label>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="treasury-invoice-report-search"
+                        className="pl-9"
+                        placeholder="Documento, factura, proveedor, proyecto o lote"
+                        value={invoiceReportSearch}
+                        onChange={event =>
+                          setInvoiceReportSearch(event.target.value)
+                        }
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    onClick={() => void exportInvoiceSummary()}
+                    disabled={exportingInvoiceSummary}
+                  >
+                    {exportingInvoiceSummary ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="mr-2 h-4 w-4" />
+                    )}
+                    Exportar Excel
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => void exportInvoiceSummaryPdf()}
+                    disabled={exportInvoiceSummaryPdfMutation.isPending}
+                  >
+                    {exportInvoiceSummaryPdfMutation.isPending ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <FileText className="mr-2 h-4 w-4" />
+                    )}
+                    Exportar PDF
+                  </Button>
+                </div>
+
                 {invoiceSummaryQuery.isLoading ? (
                   <div className="flex min-h-32 items-center justify-center gap-2 border-t px-4 py-8 text-sm text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -3874,17 +3934,33 @@ export default function Tesoreria() {
                     />
                   </div>
                 )}
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
-        </CardContent>
+              </CardContent>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       </Card>
 
       <Card>
-        <Accordion type="single" collapsible defaultValue="payment-batches">
+        <Accordion type="single" collapsible>
           <AccordionItem value="payment-batches" className="border-b-0">
             <AccordionTrigger className="px-6 py-5 hover:no-underline">
-              <span className="text-lg font-semibold">Lotes de pago</span>
+              <span className="flex min-w-0 flex-1 flex-col items-start gap-1 text-left">
+                <span className="flex items-center gap-3 text-lg font-semibold">
+                  <span className="h-5 w-1 rounded-full bg-primary" />
+                  Lotes de pago
+                  {batchesQuery.isFetching ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : (
+                    <Badge variant="secondary">
+                      {visibleBatches.length.toLocaleString("es-HN")}
+                    </Badge>
+                  )}
+                </span>
+                <span className="pl-4 text-sm font-normal text-muted-foreground">
+                  Consulta y gestiona los lotes de pago procesados en el
+                  sistema.
+                </span>
+              </span>
             </AccordionTrigger>
             <AccordionContent className="pb-0">
               <CardContent className="space-y-4 border-t pt-6">

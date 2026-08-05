@@ -367,6 +367,49 @@ describe("treasury invoice summary report", () => {
       "Descuentos documento": 3.2,
       "Neto a pagar": 105.65,
     });
+
+    const pdf = await caller.treasury.invoiceSummaryReportPdf({
+      paymentStatus: "paid",
+      dateFrom: "2026-07-01",
+      dateTo: "2026-07-31",
+    });
+    const pdfBuffer = Buffer.from(pdf.base64, "base64");
+    const pdfText = pdfBuffer.toString("latin1");
+
+    expect(pdf).toMatchObject({
+      fileName: "Tesoreria-Reporte-Facturas-2026-07-01-2026-07-31.pdf",
+      mimeType: "application/pdf",
+      invoiceCount: 1,
+    });
+    expect(pdfBuffer.subarray(0, 8).toString("ascii")).toBe("%PDF-1.4");
+    for (const header of [
+      "Proveedor",
+      "Nro. factura",
+      "Fecha",
+      "Total",
+      "Retenciones",
+      "Neto",
+      "Estado",
+      "Documento",
+    ]) {
+      expect(pdfText).toContain(
+        `<${Buffer.from(header, "latin1").toString("hex").toUpperCase()}> Tj`
+      );
+    }
+    expect(pdfText).toContain(
+      `<${Buffer.from("REPORTE DE FACTURAS - PAGADAS", "latin1")
+        .toString("hex")
+        .toUpperCase()}> Tj`
+    );
+    expect(pdfText).not.toContain(
+      Buffer.from("CONTINUACION", "latin1").toString("hex").toUpperCase()
+    );
+    expect(pdfText).toContain(
+      `<${Buffer.from("TOTALES DEL REPORTE", "latin1")
+        .toString("hex")
+        .toUpperCase()}> Tj`
+    );
+    expect(pdfText).not.toContain("/AcroForm");
   });
 
   it("filters all, pending, partial and paid registered invoices", async () => {
