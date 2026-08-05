@@ -345,7 +345,7 @@ describe("treasury invoice summary report", () => {
     expect(payload.invoices).toHaveLength(1);
     expect(payload.invoices[0]).toMatchObject({
       "Documento interno": "FT-020-00000050",
-      Estado: "Pagada",
+      Estado: "Pagado",
       "Lote de pago": "TES-2026-000049, TES-2026-000050",
       "Fecha de pago": new Date("2026-07-20T12:00:00.000Z"),
       "Referencia de pago": "REF-2026-049, REF-2026-050",
@@ -369,7 +369,7 @@ describe("treasury invoice summary report", () => {
     });
   });
 
-  it("filters all, pending and paid registered invoices", async () => {
+  it("filters all, pending, partial and paid registered invoices", async () => {
     mockDisabledApprovalSettings();
     const sourceInvoices = [
       { invoiceId: 61, invoiceDocumentNumber: "FT-00000061" },
@@ -448,38 +448,49 @@ describe("treasury invoice summary report", () => {
     const caller = appRouter.createCaller(createTreasuryContext("financiero"));
     const filters = { dateFrom: null, dateTo: null };
 
-    const [all, pending, paid, firstPage, secondPage, searchedByBatch] =
-      await Promise.all([
-        caller.treasury.invoiceSummaryReport({
-          ...filters,
-          paymentStatus: "all",
-        }),
-        caller.treasury.invoiceSummaryReport({
-          ...filters,
-          paymentStatus: "pending",
-        }),
-        caller.treasury.invoiceSummaryReport({
-          ...filters,
-          paymentStatus: "paid",
-        }),
-        caller.treasury.invoiceSummaryReport({
-          ...filters,
-          paymentStatus: "all",
-          page: 1,
-          pageSize: 2,
-        }),
-        caller.treasury.invoiceSummaryReport({
-          ...filters,
-          paymentStatus: "all",
-          page: 2,
-          pageSize: 2,
-        }),
-        caller.treasury.invoiceSummaryReport({
-          ...filters,
-          paymentStatus: "all",
-          search: "TES-2026-000062",
-        }),
-      ]);
+    const [
+      all,
+      pending,
+      partial,
+      paid,
+      firstPage,
+      secondPage,
+      searchedByBatch,
+    ] = await Promise.all([
+      caller.treasury.invoiceSummaryReport({
+        ...filters,
+        paymentStatus: "all",
+      }),
+      caller.treasury.invoiceSummaryReport({
+        ...filters,
+        paymentStatus: "pending",
+      }),
+      caller.treasury.invoiceSummaryReport({
+        ...filters,
+        paymentStatus: "partial",
+      }),
+      caller.treasury.invoiceSummaryReport({
+        ...filters,
+        paymentStatus: "paid",
+      }),
+      caller.treasury.invoiceSummaryReport({
+        ...filters,
+        paymentStatus: "all",
+        page: 1,
+        pageSize: 2,
+      }),
+      caller.treasury.invoiceSummaryReport({
+        ...filters,
+        paymentStatus: "all",
+        page: 2,
+        pageSize: 2,
+      }),
+      caller.treasury.invoiceSummaryReport({
+        ...filters,
+        paymentStatus: "all",
+        search: "TES-2026-000062",
+      }),
+    ]);
 
     expect(all.invoices.map(row => row["Documento interno"])).toEqual([
       "FT-00000061",
@@ -488,16 +499,16 @@ describe("treasury invoice summary report", () => {
     ]);
     expect(pending.invoices.map(row => row["Documento interno"])).toEqual([
       "FT-00000061",
+    ]);
+    expect(pending.invoices.map(row => row.Estado)).toEqual(["Pendiente"]);
+    expect(partial.invoices.map(row => row["Documento interno"])).toEqual([
       "FT-00000062",
     ]);
-    expect(pending.invoices.map(row => row.Estado)).toEqual([
-      "Pendiente de pagar",
-      "Pendiente de pagar",
-    ]);
+    expect(partial.invoices.map(row => row.Estado)).toEqual(["Parcial"]);
     expect(paid.invoices.map(row => row["Documento interno"])).toEqual([
       "FT-00000063",
     ]);
-    expect(paid.invoices[0]?.Estado).toBe("Pagada");
+    expect(paid.invoices[0]?.Estado).toBe("Pagado");
     expect(paid.invoices[0]).toMatchObject({
       "Lote de pago": "TES-2026-000063",
       "Monto pagado": 100,

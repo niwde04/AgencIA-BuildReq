@@ -12,7 +12,6 @@ import type {
 import {
   SYSTEM_INVOICE_HEADERS,
   SYSTEM_ORDER_HEADERS,
-  TREASURY_INVOICE_SUMMARY_HEADERS,
   type SystemWorkbookPayload,
   type TreasuryInvoiceSummaryPayload,
 } from "@shared/system-workbook-report";
@@ -580,28 +579,40 @@ function buildTreasuryInvoiceSummarySheet(
   XLSX: Xlsx,
   payload: TreasuryInvoiceSummaryPayload
 ) {
+  const headers = [
+    "Proveedor",
+    "Nro. factura",
+    "Fecha",
+    "Total",
+    "Retenciones",
+    "Neto",
+    "Estado",
+    "Documento",
+  ] as const;
   const rows: unknown[][] = [
-    [null, ...TREASURY_INVOICE_SUMMARY_HEADERS],
+    [...headers],
     ...payload.invoices.map(row => [
-      null,
-      ...TREASURY_INVOICE_SUMMARY_HEADERS.map(header => row[header]),
+      row.Proveedor,
+      row["Nro. Factura"],
+      row["Fecha factura"],
+      row["Total factura"],
+      Number(row["Retenciones fiscales"] ?? 0) +
+        Number(row["Otras retenciones"] ?? 0),
+      row["Neto a pagar"],
+      row.Estado,
+      row["Documento interno"],
     ]),
   ];
-  const sheet = makeSheet(
-    XLSX,
-    rows,
-    [2, ...Array(TREASURY_INVOICE_SUMMARY_HEADERS.length).fill(18)],
-    {
-      dateColumns: systemDateColumns(TREASURY_INVOICE_SUMMARY_HEADERS),
-      dataStartRow: 1,
-      roundNumericValues: true,
-    }
-  );
+  const sheet = makeSheet(XLSX, rows, [28, 22, 14, 16, 16, 16, 22, 24], {
+    dateColumns: [2],
+    dataStartRow: 1,
+    roundNumericValues: true,
+  });
   if (sheet["!ref"]) {
     const range = XLSX.utils.decode_range(sheet["!ref"]);
     sheet["!autofilter"] = {
       ref: XLSX.utils.encode_range({
-        s: { r: 0, c: 1 },
+        s: { r: 0, c: 0 },
         e: { r: range.e.r, c: range.e.c },
       }),
     };

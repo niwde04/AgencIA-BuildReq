@@ -640,7 +640,7 @@ export async function getTreasuryInvoiceReportPayments(invoiceIds: number[]) {
 }
 
 export async function listTreasuryInvoiceReportPage(input: {
-  paymentStatus: "all" | "pending" | "paid";
+  paymentStatus: "all" | "paid" | "pending" | "partial";
   search?: string | null;
   dateFrom?: Date | null;
   dateTo?: Date | null;
@@ -714,13 +714,16 @@ export async function listTreasuryInvoiceReportPage(input: {
     const paidAmount = roundTreasuryMoney(
       payments.reduce((sum, payment) => sum + payment.amount, 0)
     );
+    const treasuryPaymentStatus = getTreasuryPaymentStatus(
+      Number(invoice.netPayable ?? 0),
+      paidAmount + (appliedAdvanceByInvoice.get(invoice.invoiceId) ?? 0)
+    );
     const paymentStatus =
-      getTreasuryPaymentStatus(
-        Number(invoice.netPayable ?? 0),
-        paidAmount + (appliedAdvanceByInvoice.get(invoice.invoiceId) ?? 0)
-      ) === "pagada"
+      treasuryPaymentStatus === "pagada"
         ? "paid"
-        : "pending";
+        : treasuryPaymentStatus === "parcialmente_pagada"
+          ? "partial"
+          : "pending";
     if (
       input.paymentStatus !== "all" &&
       input.paymentStatus !== paymentStatus

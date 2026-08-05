@@ -111,15 +111,16 @@ type PendingReasonAction =
   | { type: "reopenRejected" }
   | { type: "resolve"; itemId: number; resolution: "accept" | "reject" };
 
-type InvoicePaymentReportStatus = "all" | "pending" | "paid";
+type InvoicePaymentReportStatus = "all" | "paid" | "pending" | "partial";
 
 const INVOICE_PAYMENT_REPORT_STATUS_LABELS: Record<
   InvoicePaymentReportStatus,
   string
 > = {
-  all: "Todas",
-  pending: "Pendientes de pagar",
-  paid: "Pagadas",
+  all: "Todos los estados",
+  paid: "Pagado",
+  pending: "Pendiente",
+  partial: "Parcial",
 };
 
 const TREASURY_BATCH_PAGE_SIZE = 25;
@@ -2966,7 +2967,7 @@ export default function Tesoreria() {
   const [invoiceReportSearch, setInvoiceReportSearch] = useState("");
   const debouncedInvoiceReportSearch = useDebouncedValue(invoiceReportSearch);
   const [invoiceReportPreviewOpen, setInvoiceReportPreviewOpen] =
-    useState(false);
+    useState(true);
   const [invoiceReportPage, setInvoiceReportPage] = useState(1);
   const [exportingInvoiceSummary, setExportingInvoiceSummary] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("todos");
@@ -3418,8 +3419,8 @@ export default function Tesoreria() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+    <div className="flex flex-col gap-6">
+      <div className="order-[-2] flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="flex items-center gap-2">
             <WalletCards className="h-6 w-6" /> Tesorería
@@ -3475,7 +3476,7 @@ export default function Tesoreria() {
       </div>
 
       {!approvalsEnabled && (
-        <Alert>
+        <Alert className="order-last">
           <Banknote />
           <AlertTitle>Aprobaciones de lotes desactivadas</AlertTitle>
           <AlertDescription>
@@ -3486,7 +3487,7 @@ export default function Tesoreria() {
         </Alert>
       )}
 
-      <Card>
+      <Card className="order-last">
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">Retenciones de calidad</CardTitle>
           <CardDescription>
@@ -3621,7 +3622,7 @@ export default function Tesoreria() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="order-[-1]">
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">Reporte de Facturas</CardTitle>
           <CardDescription>
@@ -3630,22 +3631,9 @@ export default function Tesoreria() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-[minmax(16rem,1fr)_14rem_11rem_11rem_auto]">
+          <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-[14rem_11rem_11rem_minmax(16rem,1fr)_auto]">
             <div className="space-y-2">
-              <Label htmlFor="treasury-invoice-report-search">Buscar</Label>
-              <div className="relative">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="treasury-invoice-report-search"
-                  className="pl-9"
-                  placeholder="Documento, factura, proveedor, proyecto o lote"
-                  value={invoiceReportSearch}
-                  onChange={event => setInvoiceReportSearch(event.target.value)}
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Estado de pago</Label>
+              <Label>Estado de factura</Label>
               <Select
                 value={invoicePaymentReportStatus}
                 onValueChange={value =>
@@ -3707,6 +3695,19 @@ export default function Tesoreria() {
                   }
                 }}
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="treasury-invoice-report-search">Buscar</Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="treasury-invoice-report-search"
+                  className="pl-9"
+                  placeholder="Documento, factura, proveedor, proyecto o lote"
+                  value={invoiceReportSearch}
+                  onChange={event => setInvoiceReportSearch(event.target.value)}
+                />
+              </div>
             </div>
             <Button
               onClick={() => void exportInvoiceSummary()}
@@ -3771,45 +3772,28 @@ export default function Tesoreria() {
                 ) : (
                   <div className="border-t">
                     <div className="overflow-x-auto">
-                      <Table>
+                      <Table className="min-w-[980px]">
                         <TableHeader>
                           <TableRow>
-                            <TableHead className="whitespace-nowrap">
-                              Documento
-                            </TableHead>
+                            <TableHead>Proveedor</TableHead>
                             <TableHead className="whitespace-nowrap">
                               Nro. factura
                             </TableHead>
                             <TableHead className="whitespace-nowrap">
-                              Fecha factura
-                            </TableHead>
-                            <TableHead>Estado</TableHead>
-                            <TableHead className="whitespace-nowrap">
-                              Lote de pago
-                            </TableHead>
-                            <TableHead className="whitespace-nowrap">
-                              Fecha de pago
-                            </TableHead>
-                            <TableHead className="whitespace-nowrap">
-                              Referencia de pago
+                              Fecha
                             </TableHead>
                             <TableHead className="whitespace-nowrap text-right">
-                              Monto pagado
-                            </TableHead>
-                            <TableHead>Proyecto</TableHead>
-                            <TableHead>Proveedor</TableHead>
-                            <TableHead>Moneda</TableHead>
-                            <TableHead className="whitespace-nowrap text-right">
-                              Total factura
+                              Total
                             </TableHead>
                             <TableHead className="whitespace-nowrap text-right">
                               Retenciones
                             </TableHead>
                             <TableHead className="whitespace-nowrap text-right">
-                              Descuentos
+                              Neto
                             </TableHead>
-                            <TableHead className="whitespace-nowrap text-right">
-                              Neto a pagar
+                            <TableHead>Estado</TableHead>
+                            <TableHead className="whitespace-nowrap">
+                              Documento
                             </TableHead>
                           </TableRow>
                         </TableHeader>
@@ -3822,6 +3806,34 @@ export default function Tesoreria() {
                                 <TableRow
                                   key={`${row["Documento interno"]}-${row["N° Registro"]}`}
                                 >
+                                  <TableCell className="min-w-52">
+                                    {formatReportText(row.Proveedor)}
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap">
+                                    {formatReportText(row["Nro. Factura"])}
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap">
+                                    {formatDateOnly(row["Fecha factura"])}
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap text-right">
+                                    {formatMoney(
+                                      row["Total factura"],
+                                      currency
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap text-right">
+                                    {formatMoney(
+                                      Number(row["Retenciones fiscales"] ?? 0) +
+                                        Number(row["Otras retenciones"] ?? 0),
+                                      currency
+                                    )}
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap text-right font-semibold">
+                                    {formatMoney(row["Neto a pagar"], currency)}
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap">
+                                    {formatReportText(row.Estado)}
+                                  </TableCell>
                                   <TableCell className="whitespace-nowrap font-medium">
                                     <button
                                       type="button"
@@ -3837,84 +3849,13 @@ export default function Tesoreria() {
                                       )}
                                     </button>
                                   </TableCell>
-                                  <TableCell className="whitespace-nowrap">
-                                    {formatReportText(row["Nro. Factura"])}
-                                  </TableCell>
-                                  <TableCell className="whitespace-nowrap">
-                                    {formatDateOnly(row["Fecha factura"])}
-                                  </TableCell>
-                                  <TableCell className="whitespace-nowrap">
-                                    {formatReportText(row.Estado)}
-                                  </TableCell>
-                                  <TableCell className="min-w-40">
-                                    {row.navigation.paymentBatches.length ? (
-                                      <div className="flex flex-wrap gap-x-2 gap-y-1">
-                                        {row.navigation.paymentBatches.map(
-                                          batch => (
-                                            <button
-                                              key={batch.id}
-                                              type="button"
-                                              className="whitespace-nowrap text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                              onClick={() =>
-                                                setSelectedBatchId(batch.id)
-                                              }
-                                            >
-                                              {batch.batchNumber}
-                                            </button>
-                                          )
-                                        )}
-                                      </div>
-                                    ) : (
-                                      "—"
-                                    )}
-                                  </TableCell>
-                                  <TableCell className="whitespace-nowrap">
-                                    {formatDateOnly(row["Fecha de pago"])}
-                                  </TableCell>
-                                  <TableCell className="whitespace-nowrap">
-                                    {formatReportText(
-                                      row["Referencia de pago"]
-                                    )}
-                                  </TableCell>
-                                  <TableCell className="whitespace-nowrap text-right">
-                                    {formatMoney(row["Monto pagado"], currency)}
-                                  </TableCell>
-                                  <TableCell className="min-w-48">
-                                    {formatReportText(row.Proyecto)}
-                                  </TableCell>
-                                  <TableCell className="min-w-52">
-                                    {formatReportText(row.Proveedor)}
-                                  </TableCell>
-                                  <TableCell>{currency}</TableCell>
-                                  <TableCell className="whitespace-nowrap text-right">
-                                    {formatMoney(
-                                      row["Total factura"],
-                                      currency
-                                    )}
-                                  </TableCell>
-                                  <TableCell className="whitespace-nowrap text-right">
-                                    {formatMoney(
-                                      Number(row["Retenciones fiscales"] ?? 0) +
-                                        Number(row["Otras retenciones"] ?? 0),
-                                      currency
-                                    )}
-                                  </TableCell>
-                                  <TableCell className="whitespace-nowrap text-right">
-                                    {formatMoney(
-                                      row["Descuentos documento"],
-                                      currency
-                                    )}
-                                  </TableCell>
-                                  <TableCell className="whitespace-nowrap text-right font-semibold">
-                                    {formatMoney(row["Neto a pagar"], currency)}
-                                  </TableCell>
                                 </TableRow>
                               );
                             })
                           ) : (
                             <TableRow>
                               <TableCell
-                                colSpan={15}
+                                colSpan={8}
                                 className="py-10 text-center text-muted-foreground"
                               >
                                 No hay facturas con los filtros seleccionados.

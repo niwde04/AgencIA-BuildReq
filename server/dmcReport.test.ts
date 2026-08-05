@@ -1186,28 +1186,25 @@ describe("internal BuildReq workbook", () => {
     }) as unknown[][];
     expect(rows).toHaveLength(2);
     const header = rows[0];
-    const totalColumn = header.indexOf("Total factura");
-    const subtotalColumn = header.indexOf("Subtotal");
-    const retentionColumn = header.indexOf("Retenciones fiscales");
-    const otherRetentionColumn = header.indexOf("Otras retenciones");
-    const discountColumn = header.indexOf("Descuentos documento");
-    const paymentBatchColumn = header.indexOf("Lote de pago");
-    const paymentDateColumn = header.indexOf("Fecha de pago");
-    const paymentReferenceColumn = header.indexOf("Referencia de pago");
-    const paidAmountColumn = header.indexOf("Monto pagado");
-    expect(paymentBatchColumn).toBeGreaterThan(-1);
-    expect(paymentDateColumn).toBeGreaterThan(-1);
-    expect(paymentReferenceColumn).toBeGreaterThan(-1);
-    expect(paidAmountColumn).toBeGreaterThan(-1);
-    expect(rows[1][paymentBatchColumn]).toBe("TES-2026-000086");
-    expect(rows[1][paymentDateColumn]).toBeInstanceOf(Date);
-    expect(rows[1][paymentReferenceColumn]).toBe("REF-2026-086");
-    expect(rows[1][paidAmountColumn]).toBe(5004.6);
-    expect(rows[1][subtotalColumn]).toBe(531.53);
-    expect(rows[1][totalColumn]).toBe(611.26);
-    expect(rows[1][retentionColumn]).toBe(10.12);
-    expect(rows[1][otherRetentionColumn]).toBe(26.58);
-    expect(rows[1][discountColumn]).toBe(12.35);
+    expect(header).toEqual([
+      "Proveedor",
+      "Nro. factura",
+      "Fecha",
+      "Total",
+      "Retenciones",
+      "Neto",
+      "Estado",
+      "Documento",
+    ]);
+    expect(rows[1][header.indexOf("Proveedor")]).toBe("Proveedor Demo");
+    expect(rows[1][header.indexOf("Fecha")]).toBeInstanceOf(Date);
+    expect(rows[1][header.indexOf("Total")]).toBe(611.26);
+    expect(rows[1][header.indexOf("Retenciones")]).toBe(36.7);
+    expect(rows[1][header.indexOf("Neto")]).toBe(562.21);
+    expect(rows[1][header.indexOf("Estado")]).toBe("Contabilizada");
+    expect(rows[1][header.indexOf("Documento")]).toBe("FT-2026-0001");
+    expect(rows.flat()).not.toContain("TES-2026-000086");
+    expect(rows.flat()).not.toContain("REF-2026-086");
     expect(rows.flat()).not.toContain("Artículo A");
     expect(rows.flat()).not.toContain("Artículo B");
   });

@@ -19,7 +19,12 @@ import * as treasury from "../treasury";
 type User = treasury.TreasuryActor;
 
 const currencySchema = z.enum(["HNL", "USD"]);
-const invoicePaymentReportStatusSchema = z.enum(["all", "pending", "paid"]);
+const invoicePaymentReportStatusSchema = z.enum([
+  "all",
+  "paid",
+  "pending",
+  "partial",
+]);
 const reportDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -403,13 +408,16 @@ export const treasuryRouter = router({
         const paidAmount = roundTreasuryMoney(
           payments.reduce((sum, payment) => sum + payment.amount, 0)
         );
+        const treasuryPaymentStatus = getTreasuryPaymentStatus(
+          Number(invoice.netPayable ?? 0),
+          paidAmount + Number(invoice.appliedAdvanceAmount ?? 0)
+        );
         const paymentStatus =
-          getTreasuryPaymentStatus(
-            Number(invoice.netPayable ?? 0),
-            paidAmount + Number(invoice.appliedAdvanceAmount ?? 0)
-          ) === "pagada"
+          treasuryPaymentStatus === "pagada"
             ? "paid"
-            : "pending";
+            : treasuryPaymentStatus === "parcialmente_pagada"
+              ? "partial"
+              : "pending";
         if (
           input.paymentStatus !== "all" &&
           input.paymentStatus !== paymentStatus
@@ -422,7 +430,11 @@ export const treasuryRouter = router({
             payments,
             paidAmount,
             paymentStatusLabel:
-              paymentStatus === "paid" ? "Pagada" : "Pendiente de pagar",
+              paymentStatus === "paid"
+                ? "Pagado"
+                : paymentStatus === "partial"
+                  ? "Parcial"
+                  : "Pendiente",
           },
         ];
       });
