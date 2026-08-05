@@ -13841,6 +13841,7 @@ export async function getInvoiceById(id: number) {
     advanceApplications,
     purchaseOrderAdvanceSummary,
     treasuryPayments,
+    treasuryBatchItems,
   ] = await Promise.all([
     db
       .select({
@@ -13910,6 +13911,16 @@ export async function getInvoiceById(id: number) {
         asc(treasuryPaymentItems.bankPaidDate),
         asc(treasuryPaymentBatches.id)
       ),
+    db
+      .select({ id: treasuryPaymentItems.id })
+      .from(treasuryPaymentItems)
+      .where(
+        and(
+          eq(treasuryPaymentItems.sourceType, "invoice"),
+          eq(treasuryPaymentItems.invoiceId, id)
+        )
+      )
+      .limit(1),
   ]);
   const items = itemRows.map(({ item, catalogAllowsTaxWithholding }) => ({
     ...item,
@@ -13974,6 +13985,7 @@ export async function getInvoiceById(id: number) {
     advanceApplications,
     purchaseOrderAdvanceSummary,
     treasuryPayments,
+    hasTreasuryBatchItems: treasuryBatchItems.length > 0,
     appliedAdvanceAmount: toMoneyString4(
       advanceApplications.reduce(
         (sum, application) => sum + parseDecimal(application.amount),
@@ -14244,6 +14256,75 @@ export async function reviewInvoice(id: number, reviewedById: number) {
       .where(eq(invoices.id, id))
       .returning();
 
+    return updated;
+  });
+}
+
+export async function returnAccountedInvoiceToReview(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  return db.transaction(async tx => {
+    const [invoice] = await tx
+      .select({ id: invoices.id, status: invoices.status })
+      .from(invoices)
+      .where(eq(invoices.id, id))
+      .limit(1)
+      .for("update");
+
+    if (!invoice) throw new Error("Factura no encontrada");
+    if (invoice.status !== "registrada") {
+      throw new Error(
+        "Solo una factura contabilizada puede regresar a revisión"
+      );
+    }
+
+    const [treasuryBatchItem, advanceApplication] = await Promise.all([
+      tx
+        .select({ id: treasuryPaymentItems.id })
+        .from(treasuryPaymentItems)
+        .where(
+          and(
+            eq(treasuryPaymentItems.sourceType, "invoice"),
+            eq(treasuryPaymentItems.invoiceId, id)
+          )
+        )
+        .limit(1),
+      tx
+        .select({ id: purchaseOrderAdvanceApplications.id })
+        .from(purchaseOrderAdvanceApplications)
+        .where(eq(purchaseOrderAdvanceApplications.invoiceId, id))
+        .limit(1),
+    ]);
+
+    if (treasuryBatchItem.length > 0) {
+      throw new Error(
+        "La factura pertenece a un lote de pago y no puede regresar a revisión"
+      );
+    }
+    if (advanceApplication.length > 0) {
+      throw new Error(
+        "La factura tiene un anticipo aplicado y no puede regresar a revisión"
+      );
+    }
+
+    const [updated] = await tx
+      .update(invoices)
+      .set({
+        status: "revisada",
+        accountedById: null,
+        accountedAt: null,
+        accountingComment: null,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(invoices.id, id), eq(invoices.status, "registrada")))
+      .returning();
+
+    if (!updated) {
+      throw new Error(
+        "La factura cambió de estado; actualice e intente de nuevo"
+      );
+    }
     return updated;
   });
 }

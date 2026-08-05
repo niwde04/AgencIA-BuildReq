@@ -22,6 +22,7 @@ import {
   summarizePurchaseOrderLines,
 } from "../shared/purchase-orders";
 import {
+  SYSTEM_INVOICE_REVIEW_ADMIN_EMAIL,
   isInvoiceNumberWithinFiscalRange,
   normalizeFiscalRtn,
 } from "../shared/invoices";
@@ -16433,6 +16434,74 @@ describe("BuildReq - Invoices", () => {
     },
     retentionPolicy: "rt15_only",
   } as any;
+
+  it("allows only the designated system admin to return an invoice to review", async () => {
+    const returnToReviewSpy = vi
+      .spyOn(db, "returnAccountedInvoiceToReview")
+      .mockResolvedValue({
+        ...invoiceDetail.invoice,
+        status: "revisada",
+      } as any);
+    const { ctx } = createUserContext({
+      role: "admin",
+      email: SYSTEM_INVOICE_REVIEW_ADMIN_EMAIL,
+    });
+
+    await expect(
+      appRouter.createCaller(ctx).invoices.returnToReview({ id: 10 })
+    ).resolves.toEqual(expect.objectContaining({ status: "revisada" }));
+    expect(returnToReviewSpy).toHaveBeenCalledWith(10);
+
+    returnToReviewSpy.mockRestore();
+  });
+
+  it("blocks other admins and non-admin users from returning invoices to review", async () => {
+    const returnToReviewSpy = vi.spyOn(db, "returnAccountedInvoiceToReview");
+    const otherAdmin = createUserContext({
+      role: "admin",
+      email: "otro-admin@buildreq.com",
+    });
+    const designatedNonAdmin = createUserContext({
+      role: "user",
+      email: SYSTEM_INVOICE_REVIEW_ADMIN_EMAIL,
+    });
+
+    await expect(
+      appRouter.createCaller(otherAdmin.ctx).invoices.returnToReview({ id: 10 })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      appRouter
+        .createCaller(designatedNonAdmin.ctx)
+        .invoices.returnToReview({ id: 10 })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(returnToReviewSpy).not.toHaveBeenCalled();
+
+    returnToReviewSpy.mockRestore();
+  });
+
+  it("reports when a payment lot prevents returning an invoice to review", async () => {
+    const returnToReviewSpy = vi
+      .spyOn(db, "returnAccountedInvoiceToReview")
+      .mockRejectedValue(
+        new Error(
+          "La factura pertenece a un lote de pago y no puede regresar a revisión"
+        )
+      );
+    const { ctx } = createUserContext({
+      role: "admin",
+      email: SYSTEM_INVOICE_REVIEW_ADMIN_EMAIL,
+    });
+
+    await expect(
+      appRouter.createCaller(ctx).invoices.returnToReview({ id: 10 })
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message:
+        "La factura pertenece a un lote de pago y no puede regresar a revisión",
+    });
+
+    returnToReviewSpy.mockRestore();
+  });
 
   it("Bodeguero de Proyecto can list invoices only for their assigned project", async () => {
     const { ctx } = createProjectBodegueroContext();

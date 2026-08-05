@@ -16,6 +16,7 @@ export const FISCAL_DOCUMENT_TYPE_LABELS: Record<string, string> = {
 };
 export const EMISSION_DEADLINE_ISSUE_MESSAGE =
   "Documento fuera de fecha límite de emisión";
+export const SYSTEM_INVOICE_REVIEW_ADMIN_EMAIL = "ed_barah@hotmail.com";
 
 const CAI_LENGTH = CAI_GROUPS.reduce((sum, group) => sum + group, 0);
 const INVOICE_NUMBER_LENGTH = INVOICE_NUMBER_GROUPS.reduce(

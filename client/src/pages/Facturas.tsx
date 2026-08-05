@@ -78,6 +78,7 @@ import {
   CAI_FORMAT_EXAMPLE,
   EMISSION_DEADLINE_ISSUE_MESSAGE,
   INVOICE_NUMBER_FORMAT_EXAMPLE,
+  SYSTEM_INVOICE_REVIEW_ADMIN_EMAIL,
   formatCaiInput,
   formatInvoiceNumberInput,
   hasEmissionDeadlineIssue,
@@ -1541,6 +1542,9 @@ export default function Facturas() {
   const userRole = (user as any)?.buildreqRole;
   const isAccountant = userRole === "contable";
   const canAccountInvoices = isAccountant || user?.role === "admin";
+  const isSystemInvoiceReviewAdmin =
+    user?.role === "admin" &&
+    user.email?.trim().toLowerCase() === SYSTEM_INVOICE_REVIEW_ADMIN_EMAIL;
   const canEditInvoices =
     user?.role === "admin" ||
     userRole === "administracion_central" ||
@@ -2007,6 +2011,14 @@ export default function Facturas() {
       if (selectedId)
         void utils.invoices.getById.invalidate({ id: selectedId });
       setSelectedId(null);
+    },
+    onError: error => toast.error(getFriendlyMutationError(error.message)),
+  });
+  const returnToReviewMutation = trpc.invoices.returnToReview.useMutation({
+    onSuccess: (_data, variables) => {
+      toast.success("Factura regresada a revisión");
+      void utils.invoices.invalidate();
+      void utils.invoices.getById.invalidate({ id: variables.id });
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
   });
@@ -3084,6 +3096,11 @@ export default function Facturas() {
   const canManageInvoiceAttachments = canReviewInvoices && isDraft;
   const canReviewSelectedInvoice = canReviewInvoices && isDraft;
   const canAccountSelectedInvoice = canAccountInvoices && isReviewed;
+  const canReturnSelectedInvoiceToReview =
+    isSystemInvoiceReviewAdmin &&
+    isAccounted &&
+    detail?.hasTreasuryBatchItems === false &&
+    appliedAdvanceAmount === 0;
   const canCorrectSelectedReceipt =
     canEditInvoices &&
     Boolean(detail?.receipt) &&
@@ -4042,6 +4059,15 @@ export default function Facturas() {
     });
   };
 
+  const handleReturnInvoiceToReview = () => {
+    if (!selectedId || !detail?.invoice) return;
+    const confirmed = window.confirm(
+      `¿Regresar ${detail.invoice.invoiceDocumentNumber} a revisión? Se quitará su registro de contabilización.`
+    );
+    if (!confirmed) return;
+    returnToReviewMutation.mutate({ id: selectedId });
+  };
+
   const handleRejectInvoice = () => {
     if (!selectedId) return;
     if (rejectionComment.trim().length < 5) {
@@ -4458,6 +4484,19 @@ export default function Facturas() {
                     <Printer className="mr-2 h-4 w-4" />
                     Imprimir
                   </Button>
+                  {canReturnSelectedInvoiceToReview ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleReturnInvoiceToReview}
+                      disabled={returnToReviewMutation.isPending}
+                    >
+                      <RotateCcw className="mr-2 h-4 w-4" />
+                      {returnToReviewMutation.isPending
+                        ? "Regresando..."
+                        : "Regresar a revisión"}
+                    </Button>
+                  ) : null}
                   {canCorrectSelectedReceipt ? (
                     <Button
                       type="button"
