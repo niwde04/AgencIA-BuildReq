@@ -13791,9 +13791,9 @@ describe("BuildReq - Purchase Orders", () => {
     expect(pdfText).not.toContain(`<${encodedCredit}> Tj`);
   });
 
-  it("prints Elaborado por before the preparer without duplicating the name", () => {
+  it("prints Elaborado por and the preparer together on one line", () => {
     const requestedByLabel = "WILSON MOLINA";
-    const preparedByLabel = "EDWIN BARAHONA";
+    const preparedByLabel = "SUYAPA LIZETH LOPEZ PEREZ";
     const pdf = buildPurchaseOrderPrintPdfBase64({
       orderNumber: "OC-010-00000011",
       orderId: "11",
@@ -13830,22 +13830,20 @@ describe("BuildReq - Purchase Orders", () => {
     const encodedRequestedBy = Buffer.from(requestedByLabel, "latin1")
       .toString("hex")
       .toUpperCase();
-    const encodedPreparedBy = Buffer.from(preparedByLabel, "latin1")
-      .toString("hex")
-      .toUpperCase();
-    const encodedPreparedByCaption = Buffer.from("Elaborado por:", "latin1")
+    const encodedPreparedByLine = Buffer.from(
+      `Elaborado por: ${preparedByLabel}`,
+      "latin1"
+    )
       .toString("hex")
       .toUpperCase();
 
     const requestedByOccurrences =
       pdfText.match(new RegExp(`<${encodedRequestedBy}> Tj`, "g"))?.length ?? 0;
-    const preparedByOccurrences =
-      pdfText.match(new RegExp(`<${encodedPreparedBy}> Tj`, "g"))?.length ?? 0;
     expect(requestedByOccurrences).toBe(1);
-    expect(preparedByOccurrences).toBe(1);
-    expect(pdfText.indexOf(`<${encodedPreparedByCaption}> Tj`)).toBeLessThan(
-      pdfText.indexOf(`<${encodedPreparedBy}> Tj`)
-    );
+    expect(
+      pdfText.match(new RegExp(`<${encodedPreparedByLine}> Tj`, "g"))?.length ??
+        0
+    ).toBe(1);
   });
 });
 

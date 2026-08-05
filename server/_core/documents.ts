@@ -2209,25 +2209,25 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     const secondSignatureX = marginX + 278;
     const preparedByLabel =
       params.preparedByLabel?.trim() || params.requestedByLabel || "-";
-
-    drawCenteredText(
-      firstSignatureX,
-      signaturesTop - 22,
-      signatureWidth,
-      "Elaborado por:",
-      7.1,
-      "F2"
-    );
-    drawCenteredWrappedText(
-      firstSignatureX,
-      signaturesTop - 10,
-      signatureWidth,
-      preparedByLabel,
-      7.2,
-      "F2",
-      8.5,
-      2
-    );
+    const preparedByText = `Elaborado por: ${preparedByLabel}`;
+    const preparedByWidth = secondSignatureX - firstSignatureX - 12;
+    let preparedByFontSize = 7.2;
+    while (
+      preparedByFontSize > 5.8 &&
+      measureTextWidth(preparedByText, preparedByFontSize, "F2") >
+        preparedByWidth
+    ) {
+      preparedByFontSize -= 0.2;
+    }
+    drawText(page, {
+      x: firstSignatureX,
+      top: signaturesTop - 10,
+      width: preparedByWidth,
+      text: preparedByText,
+      fontSize: preparedByFontSize,
+      font: "F2",
+      color: ink,
+    });
 
     if (!params.digitalSeal) {
       drawLine(
