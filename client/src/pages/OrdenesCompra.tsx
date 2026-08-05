@@ -949,6 +949,9 @@ export default function OrdenesCompra() {
     DEFAULT_CURRENCY_DRAFT
   );
   const [pricesIncludeTaxDraft, setPricesIncludeTaxDraft] = useState(false);
+  const [newOrderPaymentMethod, setNewOrderPaymentMethod] = useState<
+    DirectPurchasePaymentMethod | undefined
+  >(undefined);
   const [originItemDrafts, setOriginItemDrafts] = useState<
     Record<number, PurchaseOrderItemDraft>
   >({});
@@ -1068,6 +1071,18 @@ export default function OrdenesCompra() {
     },
     onError: error => toast.error(error.message),
   });
+
+  const updatePaymentMethodMutation =
+    trpc.purchaseOrders.updatePaymentMethod.useMutation({
+      onSuccess: () => {
+        toast.success("Método de pago actualizado");
+        void utils.purchaseOrders.invalidate();
+        if (selectedId) {
+          void utils.purchaseOrders.getById.invalidate({ id: selectedId });
+        }
+      },
+      onError: error => toast.error(error.message),
+    });
 
   const updatePricesIncludeTaxMutation =
     trpc.purchaseOrders.updatePricesIncludeTax.useMutation({
@@ -1281,6 +1296,7 @@ export default function OrdenesCompra() {
         setContractDraft(DEFAULT_CONTRACT_DRAFT);
         setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
         setPricesIncludeTaxDraft(false);
+        setNewOrderPaymentMethod(undefined);
         void Promise.all([
           utils.purchaseOrders.invalidate(),
           utils.purchaseRequests.invalidate(),
@@ -1565,6 +1581,14 @@ export default function OrdenesCompra() {
   const canEditContractEndDate =
     canEditNewOrderContract || canEditContractTerms;
   const isOrderCancelled = orderStatus === "anulada";
+  const currentPaymentMethod =
+    detail?.purchaseOrder.paymentMethod ??
+    detail?.directPurchasePaymentMethod ??
+    null;
+  const canEditPaymentMethod =
+    canManagePurchaseOrders &&
+    !isOrderCancelled &&
+    (canEditOrderStructure || !currentPaymentMethod);
   const isOrderReceived = orderStatus === "recibida";
   const isOrderReadOnly = Boolean(
     !canManagePurchaseOrders ||
@@ -1783,6 +1807,10 @@ export default function OrdenesCompra() {
       }
     }
 
+    if (selectedOriginItems.length > 0 && !newOrderPaymentMethod) {
+      return "Seleccione el método de pago para la orden de compra";
+    }
+
     if (currencyDraft.currency === "USD") {
       const rawRate = currencyDraft.exchangeRate.trim();
       const rate = Number(rawRate);
@@ -1835,6 +1863,7 @@ export default function OrdenesCompra() {
     currencyDraft.currency,
     currencyDraft.exchangeRate,
     currencyDraft.exchangeRateDate,
+    newOrderPaymentMethod,
     originItemDrafts,
     selectedOriginItems,
   ]);
@@ -2311,7 +2340,6 @@ export default function OrdenesCompra() {
       return "Complete la tasa referencial USD y su fecha";
     }
     if (
-      detail.purchaseOrder.purchaseType === "compra_directa" &&
       !detail.purchaseOrder.paymentMethod &&
       !detail.directPurchasePaymentMethod
     ) {
@@ -2417,8 +2445,8 @@ export default function OrdenesCompra() {
 
   const handlePaymentMethodChange = (value: string) => {
     if (!detail) return;
-    if (!canEditOrderStructure) {
-      toast.error("La OC ya fue emitida y no se puede actualizar");
+    if (!canEditPaymentMethod) {
+      toast.error("El método de pago de esta OC ya no se puede actualizar");
       return;
     }
 
@@ -2427,7 +2455,7 @@ export default function OrdenesCompra() {
       return;
     }
 
-    updateMutation.mutate({
+    updatePaymentMethodMutation.mutate({
       id: detail.purchaseOrder.id,
       paymentMethod,
     });
@@ -3617,6 +3645,7 @@ export default function OrdenesCompra() {
                   setContractDraft(DEFAULT_CONTRACT_DRAFT);
                   setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
                   setPricesIncludeTaxDraft(false);
+                  setNewOrderPaymentMethod(undefined);
                 }}
                 disabled={createFromOriginMutation.isPending}
               >
@@ -3632,6 +3661,9 @@ export default function OrdenesCompra() {
                     ...selectedSupplierCreatePayload,
                     ...selectedContractCreatePayload,
                     ...selectedCurrencyCreatePayload,
+                    ...(newOrderPaymentMethod
+                      ? { paymentMethod: newOrderPaymentMethod }
+                      : {}),
                   })
                 }
                 disabled={!canCreateFromSelectedOrigin}
@@ -3673,6 +3705,7 @@ export default function OrdenesCompra() {
             setContractDraft(DEFAULT_CONTRACT_DRAFT);
             setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
             setPricesIncludeTaxDraft(false);
+            setNewOrderPaymentMethod(undefined);
             setConfirmState({ kind: null });
             setApprovalItemDecisions({});
             setApprovalReviewComment("");
@@ -3794,8 +3827,8 @@ export default function OrdenesCompra() {
 
           {newOrderDialogOpen ? (
             <div className="space-y-5">
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(22rem,1.45fr)_minmax(22rem,1.45fr)_minmax(8.5rem,0.65fr)_minmax(14rem,0.8fr)_minmax(8.5rem,0.65fr)]">
-                <div className="min-w-0 space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-12">
+                <div className="min-w-0 space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 xl:col-span-3">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                     Origen
                   </Label>
@@ -3883,7 +3916,7 @@ export default function OrdenesCompra() {
                   </p>
                 </div>
 
-                <div className="min-w-0 space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
+                <div className="min-w-0 space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 xl:col-span-3">
                   <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                     Proveedor
                   </Label>
@@ -3990,7 +4023,7 @@ export default function OrdenesCompra() {
                   </div>
                 </div>
 
-                <div className="min-w-0 space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
+                <div className="min-w-0 space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 xl:col-span-1">
                   <Label className="break-words text-[11px] uppercase tracking-[0.1em] text-muted-foreground sm:text-xs">
                     Clasificación
                   </Label>
@@ -3999,7 +4032,36 @@ export default function OrdenesCompra() {
                   </p>
                 </div>
 
-                <div className="min-w-0 space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
+                <div className="min-w-0 space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 xl:col-span-2">
+                  <Label className="break-words text-[11px] uppercase tracking-[0.1em] text-muted-foreground sm:text-xs">
+                    Método de pago
+                  </Label>
+                  <Select
+                    value={newOrderPaymentMethod}
+                    onValueChange={value =>
+                      setNewOrderPaymentMethod(
+                        value as DirectPurchasePaymentMethod
+                      )
+                    }
+                  >
+                    <SelectTrigger className="h-10 bg-background sm:h-11">
+                      <SelectValue placeholder="Seleccione" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="linea_credito">
+                        {DIRECT_PURCHASE_PAYMENT_METHOD_LABELS.linea_credito}
+                      </SelectItem>
+                      <SelectItem value="fondo_proyecto">
+                        {DIRECT_PURCHASE_PAYMENT_METHOD_LABELS.fondo_proyecto}
+                      </SelectItem>
+                      <SelectItem value="contado">
+                        {DIRECT_PURCHASE_PAYMENT_METHOD_LABELS.contado}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="min-w-0 space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 xl:col-span-2">
                   <Label className="break-words text-[11px] uppercase tracking-[0.1em] text-muted-foreground sm:text-xs">
                     Fecha necesaria
                   </Label>
@@ -4012,7 +4074,7 @@ export default function OrdenesCompra() {
                   </p>
                 </div>
 
-                <div className="min-w-0 space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
+                <div className="min-w-0 space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 xl:col-span-1">
                   <Label className="break-words text-[11px] uppercase tracking-[0.1em] text-muted-foreground sm:text-xs">
                     Estado de emisión
                   </Label>
@@ -4673,6 +4735,7 @@ export default function OrdenesCompra() {
                       setContractDraft(DEFAULT_CONTRACT_DRAFT);
                       setCurrencyDraft(DEFAULT_CURRENCY_DRAFT);
                       setPricesIncludeTaxDraft(false);
+                      setNewOrderPaymentMethod(undefined);
                     }}
                     disabled={
                       createFromOriginMutation.isPending ||
@@ -4692,6 +4755,9 @@ export default function OrdenesCompra() {
                         ...selectedSupplierCreatePayload,
                         ...selectedContractCreatePayload,
                         ...selectedCurrencyCreatePayload,
+                        ...(newOrderPaymentMethod
+                          ? { paymentMethod: newOrderPaymentMethod }
+                          : {}),
                       })
                     }
                     disabled={!canCreateFromSelectedOrigin}
@@ -5132,51 +5198,47 @@ export default function OrdenesCompra() {
                       {detail.purchaseOrder.classification}
                     </p>
                   </div>
-                  {detail.purchaseOrder.purchaseType === "compra_directa" ||
-                  detail.purchaseOrder.paymentMethod ||
-                  detail.directPurchasePaymentMethod ? (
-                    <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3 lg:col-span-2">
-                      <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
-                        Método de pago
-                      </Label>
-                      {canEditOrderStructure ? (
-                        <Select
-                          value={normalizeDirectPurchasePaymentMethod(
-                            detail.purchaseOrder.paymentMethod ??
-                              detail.directPurchasePaymentMethod
-                          )}
-                          onValueChange={handlePaymentMethodChange}
-                          disabled={updateMutation.isPending}
-                        >
-                          <SelectTrigger className="h-10 bg-background sm:h-11">
-                            <SelectValue placeholder="Seleccione" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="linea_credito">
-                              {
-                                DIRECT_PURCHASE_PAYMENT_METHOD_LABELS.linea_credito
-                              }
-                            </SelectItem>
-                            <SelectItem value="fondo_proyecto">
-                              {
-                                DIRECT_PURCHASE_PAYMENT_METHOD_LABELS.fondo_proyecto
-                              }
-                            </SelectItem>
-                            <SelectItem value="contado">
-                              {DIRECT_PURCHASE_PAYMENT_METHOD_LABELS.contado}
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <p className="text-base font-semibold leading-tight sm:text-lg">
-                          {formatDirectPurchasePaymentMethod(
-                            detail.purchaseOrder.paymentMethod ??
-                              detail.directPurchasePaymentMethod
-                          )}
-                        </p>
-                      )}
-                    </div>
-                  ) : null}
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-3 lg:col-span-2">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Método de pago
+                    </Label>
+                    {canEditPaymentMethod ? (
+                      <Select
+                        value={normalizeDirectPurchasePaymentMethod(
+                          detail.purchaseOrder.paymentMethod ??
+                            detail.directPurchasePaymentMethod
+                        )}
+                        onValueChange={handlePaymentMethodChange}
+                        disabled={updatePaymentMethodMutation.isPending}
+                      >
+                        <SelectTrigger className="h-10 bg-background sm:h-11">
+                          <SelectValue placeholder="Seleccione" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="linea_credito">
+                            {
+                              DIRECT_PURCHASE_PAYMENT_METHOD_LABELS.linea_credito
+                            }
+                          </SelectItem>
+                          <SelectItem value="fondo_proyecto">
+                            {
+                              DIRECT_PURCHASE_PAYMENT_METHOD_LABELS.fondo_proyecto
+                            }
+                          </SelectItem>
+                          <SelectItem value="contado">
+                            {DIRECT_PURCHASE_PAYMENT_METHOD_LABELS.contado}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <p className="text-base font-semibold leading-tight sm:text-lg">
+                        {formatDirectPurchasePaymentMethod(
+                          detail.purchaseOrder.paymentMethod ??
+                            detail.directPurchasePaymentMethod
+                        )}
+                      </p>
+                    )}
+                  </div>
                   <div className="space-y-2.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4 md:col-span-6 lg:col-span-4">
                     <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                       Proveedor

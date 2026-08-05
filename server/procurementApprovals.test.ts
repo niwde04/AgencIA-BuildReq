@@ -113,11 +113,22 @@ describe("procurement approval limits", () => {
     ]);
   });
 
-  it("requires a payment method for every CD classification", () => {
+  it("requires a payment method for every purchase order", () => {
     expect(
       getPurchaseOrderApprovalReadinessError({
         supplierId: 7,
         classification: "cd",
+        purchaseType: "local",
+        currency: "HNL",
+        appliesContract: false,
+        items: [{ unitPrice: "100.00", subtotal: "100.00" }],
+      })
+    ).toBe("Seleccione el método de pago para la orden de compra");
+
+    expect(
+      getPurchaseOrderApprovalReadinessError({
+        supplierId: 7,
+        classification: "oc",
         purchaseType: "local",
         currency: "HNL",
         appliesContract: false,
@@ -134,6 +145,7 @@ describe("procurement approval limits", () => {
       currency: "USD",
       exchangeRate: "25.50000000",
       exchangeRateDate: new Date("2026-07-14T12:00:00Z"),
+      paymentMethod: "linea_credito",
       appliesContract: true,
       contractPaymentFrequency: "mensual",
       contractFirstPaymentDate: new Date("2026-07-15T12:00:00Z"),

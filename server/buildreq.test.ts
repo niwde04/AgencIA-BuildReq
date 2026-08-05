@@ -11150,6 +11150,7 @@ describe("BuildReq - Purchase Orders", () => {
         approvalStatus: null,
         supplierId: 7,
         purchaseType: "local",
+        paymentMethod: "linea_credito",
         currency: "HNL",
         exchangeRate: null,
         exchangeRateDate: null,
@@ -11178,6 +11179,87 @@ describe("BuildReq - Purchase Orders", () => {
       approvalHistory: [],
     } as any;
   }
+
+  it("allows completing a missing payment method on an emitted purchase order", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          projectId: 1,
+          status: "emitida",
+          approvalStatus: "no_requiere",
+          paymentMethod: null,
+        },
+        directPurchasePaymentMethod: null,
+        items: [],
+      } as any);
+    const updatePurchaseOrderSpy = vi
+      .spyOn(db, "updatePurchaseOrder")
+      .mockResolvedValue({ success: true });
+    const createPurchaseOrderAuditLogSpy = vi
+      .spyOn(db, "createPurchaseOrderAuditLog")
+      .mockResolvedValue({ id: 90 });
+
+    await expect(
+      caller.purchaseOrders.updatePaymentMethod({
+        id: 4,
+        paymentMethod: "contado",
+      })
+    ).resolves.toEqual({ success: true });
+    expect(updatePurchaseOrderSpy).toHaveBeenCalledWith(
+      4,
+      { paymentMethod: "contado" },
+      undefined
+    );
+    expect(createPurchaseOrderAuditLogSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purchaseOrderId: 4,
+        field: "paymentMethod",
+        oldValue: null,
+        newValue: "contado",
+        changedById: ctx.user.id,
+      })
+    );
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    updatePurchaseOrderSpy.mockRestore();
+    createPurchaseOrderAuditLogSpy.mockRestore();
+  });
+
+  it("does not replace a payment method already defined on an emitted purchase order", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getPurchaseOrderByIdSpy = vi
+      .spyOn(db, "getPurchaseOrderById")
+      .mockResolvedValue({
+        purchaseOrder: {
+          id: 4,
+          projectId: 1,
+          status: "emitida",
+          approvalStatus: "no_requiere",
+          paymentMethod: "linea_credito",
+        },
+        directPurchasePaymentMethod: null,
+        items: [],
+      } as any);
+    const updatePurchaseOrderSpy = vi.spyOn(db, "updatePurchaseOrder");
+
+    await expect(
+      caller.purchaseOrders.updatePaymentMethod({
+        id: 4,
+        paymentMethod: "contado",
+      })
+    ).rejects.toThrow(
+      "El método de pago de una OC emitida solo puede completarse cuando está pendiente"
+    );
+    expect(updatePurchaseOrderSpy).not.toHaveBeenCalled();
+
+    getPurchaseOrderByIdSpy.mockRestore();
+    updatePurchaseOrderSpy.mockRestore();
+  });
 
   function enablePurchaseOrderApprovalsForTest() {
     const previousSettings = getRuntimeProcurementApprovalSettings();
@@ -12872,6 +12954,7 @@ describe("BuildReq - Purchase Orders", () => {
           projectId: 1,
           status: "borrador",
           supplierId: 7,
+          paymentMethod: "linea_credito",
           currency: "HNL",
           pricesIncludeTax: false,
         },
@@ -13025,6 +13108,7 @@ describe("BuildReq - Purchase Orders", () => {
             status: "borrador",
             approvalStatus: null,
             supplierId: 7,
+            paymentMethod: "linea_credito",
             currency: "HNL",
             pricesIncludeTax: false,
           },
@@ -13083,6 +13167,7 @@ describe("BuildReq - Purchase Orders", () => {
           status: "aprobada",
           approvalStatus: "aprobada",
           supplierId: 7,
+          paymentMethod: "linea_credito",
           currency: "HNL",
           pricesIncludeTax: false,
         },
@@ -13140,6 +13225,7 @@ describe("BuildReq - Purchase Orders", () => {
           status: "aprobada",
           approvalStatus: "aprobada",
           supplierId: 7,
+          paymentMethod: "linea_credito",
           currency: "USD",
           exchangeRate: "26.10",
           exchangeRateDate: new Date("2026-07-14T12:00:00Z"),
@@ -13272,6 +13358,7 @@ describe("BuildReq - Purchase Orders", () => {
           projectId: 1,
           status: "borrador",
           supplierId: 7,
+          paymentMethod: "linea_credito",
           currency: "HNL",
         },
         items: [

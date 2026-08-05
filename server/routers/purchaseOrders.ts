@@ -1005,11 +1005,6 @@ export const purchaseOrdersRouter = router({
         current.push(linkedFlowItem);
         directPurchaseFlowByRequestItemId.set(requestItemId, current);
       }
-      const requiresPaymentMethod =
-        detail.purchaseRequest.purchaseType === "compra_directa" ||
-        input.classification === "cd" ||
-        directPurchaseFlowItems.length > 0;
-
       const selectedItemsByProject = new Map<number, any[]>();
       for (const conversionItem of conversionItems) {
         const { item } = conversionItem;
@@ -1081,9 +1076,7 @@ export const purchaseOrdersRouter = router({
             purchaseType: detail.purchaseRequest.purchaseType,
             pricesIncludeTax: input.pricesIncludeTax,
             ...currencySnapshot,
-            paymentMethod: requiresPaymentMethod
-              ? (input.paymentMethod ?? null)
-              : null,
+            paymentMethod: input.paymentMethod ?? null,
             supplierId: inferredSupplierId,
             supplierContactId: selectedSupplierContact?.id ?? null,
             supplierEmail: input.supplierEmail,
@@ -1341,12 +1334,6 @@ export const purchaseOrdersRouter = router({
             ) ?? [])
           : []
       );
-      const requiresPaymentMethod =
-        input.classification === "cd" ||
-        flowItems.length > 0 ||
-        purchaseRequests.some(
-          detail => detail.purchaseRequest.purchaseType === "compra_directa"
-        );
       const earliestNeededBy =
         purchaseRequests
           .map(detail => detail.purchaseRequest.neededBy)
@@ -1364,9 +1351,7 @@ export const purchaseOrdersRouter = router({
           purchaseType: purchaseRequests[0].purchaseRequest.purchaseType,
           pricesIncludeTax: input.pricesIncludeTax,
           ...currencySnapshot,
-          paymentMethod: requiresPaymentMethod
-            ? (input.paymentMethod ?? null)
-            : null,
+          paymentMethod: input.paymentMethod ?? null,
           supplierId:
             input.supplierId ?? flowItems[0]?.flow?.supplierId ?? null,
           supplierEmail: input.supplierEmail,
@@ -1604,6 +1589,78 @@ export const purchaseOrdersRouter = router({
               : "No se pudo reabrir la orden",
         });
       }
+    }),
+
+  updatePaymentMethod: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        paymentMethod: directPurchasePaymentMethodSchema,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const detail = await db.getPurchaseOrderById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Orden de compra no encontrada",
+        });
+      }
+      if (!canAccessPurchaseOrders(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene permisos para editar la OC",
+        });
+      }
+      assertCanModifyPurchaseOrders(ctx.user);
+      assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+
+      if (detail.purchaseOrder.status === "anulada") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "No se puede definir el método de pago de una OC anulada",
+        });
+      }
+
+      const currentPaymentMethod =
+        detail.purchaseOrder.paymentMethod ??
+        detail.directPurchasePaymentMethod ??
+        null;
+      const isDraft = isPurchaseOrderDraftLike(
+        detail.purchaseOrder.status,
+        detail.purchaseOrder.approvalStatus
+      );
+      if (
+        !isDraft &&
+        currentPaymentMethod &&
+        currentPaymentMethod !== input.paymentMethod
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "El método de pago de una OC emitida solo puede completarse cuando está pendiente",
+        });
+      }
+
+      await db.updatePurchaseOrder(
+        input.id,
+        { paymentMethod: input.paymentMethod },
+        isDraft ? { requireDraft: true } : undefined
+      );
+      await db.createPurchaseOrderAuditLog({
+        purchaseOrderId: input.id,
+        purchaseOrderItemId: null,
+        action: "actualizacion_metodo_pago",
+        field: "paymentMethod",
+        oldValue: currentPaymentMethod,
+        newValue: input.paymentMethod,
+        changedById: ctx.user.id,
+        note: isDraft
+          ? "Método de pago definido en la OC"
+          : "Método de pago pendiente completado después de la emisión",
+      });
+
+      return { success: true };
     }),
 
   update: protectedProcedure

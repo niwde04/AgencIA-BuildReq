@@ -328,12 +328,7 @@ export function getPurchaseOrderApprovalReadinessError(
     }
   }
 
-  if (
-    (input.classification === "cd" ||
-      input.purchaseType === "compra_directa") &&
-    !input.paymentMethod &&
-    !input.directPurchasePaymentMethod
-  ) {
+  if (!input.paymentMethod && !input.directPurchasePaymentMethod) {
     return "Seleccione el método de pago para la orden de compra";
   }
 
