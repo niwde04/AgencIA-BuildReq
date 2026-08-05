@@ -385,6 +385,7 @@ const MAIN_MENU_SECTIONS = [
     tone: "red",
     paths: [
       "/solicitudes",
+      "/flujos",
       "/solicitudes-compra",
       "/ordenes-compra",
       "/solicitudes-traslado",
@@ -404,7 +405,7 @@ const MAIN_MENU_SECTIONS = [
   {
     label: "LOGÍSTICA",
     tone: "orange",
-    paths: ["/flujos", "/devoluciones", "/recepciones", "/traslados"],
+    paths: ["/devoluciones", "/recepciones", "/traslados"],
   },
   {
     label: "FINANZAS",
