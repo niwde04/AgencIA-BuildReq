@@ -1755,6 +1755,12 @@ export default function Facturas() {
       { id: selectedId ?? 0 },
       { enabled: selectedId !== null }
     );
+  const replacementReceiptId = detail?.receipt?.replacementReceiptId ?? null;
+  const { data: replacementReceiptDetail } =
+    trpc.receipts.getById.useQuery(
+      { id: replacementReceiptId ?? 0 },
+      { enabled: replacementReceiptId !== null }
+    );
   const { data: qualityReleaseOverview } =
     trpc.qualityRetentionReleases.byInvoice.useQuery(
       { invoiceId: selectedId ?? 0 },
@@ -3114,7 +3120,6 @@ export default function Facturas() {
     !(qualityReleaseOverview?.releases ?? []).some(
       release => release.status === "pending_approval"
     );
-  const replacementReceiptId = detail?.receipt?.replacementReceiptId ?? null;
   const invoiceSaveConfirmed =
     selectedId !== null && actionFeedback.invoiceSavedId === selectedId;
   const retentionsSaveConfirmed =
@@ -4635,6 +4640,44 @@ export default function Facturas() {
                           )}{" "}
                           · {formatDateTimeLabel(detail.invoice.voidedAt)}
                         </p>
+                        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-rose-700">
+                          {detail.receipt?.id ? (
+                            <span>
+                              Recepción anulada:{" "}
+                              <DocumentNumberButton
+                                className="inline text-xs text-rose-800"
+                                onClick={() =>
+                                  setLocation(
+                                    `/recepciones?ver=${detail.receipt!.id}`
+                                  )
+                                }
+                                ariaLabel={`Abrir recepción anulada ${detail.receipt.receiptNumber}`}
+                              >
+                                {detail.receipt.receiptNumber}
+                              </DocumentNumberButton>
+                            </span>
+                          ) : null}
+                          {replacementReceiptId ? (
+                            <span>
+                              Recepción creada:{" "}
+                              <DocumentNumberButton
+                                className="inline text-xs text-rose-800"
+                                onClick={() =>
+                                  setLocation(
+                                    `/recepciones?ver=${replacementReceiptId}`
+                                  )
+                                }
+                                ariaLabel={`Abrir recepción creada ${
+                                  replacementReceiptDetail?.receipt
+                                    .receiptNumber ?? replacementReceiptId
+                                }`}
+                              >
+                                {replacementReceiptDetail?.receipt
+                                  .receiptNumber ?? "Cargando..."}
+                              </DocumentNumberButton>
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                     {replacementReceiptId ? (
@@ -4645,7 +4688,7 @@ export default function Facturas() {
                         className="border-rose-300 bg-white text-rose-800 hover:bg-rose-100"
                         onClick={() =>
                           setLocation(
-                            `/recepciones?editar=${replacementReceiptId}`
+                            `/recepciones?ver=${replacementReceiptId}`
                           )
                         }
                       >

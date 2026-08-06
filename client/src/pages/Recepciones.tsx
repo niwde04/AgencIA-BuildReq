@@ -94,7 +94,7 @@ import {
   type ChangeEvent,
 } from "react";
 import { toast } from "sonner";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getPrintLogoMarkup, printWindowWhenReady } from "@/lib/print-logo";
 import { getReadablePrintStyles } from "@/lib/readable-print-styles";
@@ -1093,7 +1093,8 @@ const ASSET_DETAIL_OPTIONAL_FIELDS: Array<{
 
 export default function Recepciones() {
   const utils = trpc.useUtils();
-  const [location, setLocation] = useLocation();
+  const [, setLocation] = useLocation();
+  const urlSearch = useSearch();
   const { user } = useAuth();
   const userRole = (user as any)?.buildreqRole;
   const canManageReceipts =
@@ -1407,8 +1408,20 @@ export default function Recepciones() {
   };
 
   useEffect(() => {
-    const query = location.includes("?") ? location.split("?")[1] : "";
-    const editReceiptId = Number(new URLSearchParams(query).get("editar"));
+    const queryParams = new URLSearchParams(urlSearch);
+    const requestedViewReceiptId = Number(queryParams.get("ver"));
+    if (
+      Number.isFinite(requestedViewReceiptId) &&
+      requestedViewReceiptId > 0
+    ) {
+      setDialogOpen(false);
+      setEditingDraftReceiptId(null);
+      setViewReceiptId(requestedViewReceiptId);
+      setLocation("/recepciones");
+      return;
+    }
+
+    const editReceiptId = Number(queryParams.get("editar"));
     if (!Number.isFinite(editReceiptId) || editReceiptId <= 0) return;
 
     if (!canManageReceipts) {
@@ -1422,7 +1435,7 @@ export default function Recepciones() {
     setEditingDraftReceiptId(editReceiptId);
     setDialogOpen(true);
     setLocation("/recepciones");
-  }, [canManageReceipts, location, setLocation]);
+  }, [canManageReceipts, setLocation, urlSearch]);
 
   useEffect(() => {
     if (viewReceiptId !== null) return;
@@ -4192,7 +4205,21 @@ export default function Recepciones() {
       : !receiptDetail.invoice?.id
         ? "Esta recepción no tiene factura vinculada para corregir."
         : receiptDetail.invoice.status === "registrada"
-          ? "La factura ya está contabilizada; no se puede corregir la recepción."
+          ? (
+              <>
+                La factura{" "}
+                <DocumentNumberButton
+                  className="inline text-xs text-primary"
+                  onClick={() =>
+                    setLocation(`/facturas?editar=${receiptDetail.invoice!.id}`)
+                  }
+                  ariaLabel={`Abrir factura ${receiptDetail.invoice.invoiceDocumentNumber}`}
+                >
+                  {receiptDetail.invoice.invoiceDocumentNumber}
+                </DocumentNumberButton>{" "}
+                ya está contabilizada; no se puede corregir la recepción.
+              </>
+            )
           : receiptDetail.invoice.status === "anulada"
             ? "La factura ya está anulada."
             : !CORRECTABLE_RECEIPT_INVOICE_STATUSES.has(
