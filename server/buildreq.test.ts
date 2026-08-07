@@ -13612,10 +13612,14 @@ describe("BuildReq - Purchase Orders", () => {
     const encodedQuoteLabel = Buffer.from("Cotización:", "latin1")
       .toString("hex")
       .toUpperCase();
+    const encodedAuthorizedByLabel = Buffer.from("Autorizado por:", "latin1")
+      .toString("hex")
+      .toUpperCase();
 
     expect(pdfText).toContain(`<${encodedSalesAdvisor}> Tj`);
     expect(pdfText).not.toContain(`<${encodedOrderLabel}> Tj`);
     expect(pdfText).not.toContain(`<${encodedQuoteLabel}> Tj`);
+    expect(pdfText).not.toContain(`<${encodedAuthorizedByLabel}> Tj`);
     expect(pdfText).toContain("/Subtype /Image");
   });
 

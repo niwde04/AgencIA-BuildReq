@@ -2193,13 +2193,12 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
 
     const lowerInfoHeight = Math.max(summary.height, detailsTop - top);
     const signaturesTop = top + lowerInfoHeight + 28;
-    const signatureWidth = 92;
     const firstSignatureX = marginX + 58;
-    const secondSignatureX = marginX + 278;
+    const preparedByEndX = marginX + 278;
     const preparedByLabel =
       params.preparedByLabel?.trim() || params.requestedByLabel || "-";
     const preparedByText = `Elaborado por: ${preparedByLabel}`;
-    const preparedByWidth = secondSignatureX - firstSignatureX - 12;
+    const preparedByWidth = preparedByEndX - firstSignatureX - 12;
     let preparedByFontSize = 7.2;
     while (
       preparedByFontSize > 5.8 &&
@@ -2217,26 +2216,6 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       font: "F2",
       color: ink,
     });
-
-    if (!params.digitalSeal) {
-      drawLine(
-        page,
-        secondSignatureX,
-        signaturesTop,
-        secondSignatureX + signatureWidth,
-        signaturesTop,
-        ink,
-        0.8
-      );
-      drawCenteredText(
-        secondSignatureX,
-        signaturesTop + 7,
-        signatureWidth,
-        "Autorizado por:",
-        7.1,
-        "F2"
-      );
-    }
 
     const noteTop = signaturesTop + 38;
     const noteX = marginX + 18;
