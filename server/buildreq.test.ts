@@ -13606,8 +13606,16 @@ describe("BuildReq - Purchase Orders", () => {
     const encodedSalesAdvisor = Buffer.from(salesAdvisorLabel, "latin1")
       .toString("hex")
       .toUpperCase();
+    const encodedOrderLabel = Buffer.from("Pedido:", "latin1")
+      .toString("hex")
+      .toUpperCase();
+    const encodedQuoteLabel = Buffer.from("Cotización:", "latin1")
+      .toString("hex")
+      .toUpperCase();
 
     expect(pdfText).toContain(`<${encodedSalesAdvisor}> Tj`);
+    expect(pdfText).not.toContain(`<${encodedOrderLabel}> Tj`);
+    expect(pdfText).not.toContain(`<${encodedQuoteLabel}> Tj`);
     expect(pdfText).toContain("/Subtype /Image");
   });
 

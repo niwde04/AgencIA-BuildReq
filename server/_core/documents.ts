@@ -1826,16 +1826,6 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
         top: rightTop,
         labelWidth: 44,
         valueWidth: 132,
-        label: "Pedido:",
-        value: params.orderId,
-        maxLines: 1,
-      }) + 1.2;
-    rightTop +=
-      drawLabelValue({
-        x: rightX,
-        top: rightTop,
-        labelWidth: 44,
-        valueWidth: 132,
         label: "F Pago:",
         value: params.paymentMethodLabel?.trim() || "-",
         maxLines: 2,
@@ -2185,7 +2175,6 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       { label: "Fecha Entrega:", value: params.deliveryDateLabel, maxLines: 1 },
       { label: "Solicitado:", value: params.requestedByLabel, maxLines: 2 },
       { label: "Observaciones:", value: params.observations, maxLines: 2 },
-      { label: "Cotización:", value: params.quoteLabel, maxLines: 1 },
     ];
     details.forEach(detail => {
       detailsTop +=
