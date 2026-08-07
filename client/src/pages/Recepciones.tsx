@@ -666,7 +666,7 @@ function getReceiptHasEmissionDeadlineIssue(receipt: any, invoice?: any) {
     hasEmissionDeadlineIssue({
       isFiscalDocument: receipt.isFiscalDocument,
       documentDate: receipt.documentDate,
-      emissionDeadline: invoice?.emissionDeadline,
+      emissionDeadline: receipt.emissionDeadline ?? invoice?.emissionDeadline,
     })
   );
 }
@@ -1659,7 +1659,7 @@ export default function Recepciones() {
     setDocumentDueDate(toDateInputValue(receipt.documentDueDate));
     setPostingDate(toDateInputValue(receipt.postingDate) || todayDateValue());
     setReceiptDate(toDateInputValue(receipt.receiptDate) || todayDateValue());
-    setEmissionDeadline("");
+    setEmissionDeadline(toDateInputValue(receipt.emissionDeadline));
     setOtherChargeDrafts(
       (editingDraftReceiptDetail.otherCharges ?? []).map((charge: any) =>
         createReceiptOtherChargeDraft({
@@ -3566,6 +3566,7 @@ export default function Recepciones() {
         documentDueDate: documentDueDate || undefined,
         postingDate: postingDate || todayDateValue(),
         receiptDate,
+        emissionDeadline: emissionDeadline || undefined,
         notes: notes.trim() || undefined,
         otherCharges: getCompleteReceiptOtherChargesPayload(),
         items: [
@@ -7475,7 +7476,7 @@ export default function Recepciones() {
                   </div>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-4">
+                <div className="grid gap-3 md:grid-cols-5">
                   <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
                     <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
                       Fecha documento
@@ -7506,6 +7507,14 @@ export default function Recepciones() {
                     </Label>
                     <p className="text-sm font-semibold leading-snug sm:text-base">
                       {formatDateLabel(receiptDetail.receipt.receiptDate)}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5 rounded-2xl border border-border/70 bg-muted/20 p-3.5 sm:p-4">
+                    <Label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:text-xs">
+                      Fecha límite de emisión
+                    </Label>
+                    <p className="text-sm font-semibold leading-snug sm:text-base">
+                      {formatDateLabel(receiptDetail.receipt.emissionDeadline)}
                     </p>
                   </div>
                 </div>

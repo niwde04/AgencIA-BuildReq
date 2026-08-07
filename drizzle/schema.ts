@@ -1348,6 +1348,7 @@ export const receipts = pgTable(
     documentDueDate: timestamp("documentDueDate"),
     postingDate: timestamp("postingDate").defaultNow().notNull(),
     receiptDate: timestamp("receiptDate").defaultNow().notNull(),
+    emissionDeadline: timestamp("emissionDeadline"),
     notes: text("notes"),
     voidedAt: timestamp("voidedAt"),
     voidedById: integer("voidedById"),

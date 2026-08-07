@@ -752,6 +752,7 @@ export const invoicesRouter = router({
           dmcDuaNumber: z.string().trim().max(100).optional(),
           dmcImportOutsideCentralAmerica: z.boolean().optional(),
           notes: z.string().trim().max(2000).optional(),
+          syncReceiptFiscalData: z.boolean().optional(),
         })
         .superRefine((value, ctx) => {
           const hasOceExemption = value.hasOceExemption === true;
@@ -1106,7 +1107,11 @@ export const invoicesRouter = router({
       };
 
       try {
-        return await db.updateInvoice(input.id, updateData);
+        return input.syncReceiptFiscalData === true
+          ? await db.updateInvoice(input.id, updateData, {
+              syncReceiptFiscalData: true,
+            })
+          : await db.updateInvoice(input.id, updateData);
       } catch (error) {
         rethrowDuplicateSupplierFiscalInvoice(error);
       }

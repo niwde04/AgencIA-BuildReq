@@ -702,9 +702,10 @@ export const receiptsRouter = router({
         documentRangeEnd: z.string().trim().max(100).optional(),
         documentDate: z.string().optional(),
         documentDueDate: z.string().optional(),
-        postingDate: z.string().optional(),
-        receiptDate: z.string().optional(),
-        notes: z.string().optional(),
+          postingDate: z.string().optional(),
+          receiptDate: z.string().optional(),
+          emissionDeadline: z.string().optional(),
+          notes: z.string().optional(),
         items: z.array(receiptItemSchema).min(1),
         otherCharges: z.array(receiptOtherChargeSchema).optional(),
       })
@@ -834,6 +835,9 @@ export const receiptsRouter = router({
         receiptDate: input.receiptDate
           ? parseDateInput(input.receiptDate)
           : now,
+        emissionDeadline: input.emissionDeadline
+          ? parseDateInput(input.emissionDeadline)
+          : null,
         notes: input.notes?.trim() || null,
       };
       const draftItems = await Promise.all(

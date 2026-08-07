@@ -17450,6 +17450,46 @@ describe("BuildReq - Invoices", () => {
     updateInvoiceSpy.mockRestore();
   });
 
+  it("can synchronize receipt fiscal data while updating a draft invoice", async () => {
+    const { ctx } = createAdminCentralContext();
+    const caller = appRouter.createCaller(ctx);
+    const getInvoiceByIdSpy = vi
+      .spyOn(db, "getInvoiceById")
+      .mockResolvedValue(invoiceDetail);
+    const updateInvoiceSpy = vi.spyOn(db, "updateInvoice").mockResolvedValue({
+      ...invoiceDetail.invoice,
+      invoiceNumber: VALID_INVOICE_NUMBER_ALT,
+    } as any);
+
+    await caller.invoices.update({
+      id: 10,
+      cai: VALID_CAI,
+      invoiceNumber: VALID_INVOICE_NUMBER_ALT,
+      documentRangeStart: VALID_DOCUMENT_RANGE_START,
+      documentRangeEnd: VALID_DOCUMENT_RANGE_END,
+      documentDate: "2026-05-01",
+      documentDueDate: "2026-06-01",
+      postingDate: "2026-05-02",
+      receiptDate: "2026-05-02",
+      emissionDeadline: "2026-05-31",
+      syncReceiptFiscalData: true,
+    });
+
+    expect(updateInvoiceSpy).toHaveBeenCalledWith(
+      10,
+      expect.objectContaining({
+        invoiceNumber: VALID_INVOICE_NUMBER_ALT,
+        documentDate: expect.any(Date),
+        documentDueDate: expect.any(Date),
+        emissionDeadline: expect.any(Date),
+      }),
+      { syncReceiptFiscalData: true }
+    );
+
+    getInvoiceByIdSpy.mockRestore();
+    updateInvoiceSpy.mockRestore();
+  });
+
   it("rejects an active fiscal invoice number already used by the supplier", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);

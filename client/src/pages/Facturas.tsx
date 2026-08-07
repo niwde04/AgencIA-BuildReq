@@ -87,6 +87,7 @@ import {
   isValidCai,
   isValidInvoiceNumber,
 } from "@shared/invoices";
+import { getInvoiceReceiptFiscalDifferences } from "@shared/invoice-receipt-fiscal";
 import {
   ASSET_CONDITION_LABELS,
   ASSET_CONDITION_VALUES,
@@ -1601,6 +1602,8 @@ export default function Facturas() {
   const [rejectionComment, setRejectionComment] = useState("");
   const [correctionDialogOpen, setCorrectionDialogOpen] = useState(false);
   const [correctionReason, setCorrectionReason] = useState("");
+  const [receiptFiscalSyncDialogOpen, setReceiptFiscalSyncDialogOpen] =
+    useState(false);
   const [qualityReleaseDialogOpen, setQualityReleaseDialogOpen] =
     useState(false);
   const [qualityReleaseAmount, setQualityReleaseAmount] = useState("");
@@ -1782,6 +1785,13 @@ export default function Facturas() {
   );
   const selectedInvoiceCurrency: PurchaseCurrency =
     detail?.invoice.currency ?? "HNL";
+  const receiptFiscalDifferences = useMemo(
+    () =>
+      detail?.receipt
+        ? getInvoiceReceiptFiscalDifferences(invoiceDraft, detail.receipt)
+        : [],
+    [detail?.receipt, invoiceDraft]
+  );
   const formatSelectedInvoiceCurrency = (
     value: string | number | null | undefined
   ) => formatPurchaseOrderCurrency(value, selectedInvoiceCurrency);
@@ -1803,6 +1813,10 @@ export default function Facturas() {
       }));
       void utils.invoices.invalidate();
       void utils.invoices.getById.invalidate({ id: variables.id });
+      if (variables.syncReceiptFiscalData && detail?.receipt?.id) {
+        void utils.receipts.invalidate();
+        void utils.receipts.getById.invalidate({ id: detail.receipt.id });
+      }
     },
     onError: error => toast.error(getFriendlyMutationError(error.message)),
   });
@@ -2073,6 +2087,7 @@ export default function Facturas() {
     setRetentionsDirty(false);
     setCorrectionDialogOpen(false);
     setCorrectionReason("");
+    setReceiptFiscalSyncDialogOpen(false);
     setActionFeedback({
       invoiceSavedId: null,
       retentionsSavedId: null,
@@ -3377,7 +3392,10 @@ export default function Facturas() {
     return true;
   };
 
-  const buildInvoiceUpdatePayload = (id: number) => ({
+  const buildInvoiceUpdatePayload = (
+    id: number,
+    options?: { syncReceiptFiscalData?: boolean }
+  ) => ({
     id,
     isFiscalDocument: invoiceDraft.isFiscalDocument,
     cai: invoiceDraft.cai.trim()
@@ -3448,6 +3466,7 @@ export default function Facturas() {
     dmcDuaNumber: invoiceDraft.dmcDuaNumber.trim() || undefined,
     dmcImportOutsideCentralAmerica: invoiceDraft.dmcImportOutsideCentralAmerica,
     notes: invoiceDraft.notes,
+    syncReceiptFiscalData: options?.syncReceiptFiscalData,
   });
 
   const handleSaveInvoice = () => {
@@ -4024,6 +4043,24 @@ export default function Facturas() {
     printWindow.document.close();
   };
 
+  const submitInvoiceForReview = (syncReceiptFiscalData = false) => {
+    if (!selectedId) return;
+
+    const invoiceId = selectedId;
+    setActionFeedback(current => ({ ...current, reviewSentId: null }));
+    updateMutation
+      .mutateAsync(
+        buildInvoiceUpdatePayload(invoiceId, { syncReceiptFiscalData })
+      )
+      .then(() => {
+        setReceiptFiscalSyncDialogOpen(false);
+        reviewMutation.mutate({ id: invoiceId });
+      })
+      .catch(() => {
+        // updateMutation already shows the friendly error toast.
+      });
+  };
+
   const handleReviewInvoice = () => {
     if (!selectedId) return;
     if (documentAdjustmentsDirty) {
@@ -4038,16 +4075,12 @@ export default function Facturas() {
     }
     if (!validateInvoiceDraft()) return;
 
-    const invoiceId = selectedId;
-    setActionFeedback(current => ({ ...current, reviewSentId: null }));
-    updateMutation
-      .mutateAsync(buildInvoiceUpdatePayload(invoiceId))
-      .then(() => {
-        reviewMutation.mutate({ id: invoiceId });
-      })
-      .catch(() => {
-        // updateMutation already shows the friendly error toast.
-      });
+    if (receiptFiscalDifferences.length > 0) {
+      setReceiptFiscalSyncDialogOpen(true);
+      return;
+    }
+
+    submitInvoiceForReview();
   };
 
   const handleAccountInvoice = () => {
@@ -6895,6 +6928,84 @@ export default function Facturas() {
               {requestQualityReleaseMutation.isPending
                 ? "Enviando..."
                 : "Enviar solicitud"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={receiptFiscalSyncDialogOpen}
+        onOpenChange={open => {
+          if (!open && !updateMutation.isPending && !reviewMutation.isPending) {
+            setReceiptFiscalSyncDialogOpen(false);
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl rounded-2xl border-border/70">
+          <DialogHeader className="space-y-2">
+            <DialogTitle>Datos fiscales diferentes</DialogTitle>
+            <DialogDescription>
+              Antes de registrar {detail?.invoice.invoiceDocumentNumber}, se
+              compararon sus datos con la recepción{" "}
+              {detail?.receipt?.receiptNumber}. Estas diferencias deben
+              corregirse para mantener ambos documentos sincronizados.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-[50vh] overflow-auto rounded-lg border border-border/70">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead className="sticky top-0 bg-muted/80">
+                <tr className="border-b border-border/70">
+                  <th className="p-3 text-left font-semibold">Campo</th>
+                  <th className="p-3 text-left font-semibold">Recepción</th>
+                  <th className="p-3 text-left font-semibold">Factura</th>
+                </tr>
+              </thead>
+              <tbody>
+                {receiptFiscalDifferences.map(difference => (
+                  <tr
+                    key={difference.field}
+                    className="border-b border-border/70 last:border-0"
+                  >
+                    <td className="p-3 font-medium">{difference.label}</td>
+                    <td className="p-3 text-muted-foreground">
+                      {difference.receiptValue}
+                    </td>
+                    <td className="p-3 font-semibold text-foreground">
+                      {difference.invoiceValue}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="rounded-lg border border-blue-300 bg-blue-50 p-3 text-sm text-blue-800">
+            ¿Desea actualizar la recepción con los datos fiscales de la factura
+            y continuar con el registro?
+          </div>
+
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setReceiptFiscalSyncDialogOpen(false)}
+              disabled={updateMutation.isPending || reviewMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => submitInvoiceForReview(true)}
+              disabled={
+                updateMutation.isPending ||
+                reviewMutation.isPending ||
+                receiptFiscalDifferences.length === 0
+              }
+            >
+              {updateMutation.isPending
+                ? "Actualizando..."
+                : reviewMutation.isPending
+                  ? "Registrando..."
+                  : "Actualizar recepción y registrar"}
             </Button>
           </div>
         </DialogContent>
