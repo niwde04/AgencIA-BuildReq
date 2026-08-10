@@ -4,6 +4,7 @@ import {
   asc,
   desc,
   eq,
+  gt,
   inArray,
   isNotNull,
   isNull,
@@ -13,13 +14,16 @@ import {
 import * as XLSX from "xlsx";
 import {
   attachments,
+  financialGroups,
   invoiceDocumentAdjustments,
   invoiceItems,
+  invoiceOtherCharges,
   invoices,
   notifications,
   projects,
   purchaseOrderAdvances,
   purchaseOrders,
+  sapCatalog,
   suppliers,
   systemSettings,
   treasuryPaymentBatches,
@@ -29,8 +33,10 @@ import {
 } from "../drizzle/schema";
 import type { PurchaseCurrency } from "../shared/purchase-orders";
 import {
-  buildTreasuryPaymentPurchaseDescription,
+  buildTreasuryPaymentsReportRows,
+  resolveTreasuryPaymentFinancialGroup,
   type TreasuryPaymentsReportPayload,
+  type TreasuryPaymentsSourceProduct,
 } from "../shared/treasury-payments-report";
 import {
   buildTreasuryMoneySummary,
@@ -1294,7 +1300,7 @@ export async function getTreasuryPaymentsReport(
 
   const paymentRows = await db
     .select({
-      itemId: treasuryPaymentItems.id,
+      paymentItemId: treasuryPaymentItems.id,
       batchNumber: treasuryPaymentBatches.batchNumber,
       bankReference: treasuryPaymentItems.bankReference,
       invoiceId: invoices.id,
@@ -1307,8 +1313,6 @@ export async function getTreasuryPaymentsReport(
       invoiceTotal: invoices.total,
       invoiceNetPayable: treasuryPaymentItems.invoiceNetPayable,
       appliedAdvanceAmount: treasuryPaymentItems.appliedAdvanceAmount,
-      requestedAmount: treasuryPaymentItems.requestedAmount,
-      approvedAmount: treasuryPaymentItems.approvedAmount,
       bankPaidAmount: treasuryPaymentItems.bankPaidAmount,
     })
     .from(treasuryPaymentItems)
@@ -1321,65 +1325,137 @@ export async function getTreasuryPaymentsReport(
     .where(
       and(
         inArray(treasuryPaymentItems.batchId, uniqueBatchIds),
+        eq(treasuryPaymentBatches.paymentKind, "invoice"),
         eq(treasuryPaymentItems.sourceType, "invoice"),
-        ne(treasuryPaymentItems.status, "excluida")
+        ne(treasuryPaymentItems.status, "excluida"),
+        gt(treasuryPaymentItems.bankPaidAmount, "0")
       )
     )
-    .orderBy(asc(treasuryPaymentBatches.id), asc(treasuryPaymentItems.id));
+    .orderBy(
+      asc(treasuryPaymentBatches.batchNumber),
+      asc(invoices.invoiceNumber),
+      asc(treasuryPaymentItems.id)
+    );
+
+  if (!paymentRows.length) {
+    return { generatedAt: new Date(), payments: [] };
+  }
 
   const uniqueInvoiceIds = Array.from(
     new Set(paymentRows.map(row => row.invoiceId))
   );
-  const itemRows = uniqueInvoiceIds.length
+  const [itemRows, otherChargeRows] = await Promise.all([
+    db
+      .select({
+        id: invoiceItems.id,
+        invoiceId: invoiceItems.invoiceId,
+        currentSapItemCode: invoiceItems.currentSapItemCode,
+        originalSapItemCode: invoiceItems.originalSapItemCode,
+        quantity: invoiceItems.quantity,
+        itemName: invoiceItems.itemName,
+        unit: invoiceItems.unit,
+        unitPrice: invoiceItems.unitPrice,
+        subtotal: invoiceItems.subtotal,
+        taxAmount: invoiceItems.taxAmount,
+        total: invoiceItems.total,
+      })
+      .from(invoiceItems)
+      .where(inArray(invoiceItems.invoiceId, uniqueInvoiceIds))
+      .orderBy(asc(invoiceItems.invoiceId), asc(invoiceItems.id)),
+    db
+      .select({
+        id: invoiceOtherCharges.id,
+        invoiceId: invoiceOtherCharges.invoiceId,
+        concept: invoiceOtherCharges.concept,
+        amount: invoiceOtherCharges.amount,
+      })
+      .from(invoiceOtherCharges)
+      .where(inArray(invoiceOtherCharges.invoiceId, uniqueInvoiceIds))
+      .orderBy(asc(invoiceOtherCharges.invoiceId), asc(invoiceOtherCharges.id)),
+  ]);
+  const sapCodes = Array.from(
+    new Set(
+      itemRows.flatMap(item =>
+        [item.currentSapItemCode, item.originalSapItemCode]
+          .map(value => value?.trim())
+          .filter((value): value is string => Boolean(value))
+      )
+    )
+  );
+  const catalogRows = sapCodes.length
     ? await db
         .select({
-          invoiceId: invoiceItems.invoiceId,
-          quantity: invoiceItems.quantity,
-          itemName: invoiceItems.itemName,
+          itemCode: sapCatalog.itemCode,
+          financialCode: sapCatalog.financialGroupCode,
+          financialGroupDescription: financialGroups.financialGroupDescription,
         })
-        .from(invoiceItems)
-        .where(inArray(invoiceItems.invoiceId, uniqueInvoiceIds))
-        .orderBy(asc(invoiceItems.invoiceId), asc(invoiceItems.id))
+        .from(sapCatalog)
+        .leftJoin(
+          financialGroups,
+          eq(sapCatalog.financialGroupCode, financialGroups.financialGroupCode)
+        )
+        .where(inArray(sapCatalog.itemCode, sapCodes))
     : [];
-  const itemsByInvoiceId = new Map<
-    number,
-    Array<{ quantity: unknown; itemName: string }>
-  >();
-  for (const item of itemRows) {
-    const invoiceItemsForReport = itemsByInvoiceId.get(item.invoiceId) ?? [];
-    invoiceItemsForReport.push({
-      quantity: item.quantity,
+  const catalogByCode = new Map(
+    catalogRows.map(row => [
+      row.itemCode,
+      {
+        itemCode: row.itemCode,
+        financialCode: row.financialCode?.trim() ?? "",
+        financialGroupDescription: row.financialGroupDescription?.trim() ?? "",
+      },
+    ])
+  );
+  const products: TreasuryPaymentsSourceProduct[] = itemRows.map(item => {
+    const codes = {
+      currentSapItemCode: item.currentSapItemCode?.trim() ?? "",
+      originalSapItemCode: item.originalSapItemCode?.trim() ?? "",
+    };
+    const financialGroup = resolveTreasuryPaymentFinancialGroup(
+      codes,
+      catalogByCode
+    );
+    return {
+      id: item.id,
+      invoiceId: item.invoiceId,
+      ...codes,
       itemName: item.itemName,
-    });
-    itemsByInvoiceId.set(item.invoiceId, invoiceItemsForReport);
-  }
+      quantity: Number(item.quantity ?? 0),
+      unit: item.unit?.trim() ?? "",
+      unitPrice: Number(item.unitPrice ?? 0),
+      subtotal: Number(item.subtotal ?? 0),
+      taxAmount: Number(item.taxAmount ?? 0),
+      total: Number(item.total ?? 0),
+      financialCode: financialGroup.financialCode,
+      financialGroupDescription: financialGroup.financialGroupDescription,
+    };
+  });
 
   return {
     generatedAt: new Date(),
-    payments: paymentRows.map(row => {
-      const invoiceTotal = roundTreasuryMoney(Number(row.invoiceTotal ?? 0));
-      const invoiceNetPayable = roundTreasuryMoney(
-        Number(row.invoiceNetPayable ?? 0)
-      );
-      return {
+    payments: buildTreasuryPaymentsReportRows({
+      payments: paymentRows.map(row => ({
+        paymentItemId: row.paymentItemId,
         batchNumber: row.batchNumber,
         bankReference: row.bankReference?.trim() ?? "",
         invoiceDate: row.invoiceDate,
         invoiceNumber: row.invoiceNumber?.trim() || row.invoiceDocumentNumber,
         supplierName: row.supplierName,
-        purchaseDescription: buildTreasuryPaymentPurchaseDescription(
-          itemsByInvoiceId.get(row.invoiceId) ?? []
-        ),
+        invoiceId: row.invoiceId,
         jobCode: row.jobCode,
-        financialCode: "" as const,
-        invoiceTotal,
-        advances: roundTreasuryMoney(Number(row.appliedAdvanceAmount ?? 0)),
-        totalRetentions: roundTreasuryMoney(
-          Math.max(0, invoiceTotal - invoiceNetPayable)
-        ),
-        netPayable: resolveTreasuryPaymentReportAmount(row),
         currency: row.currency,
-      };
+        invoiceTotal: Number(row.invoiceTotal ?? 0),
+        invoiceNetPayable: Number(row.invoiceNetPayable ?? 0),
+        appliedAdvanceAmount: Number(row.appliedAdvanceAmount ?? 0),
+        bankPaidAmount: Number(row.bankPaidAmount ?? 0),
+      })),
+      products,
+      otherCharges: otherChargeRows.map(charge => ({
+        id: charge.id,
+        invoiceId: charge.invoiceId,
+        concept: charge.concept,
+        amount: Number(charge.amount ?? 0),
+      })),
     }),
   };
 }

@@ -3221,6 +3221,15 @@ export default function Tesoreria() {
       return matchesSearch && matchesDateRange;
     });
   }, [batchesQuery.data, dateFrom, dateTo, search]);
+  const paidInvoiceBatches = useMemo(
+    () =>
+      visibleBatches.filter(
+        (row: any) =>
+          (row.batch.paymentKind ?? "invoice") === "invoice" &&
+          Number(row.paidTotal ?? 0) > 0
+      ),
+    [visibleBatches]
+  );
   const batchTotalPages = Math.max(
     1,
     Math.ceil(visibleBatches.length / TREASURY_BATCH_PAGE_SIZE)
@@ -3417,14 +3426,16 @@ export default function Tesoreria() {
   }
 
   async function exportPaymentsReport() {
-    if (!visibleBatches.length) {
-      toast.error("No hay lotes para exportar con los filtros actuales.");
+    if (!paidInvoiceBatches.length) {
+      toast.error(
+        "No hay lotes de facturas con pago registrado para exportar."
+      );
       return;
     }
     setExportingPaymentsReport(true);
     try {
       const payload = await paymentsReportMutation.mutateAsync({
-        batchIds: visibleBatches.map(row => row.batch.id),
+        batchIds: paidInvoiceBatches.map(row => row.batch.id),
       });
       const fileName =
         dateFrom || dateTo
@@ -3434,16 +3445,21 @@ export default function Tesoreria() {
         fileName,
         buildTreasuryPaymentsWorksheets({
           batchColumns: TREASURY_BATCH_EXPORT_COLUMNS,
-          batches: visibleBatches,
+          batches: paidInvoiceBatches,
           payments: payload.payments,
         })
       );
+      const invoiceCount = new Set(
+        payload.payments.map(row => `${row.batchNumber}:${row.invoiceNumber}`)
+      ).size;
       toast.success(
-        `Pagos efectuados generado con ${visibleBatches.length.toLocaleString(
+        `Pagos efectuados generado con ${paidInvoiceBatches.length.toLocaleString(
           "es-HN"
-        )} lote(s) y ${payload.payments.length.toLocaleString(
+        )} lote(s), ${invoiceCount.toLocaleString(
           "es-HN"
-        )} factura(s).`
+        )} factura(s) y ${payload.payments.length.toLocaleString(
+          "es-HN"
+        )} detalle(s).`
       );
     } catch (error) {
       toast.error(
@@ -4110,7 +4126,7 @@ export default function Tesoreria() {
                     disabled={
                       exportingPaymentsReport ||
                       batchesQuery.isFetching ||
-                      visibleBatches.length === 0
+                      paidInvoiceBatches.length === 0
                     }
                     title="Exportar Pagos efectuados con las hojas Lotes de pago y Payments"
                   >
