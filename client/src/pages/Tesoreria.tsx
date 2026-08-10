@@ -51,9 +51,15 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { downloadTreasuryInvoiceSummaryWorkbook } from "@/lib/dmc-export";
-import { buildDatedExcelFileName, downloadExcel } from "@/lib/excel-export";
+import {
+  buildDatedExcelFileName,
+  downloadExcel,
+  downloadWorkbook,
+  type ExcelColumn,
+} from "@/lib/excel-export";
 import { printWindowWhenReady } from "@/lib/print-logo";
 import { trpc } from "@/lib/trpc";
+import { buildTreasuryPaymentsWorksheets } from "@/lib/treasury-payments-export";
 import {
   buildTreasuryPaymentReportHtml,
   type TreasuryPaymentReportPayload,
@@ -303,8 +309,90 @@ function toExcelDate(value: unknown) {
   const dateKey = toDateKey(value);
   if (!dateKey) return undefined;
   const [year, month, day] = dateKey.split("-").map(Number);
-  return new Date(year!, month! - 1, day!);
+  return new Date(year!, month! - 1, day!, 12);
 }
+
+const TREASURY_BATCH_EXPORT_COLUMNS: ExcelColumn<any>[] = [
+  {
+    header: "Lote",
+    value: row => row.batch.batchNumber,
+    width: 22,
+  },
+  {
+    header: "Código de proyecto",
+    value: row =>
+      treasuryProjectSummary(row)
+        .projects.map(project => project.code)
+        .join(", "),
+    width: 20,
+  },
+  {
+    header: "Proyecto",
+    value: row =>
+      treasuryProjectSummary(row)
+        .projects.map(project => project.name)
+        .join(", "),
+    width: 36,
+  },
+  {
+    header: "Estado",
+    value: row =>
+      getTreasuryBatchStatusLabel(
+        row.batch.status as TreasuryBatchStatus,
+        row.batch.approvalBypassed === true
+      ),
+    width: 28,
+  },
+  {
+    header: "Fecha de registro de pago",
+    value: row => toExcelDate(row.paymentRegistrationDate),
+    width: 24,
+    numFmt: "dd/mm/yyyy",
+  },
+  {
+    header: "Moneda",
+    value: row => row.batch.currency,
+    width: 12,
+  },
+  {
+    header: "Proveedores",
+    value: row => Number(row.supplierCount ?? 0),
+    width: 14,
+  },
+  {
+    header: "Facturas",
+    value: row => Number(row.itemCount ?? 0),
+    width: 12,
+  },
+  {
+    header: "Solicitado",
+    value: row => Number(row.requestedTotal ?? 0),
+    width: 18,
+    numFmt: "#,##0.0000",
+  },
+  {
+    header: "Monto aprobado/listo para banco",
+    value: row => Number(row.approvedTotal ?? 0),
+    width: 18,
+    numFmt: "#,##0.0000",
+  },
+  {
+    header: "Pagado",
+    value: row => Number(row.paidTotal ?? 0),
+    width: 18,
+    numFmt: "#,##0.0000",
+  },
+  {
+    header: "Versión",
+    value: row => Number(row.batch.version ?? 1),
+    width: 10,
+  },
+  {
+    header: "Notas",
+    value: row => row.batch.notes ?? "",
+    width: 42,
+  },
+];
 
 function downloadBase64File(
   fileName: string,
@@ -2971,6 +3059,7 @@ export default function Tesoreria() {
   const [dateTo, setDateTo] = useState("");
   const [batchPage, setBatchPage] = useState(1);
   const [exporting, setExporting] = useState(false);
+  const [exportingPaymentsReport, setExportingPaymentsReport] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [advanceRequestOpen, setAdvanceRequestOpen] = useState(false);
   const [initialAdvance, setInitialAdvance] = useState<any>();
@@ -3014,6 +3103,7 @@ export default function Tesoreria() {
   );
   const exportInvoiceSummaryPdfMutation =
     trpc.treasury.invoiceSummaryReportPdf.useMutation();
+  const paymentsReportMutation = trpc.treasury.paymentsReport.useMutation();
   const invoiceReportRows = invoiceSummaryQuery.data?.invoices ?? [];
   const invoiceReportTotal = invoiceSummaryQuery.data?.pagination.total ?? 0;
   const resolvedInvoiceReportTotalPages =
@@ -3307,87 +3397,7 @@ export default function Tesoreria() {
       await downloadExcel(
         fileName,
         "Lotes de pago",
-        [
-          {
-            header: "Lote",
-            value: (row: any) => row.batch.batchNumber,
-            width: 22,
-          },
-          {
-            header: "Código de proyecto",
-            value: (row: any) =>
-              treasuryProjectSummary(row)
-                .projects.map(project => project.code)
-                .join(", "),
-            width: 20,
-          },
-          {
-            header: "Proyecto",
-            value: (row: any) =>
-              treasuryProjectSummary(row)
-                .projects.map(project => project.name)
-                .join(", "),
-            width: 36,
-          },
-          {
-            header: "Estado",
-            value: (row: any) =>
-              getTreasuryBatchStatusLabel(
-                row.batch.status as TreasuryBatchStatus,
-                row.batch.approvalBypassed === true
-              ),
-            width: 28,
-          },
-          {
-            header: "Fecha de registro de pago",
-            value: (row: any) => toExcelDate(row.paymentRegistrationDate),
-            width: 24,
-            numFmt: "dd/mm/yyyy",
-          },
-          {
-            header: "Moneda",
-            value: (row: any) => row.batch.currency,
-            width: 12,
-          },
-          {
-            header: "Proveedores",
-            value: (row: any) => Number(row.supplierCount ?? 0),
-            width: 14,
-          },
-          {
-            header: "Facturas",
-            value: (row: any) => Number(row.itemCount ?? 0),
-            width: 12,
-          },
-          {
-            header: "Solicitado",
-            value: (row: any) => Number(row.requestedTotal ?? 0),
-            width: 18,
-            numFmt: "#,##0.0000",
-          },
-          {
-            header: "Monto aprobado/listo para banco",
-            value: (row: any) => Number(row.approvedTotal ?? 0),
-            width: 18,
-            numFmt: "#,##0.0000",
-          },
-          {
-            header: "Pagado",
-            value: (row: any) => Number(row.paidTotal ?? 0),
-            width: 18,
-            numFmt: "#,##0.0000",
-          },
-          {
-            header: "Versión",
-            value: (row: any) => Number(row.batch.version ?? 1),
-            width: 10,
-          },
-          {
-            header: "Notas",
-            value: (row: any) => row.batch.notes ?? "",
-            width: 42,
-          },
-        ],
+        TREASURY_BATCH_EXPORT_COLUMNS,
         visibleBatches
       );
       toast.success(
@@ -3403,6 +3413,46 @@ export default function Tesoreria() {
       );
     } finally {
       setExporting(false);
+    }
+  }
+
+  async function exportPaymentsReport() {
+    if (!visibleBatches.length) {
+      toast.error("No hay lotes para exportar con los filtros actuales.");
+      return;
+    }
+    setExportingPaymentsReport(true);
+    try {
+      const payload = await paymentsReportMutation.mutateAsync({
+        batchIds: visibleBatches.map(row => row.batch.id),
+      });
+      const fileName =
+        dateFrom || dateTo
+          ? `pagos-efectuados-${dateFrom || "inicio"}-${dateTo || "fin"}.xlsx`
+          : buildDatedExcelFileName("pagos-efectuados");
+      await downloadWorkbook(
+        fileName,
+        buildTreasuryPaymentsWorksheets({
+          batchColumns: TREASURY_BATCH_EXPORT_COLUMNS,
+          batches: visibleBatches,
+          payments: payload.payments,
+        })
+      );
+      toast.success(
+        `Pagos efectuados generado con ${visibleBatches.length.toLocaleString(
+          "es-HN"
+        )} lote(s) y ${payload.payments.length.toLocaleString(
+          "es-HN"
+        )} factura(s).`
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar el reporte Payments."
+      );
+    } finally {
+      setExportingPaymentsReport(false);
     }
   }
 
@@ -3964,7 +4014,7 @@ export default function Tesoreria() {
             </AccordionTrigger>
             <AccordionContent className="pb-0">
               <CardContent className="space-y-4 border-t pt-6">
-                <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-[minmax(18rem,1fr)_15rem_11rem_11rem_auto_auto]">
+                <div className="grid items-end gap-3 md:grid-cols-2 xl:grid-cols-[minmax(18rem,1fr)_15rem_11rem_11rem_auto_auto_auto]">
                   <div className="space-y-2">
                     <Label htmlFor="treasury-search">Buscar</Label>
                     <div className="relative">
@@ -4040,6 +4090,7 @@ export default function Tesoreria() {
                   </div>
                   <Button
                     variant="outline"
+                    className="hidden"
                     onClick={() => void exportFilteredBatches()}
                     disabled={
                       exporting ||
@@ -4053,6 +4104,23 @@ export default function Tesoreria() {
                       <FileSpreadsheet className="mr-2 h-4 w-4" />
                     )}
                     Exportar Excel
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => void exportPaymentsReport()}
+                    disabled={
+                      exportingPaymentsReport ||
+                      batchesQuery.isFetching ||
+                      visibleBatches.length === 0
+                    }
+                    title="Exportar Pagos efectuados con las hojas Lotes de pago y Payments"
+                  >
+                    {exportingPaymentsReport ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <FileSpreadsheet className="mr-2 h-4 w-4" />
+                    )}
+                    Pagos efectuados
                   </Button>
                   <Button
                     variant="outline"

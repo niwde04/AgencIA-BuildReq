@@ -625,6 +625,32 @@ export const treasuryRouter = router({
       });
     }),
 
+  paymentsReport: protectedProcedure
+    .input(
+      z.object({
+        batchIds: z.array(z.number().int().positive()).min(1).max(5000),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      await assertTreasuryAccess(ctx.user);
+      const requestedBatchIds = Array.from(new Set(input.batchIds));
+      const accessibleBatches = await treasury.listTreasuryBatches({
+        projectIds: getProjectScopeIds(ctx.user),
+        includeConsolidated: true,
+      });
+      const accessibleBatchIds = new Set(
+        accessibleBatches.map(row => row.batch.id)
+      );
+      if (requestedBatchIds.some(id => !accessibleBatchIds.has(id))) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a uno o más lotes solicitados.",
+        });
+      }
+      return treasury.getTreasuryPaymentsReport(requestedBatchIds);
+    }),
+
   getById: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .query(async ({ ctx, input }) => {

@@ -62,7 +62,7 @@ export async function downloadExcel<T>(
   XLSX.writeFile(workbook, fileName, { bookType: "xlsx" });
 }
 
-function buildWorksheet<T>(
+export function buildWorksheet<T>(
   XLSX: typeof import("xlsx"),
   columns: ExcelColumn<T>[],
   rows: T[]
@@ -76,9 +76,7 @@ function buildWorksheet<T>(
   const worksheet = XLSX.utils.aoa_to_sheet(data);
 
   worksheet["!cols"] = columns.map((column, columnIndex) => ({
-    wch:
-      column.width ??
-      getColumnWidth(data.map(row => row[columnIndex])),
+    wch: column.width ?? getColumnWidth(data.map(row => row[columnIndex])),
   }));
 
   columns.forEach((column, columnIndex) => {
@@ -99,11 +97,10 @@ function buildWorksheet<T>(
   return worksheet;
 }
 
-export async function downloadWorkbook(
-  fileName: string,
+export function buildWorkbook(
+  XLSX: typeof import("xlsx"),
   sheets: ExcelWorksheet[]
 ) {
-  const XLSX = await import("xlsx");
   const workbook = XLSX.utils.book_new();
   sheets.forEach(sheet => {
     const worksheet = buildWorksheet(XLSX, sheet.columns, sheet.rows);
@@ -113,5 +110,14 @@ export async function downloadWorkbook(
       sanitizeSheetName(sheet.sheetName)
     );
   });
+  return workbook;
+}
+
+export async function downloadWorkbook(
+  fileName: string,
+  sheets: ExcelWorksheet[]
+) {
+  const XLSX = await import("xlsx");
+  const workbook = buildWorkbook(XLSX, sheets);
   XLSX.writeFile(workbook, fileName, { bookType: "xlsx" });
 }

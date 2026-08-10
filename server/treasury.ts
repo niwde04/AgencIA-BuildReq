@@ -14,6 +14,7 @@ import * as XLSX from "xlsx";
 import {
   attachments,
   invoiceDocumentAdjustments,
+  invoiceItems,
   invoices,
   notifications,
   projects,
@@ -27,6 +28,10 @@ import {
   users,
 } from "../drizzle/schema";
 import type { PurchaseCurrency } from "../shared/purchase-orders";
+import {
+  buildTreasuryPaymentPurchaseDescription,
+  type TreasuryPaymentsReportPayload,
+} from "../shared/treasury-payments-report";
 import {
   buildTreasuryMoneySummary,
   getTreasuryBatchStatusLabel,
@@ -1123,11 +1128,12 @@ export async function listEligibleTreasuryQualityRetentionReleases(filters?: {
 export async function listTreasuryBatches(filters?: {
   projectIds?: number[];
   status?: TreasuryBatchStatus;
+  includeConsolidated?: boolean;
 }) {
   const db = await getDb();
   if (!db) return [];
   const conditions = [];
-  if (!filters?.status) {
+  if (!filters?.status && !filters?.includeConsolidated) {
     conditions.push(isNull(treasuryPaymentBatches.consolidatedIntoBatchId));
   }
   if (filters?.status)
@@ -1275,6 +1281,107 @@ export async function listTreasuryBatches(filters?: {
         .map(source => source.batchNumber),
     };
   });
+}
+
+export async function getTreasuryPaymentsReport(
+  batchIds: number[]
+): Promise<TreasuryPaymentsReportPayload> {
+  const db = await getDb();
+  const uniqueBatchIds = Array.from(new Set(batchIds));
+  if (!db || uniqueBatchIds.length === 0) {
+    return { generatedAt: new Date(), payments: [] };
+  }
+
+  const paymentRows = await db
+    .select({
+      itemId: treasuryPaymentItems.id,
+      batchNumber: treasuryPaymentBatches.batchNumber,
+      bankReference: treasuryPaymentItems.bankReference,
+      invoiceId: invoices.id,
+      invoiceDate: invoices.documentDate,
+      invoiceNumber: invoices.invoiceNumber,
+      invoiceDocumentNumber: invoices.invoiceDocumentNumber,
+      supplierName: treasuryPaymentItems.supplierName,
+      jobCode: projects.code,
+      currency: treasuryPaymentItems.currency,
+      invoiceTotal: invoices.total,
+      invoiceNetPayable: treasuryPaymentItems.invoiceNetPayable,
+      appliedAdvanceAmount: treasuryPaymentItems.appliedAdvanceAmount,
+      requestedAmount: treasuryPaymentItems.requestedAmount,
+      approvedAmount: treasuryPaymentItems.approvedAmount,
+      bankPaidAmount: treasuryPaymentItems.bankPaidAmount,
+    })
+    .from(treasuryPaymentItems)
+    .innerJoin(
+      treasuryPaymentBatches,
+      eq(treasuryPaymentItems.batchId, treasuryPaymentBatches.id)
+    )
+    .innerJoin(invoices, eq(treasuryPaymentItems.invoiceId, invoices.id))
+    .innerJoin(projects, eq(invoices.projectId, projects.id))
+    .where(
+      and(
+        inArray(treasuryPaymentItems.batchId, uniqueBatchIds),
+        eq(treasuryPaymentItems.sourceType, "invoice"),
+        ne(treasuryPaymentItems.status, "excluida")
+      )
+    )
+    .orderBy(asc(treasuryPaymentBatches.id), asc(treasuryPaymentItems.id));
+
+  const uniqueInvoiceIds = Array.from(
+    new Set(paymentRows.map(row => row.invoiceId))
+  );
+  const itemRows = uniqueInvoiceIds.length
+    ? await db
+        .select({
+          invoiceId: invoiceItems.invoiceId,
+          quantity: invoiceItems.quantity,
+          itemName: invoiceItems.itemName,
+        })
+        .from(invoiceItems)
+        .where(inArray(invoiceItems.invoiceId, uniqueInvoiceIds))
+        .orderBy(asc(invoiceItems.invoiceId), asc(invoiceItems.id))
+    : [];
+  const itemsByInvoiceId = new Map<
+    number,
+    Array<{ quantity: unknown; itemName: string }>
+  >();
+  for (const item of itemRows) {
+    const invoiceItemsForReport = itemsByInvoiceId.get(item.invoiceId) ?? [];
+    invoiceItemsForReport.push({
+      quantity: item.quantity,
+      itemName: item.itemName,
+    });
+    itemsByInvoiceId.set(item.invoiceId, invoiceItemsForReport);
+  }
+
+  return {
+    generatedAt: new Date(),
+    payments: paymentRows.map(row => {
+      const invoiceTotal = roundTreasuryMoney(Number(row.invoiceTotal ?? 0));
+      const invoiceNetPayable = roundTreasuryMoney(
+        Number(row.invoiceNetPayable ?? 0)
+      );
+      return {
+        batchNumber: row.batchNumber,
+        bankReference: row.bankReference?.trim() ?? "",
+        invoiceDate: row.invoiceDate,
+        invoiceNumber: row.invoiceNumber?.trim() || row.invoiceDocumentNumber,
+        supplierName: row.supplierName,
+        purchaseDescription: buildTreasuryPaymentPurchaseDescription(
+          itemsByInvoiceId.get(row.invoiceId) ?? []
+        ),
+        jobCode: row.jobCode,
+        financialCode: "" as const,
+        invoiceTotal,
+        advances: roundTreasuryMoney(Number(row.appliedAdvanceAmount ?? 0)),
+        totalRetentions: roundTreasuryMoney(
+          Math.max(0, invoiceTotal - invoiceNetPayable)
+        ),
+        netPayable: resolveTreasuryPaymentReportAmount(row),
+        currency: row.currency,
+      };
+    }),
+  };
 }
 
 export async function getTreasuryBatchById(batchId: number) {

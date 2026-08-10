@@ -620,6 +620,41 @@ describe("treasury payment detail report", () => {
   });
 });
 
+describe("treasury Payments workbook data", () => {
+  it("returns payment rows only for accessible batches", async () => {
+    mockDisabledApprovalSettings();
+    vi.spyOn(treasury, "listTreasuryBatches").mockResolvedValue([
+      { batch: { id: 121 } },
+      { batch: { id: 122 } },
+    ] as any);
+    const reportSpy = vi
+      .spyOn(treasury, "getTreasuryPaymentsReport")
+      .mockResolvedValue({
+        generatedAt: new Date("2026-08-10T12:00:00.000Z"),
+        payments: [],
+      });
+    const caller = appRouter.createCaller(createTreasuryContext("financiero"));
+
+    await caller.treasury.paymentsReport({ batchIds: [121, 122, 121] });
+
+    expect(reportSpy).toHaveBeenCalledWith([121, 122]);
+  });
+
+  it("rejects the report when any requested batch is outside the scope", async () => {
+    mockDisabledApprovalSettings();
+    vi.spyOn(treasury, "listTreasuryBatches").mockResolvedValue([
+      { batch: { id: 121 } },
+    ] as any);
+    const reportSpy = vi.spyOn(treasury, "getTreasuryPaymentsReport");
+    const caller = appRouter.createCaller(createTreasuryContext("financiero"));
+
+    await expect(
+      caller.treasury.paymentsReport({ batchIds: [121, 999] })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(reportSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("treasury bank payment registration", () => {
   it("passes the selected payment date to the treasury service", async () => {
     mockDisabledApprovalSettings();
