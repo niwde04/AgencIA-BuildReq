@@ -20,14 +20,21 @@ const payment: TreasuryPaymentsSourcePayment = {
   supplierName: "PROVEEDOR DE PRUEBA",
   jobCode: "018_003",
   currency: "HNL",
+  invoiceSubtotal: 140,
+  invoiceTaxAmount: 10,
   invoiceTotal: 150,
-  invoiceNetPayable: 145,
+  fiscalRetentionTotal: 5,
+  otherRetentionTotal: 3,
+  documentDiscountTotal: 2,
+  invoiceNetPayable: 140,
   appliedAdvanceAmount: 5,
   bankPaidAmount: 60,
+  hasOceExemption: false,
+  oceExemptAmount: 0,
 };
 
 describe("treasury Payments report", () => {
-  it("keeps the agreed 23-column Payments layout", () => {
+  it("keeps the complete 48-column Payments layout", () => {
     expect(TREASURY_PAYMENTS_HEADERS).toEqual([
       "Lote",
       "Referencia Bancaria",
@@ -43,12 +50,37 @@ describe("treasury Payments report", () => {
       "Subtotal",
       "Impuesto",
       "Total producto/cargo",
+      "Base ISV 15%",
+      "Base ISV 18%",
+      "Base ISV 4%",
+      "Base ISV 0%",
+      "Total base",
+      "ISV 15%",
+      "ISV 18%",
+      "Turismo 4%",
+      "Total ISV",
+      "Ret ISR 1%",
+      "Ret ISR 12.5%",
+      "Ret ISR 25%",
+      "Ret ISV 15%",
+      "Total retención fiscal",
+      "Neto a pagar línea",
       "COD DE JOB",
       "COD FINANCIERO",
       "GRUPO FINANCIERO",
       "Moneda",
       "Total factura",
       "Anticipos",
+      "Retención calidad %",
+      "Retención calidad",
+      "Amortización anticipo %",
+      "Amortización anticipo",
+      "Pronto pago %",
+      "Pronto pago",
+      "TC %",
+      "TC",
+      "Otras retenciones",
+      "Descuentos documento",
       "Total retenciones",
       "Neto factura",
       "Pago efectuado en lote",
@@ -98,6 +130,8 @@ describe("treasury Payments report", () => {
           subtotal: 90,
           taxAmount: 10,
           total: 100,
+          taxCode: "isv_15",
+          taxBreakdown: null,
           financialCode: "02019901",
           financialGroupDescription: "Materiales de construcción",
         },
@@ -113,11 +147,42 @@ describe("treasury Payments report", () => {
           subtotal: 35,
           taxAmount: 0,
           total: 35,
+          taxCode: "exe",
+          taxBreakdown: null,
           financialCode: "",
           financialGroupDescription: "SIN ASIGNAR",
         },
       ],
       otherCharges: [{ id: 1, invoiceId: 501, concept: "FLETE", amount: 15 }],
+      retentions: [
+        {
+          id: 81,
+          invoiceId: 501,
+          invoiceItemId: null,
+          retentionCode: "RET ISR 1%",
+          retentionErpCode: "ISR1",
+          description: "Retención ISR 1%",
+          percentage: 1,
+          baseAmount: 500,
+          amount: 5,
+        },
+      ],
+      documentAdjustments: [
+        {
+          invoiceId: 501,
+          adjustmentType: "quality_retention",
+          percentage: 2,
+          baseAmount: 150,
+          amount: 3,
+        },
+        {
+          invoiceId: 501,
+          adjustmentType: "prompt_payment_discount",
+          percentage: 1.5,
+          baseAmount: 150,
+          amount: 2,
+        },
+      ],
     });
 
     expect(rows).toHaveLength(3);
@@ -129,18 +194,32 @@ describe("treasury Payments report", () => {
     expect(rows.reduce((sum, row) => sum + Number(row.itemTotal ?? 0), 0)).toBe(
       150
     );
+    expect(rows.reduce((sum, row) => sum + row.baseIsv15, 0)).toBe(90);
+    expect(rows.reduce((sum, row) => sum + row.baseIsv0, 0)).toBe(50);
+    expect(rows.reduce((sum, row) => sum + row.isv15, 0)).toBe(10);
+    expect(rows.reduce((sum, row) => sum + row.retIsr1, 0)).toBe(5);
+    expect(rows.reduce((sum, row) => sum + row.lineNetPayable, 0)).toBe(140);
     expect(rows[0]).toMatchObject({
       financialCode: "02019901",
+      baseIsv15: 90,
+      isv15: 10,
+      qualityRetentionPercentage: 2,
+      qualityRetentionAmount: 3,
+      promptPaymentPercentage: 1.5,
+      promptPaymentAmount: 2,
       invoiceTotal: 150,
       advances: 5,
-      totalRetentions: 5,
-      invoiceNetPayable: 140,
+      otherRetentionTotal: 3,
+      documentDiscountTotal: 2,
+      totalRetentions: 8,
+      invoiceNetPayable: 135,
       paidAmount: 60,
     });
     expect(rows[1]).toMatchObject({
       financialCode: "",
       financialGroupDescription: "SIN ASIGNAR",
       invoiceTotal: null,
+      qualityRetentionAmount: null,
       paidAmount: null,
     });
     expect(rows[2]).toMatchObject({
@@ -188,6 +267,8 @@ describe("treasury Payments report", () => {
             subtotal: 90,
             taxAmount: 10,
             total: 100,
+            taxCode: "isv_15",
+            taxBreakdown: null,
             financialCode: "02019901",
             financialGroupDescription: "Materiales de construcción",
           },
@@ -216,13 +297,19 @@ describe("treasury Payments report", () => {
       { header: 1, defval: "" }
     );
     expect(paymentRows[0]).toEqual([...TREASURY_PAYMENTS_HEADERS]);
+    expect(paymentRows[0]).toHaveLength(48);
     expect(paymentRows[1]?.[6]).toBe("SAP-001");
     expect(paymentRows[1]?.[10]).toBe(50);
-    expect(paymentRows[1]?.[15]).toBe("02019901");
-    expect(paymentRows[1]?.[16]).toBe("Materiales de construcción");
-    expect(paymentRows[1]?.[22]).toBe(60);
+    expect(paymentRows[1]?.[14]).toBe(90);
+    expect(paymentRows[1]?.[19]).toBe(10);
+    expect(paymentRows[1]?.[28]).toBe(140);
+    expect(paymentRows[1]?.[30]).toBe("02019901");
+    expect(paymentRows[1]?.[31]).toBe("Materiales de construcción");
+    expect(paymentRows[1]?.[47]).toBe(60);
     expect(roundTrip.Sheets.Payments?.C2?.z).toBe("dd/mm/yyyy");
     expect(roundTrip.Sheets.Payments?.K2?.z).toBe("#,##0.00");
-    expect(roundTrip.Sheets.Payments?.W2?.z).toBe("#,##0.00");
+    expect(roundTrip.Sheets.Payments?.O2?.z).toBe("#,##0.00");
+    expect(roundTrip.Sheets.Payments?.AC2?.z).toBe("#,##0.00");
+    expect(roundTrip.Sheets.Payments?.AV2?.z).toBe("#,##0.00");
   });
 });

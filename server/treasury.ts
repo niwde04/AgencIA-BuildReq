@@ -18,6 +18,7 @@ import {
   invoiceDocumentAdjustments,
   invoiceItems,
   invoiceOtherCharges,
+  invoiceRetentions,
   invoices,
   notifications,
   projects,
@@ -1310,10 +1311,17 @@ export async function getTreasuryPaymentsReport(
       supplierName: treasuryPaymentItems.supplierName,
       jobCode: projects.code,
       currency: treasuryPaymentItems.currency,
+      invoiceSubtotal: invoices.subtotal,
+      invoiceTaxAmount: invoices.taxAmount,
       invoiceTotal: invoices.total,
+      fiscalRetentionTotal: invoices.retentionTotal,
+      otherRetentionTotal: invoices.otherRetentionTotal,
+      documentDiscountTotal: invoices.documentDiscountTotal,
       invoiceNetPayable: treasuryPaymentItems.invoiceNetPayable,
       appliedAdvanceAmount: treasuryPaymentItems.appliedAdvanceAmount,
       bankPaidAmount: treasuryPaymentItems.bankPaidAmount,
+      hasOceExemption: invoices.hasOceExemption,
+      oceExemptAmount: invoices.oceExemptAmount,
     })
     .from(treasuryPaymentItems)
     .innerJoin(
@@ -1344,35 +1352,70 @@ export async function getTreasuryPaymentsReport(
   const uniqueInvoiceIds = Array.from(
     new Set(paymentRows.map(row => row.invoiceId))
   );
-  const [itemRows, otherChargeRows] = await Promise.all([
-    db
-      .select({
-        id: invoiceItems.id,
-        invoiceId: invoiceItems.invoiceId,
-        currentSapItemCode: invoiceItems.currentSapItemCode,
-        originalSapItemCode: invoiceItems.originalSapItemCode,
-        quantity: invoiceItems.quantity,
-        itemName: invoiceItems.itemName,
-        unit: invoiceItems.unit,
-        unitPrice: invoiceItems.unitPrice,
-        subtotal: invoiceItems.subtotal,
-        taxAmount: invoiceItems.taxAmount,
-        total: invoiceItems.total,
-      })
-      .from(invoiceItems)
-      .where(inArray(invoiceItems.invoiceId, uniqueInvoiceIds))
-      .orderBy(asc(invoiceItems.invoiceId), asc(invoiceItems.id)),
-    db
-      .select({
-        id: invoiceOtherCharges.id,
-        invoiceId: invoiceOtherCharges.invoiceId,
-        concept: invoiceOtherCharges.concept,
-        amount: invoiceOtherCharges.amount,
-      })
-      .from(invoiceOtherCharges)
-      .where(inArray(invoiceOtherCharges.invoiceId, uniqueInvoiceIds))
-      .orderBy(asc(invoiceOtherCharges.invoiceId), asc(invoiceOtherCharges.id)),
-  ]);
+  const [itemRows, otherChargeRows, retentionRows, documentAdjustmentRows] =
+    await Promise.all([
+      db
+        .select({
+          id: invoiceItems.id,
+          invoiceId: invoiceItems.invoiceId,
+          currentSapItemCode: invoiceItems.currentSapItemCode,
+          originalSapItemCode: invoiceItems.originalSapItemCode,
+          quantity: invoiceItems.quantity,
+          itemName: invoiceItems.itemName,
+          unit: invoiceItems.unit,
+          unitPrice: invoiceItems.unitPrice,
+          subtotal: invoiceItems.subtotal,
+          taxAmount: invoiceItems.taxAmount,
+          total: invoiceItems.total,
+          taxCode: invoiceItems.taxCode,
+          taxBreakdown: invoiceItems.taxBreakdown,
+        })
+        .from(invoiceItems)
+        .where(inArray(invoiceItems.invoiceId, uniqueInvoiceIds))
+        .orderBy(asc(invoiceItems.invoiceId), asc(invoiceItems.id)),
+      db
+        .select({
+          id: invoiceOtherCharges.id,
+          invoiceId: invoiceOtherCharges.invoiceId,
+          concept: invoiceOtherCharges.concept,
+          amount: invoiceOtherCharges.amount,
+        })
+        .from(invoiceOtherCharges)
+        .where(inArray(invoiceOtherCharges.invoiceId, uniqueInvoiceIds))
+        .orderBy(
+          asc(invoiceOtherCharges.invoiceId),
+          asc(invoiceOtherCharges.id)
+        ),
+      db
+        .select({
+          id: invoiceRetentions.id,
+          invoiceId: invoiceRetentions.invoiceId,
+          invoiceItemId: invoiceRetentions.invoiceItemId,
+          retentionCode: invoiceRetentions.retentionCode,
+          retentionErpCode: invoiceRetentions.retentionErpCode,
+          description: invoiceRetentions.description,
+          percentage: invoiceRetentions.percentage,
+          baseAmount: invoiceRetentions.baseAmount,
+          amount: invoiceRetentions.amount,
+        })
+        .from(invoiceRetentions)
+        .where(inArray(invoiceRetentions.invoiceId, uniqueInvoiceIds))
+        .orderBy(asc(invoiceRetentions.invoiceId), asc(invoiceRetentions.id)),
+      db
+        .select({
+          invoiceId: invoiceDocumentAdjustments.invoiceId,
+          adjustmentType: invoiceDocumentAdjustments.adjustmentType,
+          percentage: invoiceDocumentAdjustments.percentage,
+          baseAmount: invoiceDocumentAdjustments.baseAmount,
+          amount: invoiceDocumentAdjustments.amount,
+        })
+        .from(invoiceDocumentAdjustments)
+        .where(inArray(invoiceDocumentAdjustments.invoiceId, uniqueInvoiceIds))
+        .orderBy(
+          asc(invoiceDocumentAdjustments.invoiceId),
+          asc(invoiceDocumentAdjustments.id)
+        ),
+    ]);
   const sapCodes = Array.from(
     new Set(
       itemRows.flatMap(item =>
@@ -1426,6 +1469,8 @@ export async function getTreasuryPaymentsReport(
       subtotal: Number(item.subtotal ?? 0),
       taxAmount: Number(item.taxAmount ?? 0),
       total: Number(item.total ?? 0),
+      taxCode: item.taxCode?.trim() || "exe",
+      taxBreakdown: item.taxBreakdown,
       financialCode: financialGroup.financialCode,
       financialGroupDescription: financialGroup.financialGroupDescription,
     };
@@ -1444,10 +1489,17 @@ export async function getTreasuryPaymentsReport(
         invoiceId: row.invoiceId,
         jobCode: row.jobCode,
         currency: row.currency,
+        invoiceSubtotal: Number(row.invoiceSubtotal ?? 0),
+        invoiceTaxAmount: Number(row.invoiceTaxAmount ?? 0),
         invoiceTotal: Number(row.invoiceTotal ?? 0),
+        fiscalRetentionTotal: Number(row.fiscalRetentionTotal ?? 0),
+        otherRetentionTotal: Number(row.otherRetentionTotal ?? 0),
+        documentDiscountTotal: Number(row.documentDiscountTotal ?? 0),
         invoiceNetPayable: Number(row.invoiceNetPayable ?? 0),
         appliedAdvanceAmount: Number(row.appliedAdvanceAmount ?? 0),
         bankPaidAmount: Number(row.bankPaidAmount ?? 0),
+        hasOceExemption: row.hasOceExemption === true,
+        oceExemptAmount: Number(row.oceExemptAmount ?? 0),
       })),
       products,
       otherCharges: otherChargeRows.map(charge => ({
@@ -1456,6 +1508,18 @@ export async function getTreasuryPaymentsReport(
         concept: charge.concept,
         amount: Number(charge.amount ?? 0),
       })),
+      retentions: retentionRows.map(retention => ({
+        id: retention.id,
+        invoiceId: retention.invoiceId,
+        invoiceItemId: retention.invoiceItemId,
+        retentionCode: retention.retentionCode,
+        retentionErpCode: retention.retentionErpCode,
+        description: retention.description,
+        percentage: retention.percentage,
+        baseAmount: retention.baseAmount,
+        amount: retention.amount,
+      })),
+      documentAdjustments: documentAdjustmentRows,
     }),
   };
 }
