@@ -505,12 +505,12 @@ export default function NuevaSolicitud() {
               role="combobox"
               aria-expanded={open}
               disabled={!effectiveProjectId}
-              className="min-w-0 flex-1 justify-between font-normal"
+              className="h-auto min-h-10 min-w-0 flex-1 items-start justify-between whitespace-normal py-2 text-left font-normal"
             >
-              <span className="truncate">
+              <span className="min-w-0 flex-1 whitespace-normal break-words text-left leading-5">
                 {item.targetSelection?.label ?? "Subproyecto o activo fijo"}
               </span>
-              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              <ChevronsUpDown className="mt-0.5 ml-2 h-4 w-4 shrink-0 opacity-50" />
             </Button>
           </PopoverTrigger>
           <PopoverContent
@@ -552,16 +552,16 @@ export default function NuevaSolicitud() {
                               }}
                             >
                               <Check
-                                className={`mr-2 h-4 w-4 ${
+                                className={`mt-0.5 mr-2 h-4 w-4 ${
                                   selected ? "opacity-100" : "opacity-0"
                                 }`}
                               />
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-medium">
+                              <div className="min-w-0 flex-1">
+                                <p className="whitespace-normal break-words text-sm font-medium leading-5">
                                   {subproject.code} - {subproject.name}
                                 </p>
                                 {subproject.description ? (
-                                  <p className="truncate text-xs text-muted-foreground">
+                                  <p className="whitespace-normal break-words text-xs leading-4 text-muted-foreground">
                                     {subproject.description}
                                   </p>
                                 ) : null}
@@ -593,16 +593,16 @@ export default function NuevaSolicitud() {
                               }}
                             >
                               <Check
-                                className={`mr-2 h-4 w-4 ${
+                                className={`mt-0.5 mr-2 h-4 w-4 ${
                                   selected ? "opacity-100" : "opacity-0"
                                 }`}
                               />
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-medium">
+                              <div className="min-w-0 flex-1">
+                                <p className="whitespace-normal break-words text-sm font-medium leading-5">
                                   {asset.itemCode} - {asset.description}
                                 </p>
                                 {asset.itemGroup ? (
-                                  <p className="truncate text-xs text-muted-foreground">
+                                  <p className="whitespace-normal break-words text-xs leading-4 text-muted-foreground">
                                     {asset.itemGroup}
                                   </p>
                                 ) : null}
