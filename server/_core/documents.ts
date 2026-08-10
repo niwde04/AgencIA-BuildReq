@@ -2193,12 +2193,14 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
 
     const lowerInfoHeight = Math.max(summary.height, detailsTop - top);
     const signaturesTop = top + lowerInfoHeight + 28;
-    const firstSignatureX = marginX + 58;
-    const preparedByEndX = marginX + 278;
+    const authorizationSignatureWidth = 150;
+    const authorizationSignatureX =
+      (pageWidth - authorizationSignatureWidth) / 2;
+    const firstSignatureX = marginX;
     const preparedByLabel =
       params.preparedByLabel?.trim() || params.requestedByLabel || "-";
     const preparedByText = `Elaborado por: ${preparedByLabel}`;
-    const preparedByWidth = preparedByEndX - firstSignatureX - 12;
+    const preparedByWidth = authorizationSignatureX - firstSignatureX - 14;
     let preparedByFontSize = 7.2;
     while (
       preparedByFontSize > 5.8 &&
@@ -2209,12 +2211,32 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
     }
     drawText(page, {
       x: firstSignatureX,
-      top: signaturesTop - 10,
+      top: signaturesTop + 5,
       width: preparedByWidth,
       text: preparedByText,
       fontSize: preparedByFontSize,
       font: "F2",
       color: ink,
+    });
+
+    drawLine(
+      page,
+      authorizationSignatureX,
+      signaturesTop,
+      authorizationSignatureX + authorizationSignatureWidth,
+      signaturesTop,
+      ink,
+      0.7
+    );
+    drawText(page, {
+      x: authorizationSignatureX,
+      top: signaturesTop + 5,
+      width: authorizationSignatureWidth,
+      text: "Autorizado por:",
+      fontSize: 7.2,
+      font: "F2",
+      color: ink,
+      align: "center",
     });
 
     const noteTop = signaturesTop + 38;

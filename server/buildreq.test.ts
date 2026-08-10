@@ -13803,7 +13803,7 @@ describe("BuildReq - Purchase Orders", () => {
     expect(pdfText).not.toContain(`<${encodedCredit}> Tj`);
   });
 
-  it("prints Elaborado por and the preparer together on one line", () => {
+  it("prints the preparation and authorization signature labels", () => {
     const requestedByLabel = "WILSON MOLINA";
     const preparedByLabel = "SUYAPA LIZETH LOPEZ PEREZ";
     const pdf = buildPurchaseOrderPrintPdfBase64({
@@ -13848,12 +13848,19 @@ describe("BuildReq - Purchase Orders", () => {
     )
       .toString("hex")
       .toUpperCase();
+    const encodedAuthorizedBy = Buffer.from("Autorizado por:", "latin1")
+      .toString("hex")
+      .toUpperCase();
 
     const requestedByOccurrences =
       pdfText.match(new RegExp(`<${encodedRequestedBy}> Tj`, "g"))?.length ?? 0;
     expect(requestedByOccurrences).toBe(1);
     expect(
       pdfText.match(new RegExp(`<${encodedPreparedByLine}> Tj`, "g"))?.length ??
+        0
+    ).toBe(1);
+    expect(
+      pdfText.match(new RegExp(`<${encodedAuthorizedBy}> Tj`, "g"))?.length ??
         0
     ).toBe(1);
   });
