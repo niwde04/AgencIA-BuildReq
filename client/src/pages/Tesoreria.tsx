@@ -4106,7 +4106,6 @@ export default function Tesoreria() {
                     Exportar Excel
                   </Button>
                   <Button
-                    variant="outline"
                     onClick={() => void exportPaymentsReport()}
                     disabled={
                       exportingPaymentsReport ||
@@ -4120,7 +4119,7 @@ export default function Tesoreria() {
                     ) : (
                       <FileSpreadsheet className="mr-2 h-4 w-4" />
                     )}
-                    Pagos efectuados
+                    Exportar a Excel - Pagos efectuados
                   </Button>
                   <Button
                     variant="outline"
