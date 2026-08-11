@@ -20193,7 +20193,7 @@ describe("BuildReq - Transfer Requests", () => {
 // Tests: v6 Fixes - Auto-numbering and Supplier
 // ============================================================
 describe("BuildReq - v6 Auto-numbering and Supplier", () => {
-  it("builds project-scoped document numbers by type and project", () => {
+  it("builds project-scoped document numbers by type", () => {
     expect(
       db.buildProjectScopedDocumentNumber({
         prefix: "OC",
@@ -20216,7 +20216,7 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
         projectCode: "006",
         existingNumbers: ["OC-004-00000001", "OC-004-00000002"],
       })
-    ).toBe("OC-006-00000001");
+    ).toBe("OC-006-00000003");
 
     expect(
       db.buildProjectScopedDocumentNumber({
@@ -20246,6 +20246,20 @@ describe("BuildReq - v6 Auto-numbering and Supplier", () => {
         ],
       })
     ).toBe("OC-004-00000011");
+  });
+
+  it("keeps the sequence when a project's visible code changes", () => {
+    expect(
+      db.buildProjectScopedDocumentNumber({
+        prefix: "REQ",
+        projectCode: "001B",
+        existingNumbers: [
+          "REQ-001B - BODEGA VIRTUAL-00000024",
+          "REQ-001B - BODEGA VIRTUAL-00000025",
+          "SC-001B - BODEGA VIRTUAL-00000099",
+        ],
+      })
+    ).toBe("REQ-001B-00000026");
   });
 
   it("shares purchase order sequences between OC and CD by project", () => {

@@ -2193,6 +2193,7 @@ function escapeRegExp(value: string) {
 export function buildProjectScopedDocumentNumber(params: {
   prefix: string;
   projectCode: string;
+  /** Numbers must already be limited to the same stable project ID. */
   existingNumbers: Array<string | null | undefined>;
   sequencePrefixes?: string[];
 }) {
@@ -2207,10 +2208,10 @@ export function buildProjectScopedDocumentNumber(params: {
       ? Array.from(new Set(params.sequencePrefixes))
       : [params.prefix];
   const sequencePrefixPattern = `(?:${sequencePrefixes
-    .map(prefix => escapeRegExp(`${prefix}-${projectCode}-`))
+    .map(prefix => escapeRegExp(`${prefix}-`))
     .join("|")})`;
   const sequencePattern = new RegExp(
-    `^${sequencePrefixPattern}(\\d{${DOCUMENT_SEQUENCE_WIDTH}})$`
+    `^${sequencePrefixPattern}.+-(\\d{${DOCUMENT_SEQUENCE_WIDTH}})$`
   );
   const maxSequence = params.existingNumbers.reduce((max, value) => {
     const match = String(value ?? "").match(sequencePattern);
@@ -2230,7 +2231,7 @@ async function generateProjectScopedDocumentNumber(params: {
   prefix: string;
   projectId: number;
   selectExistingNumbers: (
-    documentPrefix: string
+    projectId: number
   ) => Promise<Array<string | null | undefined>>;
 }) {
   const project = await getProjectForDiagnostic(params.projectId);
@@ -2243,8 +2244,7 @@ async function generateProjectScopedDocumentNumber(params: {
     throw new Error("El proyecto no tiene código para correlativo");
   }
 
-  const documentPrefix = `${params.prefix}-${projectCode}-`;
-  const existingNumbers = await params.selectExistingNumbers(documentPrefix);
+  const existingNumbers = await params.selectExistingNumbers(params.projectId);
   return buildProjectScopedDocumentNumber({
     prefix: params.prefix,
     projectCode,
@@ -2259,11 +2259,11 @@ export async function generateRequestNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "REQ",
     projectId,
-    selectExistingNumbers: async documentPrefix => {
+    selectExistingNumbers: async scopedProjectId => {
       const rows = await db
         .select({ documentNumber: materialRequests.requestNumber })
         .from(materialRequests)
-        .where(ilike(materialRequests.requestNumber, `${documentPrefix}%`));
+        .where(eq(materialRequests.projectId, scopedProjectId));
       return rows.map(row => row.documentNumber);
     },
   });
@@ -5173,33 +5173,24 @@ export async function generatePurchaseOrderNumber(
   }
 
   const sequencePrefixes = ["OC", "CD"];
-  const documentPrefixes = sequencePrefixes.map(
-    prefix => `${prefix}-${projectCode}-`
-  );
   const [legacyRows, orderRows] = await Promise.all([
     db
       .select({ documentNumber: supplyFlowRecords.purchaseOrderNumber })
       .from(supplyFlowRecords)
+      .innerJoin(
+        materialRequests,
+        eq(supplyFlowRecords.requestId, materialRequests.id)
+      )
       .where(
         and(
           isNotNull(supplyFlowRecords.purchaseOrderNumber),
-          or(
-            ...documentPrefixes.map(documentPrefix =>
-              ilike(supplyFlowRecords.purchaseOrderNumber, `${documentPrefix}%`)
-            )
-          )
+          eq(materialRequests.projectId, projectId)
         )
       ),
     db
       .select({ documentNumber: purchaseOrders.orderNumber })
       .from(purchaseOrders)
-      .where(
-        or(
-          ...documentPrefixes.map(documentPrefix =>
-            ilike(purchaseOrders.orderNumber, `${documentPrefix}%`)
-          )
-        )
-      ),
+      .where(eq(purchaseOrders.projectId, projectId)),
   ]);
 
   return buildProjectScopedDocumentNumber({
@@ -5220,11 +5211,11 @@ export async function generatePurchaseRequestNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "SC",
     projectId,
-    selectExistingNumbers: async documentPrefix => {
+    selectExistingNumbers: async scopedProjectId => {
       const rows = await db
         .select({ documentNumber: purchaseRequests.requestNumber })
         .from(purchaseRequests)
-        .where(ilike(purchaseRequests.requestNumber, `${documentPrefix}%`));
+        .where(eq(purchaseRequests.projectId, scopedProjectId));
       return rows.map(row => row.documentNumber);
     },
   });
@@ -5237,11 +5228,11 @@ export async function generateTransferRequestNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "ST",
     projectId,
-    selectExistingNumbers: async documentPrefix => {
+    selectExistingNumbers: async scopedProjectId => {
       const rows = await db
         .select({ documentNumber: transferRequests.requestNumber })
         .from(transferRequests)
-        .where(ilike(transferRequests.requestNumber, `${documentPrefix}%`));
+        .where(eq(transferRequests.projectId, scopedProjectId));
       return rows.map(row => row.documentNumber);
     },
   });
@@ -5254,11 +5245,15 @@ export async function generateTransferNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "TR",
     projectId,
-    selectExistingNumbers: async documentPrefix => {
+    selectExistingNumbers: async scopedProjectId => {
       const rows = await db
         .select({ documentNumber: transfers.transferNumber })
         .from(transfers)
-        .where(ilike(transfers.transferNumber, `${documentPrefix}%`));
+        .innerJoin(
+          transferRequests,
+          eq(transfers.transferRequestId, transferRequests.id)
+        )
+        .where(eq(transferRequests.projectId, scopedProjectId));
       return rows.map(row => row.documentNumber);
     },
   });
@@ -5271,11 +5266,16 @@ export async function generateRemissionGuideNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "GR",
     projectId,
-    selectExistingNumbers: async documentPrefix => {
+    selectExistingNumbers: async scopedProjectId => {
       const rows = await db
         .select({ documentNumber: remissionGuides.guideNumber })
         .from(remissionGuides)
-        .where(ilike(remissionGuides.guideNumber, `${documentPrefix}%`));
+        .innerJoin(transfers, eq(remissionGuides.transferId, transfers.id))
+        .innerJoin(
+          transferRequests,
+          eq(transfers.transferRequestId, transferRequests.id)
+        )
+        .where(eq(transferRequests.projectId, scopedProjectId));
       return rows.map(row => row.documentNumber);
     },
   });
@@ -5288,11 +5288,41 @@ export async function generateReceiptNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "RE",
     projectId,
-    selectExistingNumbers: async documentPrefix => {
+    selectExistingNumbers: async scopedProjectId => {
       const rows = await db
         .select({ documentNumber: receipts.receiptNumber })
         .from(receipts)
-        .where(ilike(receipts.receiptNumber, `${documentPrefix}%`));
+        .leftJoin(
+          purchaseOrders,
+          and(
+            eq(receipts.sourceType, "purchase_order"),
+            eq(receipts.sourceId, purchaseOrders.id)
+          )
+        )
+        .leftJoin(
+          transfers,
+          and(
+            eq(receipts.sourceType, "transfer"),
+            eq(receipts.sourceId, transfers.id)
+          )
+        )
+        .leftJoin(
+          transferRequests,
+          eq(transfers.transferRequestId, transferRequests.id)
+        )
+        .where(
+          or(
+            eq(receipts.projectId, scopedProjectId),
+            and(
+              isNull(receipts.projectId),
+              eq(purchaseOrders.projectId, scopedProjectId)
+            ),
+            and(
+              isNull(receipts.projectId),
+              eq(transferRequests.projectId, scopedProjectId)
+            )
+          )
+        );
       return rows.map(row => row.documentNumber);
     },
   });
@@ -5305,11 +5335,11 @@ export async function generateInvoiceDocumentNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "FT",
     projectId,
-    selectExistingNumbers: async documentPrefix => {
+    selectExistingNumbers: async scopedProjectId => {
       const rows = await db
         .select({ documentNumber: invoices.invoiceDocumentNumber })
         .from(invoices)
-        .where(ilike(invoices.invoiceDocumentNumber, `${documentPrefix}%`));
+        .where(eq(invoices.projectId, scopedProjectId));
       return rows.map(row => row.documentNumber);
     },
   });
@@ -5322,11 +5352,11 @@ export async function generateWarehouseExitNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "SB",
     projectId,
-    selectExistingNumbers: async documentPrefix => {
+    selectExistingNumbers: async scopedProjectId => {
       const rows = await db
         .select({ documentNumber: warehouseExits.exitNumber })
         .from(warehouseExits)
-        .where(ilike(warehouseExits.exitNumber, `${documentPrefix}%`));
+        .where(eq(warehouseExits.projectId, scopedProjectId));
       return rows.map(row => row.documentNumber);
     },
   });
@@ -5339,11 +5369,11 @@ export async function generateOpeningBalanceNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "SI",
     projectId,
-    selectExistingNumbers: async documentPrefix => {
+    selectExistingNumbers: async scopedProjectId => {
       const rows = await db
         .select({ documentNumber: openingBalances.balanceNumber })
         .from(openingBalances)
-        .where(ilike(openingBalances.balanceNumber, `${documentPrefix}%`));
+        .where(eq(openingBalances.projectId, scopedProjectId));
       return rows.map(row => row.documentNumber);
     },
   });
@@ -16900,11 +16930,11 @@ export async function generateReturnNumber(projectId: number) {
   return generateProjectScopedDocumentNumber({
     prefix: "DEV",
     projectId,
-    selectExistingNumbers: async documentPrefix => {
+    selectExistingNumbers: async scopedProjectId => {
       const rows = await db
         .select({ documentNumber: reverseLogistics.returnNumber })
         .from(reverseLogistics)
-        .where(ilike(reverseLogistics.returnNumber, `${documentPrefix}%`));
+        .where(eq(reverseLogistics.sourceProjectId, scopedProjectId));
       return rows.map(row => row.documentNumber);
     },
   });
