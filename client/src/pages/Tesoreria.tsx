@@ -107,6 +107,7 @@ type PreparedBankAttachment = {
 
 type PendingReasonAction =
   | { type: "return" }
+  | { type: "returnToDraft" }
   | { type: "cancel" }
   | { type: "reopen" }
   | { type: "reject" }
@@ -493,6 +494,7 @@ function auditActionLabel(action: string) {
     registrar_pago_banco: "registrar pago bancario",
     reabrir_respuesta_bancaria: "restaurar respuesta bancaria",
     reabrir_lote: "reabrir lote para corregir respuesta bancaria",
+    regresar_borrador: "regresar lote a borrador",
   };
   return reviewLabels[action] ?? action.replaceAll("_", " ");
 }
@@ -1796,6 +1798,9 @@ function BatchDetailDialog({
   const returnMutation = trpc.treasury.returnBatch.useMutation(
     mutationOptions("Lote devuelto")
   );
+  const returnToDraftMutation = trpc.treasury.returnToDraft.useMutation(
+    mutationOptions("Lote regresado a borrador")
+  );
   const cancelMutation = trpc.treasury.cancel.useMutation(
     mutationOptions(
       "Lote anulado; sus documentos ya están disponibles para otro lote"
@@ -1861,6 +1866,8 @@ function BatchDetailDialog({
   const canExportBankWorkbook =
     settingsQuery.data?.permissions.canExportBankWorkbook === true;
   const canManageBankResponse = isCentral;
+  const canReturnToDraft =
+    status === "aprobado" && isCentral && !batch?.exportedAt;
   const editableAdjustments =
     approvalsEnabled && status === "enviado_depuracion" && isCentral;
   const canReopenClosedBatch =
@@ -2039,6 +2046,13 @@ function BatchDetailDialog({
       );
       return;
     }
+    if (pendingReasonAction.type === "returnToDraft") {
+      returnToDraftMutation.mutate(
+        { id: detail.batch.id, reason: actionReason },
+        { onSuccess }
+      );
+      return;
+    }
     if (pendingReasonAction.type === "cancel") {
       cancelMutation.mutate(
         { id: detail.batch.id, reason: actionReason },
@@ -2084,6 +2098,7 @@ function BatchDetailDialog({
     approveMutation,
     rejectMutation,
     returnMutation,
+    returnToDraftMutation,
     cancelMutation,
     exportMutation,
     recordBankResponseMutation,
@@ -2844,6 +2859,15 @@ function BatchDetailDialog({
                   <RotateCcw className="mr-2 h-4 w-4" /> Devolver
                 </Button>
               ) : null}
+              {canReturnToDraft && (
+                <Button
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() => requestReason({ type: "returnToDraft" })}
+                >
+                  <RotateCcw className="mr-2 h-4 w-4" /> Regresar a borrador
+                </Button>
+              )}
               {(status === "aprobado" || status === "enviado_banco") &&
                 canExportBankWorkbook && (
                   <Button
@@ -2989,30 +3013,34 @@ function BatchDetailDialog({
             <AlertDialogTitle>
               {pendingReasonAction?.type === "return"
                 ? "Devolver lote"
-                : pendingReasonAction?.type === "cancel"
-                  ? "Anular lote"
-                  : pendingReasonAction?.type === "reopen"
-                    ? "Reabrir lote"
-                    : pendingReasonAction?.type === "reject"
-                      ? "Rechazar lote"
-                      : pendingReasonAction?.type === "reopenRejected"
-                        ? "Reabrir lote rechazado"
-                        : pendingReasonAction?.resolution === "accept"
-                          ? "Aceptar abono real"
-                          : "Rechazar línea bancaria"}
+                : pendingReasonAction?.type === "returnToDraft"
+                  ? "Regresar lote a borrador"
+                  : pendingReasonAction?.type === "cancel"
+                    ? "Anular lote"
+                    : pendingReasonAction?.type === "reopen"
+                      ? "Reabrir lote"
+                      : pendingReasonAction?.type === "reject"
+                        ? "Rechazar lote"
+                        : pendingReasonAction?.type === "reopenRejected"
+                          ? "Reabrir lote rechazado"
+                          : pendingReasonAction?.resolution === "accept"
+                            ? "Aceptar abono real"
+                            : "Rechazar línea bancaria"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {pendingReasonAction?.type === "reopen"
                 ? "El lote volverá a Enviado al banco y las líneas rechazadas regresarán a Aprobada. Escriba el motivo para registrarlo en la auditoría."
-                : pendingReasonAction?.type === "cancel"
-                  ? "El lote quedará anulado y sus facturas volverán a estar disponibles para incluirlas en otro lote. Esta acción solo se permite antes de registrar una respuesta o pago bancario."
-                  : pendingReasonAction?.type === "reject"
-                    ? "El lote completo quedará rechazado. Escriba el motivo obligatorio para registrarlo en la auditoría."
-                    : pendingReasonAction?.type === "reopenRejected"
-                      ? approvalsEnabled
-                        ? "El lote volverá a quedar pendiente de aprobación. Escriba el motivo de la reapertura."
-                        : "El lote quedará listo para banco sin revisión ni aprobación. Escriba el motivo de la reapertura."
-                      : "Escriba un motivo de al menos 5 caracteres para registrar esta acción en la auditoría."}
+                : pendingReasonAction?.type === "returnToDraft"
+                  ? "El lote conservará sus documentos y reservas, aumentará de versión y volverá a borrador para permitir correcciones. Escriba el motivo obligatorio para la auditoría."
+                  : pendingReasonAction?.type === "cancel"
+                    ? "El lote quedará anulado y sus facturas volverán a estar disponibles para incluirlas en otro lote. Esta acción solo se permite antes de registrar una respuesta o pago bancario."
+                    : pendingReasonAction?.type === "reject"
+                      ? "El lote completo quedará rechazado. Escriba el motivo obligatorio para registrarlo en la auditoría."
+                      : pendingReasonAction?.type === "reopenRejected"
+                        ? approvalsEnabled
+                          ? "El lote volverá a quedar pendiente de aprobación. Escriba el motivo de la reapertura."
+                          : "El lote quedará listo para banco sin revisión ni aprobación. Escriba el motivo de la reapertura."
+                        : "Escriba un motivo de al menos 5 caracteres para registrar esta acción en la auditoría."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2">

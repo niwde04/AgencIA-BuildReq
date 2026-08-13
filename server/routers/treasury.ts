@@ -900,6 +900,34 @@ export const treasuryRouter = router({
       }
     }),
 
+  returnToDraft: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        reason: z.string().trim().min(5).max(2000),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertTreasuryEnabled();
+      await assertBatchAccess(ctx.user, input.id);
+      if (!isCentral(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            "Solo Administración Central puede regresar un lote a borrador.",
+        });
+      }
+      try {
+        return await treasury.returnTreasuryBatchToDraft({
+          batchId: input.id,
+          actor: ctx.user,
+          reason: input.reason,
+        });
+      } catch (error) {
+        rethrowTreasuryError(error);
+      }
+    }),
+
   exportBankWorkbook: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {

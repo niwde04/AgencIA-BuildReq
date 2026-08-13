@@ -10,6 +10,7 @@ import {
 } from "../shared/treasury";
 import {
   assertTreasuryBatchCanBeCancelled,
+  assertTreasuryBatchCanReturnToDraft,
   assertTreasuryBatchesCanBeConsolidated,
   buildTreasuryFullPaymentRows,
   getTreasuryApprovalRouting,
@@ -145,6 +146,68 @@ describe("treasury batch cancellation", () => {
         },
       ])
     ).toThrow("ya tiene una respuesta o pago bancario registrado");
+  });
+});
+
+describe("return treasury batch to draft", () => {
+  const approvedItems = [
+    {
+      status: "aprobada" as const,
+      activeReservation: true,
+      bankPaidAmount: null,
+      bankPaidDate: null,
+      bankReference: null,
+    },
+  ];
+
+  it("allows an unexported approved batch without bank activity", () => {
+    expect(() =>
+      assertTreasuryBatchCanReturnToDraft(
+        { status: "aprobado", exportedAt: null },
+        approvedItems,
+        false
+      )
+    ).not.toThrow();
+  });
+
+  it("blocks a batch that was exported or has a bank export attachment", () => {
+    expect(() =>
+      assertTreasuryBatchCanReturnToDraft(
+        { status: "aprobado", exportedAt: new Date() },
+        approvedItems,
+        false
+      )
+    ).toThrow("ya fue exportado al banco");
+    expect(() =>
+      assertTreasuryBatchCanReturnToDraft(
+        { status: "aprobado", exportedAt: null },
+        approvedItems,
+        true
+      )
+    ).toThrow("ya fue exportado al banco");
+  });
+
+  it("blocks bank activity and non-approved active lines", () => {
+    expect(() =>
+      assertTreasuryBatchCanReturnToDraft(
+        { status: "aprobado", exportedAt: null },
+        [
+          {
+            ...approvedItems[0],
+            status: "pagada",
+            bankPaidAmount: "100.00",
+          },
+        ],
+        false
+      )
+    ).toThrow("respuesta o pago bancario");
+    expect(() =>
+      assertTreasuryBatchCanReturnToDraft(
+        { status: "aprobado", exportedAt: null },
+        [{ ...approvedItems[0], status: "incluida" }],
+        false
+      )
+    ).toThrow("líneas que ya no están listas");
   });
 });
 

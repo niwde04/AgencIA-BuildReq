@@ -695,6 +695,58 @@ describe("treasury bank payment registration", () => {
   });
 });
 
+describe("return treasury batch to draft", () => {
+  it("allows Administración Central to return an accessible batch", async () => {
+    mockDisabledApprovalSettings();
+    vi.spyOn(treasury, "getTreasuryBatchById").mockResolvedValue({
+      batch: { id: 84, projectId: 17, status: "aprobado" },
+      projectIds: [17],
+    } as any);
+    const returnSpy = vi
+      .spyOn(treasury, "returnTreasuryBatchToDraft")
+      .mockResolvedValue({ id: 84, status: "borrador", version: 2 } as any);
+    const caller = appRouter.createCaller(
+      createTreasuryContext("administracion_central")
+    );
+
+    await expect(
+      caller.treasury.returnToDraft({
+        id: 84,
+        reason: "Debemos retirar una factura incorrecta",
+      })
+    ).resolves.toMatchObject({ status: "borrador", version: 2 });
+    expect(returnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchId: 84,
+        reason: "Debemos retirar una factura incorrecta",
+        actor: expect.objectContaining({
+          buildreqRole: "administracion_central",
+        }),
+      })
+    );
+  });
+
+  it("blocks a project manager from returning an approved batch", async () => {
+    mockDisabledApprovalSettings();
+    vi.spyOn(treasury, "getTreasuryBatchById").mockResolvedValue({
+      batch: { id: 85, projectId: 17, status: "aprobado" },
+      projectIds: [17],
+    } as any);
+    const returnSpy = vi.spyOn(treasury, "returnTreasuryBatchToDraft");
+    const caller = appRouter.createCaller(
+      createTreasuryContext("administrador_proyecto")
+    );
+
+    await expect(
+      caller.treasury.returnToDraft({
+        id: 85,
+        reason: "Debemos retirar una factura incorrecta",
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(returnSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("treasury bank workbook export", () => {
   it("allows the project manager to export a batch from their project", async () => {
     mockDisabledApprovalSettings();

@@ -273,31 +273,77 @@ const BANK_RESPONSE_ITEM_STATUSES = new Set<TreasuryItemStatus>([
   "contabilizada",
 ]);
 
+type TreasuryBankEvidenceItem = {
+  status: TreasuryItemStatus;
+  bankPaidAmount?: string | number | null;
+  bankPaidDate?: Date | string | null;
+  bankReference?: string | null;
+};
+
+function hasTreasuryBankEvidence(items: TreasuryBankEvidenceItem[]) {
+  return items.some(
+    item =>
+      BANK_RESPONSE_ITEM_STATUSES.has(item.status) ||
+      item.bankPaidAmount != null ||
+      item.bankPaidDate != null ||
+      Boolean(item.bankReference?.trim())
+  );
+}
+
 export function assertTreasuryBatchCanBeCancelled(
   batchStatus: TreasuryBatchStatus,
-  items: Array<{
-    status: TreasuryItemStatus;
-    bankPaidAmount?: string | number | null;
-    bankPaidDate?: Date | string | null;
-    bankReference?: string | null;
-  }>
+  items: TreasuryBankEvidenceItem[]
 ) {
   if (!CANCELLABLE_BATCH_STATUSES.has(batchStatus)) {
     throw new TreasuryRuleError(
       "El lote ya tiene una respuesta o pago bancario registrado y no puede anularse."
     );
   }
-  if (
-    items.some(
-      item =>
-        BANK_RESPONSE_ITEM_STATUSES.has(item.status) ||
-        item.bankPaidAmount != null ||
-        item.bankPaidDate != null ||
-        Boolean(item.bankReference?.trim())
-    )
-  ) {
+  if (hasTreasuryBankEvidence(items)) {
     throw new TreasuryRuleError(
       "El lote ya tiene una respuesta o pago bancario registrado y no puede anularse."
+    );
+  }
+}
+
+export function assertTreasuryBatchCanReturnToDraft(
+  batch: {
+    status: TreasuryBatchStatus;
+    exportedAt?: Date | string | null;
+  },
+  items: Array<
+    TreasuryBankEvidenceItem & {
+      activeReservation: boolean;
+    }
+  >,
+  hasBankExportAttachment = false
+) {
+  if (batch.status !== "aprobado") {
+    throw new TreasuryRuleError(
+      "Solo un lote listo para banco puede regresar a borrador."
+    );
+  }
+  if (batch.exportedAt || hasBankExportAttachment) {
+    throw new TreasuryRuleError(
+      "El lote ya fue exportado al banco y no puede regresar directamente a borrador."
+    );
+  }
+  if (hasTreasuryBankEvidence(items)) {
+    throw new TreasuryRuleError(
+      "El lote ya tiene una respuesta o pago bancario registrado y no puede regresar a borrador."
+    );
+  }
+  const activeItems = items.filter(
+    item => item.activeReservation && item.status !== "excluida"
+  );
+  if (!activeItems.length) {
+    throw new TreasuryRuleError(
+      "El lote no tiene documentos activos para regresar a borrador."
+    );
+  }
+  if (activeItems.some(item => item.status !== "aprobada")) {
+    throw new TreasuryRuleError(
+      "El lote contiene líneas que ya no están listas para regresar a borrador."
     );
   }
 }
@@ -2965,6 +3011,109 @@ export async function returnTreasuryBatch(input: {
   return result;
 }
 
+export async function returnTreasuryBatchToDraft(input: {
+  batchId: number;
+  actor: TreasuryActor;
+  reason: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  return db.transaction(async tx => {
+    const batch = await readBatch(tx, input.batchId);
+    const items = await readBatchItems(tx, input.batchId);
+    const bankExportAttachments = await tx
+      .select({ id: attachments.id })
+      .from(attachments)
+      .where(
+        and(
+          eq(attachments.entityType, "treasury_payment_batch"),
+          eq(attachments.entityId, input.batchId),
+          eq(attachments.category, "archivo_bancario")
+        )
+      )
+      .limit(1);
+    assertTreasuryBatchCanReturnToDraft(
+      batch,
+      items,
+      bankExportAttachments.length > 0
+    );
+
+    const activeItems = items.filter(
+      (item: any) => item.activeReservation && item.status !== "excluida"
+    );
+    const now = new Date();
+    const nextVersion = batch.version + 1;
+    const [updated] = await tx
+      .update(treasuryPaymentBatches)
+      .set({
+        status: "borrador",
+        version: nextVersion,
+        submittedById: null,
+        submittedAt: null,
+        purifiedById: null,
+        purifiedAt: null,
+        approvedById: null,
+        approvedAt: null,
+        approvalBypassed: false,
+        exportedById: null,
+        exportedAt: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(treasuryPaymentBatches.id, input.batchId),
+          eq(treasuryPaymentBatches.status, "aprobado"),
+          isNull(treasuryPaymentBatches.exportedAt)
+        )
+      )
+      .returning();
+    if (!updated) {
+      throw new TreasuryRuleError(
+        "El lote cambió de estado o fue exportado. Actualice e intente nuevamente."
+      );
+    }
+
+    const restoredItems = await tx
+      .update(treasuryPaymentItems)
+      .set({
+        status: "incluida",
+        approvedAmount: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          inArray(
+            treasuryPaymentItems.id,
+            activeItems.map((item: any) => item.id)
+          ),
+          eq(treasuryPaymentItems.activeReservation, true),
+          eq(treasuryPaymentItems.status, "aprobada")
+        )
+      )
+      .returning({ id: treasuryPaymentItems.id });
+    if (restoredItems.length !== activeItems.length) {
+      throw new TreasuryRuleError(
+        "Una o más líneas cambiaron de estado. Actualice e intente nuevamente."
+      );
+    }
+
+    await insertEvent(tx, {
+      batchId: input.batchId,
+      action: "regresar_borrador",
+      previousStatus: batch.status,
+      newStatus: "borrador",
+      actor: input.actor,
+      comment: input.reason,
+      metadata: {
+        previousVersion: batch.version,
+        version: nextVersion,
+        restoredItems: restoredItems.length,
+      },
+    });
+    return updated;
+  });
+}
+
 function buildBankWorkbook(
   detail: NonNullable<Awaited<ReturnType<typeof getTreasuryBatchById>>>
 ) {
@@ -3104,7 +3253,9 @@ export async function exportTreasuryBankWorkbook(
   }
   const buffer = buildBankWorkbook(detail);
   const fileName = `${detail.batch.batchNumber}-v${detail.batch.version}-banco.xlsx`;
-  await persistTreasuryAttachment({
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const stored = await persistTreasuryAttachment({
     batchId,
     actorId: actor.id,
     fileName,
@@ -3113,28 +3264,54 @@ export async function exportTreasuryBankWorkbook(
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     category: "archivo_bancario",
   });
-  const db = await getDb();
-  if (!db) throw new Error("DB not available");
-  await db.transaction(async tx => {
-    const batch = await readBatch(tx, batchId);
-    await tx
-      .update(treasuryPaymentBatches)
-      .set({
-        status: "enviado_banco",
-        exportedById: actor.id,
-        exportedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(treasuryPaymentBatches.id, batchId));
-    await insertEvent(tx, {
-      batchId,
-      action: "exportar_banco",
-      previousStatus: batch.status,
-      newStatus: "enviado_banco",
-      actor,
-      metadata: { fileName },
+  try {
+    await db.transaction(async tx => {
+      const batch = await readBatch(tx, batchId);
+      if (!["aprobado", "enviado_banco"].includes(batch.status)) {
+        throw new TreasuryRuleError(
+          "El lote cambió de estado y ya no puede exportarse."
+        );
+      }
+      const [updated] = await tx
+        .update(treasuryPaymentBatches)
+        .set({
+          status: "enviado_banco",
+          exportedById: actor.id,
+          exportedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(treasuryPaymentBatches.id, batchId),
+            inArray(treasuryPaymentBatches.status, [
+              "aprobado",
+              "enviado_banco",
+            ])
+          )
+        )
+        .returning({ id: treasuryPaymentBatches.id });
+      if (!updated) {
+        throw new TreasuryRuleError(
+          "El lote cambió de estado y ya no puede exportarse."
+        );
+      }
+      await insertEvent(tx, {
+        batchId,
+        action: "exportar_banco",
+        previousStatus: batch.status,
+        newStatus: "enviado_banco",
+        actor,
+        metadata: { fileName },
+      });
     });
-  });
+  } catch (error) {
+    await db
+      .delete(attachments)
+      .where(eq(attachments.fileKey, stored.key))
+      .catch(() => undefined);
+    await storageDelete(stored.key).catch(() => undefined);
+    throw error;
+  }
   return {
     fileName,
     mimeType:
