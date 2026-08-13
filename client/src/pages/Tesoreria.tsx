@@ -71,6 +71,7 @@ import {
   TREASURY_ITEM_STATUS_LABELS,
   TREASURY_PAYMENT_KIND_LABELS,
   getTreasuryBatchStatusLabel,
+  matchesTreasuryBatchSearch,
   roundTreasuryMoney,
   type TreasuryBatchStatus,
 } from "@shared/treasury";
@@ -3196,13 +3197,12 @@ export default function Tesoreria() {
   });
 
   const visibleBatches = useMemo(() => {
-    const term = search.trim().toLocaleLowerCase("es-HN");
     return (batchesQuery.data ?? []).filter((row: any) => {
       const paymentRegistrationDate = toDateKey(row.paymentRegistrationDate);
       const projectSummary = treasuryProjectSummary(row);
-      const matchesSearch =
-        !term ||
-        [
+      const matchesSearch = matchesTreasuryBatchSearch({
+        search,
+        values: [
           row.batch.batchNumber,
           projectSummary.code,
           projectSummary.name,
@@ -3211,10 +3211,10 @@ export default function Tesoreria() {
             row.batch.status as TreasuryBatchStatus,
             row.batch.approvalBypassed === true
           ),
-        ]
-          .join(" ")
-          .toLocaleLowerCase("es-HN")
-          .includes(term);
+        ],
+        invoiceDocumentNumbers: row.invoiceDocumentNumbers,
+        invoiceNumbers: row.invoiceNumbers,
+      });
       const matchesDateRange =
         (!dateFrom && !dateTo) ||
         (Boolean(paymentRegistrationDate) &&
@@ -4040,7 +4040,7 @@ export default function Tesoreria() {
                       <Input
                         id="treasury-search"
                         className="pl-9"
-                        placeholder="Buscar lote o proyecto"
+                        placeholder="Buscar lote, proyecto o factura"
                         value={search}
                         onChange={event => {
                           setSearch(event.target.value);

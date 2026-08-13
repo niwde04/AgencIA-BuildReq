@@ -5,6 +5,7 @@ import {
   buildTreasuryMoneySummary,
   getTreasuryBatchStatusLabel,
   getTreasuryPaymentStatus,
+  matchesTreasuryBatchSearch,
   roundTreasuryMoney,
 } from "../shared/treasury";
 import {
@@ -43,6 +44,36 @@ describe("treasury batch payment registration date", () => {
         { bankPaidDate: undefined },
       ])
     ).toBeNull();
+  });
+});
+
+describe("treasury batch search", () => {
+  const searchableBatch = {
+    values: ["TES-2026-000163", "017", "CA-4 Ocotepeque - El Portillo"],
+    invoiceDocumentNumbers: ["FT-017-00000054"],
+    invoiceNumbers: ["000-001-01-00258451"],
+  };
+
+  it.each([
+    "TES-2026-000163",
+    "Ocotepeque",
+    "FT-017-00000054",
+    "FT-017-000000054",
+    "000-001-01-00258451",
+    "258451",
+  ])("finds a batch with search term %s", search => {
+    expect(matchesTreasuryBatchSearch({ search, ...searchableBatch })).toBe(
+      true
+    );
+  });
+
+  it("does not match an unrelated invoice", () => {
+    expect(
+      matchesTreasuryBatchSearch({
+        search: "FT-017-99999999",
+        ...searchableBatch,
+      })
+    ).toBe(false);
   });
 });
 

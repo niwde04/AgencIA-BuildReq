@@ -58,6 +58,47 @@ export function getTreasuryBatchStatusLabel(
   return TREASURY_BATCH_STATUS_LABELS[status];
 }
 
+function normalizeTreasurySearchText(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLocaleLowerCase("es-HN");
+}
+
+function normalizeTreasuryDocumentIdentifier(value: unknown) {
+  const tokens = normalizeTreasurySearchText(value).match(/[a-z]+|\d+/g);
+  if (!tokens?.length) return "";
+  return tokens
+    .map(token =>
+      /^\d+$/.test(token) ? token.replace(/^0+(?=\d)/, "") : token
+    )
+    .join("|");
+}
+
+export function matchesTreasuryBatchSearch(input: {
+  search: string;
+  values: unknown[];
+  invoiceDocumentNumbers?: Array<string | null | undefined>;
+  invoiceNumbers?: Array<string | null | undefined>;
+}) {
+  const term = normalizeTreasurySearchText(input.search);
+  if (!term) return true;
+
+  const searchableText = input.values
+    .map(normalizeTreasurySearchText)
+    .join(" ");
+  if (searchableText.includes(term)) return true;
+
+  const normalizedTerm = normalizeTreasuryDocumentIdentifier(term);
+  if (!normalizedTerm) return false;
+
+  return [
+    ...(input.invoiceDocumentNumbers ?? []),
+    ...(input.invoiceNumbers ?? []),
+  ].some(value =>
+    normalizeTreasuryDocumentIdentifier(value).includes(normalizedTerm)
+  );
+}
+
 export const TREASURY_ITEM_STATUS_CODES = [
   "incluida",
   "excluida",

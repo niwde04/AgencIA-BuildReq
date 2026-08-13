@@ -1255,9 +1255,20 @@ export async function listTreasuryBatches(filters?: {
   return accessibleBatchRows.map(row => {
     const batchItems = items.filter(item => item.batchId === row.batch.id);
     const included = batchItems.filter(item => item.status !== "excluida");
+    const invoiceItems = included.filter(item => item.sourceType === "invoice");
     return {
       ...row,
       itemCount: included.length,
+      invoiceDocumentNumbers: Array.from(
+        new Set(invoiceItems.map(item => item.invoiceDocumentNumber))
+      ),
+      invoiceNumbers: Array.from(
+        new Set(
+          invoiceItems
+            .map(item => item.invoiceNumber?.trim())
+            .filter((value): value is string => Boolean(value))
+        )
+      ),
       paymentRegistrationDate:
         getTreasuryBatchPaymentRegistrationDate(included),
       supplierCount: new Set(
