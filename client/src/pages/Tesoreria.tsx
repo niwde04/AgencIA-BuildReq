@@ -1857,6 +1857,8 @@ function BatchDetailDialog({
   const approvalsEnabled =
     settingsQuery.data?.treasuryBatchApprovalsEnabled === true;
   const isApprover = settingsQuery.data?.isApprover === true;
+  const canExportBankWorkbook =
+    settingsQuery.data?.permissions.canExportBankWorkbook === true;
   const canManageBankResponse = isCentral;
   const editableAdjustments =
     approvalsEnabled && status === "enviado_depuracion" && isCentral;
@@ -2842,7 +2844,7 @@ function BatchDetailDialog({
                 </Button>
               ) : null}
               {(status === "aprobado" || status === "enviado_banco") &&
-                canManageBankResponse && (
+                canExportBankWorkbook && (
                   <Button
                     onClick={() =>
                       exportMutation.mutate({ id: detail.batch.id })

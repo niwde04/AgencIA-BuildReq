@@ -91,6 +91,10 @@ function canManageTreasuryDrafts(user: User) {
   return isCentral(user) || isProjectManager(user);
 }
 
+function canExportBankWorkbook(user: User) {
+  return isCentral(user) || isProjectManager(user);
+}
+
 function isAccountant(user: User) {
   return user.role === "admin" || user.buildreqRole === "contable";
 }
@@ -384,6 +388,7 @@ export const treasuryRouter = router({
       canCreate: canManageTreasuryDrafts(ctx.user),
       canDepurate: isCentral(ctx.user),
       canAccount: isAccountant(ctx.user),
+      canExportBankWorkbook: canExportBankWorkbook(ctx.user),
     },
   })),
 
@@ -900,10 +905,11 @@ export const treasuryRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertTreasuryEnabled();
       await assertBatchAccess(ctx.user, input.id);
-      if (!isCentral(ctx.user)) {
+      if (!canExportBankWorkbook(ctx.user)) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Solo Administración Central puede exportar al banco.",
+          message:
+            "Solo Administración Central o el Administrador de Proyecto pueden exportar al banco.",
         });
       }
       try {

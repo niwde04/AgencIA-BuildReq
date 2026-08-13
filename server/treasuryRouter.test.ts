@@ -5,8 +5,12 @@ import * as db from "./db";
 import * as treasury from "./treasury";
 
 function createTreasuryContext(
-  buildreqRole: "administracion_central" | "financiero"
+  buildreqRole:
+    | "administracion_central"
+    | "administrador_proyecto"
+    | "financiero"
 ) {
+  const isProjectManager = buildreqRole === "administrador_proyecto";
   return {
     user: {
       id: buildreqRole === "financiero" ? 20 : 21,
@@ -15,13 +19,15 @@ function createTreasuryContext(
       name:
         buildreqRole === "financiero"
           ? "Financiero Test"
-          : "Administración Central Test",
+          : isProjectManager
+            ? "Administrador de Proyecto Test"
+            : "Administración Central Test",
       loginMethod: "test",
       role: "user",
       buildreqRole,
-      assignedProjectId: null,
-      assignedProjectIds: [],
-      assignedProjects: [],
+      assignedProjectId: isProjectManager ? 17 : null,
+      assignedProjectIds: isProjectManager ? [17] : [],
+      assignedProjects: isProjectManager ? [{ id: 17 }] : [],
       mustChangePassword: false,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -686,5 +692,57 @@ describe("treasury bank payment registration", () => {
         paidDate: new Date("2026-07-25T00:00:00.000Z"),
       })
     );
+  });
+});
+
+describe("treasury bank workbook export", () => {
+  it("allows the project manager to export a batch from their project", async () => {
+    mockDisabledApprovalSettings();
+    vi.spyOn(treasury, "getTreasuryBatchById").mockResolvedValue({
+      batch: { id: 82, projectId: 17, status: "aprobado" },
+      projectIds: [17],
+    } as any);
+    const exportSpy = vi
+      .spyOn(treasury, "exportTreasuryBankWorkbook")
+      .mockResolvedValue({
+        fileName: "TES-2026-000082-v1-banco.xlsx",
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        base64: "dGVzdA==",
+      });
+    const caller = appRouter.createCaller(
+      createTreasuryContext("administrador_proyecto")
+    );
+
+    const settings = await caller.treasury.settings();
+    expect(settings.permissions.canExportBankWorkbook).toBe(true);
+
+    await expect(
+      caller.treasury.exportBankWorkbook({ id: 82 })
+    ).resolves.toMatchObject({ fileName: "TES-2026-000082-v1-banco.xlsx" });
+    expect(exportSpy).toHaveBeenCalledWith(
+      82,
+      expect.objectContaining({
+        buildreqRole: "administrador_proyecto",
+        assignedProjectIds: [17],
+      })
+    );
+  });
+
+  it("blocks the project manager from exporting another project's batch", async () => {
+    mockDisabledApprovalSettings();
+    vi.spyOn(treasury, "getTreasuryBatchById").mockResolvedValue({
+      batch: { id: 83, projectId: 18, status: "aprobado" },
+      projectIds: [18],
+    } as any);
+    const exportSpy = vi.spyOn(treasury, "exportTreasuryBankWorkbook");
+    const caller = appRouter.createCaller(
+      createTreasuryContext("administrador_proyecto")
+    );
+
+    await expect(
+      caller.treasury.exportBankWorkbook({ id: 83 })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(exportSpy).not.toHaveBeenCalled();
   });
 });
