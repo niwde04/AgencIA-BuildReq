@@ -1728,12 +1728,14 @@ function BatchDetailDialog({
   const [pendingReasonAction, setPendingReasonAction] =
     useState<PendingReasonAction>();
   const [actionReason, setActionReason] = useState("");
+  const [detailSearch, setDetailSearch] = useState("");
 
   useEffect(() => {
     setBatchBankReference("");
     setBankPaymentDate(currentLocalDateInput());
     setBankAttachment(undefined);
     setPreparingBankAttachment(false);
+    setDetailSearch("");
   }, [batchId]);
 
   useEffect(() => {
@@ -1881,6 +1883,35 @@ function BatchDetailDialog({
     );
   const canReopenRejectedBatch =
     status === "rechazado" && (isCentral || (approvalsEnabled && isApprover));
+  const visibleDetailItems = useMemo(
+    () =>
+      (detail?.items ?? []).filter((item: any) =>
+        matchesTreasuryBatchSearch({
+          search: detailSearch,
+          values: [
+            item.supplierName,
+            item.invoiceProjectCode,
+            item.invoiceProjectName,
+            item.status,
+            TREASURY_ITEM_STATUS_LABELS[
+              item.status as keyof typeof TREASURY_ITEM_STATUS_LABELS
+            ],
+            detail?.batch.approvalBypassed && item.status === "aprobada"
+              ? "Lista para banco"
+              : undefined,
+          ],
+          invoiceDocumentNumbers: [item.invoiceDocumentNumber],
+          invoiceNumbers: [item.invoiceNumber],
+        })
+      ),
+    [detail?.batch.approvalBypassed, detail?.items, detailSearch]
+  );
+  const detailTableColumnCount =
+    16 +
+    (isInvoiceBatch ? 1 : 0) +
+    (status === "pendiente_contabilizacion" && isAccountant ? 1 : 0) +
+    (editableAdjustments ? 1 : 0) +
+    (status === "borrador" && canManageDrafts ? 1 : 0);
 
   function currentPaymentAmount(item: any) {
     if (item.status === "excluida" || excludedIds.has(item.id)) return 0;
@@ -2271,6 +2302,23 @@ function BatchDetailDialog({
               </Card>
             </div>
 
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="relative w-full max-w-xl">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  aria-label="Filtrar documentos del lote"
+                  className="pl-9"
+                  placeholder="Filtrar por proveedor, factura, factura fiscal o proyecto"
+                  value={detailSearch}
+                  onChange={event => setDetailSearch(event.target.value)}
+                />
+              </div>
+              <div className="text-sm text-muted-foreground">
+                {detailSearch.trim()
+                  ? `${visibleDetailItems.length} de ${detail.items.length} documentos`
+                  : `${detail.items.length} documentos`}
+              </div>
+            </div>
             <div className="overflow-hidden rounded-lg border bg-card [&_[data-slot=table-container]]:max-h-[42vh] [&_[data-slot=table-container]]:overflow-auto">
               <Table
                 className={
@@ -2348,7 +2396,7 @@ function BatchDetailDialog({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {detail.items.map((item: any) => (
+                  {visibleDetailItems.map((item: any) => (
                     <TableRow key={item.id}>
                       {status === "pendiente_contabilizacion" &&
                         isAccountant && (
@@ -2559,6 +2607,16 @@ function BatchDetailDialog({
                       )}
                     </TableRow>
                   ))}
+                  {!visibleDetailItems.length && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={detailTableColumnCount}
+                        className="h-28 text-center text-muted-foreground"
+                      >
+                        No hay documentos que coincidan con el filtro.
+                      </TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </div>
