@@ -228,6 +228,7 @@ import {
   isValidInvoiceNumber,
   normalizeFiscalRtn,
 } from "@shared/invoices";
+import { isTreasuryItemBlockingInvoiceReview } from "./invoiceReview";
 
 const DEFAULT_DATABASE_POOL_MAX = 4;
 let _pool: Pool | null = null;
@@ -13942,15 +13943,22 @@ export async function getInvoiceById(id: number) {
         asc(treasuryPaymentBatches.id)
       ),
     db
-      .select({ id: treasuryPaymentItems.id })
+      .select({
+        batchStatus: treasuryPaymentBatches.status,
+        itemStatus: treasuryPaymentItems.status,
+        activeReservation: treasuryPaymentItems.activeReservation,
+      })
       .from(treasuryPaymentItems)
+      .innerJoin(
+        treasuryPaymentBatches,
+        eq(treasuryPaymentItems.batchId, treasuryPaymentBatches.id)
+      )
       .where(
         and(
           eq(treasuryPaymentItems.sourceType, "invoice"),
           eq(treasuryPaymentItems.invoiceId, id)
         )
-      )
-      .limit(1),
+      ),
   ]);
   const items = itemRows.map(({ item, catalogAllowsTaxWithholding }) => ({
     ...item,
@@ -14015,7 +14023,9 @@ export async function getInvoiceById(id: number) {
     advanceApplications,
     purchaseOrderAdvanceSummary,
     treasuryPayments,
-    hasTreasuryBatchItems: treasuryBatchItems.length > 0,
+    hasBlockingTreasuryBatchItems: treasuryBatchItems.some(
+      isTreasuryItemBlockingInvoiceReview
+    ),
     appliedAdvanceAmount: toMoneyString4(
       advanceApplications.reduce(
         (sum, application) => sum + parseDecimal(application.amount),
@@ -14353,17 +14363,24 @@ export async function returnAccountedInvoiceToReview(id: number) {
       );
     }
 
-    const [treasuryBatchItem, advanceApplication] = await Promise.all([
+    const [treasuryBatchItems, advanceApplication] = await Promise.all([
       tx
-        .select({ id: treasuryPaymentItems.id })
+        .select({
+          batchStatus: treasuryPaymentBatches.status,
+          itemStatus: treasuryPaymentItems.status,
+          activeReservation: treasuryPaymentItems.activeReservation,
+        })
         .from(treasuryPaymentItems)
+        .innerJoin(
+          treasuryPaymentBatches,
+          eq(treasuryPaymentItems.batchId, treasuryPaymentBatches.id)
+        )
         .where(
           and(
             eq(treasuryPaymentItems.sourceType, "invoice"),
             eq(treasuryPaymentItems.invoiceId, id)
           )
-        )
-        .limit(1),
+        ),
       tx
         .select({ id: purchaseOrderAdvanceApplications.id })
         .from(purchaseOrderAdvanceApplications)
@@ -14371,7 +14388,7 @@ export async function returnAccountedInvoiceToReview(id: number) {
         .limit(1),
     ]);
 
-    if (treasuryBatchItem.length > 0) {
+    if (treasuryBatchItems.some(isTreasuryItemBlockingInvoiceReview)) {
       throw new Error(
         "La factura pertenece a un lote de pago y no puede regresar a revisión"
       );

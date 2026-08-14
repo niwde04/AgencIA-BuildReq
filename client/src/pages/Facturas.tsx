@@ -3120,7 +3120,7 @@ export default function Facturas() {
   const canReturnSelectedInvoiceToReview =
     isSystemInvoiceReviewAdmin &&
     isAccounted &&
-    detail?.hasTreasuryBatchItems === false &&
+    detail?.hasBlockingTreasuryBatchItems === false &&
     appliedAdvanceAmount === 0;
   const canCorrectSelectedReceipt =
     canEditInvoices &&
