@@ -130,9 +130,9 @@ export function isSkippedReceiptInventoryReversal(
   if (decimalToHundredths(row.quantityReceived) <= 0) return false;
 
   const sapItemCode =
+    row.sapItemCode ??
     row.sourceCurrentSapItemCode ??
-    row.sourceOriginalSapItemCode ??
-    row.sapItemCode;
+    row.sourceOriginalSapItemCode;
 
   return !isPurchaseOrderNonInventoryLine({
     item: {
@@ -164,9 +164,9 @@ export function buildReceiptInventoryCorrectionPlan(
     if (!isSkippedReceiptInventoryReversal(row)) continue;
 
     const sapItemCode = normalizeCode(
-      row.sourceCurrentSapItemCode ??
-        row.sourceOriginalSapItemCode ??
-        row.sapItemCode
+      row.sapItemCode ??
+        row.sourceCurrentSapItemCode ??
+        row.sourceOriginalSapItemCode
     );
     if (!sapItemCode || !row.projectId || !row.warehouseId) {
       exceptions.push({

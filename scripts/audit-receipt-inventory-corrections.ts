@@ -212,9 +212,9 @@ async function loadAuditRows(client: Client) {
     left join "purchaseOrderItems" poi on poi.id = ri."sourceItemId"
     left join "sapCatalog" catalog
       on catalog."itemCode" = coalesce(
+        ri."sapItemCode",
         poi."currentSapItemCode",
-        poi."originalSapItemCode",
-        ri."sapItemCode"
+        poi."originalSapItemCode"
       )
     where r.status = 'anulada'
       and r."replacementReceiptId" is not null

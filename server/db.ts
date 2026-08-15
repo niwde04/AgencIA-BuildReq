@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   eq,
   and,
@@ -209,6 +210,11 @@ import {
   isPurchaseOrderNonInventoryLine,
 } from "@shared/receipt-inventory";
 import {
+  isReceiptArticleSubstitution,
+  normalizeReceiptArticleIdentity,
+  normalizeReceiptArticleValue,
+} from "@shared/receipt-substitutions";
+import {
   getDemoImportWorkload,
   type ParsedDemoImportPayload,
 } from "./_core/demoData";
@@ -233,6 +239,9 @@ import { isTreasuryItemBlockingInvoiceReview } from "./invoiceReview";
 const DEFAULT_DATABASE_POOL_MAX = 4;
 let _pool: Pool | null = null;
 let _db: ReturnType<typeof drizzle> | null = null;
+const receiptRegistrationDb = new AsyncLocalStorage<
+  ReturnType<typeof drizzle>
+>();
 
 function getDatabasePoolMax() {
   const configured = Number.parseInt(process.env.DATABASE_POOL_MAX ?? "", 10);
@@ -241,7 +250,10 @@ function getDatabasePoolMax() {
     : DEFAULT_DATABASE_POOL_MAX;
 }
 
-export async function getDb() {
+export async function getDb(): Promise<ReturnType<typeof drizzle> | null> {
+  const scopedDb = receiptRegistrationDb.getStore();
+  if (scopedDb) return scopedDb;
+
   if (!_db && process.env.DATABASE_URL) {
     try {
       _pool = new Pool({
@@ -8571,9 +8583,13 @@ export async function getPurchaseOrderById(id: number) {
             itemCode: sapCatalog.itemCode,
             description: sapCatalog.description,
             itemGroup: sapCatalog.itemGroup,
+            financialGroupCode: sapCatalog.financialGroupCode,
             brand: sapCatalog.brand,
             partNumber: sapCatalog.partNumber,
             tipoArticulo: sapCatalog.tipoArticulo,
+            projectId: sapCatalog.projectId,
+            allowsTaxWithholding: sapCatalog.allowsTaxWithholding,
+            isActive: sapCatalog.isActive,
           })
           .from(sapCatalog)
           .where(inArray(sapCatalog.itemCode, itemCatalogCodes))
@@ -11727,6 +11743,206 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
   return createdInvoice;
 }
 
+async function resolvePurchaseOrderReceiptArticles(params: {
+  client: any;
+  purchaseOrderDetail: NonNullable<
+    Awaited<ReturnType<typeof getPurchaseOrderById>>
+  >;
+  receivedById: number;
+  items: Array<
+    Omit<InsertReceiptItem, "receiptId"> & {
+      closeRemaining?: boolean;
+      closeReason?: string | null;
+      closeNote?: string | null;
+      closedById?: number | null;
+      isFixedAsset?: boolean;
+      isLeasing?: boolean;
+      assetDetails?: FixedAssetDetail[];
+    }
+  >;
+}) {
+  const sourceItemsById = new Map(
+    (params.purchaseOrderDetail.items ?? []).map((item: any) => [item.id, item])
+  );
+
+  return params.items.reduce<Promise<typeof params.items>>(
+    async (pendingItems, item) => {
+      const resolvedItems = await pendingItems;
+      const sourceItem = item.sourceItemId
+        ? sourceItemsById.get(item.sourceItemId)
+        : null;
+      const sourceCatalog = sourceItem?.catalogItem ?? null;
+
+      if (
+        !sourceItem ||
+        sourceCatalog?.tipoArticulo !== 1 ||
+        sourceItem.isFixedAsset === true
+      ) {
+        resolvedItems.push(item);
+        return resolvedItems;
+      }
+
+      const requestedSapItemCode =
+        sourceItem.currentSapItemCode ??
+        sourceItem.originalSapItemCode ??
+        sourceCatalog.itemCode ??
+        null;
+      const requestedBrand = normalizeReceiptArticleValue(
+        sourceItem.brand ?? sourceCatalog.brand
+      );
+      const requestedPartNumber = normalizeReceiptArticleValue(
+        sourceItem.partNumber ?? sourceCatalog.partNumber
+      );
+      const receivedBrand = normalizeReceiptArticleValue(
+        item.receivedBrand ?? requestedBrand
+      );
+      const receivedPartNumber = normalizeReceiptArticleValue(
+        item.receivedPartNumber ?? requestedPartNumber
+      );
+      const isSubstitution = isReceiptArticleSubstitution({
+        requested: {
+          brand: requestedBrand,
+          partNumber: requestedPartNumber,
+        },
+        received: {
+          brand: receivedBrand,
+          partNumber: receivedPartNumber,
+        },
+      });
+
+      const snapshot = {
+        requestedItemName: sourceItem.itemName,
+        requestedSapItemCode,
+        requestedBrand: requestedBrand || null,
+        requestedPartNumber: requestedPartNumber || null,
+        receivedBrand: receivedBrand || null,
+        receivedPartNumber: receivedPartNumber || null,
+        isSubstitution,
+      };
+
+      if (!isSubstitution) {
+        resolvedItems.push({
+          ...item,
+          ...snapshot,
+          sapItemCode: requestedSapItemCode,
+          receivedArticleId: sourceCatalog.id,
+          itemName: sourceCatalog.description || sourceItem.itemName,
+        });
+        return resolvedItems;
+      }
+
+      if (!receivedBrand || !receivedPartNumber) {
+        throw new Error(
+          `Complete la marca y el número de parte recibidos de ${sourceItem.itemName}`
+        );
+      }
+
+      const normalizedBrand = normalizeReceiptArticleIdentity(receivedBrand);
+      const normalizedPartNumber =
+        normalizeReceiptArticleIdentity(receivedPartNumber);
+      await params.client.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`receipt-article:${normalizedBrand}:${normalizedPartNumber}`}, 0))`
+      );
+
+      const matchingArticles = await params.client
+        .select()
+        .from(sapCatalog)
+        .where(
+          and(
+            sql`lower(regexp_replace(trim(coalesce(${sapCatalog.brand}, '')), '\\s+', ' ', 'g')) = ${normalizedBrand}`,
+            sql`lower(regexp_replace(trim(coalesce(${sapCatalog.partNumber}, '')), '\\s+', ' ', 'g')) = ${normalizedPartNumber}`
+          )
+        )
+        .orderBy(asc(sapCatalog.id));
+      const activeMatches = matchingArticles.filter(
+        (article: any) => article.isActive === true
+      );
+      const candidateSapItemCode = item.sapItemCode?.trim() || null;
+      let receivedArticle =
+        activeMatches.find(
+          (article: any) =>
+            normalizeReceiptArticleIdentity(article.itemCode) ===
+            normalizeReceiptArticleIdentity(candidateSapItemCode)
+        ) ?? null;
+
+      if (!receivedArticle && activeMatches.length === 1) {
+        receivedArticle = activeMatches[0];
+      }
+      if (!receivedArticle && activeMatches.length > 1) {
+        throw new Error(
+          `Hay varios artículos activos con marca ${receivedBrand} y parte ${receivedPartNumber}; ingrese el SAP de la coincidencia correcta`
+        );
+      }
+      if (!receivedArticle && matchingArticles.length > 0) {
+        throw new Error(
+          `El artículo con marca ${receivedBrand} y parte ${receivedPartNumber} está inactivo`
+        );
+      }
+
+      if (!receivedArticle) {
+        if (!candidateSapItemCode) {
+          throw new Error(
+            `Ingrese el código SAP definitivo para la marca ${receivedBrand} y parte ${receivedPartNumber}`
+          );
+        }
+
+        const [articleWithSap] = await params.client
+          .select()
+          .from(sapCatalog)
+          .where(
+            sql`lower(trim(${sapCatalog.itemCode})) = ${candidateSapItemCode.toLocaleLowerCase("es-HN")}`
+          )
+          .limit(1);
+        if (articleWithSap) {
+          throw new Error(
+            articleWithSap.isActive
+              ? `El código SAP ${candidateSapItemCode} pertenece a otro artículo`
+              : `El código SAP ${candidateSapItemCode} pertenece a un artículo inactivo`
+          );
+        }
+
+        [receivedArticle] = await params.client
+          .insert(sapCatalog)
+          .values({
+            itemCode: candidateSapItemCode,
+            description: normalizeArticleDescription(
+              sourceCatalog.description || sourceItem.itemName
+            ),
+            itemGroup: sourceCatalog.itemGroup,
+            financialGroupCode: sourceCatalog.financialGroupCode,
+            brand: receivedBrand,
+            partNumber: receivedPartNumber,
+            tipoArticulo: sourceCatalog.tipoArticulo,
+            projectId: sourceCatalog.projectId,
+            allowsTaxWithholding: sourceCatalog.allowsTaxWithholding,
+            isActive: true,
+            createdById: params.receivedById,
+            updatedById: params.receivedById,
+          })
+          .returning();
+      }
+
+      if (receivedArticle.tipoArticulo !== 1) {
+        throw new Error(
+          `El artículo ${receivedArticle.itemCode} no es un artículo normal de inventario`
+        );
+      }
+
+      resolvedItems.push({
+        ...item,
+        ...snapshot,
+        sapItemCode: receivedArticle.itemCode,
+        receivedArticleId: receivedArticle.id,
+        itemName: receivedArticle.description,
+        receivedBrand: receivedArticle.brand ?? receivedBrand,
+        receivedPartNumber: receivedArticle.partNumber ?? receivedPartNumber,
+      });
+      return resolvedItems;
+    },
+    Promise.resolve([])
+  );
+}
+
 export async function registerReceipt(
   data: Omit<InsertReceipt, "receiptNumber"> & {
     emissionDeadline?: Date | null;
@@ -11743,7 +11959,23 @@ export async function registerReceipt(
     }
   >,
   otherCharges?: ReceiptOtherChargeInput[]
-) {
+): Promise<{
+  id: number;
+  receiptNumber: string;
+  status: "cierre_incompleto" | "pendiente" | "parcial" | "completa";
+  invoiceId?: number;
+  invoiceDocumentNumber?: string;
+}> {
+  if (!receiptRegistrationDb.getStore()) {
+    const rootDb = await getDb();
+    if (!rootDb) throw new Error("DB not available");
+    return rootDb.transaction(transactionDb =>
+      receiptRegistrationDb.run(transactionDb as any, () =>
+        registerReceipt(data, items, otherCharges)
+      )
+    );
+  }
+
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
@@ -11800,6 +12032,13 @@ export async function registerReceipt(
         throw new Error(`Seleccione almacén destino para ${item.itemName}`);
       }
     }
+
+    items = await resolvePurchaseOrderReceiptArticles({
+      client: db,
+      purchaseOrderDetail: purchaseOrderDetailForReceipt!,
+      receivedById: data.receivedById,
+      items,
+    });
   } else if (data.sourceType === "transfer") {
     for (const item of items) {
       if (parseDecimal(item.quantityReceived) <= 0) continue;
@@ -12098,8 +12337,8 @@ export async function registerReceipt(
             item.sapItemCode ??
             existingItem.currentSapItemCode ??
             existingItem.originalSapItemCode,
-          itemName: existingItem.itemName,
-          unit: existingItem.unit,
+          itemName: item.itemName,
+          unit: item.unit ?? existingItem.unit,
           projectId: data.projectId ?? null,
           warehouseId: item.warehouseId,
           storageLocation: item.storageLocation ?? null,
@@ -14737,13 +14976,13 @@ export async function correctInvoiceReceiptFromInvoice(params: {
         ? sourceItemById.get(item.sourceItemId)
         : null;
       const sapItemCode =
+        item.sapItemCode ??
         sourceItem?.currentSapItemCode ??
         sourceItem?.originalSapItemCode ??
-        item.sapItemCode ??
         null;
       const catalogItem =
-        catalogByCode.get(sapItemCode?.trim() ?? "") ??
-        catalogByCode.get(item.sapItemCode?.trim() ?? "");
+        catalogByCode.get(item.sapItemCode?.trim() ?? "") ??
+        catalogByCode.get(sapItemCode?.trim() ?? "");
       const isNonInventoryLine = isPurchaseOrderNonInventoryLine({
         item,
         sourceItem: sourceItem
@@ -14876,6 +15115,14 @@ export async function correctInvoiceReceiptFromInvoice(params: {
           receiptId: replacementReceipt.id,
           sourceItemId: item.sourceItemId,
           sapItemCode: item.sapItemCode,
+          requestedItemName: item.requestedItemName,
+          requestedSapItemCode: item.requestedSapItemCode,
+          requestedBrand: item.requestedBrand,
+          requestedPartNumber: item.requestedPartNumber,
+          receivedArticleId: item.receivedArticleId,
+          receivedBrand: item.receivedBrand,
+          receivedPartNumber: item.receivedPartNumber,
+          isSubstitution: item.isSubstitution,
           warehouseId: item.warehouseId,
           storageLocation: item.storageLocation,
           itemName: item.itemName,

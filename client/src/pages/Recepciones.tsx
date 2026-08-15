@@ -114,6 +114,10 @@ import {
 } from "@shared/purchase-orders";
 import { isPurchaseOrderNonInventoryLine } from "@shared/receipt-inventory";
 import {
+  isReceiptArticleSubstitution,
+  normalizeReceiptArticleValue,
+} from "@shared/receipt-substitutions";
+import {
   CAI_FORMAT_EXAMPLE,
   INVOICE_NUMBER_FORMAT_EXAMPLE,
   formatCaiInput,
@@ -829,6 +833,32 @@ function isReceiptNonInventoryItem(item: any) {
   });
 }
 
+type ReceivedArticleDraft = {
+  brand: string;
+  partNumber: string;
+  sapItemCode: string;
+};
+
+function getRequestedReceiptArticle(item: any) {
+  return {
+    sapItemCode: String(getSourceItemCode(item) ?? "").trim(),
+    brand: normalizeReceiptArticleValue(
+      item?.brand ?? item?.catalogItem?.brand
+    ),
+    partNumber: normalizeReceiptArticleValue(
+      item?.partNumber ?? item?.catalogItem?.partNumber
+    ),
+  };
+}
+
+function supportsReceiptArticleSubstitution(item: any) {
+  return (
+    item?.isManualReceiptItem !== true &&
+    item?.isFixedAsset !== true &&
+    Number(item?.catalogItem?.tipoArticulo ?? item?.tipoArticulo ?? 0) === 1
+  );
+}
+
 function receiptItemHasStoredFinancials(item: any) {
   return (
     Number(item?.subtotal ?? 0) > 0 ||
@@ -1132,16 +1162,17 @@ export default function Recepciones() {
   const [receiptDate, setReceiptDate] = useState(todayDateValue());
   const [emissionDeadline, setEmissionDeadline] = useState("");
   const [receivedMap, setReceivedMap] = useState<Record<number, string>>({});
+  const [receivedArticleByItemId, setReceivedArticleByItemId] = useState<
+    Record<number, ReceivedArticleDraft>
+  >({});
   const [warehouseByItemId, setWarehouseByItemId] = useState<
     Record<number, string>
   >({});
   const [storageLocationByItemId, setStorageLocationByItemId] = useState<
     Record<number, string>
   >({});
-  const [
-    storageLocationSuggestionItemId,
-    setStorageLocationSuggestionItemId,
-  ] = useState<number | null>(null);
+  const [storageLocationSuggestionItemId, setStorageLocationSuggestionItemId] =
+    useState<number | null>(null);
   const [receiptProjectId, setReceiptProjectId] = useState("");
   const [receiptWarehouseId, setReceiptWarehouseId] = useState("");
   const [priceMap, setPriceMap] = useState<Record<number, string>>({});
@@ -1381,6 +1412,7 @@ export default function Recepciones() {
     setReceiptDate(todayDateValue());
     setEmissionDeadline("");
     setReceivedMap({});
+    setReceivedArticleByItemId({});
     setWarehouseByItemId({});
     setStorageLocationByItemId({});
     setStorageLocationSuggestionItemId(null);
@@ -1768,6 +1800,7 @@ export default function Recepciones() {
   useEffect(() => {
     if (!sourceItems.length) {
       setReceivedMap({});
+      setReceivedArticleByItemId({});
       setWarehouseByItemId({});
       setStorageLocationByItemId({});
       setStorageLocationSuggestionItemId(null);
@@ -1783,6 +1816,7 @@ export default function Recepciones() {
     }
 
     const nextMap: Record<number, string> = {};
+    const nextReceivedArticleMap: Record<number, ReceivedArticleDraft> = {};
     const nextPriceMap: Record<number, string> = {};
     const nextSubtotalMap: Record<number, string> = {};
     const nextWarehouseMap: Record<number, string> = {};
@@ -1801,11 +1835,21 @@ export default function Recepciones() {
     );
     for (const item of sourceItems as any[]) {
       const draftItem = draftItemsBySourceId.get(item.id) as any | undefined;
+      const requestedArticle = getRequestedReceiptArticle(item);
+      nextReceivedArticleMap[item.id] = {
+        brand: normalizeReceiptArticleValue(
+          draftItem?.receivedBrand ?? requestedArticle.brand
+        ),
+        partNumber: normalizeReceiptArticleValue(
+          draftItem?.receivedPartNumber ?? requestedArticle.partNumber
+        ),
+        sapItemCode: String(
+          draftItem?.sapItemCode ?? requestedArticle.sapItemCode
+        ).trim(),
+      };
       const isSavedFixedAsset =
         sourceType === "purchase_order" && item.isFixedAsset === true;
-      const savedAssetDetailCount = getFixedAssetDetailCount(
-        item.assetDetails
-      );
+      const savedAssetDetailCount = getFixedAssetDetailCount(item.assetDetails);
       const savedFixedAssetQuantity =
         savedAssetDetailCount ||
         getPositiveIntegerQuantity(getReceivableQuantity(item));
@@ -1879,6 +1923,7 @@ export default function Recepciones() {
       );
     }
     setReceivedMap(nextMap);
+    setReceivedArticleByItemId(nextReceivedArticleMap);
     setWarehouseByItemId(nextWarehouseMap);
     setStorageLocationByItemId(nextStorageLocationMap);
     const draftWarehouseIds = new Set(
@@ -2286,6 +2331,7 @@ export default function Recepciones() {
     setSourceId(value);
     setSourceDocumentPopoverOpen(false);
     setReceivedMap({});
+    setReceivedArticleByItemId({});
     setWarehouseByItemId({});
     setStorageLocationByItemId({});
     setStorageLocationSuggestionItemId(null);
@@ -3395,6 +3441,76 @@ export default function Recepciones() {
     });
   };
 
+  const getReceivedArticleDraft = (item: any): ReceivedArticleDraft => {
+    const requested = getRequestedReceiptArticle(item);
+    return (
+      receivedArticleByItemId[item.id] ?? {
+        brand: requested.brand,
+        partNumber: requested.partNumber,
+        sapItemCode: requested.sapItemCode,
+      }
+    );
+  };
+
+  const isReceivedArticleSubstitution = (item: any) => {
+    const requested = getRequestedReceiptArticle(item);
+    const received = getReceivedArticleDraft(item);
+    return (
+      sourceType === "purchase_order" &&
+      supportsReceiptArticleSubstitution(item) &&
+      isReceiptArticleSubstitution({ requested, received })
+    );
+  };
+
+  const updateReceivedArticleDraft = (
+    item: any,
+    field: keyof ReceivedArticleDraft,
+    value: string
+  ) => {
+    setReceivedArticleByItemId(current => {
+      const requested = getRequestedReceiptArticle(item);
+      const previous =
+        current[item.id] ?? ({ ...requested } satisfies ReceivedArticleDraft);
+      const next = { ...previous, [field]: value };
+      const wasSubstitution = isReceiptArticleSubstitution({
+        requested,
+        received: previous,
+      });
+      const willBeSubstitution = isReceiptArticleSubstitution({
+        requested,
+        received: next,
+      });
+
+      if (field !== "sapItemCode") {
+        if (!wasSubstitution && willBeSubstitution) {
+          next.sapItemCode = "";
+        } else if (!willBeSubstitution) {
+          next.sapItemCode = requested.sapItemCode;
+        }
+      }
+
+      return { ...current, [item.id]: next };
+    });
+  };
+
+  const getReceivedArticlePayload = (item: any) => {
+    if (
+      sourceType !== "purchase_order" ||
+      !supportsReceiptArticleSubstitution(item)
+    ) {
+      return { sapItemCode: getSourceItemCode(item) };
+    }
+    const received = getReceivedArticleDraft(item);
+    const substitution = isReceivedArticleSubstitution(item);
+    return {
+      sapItemCode: substitution
+        ? received.sapItemCode.trim() || undefined
+        : getSourceItemCode(item),
+      receivedBrand: received.brand.trim() || undefined,
+      receivedPartNumber: received.partNumber.trim() || undefined,
+    };
+  };
+
   const handleFixedAssetToggle = (item: any, checked: boolean) => {
     if (sourceType !== "purchase_order") {
       toast.error(
@@ -3592,7 +3708,7 @@ export default function Recepciones() {
 
             return {
               sourceItemId: sourceItem.id,
-              sapItemCode: getSourceItemCode(sourceItem),
+              ...getReceivedArticlePayload(sourceItem),
               warehouseId: isNonInventoryLine
                 ? undefined
                 : warehouseByItemId[sourceItem.id]
@@ -3749,6 +3865,22 @@ export default function Recepciones() {
       }
       if (!emissionDeadline) {
         toast.error("Selecciona la fecha límite de emisión");
+        return;
+      }
+    }
+
+    for (const item of sourceItems as any[]) {
+      if (
+        Number(receivedMap[item.id] ?? 0) <= 0 ||
+        !isReceivedArticleSubstitution(item)
+      ) {
+        continue;
+      }
+      const receivedArticle = getReceivedArticleDraft(item);
+      if (!receivedArticle.brand.trim() || !receivedArticle.partNumber.trim()) {
+        toast.error(
+          `Complete la marca y el número de parte recibidos de ${item.itemName}`
+        );
         return;
       }
     }
@@ -3914,7 +4046,7 @@ export default function Recepciones() {
 
         return [{
           ...basePayload,
-          sapItemCode: getSourceItemCode(item),
+          ...getReceivedArticlePayload(item),
           subtotal:
             sourceType === "purchase_order"
               ? formatMoneyPayload(getReceiptLineSubtotalDraft(item))
@@ -4306,24 +4438,36 @@ export default function Recepciones() {
           getSourceItemCode(sourceItem ?? item) ||
           receiptSourceItemCodes.get(item.sourceItemId) ||
           "-";
-        const companyCode =
-          sourceItem?.originalSapItemCode ||
-          sourceItem?.sapItemCode ||
-          sourceItem?.currentSapItemCode ||
-          sourceCode;
-        const partNumber =
+        const requestedCode =
+          item.requestedSapItemCode || sourceCode || "-";
+        const requestedName =
+          item.requestedItemName || sourceItem?.itemName || item.itemName;
+        const requestedBrand =
+          item.requestedBrand ||
+          sourceItem?.brand ||
+          sourceItem?.catalogItem?.brand ||
+          "-";
+        const requestedPartNumber =
+          item.requestedPartNumber ||
           sourceItem?.partNumber ||
           sourceItem?.catalogItem?.partNumber ||
-          sourceItem?.currentSapItemCode ||
-          sourceItem?.sapItemCode ||
-          sourceItem?.originalSapItemCode ||
-          sourceCode;
-        const brandHtml =
-          sourceItem?.brand || sourceItem?.catalogItem?.brand
-            ? `<div class="line-note"><strong>Marca:</strong> ${escapeHtml(
-                sourceItem?.brand || sourceItem?.catalogItem?.brand
-              )}</div>`
-            : "";
+          "-";
+        const receivedCode = item.sapItemCode || sourceCode || "-";
+        const receivedBrand = item.receivedBrand || requestedBrand;
+        const receivedPartNumber =
+          item.receivedPartNumber || requestedPartNumber;
+        const articleBlocksHtml = isPurchaseOrderReceipt
+          ? `<div class="line-note"><strong>Artículo solicitado:</strong> SAP ${escapeHtml(
+              requestedCode
+            )} · ${escapeHtml(requestedName)} · Marca ${escapeHtml(
+              requestedBrand
+            )} · Parte ${escapeHtml(requestedPartNumber)}</div>
+             <div class="line-note"><strong>Artículo recibido:</strong> SAP ${escapeHtml(
+               receivedCode
+             )} · ${escapeHtml(item.itemName)} · Marca ${escapeHtml(
+               receivedBrand
+             )} · Parte ${escapeHtml(receivedPartNumber)}</div>`
+          : "";
         const unitPrice = isPurchaseOrderReceipt
           ? (item.unitPrice ?? sourceItem?.unitPrice ?? "0.00")
           : "0.00";
@@ -4373,11 +4517,11 @@ export default function Recepciones() {
 
         return `
           <tr>
-            <td>${escapeHtml(companyCode || "-")}</td>
-            <td>${escapeHtml(item.itemName)}${brandHtml}${notesHtml}${assetHtml}</td>
+            <td>${escapeHtml(receivedCode)}</td>
+            <td>${escapeHtml(item.itemName)}${articleBlocksHtml}${notesHtml}${assetHtml}</td>
             <td>${escapeHtml(itemWarehouseLabel)}${storageLocationHtml}</td>
             <td>${escapeHtml(targetCellLabel)}</td>
-            <td class="center">${escapeHtml(partNumber || "-")}</td>
+            <td class="center">${escapeHtml(receivedPartNumber)}</td>
             <td class="numeric">${escapeHtml(formatPrintNumber(item.quantityReceived))}</td>
             <td class="center">${escapeHtml(item.unit || "-")}</td>
             <td class="numeric">${escapeHtml(formatPrintMoney(unitPrice))}</td>
@@ -4938,6 +5082,7 @@ export default function Recepciones() {
                         setSourceId("");
                         setSourceDocumentPopoverOpen(false);
                         setReceivedMap({});
+                        setReceivedArticleByItemId({});
                         setWarehouseByItemId({});
                         setStorageLocationByItemId({});
                         setStorageLocationSuggestionItemId(null);
@@ -5816,6 +5961,16 @@ export default function Recepciones() {
                             0
                           );
                           const sourceCode = getSourceItemCode(item);
+                          const requestedArticle =
+                            getRequestedReceiptArticle(item);
+                          const receivedArticle =
+                            getReceivedArticleDraft(item);
+                          const canSubstituteArticle =
+                            sourceType === "purchase_order" &&
+                            supportsReceiptArticleSubstitution(item);
+                          const articleIsSubstitution =
+                            canSubstituteArticle &&
+                            isReceivedArticleSubstitution(item);
                           const transferCloseQuantity =
                             getTransferCloseQuantity(item);
                           const transferClosureDraft =
@@ -6138,6 +6293,14 @@ export default function Recepciones() {
                                         Activo fijo
                                       </Badge>
                                     ) : null}
+                                    {articleIsSubstitution ? (
+                                      <Badge
+                                        variant="outline"
+                                        className="border-violet-300 text-violet-700"
+                                      >
+                                        Sustitución
+                                      </Badge>
+                                    ) : null}
                                     {hasReceiptLineNotes ? (
                                       <Badge variant="outline">
                                         Con observación
@@ -6434,6 +6597,139 @@ export default function Recepciones() {
                                     className="p-4 pt-0"
                                   >
                                   <div className="space-y-4 rounded-xl border border-border/70 bg-background p-3">
+                                    {canSubstituteArticle ? (
+                                      <div className="grid gap-3 lg:grid-cols-2">
+                                        <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
+                                          <div className="mb-2 text-sm font-semibold">
+                                            Artículo solicitado
+                                          </div>
+                                          <dl className="grid gap-2 text-sm sm:grid-cols-3">
+                                            <div>
+                                              <dt className="text-xs text-muted-foreground">
+                                                Código SAP
+                                              </dt>
+                                              <dd className="font-mono">
+                                                {requestedArticle.sapItemCode ||
+                                                  "—"}
+                                              </dd>
+                                            </div>
+                                            <div>
+                                              <dt className="text-xs text-muted-foreground">
+                                                Marca
+                                              </dt>
+                                              <dd>
+                                                {requestedArticle.brand || "—"}
+                                              </dd>
+                                            </div>
+                                            <div>
+                                              <dt className="text-xs text-muted-foreground">
+                                                Número de parte
+                                              </dt>
+                                              <dd>
+                                                {requestedArticle.partNumber ||
+                                                  "—"}
+                                              </dd>
+                                            </div>
+                                          </dl>
+                                        </div>
+                                        <div className="rounded-lg border border-violet-200 bg-violet-50/40 p-3">
+                                          <div className="mb-2 flex items-center justify-between gap-2">
+                                            <div className="text-sm font-semibold">
+                                              Artículo recibido
+                                            </div>
+                                            {articleIsSubstitution ? (
+                                              <Badge
+                                                variant="outline"
+                                                className="border-violet-300 text-violet-700"
+                                              >
+                                                Sustitución
+                                              </Badge>
+                                            ) : null}
+                                          </div>
+                                          <div className="grid gap-2 sm:grid-cols-2">
+                                            <div className="space-y-1">
+                                              <Label
+                                                htmlFor={`received-brand-${item.id}`}
+                                              >
+                                                Marca recibida
+                                              </Label>
+                                              <Input
+                                                id={`received-brand-${item.id}`}
+                                                value={receivedArticle.brand}
+                                                maxLength={120}
+                                                disabled={
+                                                  registerMutation.isPending
+                                                }
+                                                onChange={event =>
+                                                  updateReceivedArticleDraft(
+                                                    item,
+                                                    "brand",
+                                                    event.target.value
+                                                  )
+                                                }
+                                              />
+                                            </div>
+                                            <div className="space-y-1">
+                                              <Label
+                                                htmlFor={`received-part-${item.id}`}
+                                              >
+                                                Número de parte recibido
+                                              </Label>
+                                              <Input
+                                                id={`received-part-${item.id}`}
+                                                value={
+                                                  receivedArticle.partNumber
+                                                }
+                                                maxLength={120}
+                                                disabled={
+                                                  registerMutation.isPending
+                                                }
+                                                onChange={event =>
+                                                  updateReceivedArticleDraft(
+                                                    item,
+                                                    "partNumber",
+                                                    event.target.value
+                                                  )
+                                                }
+                                              />
+                                            </div>
+                                            {articleIsSubstitution ? (
+                                              <div className="space-y-1 sm:col-span-2">
+                                                <Label
+                                                  htmlFor={`received-sap-${item.id}`}
+                                                >
+                                                  Código SAP definitivo
+                                                </Label>
+                                                <Input
+                                                  id={`received-sap-${item.id}`}
+                                                  value={
+                                                    receivedArticle.sapItemCode
+                                                  }
+                                                  maxLength={50}
+                                                  disabled={
+                                                    registerMutation.isPending
+                                                  }
+                                                  onChange={event =>
+                                                    updateReceivedArticleDraft(
+                                                      item,
+                                                      "sapItemCode",
+                                                      event.target.value
+                                                    )
+                                                  }
+                                                  placeholder="Requerido solo si el artículo no existe"
+                                                />
+                                                <p className="text-xs text-muted-foreground">
+                                                  Si la combinación ya existe,
+                                                  se usará automáticamente su
+                                                  SAP. Si es nueva, ingrese el
+                                                  SAP definitivo.
+                                                </p>
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ) : null}
                                     {sourceType === "purchase_order" ? (
                                       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
                                         {renderReceiptTargetSelector(item)}
@@ -7636,12 +7932,39 @@ export default function Recepciones() {
                         </tr>
                       ) : (
                         receiptDetail.items.map((item: any) => {
-                          const itemCode =
-                            receiptSourceItemCodes.get(item.sourceItemId) ??
-                            getSourceItemCode(item);
-                          const sourceItem = receiptSourceItemsById.get(
+                          const sourceItem: any = receiptSourceItemsById.get(
                             item.sourceItemId
                           );
+                          const sourceItemCode =
+                            receiptSourceItemCodes.get(item.sourceItemId) ??
+                            getSourceItemCode(sourceItem ?? item);
+                          const itemCode = item.sapItemCode ?? sourceItemCode;
+                          const requestedArticleSnapshot = {
+                            sapItemCode:
+                              item.requestedSapItemCode ?? sourceItemCode,
+                            itemName:
+                              item.requestedItemName ??
+                              sourceItem?.itemName ??
+                              item.itemName,
+                            brand:
+                              item.requestedBrand ??
+                              sourceItem?.brand ??
+                              sourceItem?.catalogItem?.brand,
+                            partNumber:
+                              item.requestedPartNumber ??
+                              sourceItem?.partNumber ??
+                              sourceItem?.catalogItem?.partNumber,
+                          };
+                          const receivedArticleSnapshot = {
+                            sapItemCode: itemCode,
+                            itemName: item.itemName,
+                            brand:
+                              item.receivedBrand ??
+                              requestedArticleSnapshot.brand,
+                            partNumber:
+                              item.receivedPartNumber ??
+                              requestedArticleSnapshot.partNumber,
+                          };
                           const lineAmounts = calculateReceiptLineAmounts(
                             item,
                             sourceItem,
@@ -7669,6 +7992,53 @@ export default function Recepciones() {
                                 <div className="font-semibold">
                                   {item.itemName}
                                 </div>
+                                {receiptDetail.receipt.sourceType ===
+                                "purchase_order" ? (
+                                  <div className="mt-2 grid gap-2 text-xs lg:grid-cols-2">
+                                    <div className="rounded-md border border-border/70 bg-muted/20 p-2">
+                                      <div className="font-semibold">
+                                        Artículo solicitado
+                                      </div>
+                                      <div>
+                                        SAP: {requestedArticleSnapshot.sapItemCode ||
+                                          "—"}
+                                      </div>
+                                      <div>
+                                        {requestedArticleSnapshot.itemName}
+                                      </div>
+                                      <div>
+                                        Marca: {requestedArticleSnapshot.brand ||
+                                          "—"} · Parte: {requestedArticleSnapshot.partNumber ||
+                                          "—"}
+                                      </div>
+                                    </div>
+                                    <div className="rounded-md border border-violet-200 bg-violet-50/40 p-2">
+                                      <div className="flex items-center gap-2 font-semibold">
+                                        Artículo recibido
+                                        {item.isSubstitution ? (
+                                          <Badge
+                                            variant="outline"
+                                            className="border-violet-300 text-violet-700"
+                                          >
+                                            Sustitución
+                                          </Badge>
+                                        ) : null}
+                                      </div>
+                                      <div>
+                                        SAP: {receivedArticleSnapshot.sapItemCode ||
+                                          "—"}
+                                      </div>
+                                      <div>
+                                        {receivedArticleSnapshot.itemName}
+                                      </div>
+                                      <div>
+                                        Marca: {receivedArticleSnapshot.brand ||
+                                          "—"} · Parte: {receivedArticleSnapshot.partNumber ||
+                                          "—"}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ) : null}
                                 {item.notes ? (
                                   <div className="mt-1 text-xs text-muted-foreground">
                                     {item.notes}

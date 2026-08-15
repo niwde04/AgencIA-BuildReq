@@ -27,6 +27,10 @@ import {
   isProjectScopedRole,
 } from "@shared/buildreq-roles";
 import { isPurchaseOrderNonInventoryLine } from "@shared/receipt-inventory";
+import {
+  isReceiptArticleSubstitution,
+  normalizeReceiptArticleValue,
+} from "@shared/receipt-substitutions";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 
 const RECEIVABLE_PURCHASE_ORDER_STATUSES = new Set([
@@ -336,10 +340,77 @@ async function resolveReceiptLineTarget(params: {
   };
 }
 
+function buildReceiptArticleSnapshot(params: {
+  item: {
+    itemName: string;
+    sapItemCode?: string | null;
+    receivedBrand?: string | null;
+    receivedPartNumber?: string | null;
+  };
+  sourceItem?: any;
+}) {
+  const sourceCatalog = params.sourceItem?.catalogItem ?? null;
+  const requestedSapItemCode =
+    params.sourceItem?.currentSapItemCode ??
+    params.sourceItem?.originalSapItemCode ??
+    null;
+  const requestedBrand = normalizeReceiptArticleValue(
+    params.sourceItem?.brand ?? sourceCatalog?.brand
+  );
+  const requestedPartNumber = normalizeReceiptArticleValue(
+    params.sourceItem?.partNumber ?? sourceCatalog?.partNumber
+  );
+  const receivedBrand = normalizeReceiptArticleValue(
+    params.item.receivedBrand ?? requestedBrand
+  );
+  const receivedPartNumber = normalizeReceiptArticleValue(
+    params.item.receivedPartNumber ?? requestedPartNumber
+  );
+  const supportsSubstitution =
+    Boolean(params.sourceItem) &&
+    sourceCatalog?.tipoArticulo === 1 &&
+    params.sourceItem?.isFixedAsset !== true;
+  const isSubstitution =
+    supportsSubstitution &&
+    isReceiptArticleSubstitution({
+      requested: {
+        brand: requestedBrand,
+        partNumber: requestedPartNumber,
+      },
+      received: {
+        brand: receivedBrand,
+        partNumber: receivedPartNumber,
+      },
+    });
+
+  if (isSubstitution && (!receivedBrand || !receivedPartNumber)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `Complete la marca y el número de parte recibidos de ${params.item.itemName}`,
+    });
+  }
+
+  return {
+    requestedItemName: params.sourceItem?.itemName ?? params.item.itemName,
+    requestedSapItemCode,
+    requestedBrand: requestedBrand || null,
+    requestedPartNumber: requestedPartNumber || null,
+    receivedArticleId: isSubstitution ? null : (sourceCatalog?.id ?? null),
+    receivedBrand: receivedBrand || null,
+    receivedPartNumber: receivedPartNumber || null,
+    isSubstitution,
+    sapItemCode: isSubstitution
+      ? params.item.sapItemCode?.trim() || null
+      : (requestedSapItemCode ?? params.item.sapItemCode?.trim() ?? null),
+  };
+}
+
 const receiptItemSchema = z
   .object({
     sourceItemId: z.number().nullable().optional(),
     sapItemCode: z.string().trim().max(50).nullable().optional(),
+    receivedBrand: z.string().trim().max(120).nullable().optional(),
+    receivedPartNumber: z.string().trim().max(120).nullable().optional(),
     warehouseId: z.number().int().positive().optional(),
     storageLocation: z.string().trim().max(255).nullable().optional(),
     itemName: z.string().min(1),
@@ -868,11 +939,7 @@ export const receiptsRouter = router({
               : 0;
           return {
             sourceItemId: item.sourceItemId ?? null,
-            sapItemCode:
-              sourceItem?.currentSapItemCode ??
-              sourceItem?.originalSapItemCode ??
-              item.sapItemCode?.trim() ??
-              null,
+            ...buildReceiptArticleSnapshot({ item, sourceItem }),
             warehouseId: isNonInventoryLine ? undefined : item.warehouseId,
             storageLocation: isNonInventoryLine
               ? null
@@ -1545,12 +1612,16 @@ export const receiptsRouter = router({
 
           const baseReceiptItem = {
             sourceItemId: item.sourceItemId ?? null,
-            sapItemCode:
-              (sourceIsFixedAsset ? item.sapItemCode?.trim() : null) ??
-              sourceItem?.currentSapItemCode ??
-              sourceItem?.originalSapItemCode ??
-              item.sapItemCode?.trim() ??
-              null,
+            ...(input.sourceType === "purchase_order" && !sourceIsFixedAsset
+              ? buildReceiptArticleSnapshot({ item, sourceItem })
+              : {
+                  sapItemCode:
+                    (sourceIsFixedAsset ? item.sapItemCode?.trim() : null) ??
+                    sourceItem?.currentSapItemCode ??
+                    sourceItem?.originalSapItemCode ??
+                    item.sapItemCode?.trim() ??
+                    null,
+                }),
             warehouseId: isNonInventoryLine ? undefined : item.warehouseId,
             storageLocation:
               isNonInventoryLine || sourceIsFixedAsset || isFixedAsset

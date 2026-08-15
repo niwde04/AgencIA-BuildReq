@@ -14116,6 +14116,92 @@ describe("BuildReq - Receipts", () => {
     saveReceiptDraftSpy.mockRestore();
   });
 
+  it("passes requested and received article snapshots without changing the source line", async () => {
+    const { ctx } = createProjectBodegueroContext();
+    const caller = appRouter.createCaller(ctx);
+    vi.spyOn(db, "getPurchaseOrderById").mockResolvedValue({
+      purchaseOrder: {
+        id: 4,
+        orderNumber: "OC-2026-0005",
+        projectId: 1,
+        status: "emitida",
+        approvalStatus: "aprobada",
+        currency: "HNL",
+        pricesIncludeTax: false,
+      },
+      items: [
+        {
+          id: 16,
+          itemName: "FILTRO DE ACEITE",
+          quantity: "2.00",
+          receivedQuantity: "0.00",
+          currentSapItemCode: "SAP-ORIGINAL",
+          unit: "UNIDAD",
+          catalogItem: {
+            id: 500,
+            itemCode: "SAP-ORIGINAL",
+            description: "FILTRO DE ACEITE",
+            itemGroup: "FILTROS",
+            financialGroupCode: "FG-01",
+            brand: "Fleetguard",
+            partNumber: "LF14000NN",
+            tipoArticulo: 1,
+            isActive: true,
+            allowsTaxWithholding: true,
+          },
+          brand: "Fleetguard",
+          partNumber: "LF14000NN",
+        },
+      ],
+    } as any);
+    const registerReceiptSpy = vi
+      .spyOn(db, "registerReceipt")
+      .mockResolvedValue({
+        id: 6,
+        receiptNumber: "RE-006-0001",
+        status: "completa",
+      } as any);
+
+    await caller.receipts.register({
+      sourceType: "purchase_order",
+      sourceId: 4,
+      projectId: 1,
+      isFiscalDocument: false,
+      postingDate: "2026-04-15",
+      receiptDate: "2026-04-15",
+      items: [
+        {
+          sourceItemId: 16,
+          sapItemCode: "SAP-RECIBIDO",
+          receivedBrand: "Donaldson",
+          receivedPartNumber: "LF14000NN",
+          warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
+          itemName: "FILTRO DE ACEITE",
+          quantityExpected: "2.00",
+          quantityReceived: "2.00",
+          unit: "UNIDAD",
+          unitPrice: "100.00",
+        },
+      ],
+    });
+
+    const registeredItem = (registerReceiptSpy.mock.calls[0]?.[1] as any[])[0];
+    expect(registeredItem).toEqual(
+      expect.objectContaining({
+        sourceItemId: 16,
+        sapItemCode: "SAP-RECIBIDO",
+        requestedItemName: "FILTRO DE ACEITE",
+        requestedSapItemCode: "SAP-ORIGINAL",
+        requestedBrand: "Fleetguard",
+        requestedPartNumber: "LF14000NN",
+        receivedBrand: "Donaldson",
+        receivedPartNumber: "LF14000NN",
+        receivedArticleId: null,
+        isSubstitution: true,
+      })
+    );
+  });
+
   it("Bodeguero de Proyecto can receive an approved and issued purchase order for their project", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);

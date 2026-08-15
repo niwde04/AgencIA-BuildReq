@@ -1391,6 +1391,17 @@ export const receiptItems = pgTable(
     receiptId: integer("receiptId").notNull(),
     sourceItemId: integer("sourceItemId"),
     sapItemCode: varchar("sapItemCode", { length: 50 }),
+    requestedItemName: varchar("requestedItemName", { length: 500 }),
+    requestedSapItemCode: varchar("requestedSapItemCode", { length: 50 }),
+    requestedBrand: varchar("requestedBrand", { length: 120 }),
+    requestedPartNumber: varchar("requestedPartNumber", { length: 120 }),
+    receivedArticleId: integer("receivedArticleId").references(
+      () => sapCatalog.id,
+      { onDelete: "set null" }
+    ),
+    receivedBrand: varchar("receivedBrand", { length: 120 }),
+    receivedPartNumber: varchar("receivedPartNumber", { length: 120 }),
+    isSubstitution: boolean("isSubstitution").default(false).notNull(),
     warehouseId: integer("warehouseId").references(() => warehouses.id, {
       onDelete: "set null",
     }),
@@ -1447,6 +1458,9 @@ export const receiptItems = pgTable(
   table => ({
     receiptIdx: index("reci_receipt_idx").on(table.receiptId),
     sapItemIdx: index("reci_sap_item_idx").on(table.sapItemCode),
+    receivedArticleIdx: index("reci_received_article_idx").on(
+      table.receivedArticleId
+    ),
     warehouseIdx: index("reci_warehouse_idx").on(table.warehouseId),
     subProjectIdx: index("reci_subproject_idx").on(table.subProjectId),
     fixedAssetIdx: index("reci_fixed_asset_idx").on(
