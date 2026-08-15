@@ -2228,6 +2228,36 @@ export function buildProjectScopedDocumentNumber(params: {
   )}`;
 }
 
+export async function findAvailableProjectScopedDocumentNumber(params: {
+  prefix: string;
+  projectCode: string;
+  /** Numbers must already be limited to the same stable project ID. */
+  existingNumbers: Array<string | null | undefined>;
+  sequencePrefixes?: string[];
+  isDocumentNumberTaken: (documentNumber: string) => Promise<boolean>;
+}) {
+  const projectCode = params.projectCode.trim();
+  let documentNumber = buildProjectScopedDocumentNumber(params);
+  const documentPrefix = `${params.prefix}-${projectCode}-`;
+  let sequence = Number.parseInt(
+    documentNumber.slice(documentPrefix.length),
+    10
+  );
+
+  while (await params.isDocumentNumberTaken(documentNumber)) {
+    sequence += 1;
+    if (!Number.isSafeInteger(sequence)) {
+      throw new Error("No se pudo generar un correlativo válido");
+    }
+    documentNumber = `${documentPrefix}${String(sequence).padStart(
+      DOCUMENT_SEQUENCE_WIDTH,
+      "0"
+    )}`;
+  }
+
+  return documentNumber;
+}
+
 async function generateProjectScopedDocumentNumber(params: {
   prefix: string;
   projectId: number;
@@ -5226,15 +5256,46 @@ export async function generateTransferRequestNumber(projectId: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  return generateProjectScopedDocumentNumber({
+  return generateTransferRequestNumberWithClient(db, projectId);
+}
+
+async function generateTransferRequestNumberWithClient(
+  client: any,
+  projectId: number
+) {
+  const [project] = await client
+    .select({ code: projects.code })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+
+  if (!project) {
+    throw new Error("Proyecto no encontrado para correlativo");
+  }
+
+  const projectCode = project.code.trim();
+  if (!projectCode) {
+    throw new Error("El proyecto no tiene código para correlativo");
+  }
+
+  const rows = await client
+    .select({ documentNumber: transferRequests.requestNumber })
+    .from(transferRequests)
+    .where(eq(transferRequests.projectId, projectId));
+
+  return findAvailableProjectScopedDocumentNumber({
     prefix: "ST",
-    projectId,
-    selectExistingNumbers: async scopedProjectId => {
-      const rows = await db
-        .select({ documentNumber: transferRequests.requestNumber })
+    projectCode,
+    existingNumbers: rows.map((row: { documentNumber: string }) =>
+      row.documentNumber
+    ),
+    isDocumentNumberTaken: async documentNumber => {
+      const [existing] = await client
+        .select({ id: transferRequests.id })
         .from(transferRequests)
-        .where(eq(transferRequests.projectId, scopedProjectId));
-      return rows.map(row => row.documentNumber);
+        .where(eq(transferRequests.requestNumber, documentNumber))
+        .limit(1);
+      return Boolean(existing);
     },
   });
 }
@@ -10322,22 +10383,32 @@ export async function createTransferRequest(
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  const requestNumber = await generateTransferRequestNumber(data.projectId);
-  const [created] = await db
-    .insert(transferRequests)
-    .values({ ...data, requestNumber })
-    .returning({ id: transferRequests.id });
 
-  if (items.length > 0) {
-    await db.insert(transferRequestItems).values(
-      items.map(item => ({
-        ...item,
-        transferRequestId: created.id,
-      }))
+  return db.transaction(async tx => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${"buildreq:transferRequests:requestNumber"}, 0))`
     );
-  }
 
-  return { id: created.id, requestNumber };
+    const requestNumber = await generateTransferRequestNumberWithClient(
+      tx,
+      data.projectId
+    );
+    const [created] = await tx
+      .insert(transferRequests)
+      .values({ ...data, requestNumber })
+      .returning({ id: transferRequests.id });
+
+    if (items.length > 0) {
+      await tx.insert(transferRequestItems).values(
+        items.map(item => ({
+          ...item,
+          transferRequestId: created.id,
+        }))
+      );
+    }
+
+    return { id: created.id, requestNumber };
+  });
 }
 
 export async function listTransferRequests(filters?: {
