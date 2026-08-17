@@ -58,8 +58,10 @@ describe("treasury batch search", () => {
   it.each([
     "TES-2026-000163",
     "Ocotepeque",
+    "FT-017-0000",
     "FT-017-00000054",
     "FT-017-000000054",
+    "000-001-01-0025",
     "000-001-01-00258451",
     "258451",
   ])("finds a batch with search term %s", search => {

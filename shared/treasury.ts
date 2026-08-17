@@ -88,13 +88,22 @@ export function matchesTreasuryBatchSearch(input: {
     .join(" ");
   if (searchableText.includes(term)) return true;
 
+  const documentValues = [
+    ...(input.invoiceDocumentNumbers ?? []),
+    ...(input.invoiceNumbers ?? []),
+  ];
+  if (
+    documentValues.some(value =>
+      normalizeTreasurySearchText(value).includes(term)
+    )
+  ) {
+    return true;
+  }
+
   const normalizedTerm = normalizeTreasuryDocumentIdentifier(term);
   if (!normalizedTerm) return false;
 
-  return [
-    ...(input.invoiceDocumentNumbers ?? []),
-    ...(input.invoiceNumbers ?? []),
-  ].some(value =>
+  return documentValues.some(value =>
     normalizeTreasuryDocumentIdentifier(value).includes(normalizedTerm)
   );
 }
