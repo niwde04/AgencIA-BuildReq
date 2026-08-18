@@ -265,7 +265,10 @@ function assertDetailItemApprovedForProcessing(
   }
 }
 
-async function syncRequestStatusFromAssignments(requestId: number, userId: number) {
+async function syncRequestStatusFromAssignments(
+  requestId: number,
+  userId: number
+) {
   try {
     await db.syncMaterialRequestFulfillmentStatus(requestId, userId);
   } catch (error) {
@@ -274,7 +277,7 @@ async function syncRequestStatusFromAssignments(requestId: number, userId: numbe
     }
 
     const items = await db.getRequestItemsByRequestId(requestId);
-    const someAssigned = items.some((item) => item.assignedFlow !== null);
+    const someAssigned = items.some(item => item.assignedFlow !== null);
 
     await db.updateMaterialRequestStatus(
       requestId,
@@ -290,11 +293,14 @@ async function assertSapTranslationCanBeChanged(item: {
   deliveredQuantity?: string | null;
   dispatchedQuantity?: string | null;
 }) {
-  const existingFlows = (await db.getSupplyFlowByRequestId(item.requestId)).filter(
-    (flow) => flow.requestItemId === item.id && flow.status !== "cancelado"
+  const existingFlows = (
+    await db.getSupplyFlowByRequestId(item.requestId)
+  ).filter(
+    flow => flow.requestItemId === item.id && flow.status !== "cancelado"
   );
   const hasMovement =
-    Number(item.deliveredQuantity ?? 0) > 0 || Number(item.dispatchedQuantity ?? 0) > 0;
+    Number(item.deliveredQuantity ?? 0) > 0 ||
+    Number(item.dispatchedQuantity ?? 0) > 0;
 
   if (existingFlows.length > 0 || hasMovement) {
     throw new TRPCError({
@@ -344,8 +350,10 @@ async function assertQueuedFlowCanBeCleared(
     });
   }
 
-  const existingFlows = (await db.getSupplyFlowByRequestId(item.requestId)).filter(
-    (flow) => flow.requestItemId === item.id && flow.status !== "cancelado"
+  const existingFlows = (
+    await db.getSupplyFlowByRequestId(item.requestId)
+  ).filter(
+    flow => flow.requestItemId === item.id && flow.status !== "cancelado"
   );
   const hasMovement =
     Number(item.deliveredQuantity ?? 0) > 0 ||
@@ -354,7 +362,8 @@ async function assertQueuedFlowCanBeCleared(
   if (existingFlows.length > 0 || hasMovement) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "Este ítem ya tiene movimientos registrados y no se puede quitar del flujo",
+      message:
+        "Este ítem ya tiene movimientos registrados y no se puede quitar del flujo",
     });
   }
 
@@ -404,6 +413,22 @@ export const requestItemsRouter = router({
     .input(z.object({ search: z.string().min(1) }))
     .query(async ({ input }) => {
       return db.searchSuppliers(input.search);
+    }),
+
+  supplierOptions: protectedProcedure
+    .input(
+      z
+        .object({
+          search: z.string().trim().optional(),
+          limit: z.number().int().min(20).max(50).optional(),
+        })
+        .optional()
+    )
+    .query(async ({ input }) => {
+      return db.listSupplierOptions({
+        search: input?.search,
+        limit: input?.limit ?? 30,
+      });
     }),
 
   // List all suppliers
@@ -571,18 +596,22 @@ export const requestItemsRouter = router({
         });
       }
 
-      const existingFlows = (await db.getSupplyFlowByRequestId(item.requestId)).filter(
-        (flow) => flow.requestItemId === item.id && flow.status !== "cancelado"
+      const existingFlows = (
+        await db.getSupplyFlowByRequestId(item.requestId)
+      ).filter(
+        flow => flow.requestItemId === item.id && flow.status !== "cancelado"
       );
 
       if (input.flowType === null) {
         const hasMovement =
-          Number(item.deliveredQuantity ?? 0) > 0 || Number(item.dispatchedQuantity ?? 0) > 0;
+          Number(item.deliveredQuantity ?? 0) > 0 ||
+          Number(item.dispatchedQuantity ?? 0) > 0;
 
         if (existingFlows.length > 0 || hasMovement) {
           throw new TRPCError({
             code: "BAD_REQUEST",
-            message: "Este ítem ya tiene movimientos registrados y no se puede quitar del flujo",
+            message:
+              "Este ítem ya tiene movimientos registrados y no se puede quitar del flujo",
           });
         }
 
@@ -603,9 +632,8 @@ export const requestItemsRouter = router({
       }
 
       if (input.flowType === "solicitud_compra") {
-        const existingPurchaseRequest = await db.getActivePurchaseRequestByMaterialRequestItemId(
-          item.id
-        );
+        const existingPurchaseRequest =
+          await db.getActivePurchaseRequestByMaterialRequestItemId(item.id);
         if (existingPurchaseRequest) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -745,7 +773,9 @@ export const requestItemsRouter = router({
         });
       }
 
-      const { item, detail } = await assertItemApprovedForProcessing(input.requestItemId);
+      const { item, detail } = await assertItemApprovedForProcessing(
+        input.requestItemId
+      );
       if (item.requestId !== input.requestId) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -785,7 +815,12 @@ export const requestItemsRouter = router({
             z.object({
               requestItemId: z.number(),
               dispatchedQuantity: z.string(),
-              sourceProjectId: z.number().int().positive().nullable().optional(),
+              sourceProjectId: z
+                .number()
+                .int()
+                .positive()
+                .nullable()
+                .optional(),
               warehouseId: z.number().int().positive().optional(),
               storageLocation: z.string().trim().max(255).nullable().optional(),
               destinationProjectId: z.number().int().positive().optional(),
@@ -801,12 +836,7 @@ export const requestItemsRouter = router({
                 .max(50)
                 .nullable()
                 .optional(),
-              fixedAssetName: z
-                .string()
-                .trim()
-                .max(500)
-                .nullable()
-                .optional(),
+              fixedAssetName: z.string().trim().max(500).nullable().optional(),
             })
           )
           .min(1),
@@ -822,10 +852,11 @@ export const requestItemsRouter = router({
             "Solo el Jefe de Bodega Central, Administración Central o Bodeguero de Proyecto pueden registrar salida de bodega",
         });
       }
-      if (input.items.some((item) => !item.warehouseId)) {
+      if (input.items.some(item => !item.warehouseId)) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "Seleccione almacén origen para todos los ítems de la salida",
+          message:
+            "Seleccione almacén origen para todos los ítems de la salida",
         });
       }
       if (
@@ -866,9 +897,7 @@ export const requestItemsRouter = router({
             input.items.map(entry => db.getRequestItemById(entry.requestItemId))
           );
       const detailItemsById = new Map<number, any>(
-        detailItems
-          .filter(Boolean)
-          .map((item: any) => [item.id, item] as const)
+        detailItems.filter(Boolean).map((item: any) => [item.id, item] as const)
       );
 
       for (const entry of input.items) {
@@ -887,7 +916,8 @@ export const requestItemsRouter = router({
         }
         assertDetailItemApprovedForProcessing(detail, item);
 
-        const sourceProjectId = entry.sourceProjectId ?? detail.request.projectId;
+        const sourceProjectId =
+          entry.sourceProjectId ?? detail.request.projectId;
         if (sourceProjectId && !canAccessProject(ctx.user, sourceProjectId)) {
           throw new TRPCError({
             code: "FORBIDDEN",
@@ -914,7 +944,8 @@ export const requestItemsRouter = router({
         ) {
           throw new TRPCError({
             code: "FORBIDDEN",
-            message: "No tiene acceso a la bodega/proyecto destino seleccionada",
+            message:
+              "No tiene acceso a la bodega/proyecto destino seleccionada",
           });
         }
       }
@@ -923,7 +954,7 @@ export const requestItemsRouter = router({
         requestId: input.requestId,
         destinationProjectId: input.destinationProjectId,
         destinationWarehouseId: input.destinationWarehouseId,
-        items: input.items.map((item) => ({
+        items: input.items.map(item => ({
           requestItemId: item.requestItemId,
           quantity: item.dispatchedQuantity,
           ...(item.sourceProjectId !== undefined
@@ -1101,11 +1132,14 @@ export const requestItemsRouter = router({
         });
       }
 
-      const activeFlows = (await db.getSupplyFlowByRequestId(item.requestId)).filter(
-        (flow) => flow.requestItemId === item.id && flow.status !== "cancelado"
+      const activeFlows = (
+        await db.getSupplyFlowByRequestId(item.requestId)
+      ).filter(
+        flow => flow.requestItemId === item.id && flow.status !== "cancelado"
       );
       const hasMovement =
-        Number(item.deliveredQuantity ?? 0) > 0 || Number(item.dispatchedQuantity ?? 0) > 0;
+        Number(item.deliveredQuantity ?? 0) > 0 ||
+        Number(item.dispatchedQuantity ?? 0) > 0;
       if (activeFlows.length > 0 || Boolean(item.assignedFlow) || hasMovement) {
         throw new TRPCError({
           code: "BAD_REQUEST",

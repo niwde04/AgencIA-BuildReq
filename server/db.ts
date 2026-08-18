@@ -15,6 +15,7 @@ import {
   isNull,
   gte,
   lte,
+  getTableColumns,
 } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { alias } from "drizzle-orm/pg-core";
@@ -236,7 +237,65 @@ import {
   normalizeFiscalRtn,
 } from "@shared/invoices";
 import { isTreasuryItemBlockingInvoiceReview } from "./invoiceReview";
-import { recordDatabaseQuery } from "./_core/databaseRequestContext";
+import {
+  invalidateDatabaseRequestCache,
+  memoizeDatabaseRequest,
+  recordDatabaseQuery,
+} from "./_core/databaseRequestContext";
+
+const purchaseRequestColumns = getTableColumns(purchaseRequests);
+const {
+  printedDocumentContent: _purchaseRequestPrintedDocumentContent,
+  ...lightPurchaseRequestColumns
+} = purchaseRequestColumns;
+const purchaseOrderColumns = getTableColumns(purchaseOrders);
+const {
+  printedDocumentContent: _purchaseOrderPrintedDocumentContent,
+  ...lightPurchaseOrderColumns
+} = purchaseOrderColumns;
+const warehouseExitColumns = getTableColumns(warehouseExits);
+const {
+  printedDocumentContent: _warehouseExitPrintedDocumentContent,
+  ...lightWarehouseExitColumns
+} = warehouseExitColumns;
+
+function selectPurchaseRequestColumns(
+  includePrintedDocumentContent = true
+): any {
+  return {
+    ...(includePrintedDocumentContent
+      ? purchaseRequestColumns
+      : lightPurchaseRequestColumns),
+    ...(includePrintedDocumentContent
+      ? {}
+      : { printedDocumentContent: sql<string | null>`null` }),
+    hasPrintedDocument: sql<boolean>`${purchaseRequests.printedDocumentContent} is not null`,
+  };
+}
+
+function selectPurchaseOrderColumns(includePrintedDocumentContent = true): any {
+  return {
+    ...(includePrintedDocumentContent
+      ? purchaseOrderColumns
+      : lightPurchaseOrderColumns),
+    ...(includePrintedDocumentContent
+      ? {}
+      : { printedDocumentContent: sql<string | null>`null` }),
+    hasPrintedDocument: sql<boolean>`${purchaseOrders.printedDocumentContent} is not null`,
+  };
+}
+
+function selectWarehouseExitColumns(includePrintedDocumentContent = true): any {
+  return {
+    ...(includePrintedDocumentContent
+      ? warehouseExitColumns
+      : lightWarehouseExitColumns),
+    ...(includePrintedDocumentContent
+      ? {}
+      : { printedDocumentContent: sql<string | null>`null` }),
+    hasPrintedDocument: sql<boolean>`${warehouseExits.printedDocumentContent} is not null`,
+  };
+}
 
 const DEFAULT_DATABASE_POOL_MAX = 4;
 let _pool: Pool | null = null;
@@ -419,22 +478,63 @@ function toProcurementApprovalSettings(
   };
 }
 
+const PROCUREMENT_APPROVAL_SETTINGS_TTL_MS = 60_000;
+let procurementApprovalSettingsCache: {
+  value: ProcurementApprovalSettings;
+  expiresAt: number;
+} | null = null;
+let procurementApprovalSettingsPending: Promise<ProcurementApprovalSettings> | null =
+  null;
+
+function cacheProcurementApprovalSettings(value: ProcurementApprovalSettings) {
+  const runtimeValue = setRuntimeProcurementApprovalSettings(value);
+  procurementApprovalSettingsCache = {
+    value: runtimeValue,
+    expiresAt: Date.now() + PROCUREMENT_APPROVAL_SETTINGS_TTL_MS,
+  };
+  return runtimeValue;
+}
+
 export async function getProcurementApprovalSettings() {
-  const db = await getDb();
-  if (!db) return { ...DEFAULT_PROCUREMENT_APPROVAL_SETTINGS };
+  if (
+    procurementApprovalSettingsCache &&
+    procurementApprovalSettingsCache.expiresAt > Date.now()
+  ) {
+    return procurementApprovalSettingsCache.value;
+  }
+  if (procurementApprovalSettingsPending) {
+    return procurementApprovalSettingsPending;
+  }
+
+  procurementApprovalSettingsPending = (async () => {
+    const db = await getDb();
+    if (!db) {
+      return cacheProcurementApprovalSettings({
+        ...DEFAULT_PROCUREMENT_APPROVAL_SETTINGS,
+      });
+    }
+
+    try {
+      const [settings] = await db
+        .select()
+        .from(systemSettings)
+        .where(eq(systemSettings.id, 1));
+      return cacheProcurementApprovalSettings(
+        toProcurementApprovalSettings(settings)
+      );
+    } catch {
+      // During deployment the feature stays safely disabled until the system
+      // settings migrations have been applied.
+      return cacheProcurementApprovalSettings({
+        ...DEFAULT_PROCUREMENT_APPROVAL_SETTINGS,
+      });
+    }
+  })();
 
   try {
-    const [settings] = await db
-      .select()
-      .from(systemSettings)
-      .where(eq(systemSettings.id, 1));
-    return setRuntimeProcurementApprovalSettings(
-      toProcurementApprovalSettings(settings)
-    );
-  } catch {
-    // During deployment the feature stays safely disabled until the system
-    // settings migrations have been applied.
-    return { ...DEFAULT_PROCUREMENT_APPROVAL_SETTINGS };
+    return await procurementApprovalSettingsPending;
+  } finally {
+    procurementApprovalSettingsPending = null;
   }
 }
 
@@ -458,7 +558,7 @@ export async function updatePurchaseRequestApprovalSettings(params: {
 
   if (!settings) throw new Error("Configuración del sistema no disponible");
 
-  return setRuntimeProcurementApprovalSettings(
+  return cacheProcurementApprovalSettings(
     toProcurementApprovalSettings(settings)
   );
 }
@@ -571,7 +671,7 @@ export async function updatePurchaseOrderApprovalSettings(params: {
     return updatedSettings;
   });
 
-  return setRuntimeProcurementApprovalSettings(
+  return cacheProcurementApprovalSettings(
     toProcurementApprovalSettings(settings)
   );
 }
@@ -1533,6 +1633,15 @@ export async function getUserByOpenId(openId: string) {
   return user;
 }
 
+export async function touchUserLastSignedIn(
+  openId: string,
+  lastSignedIn: Date = new Date()
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(users).set({ lastSignedIn }).where(eq(users.openId, openId));
+}
+
 export async function getUserById(userId: number) {
   const db = await getDb();
   if (!db) return undefined;
@@ -1901,6 +2010,10 @@ export async function listProjects(statusFilter?: string) {
 }
 
 export async function getProjectById(id: number) {
+  return memoizeDatabaseRequest(`project:${id}`, () => loadProjectById(id));
+}
+
+async function loadProjectById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const [project] = await db
@@ -1952,6 +2065,8 @@ export async function createProject(data: InsertProject) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const [project] = await db.insert(projects).values(data).returning();
+  invalidateDatabaseRequestCache("project:");
+  invalidateDatabaseRequestCache("project-warehouses:");
   return {
     id: project.id,
     warehouseId: project.warehouseId ?? null,
@@ -1965,6 +2080,8 @@ export async function updateProject(id: number, data: Partial<InsertProject>) {
     .update(projects)
     .set({ ...data, updatedAt: new Date() })
     .where(eq(projects.id, id));
+  invalidateDatabaseRequestCache(`project:${id}`);
+  invalidateDatabaseRequestCache(`project-warehouses:${id}:`);
   return { success: true };
 }
 
@@ -3446,61 +3563,234 @@ export async function getMaterialRequestById(id: number) {
     }
   }
 
-  const enrichedItems = await Promise.all(
-    items.map(async item => {
-      const sapItemCode = item.sapItemCode?.trim() || null;
-      const transferWarehouse = transferWarehouseByItemId.get(item.id);
-      const committedQuantity = sapItemCode
-        ? await getCommittedQuantityForItem(id, item)
-        : null;
-      const sapStock = sapItemCode
-        ? await getStockByItem({
-            sapItemCode,
-            itemName: item.itemName,
-          })
-        : null;
-      const projectStock = sapItemCode
-        ? await getProjectStockBreakdownByWarehouse({
-            sapItemCode,
-            itemName: item.itemName,
-            projectId: rows[0].request.projectId,
-          })
-        : null;
-      const warehouseStock = sapItemCode
-        ? await getAssignedWarehouseStockBreakdown({
-            sapItemCode,
-            itemName: item.itemName,
-            projectId: rows[0].request.projectId,
-          })
-        : null;
-
-      return {
-        ...item,
-        target: mapMaterialRequestTarget(
-          item,
-          item.subProjectId
-            ? (itemSubprojectById.get(item.subProjectId) ?? null)
-            : null
-        ),
-        committedQuantity: sapItemCode
-          ? (item.committedQuantity ?? committedQuantity)
-          : null,
-        sapStock,
-        projectStock: projectStock?.quantity ?? null,
-        projectStockWarehouses: projectStock?.warehouses ?? [],
-        warehouseStock: warehouseStock?.quantity ?? null,
-        warehouseStockWarehouses: warehouseStock?.warehouses ?? [],
-        transferSourceWarehouseId: transferWarehouse?.sourceWarehouseId ?? null,
-        transferSourceProjectId: transferWarehouse?.sourceProjectId ?? null,
-        transferReceiptProjectId: transferWarehouse?.receiptProjectId ?? null,
-        transferReceiptWarehouseId:
-          transferWarehouse?.receiptWarehouseId ?? null,
-        physicalDispatchedQuantity: item.dispatchedQuantity ?? "0.00",
-        dispatchedQuantity:
-          item.dispatchedQuantity ?? item.deliveredQuantity ?? "0.00",
-      };
-    })
+  const sapItemCodes = Array.from(
+    new Set(
+      items
+        .map(item => item.sapItemCode?.trim())
+        .filter((value): value is string => Boolean(value))
+    )
   );
+  const [committedRows, projectWarehouses] =
+    sapItemCodes.length > 0
+      ? await Promise.all([
+          db
+            .select({
+              sapItemCode: requestItems.sapItemCode,
+              quantity: sql<string>`coalesce(sum(
+                case
+                  when ${materialRequests.status}::text in ('flujo_completado', 'cerrada_incompleta')
+                    then greatest(coalesce(${requestItems.deliveredQuantity}, 0), 0)
+                  else greatest(
+                    ${requestItems.quantity} - coalesce(${requestItems.deliveredQuantity}, 0),
+                    0
+                  )
+                end
+              ), 0)`,
+            })
+            .from(requestItems)
+            .leftJoin(
+              materialRequests,
+              eq(requestItems.requestId, materialRequests.id)
+            )
+            .where(
+              and(
+                inArray(requestItems.sapItemCode, sapItemCodes),
+                sql`${requestItems.requestId} <> ${id}`,
+                or(
+                  and(
+                    sql`${requestItems.status}::text <> 'completo'`,
+                    sql`${materialRequests.status}::text in ('pendiente_aprobar', 'en_espera', 'en_proceso', 'parcialmente_atendida')`
+                  ),
+                  sql`${materialRequests.status}::text in ('flujo_completado', 'cerrada_incompleta')`
+                )
+              )
+            )
+            .groupBy(requestItems.sapItemCode),
+          listProjectWarehouses(rows[0].request.projectId, {
+            isActive: true,
+          }),
+        ])
+      : [[], []];
+  const projectWarehouseIds = projectWarehouses.map(warehouse => warehouse.id);
+  const inventoryScopeConditions = [
+    isNull(inventoryItems.projectId),
+    eq(inventoryItems.projectId, rows[0].request.projectId),
+  ];
+  if (projectWarehouseIds.length > 0) {
+    inventoryScopeConditions.push(
+      inArray(inventoryItems.warehouseId, projectWarehouseIds)
+    );
+  }
+  const inventoryRowsForCodes =
+    sapItemCodes.length > 0
+      ? await db
+          .select({
+            sapItemCode: inventoryItems.sapItemCode,
+            projectId: inventoryItems.projectId,
+            warehouseId: inventoryItems.warehouseId,
+            currentStock: inventoryItems.currentStock,
+            isActive: inventoryItems.isActive,
+          })
+          .from(inventoryItems)
+          .where(
+            and(
+              inArray(inventoryItems.sapItemCode, sapItemCodes),
+              or(...inventoryScopeConditions)
+            )
+          )
+      : [];
+  const extraProjectWarehouseIds = Array.from(
+    new Set(
+      inventoryRowsForCodes
+        .filter(
+          row =>
+            row.projectId === rows[0].request.projectId &&
+            typeof row.warehouseId === "number" &&
+            !projectWarehouseIds.includes(row.warehouseId)
+        )
+        .map(row => row.warehouseId as number)
+    )
+  );
+  const extraProjectWarehouses =
+    extraProjectWarehouseIds.length > 0
+      ? await db
+          .select()
+          .from(warehouses)
+          .where(inArray(warehouses.id, extraProjectWarehouseIds))
+      : [];
+  const committedBySapItemCode = new Map(
+    committedRows
+      .filter(row => Boolean(row.sapItemCode))
+      .map(row => [row.sapItemCode as string, row.quantity])
+  );
+
+  const buildStockSummary = (sapItemCode: string) => {
+    const sapStock = inventoryRowsForCodes
+      .filter(row => row.sapItemCode === sapItemCode && row.projectId === null)
+      .reduce((sum, row) => sum + parseDecimal(row.currentStock), 0);
+    const projectQuantitiesByWarehouse = new Map<number | null, number>();
+    const assignedQuantitiesByWarehouse = new Map<number, number>();
+
+    for (const row of inventoryRowsForCodes) {
+      if (row.sapItemCode !== sapItemCode) continue;
+      if (row.projectId === rows[0].request.projectId) {
+        const warehouseId = row.warehouseId ?? null;
+        projectQuantitiesByWarehouse.set(
+          warehouseId,
+          (projectQuantitiesByWarehouse.get(warehouseId) ?? 0) +
+            parseDecimal(row.currentStock)
+        );
+      }
+      if (
+        row.isActive &&
+        typeof row.warehouseId === "number" &&
+        projectWarehouseIds.includes(row.warehouseId)
+      ) {
+        assignedQuantitiesByWarehouse.set(
+          row.warehouseId,
+          (assignedQuantitiesByWarehouse.get(row.warehouseId) ?? 0) +
+            parseDecimal(row.currentStock)
+        );
+      }
+    }
+
+    const mapProjectWarehouse = (warehouse: Warehouse) => ({
+      warehouseId: warehouse.id,
+      warehouseCode: warehouse.code,
+      localCode: warehouse.localCode,
+      warehouseName: warehouse.name,
+      displayName: warehouse.displayName,
+      isDefault: warehouse.isDefault,
+      isActive: warehouse.isActive,
+      quantity: toDecimalString(
+        projectQuantitiesByWarehouse.get(warehouse.id) ?? 0
+      ),
+    });
+    const projectStockWarehouses = [
+      ...projectWarehouses.map(mapProjectWarehouse),
+      ...extraProjectWarehouses.map(mapProjectWarehouse),
+    ];
+    const legacyProjectStock = projectQuantitiesByWarehouse.get(null) ?? 0;
+    if (legacyProjectStock > 0) {
+      projectStockWarehouses.push({
+        warehouseId: null,
+        warehouseCode: null,
+        localCode: null,
+        warehouseName: null,
+        displayName: "Sin almacén asignado",
+        isDefault: false,
+        isActive: false,
+        quantity: toDecimalString(legacyProjectStock),
+      } as any);
+    }
+    const projectStock = Array.from(
+      projectQuantitiesByWarehouse.values()
+    ).reduce((sum, quantity) => sum + quantity, 0);
+    const warehouseStockWarehouses = projectWarehouses.map(warehouse => ({
+      warehouseId: warehouse.id,
+      warehouseCode: warehouse.code,
+      localCode: warehouse.localCode,
+      warehouseName: warehouse.name,
+      displayName: warehouse.displayName,
+      isDefault: warehouse.isDefault,
+      isActive: warehouse.isActive,
+      quantity: toDecimalString(
+        assignedQuantitiesByWarehouse.get(warehouse.id) ?? 0
+      ),
+    }));
+    const warehouseStock = Array.from(
+      assignedQuantitiesByWarehouse.values()
+    ).reduce((sum, quantity) => sum + quantity, 0);
+
+    return {
+      sapStock: toDecimalString(sapStock),
+      projectStock: toDecimalString(projectStock),
+      projectStockWarehouses,
+      warehouseStock: toDecimalString(warehouseStock),
+      warehouseStockWarehouses,
+    };
+  };
+  const stockSummaryBySapItemCode = new Map(
+    sapItemCodes.map(sapItemCode => [
+      sapItemCode,
+      buildStockSummary(sapItemCode),
+    ])
+  );
+
+  const enrichedItems = items.map(item => {
+    const sapItemCode = item.sapItemCode?.trim() || null;
+    const transferWarehouse = transferWarehouseByItemId.get(item.id);
+    const stockSummary = sapItemCode
+      ? stockSummaryBySapItemCode.get(sapItemCode)
+      : undefined;
+
+    return {
+      ...item,
+      target: mapMaterialRequestTarget(
+        item,
+        item.subProjectId
+          ? (itemSubprojectById.get(item.subProjectId) ?? null)
+          : null
+      ),
+      committedQuantity: sapItemCode
+        ? (item.committedQuantity ??
+          committedBySapItemCode.get(sapItemCode) ??
+          "0.00")
+        : null,
+      sapStock: stockSummary?.sapStock ?? null,
+      projectStock: stockSummary?.projectStock ?? null,
+      projectStockWarehouses: stockSummary?.projectStockWarehouses ?? [],
+      warehouseStock: stockSummary?.warehouseStock ?? null,
+      warehouseStockWarehouses: stockSummary?.warehouseStockWarehouses ?? [],
+      transferSourceWarehouseId: transferWarehouse?.sourceWarehouseId ?? null,
+      transferSourceProjectId: transferWarehouse?.sourceProjectId ?? null,
+      transferReceiptProjectId: transferWarehouse?.receiptProjectId ?? null,
+      transferReceiptWarehouseId: transferWarehouse?.receiptWarehouseId ?? null,
+      physicalDispatchedQuantity: item.dispatchedQuantity ?? "0.00",
+      dispatchedQuantity:
+        item.dispatchedQuantity ?? item.deliveredQuantity ?? "0.00",
+    };
+  });
 
   return {
     ...rows[0],
@@ -5162,66 +5452,78 @@ export async function listPendingFlowQueueItems(filters?: {
     return !activeForSameFlow;
   });
 
-  return Promise.all(
-    filteredRows.map(async row => {
-      const sapCode = row.item.sapItemCode?.trim() || null;
-      const insight = sapCode ? procurementInsightsByCode[sapCode] : undefined;
-      const resolvedSapDescription =
-        row.item.sapItemDescription?.trim() || insight?.sapDescription || null;
-      const dispatchStock =
-        row.item.assignedFlow === "despacho_bodega"
-          ? await (async () => {
-              const projectWarehouses = await listProjectWarehouses(
-                row.request.projectId,
-                { isActive: true }
-              );
-              const warehouseIds = projectWarehouses.map(
-                warehouse => warehouse.id
-              );
-              const [stock] = await listVisibleWarehouseStockForItems({
-                warehouseIds,
-                items: [
-                  {
-                    id: row.item.id,
-                    sapItemCode: sapCode,
-                    itemName: row.item.itemName,
-                  },
-                ],
-              });
-              return stock;
-            })()
-          : null;
-
-      return {
-        ...row,
-        item: {
-          ...row.item,
-          sapItemDescription: resolvedSapDescription,
-          projectStock:
-            row.item.assignedFlow === "despacho_bodega"
-              ? (dispatchStock?.quantity ?? "0.00")
-              : row.item.projectStock,
-          projectStockWarehouses:
-            row.item.assignedFlow === "despacho_bodega"
-              ? (dispatchStock?.warehouses ?? [])
-              : [],
-          dispatchStock:
-            row.item.assignedFlow === "despacho_bodega"
-              ? (dispatchStock?.quantity ?? "0.00")
-              : null,
-          dispatchStockOptions:
-            row.item.assignedFlow === "despacho_bodega"
-              ? (dispatchStock?.warehouses ?? [])
-              : [],
-        },
-        purchaseInsight: {
-          sapDescription: resolvedSapDescription,
-          lastPurchase: insight?.lastPurchase ?? null,
-          minimumPurchase: insight?.minimumPurchase ?? null,
-        },
-      };
-    })
+  const dispatchRowsByProjectId = new Map<number, typeof filteredRows>();
+  for (const row of filteredRows) {
+    if (row.item.assignedFlow !== "despacho_bodega") continue;
+    const projectRows =
+      dispatchRowsByProjectId.get(row.request.projectId) ?? [];
+    projectRows.push(row);
+    dispatchRowsByProjectId.set(row.request.projectId, projectRows);
+  }
+  const dispatchStockByItemId = new Map<
+    number,
+    Awaited<ReturnType<typeof listVisibleWarehouseStockForItems>>[number]
+  >();
+  await Promise.all(
+    Array.from(dispatchRowsByProjectId.entries()).map(
+      async ([projectId, projectRows]) => {
+        const projectWarehouses = await listProjectWarehouses(projectId, {
+          isActive: true,
+        });
+        const stocks = await listVisibleWarehouseStockForItems({
+          warehouseIds: projectWarehouses.map(warehouse => warehouse.id),
+          items: projectRows.map(row => ({
+            id: row.item.id,
+            sapItemCode: row.item.sapItemCode?.trim() || null,
+            itemName: row.item.itemName,
+          })),
+        });
+        for (const stock of stocks) {
+          dispatchStockByItemId.set(stock.itemId, stock);
+        }
+      }
+    )
   );
+
+  return filteredRows.map(row => {
+    const sapCode = row.item.sapItemCode?.trim() || null;
+    const insight = sapCode ? procurementInsightsByCode[sapCode] : undefined;
+    const resolvedSapDescription =
+      row.item.sapItemDescription?.trim() || insight?.sapDescription || null;
+    const dispatchStock =
+      row.item.assignedFlow === "despacho_bodega"
+        ? dispatchStockByItemId.get(row.item.id)
+        : null;
+
+    return {
+      ...row,
+      item: {
+        ...row.item,
+        sapItemDescription: resolvedSapDescription,
+        projectStock:
+          row.item.assignedFlow === "despacho_bodega"
+            ? (dispatchStock?.quantity ?? "0.00")
+            : row.item.projectStock,
+        projectStockWarehouses:
+          row.item.assignedFlow === "despacho_bodega"
+            ? (dispatchStock?.warehouses ?? [])
+            : [],
+        dispatchStock:
+          row.item.assignedFlow === "despacho_bodega"
+            ? (dispatchStock?.quantity ?? "0.00")
+            : null,
+        dispatchStockOptions:
+          row.item.assignedFlow === "despacho_bodega"
+            ? (dispatchStock?.warehouses ?? [])
+            : [],
+      },
+      purchaseInsight: {
+        sapDescription: resolvedSapDescription,
+        lastPurchase: insight?.lastPurchase ?? null,
+        minimumPurchase: insight?.minimumPurchase ?? null,
+      },
+    };
+  });
 }
 
 export async function getActiveSupplyFlowForRequestItem(params: {
@@ -5356,8 +5658,8 @@ async function generateTransferRequestNumberWithClient(
   return findAvailableProjectScopedDocumentNumber({
     prefix: "ST",
     projectCode,
-    existingNumbers: rows.map((row: { documentNumber: string }) =>
-      row.documentNumber
+    existingNumbers: rows.map(
+      (row: { documentNumber: string }) => row.documentNumber
     ),
     isDocumentNumberTaken: async documentNumber => {
       const [existing] = await client
@@ -5927,9 +6229,7 @@ async function buildOfficialPurchaseOrderDocument(
   const catalogByCode = new Map<
     string,
     { itemCode: string; brand: string | null; partNumber: string | null }
-  >(
-    catalogRows.map((row: any) => [row.itemCode, row] as const)
-  );
+  >(catalogRows.map((row: any) => [row.itemCode, row] as const));
   const printableItems = itemRows.map((row: any) => {
     const catalog =
       catalogByCode.get(row.item.currentSapItemCode?.trim() ?? "") ??
@@ -6040,8 +6340,7 @@ async function buildOfficialPurchaseOrderDocument(
       originalRequester?.email ??
       header.createdBy?.name ??
       "-",
-    preparedByLabel:
-      header.createdBy?.name ?? header.createdBy?.email ?? "-",
+    preparedByLabel: header.createdBy?.name ?? header.createdBy?.email ?? "-",
     originalRequestLabel:
       originalRequestNumbers.length > 0
         ? originalRequestNumbers.join(", ")
@@ -6072,9 +6371,7 @@ async function buildOfficialPurchaseOrderDocument(
       sealedAt,
     })
   );
-  const verificationCode = `OC-${payloadHash
-    .slice(0, 16)
-    .toUpperCase()}`;
+  const verificationCode = `OC-${payloadHash.slice(0, 16).toUpperCase()}`;
   const verificationUrl = `${ENV.siteUrl}/verificar/oc/${verificationToken}`;
   const base64 = buildPurchaseOrderDocument({
     ...baseDocument,
@@ -6476,6 +6773,7 @@ export async function listPurchaseRequests(filters?: {
   projectId?: number;
   projectIds?: number[];
   status?: string;
+  includePrintedDocumentContent?: boolean;
 }) {
   const db = await getDb();
   if (!db) return [];
@@ -6509,7 +6807,9 @@ export async function listPurchaseRequests(filters?: {
 
   const rows = await db
     .select({
-      purchaseRequest: purchaseRequests,
+      purchaseRequest: selectPurchaseRequestColumns(
+        filters?.includePrintedDocumentContent !== false
+      ),
       project: projects,
       materialRequest: materialRequests,
       requestedBy: materialRequestRequestedByUsers,
@@ -8290,6 +8590,7 @@ export async function listPurchaseOrders(filters?: {
   projectIds?: number[];
   classification?: string;
   status?: string;
+  includePrintedDocumentContent?: boolean;
 }) {
   const db = await getDb();
   if (!db) return [];
@@ -8321,8 +8622,12 @@ export async function listPurchaseOrders(filters?: {
 
   const rows = await db
     .select({
-      purchaseOrder: purchaseOrders,
-      purchaseRequest: purchaseRequests,
+      purchaseOrder: selectPurchaseOrderColumns(
+        filters?.includePrintedDocumentContent !== false
+      ),
+      purchaseRequest: selectPurchaseRequestColumns(
+        filters?.includePrintedDocumentContent !== false
+      ),
       materialRequest: purchaseOrderMaterialRequests,
       project: projects,
       supplier: suppliers,
@@ -9965,10 +10270,7 @@ export async function verifyPurchaseOrderDigitalSeal(token: string) {
       eq(purchaseOrderDigitalSeals.purchaseOrderId, purchaseOrders.id)
     )
     .where(
-      eq(
-        purchaseOrderDigitalSeals.verificationTokenHash,
-        sha256Hex(token)
-      )
+      eq(purchaseOrderDigitalSeals.verificationTokenHash, sha256Hex(token))
     )
     .limit(1);
   if (!row) return undefined;
@@ -10558,33 +10860,92 @@ export async function getTransferRequestById(id: number) {
     .where(eq(transferRequestItems.transferRequestId, id))
     .orderBy(asc(transferRequestItems.id));
 
-  const enrichedItems = await Promise.all(
-    items.map(async item => {
-      const sourceWarehouse = item.sourceWarehouseId
-        ? await getWarehouseById(item.sourceWarehouseId)
-        : undefined;
-      const currentOriginStock = item.sourceWarehouseId
-        ? parseDecimal(
-            await getStockByItem({
-              sapItemCode: item.sapItemCode,
-              itemName: item.itemName,
-              projectId: item.sourceProjectId ?? null,
-              warehouseId: item.sourceWarehouseId,
-              storageLocation: item.sourceStorageLocation ?? null,
-            })
-          )
-        : 0;
-      const openQuantity = getTransferOpenQuantity(item);
-      const stockAfterTransfer = currentOriginStock - openQuantity;
-
-      return {
-        ...item,
-        sourceWarehouse: sourceWarehouse ?? null,
-        originStockQuantity: toDecimalString(currentOriginStock),
-        stockAfterTransfer: toDecimalString(stockAfterTransfer),
-      };
-    })
+  const sourceWarehouseIds = Array.from(
+    new Set(
+      items
+        .map(item => item.sourceWarehouseId)
+        .filter((value): value is number => typeof value === "number")
+    )
   );
+  const sourceWarehouseRows =
+    sourceWarehouseIds.length > 0
+      ? await db
+          .select()
+          .from(warehouses)
+          .where(inArray(warehouses.id, sourceWarehouseIds))
+      : [];
+  const sourceWarehouseById = new Map(
+    sourceWarehouseRows.map(warehouse => [warehouse.id, warehouse])
+  );
+  const stockConditions = items
+    .filter(item => typeof item.sourceWarehouseId === "number")
+    .map(item => {
+      const identityCondition = item.sapItemCode?.trim()
+        ? eq(inventoryItems.sapItemCode, item.sapItemCode.trim())
+        : sql`lower(${inventoryItems.name}) = lower(${item.itemName})`;
+      const projectCondition =
+        typeof item.sourceProjectId === "number"
+          ? eq(inventoryItems.projectId, item.sourceProjectId)
+          : isNull(inventoryItems.projectId);
+      const storageLocation = normalizeInventoryStorageLocation(
+        item.sourceStorageLocation
+      );
+      const storageCondition = storageLocation
+        ? sql`lower(trim(coalesce(${inventoryItems.storageLocation}, ''))) = lower(${storageLocation})`
+        : sql`nullif(trim(coalesce(${inventoryItems.storageLocation}, '')), '') is null`;
+      return and(
+        identityCondition,
+        projectCondition,
+        eq(inventoryItems.warehouseId, item.sourceWarehouseId!),
+        storageCondition
+      )!;
+    });
+  const originStockRows =
+    stockConditions.length > 0
+      ? await db
+          .select({
+            sapItemCode: inventoryItems.sapItemCode,
+            itemName: inventoryItems.name,
+            projectId: inventoryItems.projectId,
+            warehouseId: inventoryItems.warehouseId,
+            storageLocation: inventoryItems.storageLocation,
+            currentStock: inventoryItems.currentStock,
+          })
+          .from(inventoryItems)
+          .where(or(...stockConditions))
+      : [];
+
+  const enrichedItems = items.map(item => {
+    const sourceWarehouse = item.sourceWarehouseId
+      ? sourceWarehouseById.get(item.sourceWarehouseId)
+      : undefined;
+    const normalizedStorageLocation = normalizeInventoryStorageLocation(
+      item.sourceStorageLocation
+    );
+    const currentOriginStock = item.sourceWarehouseId
+      ? originStockRows
+          .filter(
+            row =>
+              row.warehouseId === item.sourceWarehouseId &&
+              row.projectId === (item.sourceProjectId ?? null) &&
+              normalizeInventoryStorageLocation(row.storageLocation) ===
+                normalizedStorageLocation &&
+              (item.sapItemCode?.trim()
+                ? row.sapItemCode === item.sapItemCode.trim()
+                : row.itemName.toLowerCase() === item.itemName.toLowerCase())
+          )
+          .reduce((sum, row) => sum + parseDecimal(row.currentStock), 0)
+      : 0;
+    const openQuantity = getTransferOpenQuantity(item);
+    const stockAfterTransfer = currentOriginStock - openQuantity;
+
+    return {
+      ...item,
+      sourceWarehouse: sourceWarehouse ?? null,
+      originStockQuantity: toDecimalString(currentOriginStock),
+      stockAfterTransfer: toDecimalString(stockAfterTransfer),
+    };
+  });
 
   const destinationProject =
     rows[0].transferRequest.destinationType === "proyecto" &&
@@ -11201,52 +11562,79 @@ export async function getTransferById(id: number) {
   const sourceProjectsById = new Map(
     sourceProjectRows.map(sourceProject => [sourceProject.id, sourceProject])
   );
-  const items = await Promise.all(
-    transferItems.map(async item => {
-      const [requestItemTarget] = item.materialRequestItemId
-        ? await db
-            .select({
-              item: requestItems,
-              subproject: projectSubprojects,
-            })
-            .from(requestItems)
-            .leftJoin(
-              projectSubprojects,
-              eq(requestItems.subProjectId, projectSubprojects.id)
-            )
-            .where(eq(requestItems.id, item.materialRequestItemId))
-            .limit(1)
-        : [];
-      const target = requestItemTarget
-        ? mapMaterialRequestTarget(
-            requestItemTarget.item,
-            requestItemTarget.subproject
-          )
-        : null;
-
-      return {
-        ...item,
-        sourceProject:
-          typeof item.sourceProjectId === "number"
-            ? (sourceProjectsById.get(item.sourceProjectId) ?? null)
-            : null,
-        sourceWarehouse: item.sourceWarehouseId
-          ? ((await getWarehouseById(item.sourceWarehouseId)) ?? null)
-          : null,
-        target,
-        targetLabel: requestItemTarget
-          ? buildWarehouseExitTargetLabel({
-              targetType: requestItemTarget.item.targetType,
-              subProjectId: requestItemTarget.item.subProjectId,
-              subproject: requestItemTarget.subproject,
-              fixedAssetSapItemCode:
-                requestItemTarget.item.fixedAssetSapItemCode,
-              fixedAssetName: requestItemTarget.item.fixedAssetName,
-            })
-          : null,
-      };
-    })
+  const materialRequestItemIds = Array.from(
+    new Set(
+      transferItems
+        .map(item => item.materialRequestItemId)
+        .filter((value): value is number => typeof value === "number")
+    )
   );
+  const sourceWarehouseIds = Array.from(
+    new Set(
+      transferItems
+        .map(item => item.sourceWarehouseId)
+        .filter((value): value is number => typeof value === "number")
+    )
+  );
+  const [requestItemTargetRows, sourceWarehouseRows] = await Promise.all([
+    materialRequestItemIds.length > 0
+      ? db
+          .select({
+            item: requestItems,
+            subproject: projectSubprojects,
+          })
+          .from(requestItems)
+          .leftJoin(
+            projectSubprojects,
+            eq(requestItems.subProjectId, projectSubprojects.id)
+          )
+          .where(inArray(requestItems.id, materialRequestItemIds))
+      : [],
+    sourceWarehouseIds.length > 0
+      ? db
+          .select()
+          .from(warehouses)
+          .where(inArray(warehouses.id, sourceWarehouseIds))
+      : [],
+  ]);
+  const requestItemTargetById = new Map(
+    requestItemTargetRows.map(row => [row.item.id, row])
+  );
+  const sourceWarehouseById = new Map(
+    sourceWarehouseRows.map(warehouse => [warehouse.id, warehouse])
+  );
+  const items = transferItems.map(item => {
+    const requestItemTarget = item.materialRequestItemId
+      ? requestItemTargetById.get(item.materialRequestItemId)
+      : undefined;
+    const target = requestItemTarget
+      ? mapMaterialRequestTarget(
+          requestItemTarget.item,
+          requestItemTarget.subproject
+        )
+      : null;
+
+    return {
+      ...item,
+      sourceProject:
+        typeof item.sourceProjectId === "number"
+          ? (sourceProjectsById.get(item.sourceProjectId) ?? null)
+          : null,
+      sourceWarehouse: item.sourceWarehouseId
+        ? (sourceWarehouseById.get(item.sourceWarehouseId) ?? null)
+        : null,
+      target,
+      targetLabel: requestItemTarget
+        ? buildWarehouseExitTargetLabel({
+            targetType: requestItemTarget.item.targetType,
+            subProjectId: requestItemTarget.item.subProjectId,
+            subproject: requestItemTarget.subproject,
+            fixedAssetSapItemCode: requestItemTarget.item.fixedAssetSapItemCode,
+            fixedAssetName: requestItemTarget.item.fixedAssetName,
+          })
+        : null,
+    };
+  });
 
   return {
     ...rows[0],
@@ -15826,6 +16214,7 @@ export async function listWarehouseExits(filters?: {
   projectId?: number;
   projectIds?: number[];
   status?: string;
+  includePrintedDocumentContent?: boolean;
 }) {
   const db = await getDb();
   if (!db) return [];
@@ -15851,7 +16240,9 @@ export async function listWarehouseExits(filters?: {
 
   const rows = await db
     .select({
-      warehouseExit: warehouseExits,
+      warehouseExit: selectWarehouseExitColumns(
+        filters?.includePrintedDocumentContent !== false
+      ),
       project: projects,
       warehouse: warehouses,
       createdBy: users,
@@ -16091,81 +16482,109 @@ export async function getWarehouseExitById(id: number) {
     }
   }
 
-  const enrichedItems = await Promise.all(
-    items.map(async item => {
-      const stockScope = {
-        sapItemCode: item.sapItemCode,
-        itemName: item.itemName,
-        projectId: rows[0].warehouseExit.projectId,
-        warehouseId: item.warehouseId ?? rows[0].warehouseExit.warehouseId,
-        includeUnclassifiedProjectStock: true,
-      };
-      const allLocationStockRows = await listInventoryRowsForStock(stockScope);
-      const stockRows = await listInventoryRowsForStock({
-        ...stockScope,
-        ...(item.storageLocation
-          ? { storageLocation: item.storageLocation }
-          : {}),
-      });
-      const availableQuantity = stockRows.reduce(
-        (sum, row) => sum + parseDecimal(row.currentStock),
-        0
-      );
-      const storageLocationOptionsByKey = new Map<
-        string,
-        { storageLocation: string | null; label: string; quantity: string }
-      >();
-      for (const row of allLocationStockRows) {
-        const storageLocation = normalizeInventoryStorageLocation(
-          row.storageLocation
-        );
-        const key = storageLocation?.toLowerCase() ?? "";
-        const current = storageLocationOptionsByKey.get(key);
-        storageLocationOptionsByKey.set(key, {
-          storageLocation,
-          label: storageLocation ?? "Sin ubicación",
-          quantity: toDecimalString(
-            parseDecimal(current?.quantity) + parseDecimal(row.currentStock)
-          ),
-        });
-      }
-      const currentStorageLocation = normalizeInventoryStorageLocation(
-        item.storageLocation
-      );
-      const currentStorageLocationKey =
-        currentStorageLocation?.toLowerCase() ?? "";
-      if (!storageLocationOptionsByKey.has(currentStorageLocationKey)) {
-        storageLocationOptionsByKey.set(currentStorageLocationKey, {
-          storageLocation: currentStorageLocation,
-          label: currentStorageLocation ?? "Sin ubicación",
-          quantity: "0.00",
-        });
-      }
-      const exitQuantity = parseDecimal(item.quantity);
-      const returnedQuantity = returnedQuantityByExitItemId.get(item.id) ?? 0;
-      const stockAfterExit =
-        rows[0].warehouseExit.status === "emitida"
-          ? availableQuantity
-          : availableQuantity - exitQuantity;
+  const inventoryConditions = items.map(item => {
+    const identityCondition = item.sapItemCode?.trim()
+      ? eq(inventoryItems.sapItemCode, item.sapItemCode.trim())
+      : sql`lower(${inventoryItems.name}) = lower(${item.itemName})`;
+    const warehouseId = item.warehouseId ?? rows[0].warehouseExit.warehouseId;
+    return and(
+      identityCondition,
+      typeof warehouseId === "number"
+        ? eq(inventoryItems.warehouseId, warehouseId)
+        : sql`true`,
+      or(
+        eq(inventoryItems.projectId, rows[0].warehouseExit.projectId),
+        isNull(inventoryItems.projectId)
+      )
+    )!;
+  });
+  const inventoryRowsForExitItems =
+    inventoryConditions.length > 0
+      ? await db
+          .select()
+          .from(inventoryItems)
+          .where(or(...inventoryConditions))
+      : [];
 
-      return {
-        ...item,
-        availableQuantity: toDecimalString(availableQuantity),
-        storageLocationOptions: Array.from(
-          storageLocationOptionsByKey.values()
-        ).sort((left, right) => {
-          if (left.storageLocation && !right.storageLocation) return -1;
-          if (!left.storageLocation && right.storageLocation) return 1;
-          return left.label.localeCompare(right.label);
-        }),
-        stockAfterExit: toDecimalString(stockAfterExit),
-        returnedQuantity: toDecimalString(returnedQuantity),
-        returnableQuantity: toDecimalString(
-          Math.max(exitQuantity - returnedQuantity, 0)
+  const enrichedItems = items.map(item => {
+    const warehouseId = item.warehouseId ?? rows[0].warehouseExit.warehouseId;
+    const allLocationStockRows = inventoryRowsForExitItems.filter(
+      row =>
+        (typeof warehouseId !== "number" || row.warehouseId === warehouseId) &&
+        (row.projectId === rows[0].warehouseExit.projectId ||
+          row.projectId === null) &&
+        (item.sapItemCode?.trim()
+          ? row.sapItemCode === item.sapItemCode.trim()
+          : row.name.toLowerCase() === item.itemName.toLowerCase())
+    );
+    const itemStorageLocation = normalizeInventoryStorageLocation(
+      item.storageLocation
+    );
+    const stockRows = item.storageLocation
+      ? allLocationStockRows.filter(
+          row =>
+            normalizeInventoryStorageLocation(row.storageLocation) ===
+            itemStorageLocation
+        )
+      : allLocationStockRows;
+    const availableQuantity = stockRows.reduce(
+      (sum, row) => sum + parseDecimal(row.currentStock),
+      0
+    );
+    const storageLocationOptionsByKey = new Map<
+      string,
+      { storageLocation: string | null; label: string; quantity: string }
+    >();
+    for (const row of allLocationStockRows) {
+      const storageLocation = normalizeInventoryStorageLocation(
+        row.storageLocation
+      );
+      const key = storageLocation?.toLowerCase() ?? "";
+      const current = storageLocationOptionsByKey.get(key);
+      storageLocationOptionsByKey.set(key, {
+        storageLocation,
+        label: storageLocation ?? "Sin ubicación",
+        quantity: toDecimalString(
+          parseDecimal(current?.quantity) + parseDecimal(row.currentStock)
         ),
-      };
-    })
-  );
+      });
+    }
+    const currentStorageLocation = normalizeInventoryStorageLocation(
+      item.storageLocation
+    );
+    const currentStorageLocationKey =
+      currentStorageLocation?.toLowerCase() ?? "";
+    if (!storageLocationOptionsByKey.has(currentStorageLocationKey)) {
+      storageLocationOptionsByKey.set(currentStorageLocationKey, {
+        storageLocation: currentStorageLocation,
+        label: currentStorageLocation ?? "Sin ubicación",
+        quantity: "0.00",
+      });
+    }
+    const exitQuantity = parseDecimal(item.quantity);
+    const returnedQuantity = returnedQuantityByExitItemId.get(item.id) ?? 0;
+    const stockAfterExit =
+      rows[0].warehouseExit.status === "emitida"
+        ? availableQuantity
+        : availableQuantity - exitQuantity;
+
+    return {
+      ...item,
+      availableQuantity: toDecimalString(availableQuantity),
+      storageLocationOptions: Array.from(
+        storageLocationOptionsByKey.values()
+      ).sort((left, right) => {
+        if (left.storageLocation && !right.storageLocation) return -1;
+        if (!left.storageLocation && right.storageLocation) return 1;
+        return left.label.localeCompare(right.label);
+      }),
+      stockAfterExit: toDecimalString(stockAfterExit),
+      returnedQuantity: toDecimalString(returnedQuantity),
+      returnableQuantity: toDecimalString(
+        Math.max(exitQuantity - returnedQuantity, 0)
+      ),
+    };
+  });
 
   let materialRequestSummary: {
     id: number;
@@ -18525,6 +18944,10 @@ function parseWarehouseLocation(value?: string | null) {
 }
 
 async function getWarehouseById(id: number) {
+  return memoizeDatabaseRequest(`warehouse:${id}`, () => loadWarehouseById(id));
+}
+
+async function loadWarehouseById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const rows = await db
@@ -18551,6 +18974,16 @@ async function getProjectAssignedWarehouseByProjectId(projectId: number) {
 }
 
 export async function listProjectWarehouses(
+  projectId: number,
+  filters?: { isActive?: boolean }
+) {
+  return memoizeDatabaseRequest(
+    `project-warehouses:${projectId}:${filters?.isActive ?? "all"}`,
+    () => loadProjectWarehouses(projectId, filters)
+  );
+}
+
+async function loadProjectWarehouses(
   projectId: number,
   filters?: { isActive?: boolean }
 ) {
@@ -19421,6 +19854,9 @@ export async function createWarehouse(data: {
         .returning()
         .then(rows => rows[0]);
 
+  invalidateDatabaseRequestCache("warehouse:");
+  invalidateDatabaseRequestCache("project-warehouses:");
+
   return {
     warehouse,
     linkedRows: 0,
@@ -19598,6 +20034,9 @@ export async function updateWarehouse(
     }
   });
 
+  invalidateDatabaseRequestCache(`warehouse:${id}`);
+  invalidateDatabaseRequestCache("project-warehouses:");
+
   return { success: true };
 }
 
@@ -19665,6 +20104,10 @@ export async function assignProjectToWarehouse(params: {
     ? await syncInventoryItemsToAssignedWarehouse(params.projectId, warehouse)
     : { linkedRows: 0 };
 
+  invalidateDatabaseRequestCache(`project:${params.projectId}`);
+  invalidateDatabaseRequestCache(`project-warehouses:${params.projectId}:`);
+  invalidateDatabaseRequestCache(`warehouse:${params.warehouseId}`);
+
   return { success: true, linkedRows: syncResult.linkedRows };
 }
 
@@ -19717,6 +20160,10 @@ export async function setProjectPrimaryWarehouse(params: {
       .set({ warehouseId: params.warehouseId, updatedAt: new Date() })
       .where(eq(projects.id, params.projectId));
   });
+
+  invalidateDatabaseRequestCache(`project:${params.projectId}`);
+  invalidateDatabaseRequestCache(`project-warehouses:${params.projectId}:`);
+  invalidateDatabaseRequestCache(`warehouse:${params.warehouseId}`);
 
   return { success: true };
 }
@@ -19811,6 +20258,12 @@ export async function unassignProjectFromWarehouse(params: {
     !nextPrimaryWarehouseId && !params.warehouseId
       ? await syncInventoryItemsToAssignedWarehouse(params.projectId, null)
       : { linkedRows: 0 };
+
+  invalidateDatabaseRequestCache(`project:${params.projectId}`);
+  invalidateDatabaseRequestCache(`project-warehouses:${params.projectId}:`);
+  if (params.warehouseId) {
+    invalidateDatabaseRequestCache(`warehouse:${params.warehouseId}`);
+  }
 
   return { success: true, linkedRows: syncResult.linkedRows };
 }
@@ -20293,40 +20746,42 @@ export async function listInventoryItems(filters?: InventoryListFilters) {
     .limit(pageSize)
     .offset(offset);
 
-  const items = rows.map(({ item, catalog, effectiveCategory, warehouse, project }) => ({
-    ...item,
-    category: effectiveCategory,
-    brand: catalog?.brand ?? null,
-    partNumber: catalog?.partNumber ?? null,
-    catalogItem: catalog
-      ? {
-          id: catalog.id,
-          itemCode: catalog.itemCode,
-          description: catalog.description,
-          itemGroup: catalog.itemGroup,
-          brand: catalog.brand,
-          partNumber: catalog.partNumber,
-          tipoArticulo: catalog.tipoArticulo,
-        }
-      : null,
-    warehouse: warehouse
-      ? {
-          id: warehouse.id,
-          code: warehouse.code,
-          name: warehouse.name,
-          displayName: warehouse.displayName,
-        }
-      : null,
-    project: project
-      ? {
-          id: project.id,
-          code: project.code,
-          name: project.name,
-          status: project.status,
-        }
-      : null,
-    warehouseLocation: warehouse?.displayName ?? item.warehouseLocation,
-  }));
+  const items = rows.map(
+    ({ item, catalog, effectiveCategory, warehouse, project }) => ({
+      ...item,
+      category: effectiveCategory,
+      brand: catalog?.brand ?? null,
+      partNumber: catalog?.partNumber ?? null,
+      catalogItem: catalog
+        ? {
+            id: catalog.id,
+            itemCode: catalog.itemCode,
+            description: catalog.description,
+            itemGroup: catalog.itemGroup,
+            brand: catalog.brand,
+            partNumber: catalog.partNumber,
+            tipoArticulo: catalog.tipoArticulo,
+          }
+        : null,
+      warehouse: warehouse
+        ? {
+            id: warehouse.id,
+            code: warehouse.code,
+            name: warehouse.name,
+            displayName: warehouse.displayName,
+          }
+        : null,
+      project: project
+        ? {
+            id: project.id,
+            code: project.code,
+            name: project.name,
+            status: project.status,
+          }
+        : null,
+      warehouseLocation: warehouse?.displayName ?? item.warehouseLocation,
+    })
+  );
 
   const pendingQuantityByScope = includePendingQuantities
     ? await getPendingQuantitiesForInventoryItems(items)
@@ -21569,6 +22024,177 @@ export async function getSapSyncLogByEntity(
 // ============================================================
 // DASHBOARD QUERIES
 // ============================================================
+export async function getDashboardSidebarCounts(params: {
+  requestedById?: number;
+  projectIds?: number[];
+  purchaseProjectIds?: number[];
+  visibleFlowTypes?: string[] | null;
+  includeMaterialRequests: boolean;
+  includeSupplyFlows: boolean;
+  includePurchaseRequests: boolean;
+  purchaseRequestStatus: "pendiente" | "en_revision";
+  includePurchaseOrders: boolean;
+  purchaseOrderStatus: "emitida" | "pendiente_aprobacion";
+  includeTransferRequests: boolean;
+  includeFixedAssets: boolean;
+  includeInvoices: boolean;
+  includeReviewedInvoices: boolean;
+}) {
+  const db = await getDb();
+  if (!db) {
+    return {
+      materialRequestsPendingApproval: 0,
+      supplyFlowsPending: 0,
+      purchaseRequestsPending: 0,
+      purchaseOrdersEmitted: 0,
+      transferRequestsPending: 0,
+      fixedAssetsPending: 0,
+      invoicesPendingAttention: 0,
+      invoicesReviewed: 0,
+    };
+  }
+
+  const projectScope = (column: any, projectIds?: number[]) => {
+    if (projectIds === undefined) return sql`true`;
+    if (projectIds.length === 0) return sql`false`;
+    return inArray(column, projectIds);
+  };
+  const requestedByScope = params.requestedById
+    ? eq(materialRequests.requestedById, params.requestedById)
+    : sql`true`;
+  const flowTypeScope =
+    params.visibleFlowTypes === null || params.visibleFlowTypes === undefined
+      ? sql`true`
+      : params.visibleFlowTypes.length > 0
+        ? inArray(requestItems.assignedFlow, params.visibleFlowTypes as any)
+        : sql`false`;
+
+  const result = await db.execute(sql`
+    select
+      (
+        select count(*)::integer
+        from ${materialRequests}
+        where ${params.includeMaterialRequests}
+          and ${materialRequests.status} = 'pendiente_aprobar'
+          and ${requestedByScope}
+          and ${projectScope(materialRequests.projectId, params.projectIds)}
+      ) as "materialRequestsPendingApproval",
+      (
+        select count(*)::integer
+        from ${requestItems}
+        inner join ${materialRequests}
+          on ${requestItems.requestId} = ${materialRequests.id}
+        where ${params.includeSupplyFlows}
+          and ${requestItems.assignedFlow} is not null
+          and ${materialRequests.status} not in (
+            'borrador',
+            'flujo_completado',
+            'cerrada',
+            'cerrada_incompleta',
+            'anulada'
+          )
+          and ${requestItems.approvalStatus} in ('aprobada', 'no_requiere')
+          and ${requestedByScope}
+          and ${projectScope(materialRequests.projectId, params.projectIds)}
+          and ${flowTypeScope}
+          and (
+            (
+              ${requestItems.assignedFlow} = 'despacho_bodega'
+              and coalesce(${requestItems.dispatchedQuantity}, 0) < ${requestItems.quantity}
+              and not exists (
+                select 1
+                from ${supplyFlowRecords}
+                where ${supplyFlowRecords.requestItemId} = ${requestItems.id}
+                  and ${supplyFlowRecords.flowType} = 'despacho_bodega'
+                  and ${supplyFlowRecords.status} = 'pendiente'
+                  and ${supplyFlowRecords.sapDocumentNumber} is not null
+              )
+            )
+            or (
+              ${requestItems.assignedFlow} <> 'despacho_bodega'
+              and not exists (
+                select 1
+                from ${supplyFlowRecords}
+                where ${supplyFlowRecords.requestItemId} = ${requestItems.id}
+                  and ${supplyFlowRecords.flowType} = ${requestItems.assignedFlow}
+                  and ${supplyFlowRecords.status} <> 'cancelado'
+              )
+            )
+          )
+      ) as "supplyFlowsPending",
+      (
+        select count(*)::integer
+        from ${purchaseRequests}
+        where ${params.includePurchaseRequests}
+          and ${purchaseRequests.status} = ${params.purchaseRequestStatus}
+          and ${projectScope(
+            purchaseRequests.projectId,
+            params.purchaseProjectIds
+          )}
+      ) as "purchaseRequestsPending",
+      (
+        select count(*)::integer
+        from ${purchaseOrders}
+        where ${params.includePurchaseOrders}
+          and ${purchaseOrders.status} = ${params.purchaseOrderStatus}
+          and ${projectScope(
+            purchaseOrders.projectId,
+            params.purchaseProjectIds
+          )}
+      ) as "purchaseOrdersEmitted",
+      (
+        select count(*)::integer
+        from ${transferRequests}
+        where ${params.includeTransferRequests}
+          and ${transferRequests.status} = 'pendiente'
+          and (
+            ${projectScope(transferRequests.projectId, params.projectIds)}
+            or ${projectScope(
+              transferRequests.destinationProjectId,
+              params.projectIds
+            )}
+          )
+      ) as "transferRequestsPending",
+      (
+        select count(*)::integer
+        from ${sapCatalog}
+        where ${params.includeFixedAssets}
+          and ${sapCatalog.tipoArticulo} = 3
+          and ${sapCatalog.fixedAssetStatus} = 'pendiente'
+          and ${sapCatalog.temporaryItemCode} is not null
+          and ${sapCatalog.isActive} = true
+      ) as "fixedAssetsPending",
+      (
+        select count(*)::integer
+        from ${invoices}
+        where ${params.includeInvoices}
+          and ${invoices.status} in ('borrador', 'rechazada')
+          and ${projectScope(invoices.projectId, params.projectIds)}
+      ) as "invoicesPendingAttention",
+      (
+        select count(*)::integer
+        from ${invoices}
+        where ${params.includeReviewedInvoices}
+          and ${invoices.status} = 'revisada'
+          and ${projectScope(invoices.projectId, params.projectIds)}
+      ) as "invoicesReviewed"
+  `);
+  const row = (result as any).rows?.[0] ?? (result as any)[0] ?? {};
+
+  return {
+    materialRequestsPendingApproval: Number(
+      row.materialRequestsPendingApproval ?? 0
+    ),
+    supplyFlowsPending: Number(row.supplyFlowsPending ?? 0),
+    purchaseRequestsPending: Number(row.purchaseRequestsPending ?? 0),
+    purchaseOrdersEmitted: Number(row.purchaseOrdersEmitted ?? 0),
+    transferRequestsPending: Number(row.transferRequestsPending ?? 0),
+    fixedAssetsPending: Number(row.fixedAssetsPending ?? 0),
+    invoicesPendingAttention: Number(row.invoicesPendingAttention ?? 0),
+    invoicesReviewed: Number(row.invoicesReviewed ?? 0),
+  };
+}
+
 export async function getDashboardStats(filters?: {
   requestedById?: number;
   projectId?: number;
@@ -23296,6 +23922,33 @@ export async function listSapCatalog() {
 // ============================================================
 // SUPPLIERS
 // ============================================================
+const SUPPLIER_OPTIONS_TTL_MS = 2 * 60 * 1000;
+const SUPPLIER_OPTIONS_MAX_KEYS = 100;
+const supplierOptionsCache = new Map<
+  string,
+  { expiresAt: number; value: Supplier[] }
+>();
+const supplierOptionsPending = new Map<string, Promise<Supplier[]>>();
+
+function invalidateSupplierOptionsCache() {
+  supplierOptionsCache.clear();
+  supplierOptionsPending.clear();
+}
+
+function rememberSupplierOptions(key: string, value: Supplier[]) {
+  supplierOptionsCache.delete(key);
+  supplierOptionsCache.set(key, {
+    value,
+    expiresAt: Date.now() + SUPPLIER_OPTIONS_TTL_MS,
+  });
+  while (supplierOptionsCache.size > SUPPLIER_OPTIONS_MAX_KEYS) {
+    const oldestKey = supplierOptionsCache.keys().next().value;
+    if (!oldestKey) break;
+    supplierOptionsCache.delete(oldestKey);
+  }
+  return value;
+}
+
 export async function getSupplierById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
@@ -23308,49 +23961,74 @@ export async function getSupplierById(id: number) {
 }
 
 export async function listSuppliers() {
-  const db = await getDb();
-  if (!db) return [];
-  return db
-    .select()
-    .from(suppliers)
-    .where(eq(suppliers.isActive, true))
-    .orderBy(suppliers.name);
+  return listSupplierOptions({ limit: 2_000, cacheKey: "legacy-all" });
 }
 
-export async function searchSuppliers(search: string) {
-  const db = await getDb();
-  if (!db) return [];
-  const normalizedSearch = normalizeSearchInput(search);
-  if (!normalizedSearch) return [];
+export async function listSupplierOptions(params?: {
+  search?: string;
+  limit?: number;
+  cacheKey?: string;
+}) {
+  const normalizedSearch = normalizeSearchInput(params?.search ?? "");
+  const limit = Math.min(Math.max(params?.limit ?? 30, 1), 2_000);
+  const cacheKey =
+    params?.cacheKey ?? `${normalizedSearch.toLowerCase()}:${limit}`;
+  const cached = supplierOptionsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    supplierOptionsCache.delete(cacheKey);
+    supplierOptionsCache.set(cacheKey, cached);
+    return cached.value;
+  }
+  const pending = supplierOptionsPending.get(cacheKey);
+  if (pending) return pending;
 
-  const supplierCodeSearch = normalizedSearchSql(suppliers.supplierCode);
-  const supplierNameSearch = normalizedSearchSql(suppliers.name);
-
-  return db
-    .select()
-    .from(suppliers)
-    .where(
-      and(
-        eq(suppliers.isActive, true),
-        ...buildSearchTokenConditions(search, [
+  const load = (async () => {
+    const db = await getDb();
+    if (!db) return [];
+    const supplierCodeSearch = normalizedSearchSql(suppliers.supplierCode);
+    const supplierNameSearch = normalizedSearchSql(suppliers.name);
+    const conditions = [eq(suppliers.isActive, true)];
+    if (normalizedSearch) {
+      conditions.push(
+        ...buildSearchTokenConditions(params?.search ?? "", [
           suppliers.supplierCode,
           suppliers.name,
           suppliers.rtn,
           suppliers.address,
         ])
+      );
+    }
+
+    const rows = await db
+      .select()
+      .from(suppliers)
+      .where(and(...conditions))
+      .orderBy(
+        normalizedSearch
+          ? sql`case
+              when ${supplierCodeSearch} = ${normalizedSearch} then 0
+              when ${supplierCodeSearch} like ${prefixSearchPattern(normalizedSearch)} escape ${"\\"} then 1
+              when ${supplierNameSearch} like ${prefixSearchPattern(normalizedSearch)} escape ${"\\"} then 2
+              when ${supplierNameSearch} like ${containsSearchPattern(normalizedSearch)} escape ${"\\"} then 3
+              else 4
+            end`
+          : asc(suppliers.name),
+        asc(suppliers.name)
       )
-    )
-    .orderBy(
-      sql`case
-        when ${supplierCodeSearch} = ${normalizedSearch} then 0
-        when ${supplierCodeSearch} like ${prefixSearchPattern(normalizedSearch)} escape ${"\\"} then 1
-        when ${supplierNameSearch} like ${prefixSearchPattern(normalizedSearch)} escape ${"\\"} then 2
-        when ${supplierNameSearch} like ${containsSearchPattern(normalizedSearch)} escape ${"\\"} then 3
-        else 4
-      end`,
-      asc(suppliers.name)
-    )
-    .limit(20);
+      .limit(limit);
+    return rememberSupplierOptions(cacheKey, rows);
+  })();
+  supplierOptionsPending.set(cacheKey, load);
+  try {
+    return await load;
+  } finally {
+    supplierOptionsPending.delete(cacheKey);
+  }
+}
+
+export async function searchSuppliers(search: string) {
+  if (!normalizeSearchInput(search)) return [];
+  return listSupplierOptions({ search, limit: 20 });
 }
 
 export type SupplierListFilters = {
@@ -23515,6 +24193,8 @@ export async function createSupplier(data: InsertSupplier) {
     })
     .returning();
 
+  invalidateSupplierOptionsCache();
+
   return supplier;
 }
 
@@ -23541,6 +24221,8 @@ export async function updateSupplier(
   if (!supplier) {
     throw new Error("Proveedor no encontrado");
   }
+
+  invalidateSupplierOptionsCache();
 
   return supplier;
 }
@@ -23633,6 +24315,8 @@ export async function importSupplierExcel(
         set: supplierConflictUpdateSet,
       });
   }
+
+  invalidateSupplierOptionsCache();
 
   return {
     ...summarizeSupplierExcelImportAnalysis(analysis),

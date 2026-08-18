@@ -64,6 +64,7 @@ export const warehouseExitsRouter = router({
         .object({
           projectId: z.number().int().positive().optional(),
           status: z.string().optional(),
+          includePrintedDocumentContent: z.boolean().optional(),
         })
         .optional()
     )
@@ -86,6 +87,7 @@ export const warehouseExitsRouter = router({
         search: z.string().trim().optional(),
         page: z.number().int().min(1).optional(),
         pageSize: z.number().int().min(10).max(200).optional(),
+        includePrintedDocumentContent: z.boolean().optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -119,6 +121,31 @@ export const warehouseExitsRouter = router({
       assertProjectScopedAccess(ctx.user, detail.warehouseExit.projectId);
 
       return detail;
+    }),
+
+  getDocument: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      if (!canManageWarehouseExits(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a salidas de bodega",
+        });
+      }
+      const detail = await db.getWarehouseExitById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Salida de bodega no encontrada",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.warehouseExit.projectId);
+      return {
+        id: detail.warehouseExit.id,
+        content: detail.warehouseExit.printedDocumentContent,
+        mimeType: detail.warehouseExit.printedDocumentMimeType,
+        name: detail.warehouseExit.printedDocumentName,
+      };
     }),
 
   emit: protectedProcedure

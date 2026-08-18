@@ -514,6 +514,7 @@ export default function PurchaseRequests() {
         effectiveStatusFilter === "all" ? undefined : effectiveStatusFilter,
       page,
       pageSize: PAGE_SIZE,
+      includePrintedDocumentContent: false,
     },
     { placeholderData: previousData => previousData }
   );
@@ -2038,7 +2039,7 @@ export default function PurchaseRequests() {
         {
           header: "Documento",
           value: (row: any) =>
-            row.purchaseRequest.printedDocumentContent ? "Listo" : "Pendiente",
+            row.purchaseRequest.hasPrintedDocument ? "Listo" : "Pendiente",
         },
       ],
       exportRows

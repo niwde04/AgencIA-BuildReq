@@ -3453,12 +3453,18 @@ describe("BuildReq - Role-based Access Control", () => {
   it("Ingeniero Residente sees sidebar flow counts scoped to their requests", async () => {
     const { ctx } = createIngenieroContext();
     const caller = appRouter.createCaller(ctx);
-    const listMaterialRequestsSpy = vi
-      .spyOn(db, "listMaterialRequests")
-      .mockResolvedValue([] as any);
-    const listPendingFlowQueueItemsSpy = vi
-      .spyOn(db, "listPendingFlowQueueItems")
-      .mockResolvedValue([{}, {}] as any);
+    const sidebarCountsSpy = vi
+      .spyOn(db, "getDashboardSidebarCounts")
+      .mockResolvedValue({
+        materialRequestsPendingApproval: 0,
+        supplyFlowsPending: 2,
+        purchaseRequestsPending: 0,
+        purchaseOrdersEmitted: 0,
+        transferRequestsPending: 0,
+        fixedAssetsPending: 0,
+        invoicesPendingAttention: 0,
+        invoicesReviewed: 0,
+      });
 
     await expect(caller.dashboard.sidebarCounts()).resolves.toEqual(
       expect.objectContaining({
@@ -3468,51 +3474,35 @@ describe("BuildReq - Role-based Access Control", () => {
         transferRequestsPending: 0,
       })
     );
-    expect(listMaterialRequestsSpy).toHaveBeenCalledWith({
-      status: "pendiente_aprobar",
-      requestedById: 2,
-      projectIds: [1],
-    });
-    expect(listPendingFlowQueueItemsSpy).toHaveBeenCalledWith({
-      requestedById: 2,
-    });
+    expect(sidebarCountsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestedById: 2,
+        projectIds: [1],
+        includeMaterialRequests: true,
+        includeSupplyFlows: true,
+        includePurchaseRequests: false,
+        includePurchaseOrders: false,
+        includeTransferRequests: false,
+      })
+    );
 
-    listMaterialRequestsSpy.mockRestore();
-    listPendingFlowQueueItemsSpy.mockRestore();
+    sidebarCountsSpy.mockRestore();
   });
 
   it("Superuser sees sidebar invoice counts by attention and reviewed status", async () => {
     const { ctx } = createUserContext();
     const caller = appRouter.createCaller(ctx);
-    const listMaterialRequestsSpy = vi
-      .spyOn(db, "listMaterialRequests")
-      .mockResolvedValue([] as any);
-    const listPendingFlowQueueItemsSpy = vi
-      .spyOn(db, "listPendingFlowQueueItems")
-      .mockResolvedValue([] as any);
-    const listPurchaseRequestsSpy = vi
-      .spyOn(db, "listPurchaseRequests")
-      .mockResolvedValue([] as any);
-    const listPurchaseOrdersSpy = vi
-      .spyOn(db, "listPurchaseOrders")
-      .mockResolvedValue([] as any);
-    const listTransferRequestsSpy = vi
-      .spyOn(db, "listTransferRequests")
-      .mockResolvedValue([] as any);
-    const listArticlesSpy = vi.spyOn(db, "listArticles").mockResolvedValue({
-      items: [],
-      total: 4,
-      page: 1,
-      pageSize: 10,
-      totalPages: 1,
-    } as any);
-    const listInvoicesSpy = vi
-      .spyOn(db, "listInvoices")
-      .mockImplementation(async (filters?: any) => {
-        if (filters?.status === "borrador") return [{}, {}] as any;
-        if (filters?.status === "rechazada") return [{}] as any;
-        if (filters?.status === "revisada") return [{}, {}] as any;
-        return [] as any;
+    const sidebarCountsSpy = vi
+      .spyOn(db, "getDashboardSidebarCounts")
+      .mockResolvedValue({
+        materialRequestsPendingApproval: 0,
+        supplyFlowsPending: 0,
+        purchaseRequestsPending: 0,
+        purchaseOrdersEmitted: 0,
+        transferRequestsPending: 0,
+        fixedAssetsPending: 4,
+        invoicesPendingAttention: 3,
+        invoicesReviewed: 2,
       });
 
     await expect(caller.dashboard.sidebarCounts()).resolves.toEqual(
@@ -3522,50 +3512,32 @@ describe("BuildReq - Role-based Access Control", () => {
         fixedAssetsPending: 4,
       })
     );
-    expect(listArticlesSpy).toHaveBeenCalledWith({
-      tipoArticulo: 3,
-      fixedAssetStatus: "pendiente",
-      temporaryOnly: true,
-      isActive: true,
-      page: 1,
-      pageSize: 10,
-    });
-    expect(listInvoicesSpy).toHaveBeenCalledWith({ status: "borrador" });
-    expect(listInvoicesSpy).toHaveBeenCalledWith({ status: "rechazada" });
-    expect(listInvoicesSpy).toHaveBeenCalledWith({ status: "revisada" });
+    expect(sidebarCountsSpy).toHaveBeenCalledTimes(1);
+    expect(sidebarCountsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        includeFixedAssets: true,
+        includeInvoices: true,
+        includeReviewedInvoices: true,
+      })
+    );
 
-    listMaterialRequestsSpy.mockRestore();
-    listPendingFlowQueueItemsSpy.mockRestore();
-    listPurchaseRequestsSpy.mockRestore();
-    listPurchaseOrdersSpy.mockRestore();
-    listTransferRequestsSpy.mockRestore();
-    listArticlesSpy.mockRestore();
-    listInvoicesSpy.mockRestore();
+    sidebarCountsSpy.mockRestore();
   });
 
   it("Admin Central sees sidebar reviewed invoice count", async () => {
     const { ctx } = createAdminCentralContext();
     const caller = appRouter.createCaller(ctx);
-    const listMaterialRequestsSpy = vi
-      .spyOn(db, "listMaterialRequests")
-      .mockResolvedValue([] as any);
-    const listPendingFlowQueueItemsSpy = vi
-      .spyOn(db, "listPendingFlowQueueItems")
-      .mockResolvedValue([] as any);
-    const listPurchaseRequestsSpy = vi
-      .spyOn(db, "listPurchaseRequests")
-      .mockResolvedValue([] as any);
-    const listPurchaseOrdersSpy = vi
-      .spyOn(db, "listPurchaseOrders")
-      .mockResolvedValue([] as any);
-    const listTransferRequestsSpy = vi
-      .spyOn(db, "listTransferRequests")
-      .mockResolvedValue([] as any);
-    const listInvoicesSpy = vi
-      .spyOn(db, "listInvoices")
-      .mockImplementation(async (filters?: any) => {
-        if (filters?.status === "revisada") return [{}, {}] as any;
-        return [] as any;
+    const sidebarCountsSpy = vi
+      .spyOn(db, "getDashboardSidebarCounts")
+      .mockResolvedValue({
+        materialRequestsPendingApproval: 0,
+        supplyFlowsPending: 0,
+        purchaseRequestsPending: 0,
+        purchaseOrdersEmitted: 0,
+        transferRequestsPending: 0,
+        fixedAssetsPending: 0,
+        invoicesPendingAttention: 0,
+        invoicesReviewed: 2,
       });
 
     await expect(caller.dashboard.sidebarCounts()).resolves.toEqual(
@@ -3574,29 +3546,32 @@ describe("BuildReq - Role-based Access Control", () => {
         invoicesReviewed: 2,
       })
     );
-    expect(listInvoicesSpy).toHaveBeenCalledWith({ status: "revisada" });
+    expect(sidebarCountsSpy).toHaveBeenCalledTimes(1);
+    expect(sidebarCountsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        includeInvoices: true,
+        includeReviewedInvoices: true,
+      })
+    );
 
-    listMaterialRequestsSpy.mockRestore();
-    listPendingFlowQueueItemsSpy.mockRestore();
-    listPurchaseRequestsSpy.mockRestore();
-    listPurchaseOrdersSpy.mockRestore();
-    listTransferRequestsSpy.mockRestore();
-    listInvoicesSpy.mockRestore();
+    sidebarCountsSpy.mockRestore();
   });
 
   it("Contable sees reviewed invoices and pending fixed asset counts", async () => {
     const { ctx } = createContableContext();
     const caller = appRouter.createCaller(ctx);
-    const listInvoicesSpy = vi
-      .spyOn(db, "listInvoices")
-      .mockResolvedValue([{}, {}] as any);
-    const listArticlesSpy = vi.spyOn(db, "listArticles").mockResolvedValue({
-      items: [],
-      total: 7,
-      page: 1,
-      pageSize: 10,
-      totalPages: 1,
-    } as any);
+    const sidebarCountsSpy = vi
+      .spyOn(db, "getDashboardSidebarCounts")
+      .mockResolvedValue({
+        materialRequestsPendingApproval: 0,
+        supplyFlowsPending: 0,
+        purchaseRequestsPending: 0,
+        purchaseOrdersEmitted: 0,
+        transferRequestsPending: 0,
+        fixedAssetsPending: 7,
+        invoicesPendingAttention: 0,
+        invoicesReviewed: 2,
+      });
 
     await expect(caller.dashboard.sidebarCounts()).resolves.toEqual(
       expect.objectContaining({
@@ -3604,41 +3579,35 @@ describe("BuildReq - Role-based Access Control", () => {
         fixedAssetsPending: 7,
       })
     );
-    expect(listInvoicesSpy).toHaveBeenCalledWith({ status: "revisada" });
-    expect(listArticlesSpy).toHaveBeenCalledWith({
-      tipoArticulo: 3,
-      fixedAssetStatus: "pendiente",
-      temporaryOnly: true,
-      isActive: true,
-      page: 1,
-      pageSize: 10,
-    });
+    expect(sidebarCountsSpy).toHaveBeenCalledTimes(1);
+    expect(sidebarCountsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        includeMaterialRequests: false,
+        includeSupplyFlows: false,
+        includeFixedAssets: true,
+        includeInvoices: false,
+        includeReviewedInvoices: true,
+      })
+    );
 
-    listInvoicesSpy.mockRestore();
-    listArticlesSpy.mockRestore();
+    sidebarCountsSpy.mockRestore();
   });
 
   it("Project Administrator without assigned project sees empty scoped purchase sidebar counts", async () => {
     const { ctx } = createProjectAdminContext({ assignedProjectId: null });
     const caller = appRouter.createCaller(ctx);
-    const listMaterialRequestsSpy = vi
-      .spyOn(db, "listMaterialRequests")
-      .mockResolvedValue([] as any);
-    const listPendingFlowQueueItemsSpy = vi
-      .spyOn(db, "listPendingFlowQueueItems")
-      .mockResolvedValue([] as any);
-    const listPurchaseRequestsSpy = vi
-      .spyOn(db, "listPurchaseRequests")
-      .mockResolvedValue([] as any);
-    const listPurchaseOrdersSpy = vi
-      .spyOn(db, "listPurchaseOrders")
-      .mockResolvedValue([] as any);
-    const listTransferRequestsSpy = vi
-      .spyOn(db, "listTransferRequests")
-      .mockResolvedValue([] as any);
-    const listInvoicesSpy = vi
-      .spyOn(db, "listInvoices")
-      .mockResolvedValue([] as any);
+    const sidebarCountsSpy = vi
+      .spyOn(db, "getDashboardSidebarCounts")
+      .mockResolvedValue({
+        materialRequestsPendingApproval: 0,
+        supplyFlowsPending: 0,
+        purchaseRequestsPending: 0,
+        purchaseOrdersEmitted: 0,
+        transferRequestsPending: 0,
+        fixedAssetsPending: 0,
+        invoicesPendingAttention: 0,
+        invoicesReviewed: 0,
+      });
 
     await expect(caller.dashboard.sidebarCounts()).resolves.toEqual(
       expect.objectContaining({
@@ -3648,29 +3617,18 @@ describe("BuildReq - Role-based Access Control", () => {
       })
     );
 
-    expect(listMaterialRequestsSpy).toHaveBeenCalledWith({
-      projectIds: [],
-      status: "pendiente_aprobar",
-    });
-    expect(listPurchaseRequestsSpy).toHaveBeenCalledWith({
-      projectIds: [],
-      status: "pendiente",
-    });
-    expect(listPurchaseOrdersSpy).toHaveBeenCalledWith({
-      projectIds: [],
-      status: "emitida",
-    });
-    expect(listTransferRequestsSpy).toHaveBeenCalledWith({
-      projectIds: [],
-      status: "pendiente",
-    });
+    expect(sidebarCountsSpy).toHaveBeenCalledTimes(1);
+    expect(sidebarCountsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectIds: [],
+        purchaseProjectIds: [],
+        includePurchaseRequests: true,
+        includePurchaseOrders: true,
+        includeTransferRequests: true,
+      })
+    );
 
-    listMaterialRequestsSpy.mockRestore();
-    listPendingFlowQueueItemsSpy.mockRestore();
-    listPurchaseRequestsSpy.mockRestore();
-    listPurchaseOrdersSpy.mockRestore();
-    listTransferRequestsSpy.mockRestore();
-    listInvoicesSpy.mockRestore();
+    sidebarCountsSpy.mockRestore();
   });
 
   it("Project Administrator without assigned project has empty scoped purchase and project lists only", async () => {
@@ -13860,8 +13818,7 @@ describe("BuildReq - Purchase Orders", () => {
         0
     ).toBe(1);
     expect(
-      pdfText.match(new RegExp(`<${encodedAuthorizedBy}> Tj`, "g"))?.length ??
-        0
+      pdfText.match(new RegExp(`<${encodedAuthorizedBy}> Tj`, "g"))?.length ?? 0
     ).toBe(1);
   });
 });
@@ -18738,9 +18695,7 @@ describe("BuildReq - Document attachments", () => {
       .spyOn(db, "deleteAttachment")
       .mockResolvedValue({ success: true });
 
-    await expect(
-      caller.attachments.delete({ id: 700 })
-    ).resolves.toEqual({
+    await expect(caller.attachments.delete({ id: 700 })).resolves.toEqual({
       success: true,
     });
     expect(storageDeleteSpy).toHaveBeenCalledWith(

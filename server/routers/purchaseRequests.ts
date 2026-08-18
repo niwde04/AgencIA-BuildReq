@@ -2,7 +2,10 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
 import { listPurchaseRequestsPage } from "../paginatedLists";
-import { procurementProcedure as protectedProcedure, router } from "../_core/trpc";
+import {
+  procurementProcedure as protectedProcedure,
+  router,
+} from "../_core/trpc";
 import { applyProjectScope, canAccessProject } from "../projectAccess";
 import {
   canReviewProcurementApprovals,
@@ -521,6 +524,7 @@ export const purchaseRequestsRouter = router({
         search: z.string().trim().optional(),
         page: z.number().int().min(1).optional(),
         pageSize: z.number().int().min(10).max(200).optional(),
+        includePrintedDocumentContent: z.boolean().optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -547,6 +551,7 @@ export const purchaseRequestsRouter = router({
         .object({
           projectId: z.number().optional(),
           status: z.string().optional(),
+          includePrintedDocumentContent: z.boolean().optional(),
         })
         .optional()
     )
@@ -604,6 +609,32 @@ export const purchaseRequestsRouter = router({
       assertPurchaseRequestProjectScope(ctx.user, detail);
       assertApproverPendingVisibility(ctx.user, detail.purchaseRequest);
       return detail;
+    }),
+
+  getDocument: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .query(async ({ ctx, input }) => {
+      if (!canReadPurchaseRequests(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a las solicitudes de compra",
+        });
+      }
+      const detail = await db.getPurchaseRequestById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Solicitud de compra no encontrada",
+        });
+      }
+      assertPurchaseRequestProjectScope(ctx.user, detail);
+      assertApproverPendingVisibility(ctx.user, detail.purchaseRequest);
+      return {
+        id: detail.purchaseRequest.id,
+        content: detail.purchaseRequest.printedDocumentContent,
+        mimeType: detail.purchaseRequest.printedDocumentMimeType,
+        name: detail.purchaseRequest.printedDocumentName,
+      };
     }),
 
   create: protectedProcedure

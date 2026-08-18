@@ -376,16 +376,26 @@ function formatPurchaseOrderCreatedBy(row: any) {
 }
 
 function SupplierCommandList({
-  suppliers,
   selectedSupplierId,
   onSelect,
 }: {
-  suppliers: any[];
   selectedSupplierId: string;
-  onSelect: (supplierId: string) => void;
+  onSelect: (supplier: any) => void;
 }) {
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search, 300);
   const commandContainerRef = useRef<HTMLDivElement | null>(null);
+  const { data: suppliers = [], isFetching } =
+    trpc.requestItems.supplierOptions.useQuery(
+      {
+        search: debouncedSearch.trim() || undefined,
+        limit: 30,
+      },
+      {
+        staleTime: 2 * 60_000,
+        refetchOnWindowFocus: false,
+      }
+    );
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -400,14 +410,18 @@ function SupplierCommandList({
 
   return (
     <div ref={commandContainerRef}>
-      <Command>
+      <Command shouldFilter={false}>
         <CommandInput
           placeholder="Buscar proveedor por código o nombre..."
           value={search}
           onValueChange={setSearch}
         />
         <CommandList>
-          <CommandEmpty>No se encontraron proveedores.</CommandEmpty>
+          <CommandEmpty>
+            {isFetching
+              ? "Buscando proveedores..."
+              : "No se encontraron proveedores."}
+          </CommandEmpty>
           <CommandGroup>
             {suppliers.map((supplier: any) => {
               const supplierId = String(supplier.id);
@@ -417,7 +431,7 @@ function SupplierCommandList({
                 <CommandItem
                   key={supplier.id}
                   value={`${supplier.id} ${supplier.supplierCode} ${supplier.name} ${supplier.rtn ?? ""}`}
-                  onSelect={() => onSelect(supplierId)}
+                  onSelect={() => onSelect(supplier)}
                 >
                   <Check
                     className={`h-4 w-4 ${
@@ -933,6 +947,9 @@ export default function OrdenesCompra() {
   const [replaceItemId, setReplaceItemId] = useState<number | null>(null);
   const [replacementSearch, setReplacementSearch] = useState("");
   const [selectedSupplierId, setSelectedSupplierId] = useState("");
+  const [selectedSupplierOption, setSelectedSupplierOption] = useState<
+    any | null
+  >(null);
   const [selectedSupplierContactId, setSelectedSupplierContactId] =
     useState("");
   const [supplierPopoverOpen, setSupplierPopoverOpen] = useState(false);
@@ -986,6 +1003,7 @@ export default function OrdenesCompra() {
       emissionDateTo: emissionDateToFilter || undefined,
       page,
       pageSize: PAGE_SIZE,
+      includePrintedDocumentContent: false,
     },
     { placeholderData: previousData => previousData }
   );
@@ -997,9 +1015,12 @@ export default function OrdenesCompra() {
   const {
     data: purchaseRequestOrigins,
     isLoading: isLoadingPurchaseRequestOrigins,
-  } = trpc.purchaseRequests.list.useQuery(undefined, {
-    enabled: canCreatePurchaseOrder && newOrderDialogOpen,
-  });
+  } = trpc.purchaseRequests.list.useQuery(
+    { includePrintedDocumentContent: false },
+    {
+      enabled: canCreatePurchaseOrder && newOrderDialogOpen,
+    }
+  );
   const selectedOriginIdNumber = Number(selectedOriginId || 0);
   const {
     data: selectedOriginDetail,
@@ -1013,7 +1034,6 @@ export default function OrdenesCompra() {
         selectedOriginIdNumber > 0,
     }
   );
-  const { data: suppliersList } = trpc.requestItems.listSuppliers.useQuery();
   const { data: salesTaxes } = trpc.taxes.activeOptions.useQuery(undefined, {
     enabled: Boolean(user),
   });
@@ -1398,13 +1418,13 @@ export default function OrdenesCompra() {
       ),
     [items]
   );
-  const selectedSupplier = useMemo(
-    () =>
-      (suppliersList || []).find(
-        (supplier: any) => supplier.id === Number(selectedSupplierId)
-      ) ?? null,
-    [selectedSupplierId, suppliersList]
-  );
+  const selectedSupplier = useMemo(() => {
+    const selectedId = Number(selectedSupplierId);
+    if (selectedSupplierOption?.id === selectedId) {
+      return selectedSupplierOption;
+    }
+    return detail?.supplier?.id === selectedId ? detail.supplier : null;
+  }, [detail?.supplier, selectedSupplierId, selectedSupplierOption]);
   const { data: latestSupplierPrices } =
     trpc.purchaseOrders.latestSupplierPrices.useQuery(
       {
@@ -2068,7 +2088,12 @@ export default function OrdenesCompra() {
         ? String(detail.purchaseOrder.supplierId)
         : ""
     );
-  }, [detail?.purchaseOrder.id, detail?.purchaseOrder.supplierId]);
+    setSelectedSupplierOption(detail?.supplier ?? null);
+  }, [
+    detail?.purchaseOrder.id,
+    detail?.purchaseOrder.supplierId,
+    detail?.supplier,
+  ]);
 
   useEffect(() => {
     if (!detail?.purchaseOrder) {
@@ -2382,8 +2407,10 @@ export default function OrdenesCompra() {
     registeredInvoiceCount: contractSummary.registeredInvoiceCount,
   });
 
-  const handleSupplierChange = (value: string) => {
+  const handleSupplierChange = (nextSupplier: any) => {
+    const value = String(nextSupplier.id);
     setSelectedSupplierId(value);
+    setSelectedSupplierOption(nextSupplier);
     if (!detail) return;
     if (!canEditOrderStructure) {
       toast.error("La OC ya fue emitida y no se puede actualizar");
@@ -2394,9 +2421,6 @@ export default function OrdenesCompra() {
       return;
     }
 
-    const nextSupplier = (suppliersList || []).find(
-      (supplier: any) => supplier.id === Number(value)
-    );
     const nextSupplierEmail = nextSupplier?.email ?? "";
     const supplierChanged =
       Number(value) !== detail.purchaseOrder.supplierId ||
@@ -3693,6 +3717,7 @@ export default function OrdenesCompra() {
             setReplaceItemId(null);
             setReplacementSearch("");
             setSelectedSupplierId("");
+            setSelectedSupplierOption(null);
             setSelectedSupplierContactId("");
             setSupplierPopoverOpen(false);
             setContactPopoverOpen(false);
@@ -3943,10 +3968,10 @@ export default function OrdenesCompra() {
                       className="w-[var(--radix-popover-trigger-width)] p-0"
                     >
                       <SupplierCommandList
-                        suppliers={suppliersList || []}
                         selectedSupplierId={selectedSupplierId}
-                        onSelect={supplierId => {
-                          setSelectedSupplierId(supplierId);
+                        onSelect={supplier => {
+                          setSelectedSupplierId(String(supplier.id));
+                          setSelectedSupplierOption(supplier);
                           setSelectedSupplierContactId("");
                           setSupplierPopoverOpen(false);
                         }}
@@ -5267,10 +5292,9 @@ export default function OrdenesCompra() {
                         className="w-[var(--radix-popover-trigger-width)] p-0"
                       >
                         <SupplierCommandList
-                          suppliers={suppliersList || []}
                           selectedSupplierId={selectedSupplierId}
-                          onSelect={supplierId => {
-                            handleSupplierChange(supplierId);
+                          onSelect={supplier => {
+                            handleSupplierChange(supplier);
                             setSupplierPopoverOpen(false);
                           }}
                         />

@@ -624,6 +624,7 @@ export default function SalidasBodega() {
       search: debouncedSearchTerm.trim() || undefined,
       page,
       pageSize: PAGE_SIZE,
+      includePrintedDocumentContent: false,
     },
     { placeholderData: previousData => previousData }
   );

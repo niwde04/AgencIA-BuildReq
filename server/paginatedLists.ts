@@ -295,6 +295,7 @@ export type PurchaseRequestPageFilters = PageInput & {
   status?: string;
   approvalsEnabled?: boolean;
   pendingApprovalOnly?: boolean;
+  includePrintedDocumentContent?: boolean;
 };
 
 export async function listPurchaseRequestsPage(
@@ -338,21 +339,16 @@ export async function listPurchaseRequestsPage(
   }
 
   if (filters.projectIds !== undefined && filters.projectIds.length > 0) {
-    const outsideRows = await database
-      .select({ id: purchaseRequestItems.purchaseRequestId })
-      .from(purchaseRequestItems)
-      .leftJoin(
-        requestItems,
-        eq(purchaseRequestItems.materialRequestItemId, requestItems.id)
-      )
-      .leftJoin(
-        materialRequests,
-        eq(requestItems.requestId, materialRequests.id)
-      )
-      .where(notInArray(materialRequests.projectId, filters.projectIds));
-    const outsideIds = uniqueIds(outsideRows);
-    if (outsideIds.length > 0)
-      conditions.push(notInArray(purchaseRequests.id, outsideIds));
+    conditions.push(sql`not exists (
+      select 1
+      from ${purchaseRequestItems}
+      left join ${requestItems}
+        on ${purchaseRequestItems.materialRequestItemId} = ${requestItems.id}
+      left join ${materialRequests}
+        on ${requestItems.requestId} = ${materialRequests.id}
+      where ${purchaseRequestItems.purchaseRequestId} = ${purchaseRequests.id}
+        and ${notInArray(materialRequests.projectId, filters.projectIds)}
+    )`);
   }
 
   const search = filters.search?.trim();
@@ -447,6 +443,7 @@ export async function listPurchaseRequestsPage(
     ids: uniqueIds(idRows),
     projectId: filters.projectId,
     projectIds: filters.projectIds,
+    includePrintedDocumentContent: filters.includePrintedDocumentContent,
   });
   return pageResult(items, total, filters);
 }
@@ -461,6 +458,7 @@ export type PurchaseOrderPageFilters = PageInput & {
   emissionDateTo?: Date;
   approvalsEnabled?: boolean;
   pendingApprovalOnly?: boolean;
+  includePrintedDocumentContent?: boolean;
 };
 
 export async function listPurchaseOrdersPage(
@@ -596,6 +594,7 @@ export async function listPurchaseOrdersPage(
     projectId: filters.projectId,
     projectIds: filters.projectIds,
     classification: filters.classification,
+    includePrintedDocumentContent: filters.includePrintedDocumentContent,
   });
   return pageResult(items, total, filters);
 }
@@ -1033,6 +1032,7 @@ export type WarehouseExitPageFilters = PageInput & {
   projectId?: number;
   projectIds?: number[];
   status?: string;
+  includePrintedDocumentContent?: boolean;
 };
 
 export async function listWarehouseExitsPage(
@@ -1091,6 +1091,7 @@ export async function listWarehouseExitsPage(
     projectId: filters.projectId,
     projectIds: filters.projectIds,
     status: filters.status,
+    includePrintedDocumentContent: filters.includePrintedDocumentContent,
   });
 
   return pageResult(items, total, filters);

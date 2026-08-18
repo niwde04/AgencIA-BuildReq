@@ -89,36 +89,25 @@ export const dashboardRouter = router({
     const user = ctx.user;
     const userRole = user.buildreqRole;
     if (userRole === "contable") {
-      const [reviewedInvoices, pendingFixedAssets] = await Promise.all([
-        db.listInvoices({ status: "revisada" }),
-        db.listArticles({
-          tipoArticulo: 3,
-          fixedAssetStatus: "pendiente",
-          temporaryOnly: true,
-          isActive: true,
-          page: 1,
-          pageSize: 10,
-        }),
-      ]);
-      return {
-        materialRequestsPendingApproval: 0,
-        supplyFlowsPending: 0,
-        purchaseRequestsPending: 0,
-        purchaseOrdersEmitted: 0,
-        transferRequestsPending: 0,
-        fixedAssetsPending: pendingFixedAssets.total,
-        invoicesPendingAttention: 0,
-        invoicesReviewed: reviewedInvoices.length,
-      };
+      return db.getDashboardSidebarCounts({
+        includeMaterialRequests: false,
+        includeSupplyFlows: false,
+        includePurchaseRequests: false,
+        purchaseRequestStatus: "pendiente",
+        includePurchaseOrders: false,
+        purchaseOrderStatus: "emitida",
+        includeTransferRequests: false,
+        includeFixedAssets: true,
+        includeInvoices: false,
+        includeReviewedInvoices: true,
+      });
     }
     const isAdmin = user.role === "admin";
     const scopedProjectIds = getProjectScopeIds(user);
-    const scopedFilters =
-      scopedProjectIds !== undefined ? { projectIds: scopedProjectIds } : {};
-    const purchaseFilters =
+    const purchaseProjectIds =
       userRole === "administrador_proyecto" && hasAllProjectAccess(user)
-        ? {}
-        : scopedFilters;
+        ? undefined
+        : scopedProjectIds;
     const canAccessProcurement =
       isAdmin ||
       userRole === "jefe_bodega_central" ||
@@ -139,10 +128,6 @@ export const dashboardRouter = router({
       userRole === "bodeguero_proyecto";
     const canAccessReviewedInvoices =
       isAdmin || userRole === "administracion_central";
-    const flowQueueScope =
-      userRole === "ingeniero_residente"
-        ? { requestedById: user.id }
-        : scopedFilters;
     const visibleFlowTypes =
       userRole === "bodeguero_proyecto"
         ? [
@@ -154,100 +139,29 @@ export const dashboardRouter = router({
         : userRole === "administrador_proyecto"
           ? ["compra_directa", "solicitud_compra"]
           : null;
-    const pendingFlowRowsPromise = visibleFlowTypes
-      ? Promise.all(
-          visibleFlowTypes.map(flowType =>
-            db.listPendingFlowQueueItems({
-              ...(flowQueueScope ?? {}),
-              flowType,
-            })
-          )
-        ).then(rows => rows.flat())
-      : db.listPendingFlowQueueItems(flowQueueScope);
+    const isApprover = isProcurementApproverRole(userRole);
 
-    const [
-      materialRequestsPendingApproval,
-      pendingFlowRows,
-      pendingPurchaseRequests,
-      emittedPurchaseOrders,
-      pendingTransferRequests,
-      pendingFixedAssets,
-      draftInvoices,
-      rejectedInvoices,
-      reviewedInvoices,
-    ] = await Promise.all([
-      db.listMaterialRequests({
-        status: "pendiente_aprobar",
-        ...(userRole === "ingeniero_residente"
-          ? { requestedById: user.id }
-          : {}),
-        ...scopedFilters,
-      }),
-      pendingFlowRowsPromise,
-      canAccessPurchaseRequests &&
-      (!isProcurementApproverRole(userRole) ||
-        isPurchaseRequestApprovalEnabled())
-        ? db.listPurchaseRequests({
-            status: isProcurementApproverRole(userRole)
-              ? "en_revision"
-              : "pendiente",
-            ...purchaseFilters,
-          })
-        : Promise.resolve([]),
-      canAccessPurchaseOrders &&
-      (!isProcurementApproverRole(userRole) || isPurchaseOrderApprovalEnabled())
-        ? db.listPurchaseOrders({
-            status: isProcurementApproverRole(userRole)
-              ? "pendiente_aprobacion"
-              : "emitida",
-            ...purchaseFilters,
-          })
-        : Promise.resolve([]),
-      canAccessTransferRequests
-        ? db.listTransferRequests({
-            status: "pendiente",
-            ...scopedFilters,
-          })
-        : Promise.resolve([]),
-      isAdmin
-        ? db.listArticles({
-            tipoArticulo: 3,
-            fixedAssetStatus: "pendiente",
-            temporaryOnly: true,
-            isActive: true,
-            page: 1,
-            pageSize: 10,
-          })
-        : Promise.resolve({ total: 0 }),
-      canAccessInvoices
-        ? db.listInvoices({
-            status: "borrador",
-            ...scopedFilters,
-          })
-        : Promise.resolve([]),
-      canAccessInvoices
-        ? db.listInvoices({
-            status: "rechazada",
-            ...scopedFilters,
-          })
-        : Promise.resolve([]),
-      canAccessReviewedInvoices
-        ? db.listInvoices({
-            status: "revisada",
-            ...scopedFilters,
-          })
-        : Promise.resolve([]),
-    ]);
-
-    return {
-      materialRequestsPendingApproval: materialRequestsPendingApproval.length,
-      supplyFlowsPending: pendingFlowRows.length,
-      purchaseRequestsPending: pendingPurchaseRequests.length,
-      purchaseOrdersEmitted: emittedPurchaseOrders.length,
-      transferRequestsPending: pendingTransferRequests.length,
-      fixedAssetsPending: pendingFixedAssets.total,
-      invoicesPendingAttention: draftInvoices.length + rejectedInvoices.length,
-      invoicesReviewed: reviewedInvoices.length,
-    };
+    return db.getDashboardSidebarCounts({
+      ...(userRole === "ingeniero_residente" ? { requestedById: user.id } : {}),
+      ...(scopedProjectIds !== undefined
+        ? { projectIds: scopedProjectIds }
+        : {}),
+      ...(purchaseProjectIds !== undefined ? { purchaseProjectIds } : {}),
+      visibleFlowTypes,
+      includeMaterialRequests: true,
+      includeSupplyFlows: true,
+      includePurchaseRequests:
+        canAccessPurchaseRequests &&
+        (!isApprover || isPurchaseRequestApprovalEnabled()),
+      purchaseRequestStatus: isApprover ? "en_revision" : "pendiente",
+      includePurchaseOrders:
+        canAccessPurchaseOrders &&
+        (!isApprover || isPurchaseOrderApprovalEnabled()),
+      purchaseOrderStatus: isApprover ? "pendiente_aprobacion" : "emitida",
+      includeTransferRequests: canAccessTransferRequests,
+      includeFixedAssets: isAdmin,
+      includeInvoices: canAccessInvoices,
+      includeReviewedInvoices: canAccessReviewedInvoices,
+    });
   }),
 });

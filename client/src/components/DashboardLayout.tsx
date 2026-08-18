@@ -542,11 +542,21 @@ function DashboardLayoutContent({
 
   const { data: unreadCount } = trpc.notifications.unreadCount.useQuery(
     undefined,
-    { refetchInterval: 30000 }
+    {
+      refetchInterval: 30_000,
+      refetchIntervalInBackground: false,
+      refetchOnWindowFocus: false,
+      staleTime: 30_000,
+    }
   );
   const { data: sidebarCounts } = trpc.dashboard.sidebarCounts.useQuery(
     undefined,
-    { refetchInterval: 30000 }
+    {
+      refetchInterval: 30_000,
+      refetchIntervalInBackground: false,
+      refetchOnWindowFocus: false,
+      staleTime: 30_000,
+    }
   );
 
   const userRole = (user as any)?.buildreqRole || "";

@@ -15,8 +15,37 @@ export type SupabaseJwtPayload = {
   role: string;
 };
 
+const LAST_SIGNED_IN_TOUCH_INTERVAL_MS = 15 * 60 * 1000;
+const LAST_SIGNED_IN_CACHE_MAX_KEYS = 5_000;
+const lastSignedInTouches = new Map<string, number>();
+
+function shouldTouchLastSignedIn(user: User, now: Date) {
+  const cachedAt = lastSignedInTouches.get(user.openId);
+  const persistedAt = user.lastSignedIn
+    ? new Date(user.lastSignedIn).getTime()
+    : 0;
+  const lastTouchAt = Math.max(cachedAt ?? 0, persistedAt);
+  if (now.getTime() - lastTouchAt < LAST_SIGNED_IN_TOUCH_INTERVAL_MS) {
+    lastSignedInTouches.delete(user.openId);
+    lastSignedInTouches.set(user.openId, lastTouchAt);
+    return false;
+  }
+  return true;
+}
+
+function rememberLastSignedInTouch(openId: string, timestamp: number) {
+  lastSignedInTouches.delete(openId);
+  lastSignedInTouches.set(openId, timestamp);
+  while (lastSignedInTouches.size > LAST_SIGNED_IN_CACHE_MAX_KEYS) {
+    const oldest = lastSignedInTouches.keys().next().value;
+    if (!oldest) break;
+    lastSignedInTouches.delete(oldest);
+  }
+}
+
 function isExpiredJwtError(error: unknown) {
-  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const message =
+    error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   return (
     message.includes("JWTExpired") ||
     message.includes('"exp" claim timestamp check failed')
@@ -48,11 +77,15 @@ export async function verifySupabaseToken(
 
     if (header.alg === "HS256") {
       if (!ENV.supabaseJwtSecret) {
-        console.warn("[Auth] SUPABASE_JWT_SECRET not configured for legacy HS256 token");
+        console.warn(
+          "[Auth] SUPABASE_JWT_SECRET not configured for legacy HS256 token"
+        );
         return null;
       }
       const secret = new TextEncoder().encode(ENV.supabaseJwtSecret);
-      const { payload } = await jwtVerify(token, secret, { audience: "authenticated" });
+      const { payload } = await jwtVerify(token, secret, {
+        audience: "authenticated",
+      });
       return payload as unknown as SupabaseJwtPayload;
     }
 
@@ -61,7 +94,9 @@ export async function verifySupabaseToken(
       console.warn("[Auth] SUPABASE_URL not configured");
       return null;
     }
-    const { payload } = await jwtVerify(token, getJWKS(), { audience: "authenticated" });
+    const { payload } = await jwtVerify(token, getJWKS(), {
+      audience: "authenticated",
+    });
     return payload as unknown as SupabaseJwtPayload;
   } catch (error) {
     if (isExpiredJwtError(error)) {
@@ -102,20 +137,25 @@ export async function authenticateRequest(req: Request): Promise<User> {
   const openId = payload.sub;
   const email = payload.email ?? payload.user_metadata?.email ?? null;
   const name =
-    payload.user_metadata?.full_name ??
-    payload.user_metadata?.name ??
-    null;
+    payload.user_metadata?.full_name ?? payload.user_metadata?.name ?? null;
 
   let user = await db.getUserByOpenId(openId);
-  await db.upsertUser({
-    openId,
-    email,
-    name: user ? undefined : name,
-    loginMethod: "email",
-    lastSignedIn: new Date(),
-  });
-
-  user = await db.getUserByOpenId(openId);
+  if (!user) {
+    await db.upsertUser({
+      openId,
+      email,
+      name,
+      loginMethod: "email",
+      lastSignedIn: new Date(),
+    });
+    user = await db.getUserByOpenId(openId);
+  } else {
+    const now = new Date();
+    if (shouldTouchLastSignedIn(user, now)) {
+      await db.touchUserLastSignedIn(openId, now);
+      rememberLastSignedInTouch(openId, now.getTime());
+    }
+  }
   if (!user) {
     throw ForbiddenError("User not found after upsert");
   }

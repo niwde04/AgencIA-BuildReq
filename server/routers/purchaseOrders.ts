@@ -681,6 +681,7 @@ export const purchaseOrdersRouter = router({
         search: z.string().trim().optional(),
         page: z.number().int().min(1).optional(),
         pageSize: z.number().int().min(10).max(200).optional(),
+        includePrintedDocumentContent: z.boolean().optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -726,6 +727,7 @@ export const purchaseOrdersRouter = router({
           projectId: z.number().optional(),
           classification: z.enum(["oc", "cd"]).optional(),
           status: z.string().optional(),
+          includePrintedDocumentContent: z.boolean().optional(),
         })
         .optional()
     )
@@ -774,6 +776,32 @@ export const purchaseOrdersRouter = router({
       assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
       assertApproverPendingVisibility(ctx.user, detail.purchaseOrder);
       return detail;
+    }),
+
+  getDocument: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .query(async ({ ctx, input }) => {
+      if (!canReadPurchaseOrders(ctx.user)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "No tiene acceso a órdenes de compra",
+        });
+      }
+      const detail = await db.getPurchaseOrderById(input.id);
+      if (!detail) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Orden de compra no encontrada",
+        });
+      }
+      assertProjectScopedAccess(ctx.user, detail.purchaseOrder.projectId);
+      assertApproverPendingVisibility(ctx.user, detail.purchaseOrder);
+      return {
+        id: detail.purchaseOrder.id,
+        content: detail.purchaseOrder.printedDocumentContent,
+        mimeType: detail.purchaseOrder.printedDocumentMimeType,
+        name: detail.purchaseOrder.printedDocumentName,
+      };
     }),
 
   latestSupplierPrices: protectedProcedure

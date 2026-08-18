@@ -1287,7 +1287,7 @@ export default function Recepciones() {
     { enabled: canManageReceipts && editingDraftReceiptId !== null }
   );
   const { data: purchaseOrders } = trpc.purchaseOrders.list.useQuery(
-    undefined,
+    { includePrintedDocumentContent: false },
     { enabled: canManageReceipts && dialogOpen }
   );
   const { data: transfers } = trpc.transfers.list.useQuery(
