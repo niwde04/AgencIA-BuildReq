@@ -1,6 +1,7 @@
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
 import type { User } from "../../drizzle/schema";
 import { authenticateRequest } from "./supabaseAuth";
+import { setDatabaseRequestUserId } from "./databaseRequestContext";
 
 export type AuthenticatedUser = User & {
   assignedProjectIds?: number[];
@@ -20,6 +21,7 @@ export async function createContext(
 
   try {
     user = await authenticateRequest(opts.req);
+    setDatabaseRequestUserId(user.id);
   } catch {
     // Authentication is optional for public procedures.
     user = null;

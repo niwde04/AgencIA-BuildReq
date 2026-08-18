@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { performance } from "node:perf_hooks";
 import {
   eq,
   and,
@@ -235,6 +236,7 @@ import {
   normalizeFiscalRtn,
 } from "@shared/invoices";
 import { isTreasuryItemBlockingInvoiceReview } from "./invoiceReview";
+import { recordDatabaseQuery } from "./_core/databaseRequestContext";
 
 const DEFAULT_DATABASE_POOL_MAX = 4;
 let _pool: Pool | null = null;
@@ -250,6 +252,61 @@ function getDatabasePoolMax() {
     : DEFAULT_DATABASE_POOL_MAX;
 }
 
+function instrumentDatabasePool(pool: Pool) {
+  const originalQuery = pool.query.bind(pool);
+
+  (pool as any).query = (...args: any[]) => {
+    const queryText =
+      typeof args[0] === "string"
+        ? args[0]
+        : typeof args[0]?.text === "string"
+          ? args[0].text
+          : undefined;
+    const startedAt = performance.now();
+    const callbackIndex =
+      typeof args[args.length - 1] === "function" ? args.length - 1 : -1;
+
+    if (callbackIndex >= 0) {
+      const callback = args[callbackIndex];
+      args[callbackIndex] = (error: unknown, result: any) => {
+        recordDatabaseQuery({
+          queryText,
+          durationMs: performance.now() - startedAt,
+          rows: Number(result?.rowCount ?? result?.rows?.length ?? 0),
+        });
+        callback(error, result);
+      };
+      return (originalQuery as any)(...args);
+    }
+
+    const result = (originalQuery as any)(...args) as Promise<any>;
+    return result.then(
+      value => {
+        recordDatabaseQuery({
+          queryText,
+          durationMs: performance.now() - startedAt,
+          rows: Array.isArray(value)
+            ? value.reduce(
+                (total, entry) =>
+                  total + Number(entry?.rowCount ?? entry?.rows?.length ?? 0),
+                0
+              )
+            : Number(value?.rowCount ?? value?.rows?.length ?? 0),
+        });
+        return value;
+      },
+      error => {
+        recordDatabaseQuery({
+          queryText,
+          durationMs: performance.now() - startedAt,
+          rows: 0,
+        });
+        throw error;
+      }
+    );
+  };
+}
+
 export async function getDb(): Promise<ReturnType<typeof drizzle> | null> {
   const scopedDb = receiptRegistrationDb.getStore();
   if (scopedDb) return scopedDb;
@@ -262,6 +319,7 @@ export async function getDb(): Promise<ReturnType<typeof drizzle> | null> {
         idleTimeoutMillis: 10_000,
         connectionTimeoutMillis: 10_000,
       });
+      instrumentDatabasePool(_pool);
       _pool.on("error", error => {
         console.error("[Database] Idle connection error:", error);
       });
