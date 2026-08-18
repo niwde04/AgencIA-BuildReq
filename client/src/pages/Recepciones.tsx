@@ -4422,6 +4422,10 @@ export default function Recepciones() {
           )
       : [];
 
+    const printableItems = receiptDetail.items.filter(
+      (item: any) =>
+        Number(item.quantityReceived ?? 0) > 0
+    );
     const summaryLines: Array<{
       quantity: string | number | null | undefined;
       unitPrice?: string | number | null;
@@ -4430,7 +4434,7 @@ export default function Recepciones() {
       additionalTaxCodes?: string[] | string | null;
       taxBreakdown?: any;
     }> = [];
-    const itemRows = receiptDetail.items
+    const itemRows = printableItems
       .map((item: any, index: number) => {
         const sourceItem: any = sourceItemsById.get(item.sourceItemId);
         const sourceCode =
