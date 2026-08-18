@@ -216,6 +216,7 @@ import {
   normalizeReceiptArticleIdentity,
   normalizeReceiptArticleValue,
 } from "@shared/receipt-substitutions";
+import { extractSapItemGroupCode } from "@shared/sap-item-codes";
 import {
   getDemoImportWorkload,
   type ParsedDemoImportPayload,
@@ -237,6 +238,7 @@ import {
   normalizeFiscalRtn,
 } from "@shared/invoices";
 import { isTreasuryItemBlockingInvoiceReview } from "./invoiceReview";
+import { allocateNextSapItemCode } from "./sapItemCodeAllocator";
 import {
   invalidateDatabaseRequestCache,
   memoizeDatabaseRequest,
@@ -12189,6 +12191,76 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
   return createdInvoice;
 }
 
+const RECEIPT_SAP_SEQUENCE_LOCK_NAMESPACE = "receipt-sap-sequence";
+
+function getReceiptSubstitutionLockData(
+  sourceItem: any,
+  item: { receivedBrand?: string | null; receivedPartNumber?: string | null }
+) {
+  const sourceCatalog = sourceItem?.catalogItem ?? null;
+  if (
+    !sourceItem ||
+    sourceCatalog?.tipoArticulo !== 1 ||
+    sourceItem.isFixedAsset === true
+  ) {
+    return null;
+  }
+
+  const requestedBrand = normalizeReceiptArticleValue(
+    sourceItem.brand ?? sourceCatalog.brand
+  );
+  const requestedPartNumber = normalizeReceiptArticleValue(
+    sourceItem.partNumber ?? sourceCatalog.partNumber
+  );
+  const receivedBrand = normalizeReceiptArticleValue(
+    item.receivedBrand ?? requestedBrand
+  );
+  const receivedPartNumber = normalizeReceiptArticleValue(
+    item.receivedPartNumber ?? requestedPartNumber
+  );
+  const isSubstitution = isReceiptArticleSubstitution({
+    requested: { brand: requestedBrand, partNumber: requestedPartNumber },
+    received: { brand: receivedBrand, partNumber: receivedPartNumber },
+  });
+  if (!isSubstitution) {
+    return null;
+  }
+
+  return {
+    groupCode: extractSapItemGroupCode(sourceCatalog.itemGroup),
+    identityLockKey:
+      receivedBrand && receivedPartNumber
+        ? `receipt-article:${normalizeReceiptArticleIdentity(receivedBrand)}:${normalizeReceiptArticleIdentity(receivedPartNumber)}`
+        : null,
+  };
+}
+
+async function lockReceiptSapSequenceGroup(client: any, groupCode: string) {
+  await client.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${`${RECEIPT_SAP_SEQUENCE_LOCK_NAMESPACE}:${groupCode}`}, 0))`
+  );
+}
+
+async function getLatestReceiptSapItemCode(client: any, groupCode: string) {
+  const firstCode = `${groupCode}00000`;
+  const lastCode = `${groupCode}99999`;
+  const codePattern = `^${groupCode}[0-9]{5}$`;
+  const [latest] = await client
+    .select({
+      itemCode: sql<string | null>`max(${sapCatalog.itemCode})`,
+    })
+    .from(sapCatalog)
+    .where(
+      and(
+        gte(sapCatalog.itemCode, firstCode),
+        lte(sapCatalog.itemCode, lastCode),
+        sql`${sapCatalog.itemCode} ~ ${codePattern}`
+      )
+    );
+
+  return latest?.itemCode ?? null;
+}
+
 async function resolvePurchaseOrderReceiptArticles(params: {
   client: any;
   purchaseOrderDetail: NonNullable<
@@ -12210,6 +12282,40 @@ async function resolvePurchaseOrderReceiptArticles(params: {
   const sourceItemsById = new Map(
     (params.purchaseOrderDetail.items ?? []).map((item: any) => [item.id, item])
   );
+
+  // Transaction-level group and identity locks are acquired in a stable order
+  // before resolving any item. This prevents duplicate reservations and avoids
+  // deadlocks when concurrent receipts contain several substitutions.
+  const substitutionLockData = params.items
+    .map(item => {
+      const sourceItem = item.sourceItemId
+        ? sourceItemsById.get(item.sourceItemId)
+        : null;
+      return getReceiptSubstitutionLockData(sourceItem, item);
+    })
+    .filter(data => data !== null);
+  const substitutionGroupCodes = Array.from(
+    new Set(
+      substitutionLockData
+        .map(data => data.groupCode)
+        .filter((groupCode): groupCode is string => Boolean(groupCode))
+    )
+  ).sort();
+  for (const groupCode of substitutionGroupCodes) {
+    await lockReceiptSapSequenceGroup(params.client, groupCode);
+  }
+  const substitutionIdentityLockKeys = Array.from(
+    new Set(
+      substitutionLockData
+        .map(data => data.identityLockKey)
+        .filter((lockKey): lockKey is string => Boolean(lockKey))
+    )
+  ).sort();
+  for (const lockKey of substitutionIdentityLockKeys) {
+    await params.client.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`
+    );
+  }
 
   return params.items.reduce<Promise<typeof params.items>>(
     async (pendingItems, item) => {
@@ -12286,9 +12392,6 @@ async function resolvePurchaseOrderReceiptArticles(params: {
       const normalizedBrand = normalizeReceiptArticleIdentity(receivedBrand);
       const normalizedPartNumber =
         normalizeReceiptArticleIdentity(receivedPartNumber);
-      await params.client.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${`receipt-article:${normalizedBrand}:${normalizedPartNumber}`}, 0))`
-      );
 
       const matchingArticles = await params.client
         .select()
@@ -12326,46 +12429,50 @@ async function resolvePurchaseOrderReceiptArticles(params: {
       }
 
       if (!receivedArticle) {
-        if (!candidateSapItemCode) {
+        const buildArticleValues = (itemCode: string) => ({
+          itemCode,
+          description: normalizeArticleDescription(
+            sourceCatalog.description || sourceItem.itemName
+          ),
+          itemGroup: sourceCatalog.itemGroup,
+          financialGroupCode: sourceCatalog.financialGroupCode,
+          brand: receivedBrand,
+          partNumber: receivedPartNumber,
+          tipoArticulo: sourceCatalog.tipoArticulo,
+          projectId: sourceCatalog.projectId,
+          allowsTaxWithholding: sourceCatalog.allowsTaxWithholding,
+          isActive: true,
+          createdById: params.receivedById,
+          updatedById: params.receivedById,
+        });
+
+        const groupCode = extractSapItemGroupCode(sourceCatalog.itemGroup);
+        if (!groupCode) {
           throw new Error(
-            `Ingrese el código SAP definitivo para la marca ${receivedBrand} y parte ${receivedPartNumber}`
+            `El grupo SAP de ${sourceItem.itemName} debe iniciar con 4 dígitos para generar el código automáticamente`
           );
         }
 
-        const [articleWithSap] = await params.client
-          .select()
-          .from(sapCatalog)
-          .where(
-            sql`lower(trim(${sapCatalog.itemCode})) = ${candidateSapItemCode.toLocaleLowerCase("es-HN")}`
-          )
-          .limit(1);
-        if (articleWithSap) {
-          throw new Error(
-            articleWithSap.isActive
-              ? `El código SAP ${candidateSapItemCode} pertenece a otro artículo`
-              : `El código SAP ${candidateSapItemCode} pertenece a un artículo inactivo`
-          );
-        }
-
-        [receivedArticle] = await params.client
-          .insert(sapCatalog)
-          .values({
-            itemCode: candidateSapItemCode,
-            description: normalizeArticleDescription(
-              sourceCatalog.description || sourceItem.itemName
-            ),
-            itemGroup: sourceCatalog.itemGroup,
-            financialGroupCode: sourceCatalog.financialGroupCode,
-            brand: receivedBrand,
-            partNumber: receivedPartNumber,
-            tipoArticulo: sourceCatalog.tipoArticulo,
-            projectId: sourceCatalog.projectId,
-            allowsTaxWithholding: sourceCatalog.allowsTaxWithholding,
-            isActive: true,
-            createdById: params.receivedById,
-            updatedById: params.receivedById,
-          })
-          .returning();
+        receivedArticle = await allocateNextSapItemCode({
+          itemGroup: sourceCatalog.itemGroup,
+          // Re-acquiring the transaction lock is intentional defense in
+          // depth. All group locks were already taken in sorted order above,
+          // and PostgreSQL keeps this lock through the final receipt commit.
+          withGroupLock: async (lockedGroupCode, allocate) => {
+            await lockReceiptSapSequenceGroup(params.client, lockedGroupCode);
+            return allocate();
+          },
+          findLatestItemCode: lockedGroupCode =>
+            getLatestReceiptSapItemCode(params.client, lockedGroupCode),
+          tryInsert: async generatedSapItemCode => {
+            const [insertedArticle] = await params.client
+              .insert(sapCatalog)
+              .values(buildArticleValues(generatedSapItemCode))
+              .onConflictDoNothing({ target: sapCatalog.itemCode })
+              .returning();
+            return insertedArticle ?? null;
+          },
+        });
       }
 
       if (receivedArticle.tipoArticulo !== 1) {

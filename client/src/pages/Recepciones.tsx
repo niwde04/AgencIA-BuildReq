@@ -117,6 +117,7 @@ import {
   isReceiptArticleSubstitution,
   normalizeReceiptArticleValue,
 } from "@shared/receipt-substitutions";
+import { extractSapItemGroupCode } from "@shared/sap-item-codes";
 import {
   CAI_FORMAT_EXAMPLE,
   INVOICE_NUMBER_FORMAT_EXAMPLE,
@@ -3503,9 +3504,7 @@ export default function Recepciones() {
     const received = getReceivedArticleDraft(item);
     const substitution = isReceivedArticleSubstitution(item);
     return {
-      sapItemCode: substitution
-        ? received.sapItemCode.trim() || undefined
-        : getSourceItemCode(item),
+      sapItemCode: substitution ? undefined : getSourceItemCode(item),
       receivedBrand: received.brand.trim() || undefined,
       receivedPartNumber: received.partNumber.trim() || undefined,
     };
@@ -5971,6 +5970,9 @@ export default function Recepciones() {
                           const articleIsSubstitution =
                             canSubstituteArticle &&
                             isReceivedArticleSubstitution(item);
+                          const sapItemGroupCode = extractSapItemGroupCode(
+                            item?.catalogItem?.itemGroup ?? item?.itemGroup
+                          );
                           const transferCloseQuantity =
                             getTransferCloseQuantity(item);
                           const transferClosureDraft =
@@ -6695,34 +6697,22 @@ export default function Recepciones() {
                                             </div>
                                             {articleIsSubstitution ? (
                                               <div className="space-y-1 sm:col-span-2">
-                                                <Label
-                                                  htmlFor={`received-sap-${item.id}`}
-                                                >
+                                                <Label>
                                                   Código SAP definitivo
+                                                  (automático)
                                                 </Label>
-                                                <Input
-                                                  id={`received-sap-${item.id}`}
-                                                  value={
-                                                    receivedArticle.sapItemCode
-                                                  }
-                                                  maxLength={50}
-                                                  disabled={
-                                                    registerMutation.isPending
-                                                  }
-                                                  onChange={event =>
-                                                    updateReceivedArticleDraft(
-                                                      item,
-                                                      "sapItemCode",
-                                                      event.target.value
-                                                    )
-                                                  }
-                                                  placeholder="Requerido solo si el artículo no existe"
-                                                />
+                                                <div className="flex min-h-10 items-center rounded-md border border-violet-200 bg-background px-3 font-mono text-sm">
+                                                  {sapItemGroupCode
+                                                    ? `${sapItemGroupCode} + siguiente secuencia disponible`
+                                                    : "Se validará el grupo al registrar"}
+                                                </div>
                                                 <p className="text-xs text-muted-foreground">
                                                   Si la combinación ya existe,
                                                   se usará automáticamente su
-                                                  SAP. Si es nueva, ingrese el
-                                                  SAP definitivo.
+                                                  SAP. Si es nueva, el sistema
+                                                  reservará el siguiente código
+                                                  del grupo al registrar la
+                                                  recepción.
                                                 </p>
                                               </div>
                                             ) : null}

@@ -14073,7 +14073,7 @@ describe("BuildReq - Receipts", () => {
     saveReceiptDraftSpy.mockRestore();
   });
 
-  it("passes requested and received article snapshots without changing the source line", async () => {
+  it("leaves a new substitution SAP code empty for transactional allocation", async () => {
     const { ctx } = createProjectBodegueroContext();
     const caller = appRouter.createCaller(ctx);
     vi.spyOn(db, "getPurchaseOrderById").mockResolvedValue({
@@ -14129,7 +14129,6 @@ describe("BuildReq - Receipts", () => {
       items: [
         {
           sourceItemId: 16,
-          sapItemCode: "SAP-RECIBIDO",
           receivedBrand: "Donaldson",
           receivedPartNumber: "LF14000NN",
           warehouseId: DEFAULT_PROJECT_WAREHOUSE_ID,
@@ -14146,7 +14145,7 @@ describe("BuildReq - Receipts", () => {
     expect(registeredItem).toEqual(
       expect.objectContaining({
         sourceItemId: 16,
-        sapItemCode: "SAP-RECIBIDO",
+        sapItemCode: null,
         requestedItemName: "FILTRO DE ACEITE",
         requestedSapItemCode: "SAP-ORIGINAL",
         requestedBrand: "Fleetguard",
