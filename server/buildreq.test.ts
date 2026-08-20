@@ -4677,14 +4677,21 @@ describe("BuildReq - Role-based Access Control", () => {
     const getSupplyFlowByRequestIdSpy = vi
       .spyOn(db, "getSupplyFlowByRequestId")
       .mockResolvedValue([] as any);
-    const updateRequestItemSpy = vi
-      .spyOn(db, "updateRequestItem")
-      .mockResolvedValue({ success: true } as any);
+    const translateRequestItemToSapSpy = vi
+      .spyOn(db, "translateRequestItemToSap")
+      .mockResolvedValue({
+        success: true,
+        sapItemCode: "05050200058",
+        sapItemDescription: "CEMENTO GRANEL",
+        unit: "saco",
+        tipoArticulo: 1,
+        articleUnitUpdated: false,
+      } as any);
 
-    for (const createContext of [
+    for (const [index, createContext] of [
       createProjectAdminContext,
       createProjectBodegueroContext,
-    ]) {
+    ].entries()) {
       const { ctx } = createContext();
       const caller = appRouter.createCaller(ctx);
 
@@ -4693,20 +4700,33 @@ describe("BuildReq - Role-based Access Control", () => {
           id: 41,
           sapItemCode: "05050200058",
           sapItemDescription: "CEMENTO GRANEL",
+          unit: index === 1 ? "gal" : undefined,
         })
-      ).resolves.toEqual({ success: true });
+      ).resolves.toMatchObject({
+        success: true,
+        sapItemCode: "05050200058",
+        unit: "saco",
+      });
     }
 
-    expect(updateRequestItemSpy).toHaveBeenCalledTimes(2);
-    expect(updateRequestItemSpy).toHaveBeenCalledWith(41, {
+    expect(translateRequestItemToSapSpy).toHaveBeenCalledTimes(2);
+    expect(translateRequestItemToSapSpy).toHaveBeenCalledWith({
+      requestItemId: 41,
       sapItemCode: "05050200058",
-      sapItemDescription: "CEMENTO GRANEL",
+      proposedUnit: undefined,
+      updatedById: expect.any(Number),
+    });
+    expect(translateRequestItemToSapSpy).toHaveBeenCalledWith({
+      requestItemId: 41,
+      sapItemCode: "05050200058",
+      proposedUnit: "gal",
+      updatedById: expect.any(Number),
     });
 
     getRequestItemByIdSpy.mockRestore();
     getMaterialRequestByIdSpy.mockRestore();
     getSupplyFlowByRequestIdSpy.mockRestore();
-    updateRequestItemSpy.mockRestore();
+    translateRequestItemToSapSpy.mockRestore();
   });
 
   it("Project-scoped users cannot translate items from another project", async () => {

@@ -65,3 +65,24 @@ export function normalizeUnitValue(value: string | null | undefined) {
   if (!normalized) return null;
   return UNIT_ALIASES[normalized] ?? normalized;
 }
+
+export function resolveArticleTranslationUnit(
+  catalogUnit: string | null | undefined,
+  proposedUnit: string | null | undefined
+) {
+  const storedUnit = normalizeUnitValue(catalogUnit);
+  if (storedUnit) {
+    return {
+      unit: storedUnit,
+      shouldUpdateCatalog: false,
+    };
+  }
+
+  const normalizedProposal = normalizeUnitValue(proposedUnit);
+  if (!normalizedProposal) return null;
+
+  return {
+    unit: normalizedProposal,
+    shouldUpdateCatalog: true,
+  };
+}

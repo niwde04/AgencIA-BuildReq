@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { normalizeUnitValue, UNITS } from "../shared/units";
+import {
+  normalizeUnitValue,
+  resolveArticleTranslationUnit,
+  UNITS,
+} from "../shared/units";
 
 describe("units", () => {
   it.each([
@@ -25,5 +29,20 @@ describe("units", () => {
         "yarda",
       ])
     );
+  });
+
+  it("uses the catalog unit as authoritative during requisition translation", () => {
+    expect(resolveArticleTranslationUnit("gal", "und")).toEqual({
+      unit: "gal",
+      shouldUpdateCatalog: false,
+    });
+  });
+
+  it("uses and normalizes the proposed unit only when the catalog is empty", () => {
+    expect(resolveArticleTranslationUnit(null, "Unidades")).toEqual({
+      unit: "und",
+      shouldUpdateCatalog: true,
+    });
+    expect(resolveArticleTranslationUnit(null, "  ")).toBeNull();
   });
 });

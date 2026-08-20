@@ -2,6 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { isSuperintendentFamilyRole } from "@shared/buildreq-roles";
 import { DocumentAttachmentsPanel } from "@/components/DocumentAttachmentsPanel";
+import { UnitCombobox } from "@/components/UnitCombobox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -450,7 +451,11 @@ function SapSearchBox({
   itemId: number;
   currentCode: string | null;
   currentDescription: string | null;
-  onSelect: (code: string, desc: string) => void;
+  onSelect: (article: {
+    itemCode: string;
+    description: string;
+    unit?: string | null;
+  }) => void;
   onClear: () => void;
   disabled: boolean;
 }) {
@@ -568,7 +573,11 @@ function SapSearchBox({
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
-                onSelect(item.itemCode, item.description);
+                onSelect({
+                  itemCode: item.itemCode,
+                  description: item.description,
+                  unit: item.unit,
+                });
                 setSearch("");
                 setIsEditing(false);
                 setOpen(false);
@@ -589,6 +598,15 @@ function SapSearchBox({
                       .join(" · ")}
                   </span>
                 ) : null}
+                <span
+                  className={`mt-1 block text-[11px] ${
+                    item.unit ? "text-muted-foreground" : "font-medium text-amber-700"
+                  }`}
+                >
+                  {item.unit
+                    ? `Unidad base: ${item.unit}`
+                    : "Unidad pendiente: se solicitará al seleccionar"}
+                </span>
               </span>
             </button>
           ))}
@@ -660,8 +678,14 @@ export default function SolicitudDetalle() {
   const items = data?.items ?? [];
 
   const translateMutation = trpc.requestItems.translateToSap.useMutation({
-    onSuccess: () => {
-      toast.success("Traducción SAP guardada");
+    onSuccess: (result) => {
+      toast.success(
+        result.articleUnitUpdated
+          ? `Traducción guardada. Unidad ${result.unit} agregada al artículo ${result.sapItemCode}.`
+          : `Traducción SAP guardada con unidad ${result.unit}.`
+      );
+      setPendingSapUnitAssignment(null);
+      setPendingSapUnit("");
       invalidateAll();
     },
     onError: (e) => toast.error(e.message),
@@ -806,6 +830,13 @@ export default function SolicitudDetalle() {
     unit?: string | null;
   } | null>(null);
   const [approvedItemRejectReason, setApprovedItemRejectReason] = useState("");
+  const [pendingSapUnitAssignment, setPendingSapUnitAssignment] = useState<{
+    itemId: number;
+    sapItemCode: string;
+    sapItemDescription: string;
+    requestUnit?: string | null;
+  } | null>(null);
+  const [pendingSapUnit, setPendingSapUnit] = useState("");
   const [pendingBulkReviewDecision, setPendingBulkReviewDecision] = useState<
     "aprobada" | "rechazada" | null
   >(null);
@@ -1080,11 +1111,29 @@ export default function SolicitudDetalle() {
     });
   }, [activeFlowTypesByItem, activeFlowsByItem, items]);
 
-  const handleSapSelect = (itemId: number, code: string, desc: string) => {
+  const handleSapSelect = (
+    itemId: number,
+    article: {
+      itemCode: string;
+      description: string;
+      unit?: string | null;
+    },
+    requestUnit?: string | null
+  ) => {
+    if (!article.unit?.trim()) {
+      setPendingSapUnitAssignment({
+        itemId,
+        sapItemCode: article.itemCode,
+        sapItemDescription: article.description,
+        requestUnit,
+      });
+      setPendingSapUnit("");
+      return;
+    }
+
     translateMutation.mutate({
       id: itemId,
-      sapItemCode: code,
-      sapItemDescription: desc,
+      sapItemCode: article.itemCode,
     });
   };
 
@@ -1972,8 +2021,12 @@ export default function SolicitudDetalle() {
                           currentDescription={
                             editableItem?.sapItemDescription ?? item.sapItemDescription
                           }
-                          onSelect={(code, desc) =>
-                            handleSapSelect(editableItem?.id ?? item.id, code, desc)
+                          onSelect={(article) =>
+                            handleSapSelect(
+                              editableItem?.id ?? item.id,
+                              article,
+                              editableItem?.unit ?? item.unit
+                            )
                           }
                           onClear={() =>
                             handleClearSapTranslation(editableItem?.id ?? item.id)
@@ -2386,6 +2439,87 @@ export default function SolicitudDetalle() {
         title="Archivos Adjuntos"
         canManage={canManageMaterialRequestAttachments}
       />
+
+      <Dialog
+        open={Boolean(pendingSapUnitAssignment)}
+        onOpenChange={(open) => {
+          if (!open && !translateMutation.isPending) {
+            setPendingSapUnitAssignment(null);
+            setPendingSapUnit("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg rounded-2xl border-border/70">
+          <DialogHeader className="space-y-2">
+            <DialogTitle>Completar unidad base del artículo</DialogTitle>
+            <DialogDescription className="leading-6">
+              El artículo SAP{" "}
+              <span className="font-mono font-semibold text-foreground">
+                {pendingSapUnitAssignment?.sapItemCode}
+              </span>{" "}
+              todavía no tiene unidad. La unidad elegida se guardará en el catálogo y
+              también reemplazará la unidad de este ítem en la requisición.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="rounded-md border bg-muted/30 p-3 text-sm">
+              <p className="font-medium">
+                {pendingSapUnitAssignment?.sapItemDescription}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Unidad escrita originalmente en la requisición:{" "}
+                {pendingSapUnitAssignment?.requestUnit || "No indicada"}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Unidad base correcta *</Label>
+              <UnitCombobox
+                value={pendingSapUnit}
+                onChange={setPendingSapUnit}
+                disabled={translateMutation.isPending}
+              />
+              <p className="text-xs text-muted-foreground">
+                Esta será la unidad oficial para las próximas requisiciones de este
+                artículo.
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:justify-end">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setPendingSapUnitAssignment(null);
+                setPendingSapUnit("");
+              }}
+              disabled={translateMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                if (!pendingSapUnitAssignment) return;
+                if (!pendingSapUnit) {
+                  toast.error("Seleccione la unidad base correcta");
+                  return;
+                }
+
+                translateMutation.mutate({
+                  id: pendingSapUnitAssignment.itemId,
+                  sapItemCode: pendingSapUnitAssignment.sapItemCode,
+                  unit: pendingSapUnit,
+                });
+              }}
+              disabled={translateMutation.isPending || !pendingSapUnit}
+            >
+              {translateMutation.isPending
+                ? "Guardando..."
+                : "Guardar unidad y traducir"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={Boolean(pendingBalanceRejection)}

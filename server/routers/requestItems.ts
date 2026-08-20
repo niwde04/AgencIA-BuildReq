@@ -442,6 +442,7 @@ export const requestItemsRouter = router({
       z.object({
         id: z.number(),
         sapItemCode: z.string().min(1),
+        unit: z.string().trim().min(1).max(50).optional(),
         sapItemDescription: z.string().optional(),
       })
     )
@@ -461,14 +462,26 @@ export const requestItemsRouter = router({
       }
       await assertSapTranslationCanBeChanged(item);
 
-      const sapItem = await db.lookupSapItemByCode(input.sapItemCode);
-      const derivedRequestType =
-        sapItem?.tipoArticulo === 2 ? "servicios" : sapItem ? "bienes" : null;
+      let result: Awaited<ReturnType<typeof db.translateRequestItemToSap>>;
+      try {
+        result = await db.translateRequestItemToSap({
+          requestItemId: input.id,
+          sapItemCode: input.sapItemCode,
+          proposedUnit: input.unit,
+          updatedById: ctx.user.id,
+        });
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            error instanceof Error
+              ? error.message
+              : "No se pudo guardar la traducción SAP",
+        });
+      }
 
-      const result = await db.updateRequestItem(input.id, {
-        sapItemCode: input.sapItemCode,
-        sapItemDescription: input.sapItemDescription,
-      });
+      const derivedRequestType =
+        result.tipoArticulo === 2 ? "servicios" : "bienes";
 
       if (
         derivedRequestType &&

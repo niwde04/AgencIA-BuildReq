@@ -219,7 +219,10 @@ import {
   normalizeReceiptArticleValue,
 } from "@shared/receipt-substitutions";
 import { extractSapItemGroupCode } from "@shared/sap-item-codes";
-import { normalizeUnitValue } from "@shared/units";
+import {
+  normalizeUnitValue,
+  resolveArticleTranslationUnit,
+} from "@shared/units";
 import {
   getDemoImportWorkload,
   type ParsedDemoImportPayload,
@@ -4334,6 +4337,91 @@ export async function updateRequestItem(
   if (!db) throw new Error("DB not available");
   await db.update(requestItems).set(data).where(eq(requestItems.id, id));
   return { success: true };
+}
+
+export async function translateRequestItemToSap(params: {
+  requestItemId: number;
+  sapItemCode: string;
+  proposedUnit?: string | null;
+  updatedById: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  const normalizedSapItemCode = params.sapItemCode.trim();
+  return db.transaction(async tx => {
+    const [article] = await tx
+      .select({
+        id: sapCatalog.id,
+        itemCode: sapCatalog.itemCode,
+        description: sapCatalog.description,
+        unit: sapCatalog.unit,
+        tipoArticulo: sapCatalog.tipoArticulo,
+      })
+      .from(sapCatalog)
+      .where(
+        and(
+          eq(sapCatalog.itemCode, normalizedSapItemCode),
+          eq(sapCatalog.isActive, true)
+        )
+      )
+      .limit(1)
+      .for("update");
+
+    if (!article) {
+      throw new Error("El artículo SAP no existe o está inactivo");
+    }
+
+    const resolvedTranslationUnit = resolveArticleTranslationUnit(
+      article.unit,
+      params.proposedUnit
+    );
+    if (!resolvedTranslationUnit) {
+      throw new Error(
+        `El artículo SAP ${article.itemCode} no tiene unidad base. Seleccione una unidad para continuar.`
+      );
+    }
+
+    // The row lock makes the first completed assignment authoritative when
+    // several users translate the same unit-less article concurrently.
+    const resolvedUnit = resolvedTranslationUnit.unit;
+    const articleUnitUpdated = resolvedTranslationUnit.shouldUpdateCatalog;
+
+    if (articleUnitUpdated) {
+      await tx
+        .update(sapCatalog)
+        .set({
+          unit: resolvedUnit,
+          updatedById: params.updatedById,
+          updatedAt: new Date(),
+        })
+        .where(eq(sapCatalog.id, article.id));
+    }
+
+    const [updatedItem] = await tx
+      .update(requestItems)
+      .set({
+        sapItemCode: article.itemCode,
+        sapItemDescription: article.description,
+        unit: resolvedUnit,
+        updatedAt: new Date(),
+      })
+      .where(eq(requestItems.id, params.requestItemId))
+      .returning({ id: requestItems.id });
+
+    if (!updatedItem) {
+      throw new Error("El ítem de la requisición ya no existe");
+    }
+
+    return {
+      success: true as const,
+      sapItemCode: article.itemCode,
+      sapItemDescription: article.description,
+      unit: resolvedUnit,
+      tipoArticulo: article.tipoArticulo,
+      articleUnitUpdated,
+    };
+  });
 }
 
 export async function createRequestItem(data: InsertRequestItem) {
