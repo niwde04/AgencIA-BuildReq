@@ -1,11 +1,9 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { hasAtMostDecimalPlaces } from "../../shared/money";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
-import {
-  canAccessProject,
-  getProjectScopeIds,
-} from "../projectAccess";
+import { canAccessProject, getProjectScopeIds } from "../projectAccess";
 import * as advances from "../purchaseOrderAdvances";
 
 type User = advances.PurchaseOrderAdvanceActor & {
@@ -66,6 +64,7 @@ export const purchaseOrderAdvancesRouter = router({
   eligiblePurchaseOrders: protectedProcedure
     .input(
       z.object({
+        purchaseOrderId: z.number().int().positive().optional(),
         projectId: z.number().int().positive().optional(),
         currency: z.enum(["HNL", "USD"]).optional(),
         search: z.string().trim().max(200).optional(),
@@ -84,11 +83,28 @@ export const purchaseOrderAdvancesRouter = router({
           message: "No tiene acceso al proyecto solicitado.",
         });
       }
+      if (input.purchaseOrderId) {
+        const purchaseOrder = await db.getPurchaseOrderById(
+          input.purchaseOrderId
+        );
+        if (!purchaseOrder) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Orden de compra no encontrada.",
+          });
+        }
+        if (
+          !canAccessProject(ctx.user, purchaseOrder.purchaseOrder.projectId)
+        ) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "No tiene acceso a la orden de compra.",
+          });
+        }
+      }
       return advances.listEligiblePurchaseOrdersForAdvance({
         ...input,
-        projectIds: input.projectId
-          ? undefined
-          : getProjectScopeIds(ctx.user),
+        projectIds: input.projectId ? undefined : getProjectScopeIds(ctx.user),
       });
     }),
 
@@ -112,7 +128,9 @@ export const purchaseOrderAdvancesRouter = router({
             message: "Orden de compra no encontrada.",
           });
         }
-        if (!canAccessProject(ctx.user, purchaseOrder.purchaseOrder.projectId)) {
+        if (
+          !canAccessProject(ctx.user, purchaseOrder.purchaseOrder.projectId)
+        ) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "No tiene acceso a la orden de compra.",
@@ -136,7 +154,13 @@ export const purchaseOrderAdvancesRouter = router({
     .input(
       z.object({
         purchaseOrderId: z.number().int().positive(),
-        requestedAmount: z.number().positive().max(999_999_999),
+        requestedAmount: z
+          .number()
+          .positive()
+          .max(999_999_999)
+          .refine(value => hasAtMostDecimalPlaces(value, 2), {
+            message: "El importe debe tener como máximo dos decimales.",
+          }),
         requestedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         notes: z.string().trim().max(2000).optional(),
       })
@@ -149,7 +173,9 @@ export const purchaseOrderAdvancesRouter = router({
             "Solo Administración Central o Administración de Proyecto pueden solicitar anticipos.",
         });
       }
-      const purchaseOrder = await db.getPurchaseOrderById(input.purchaseOrderId);
+      const purchaseOrder = await db.getPurchaseOrderById(
+        input.purchaseOrderId
+      );
       if (!purchaseOrder) {
         throw new TRPCError({
           code: "NOT_FOUND",

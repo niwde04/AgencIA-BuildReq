@@ -100,8 +100,10 @@ import { useProcurementApprovalSettings } from "@/hooks/useProcurementApprovalSe
 import {
   allowsPurchaseOrderAdvance,
   calculatePurchaseOrderLineAmounts,
+  calculatePurchaseOrderAdvanceAvailableAmount,
   DEFAULT_SALES_TAXES,
   formatPurchaseOrderCurrency,
+  formatPurchaseOrderUnitPrice,
   getPurchaseCurrencyLabel,
   getPurchaseOrderContractSummary,
   normalizePurchaseOrderAdditionalTaxCodes,
@@ -632,10 +634,7 @@ function formatUnitPricePayload(value: number | string | null | undefined) {
 }
 
 function formatUnitPriceDisplay(value: number | string | null | undefined) {
-  const [integerPart, decimalPart = ""] =
-    formatUnitPricePayload(value).split(".");
-  const visibleDecimals = decimalPart.replace(/0+$/, "").padEnd(2, "0");
-  return `${integerPart}.${visibleDecimals}`;
+  return formatPurchaseOrderUnitPrice(value);
 }
 
 function formatMoneyDisplay(value: number | string | null | undefined) {
@@ -1401,10 +1400,11 @@ export default function OrdenesCompra() {
         pendingApply: 0,
       }
     );
-  const availableAdvanceRequestAmount = Math.max(
-    0,
-    Number(detail?.summary.total ?? 0) - advanceTotals.requested
-  );
+  const availableAdvanceRequestAmount =
+    calculatePurchaseOrderAdvanceAvailableAmount(
+      detail?.digitalSeal?.totalAmount ?? detail?.summary.total,
+      advanceTotals.requested
+    );
   const purchaseOrderSapCodes = useMemo(
     () =>
       Array.from(
@@ -6717,7 +6717,6 @@ export default function OrdenesCompra() {
             id: detail.purchaseOrder.id,
             orderNumber: detail.purchaseOrder.orderNumber,
             currency: detail.purchaseOrder.currency,
-            total: availableAdvanceRequestAmount,
             supplierName: detail.supplier?.name,
           }}
           onSaved={() => {

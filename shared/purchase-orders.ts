@@ -1,3 +1,9 @@
+import {
+  decimalToMinorUnits,
+  formatDecimalAmount,
+  roundDecimalAmount,
+} from "./money";
+
 export const PURCHASE_ORDER_TAX_VALUES = [
   "exe",
   "isv_15",
@@ -15,17 +21,13 @@ export function normalizePurchaseCurrency(
   return value === "USD" ? "USD" : "HNL";
 }
 
-export function getPurchaseCurrencyLabel(
-  value: string | null | undefined
-) {
+export function getPurchaseCurrencyLabel(value: string | null | undefined) {
   return normalizePurchaseCurrency(value) === "USD"
     ? "DÓLAR ESTADOUNIDENSE (USD)"
     : "LEMPIRA (HNL)";
 }
 
-export function getPurchaseCurrencySymbol(
-  value: string | null | undefined
-) {
+export function getPurchaseCurrencySymbol(value: string | null | undefined) {
   return normalizePurchaseCurrency(value) === "USD" ? "US$" : "L";
 }
 
@@ -157,7 +159,9 @@ export const PURCHASE_ORDER_TAX_OPTIONS =
   getPurchaseOrderBaseTaxOptions(DEFAULT_SALES_TAXES);
 
 function normalizeTaxCode(value: string | null | undefined) {
-  return String(value ?? "").trim().toLowerCase();
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
 }
 
 function toRatePercent(value: string | number | null | undefined) {
@@ -239,9 +243,7 @@ export function parsePurchaseOrderTaxBreakdown(
         displayOrder: toDisplayOrder(entry?.displayOrder, index + 1),
       } satisfies PurchaseOrderTaxBreakdownEntry;
     })
-    .filter((entry): entry is PurchaseOrderTaxBreakdownEntry =>
-      Boolean(entry)
-    )
+    .filter((entry): entry is PurchaseOrderTaxBreakdownEntry => Boolean(entry))
     .sort((a, b) => a.displayOrder - b.displayOrder);
 }
 
@@ -403,14 +405,49 @@ export function toPurchaseOrderNumber(
     typeof value === "number"
       ? value
       : value === null || value === undefined || value === ""
-      ? 0
-      : Number(String(value).replace(/,/g, "").trim());
+        ? 0
+        : Number(String(value).replace(/,/g, "").trim());
 
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
 export function roundPurchaseOrderMoney(value: number) {
-  return Math.round((value + Number.EPSILON) * 10000) / 10000;
+  return roundDecimalAmount(value, 4);
+}
+
+/**
+ * Returns the monetary value shown on an official purchase order.
+ *
+ * Purchase-order calculations retain four decimals, but the document and all
+ * user-facing currency amounts are expressed in cents. Any workflow that uses
+ * the printed total as a limit must use this value instead of the four-decimal
+ * calculation result.
+ */
+export function roundPurchaseOrderDisplayMoney(
+  value: string | number | null | undefined
+) {
+  return roundDecimalAmount(value, 2);
+}
+
+export function calculatePurchaseOrderAdvanceAvailableAmount(
+  purchaseOrderTotal: string | number | null | undefined,
+  requestedAdvanceAmount: string | number | null | undefined
+) {
+  const printedTotal = decimalToMinorUnits(purchaseOrderTotal, 2);
+  const requestedTotal = decimalToMinorUnits(requestedAdvanceAmount, 2);
+  const available = printedTotal - requestedTotal;
+  return Math.max(0, available) / 100;
+}
+
+export function formatPurchaseOrderUnitPrice(
+  value: string | number | null | undefined,
+  useGrouping = false
+) {
+  return formatDecimalAmount(value, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 8,
+    useGrouping,
+  });
 }
 
 export function calculatePurchaseOrderLineAmounts(params: {
@@ -510,9 +547,7 @@ export function calculatePurchaseOrderLineAmounts(params: {
     const isLastTax = index === appliedTaxes.length - 1;
     const amount =
       pricesIncludeTax && isLastTax
-        ? roundPurchaseOrderMoney(
-            inclusiveTaxAmount - allocatedInclusiveTax
-          )
+        ? roundPurchaseOrderMoney(inclusiveTaxAmount - allocatedInclusiveTax)
         : roundPurchaseOrderMoney(subtotal * entry.rate);
     allocatedInclusiveTax = roundPurchaseOrderMoney(
       allocatedInclusiveTax + amount
@@ -585,6 +620,10 @@ export function summarizePurchaseOrderLines(
       summary.subtotal = roundPurchaseOrderMoney(
         summary.subtotal + amounts.subtotal
       );
+      summary.displaySubtotal = roundPurchaseOrderDisplayMoney(
+        summary.displaySubtotal +
+          roundPurchaseOrderDisplayMoney(amounts.subtotal)
+      );
       summary.totalIsv = roundPurchaseOrderMoney(
         summary.totalIsv + amounts.taxAmount
       );
@@ -653,9 +692,7 @@ export function summarizePurchaseOrderLines(
       }
 
       for (const entry of amounts.taxBreakdown) {
-        let taxRow = summary.taxRows.find(
-          row => row.taxCode === entry.taxCode
-        );
+        let taxRow = summary.taxRows.find(row => row.taxCode === entry.taxCode);
         if (!taxRow) {
           taxRow = {
             taxCode: entry.taxCode,
@@ -680,6 +717,7 @@ export function summarizePurchaseOrderLines(
     },
     {
       subtotal: 0,
+      displaySubtotal: 0,
       totalIsv: 0,
       totalIsv15: 0,
       totalIsv18: 0,
@@ -688,16 +726,20 @@ export function summarizePurchaseOrderLines(
       totalExempt: 0,
       totalTaxed15: 0,
       totalTaxed18: 0,
-      taxedRows: taxSummarySeed.filter(
-        row =>
-          catalog.find(tax => tax.taxCode === row.taxCode)?.taxType ===
-            "base" && row.fiscalCategory === "gravado"
-      ).map(row => ({ ...row })),
-      taxRows: taxSummarySeed.filter(
-        row =>
-          (catalog.find(tax => tax.taxCode === row.taxCode)?.ratePercent ??
-            0) > 0
-      ).map(row => ({ ...row })),
+      taxedRows: taxSummarySeed
+        .filter(
+          row =>
+            catalog.find(tax => tax.taxCode === row.taxCode)?.taxType ===
+              "base" && row.fiscalCategory === "gravado"
+        )
+        .map(row => ({ ...row })),
+      taxRows: taxSummarySeed
+        .filter(
+          row =>
+            (catalog.find(tax => tax.taxCode === row.taxCode)?.ratePercent ??
+              0) > 0
+        )
+        .map(row => ({ ...row })),
       total: 0,
     }
   );
@@ -708,41 +750,61 @@ export function getPurchaseOrderFiscalSummaryRows(
   currency: PurchaseCurrency = "HNL"
 ) {
   const currencyCode = normalizePurchaseCurrency(currency);
+  const subtotal = roundPurchaseOrderDisplayMoney(summary.displaySubtotal);
+  const taxRows = summary.taxRows.map(row => ({
+    key: `isv-${row.taxCode}`,
+    label: `I.S.V. ${row.shortLabel.replace(/^ISV\s*/i, "")} ${currencyCode}`,
+    value: roundPurchaseOrderDisplayMoney(row.value),
+    emphasized: false,
+  }));
+  const total = roundPurchaseOrderDisplayMoney(summary.total);
+  const componentCents =
+    decimalToMinorUnits(subtotal, 2) +
+    taxRows.reduce((sum, row) => sum + decimalToMinorUnits(row.value, 2), 0);
+  const adjustmentCents = decimalToMinorUnits(total, 2) - componentCents;
+  const roundingRows =
+    adjustmentCents === 0
+      ? []
+      : [
+          {
+            key: "rounding-adjustment",
+            label: `Ajuste por redondeo ${currencyCode}`,
+            value: adjustmentCents / 100,
+            emphasized: false,
+          },
+        ];
+
   return [
     {
       key: "subtotal",
       label: `Sub-total ${currencyCode}`,
-      value: summary.subtotal,
+      value: subtotal,
       emphasized: false,
     },
     {
       key: "exonerated",
       label: `Importe exonerado ${currencyCode}`,
-      value: summary.totalExonerated,
+      value: roundPurchaseOrderDisplayMoney(summary.totalExonerated),
       emphasized: false,
     },
     {
       key: "exempt",
       label: `Importe exento ${currencyCode}`,
-      value: summary.totalExempt,
+      value: roundPurchaseOrderDisplayMoney(summary.totalExempt),
       emphasized: false,
     },
     ...summary.taxedRows.map(row => ({
       key: `taxed-${row.taxCode}`,
       label: `Importe gravado ${row.shortLabel.replace(/^ISV\s*/i, "")} ${currencyCode}`,
-      value: row.value,
+      value: roundPurchaseOrderDisplayMoney(row.value),
       emphasized: false,
     })),
-    ...summary.taxRows.map(row => ({
-      key: `isv-${row.taxCode}`,
-      label: `I.S.V. ${row.shortLabel.replace(/^ISV\s*/i, "")} ${currencyCode}`,
-      value: row.value,
-      emphasized: false,
-    })),
+    ...taxRows,
+    ...roundingRows,
     {
       key: "total",
       label: `Total a pagar ${currencyCode}`,
-      value: summary.total,
+      value: total,
       emphasized: true,
     },
   ];
@@ -752,7 +814,7 @@ export function formatPurchaseOrderCurrency(
   value: string | number | null | undefined,
   currency: PurchaseCurrency = "HNL"
 ) {
-  const amount = toPurchaseOrderNumber(value);
+  const amount = roundPurchaseOrderDisplayMoney(value);
   const symbol = getPurchaseCurrencySymbol(currency);
   const formatted = new Intl.NumberFormat("es-HN", {
     minimumFractionDigits: 2,
@@ -819,7 +881,12 @@ export function calculateContractPaymentDates(params: {
   const firstPaymentDate = toContractDate(params.firstPaymentDate);
   const endDate = toContractDate(params.endDate);
 
-  if (!frequency || !firstPaymentDate || !endDate || firstPaymentDate > endDate) {
+  if (
+    !frequency ||
+    !firstPaymentDate ||
+    !endDate ||
+    firstPaymentDate > endDate
+  ) {
     return [];
   }
 
@@ -882,9 +949,7 @@ export function getPurchaseOrderContractSummary(params: {
     : null;
   const isExpired = endDate ? daysUntilEnd !== null && daysUntilEnd < 0 : false;
   const expiresSoon =
-    endDate && daysUntilEnd !== null
-      ? !isExpired && daysUntilEnd <= 30
-      : false;
+    endDate && daysUntilEnd !== null ? !isExpired && daysUntilEnd <= 30 : false;
   const isFullyInvoiced =
     appliesContract &&
     expectedInvoiceCount > 0 &&

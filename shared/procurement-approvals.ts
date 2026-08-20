@@ -1,4 +1,5 @@
 import type { PurchaseCurrency } from "./purchase-orders";
+import { roundDecimalAmount } from "./money";
 
 /**
  * Interruptor temporal del flujo de aprobación de Solicitudes y Órdenes de
@@ -109,8 +110,7 @@ export function hasUnresolvedPurchaseRequestApprovalItems(
 ) {
   return items.some(
     item =>
-      item.approvalStatus === "pendiente" ||
-      item.approvalStatus === "rechazada"
+      item.approvalStatus === "pendiente" || item.approvalStatus === "rechazada"
   );
 }
 
@@ -356,10 +356,7 @@ export function getPurchaseOrderApprovalReadinessError(
 }
 
 export function roundProcurementAmount(value: unknown) {
-  const numeric = Number(value ?? 0);
-  if (!Number.isFinite(numeric)) return 0;
-  const tolerance = Number.EPSILON * Math.max(1, Math.abs(numeric)) * 4;
-  return Math.round((numeric + tolerance) * 100) / 100;
+  return roundDecimalAmount(value as string | number | null | undefined, 2);
 }
 
 function normalizeApprovalMinimum(value: unknown) {

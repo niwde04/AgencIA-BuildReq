@@ -1982,6 +1982,21 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       descriptionLines.length * 8.8 + 7,
       partLines.length * 8.7 + 7
     );
+    const unitPriceWidth = tableColumns[4].width - 10;
+    const unitPricePreferredFontSize = 7.3;
+    const unitPriceMeasuredWidth = measureTextWidth(
+      item.unitPriceLabel,
+      unitPricePreferredFontSize,
+      "F1"
+    );
+    const unitPriceFontSize = Math.max(
+      5,
+      Math.min(
+        unitPricePreferredFontSize,
+        (unitPricePreferredFontSize * unitPriceWidth) /
+          Math.max(unitPriceMeasuredWidth, 1)
+      )
+    );
 
     drawWrappedCell({
       x: tableColumns[0].x,
@@ -2025,7 +2040,7 @@ export function buildPurchaseOrderPrintPdfBase64(params: {
       top: top + Math.max(4.5, rowHeight / 2 - 3),
       width: tableColumns[4].width - 10,
       text: item.unitPriceLabel,
-      fontSize: 7.3,
+      fontSize: unitPriceFontSize,
       color: ink,
       align: "right",
     });

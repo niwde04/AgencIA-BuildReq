@@ -187,6 +187,7 @@ import {
   DEFAULT_SALES_TAXES,
   formatPurchaseOrderCurrency,
   formatPurchaseOrderPaymentMethodPrintLabel,
+  formatPurchaseOrderUnitPrice,
   getPurchaseCurrencyLabel,
   getPurchaseOrderContractSummary,
   getPurchaseOrderFiscalSummaryRows,
@@ -194,6 +195,7 @@ import {
   normalizePurchaseOrderTaxCode,
   parsePurchaseOrderAdditionalTaxCodes,
   parsePurchaseOrderTaxBreakdown,
+  roundPurchaseOrderDisplayMoney,
   summarizePurchaseOrderLines,
   type PurchaseOrderTaxBreakdownEntry,
   type PurchaseCurrency,
@@ -1171,7 +1173,7 @@ function formatPrintNumberLabel(value: string | number | null | undefined) {
 }
 
 function formatPrintMoneyLabel(value: string | number | null | undefined) {
-  return parseDecimal(value).toLocaleString("es-HN", {
+  return roundPurchaseOrderDisplayMoney(value).toLocaleString("es-HN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
@@ -6102,7 +6104,7 @@ function buildPurchaseOrderDocument(params: {
           item.originalSapItemCode ||
           "-",
         quantityLabel: formatPrintNumberLabel(item.quantity),
-        unitPriceLabel: formatPrintMoneyLabel(item.unitPrice),
+        unitPriceLabel: formatPurchaseOrderUnitPrice(item.unitPrice, true),
         subtotalLabel: formatPrintMoneyLabel(amounts.subtotal),
       };
     }),
@@ -9249,6 +9251,8 @@ export async function getPurchaseOrderById(id: number) {
           sealType: digitalSeal.sealType,
           signerName: digitalSeal.signerName,
           signerRole: getBuildReqRoleLabel(digitalSeal.signerRole),
+          totalAmount: digitalSeal.totalAmount,
+          currency: digitalSeal.currency,
           signedAt: digitalSeal.signedAt,
           sealedAt: digitalSeal.sealedAt,
           verificationCode: digitalSeal.verificationCode,

@@ -16,6 +16,7 @@ import {
   projects,
   purchaseOrderAdvanceApplications,
   purchaseOrderAdvances,
+  purchaseOrderDigitalSeals,
   purchaseOrderItems,
   purchaseOrders,
   receipts,
@@ -25,10 +26,12 @@ import {
 } from "../drizzle/schema";
 import {
   allowsPurchaseOrderAdvance,
+  calculatePurchaseOrderAdvanceAvailableAmount,
+  roundPurchaseOrderDisplayMoney,
   summarizePurchaseOrderLines,
   type PurchaseCurrency,
 } from "../shared/purchase-orders";
-import { roundTreasuryMoney } from "../shared/treasury";
+import { hasAtMostDecimalPlaces } from "../shared/money";
 import { getDb } from "./db";
 
 type DbExecutor = NonNullable<Awaited<ReturnType<typeof getDb>>> | any;
@@ -48,11 +51,11 @@ export type PurchaseOrderAdvanceActor = {
 };
 
 function money(value: string | number | null | undefined) {
-  return roundTreasuryMoney(Number(value ?? 0));
+  return roundPurchaseOrderDisplayMoney(value);
 }
 
 function moneyString(value: string | number | null | undefined) {
-  return money(value).toFixed(4);
+  return money(value).toFixed(2);
 }
 
 function paymentAmount(item: {
@@ -107,10 +110,7 @@ export function buildPurchaseOrderAdvanceMoneySummary(input: {
   const accountedAmount = money(input.accountedAmount);
   const reservedAmount = money(input.reservedAmount);
   const bankPaidPendingAmount = money(input.bankPaidPendingAmount);
-  const appliedAmount = Math.min(
-    accountedAmount,
-    money(input.appliedAmount)
-  );
+  const appliedAmount = Math.min(accountedAmount, money(input.appliedAmount));
   const availableToPayAmount = money(
     Math.max(0, requestedAmount - accountedAmount - reservedAmount)
   );
@@ -303,7 +303,10 @@ export async function getInvoiceAppliedAdvanceMap(
     .from(purchaseOrderAdvanceApplications)
     .where(inArray(purchaseOrderAdvanceApplications.invoiceId, uniqueIds));
   for (const row of rows) {
-    result.set(row.invoiceId, money((result.get(row.invoiceId) ?? 0) + money(row.amount)));
+    result.set(
+      row.invoiceId,
+      money((result.get(row.invoiceId) ?? 0) + money(row.amount))
+    );
   }
   return result;
 }
@@ -342,7 +345,7 @@ export async function getPurchaseOrderAdvanceBlockingSet(
   return blocked;
 }
 
-async function getPurchaseOrderTotal(
+async function getCalculatedPurchaseOrderTotal(
   executor: DbExecutor,
   purchaseOrderId: number,
   pricesIncludeTax: boolean
@@ -364,7 +367,41 @@ async function getPurchaseOrderTotal(
   ).total;
 }
 
+export function resolvePurchaseOrderOfficialTotal(input: {
+  sealedTotal?: string | number | null;
+  calculatedTotal: string | number;
+}) {
+  return money(input.sealedTotal ?? input.calculatedTotal);
+}
+
+async function getPurchaseOrderOfficialTotal(
+  executor: DbExecutor,
+  purchaseOrderId: number,
+  pricesIncludeTax: boolean
+) {
+  const [seal] = await executor
+    .select({ totalAmount: purchaseOrderDigitalSeals.totalAmount })
+    .from(purchaseOrderDigitalSeals)
+    .where(eq(purchaseOrderDigitalSeals.purchaseOrderId, purchaseOrderId))
+    .limit(1);
+  if (seal) {
+    return resolvePurchaseOrderOfficialTotal({
+      sealedTotal: seal.totalAmount,
+      calculatedTotal: 0,
+    });
+  }
+
+  return resolvePurchaseOrderOfficialTotal({
+    calculatedTotal: await getCalculatedPurchaseOrderTotal(
+      executor,
+      purchaseOrderId,
+      pricesIncludeTax
+    ),
+  });
+}
+
 export async function listEligiblePurchaseOrdersForAdvance(filters?: {
+  purchaseOrderId?: number;
   projectId?: number;
   projectIds?: number[];
   currency?: PurchaseCurrency;
@@ -390,6 +427,9 @@ export async function listEligiblePurchaseOrdersForAdvance(filters?: {
         )
     ),
   ];
+  if (filters?.purchaseOrderId) {
+    conditions.push(eq(purchaseOrders.id, filters.purchaseOrderId));
+  }
   if (filters?.projectId)
     conditions.push(eq(purchaseOrders.projectId, filters.projectId));
   if (filters?.projectIds) {
@@ -426,6 +466,24 @@ export async function listEligiblePurchaseOrdersForAdvance(filters?: {
     .where(and(...conditions))
     .orderBy(asc(suppliers.name), asc(purchaseOrders.orderNumber));
 
+  const sealedTotals = rows.length
+    ? await db
+        .select({
+          purchaseOrderId: purchaseOrderDigitalSeals.purchaseOrderId,
+          totalAmount: purchaseOrderDigitalSeals.totalAmount,
+        })
+        .from(purchaseOrderDigitalSeals)
+        .where(
+          inArray(
+            purchaseOrderDigitalSeals.purchaseOrderId,
+            rows.map((row: any) => row.purchaseOrder.id)
+          )
+        )
+    : [];
+  const sealedTotalByOrder = new Map(
+    sealedTotals.map((seal: any) => [seal.purchaseOrderId, seal.totalAmount])
+  );
+
   const advances = rows.length
     ? await db
         .select()
@@ -453,21 +511,31 @@ export async function listEligiblePurchaseOrdersForAdvance(filters?: {
 
   return Promise.all(
     rows.map(async (row: any) => {
-      const total = money(
-        await getPurchaseOrderTotal(
-          db,
-          row.purchaseOrder.id,
-          row.purchaseOrder.pricesIncludeTax
-        )
-      );
-      const requestedAdvanceAmount = requestedByOrder.get(row.purchaseOrder.id) ?? 0;
+      const sealedTotal = sealedTotalByOrder.get(row.purchaseOrder.id);
+      const total =
+        sealedTotal !== undefined
+          ? resolvePurchaseOrderOfficialTotal({
+              sealedTotal,
+              calculatedTotal: 0,
+            })
+          : resolvePurchaseOrderOfficialTotal({
+              calculatedTotal: await getCalculatedPurchaseOrderTotal(
+                db,
+                row.purchaseOrder.id,
+                row.purchaseOrder.pricesIncludeTax
+              ),
+            });
+      const requestedAdvanceAmount =
+        requestedByOrder.get(row.purchaseOrder.id) ?? 0;
       return {
         ...row,
         total,
         requestedAdvanceAmount,
-        availableAdvanceRequestAmount: money(
-          Math.max(0, total - requestedAdvanceAmount)
-        ),
+        availableAdvanceRequestAmount:
+          calculatePurchaseOrderAdvanceAvailableAmount(
+            total,
+            requestedAdvanceAmount
+          ),
       };
     })
   );
@@ -482,6 +550,11 @@ export async function createPurchaseOrderAdvance(input: {
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
+  if (!hasAtMostDecimalPlaces(input.requestedAmount, 2)) {
+    throw new PurchaseOrderAdvanceRuleError(
+      "El importe del anticipo debe tener como máximo dos decimales."
+    );
+  }
   const requestedAmount = money(input.requestedAmount);
   if (requestedAmount <= 0) {
     throw new PurchaseOrderAdvanceRuleError(
@@ -497,9 +570,7 @@ export async function createPurchaseOrderAdvance(input: {
       .for("update")
       .limit(1);
     if (!purchaseOrder) {
-      throw new PurchaseOrderAdvanceRuleError(
-        "La orden de compra no existe."
-      );
+      throw new PurchaseOrderAdvanceRuleError("La orden de compra no existe.");
     }
     if (!["emitida", "enviada"].includes(purchaseOrder.status)) {
       throw new PurchaseOrderAdvanceRuleError(
@@ -536,7 +607,7 @@ export async function createPurchaseOrderAdvance(input: {
     }
 
     const total = money(
-      await getPurchaseOrderTotal(
+      await getPurchaseOrderOfficialTotal(
         tx,
         purchaseOrder.id,
         purchaseOrder.pricesIncludeTax
@@ -555,11 +626,13 @@ export async function createPurchaseOrderAdvance(input: {
           0
         )
     );
-    if (requestedAmount > total - alreadyRequested + 0.0001) {
+    const availableAdvanceRequestAmount =
+      calculatePurchaseOrderAdvanceAvailableAmount(total, alreadyRequested);
+    if (requestedAmount > availableAdvanceRequestAmount + 0.0001) {
       throw new PurchaseOrderAdvanceRuleError(
-        `El anticipo supera el saldo disponible de la OC (${money(
-          total - alreadyRequested
-        ).toFixed(2)} ${purchaseOrder.currency}).`
+        `El anticipo supera el saldo disponible de la OC (${availableAdvanceRequestAmount.toFixed(
+          2
+        )} ${purchaseOrder.currency}).`
       );
     }
 
@@ -588,9 +661,11 @@ export async function createPurchaseOrderAdvance(input: {
     return {
       ...updated,
       purchaseOrderTotal: total,
-      availableAdvanceRequestAmount: money(
-        total - alreadyRequested - requestedAmount
-      ),
+      availableAdvanceRequestAmount:
+        calculatePurchaseOrderAdvanceAvailableAmount(
+          total,
+          alreadyRequested + requestedAmount
+        ),
     };
   });
 }
@@ -640,7 +715,10 @@ export async function listPurchaseOrderAdvances(filters?: {
     .innerJoin(projects, eq(purchaseOrderAdvances.projectId, projects.id))
     .innerJoin(users, eq(purchaseOrderAdvances.createdById, users.id))
     .where(conditions.length ? and(...conditions) : undefined)
-    .orderBy(desc(purchaseOrderAdvances.createdAt), desc(purchaseOrderAdvances.id));
+    .orderBy(
+      desc(purchaseOrderAdvances.createdAt),
+      desc(purchaseOrderAdvances.id)
+    );
   const financials = await getAdvanceFinancialMap(
     db,
     rows.map((row: any) => row.advance.id)
@@ -703,9 +781,7 @@ export async function getPurchaseOrderAdvanceSnapshots(
     .where(inArray(purchaseOrderAdvances.id, uniqueIds))
     .for("update", { of: purchaseOrderAdvances });
   if (rows.length !== uniqueIds.length) {
-    throw new PurchaseOrderAdvanceRuleError(
-      "Uno o más anticipos no existen."
-    );
+    throw new PurchaseOrderAdvanceRuleError("Uno o más anticipos no existen.");
   }
   const financials = await getAdvanceFinancialMap(
     executor,
@@ -829,7 +905,10 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
         isNull(purchaseOrderAdvances.cancelledAt)
       )
     )
-    .orderBy(asc(purchaseOrderAdvances.createdAt), asc(purchaseOrderAdvances.id))
+    .orderBy(
+      asc(purchaseOrderAdvances.createdAt),
+      asc(purchaseOrderAdvances.id)
+    )
     .for("update");
   if (!advances.length) return [];
 
@@ -852,8 +931,7 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
   );
   const advanceAccountingRows = await input.executor
     .select({
-      purchaseOrderAdvanceId:
-        treasuryPaymentItems.purchaseOrderAdvanceId,
+      purchaseOrderAdvanceId: treasuryPaymentItems.purchaseOrderAdvanceId,
       firstAccountedAt: sql<Date | null>`min(${treasuryPaymentItems.accountedAt})`,
     })
     .from(treasuryPaymentItems)
@@ -878,20 +956,16 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
   );
   const orderedAdvances = [...advances].sort(
     (left: any, right: any) =>
-      (firstAccountedAtByAdvanceId.get(left.id) ??
-        Number.MAX_SAFE_INTEGER) -
+      (firstAccountedAtByAdvanceId.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
         (firstAccountedAtByAdvanceId.get(right.id) ??
-          Number.MAX_SAFE_INTEGER) ||
-      left.id - right.id
+          Number.MAX_SAFE_INTEGER) || left.id - right.id
   );
   const invoiceIds = invoiceRows.map((invoice: any) => invoice.id);
   const [applicationRows, invoicePaymentRows] = await Promise.all([
     input.executor
       .select()
       .from(purchaseOrderAdvanceApplications)
-      .where(
-        inArray(purchaseOrderAdvanceApplications.invoiceId, invoiceIds)
-      ),
+      .where(inArray(purchaseOrderAdvanceApplications.invoiceId, invoiceIds)),
     input.executor
       .select()
       .from(treasuryPaymentItems)
@@ -915,7 +989,9 @@ export async function applyAvailableAdvancesForPurchaseOrder(input: {
     if (item.status === "contabilizada") {
       invoiceSettled.set(
         item.invoiceId,
-        money((invoiceSettled.get(item.invoiceId) ?? 0) + money(item.bankPaidAmount))
+        money(
+          (invoiceSettled.get(item.invoiceId) ?? 0) + money(item.bankPaidAmount)
+        )
       );
     } else if (item.activeReservation) {
       invoiceSettled.set(

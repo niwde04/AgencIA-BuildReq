@@ -1,4 +1,5 @@
 import type { PurchaseCurrency } from "./purchase-orders";
+import { roundDecimalAmount } from "./money";
 
 export const TREASURY_PAYMENT_KIND_CODES = [
   "invoice",
@@ -171,7 +172,7 @@ export const TREASURY_ACTIVE_ITEM_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 export function roundTreasuryMoney(value: number) {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
+  return roundDecimalAmount(value, 2);
 }
 
 export function buildInvoiceAdvanceBalance(input: {

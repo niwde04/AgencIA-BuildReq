@@ -22,13 +22,13 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { prepareDocumentAttachment } from "@/lib/document-attachments";
 import { trpc } from "@/lib/trpc";
+import { hasAtMostDecimalPlaces } from "@shared/money";
 import { formatPurchaseOrderCurrency } from "@shared/purchase-orders";
 
 type FixedPurchaseOrder = {
   id: number;
   orderNumber: string;
   currency: "HNL" | "USD";
-  total: number;
   supplierName?: string | null;
 };
 
@@ -58,8 +58,11 @@ export function PurchaseOrderAdvanceDialog({
   const [support, setSupport] = useState<File>();
   const eligibleQuery =
     trpc.purchaseOrderAdvances.eligiblePurchaseOrders.useQuery(
-      { search: search || undefined },
-      { enabled: open && !purchaseOrder }
+      {
+        purchaseOrderId: purchaseOrder?.id,
+        search: purchaseOrder ? undefined : search || undefined,
+      },
+      { enabled: open }
     );
   const uploadMutation = trpc.attachments.upload.useMutation();
   const createMutation = trpc.purchaseOrderAdvances.create.useMutation();
@@ -75,32 +78,25 @@ export function PurchaseOrderAdvanceDialog({
   }, [open, purchaseOrder]);
 
   const selected = useMemo(() => {
-    if (purchaseOrder) {
-      return {
-        purchaseOrder: {
-          id: purchaseOrder.id,
-          orderNumber: purchaseOrder.orderNumber,
-          currency: purchaseOrder.currency,
-        },
-        supplier: { name: purchaseOrder.supplierName ?? "" },
-        availableAdvanceRequestAmount: purchaseOrder.total,
-      };
-    }
+    const selectedId = purchaseOrder?.id ?? Number(purchaseOrderId);
     return (eligibleQuery.data ?? []).find(
-      (row: any) => row.purchaseOrder.id === Number(purchaseOrderId)
+      (row: any) => row.purchaseOrder.id === selectedId
     );
   }, [eligibleQuery.data, purchaseOrder, purchaseOrderId]);
 
   async function save() {
-    const amount = Number(requestedAmount);
-    if (!selected || !requestedPaymentDate || !Number.isFinite(amount)) {
+    const parsedAmount = Number(requestedAmount);
+    if (!selected || !requestedPaymentDate || !Number.isFinite(parsedAmount)) {
       toast.error("Seleccione la OC, fecha e importe del anticipo.");
       return;
     }
-    if (
-      amount <= 0 ||
-      amount > Number(selected.availableAdvanceRequestAmount) + 0.0001
-    ) {
+    if (!hasAtMostDecimalPlaces(requestedAmount, 2)) {
+      toast.error("El importe debe tener como máximo dos decimales.");
+      return;
+    }
+    const amount = parsedAmount;
+    const availableAmount = Number(selected.availableAdvanceRequestAmount);
+    if (amount <= 0 || amount > availableAmount) {
       toast.error("El importe supera el saldo disponible de la OC.");
       return;
     }
@@ -143,16 +139,15 @@ export function PurchaseOrderAdvanceDialog({
     }
   }
 
-  const pending =
-    createMutation.isPending || uploadMutation.isPending;
+  const pending = createMutation.isPending || uploadMutation.isPending;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[calc(100vh-2rem)] !w-[calc(100vw-1rem)] !max-w-[calc(100vw-1rem)] overflow-y-auto sm:!w-[calc(100vw-3rem)] sm:!max-w-[calc(100vw-3rem)] lg:!max-w-5xl">
         <DialogHeader>
           <DialogTitle>Solicitar anticipo a proveedor</DialogTitle>
           <DialogDescription>
-            La solicitud quedará disponible para un lote exclusivo de
-            anticipos a proveedores en Tesorería.
+            La solicitud quedará disponible para un lote exclusivo de anticipos
+            a proveedores en Tesorería.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -161,11 +156,14 @@ export function PurchaseOrderAdvanceDialog({
               <div className="font-medium">{purchaseOrder.orderNumber}</div>
               <div className="text-muted-foreground">
                 {purchaseOrder.supplierName || "Proveedor"} ·{" "}
-                {formatPurchaseOrderCurrency(
-                  purchaseOrder.total,
-                  purchaseOrder.currency
-                )}{" "}
-                disponible
+                {selected
+                  ? `${formatPurchaseOrderCurrency(
+                      selected.availableAdvanceRequestAmount,
+                      purchaseOrder.currency
+                    )} disponible`
+                  : eligibleQuery.isLoading
+                    ? "Consultando saldo oficial..."
+                    : "Sin saldo disponible"}
               </div>
             </div>
           ) : (
@@ -186,8 +184,7 @@ export function PurchaseOrderAdvanceDialog({
                   onValueChange={value => {
                     setPurchaseOrderId(value);
                     const row = (eligibleQuery.data ?? []).find(
-                      (entry: any) =>
-                        entry.purchaseOrder.id === Number(value)
+                      (entry: any) => entry.purchaseOrder.id === Number(value)
                     ) as any;
                     if (row) {
                       setRequestedAmount(
@@ -224,7 +221,11 @@ export function PurchaseOrderAdvanceDialog({
                 type="number"
                 min="0.01"
                 step="0.01"
-                max={selected?.availableAdvanceRequestAmount}
+                max={
+                  selected
+                    ? Number(selected.availableAdvanceRequestAmount)
+                    : undefined
+                }
                 value={requestedAmount}
                 onChange={event => setRequestedAmount(event.target.value)}
               />
@@ -234,9 +235,7 @@ export function PurchaseOrderAdvanceDialog({
               <Input
                 type="date"
                 value={requestedPaymentDate}
-                onChange={event =>
-                  setRequestedPaymentDate(event.target.value)
-                }
+                onChange={event => setRequestedPaymentDate(event.target.value)}
               />
             </div>
           </div>
@@ -267,7 +266,10 @@ export function PurchaseOrderAdvanceDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button onClick={() => void save()} disabled={pending}>
+          <Button
+            onClick={() => void save()}
+            disabled={pending || eligibleQuery.isLoading || !selected}
+          >
             {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Crear solicitud
           </Button>

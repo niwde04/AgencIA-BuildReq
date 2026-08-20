@@ -2,10 +2,17 @@ import { describe, expect, it } from "vitest";
 import {
   buildPurchaseOrderAdvanceMoneySummary,
   buildPurchaseOrderAdvancesSummary,
+  resolvePurchaseOrderOfficialTotal,
 } from "./purchaseOrderAdvances";
 import {
   allowsPurchaseOrderAdvance,
+  calculatePurchaseOrderAdvanceAvailableAmount,
+  formatPurchaseOrderCurrency,
   formatPurchaseOrderPaymentMethodPrintLabel,
+  formatPurchaseOrderUnitPrice,
+  getPurchaseOrderFiscalSummaryRows,
+  roundPurchaseOrderDisplayMoney,
+  summarizePurchaseOrderLines,
 } from "../shared/purchase-orders";
 
 describe("purchase order advance balances", () => {
@@ -20,6 +27,64 @@ describe("purchase order advance balances", () => {
     expect(formatPurchaseOrderPaymentMethodPrintLabel("contado")).toBe(
       "CONTADO"
     );
+  });
+
+  it("uses the exact printed purchase-order total as the advance limit", () => {
+    const calculatedTotal = 46_280.3355;
+
+    expect(roundPurchaseOrderDisplayMoney(calculatedTotal)).toBe(46_280.34);
+    expect(formatPurchaseOrderCurrency(calculatedTotal, "HNL")).toBe(
+      "L 46,280.34"
+    );
+    expect(
+      calculatePurchaseOrderAdvanceAvailableAmount(calculatedTotal, 0)
+    ).toBe(46_280.34);
+    expect(
+      calculatePurchaseOrderAdvanceAvailableAmount(calculatedTotal, 46_280.33)
+    ).toBe(0.01);
+  });
+
+  it("uses the immutable sealed total instead of recalculating an issued order", () => {
+    expect(
+      resolvePurchaseOrderOfficialTotal({
+        sealedTotal: "46280.34",
+        calculatedTotal: "46280.3355",
+      })
+    ).toBe(46_280.34);
+    expect(
+      resolvePurchaseOrderOfficialTotal({
+        sealedTotal: "9847.34",
+        calculatedTotal: "9847.3350",
+      })
+    ).toBe(9_847.34);
+  });
+
+  it("prints enough unit-price precision to reconcile the purchase-order line", () => {
+    expect(formatPurchaseOrderUnitPrice("100.60942500")).toBe("100.609425");
+    expect(
+      roundPurchaseOrderDisplayMoney(
+        400 * Number(formatPurchaseOrderUnitPrice("100.60942500"))
+      )
+    ).toBe(40_243.77);
+  });
+
+  it("shows an explicit rounding adjustment when displayed components need it", () => {
+    const summary = summarizePurchaseOrderLines([
+      {
+        quantity: 1,
+        unitPrice: "103998.2465",
+        subtotal: "103998.2465",
+        taxCode: "isv_15",
+      },
+    ]);
+    const rows = getPurchaseOrderFiscalSummaryRows(summary);
+
+    expect(rows.find(row => row.key === "subtotal")?.value).toBe(103_998.25);
+    expect(rows.find(row => row.key === "isv-isv_15")?.value).toBe(15_599.74);
+    expect(rows.find(row => row.key === "rounding-adjustment")?.value).toBe(
+      -0.01
+    );
+    expect(rows.find(row => row.key === "total")?.value).toBe(119_597.98);
   });
 
   it("keeps requested, reserved, accounted and applied amounts separate", () => {
