@@ -59,6 +59,7 @@ export const reportsRouter = router({
   systemWorkbook: protectedProcedure
     .input(
       z.object({
+        projectId: z.number().int().positive().nullish(),
         dateFrom: dateInputSchema,
         dateTo: dateInputSchema,
         statusMode: z
@@ -107,6 +108,7 @@ export const reportsRouter = router({
   systemPurchaseOrders: protectedProcedure
     .input(
       z.object({
+        projectId: z.number().int().positive().nullish(),
         dateFrom: dateInputSchema,
         dateTo: dateInputSchema,
         search: z.string().trim().max(200).nullish(),
@@ -132,6 +134,7 @@ export const reportsRouter = router({
       const purchaseOrderFilters: Parameters<
         typeof db.listSystemReportPurchaseOrderLines
       >[0] = {
+        projectId: input.projectId,
         dateFrom,
         dateTo,
         search: input.search,

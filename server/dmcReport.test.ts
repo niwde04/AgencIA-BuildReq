@@ -1221,6 +1221,7 @@ describe("DMC report authorization", () => {
     const caller = appRouter.createCaller(createUserContext());
 
     const orderPayload = await caller.reports.systemPurchaseOrders({
+      projectId: 12,
       dateFrom: null,
       dateTo: null,
       search: "OC-001",
@@ -1230,6 +1231,7 @@ describe("DMC report authorization", () => {
     expect(orderPayload.invoices).toEqual([]);
     expect(orderSpy).toHaveBeenCalledWith(
       expect.objectContaining({
+        projectId: 12,
         search: "OC-001",
         purchaseType: "local",
         statuses: ["emitida"],

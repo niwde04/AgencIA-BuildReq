@@ -1,6 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { DataPagination } from "@/components/DataPagination";
 import { CompactProcurementApprovalPanel } from "@/components/CompactProcurementApprovalPanel";
+import { ProjectFilterSelect } from "@/components/ProjectFilterSelect";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { downloadSystemPurchaseOrdersWorkbook } from "@/lib/dmc-export";
 import { openBase64Pdf } from "@/lib/document-download";
@@ -936,6 +937,7 @@ export default function OrdenesCompra() {
   const debouncedSearchTerm = useDebouncedValue(searchTerm);
   const [isExportingInternalReport, setIsExportingInternalReport] =
     useState(false);
+  const [projectFilter, setProjectFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [purchaseTypeFilter, setPurchaseTypeFilter] = useState("all");
   const [emissionDateFromFilter, setEmissionDateFromFilter] = useState("");
@@ -991,6 +993,7 @@ export default function OrdenesCompra() {
     isPlaceholderData,
   } = trpc.purchaseOrders.listPage.useQuery(
     {
+      projectId: projectFilter === "all" ? undefined : Number(projectFilter),
       search: debouncedSearchTerm.trim() || undefined,
       purchaseType:
         purchaseTypeFilter === "all" ? undefined : purchaseTypeFilter,
@@ -1658,6 +1661,7 @@ export default function OrdenesCompra() {
     debouncedSearchTerm,
     emissionDateFromFilter,
     emissionDateToFilter,
+    projectFilter,
     purchaseTypeFilter,
     statusFilter,
   ]);
@@ -2840,6 +2844,7 @@ export default function OrdenesCompra() {
     setIsExportingInternalReport(true);
     try {
       const payload = await utils.reports.systemPurchaseOrders.fetch({
+        projectId: projectFilter === "all" ? null : Number(projectFilter),
         dateFrom: emissionDateFromFilter || null,
         dateTo: emissionDateToFilter || null,
         search: debouncedSearchTerm.trim() || null,
@@ -2890,7 +2895,7 @@ export default function OrdenesCompra() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(360px,1fr)_repeat(4,minmax(150px,190px))] xl:items-end">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(360px,1fr)_repeat(5,minmax(150px,190px))] xl:items-end">
         <div className="min-w-0 space-y-1.5 sm:col-span-2 xl:col-span-1">
           <Label htmlFor="purchase-order-search" className="text-xs">
             Buscar
@@ -2905,6 +2910,14 @@ export default function OrdenesCompra() {
               className="h-10 pl-9"
             />
           </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Proyecto</Label>
+          <ProjectFilterSelect
+            value={projectFilter}
+            onValueChange={setProjectFilter}
+            triggerClassName="h-10 w-full"
+          />
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">Tipo de compra</Label>

@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { DataPagination } from "@/components/DataPagination";
+import { ProjectFilterSelect } from "@/components/ProjectFilterSelect";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -245,6 +246,7 @@ export default function TransferRequests() {
   const [quantity, setQuantity] = useState("");
   const [unit, setUnit] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [projectFilter, setProjectFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
   const debouncedSearchTerm = useDebouncedValue(searchTerm);
@@ -271,6 +273,7 @@ export default function TransferRequests() {
     isPlaceholderData,
   } = trpc.transferRequests.listPage.useQuery(
     {
+      projectId: projectFilter === "all" ? undefined : Number(projectFilter),
       search: debouncedSearchTerm.trim() || undefined,
       status: statusFilter === "all" ? undefined : statusFilter,
       page,
@@ -943,7 +946,10 @@ export default function TransferRequests() {
 
   const filteredTransferRequests = transferRequests;
 
-  useEffect(() => setPage(1), [debouncedSearchTerm, statusFilter]);
+  useEffect(
+    () => setPage(1),
+    [debouncedSearchTerm, projectFilter, statusFilter]
+  );
   useEffect(() => {
     if (
       !isPlaceholderData &&
@@ -1180,6 +1186,10 @@ export default function TransferRequests() {
             className="h-10 pl-9"
           />
         </div>
+        <ProjectFilterSelect
+          value={projectFilter}
+          onValueChange={setProjectFilter}
+        />
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="h-10 w-full lg:w-56">
             <SelectValue placeholder="Estado" />

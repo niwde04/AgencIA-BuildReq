@@ -1,6 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { DataPagination } from "@/components/DataPagination";
 import { CompactProcurementApprovalPanel } from "@/components/CompactProcurementApprovalPanel";
+import { ProjectFilterSelect } from "@/components/ProjectFilterSelect";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { fetchAllFilteredPages } from "@/lib/paginated-export";
 import { trpc } from "@/lib/trpc";
@@ -478,6 +479,7 @@ export default function PurchaseRequests() {
   const [page, setPage] = useState(1);
   const debouncedSearchTerm = useDebouncedValue(searchTerm);
   const [isExportingCsv, setIsExportingCsv] = useState(false);
+  const [projectFilter, setProjectFilter] = useState("all");
   const [purchaseTypeFilter, setPurchaseTypeFilter] = useState<
     PurchaseType | "all"
   >("all");
@@ -507,6 +509,7 @@ export default function PurchaseRequests() {
     isPlaceholderData,
   } = trpc.purchaseRequests.listPage.useQuery(
     {
+      projectId: projectFilter === "all" ? undefined : Number(projectFilter),
       search: debouncedSearchTerm.trim() || undefined,
       purchaseType:
         purchaseTypeFilter === "all" ? undefined : purchaseTypeFilter,
@@ -572,12 +575,23 @@ export default function PurchaseRequests() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearchTerm, purchaseTypeFilter, effectiveStatusFilter]);
+  }, [
+    debouncedSearchTerm,
+    projectFilter,
+    purchaseTypeFilter,
+    effectiveStatusFilter,
+  ]);
 
   useEffect(() => {
     setSelectedRequestIds([]);
     setSelectedItemIds([]);
-  }, [page, debouncedSearchTerm, purchaseTypeFilter, effectiveStatusFilter]);
+  }, [
+    page,
+    debouncedSearchTerm,
+    projectFilter,
+    purchaseTypeFilter,
+    effectiveStatusFilter,
+  ]);
 
   useEffect(() => {
     if (
@@ -1954,6 +1968,8 @@ export default function PurchaseRequests() {
     try {
       exportRows = await fetchAllFilteredPages((exportPage, pageSize) =>
         utils.purchaseRequests.listPage.fetch({
+          projectId:
+            projectFilter === "all" ? undefined : Number(projectFilter),
           search: debouncedSearchTerm.trim() || undefined,
           purchaseType:
             purchaseTypeFilter === "all" ? undefined : purchaseTypeFilter,
@@ -2095,6 +2111,10 @@ export default function PurchaseRequests() {
             className="h-10 pl-9"
           />
         </div>
+        <ProjectFilterSelect
+          value={projectFilter}
+          onValueChange={setProjectFilter}
+        />
         <Select
           value={purchaseTypeFilter}
           onValueChange={value =>

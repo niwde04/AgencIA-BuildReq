@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { DataPagination } from "@/components/DataPagination";
+import { ProjectFilterSelect } from "@/components/ProjectFilterSelect";
 import { Input } from "@/components/ui/input";
 import {
   Command,
@@ -570,6 +571,7 @@ export default function SalidasBodega() {
     Record<number, string>
   >({});
   const [searchTerm, setSearchTerm] = useState("");
+  const [projectFilter, setProjectFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false);
@@ -620,6 +622,7 @@ export default function SalidasBodega() {
     isPlaceholderData,
   } = trpc.warehouseExits.listPage.useQuery(
     {
+      projectId: projectFilter === "all" ? undefined : Number(projectFilter),
       status: statusFilter !== "all" ? statusFilter : undefined,
       search: debouncedSearchTerm.trim() || undefined,
       page,
@@ -1738,7 +1741,10 @@ export default function SalidasBodega() {
     isDeliveryScopeBlocked,
   ]);
 
-  useEffect(() => setPage(1), [debouncedSearchTerm, statusFilter]);
+  useEffect(
+    () => setPage(1),
+    [debouncedSearchTerm, projectFilter, statusFilter]
+  );
   useEffect(() => {
     if (!isPlaceholderData && exitsPage?.page && exitsPage.page !== page) {
       setPage(exitsPage.page);
@@ -1746,7 +1752,9 @@ export default function SalidasBodega() {
   }, [exitsPage?.page, isPlaceholderData, page]);
 
   const hasExitFilters =
-    Boolean(debouncedSearchTerm.trim()) || statusFilter !== "all";
+    Boolean(debouncedSearchTerm.trim()) ||
+    projectFilter !== "all" ||
+    statusFilter !== "all";
 
   const detailIsDraft = detail?.warehouseExit.status === "borrador";
 
@@ -2521,6 +2529,10 @@ export default function SalidasBodega() {
             className="h-10 pl-9"
           />
         </div>
+        <ProjectFilterSelect
+          value={projectFilter}
+          onValueChange={setProjectFilter}
+        />
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="h-10 w-full lg:w-56">
             <SelectValue placeholder="Estado" />
