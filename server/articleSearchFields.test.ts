@@ -11,6 +11,7 @@ describe("article search fields", () => {
         "itemCode",
         "temporaryItemCode",
         "description",
+        "unit",
         "brand",
         "partNumber",
         "fixedAssetSerialNumber",

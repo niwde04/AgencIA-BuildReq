@@ -26,9 +26,42 @@ export const UNITS: UnitOption[] = [
   { value: "par", label: "Pares" },
   { value: "caja", label: "Cajas" },
   { value: "cubeta", label: "Cubetas" },
+  { value: "juego", label: "Juegos" },
+  { value: "kit", label: "Kits" },
+  { value: "paquete", label: "Paquetes" },
+  { value: "resma", label: "Resmas" },
+  { value: "cuarto", label: "Cuartos" },
+  { value: "barril", label: "Barriles" },
+  { value: "yarda", label: "Yardas" },
   { value: "quintal", label: "Quintales (qq)" },
   { value: "pie2", label: "Pies cuadrados (ft²)" },
   { value: "plg", label: "Pulgadas (plg)" },
   { value: "viaje", label: "Viajes" },
   { value: "global", label: "Global" },
 ];
+
+const UNIT_ALIASES: Record<string, string> = {
+  unidad: "und",
+  unidades: "und",
+  galon: "gal",
+  galón: "gal",
+  galones: "gal",
+  libra: "lb",
+  libras: "lb",
+  litro: "lt",
+  litros: "lt",
+  metro: "m",
+  metros: "m",
+  pie: "ft",
+  pies: "ft",
+  kilogramo: "kg",
+  kilogramos: "kg",
+  tonelada: "ton",
+  toneladas: "ton",
+};
+
+export function normalizeUnitValue(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim().toLocaleLowerCase("es-HN");
+  if (!normalized) return null;
+  return UNIT_ALIASES[normalized] ?? normalized;
+}

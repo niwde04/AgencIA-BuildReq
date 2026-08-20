@@ -2866,6 +2866,7 @@ export const sapCatalog = pgTable(
     itemCode: varchar("itemCode", { length: 50 }).notNull().unique(),
     description: varchar("description", { length: 500 }).notNull(),
     itemGroup: varchar("itemGroup", { length: 255 }),
+    unit: varchar("unit", { length: 50 }),
     financialGroupCode: varchar("financialGroupCode", {
       length: 20,
     }).references(() => financialGroups.financialGroupCode, {

@@ -159,6 +159,7 @@ export const articlesRouter = router({
         itemCode: z.string().trim().min(1).max(50).optional(),
         description: articleDescriptionSchema.optional(),
         itemGroup: z.string().trim().max(255).nullable().optional(),
+        unit: z.string().trim().max(50).nullable().optional(),
         financialGroupCode: z.string().trim().max(20).nullable().optional(),
         brand: z.string().trim().max(120).nullable().optional(),
         partNumber: z.string().trim().max(120).nullable().optional(),
@@ -220,6 +221,7 @@ export const articlesRouter = router({
         itemCode: input.itemCode,
         description: input.description,
         itemGroup: input.itemGroup?.trim() || null,
+        unit: input.unit?.trim() || null,
         brand: input.brand?.trim() || null,
         partNumber: input.partNumber?.trim() || null,
         tipoArticulo: input.tipoArticulo,
@@ -239,6 +241,9 @@ export const articlesRouter = router({
       }
       if (!("itemGroup" in input)) {
         delete updateData.itemGroup;
+      }
+      if (!("unit" in input)) {
+        delete updateData.unit;
       }
       if (!("brand" in input)) {
         delete updateData.brand;
@@ -268,6 +273,7 @@ export const articlesRouter = router({
         itemCode: z.string().trim().max(50).optional(),
         description: articleDescriptionSchema,
         itemGroup: z.string().trim().min(1).max(255),
+        unit: z.string().trim().min(1).max(50),
         financialGroupCode: z.string().trim().max(20).nullable().optional(),
         brand: z.string().trim().max(120).nullable().optional(),
         partNumber: z.string().trim().max(120).nullable().optional(),
@@ -296,6 +302,7 @@ export const articlesRouter = router({
         return await db.createArticle({
           description: input.description,
           itemGroup: input.itemGroup,
+          unit: input.unit,
           financialGroupCode: input.financialGroupCode ?? null,
           brand: input.brand ?? null,
           partNumber: input.partNumber ?? null,

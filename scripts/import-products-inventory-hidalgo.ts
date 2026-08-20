@@ -6,6 +6,7 @@ import dotenv from "dotenv";
 import { Client } from "pg";
 import XLSX from "xlsx";
 import { normalizeArticleDescription } from "../shared/article-descriptions";
+import { normalizeUnitValue } from "../shared/units";
 
 const DEFAULT_SHEET_NAME = "Inventario";
 const BATCH_SIZE = 500;
@@ -100,6 +101,7 @@ export type CatalogProductInput = {
   itemCode: string;
   description: string;
   itemGroup: string | null;
+  unit: string | null;
   brand: string | null;
   partNumber: string | null;
   isActive: boolean;
@@ -784,6 +786,11 @@ export function buildImportData(params: {
         collectConflict(conflicts, "catalog", itemCode, "description", rows, "description")
       ),
       itemGroup: collectConflict(conflicts, "catalog", itemCode, "itemGroup", rows, "itemGroup") as string,
+      unit: normalizeUnitValue(
+        collectConflict(conflicts, "catalog", itemCode, "unit", rows, "unit") as
+          | string
+          | null
+      ),
       brand: collectConflict(conflicts, "catalog", itemCode, "brand", rows, "brand") as string | null,
       partNumber: collectConflict(conflicts, "catalog", itemCode, "partNumber", rows, "partNumber") as string | null,
       isActive: rows.some(row => row.isActive),
@@ -1145,6 +1152,7 @@ function toCatalogPayload(rows: CatalogWrite[]) {
     itemCode: row.itemCode,
     description: row.description,
     itemGroup: row.itemGroup,
+    unit: row.unit,
     brand: row.brand,
     partNumber: row.partNumber,
     tipoArticulo: row.tipoArticulo,
@@ -1162,6 +1170,7 @@ async function upsertCatalogProducts(client: Client, rows: CatalogWrite[]) {
           "itemCode",
           description,
           "itemGroup",
+          unit,
           brand,
           "partNumber",
           "tipoArticulo",
@@ -1172,6 +1181,7 @@ async function upsertCatalogProducts(client: Client, rows: CatalogWrite[]) {
        select x."itemCode",
               x.description,
               x."itemGroup",
+              x.unit,
               x.brand,
               x."partNumber",
               x."tipoArticulo",
@@ -1182,6 +1192,7 @@ async function upsertCatalogProducts(client: Client, rows: CatalogWrite[]) {
            "itemCode" text,
            description text,
            "itemGroup" text,
+           unit text,
            brand text,
            "partNumber" text,
            "tipoArticulo" integer,
@@ -1190,6 +1201,7 @@ async function upsertCatalogProducts(client: Client, rows: CatalogWrite[]) {
        on conflict ("itemCode") do update set
           description = excluded.description,
           "itemGroup" = coalesce(excluded."itemGroup", "sapCatalog"."itemGroup"),
+          unit = coalesce(excluded.unit, "sapCatalog".unit),
           brand = coalesce(excluded.brand, "sapCatalog".brand),
           "partNumber" = coalesce(excluded."partNumber", "sapCatalog"."partNumber"),
           "tipoArticulo" = ${PRODUCT_ARTICLE_TYPE},

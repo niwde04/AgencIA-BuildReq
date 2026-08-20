@@ -13,6 +13,7 @@ import {
   FinancialGroupCombobox,
   type FinancialGroupOption,
 } from "@/components/FinancialGroupCombobox";
+import { UnitCombobox } from "@/components/UnitCombobox";
 import {
   Dialog,
   DialogContent,
@@ -70,6 +71,7 @@ type ArticleRecord = {
   itemCode: string;
   description: string;
   itemGroup?: string | null;
+  unit?: string | null;
   financialGroupCode?: string | null;
   financialGroupDescription?: string | null;
   brand?: string | null;
@@ -119,6 +121,7 @@ type FixedAssetDetailDraft = {
 type ArticleCreateFormState = {
   description: string;
   itemGroup: string;
+  unit: string;
   financialGroupCode: string;
   brand: string;
   partNumber: string;
@@ -140,6 +143,7 @@ const ARTICLE_TYPE_LABELS: Record<ArticleType, string> = {
 const EMPTY_CREATE_ARTICLE_FORM: ArticleCreateFormState = {
   description: "",
   itemGroup: "",
+  unit: "",
   financialGroupCode: "",
   brand: "",
   partNumber: "",
@@ -288,6 +292,7 @@ export default function Articulos() {
   const [editItemCode, setEditItemCode] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editItemGroup, setEditItemGroup] = useState("");
+  const [editUnit, setEditUnit] = useState("");
   const [editType, setEditType] = useState<ArticleType>(1);
   const [editBrand, setEditBrand] = useState("");
   const [editFinancialGroupCode, setEditFinancialGroupCode] = useState("");
@@ -516,6 +521,7 @@ export default function Articulos() {
     setEditItemCode(article.itemCode);
     setEditDescription(article.description);
     setEditItemGroup(article.itemGroup ?? "");
+    setEditUnit(article.unit ?? "");
     setEditType(parseArticleType(String(article.tipoArticulo)) ?? 1);
     setEditBrand(article.brand ?? "");
     setEditFinancialGroupCode(article.financialGroupCode ?? "");
@@ -534,8 +540,14 @@ export default function Articulos() {
       toast.error("No tiene permisos para crear artículos");
       return;
     }
-    if (!createForm.itemGroup.trim() || !createForm.description.trim()) {
-      toast.error("El grupo SAP y la descripción son obligatorios");
+    if (
+      !createForm.itemGroup.trim() ||
+      !createForm.description.trim() ||
+      !createForm.unit.trim()
+    ) {
+      toast.error(
+        "El grupo SAP, la descripción y la unidad base son obligatorios"
+      );
       return;
     }
 
@@ -545,6 +557,7 @@ export default function Articulos() {
     createMutation.mutate({
       description: normalizeArticleDescription(createForm.description),
       itemGroup: createForm.itemGroup.trim(),
+      unit: createForm.unit,
       financialGroupCode: createForm.financialGroupCode || null,
       brand: createForm.brand.trim() || null,
       partNumber: createForm.partNumber.trim() || null,
@@ -634,6 +647,7 @@ export default function Articulos() {
       itemCode: editItemCode.trim(),
       description: normalizeArticleDescription(editDescription),
       itemGroup: editItemGroup.trim() || null,
+      unit: editUnit.trim() || null,
       financialGroupCode: editFinancialGroupCode || null,
       brand: editBrand.trim() || null,
       partNumber: editPartNumber.trim() || null,
@@ -674,6 +688,7 @@ export default function Articulos() {
           { header: "Código", value: row => row.itemCode, width: 16 },
           { header: "Descripción", value: row => row.description, width: 42 },
           { header: "Grupo", value: row => row.itemGroup || "" },
+          { header: "Unidad base", value: row => row.unit || "" },
           {
             header: "Grupo financiero",
             value: row => row.financialGroupDescription || "",
@@ -943,6 +958,9 @@ export default function Articulos() {
                         Grupo
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Unidad base
+                      </th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Grupo financiero
                       </th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1036,6 +1054,9 @@ export default function Articulos() {
                         </td>
                         <td className="p-3 text-xs text-muted-foreground">
                           {article.itemGroup || "-"}
+                        </td>
+                        <td className="p-3 text-xs text-muted-foreground">
+                          {article.unit || "-"}
                         </td>
                         <td className="max-w-[360px] p-3 text-xs text-muted-foreground">
                           {article.financialGroupDescription || "-"}
@@ -1267,7 +1288,7 @@ export default function Articulos() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_180px_220px]">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_180px_220px]">
               <div className="space-y-1">
                 <Label className="text-xs">Tipo</Label>
                 <Select
@@ -1291,6 +1312,15 @@ export default function Articulos() {
                     <SelectItem value="3">Activo fijo</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Unidad base *</Label>
+                <UnitCombobox
+                  value={createForm.unit}
+                  onChange={unit =>
+                    setCreateForm(form => ({ ...form, unit }))
+                  }
+                />
               </div>
               <div className="flex items-center justify-between rounded-md border p-3">
                 <Label className="text-sm">Activo</Label>
@@ -1508,7 +1538,7 @@ export default function Articulos() {
                 </div>
               ) : null}
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_180px_220px]">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_180px_220px]">
                 <div className="space-y-1">
                   <Label className="text-xs">Tipo</Label>
                   <Select
@@ -1531,6 +1561,19 @@ export default function Articulos() {
                       <SelectItem value="3">Activo fijo</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs">Unidad base</Label>
+                  <UnitCombobox
+                    value={
+                      canEditSelectedArticleCatalog
+                        ? editUnit
+                        : selectedArticle.unit
+                    }
+                    disabled={!canEditSelectedArticleCatalog}
+                    onChange={setEditUnit}
+                  />
                 </div>
 
                 <div className="flex items-center justify-between rounded-md border p-3">

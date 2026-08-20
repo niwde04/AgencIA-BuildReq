@@ -915,6 +915,7 @@ describe("BuildReq - Articles catalog", () => {
       itemCode: "ART-FG-01",
       description: "Artículo con grupo financiero",
       itemGroup: "0905 - REPUESTOS INDIVIDUALES",
+      unit: "und",
       financialGroupCode: "02019901",
       tipoArticulo: 1,
       isActive: true,
@@ -974,6 +975,7 @@ describe("BuildReq - Articles catalog", () => {
         itemCode: "ART-FG-02",
         description: "Artículo bloqueado",
         itemGroup: "0905 - REPUESTOS INDIVIDUALES",
+        unit: "und",
         financialGroupCode: "02019901",
         tipoArticulo: 1,
         isActive: true,
@@ -985,6 +987,24 @@ describe("BuildReq - Articles catalog", () => {
     expect(createArticleSpy).not.toHaveBeenCalled();
 
     financialGroupSpy.mockRestore();
+    createArticleSpy.mockRestore();
+  });
+
+  it("Requires a base unit when creating an article", async () => {
+    const caller = appRouter.createCaller(createAdminCentralContext().ctx);
+    const createArticleSpy = vi.spyOn(db, "createArticle");
+
+    await expect(
+      caller.articles.create({
+        description: "Artículo sin unidad",
+        itemGroup: "0905 - REPUESTOS INDIVIDUALES",
+        tipoArticulo: 1,
+        isActive: true,
+        allowsTaxWithholding: true,
+      } as any)
+    ).rejects.toThrow();
+    expect(createArticleSpy).not.toHaveBeenCalled();
+
     createArticleSpy.mockRestore();
   });
 
@@ -1227,6 +1247,7 @@ describe("BuildReq - Articles catalog", () => {
           itemCode: legacyItemCode,
           description: "Artículo nuevo",
           itemGroup: "0905 - REPUESTOS INDIVIDUALES",
+          unit: "und",
           tipoArticulo: 1,
           allowsTaxWithholding: true,
           isActive: true,
@@ -1242,6 +1263,7 @@ describe("BuildReq - Articles catalog", () => {
       expect.objectContaining({
         description: "ARTÍCULO NUEVO",
         itemGroup: "0905 - REPUESTOS INDIVIDUALES",
+        unit: "und",
         createdById: 1,
         updatedById: 1,
       })
@@ -1250,6 +1272,7 @@ describe("BuildReq - Articles catalog", () => {
       2,
       expect.objectContaining({
         itemGroup: "0905 - REPUESTOS INDIVIDUALES",
+        unit: "und",
         createdById: 3,
         updatedById: 3,
       })
@@ -1258,6 +1281,7 @@ describe("BuildReq - Articles catalog", () => {
       3,
       expect.objectContaining({
         itemGroup: "0905 - REPUESTOS INDIVIDUALES",
+        unit: "und",
         createdById: 4,
         updatedById: 4,
       })
@@ -1285,6 +1309,7 @@ describe("BuildReq - Articles catalog", () => {
           itemCode: "NO-CREATE",
           description: "Artículo bloqueado",
           itemGroup: "0905 - REPUESTOS INDIVIDUALES",
+          unit: "und",
           tipoArticulo: 1,
           allowsTaxWithholding: true,
           isActive: true,
@@ -1502,6 +1527,7 @@ describe("BuildReq - Articles catalog", () => {
           itemCode,
           description: "Descripción actualizada",
           itemGroup: "Grupo actualizado",
+          unit: "gal",
           financialGroupCode: "02019901",
           tipoArticulo: 1,
           isActive: true,
@@ -1519,6 +1545,7 @@ describe("BuildReq - Articles catalog", () => {
       expect.objectContaining({
         description: "DESCRIPCIÓN ACTUALIZADA",
         itemGroup: "Grupo actualizado",
+        unit: "gal",
         financialGroupCode: "02019901",
       })
     );

@@ -219,6 +219,7 @@ import {
   normalizeReceiptArticleValue,
 } from "@shared/receipt-substitutions";
 import { extractSapItemGroupCode } from "@shared/sap-item-codes";
+import { normalizeUnitValue } from "@shared/units";
 import {
   getDemoImportWorkload,
   type ParsedDemoImportPayload,
@@ -12441,6 +12442,10 @@ async function resolvePurchaseOrderReceiptArticles(params: {
             sourceCatalog.description || sourceItem.itemName
           ),
           itemGroup: sourceCatalog.itemGroup,
+          unit:
+            normalizeUnitValue(item.unit) ??
+            normalizeUnitValue(sourceItem.unit) ??
+            normalizeUnitValue(sourceCatalog.unit),
           financialGroupCode: sourceCatalog.financialGroupCode,
           brand: receivedBrand,
           partNumber: receivedPartNumber,
@@ -22019,6 +22024,7 @@ export async function lookupSapItemByCode(sapItemCode: string) {
   const catalogTypeMatch = await db
     .select({
       tipoArticulo: sapCatalog.tipoArticulo,
+      unit: sapCatalog.unit,
       brand: sapCatalog.brand,
       partNumber: sapCatalog.partNumber,
     })
@@ -22049,7 +22055,10 @@ export async function lookupSapItemByCode(sapItemCode: string) {
     return {
       sapItemCode: inventoryMatch[0].sapItemCode,
       itemName: inventoryMatch[0].itemName,
-      unit: inventoryMatch[0].unit,
+      unit:
+        normalizeUnitValue(inventoryMatch[0].unit) ??
+        catalogTypeMatch[0]?.unit ??
+        null,
       tipoArticulo: catalogTypeMatch[0]?.tipoArticulo ?? 1,
       brand: inventoryMatch[0].brand ?? catalogTypeMatch[0]?.brand ?? null,
       partNumber:
@@ -22063,6 +22072,7 @@ export async function lookupSapItemByCode(sapItemCode: string) {
       itemCode: sapCatalog.itemCode,
       description: sapCatalog.description,
       tipoArticulo: sapCatalog.tipoArticulo,
+      unit: sapCatalog.unit,
       brand: sapCatalog.brand,
       partNumber: sapCatalog.partNumber,
     })
@@ -22079,7 +22089,7 @@ export async function lookupSapItemByCode(sapItemCode: string) {
     return {
       sapItemCode: catalogMatch[0].itemCode,
       itemName: catalogMatch[0].description,
-      unit: null,
+      unit: catalogMatch[0].unit,
       tipoArticulo: catalogMatch[0].tipoArticulo,
       brand: catalogMatch[0].brand,
       partNumber: catalogMatch[0].partNumber,
@@ -22092,7 +22102,7 @@ export async function lookupSapItemByCode(sapItemCode: string) {
     return {
       sapItemCode: fuzzyMatches[0].itemCode,
       itemName: fuzzyMatches[0].description,
-      unit: null,
+      unit: fuzzyMatches[0].unit,
       tipoArticulo: fuzzyMatches[0].tipoArticulo,
       brand: fuzzyMatches[0].brand,
       partNumber: fuzzyMatches[0].partNumber,
@@ -22986,6 +22996,7 @@ export const ARTICLE_SEARCH_FIELD_NAMES = [
   "temporaryItemCode",
   "description",
   "itemGroup",
+  "unit",
   "financialGroupCode",
   "brand",
   "partNumber",
@@ -23158,6 +23169,7 @@ export async function updateArticle(
     itemCode?: string;
     description?: string;
     itemGroup?: string | null;
+    unit?: string | null;
     financialGroupCode?: string | null;
     brand?: string | null;
     partNumber?: string | null;
@@ -23175,6 +23187,9 @@ export async function updateArticle(
     ...data,
     ...(data.description !== undefined
       ? { description: normalizeArticleDescription(data.description) }
+      : {}),
+    ...(data.unit !== undefined
+      ? { unit: normalizeUnitValue(data.unit) }
       : {}),
   };
 
@@ -23322,6 +23337,7 @@ export async function articleCodeHasUsage(itemCode: string) {
 export async function createArticle(data: {
   description: string;
   itemGroup?: string | null;
+  unit: string;
   financialGroupCode?: string | null;
   brand?: string | null;
   partNumber?: string | null;
@@ -23337,14 +23353,18 @@ export async function createArticle(data: {
 
   const description = normalizeArticleDescription(data.description);
   const itemGroup = data.itemGroup?.trim() || "";
-  if (!itemGroup || !description) {
-    throw new Error("El grupo SAP y la descripción son obligatorios");
+  const unit = normalizeUnitValue(data.unit);
+  if (!itemGroup || !description || !unit) {
+    throw new Error(
+      "El grupo SAP, la descripción y la unidad base son obligatorios"
+    );
   }
 
   const buildArticleValues = (itemCode: string) => ({
     itemCode,
     description,
     itemGroup,
+    unit,
     financialGroupCode: data.financialGroupCode?.trim() || null,
     brand: data.brand?.trim() || null,
     partNumber: data.partNumber?.trim() || null,
@@ -23630,6 +23650,7 @@ export async function savePurchaseOrderFixedAssetDraftLine(params: {
         temporaryItemCode: temporaryCode,
         description: normalizeArticleDescription(itemDetail.item.itemName),
         itemGroup: "Activo fijo temporal",
+        unit: normalizeUnitValue(itemDetail.item.unit),
         tipoArticulo: 3 as const,
         projectId: itemDetail.purchaseOrder.projectId,
         fixedAssetStatus: "pendiente",

@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import { Client } from "pg";
 import XLSX from "xlsx";
 import { normalizeArticleDescription } from "../shared/article-descriptions";
+import { normalizeUnitValue } from "../shared/units";
 
 const SHEET_NAME = "ARTICULOS";
 const BATCH_SIZE = 500;
@@ -1163,6 +1164,7 @@ function validateLengths(
       FIELD_LIMITS.description
     );
     validateLength(errors, "catalog", item.itemCode, "itemGroup", item.itemGroup, FIELD_LIMITS.itemGroup);
+    validateLength(errors, "catalog", item.itemCode, "unit", item.unit, FIELD_LIMITS.unit);
     validateLength(errors, "catalog", item.itemCode, "brand", item.brand, FIELD_LIMITS.brand);
     validateLength(
       errors,
@@ -1614,6 +1616,7 @@ function resolveCatalogForDb(
       itemCode: item.itemCode,
       description: item.description,
       itemGroup: item.itemGroup,
+      unit: normalizeUnitValue(item.unit),
       brand: item.brand,
       partNumber: item.partNumber,
       tipoArticulo: item.tipoArticulo,
@@ -1680,6 +1683,7 @@ async function upsertCatalog(client: Client, rows: ReturnType<typeof resolveCata
           "itemCode",
           description,
           "itemGroup",
+          unit,
           "brand",
           "partNumber",
           "tipoArticulo",
@@ -1703,6 +1707,7 @@ async function upsertCatalog(client: Client, rows: ReturnType<typeof resolveCata
        select x."itemCode",
               x.description,
               x."itemGroup",
+              x.unit,
               x."brand",
               x."partNumber",
               x."tipoArticulo",
@@ -1729,6 +1734,7 @@ async function upsertCatalog(client: Client, rows: ReturnType<typeof resolveCata
            "itemCode" text,
            description text,
            "itemGroup" text,
+           unit text,
            "brand" text,
            "partNumber" text,
            "tipoArticulo" integer,
@@ -1751,6 +1757,7 @@ async function upsertCatalog(client: Client, rows: ReturnType<typeof resolveCata
        on conflict ("itemCode") do update set
           description = excluded.description,
           "itemGroup" = excluded."itemGroup",
+          unit = coalesce(excluded.unit, "sapCatalog".unit),
           "brand" = excluded."brand",
           "partNumber" = excluded."partNumber",
           "tipoArticulo" = excluded."tipoArticulo",
