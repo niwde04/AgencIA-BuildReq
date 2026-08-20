@@ -914,6 +914,7 @@ describe("BuildReq - Articles catalog", () => {
     await caller.articles.create({
       itemCode: "ART-FG-01",
       description: "Artículo con grupo financiero",
+      itemGroup: "0905 - REPUESTOS INDIVIDUALES",
       financialGroupCode: "02019901",
       tipoArticulo: 1,
       isActive: true,
@@ -972,6 +973,7 @@ describe("BuildReq - Articles catalog", () => {
       caller.articles.create({
         itemCode: "ART-FG-02",
         description: "Artículo bloqueado",
+        itemGroup: "0905 - REPUESTOS INDIVIDUALES",
         financialGroupCode: "02019901",
         tipoArticulo: 1,
         isActive: true,
@@ -1187,44 +1189,59 @@ describe("BuildReq - Articles catalog", () => {
   });
 
   it("Admin, Bodega Central and Administración Central can create articles", async () => {
+    let generatedSequence = 0;
     const createArticleSpy = vi.spyOn(db, "createArticle").mockImplementation(
-      async (data: Parameters<typeof db.createArticle>[0]) =>
-        ({
+      async (data: Parameters<typeof db.createArticle>[0]) => {
+        generatedSequence += 1;
+        return {
           id: 100,
-          itemCode: data.itemCode,
+          itemCode: `0905${String(generatedSequence).padStart(5, "0")}`,
           description: data.description,
           tipoArticulo: data.tipoArticulo,
           isActive: data.isActive ?? true,
-        }) as any
+        } as any;
+      }
     );
 
-    for (const { ctx, itemCode } of [
+    for (const { ctx, expectedItemCode, legacyItemCode } of [
       {
         ctx: createUserContext({ role: "admin", buildreqRole: null }).ctx,
-        itemCode: "ADM-001",
+        expectedItemCode: "090500001",
+        legacyItemCode: "ADM-001",
       },
-      { ctx: createBodegaContext().ctx, itemCode: "BC-001" },
-      { ctx: createAdminCentralContext().ctx, itemCode: "AC-001" },
+      {
+        ctx: createBodegaContext().ctx,
+        expectedItemCode: "090500002",
+        legacyItemCode: undefined,
+      },
+      {
+        ctx: createAdminCentralContext().ctx,
+        expectedItemCode: "090500003",
+        legacyItemCode: undefined,
+      },
     ]) {
       const caller = appRouter.createCaller(ctx);
 
       await expect(
         caller.articles.create({
-          itemCode,
+          itemCode: legacyItemCode,
           description: "Artículo nuevo",
+          itemGroup: "0905 - REPUESTOS INDIVIDUALES",
           tipoArticulo: 1,
           allowsTaxWithholding: true,
           isActive: true,
         })
-      ).resolves.toEqual(expect.objectContaining({ itemCode }));
+      ).resolves.toEqual(
+        expect.objectContaining({ itemCode: expectedItemCode })
+      );
     }
 
     expect(createArticleSpy).toHaveBeenCalledTimes(3);
     expect(createArticleSpy).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
-        itemCode: "ADM-001",
         description: "ARTÍCULO NUEVO",
+        itemGroup: "0905 - REPUESTOS INDIVIDUALES",
         createdById: 1,
         updatedById: 1,
       })
@@ -1232,7 +1249,7 @@ describe("BuildReq - Articles catalog", () => {
     expect(createArticleSpy).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        itemCode: "BC-001",
+        itemGroup: "0905 - REPUESTOS INDIVIDUALES",
         createdById: 3,
         updatedById: 3,
       })
@@ -1240,11 +1257,14 @@ describe("BuildReq - Articles catalog", () => {
     expect(createArticleSpy).toHaveBeenNthCalledWith(
       3,
       expect.objectContaining({
-        itemCode: "AC-001",
+        itemGroup: "0905 - REPUESTOS INDIVIDUALES",
         createdById: 4,
         updatedById: 4,
       })
     );
+    for (const [createData] of createArticleSpy.mock.calls) {
+      expect(createData).not.toHaveProperty("itemCode");
+    }
     createArticleSpy.mockRestore();
   });
 
@@ -1264,6 +1284,7 @@ describe("BuildReq - Articles catalog", () => {
         caller.articles.create({
           itemCode: "NO-CREATE",
           description: "Artículo bloqueado",
+          itemGroup: "0905 - REPUESTOS INDIVIDUALES",
           tipoArticulo: 1,
           allowsTaxWithholding: true,
           isActive: true,

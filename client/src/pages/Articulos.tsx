@@ -117,7 +117,6 @@ type FixedAssetDetailDraft = {
 };
 
 type ArticleCreateFormState = {
-  itemCode: string;
   description: string;
   itemGroup: string;
   financialGroupCode: string;
@@ -139,7 +138,6 @@ const ARTICLE_TYPE_LABELS: Record<ArticleType, string> = {
 };
 
 const EMPTY_CREATE_ARTICLE_FORM: ArticleCreateFormState = {
-  itemCode: "",
   description: "",
   itemGroup: "",
   financialGroupCode: "",
@@ -448,8 +446,8 @@ export default function Articulos() {
   }, [data?.page, isPlaceholderData, page]);
 
   const createMutation = trpc.articles.create.useMutation({
-    onSuccess: () => {
-      toast.success("Artículo creado");
+    onSuccess: article => {
+      toast.success(`Artículo ${article.itemCode} creado`);
       utils.articles.list.invalidate();
       setCreateDialogOpen(false);
       setCreateForm(EMPTY_CREATE_ARTICLE_FORM);
@@ -536,8 +534,8 @@ export default function Articulos() {
       toast.error("No tiene permisos para crear artículos");
       return;
     }
-    if (!createForm.itemCode.trim() || !createForm.description.trim()) {
-      toast.error("Código y descripción son obligatorios");
+    if (!createForm.itemGroup.trim() || !createForm.description.trim()) {
+      toast.error("El grupo SAP y la descripción son obligatorios");
       return;
     }
 
@@ -545,9 +543,8 @@ export default function Articulos() {
       createForm.projectId !== "none" ? Number(createForm.projectId) : null;
 
     createMutation.mutate({
-      itemCode: createForm.itemCode.trim(),
       description: normalizeArticleDescription(createForm.description),
-      itemGroup: createForm.itemGroup.trim() || null,
+      itemGroup: createForm.itemGroup.trim(),
       financialGroupCode: createForm.financialGroupCode || null,
       brand: createForm.brand.trim() || null,
       partNumber: createForm.partNumber.trim() || null,
@@ -1188,20 +1185,18 @@ export default function Articulos() {
           <div className="space-y-4 pt-2">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div className="space-y-1">
-                <Label className="text-xs">Código *</Label>
+                <Label className="text-xs">Código SAP</Label>
                 <Input
-                  value={createForm.itemCode}
-                  onChange={(event) =>
-                    setCreateForm((form) => ({
-                      ...form,
-                      itemCode: event.target.value,
-                    }))
-                  }
-                  placeholder="SAP o código interno"
+                  value="Automático al guardar"
+                  disabled
+                  aria-label="Código SAP generado automáticamente"
                 />
+                <p className="text-xs text-muted-foreground">
+                  Se asignará la siguiente secuencia disponible del grupo.
+                </p>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Grupo</Label>
+                <Label className="text-xs">Grupo SAP *</Label>
                 <Input
                   value={createForm.itemGroup}
                   onChange={(event) =>
@@ -1210,8 +1205,11 @@ export default function Articulos() {
                       itemGroup: event.target.value,
                     }))
                   }
-                  placeholder="Familia o grupo"
+                  placeholder="Ej. 0905 - REPUESTOS INDIVIDUALES"
                 />
+                <p className="text-xs text-muted-foreground">
+                  Debe comenzar con los 4 dígitos que formarán el código SAP.
+                </p>
               </div>
               <div className="space-y-1 md:col-span-2">
                 <Label className="text-xs">Grupo financiero</Label>

@@ -46,6 +46,17 @@ describe("SAP item code sequences", () => {
     );
   });
 
+  it("rejects automatic allocation when the SAP group has no prefix", async () => {
+    await expect(
+      allocateNextSapItemCode({
+        itemGroup: "REPUESTOS",
+        withGroupLock: async (_groupCode, allocate) => allocate(),
+        findLatestItemCode: async () => null,
+        tryInsert: async itemCode => itemCode,
+      })
+    ).rejects.toThrow("debe iniciar con 4 dígitos");
+  });
+
   it("serializes concurrent allocations and returns a unique sequence", async () => {
     const codes = new Set(["010100005"]);
     let lockTail = Promise.resolve();

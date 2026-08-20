@@ -263,9 +263,11 @@ export const articlesRouter = router({
   create: protectedProcedure
     .input(
       z.object({
-        itemCode: z.string().trim().min(1).max(50),
+        // Accepted temporarily for compatibility with an older open client,
+        // but ignored: the server always allocates the SAP code by group.
+        itemCode: z.string().trim().max(50).optional(),
         description: articleDescriptionSchema,
-        itemGroup: z.string().trim().max(255).nullable().optional(),
+        itemGroup: z.string().trim().min(1).max(255),
         financialGroupCode: z.string().trim().max(20).nullable().optional(),
         brand: z.string().trim().max(120).nullable().optional(),
         partNumber: z.string().trim().max(120).nullable().optional(),
@@ -292,9 +294,8 @@ export const articlesRouter = router({
 
       try {
         return await db.createArticle({
-          itemCode: input.itemCode,
           description: input.description,
-          itemGroup: input.itemGroup ?? null,
+          itemGroup: input.itemGroup,
           financialGroupCode: input.financialGroupCode ?? null,
           brand: input.brand ?? null,
           partNumber: input.partNumber ?? null,

@@ -12195,7 +12195,9 @@ async function createInvoiceFromPurchaseOrderReceipt(params: {
   return createdInvoice;
 }
 
-const RECEIPT_SAP_SEQUENCE_LOCK_NAMESPACE = "receipt-sap-sequence";
+// Keep the original lock key during rolling deployments so old receipt
+// workers and new manual creations serialize against the same sequence.
+const SAP_ITEM_SEQUENCE_LOCK_NAMESPACE = "receipt-sap-sequence";
 
 function getReceiptSubstitutionLockData(
   sourceItem: any,
@@ -12239,13 +12241,13 @@ function getReceiptSubstitutionLockData(
   };
 }
 
-async function lockReceiptSapSequenceGroup(client: any, groupCode: string) {
+async function lockSapItemSequenceGroup(client: any, groupCode: string) {
   await client.execute(
-    sql`select pg_advisory_xact_lock(hashtextextended(${`${RECEIPT_SAP_SEQUENCE_LOCK_NAMESPACE}:${groupCode}`}, 0))`
+    sql`select pg_advisory_xact_lock(hashtextextended(${`${SAP_ITEM_SEQUENCE_LOCK_NAMESPACE}:${groupCode}`}, 0))`
   );
 }
 
-async function getLatestReceiptSapItemCode(client: any, groupCode: string) {
+async function getLatestSapItemCode(client: any, groupCode: string) {
   const firstCode = `${groupCode}00000`;
   const lastCode = `${groupCode}99999`;
   const codePattern = `^${groupCode}[0-9]{5}$`;
@@ -12306,7 +12308,7 @@ async function resolvePurchaseOrderReceiptArticles(params: {
     )
   ).sort();
   for (const groupCode of substitutionGroupCodes) {
-    await lockReceiptSapSequenceGroup(params.client, groupCode);
+    await lockSapItemSequenceGroup(params.client, groupCode);
   }
   const substitutionIdentityLockKeys = Array.from(
     new Set(
@@ -12463,11 +12465,11 @@ async function resolvePurchaseOrderReceiptArticles(params: {
           // depth. All group locks were already taken in sorted order above,
           // and PostgreSQL keeps this lock through the final receipt commit.
           withGroupLock: async (lockedGroupCode, allocate) => {
-            await lockReceiptSapSequenceGroup(params.client, lockedGroupCode);
+            await lockSapItemSequenceGroup(params.client, lockedGroupCode);
             return allocate();
           },
           findLatestItemCode: lockedGroupCode =>
-            getLatestReceiptSapItemCode(params.client, lockedGroupCode),
+            getLatestSapItemCode(params.client, lockedGroupCode),
           tryInsert: async generatedSapItemCode => {
             const [insertedArticle] = await params.client
               .insert(sapCatalog)
@@ -23318,7 +23320,6 @@ export async function articleCodeHasUsage(itemCode: string) {
 }
 
 export async function createArticle(data: {
-  itemCode: string;
   description: string;
   itemGroup?: string | null;
   financialGroupCode?: string | null;
@@ -23334,41 +23335,45 @@ export async function createArticle(data: {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  const itemCode = data.itemCode.trim();
   const description = normalizeArticleDescription(data.description);
-  if (!itemCode || !description) {
-    throw new Error("Código y descripción son obligatorios");
+  const itemGroup = data.itemGroup?.trim() || "";
+  if (!itemGroup || !description) {
+    throw new Error("El grupo SAP y la descripción son obligatorios");
   }
 
-  const [existing] = await db
-    .select({ id: sapCatalog.id })
-    .from(sapCatalog)
-    .where(eq(sapCatalog.itemCode, itemCode))
-    .limit(1);
+  const buildArticleValues = (itemCode: string) => ({
+    itemCode,
+    description,
+    itemGroup,
+    financialGroupCode: data.financialGroupCode?.trim() || null,
+    brand: data.brand?.trim() || null,
+    partNumber: data.partNumber?.trim() || null,
+    tipoArticulo: data.tipoArticulo,
+    projectId: data.tipoArticulo === 3 ? (data.projectId ?? null) : null,
+    allowsTaxWithholding: data.allowsTaxWithholding ?? true,
+    isActive: data.isActive ?? true,
+    createdById: data.createdById ?? null,
+    updatedById: data.updatedById ?? data.createdById ?? null,
+  });
 
-  if (existing) {
-    throw new Error("Ya existe un artículo con ese código");
-  }
-
-  const [article] = await db
-    .insert(sapCatalog)
-    .values({
-      itemCode,
-      description,
-      itemGroup: data.itemGroup?.trim() || null,
-      financialGroupCode: data.financialGroupCode?.trim() || null,
-      brand: data.brand?.trim() || null,
-      partNumber: data.partNumber?.trim() || null,
-      tipoArticulo: data.tipoArticulo,
-      projectId: data.tipoArticulo === 3 ? (data.projectId ?? null) : null,
-      allowsTaxWithholding: data.allowsTaxWithholding ?? true,
-      isActive: data.isActive ?? true,
-      createdById: data.createdById ?? null,
-      updatedById: data.updatedById ?? data.createdById ?? null,
+  return db.transaction(tx =>
+    allocateNextSapItemCode({
+      itemGroup,
+      withGroupLock: async (groupCode, allocate) => {
+        await lockSapItemSequenceGroup(tx, groupCode);
+        return allocate();
+      },
+      findLatestItemCode: groupCode => getLatestSapItemCode(tx, groupCode),
+      tryInsert: async itemCode => {
+        const [article] = await tx
+          .insert(sapCatalog)
+          .values(buildArticleValues(itemCode))
+          .onConflictDoNothing({ target: sapCatalog.itemCode })
+          .returning();
+        return article ?? null;
+      },
     })
-    .returning();
-
-  return article;
+  );
 }
 
 function normalizeTemporaryProjectCode(projectCode: string) {
